@@ -1,0 +1,56 @@
+// python/pt1120-python-09: what batch pt1120-python-09's rules share beyond python/exceptions and
+// python/misc2-messages: the raised expression of a raise statement continued with a backslash (TRY002, TRY003),
+// and a translation call's first argument inside type strings (INT001, INT002).
+//
+// Interface
+//   p09_raise(r, e)          raise statement r raises e, parentheses off; not its `from` cause; no row for a bare
+//                            `raise`. Unlike exceptions' exc_raise, also after a backslash continuation
+//   p09_raised_class(e, c)   Ruff's map_callable on a raised e: the callee of `E(…)`, parentheses off; e itself
+//                            otherwise
+//   p09_gettext_arg(c, a)    c is a translation call (misc2-messages' msg_gettext) and a is its first positional
+//                            argument, parentheses off: in the file's code, and in a tree Ruff parses from a string it
+//                            reads as a type (python-03's type_str_node)
+//
+// Python and Ruff background
+//   - tree-sitter keeps a backslash continuation as a `line_continuation` child of the statement: in
+//     `raise \` / `    E("m")` the raise statement's first child is the continuation, the call its second.
+//     exceptions' exc_raise reads the first child, so it finds no call there; Ruff's tree has no continuations.
+//   - Ruff visits the expressions it parses from string type definitions (an annotation's `"…"`, `cast("…", x)`'s
+//     type, a TypeVar bound) like any other, so a translation call written inside one is checked. misc2-messages'
+//     msg_arg counts children in an aggregate, which sees none of a guest tree's nodes (python-03's background):
+//     python-03's type_arg counts derived rows instead.
+//   - A guest tree's rows are reached only from its string, through `parsed`: a relation that starts from
+//     `kind(l, "subscript")` finds no guest subscript. names' literal_str does, so a string inside `Literal[…]`
+//     inside a string annotation (`x: "Literal['_(f\"{a}\")']"`) passes ann_str and is parsed as a type, which Ruff
+//     does not do. p09_in_literal finds those subscripts from the guest's nodes (type_str_node).
+//
+//   raise \
+//       ValueError("m")               p09_raise(<raise>, <ValueError("m")>), p09_raised_class(<call>, <ValueError>)
+//   raise (Exception)                 p09_raise(<raise>, <Exception>), p09_raised_class(<Exception>, <Exception>)
+//   x: "_(f'{a}')" = 1                p09_gettext_arg(<_(…)>, <f'{a}'>)
+//   y = cast("ngettext(f'{a}', 'b', 1)", 1)   p09_gettext_arg(<ngettext(…)>, <f'{a}'>)
+//   z: "Literal['_(f\"{a}\")']" = 1   none: a Literal's string is a value, not parsed
+#include "python/exceptions.rerail"
+#include "python/misc2-messages.rerail"
+#include "python/python-03.rerail"   // type_str_node, type_arg
+
+// ---- raises ------------------------------------------------------------------------------------------------------
+// A raise statement's children are its exception, its cause (field `cause`), and continuations and comments.
+.decl p09_raise(r: node, e: node)
+p09_raise(r, e) :- kind(r, "raise_statement"), child(r, e0, _), !kind(e0, "line_continuation"),
+    !kind(e0, "comment"), !field(r, "cause", e0), unparen(e0, e).
+.decl p09_raised_class(e: node, c: node)
+p09_raised_class(e, c) :- p09_raise(_, e), kind(e, "call"), field(e, "function", f), unparen(f, c).
+p09_raised_class(e, e) :- p09_raise(_, e), !kind(e, "call").
+
+// ---- translation calls -------------------------------------------------------------------------------------------
+.decl p09_gettext_arg(c: node, a: node)
+p09_gettext_arg(c, a) :- msg_gettext(c), msg_arg(c, 0, a).
+p09_gettext_arg(c, a) :- msg_gettext(c), type_str_node(c), !p09_in_literal(c), type_arg(c, 0, a0), unparen(a0, a).
+// p09_in_literal(e): e is in a tree parsed from a string that stands inside a guest tree's `Literal[…]` or
+// `x.Literal[…]`, or from a string nested in one.
+.decl p09_in_literal(e: node)
+p09_in_literal(e) :- type_str_node(l), kind(l, "subscript"), field(l, "value", v), text(v, t),
+    (t = "Literal" ; suffix(".Literal", t)), type_str_node(s), str_node(s), within(s, l), !within(s, v),
+    parsed(s, "annotation", r), (e = r ; within(e, r)).
+p09_in_literal(e) :- p09_in_literal(s), str_node(s), parsed(s, "annotation", r), (e = r ; within(e, r)).

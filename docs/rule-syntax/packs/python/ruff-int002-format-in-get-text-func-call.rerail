@@ -1,4 +1,4 @@
-.policy "ruff-int002-format-in-get-text-func-call" revision 2
+.policy "ruff-int002-format-in-get-text-func-call" revision 3
 .description "Pass a constant template to a gettext call and format the translated result; a format method call is evaluated before the catalog lookup."
 .language python
 .mode steer
@@ -12,9 +12,11 @@
 //   _("Hello, {}!".format(name))          ← INT002
 //   gettext("{}".format("line"))           ← INT002
 //   _("Hello, {}!").format(name)           not reported: translated first
-#include "python/misc2-messages.rerail"
+//   x: "_(t.format(a))" = 1                ← INT002: Ruff checks the code of string type definitions too
+#include "python/pt1120-python-09.rerail"
+//   p09_gettext_arg(c, a); python/misc2-messages: msg_form(a, k)
 
 .violation INT002(at: node) code "INT002"
     "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress ruff "INT002"
-INT002(a) :- msg_gettext(c), msg_arg(c, 0, a), msg_form(a, "format").
+INT002(a) :- p09_gettext_arg(_, a), msg_form(a, "format").

@@ -1,4 +1,4 @@
-.policy "ruff-b905-zip-without-explicit-strict" revision 2
+.policy "ruff-b905-zip-without-explicit-strict" revision 3
 .description "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently."
 .language python
 .mode steer
@@ -12,18 +12,28 @@
 //   zip(*iterators)                   ← B905
 //   zip([1, 2], repeat(1))            not reported: infinite
 //   zip("a", "b", strict=False)       not reported
+//   [*zip(a, b)]                      ← B905: tree-sitter reads it as a call of `*zip`
 #include "python/bugbear.rerail"
 #include "python/version.rerail"   // targets
 
 .violation B905(at: node) code "B905"
     "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
     suppress ruff "B905"
-B905(c) :- bb_builtin_call(c, "zip"), !call_kw(c, "strict", _), many(c), !infinite_arg(c), targets(10).
+B905(c) :- zip_call(c), !call_kw(c, "strict", _), many(c), !infinite_arg(c), targets(10).
+// zip_call(c): c calls the builtin zip. tree-sitter parses a starred call first in a list display, `[*zip(a, b)]`,
+// as a call whose callee is `*zip`; Ruff's tree has the starred call `zip(a, b)` there.
+.decl zip_call(c: node)
+zip_call(c) :- bb_builtin_call(c, "zip").
+zip_call(c) :- kind(c, "call"), field(c, "function", s), kind(s, "list_splat"), child(s, f0, 0), unparen(f0, f),
+    sym_of(f, "builtins.zip").
 .decl many(c: node)
 many(c) :- call_nargs(c, k), k >= 2.
 many(c) :- call_star(c).
+// infinite_arg(c): Ruff's is_infinite_iterable on one of c's positional arguments. python/ruff's counts skip
+// comments and backslash continuations (`repeat(1, \` / `None)` has two arguments).
 .decl infinite_arg(c: node)
 infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, q), (q = "itertools.cycle" ; q = "itertools.count").
 infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 1), call_nkwargs(a, 0).
-infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 2), bb_pos(a, 1, n), kind(n, "none").
+infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_nargs(a, 2), ruff_arg(a, 1, n0),
+    unparen(n0, n), kind(n, "none").
 infinite_arg(c) :- bb_pos(c, _, a), bb_sym_call(a, "itertools.repeat"), call_kw(a, "times", n), kind(n, "none").
