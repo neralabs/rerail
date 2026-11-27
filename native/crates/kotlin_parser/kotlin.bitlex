@@ -347,6 +347,7 @@ escape "a `;` after a line break and a comment" when code & semicolon & prev(fil
 # does (`as_open`, `as_split`). A blank, a comment or a `\r` after that `>`, which the lean
 # parser reads past to the next line: not read.
 mask as_kw      = kw_start & (text("as") | text("is")) & ~next(w, 2)
+mask as_end     = prev(as_kw)
 mask as_run     = fill(prev(as_kw, 2), ~(code & (word | high | dot | text(" ") | text("?") | text("<") | text(">"))))
 mask as_dot     = fill(as_run & dot, ~as_run)
 # Names and dots alone between the angles, as the lean parser's `as_split` asks: the run from a
@@ -378,12 +379,33 @@ assume "a `0x` starts a hex number at a start" at starts hex_at = zero & next(x_
 assume "a `0b` starts a binary number at a start" at starts bin_at = zero & next(b_letter) & ~prev(dot & ~prev(dot))
 assume "a `.` starts a real number before a digit, not after a word or a `.`" at starts dot_at = dot & next(digit) & ~prev(word | high) & ~prev(dot)
 assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct & ~(prev(two_start) | prev(two_start_three, 2)) & ~(dot & next(digit) & ~prev(word) & ~prev(dot))
+assume "no token starts touching an `as` or `is` before it: the two would be one word" at starts as_end = empty
 # A token's bytes after its start are code: the regions open only at a token's start.
 assume "a name runs over its word's bytes" in simple_identifier name_more = word | high
+assume "a name's bytes are code" in simple_identifier code = ~empty
 assume "a number's bytes are code" in integer_literal code = ~empty
 assume "a number's bytes are code" in real_literal code = ~empty
 assume "a number's bytes are code" in hex_literal code = ~empty
 assume "a number's bytes are code" in bin_literal code = ~empty
+# A byte is one token's: a number of one kind holds no other kind's number at its bytes, nor at the
+# byte after (a number's end tests read there, as the lean lexer reads one kind of number at a time).
+assume "a decimal number is no hex number" in integer_literal hx = empty
+assume "a decimal number is no binary number" in integer_literal bx = empty
+assume "a decimal number is no hex number" in real_literal hx = empty
+assume "a decimal number is no binary number" in real_literal bx = empty
+assume "a hex number is no decimal number" in hex_literal nb = empty
+assume "a hex number is no binary number" in hex_literal bx = empty
+assume "a binary number is no decimal number" in bin_literal nb = empty
+assume "a binary number is no hex number" in bin_literal hx = empty
+# A name holds no number's bytes after its first: a number's runs stop at a name's first byte, a
+# letter (`nb`'s terms are a number's from its first byte), as the lean lexer reads a name apart.
+assume "a name holds no number's bytes" in simple_identifier nb = empty
+assume "a name holds no number's start: its first byte is a letter, the rest after a word's" in simple_identifier num_start = empty
+# A hex or a binary number is a number at its bytes; an operator holds none.
+assume "a hex number is a number" in hex_literal number = ~empty
+assume "a binary number is a number" in bin_literal number = ~empty
+assume "an operator holds no number's bytes" in punct nb = empty
+assume "an operator's bytes are code" in punct code = ~empty
 token simple_identifier = start word_start run name_more
 token integer_literal = start int_at run nb
 token real_literal = start dot_at run nb

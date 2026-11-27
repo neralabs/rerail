@@ -399,10 +399,10 @@ struct Stage1 {
     t52: Vec<u64>,
     t69: Vec<u64>,
     t70: Vec<u64>,
-    t76: Vec<u64>,
-    t78: Vec<u64>,
+    t71: Vec<u64>,
     t77: Vec<u64>,
     t79: Vec<u64>,
+    t78: Vec<u64>,
     t80: Vec<u64>,
     t81: Vec<u64>,
     t82: Vec<u64>,
@@ -428,6 +428,7 @@ struct Stage1 {
     t102: Vec<u64>,
     t103: Vec<u64>,
     t104: Vec<u64>,
+    t105: Vec<u64>,
     refused: bool,
 }
 
@@ -569,10 +570,10 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
     let mut p_m_two_start_three = 0u64;
     let mut v_t69 = 0u64;
     let mut p_t69 = 0u64;
-    let mut c_t72 = 0u64;
-    let mut v_t78 = 0u64;
-    let mut p_t78 = 0u64;
-    let mut r_t78 = [0u64; RING];
+    let mut c_t73 = 0u64;
+    let mut v_t79 = 0u64;
+    let mut p_t79 = 0u64;
+    let mut r_t79 = [0u64; RING];
     let mut m_lf = vec![0u64; nw];
     let mut m_ws = vec![0u64; nw];
     let mut m_hash = vec![0u64; nw];
@@ -641,10 +642,10 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
     let mut t52 = vec![0u64; nw];
     let mut t69 = vec![0u64; nw];
     let mut t70 = vec![0u64; nw];
-    let mut t76 = vec![0u64; nw];
-    let mut t78 = vec![0u64; nw];
+    let mut t71 = vec![0u64; nw];
     let mut t77 = vec![0u64; nw];
     let mut t79 = vec![0u64; nw];
+    let mut t78 = vec![0u64; nw];
     let mut t80 = vec![0u64; nw];
     let mut t81 = vec![0u64; nw];
     let mut t82 = vec![0u64; nw];
@@ -670,6 +671,7 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
     let mut t102 = vec![0u64; nw];
     let mut t103 = vec![0u64; nw];
     let mut t104 = vec![0u64; nw];
+    let mut t105 = vec![0u64; nw];
     let mut lv_1 = 0u64;
     // The errors' bits in the blocks so far, ORed.
     let mut errors = 0u64;
@@ -1025,81 +1027,81 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
                 t69[q] = v_t69;
             }
             // prev(lf)
-            let v_t73 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
+            let v_t74 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
             // ~blank
-            let v_t74 = !v_m_blank & lv;
+            let v_t75 = !v_m_blank & lv;
             // fill(prev(lf), ~blank)
-            let v_t72 = {
-                    let (s, e) = (v_t73, v_t74);
+            let v_t73 = {
+                    let (s, e) = (v_t74, v_t75);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t72) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t73) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t72 = f >> 63;
+                    c_t73 = f >> 63;
                     f & lv
                 };
             // tab_ff & fill(prev(lf), ~blank)
-            let v_t71 = v_m_tab_ff & v_t72;
+            let v_t72 = v_m_tab_ff & v_t73;
             // a tab or a form feed in a line's indentation
             if q < nw {
-                errors |= v_t71;
+                errors |= v_t72;
             }
             // tab_ff & ~prev(~empty)
-            let v_t75 = v_m_tab_ff & (!(v_t69 << 1 | p_t69 >> 63) & lv);
+            let v_t76 = v_m_tab_ff & (!(v_t69 << 1 | p_t69 >> 63) & lv);
             // a tab or a form feed starting the file
             if q < nw {
-                errors |= v_t75;
+                errors |= v_t76;
             }
-            p_t78 = v_t78;
+            p_t79 = v_t79;
             // empty
-            v_t78 = 0;
-            r_t78[q % RING] = v_t78;
+            v_t79 = 0;
+            r_t79[q % RING] = v_t79;
             if q < nw {
-                t78[q] = v_t78;
+                t79[q] = v_t79;
             }
             // lf & ~escaped(bslash)
-            let v_t81 = v_m_lf & (!v_t14 & lv);
+            let v_t82 = v_m_lf & (!v_t14 & lv);
             if q < nw {
-                t81[q] = v_t81;
+                t82[q] = v_t82;
             }
             // (quote | bslash) | lf
-            let v_t87 = ((v_m_quote | v_m_bslash) | v_m_lf);
-            if q < nw {
-                t87[q] = v_t87;
-            }
-            // lbrace | lf
-            let v_t88 = (v_m_lbrace | v_m_lf);
+            let v_t88 = ((v_m_quote | v_m_bslash) | v_m_lf);
             if q < nw {
                 t88[q] = v_t88;
             }
-            // prev(eq_end) | (prev(blank) & prev(eq_end, 2))
-            let v_t89 = ((v_m_eq_end << 1 | p_m_eq_end >> 63) & lv | (v_m_blank << 1 | p_m_blank >> 63) & lv & (v_m_eq_end << 2 | p_m_eq_end >> 62) & lv);
+            // lbrace | lf
+            let v_t89 = (v_m_lbrace | v_m_lf);
             if q < nw {
                 t89[q] = v_t89;
             }
-            // ~bslash & ~(escaped(bslash) & ((quote | bslash) | lf))
-            let v_t90 = (!v_m_bslash & lv) & (!(v_t14 & ((v_m_quote | v_m_bslash) | v_m_lf)) & lv);
+            // prev(eq_end) | (prev(blank) & prev(eq_end, 2))
+            let v_t90 = ((v_m_eq_end << 1 | p_m_eq_end >> 63) & lv | (v_m_blank << 1 | p_m_blank >> 63) & lv & (v_m_eq_end << 2 | p_m_eq_end >> 62) & lv);
             if q < nw {
                 t90[q] = v_t90;
             }
-            // (sq | dq) | bslash
-            let v_t91 = ((v_m_sq | v_m_dq) | v_m_bslash);
+            // ~bslash & ~(escaped(bslash) & ((quote | bslash) | lf))
+            let v_t91 = (!v_m_bslash & lv) & (!(v_t14 & ((v_m_quote | v_m_bslash) | v_m_lf)) & lv);
             if q < nw {
                 t91[q] = v_t91;
             }
-            // (((sq | dq) | bslash) | lbrace) | rbrace
-            let v_t92 = ((((v_m_sq | v_m_dq) | v_m_bslash) | v_m_lbrace) | v_m_rbrace);
+            // (sq | dq) | bslash
+            let v_t92 = ((v_m_sq | v_m_dq) | v_m_bslash);
             if q < nw {
                 t92[q] = v_t92;
             }
-            // opens | closes
-            let v_t93 = (v_m_opens | v_m_closes);
+            // (((sq | dq) | bslash) | lbrace) | rbrace
+            let v_t93 = ((((v_m_sq | v_m_dq) | v_m_bslash) | v_m_lbrace) | v_m_rbrace);
             if q < nw {
                 t93[q] = v_t93;
             }
-            // dot | exp_l
-            let v_t98 = (v_m_dot | v_m_exp_l);
+            // opens | closes
+            let v_t94 = (v_m_opens | v_m_closes);
             if q < nw {
-                t98[q] = v_t98;
+                t94[q] = v_t94;
+            }
+            // dot | exp_l
+            let v_t99 = (v_m_dot | v_m_exp_l);
+            if q < nw {
+                t99[q] = v_t99;
             }
         }
         // The masks 1 block behind the classes.
@@ -1303,85 +1305,90 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
             if q < nw {
                 m_two_start_three[q] = v_m_two_start_three;
             }
-            // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
-            let v_t70 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
+            // ~raw_q
+            let v_t70 = !v_m_raw_q & lv;
             if q < nw {
                 t70[q] = v_t70;
             }
-            // opens | (i_open & prev(empty))
-            let v_t77 = (p_m_opens | v_m_i_open & (p_t78 << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv);
+            // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
+            let v_t71 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
             if q < nw {
-                t77[q] = v_t77;
+                t71[q] = v_t71;
+            }
+            // opens | (i_open & prev(empty))
+            let v_t78 = (p_m_opens | v_m_i_open & (p_t79 << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv);
+            if q < nw {
+                t78[q] = v_t78;
             }
             // (opens | (i_open & prev(empty))) | closes
-            let v_t79 = ((p_m_opens | v_m_i_open & (p_t78 << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
-            if q < nw {
-                t79[q] = v_t79;
-            }
-            // ~next(~empty)
-            let v_t80 = !(p_t69 >> 1 | v_t69 << 63) & lv;
+            let v_t80 = ((p_m_opens | v_m_i_open & (p_t79 << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
             if q < nw {
                 t80[q] = v_t80;
             }
-            // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
-            let v_t82 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+            // ~next(~empty)
+            let v_t81 = !(p_t69 >> 1 | v_t69 << 63) & lv;
             if q < nw {
-                t82[q] = v_t82;
+                t81[q] = v_t81;
+            }
+            // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
+            let v_t83 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+            if q < nw {
+                t83[q] = v_t83;
             }
             // next(nn_l)
-            let v_t85 = (p_m_nn_l >> 1 | v_m_nn_l << 63);
-            if q < nw {
-                t85[q] = v_t85;
-            }
-            // next(bytes_esc)
-            let v_t86 = (p_m_bytes_esc >> 1 | v_m_bytes_esc << 63);
+            let v_t86 = (p_m_nn_l >> 1 | v_m_nn_l << 63);
             if q < nw {
                 t86[q] = v_t86;
             }
-            // (alpha & ~p1) & ~p2
-            let v_t94 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
+            // next(bytes_esc)
+            let v_t87 = (p_m_bytes_esc >> 1 | v_m_bytes_esc << 63);
             if q < nw {
-                t94[q] = v_t94;
+                t87[q] = v_t87;
             }
-            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
-            let v_t95 = p_m_zero & (p_t45 >> 1 | v_t45 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            // (alpha & ~p1) & ~p2
+            let v_t95 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
             if q < nw {
                 t95[q] = v_t95;
             }
-            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
-            let v_t96 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t45 >> 1 | v_t45 << 63)) & lv);
+            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
+            let v_t96 = p_m_zero & (p_t45 >> 1 | v_t45 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t96[q] = v_t96;
             }
-            // (dot & next(digit)) & ~prev(word)
-            let v_t97 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
+            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
+            let v_t97 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t45 >> 1 | v_t45 << 63)) & lv);
             if q < nw {
                 t97[q] = v_t97;
             }
-            // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
-            let v_t99 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+            // (dot & next(digit)) & ~prev(word)
+            let v_t98 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
-                t99[q] = v_t99;
+                t98[q] = v_t98;
+            }
+            // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
+            let v_t100 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+            if q < nw {
+                t100[q] = v_t100;
             }
             // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
-            let v_t101 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
-            if q < nw {
-                t101[q] = v_t101;
-            }
-            // p1 | p2
-            let v_t102 = (v_m_p1 | v_m_p2);
+            let v_t102 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t102[q] = v_t102;
             }
-            // ~prev(p1)
-            let v_t103 = !(v_m_p1 << 1 | p_m_p1 >> 63) & lv;
+            // p1 | p2
+            let v_t103 = (v_m_p1 | v_m_p2);
             if q < nw {
                 t103[q] = v_t103;
             }
-            // ~prev(p2, 2)
-            let v_t104 = !(v_m_p2 << 2 | p_m_p2 >> 62) & lv;
+            // ~prev(p1)
+            let v_t104 = !(v_m_p1 << 1 | p_m_p1 >> 63) & lv;
             if q < nw {
                 t104[q] = v_t104;
+            }
+            // ~prev(p2, 2)
+            let v_t105 = !(v_m_p2 << 2 | p_m_p2 >> 62) & lv;
+            if q < nw {
+                t105[q] = v_t105;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -1389,24 +1396,24 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
             let q = t - 2;
             let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
             // ((punct & ~prev(two_start)) & two_start_three) & next(two_start_two, 2)
-            let v_t76 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+            let v_t77 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
             if q < nw {
-                t76[q] = v_t76;
+                t77[q] = v_t77;
             }
             // (~escaped(bslash) & sq) & next(sq3_c)
-            let v_t83 = (!r_t14[q % RING] & lv) & r_m_sq[q % RING] & (p_m_sq3_c >> 1 | v_m_sq3_c << 63);
-            if q < nw {
-                t83[q] = v_t83;
-            }
-            // (~escaped(bslash) & dq) & next(dq3_c)
-            let v_t84 = (!r_t14[q % RING] & lv) & r_m_dq[q % RING] & (p_m_dq3_c >> 1 | v_m_dq3_c << 63);
+            let v_t84 = (!r_t14[q % RING] & lv) & r_m_sq[q % RING] & (p_m_sq3_c >> 1 | v_m_sq3_c << 63);
             if q < nw {
                 t84[q] = v_t84;
             }
-            // two_start_three & next(two_start_two, 2)
-            let v_t100 = p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+            // (~escaped(bslash) & dq) & next(dq3_c)
+            let v_t85 = (!r_t14[q % RING] & lv) & r_m_dq[q % RING] & (p_m_dq3_c >> 1 | v_m_dq3_c << 63);
             if q < nw {
-                t100[q] = v_t100;
+                t85[q] = v_t85;
+            }
+            // two_start_three & next(two_start_two, 2)
+            let v_t101 = p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+            if q < nw {
+                t101[q] = v_t101;
             }
         }
         lv_1 = lv_0;
@@ -1482,10 +1489,10 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
         t52,
         t69,
         t70,
-        t76,
-        t78,
+        t71,
         t77,
         t79,
+        t78,
         t80,
         t81,
         t82,
@@ -1511,6 +1518,7 @@ unsafe fn stage1(src: &[u8]) -> Stage1 {
         t102,
         t103,
         t104,
+        t105,
         refused,
     }
 }
@@ -1662,10 +1670,10 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     let mut p_m_two_start_three = 0u64;
     let mut v_t69 = 0u64;
     let mut p_t69 = 0u64;
-    let mut c_t72 = 0u64;
-    let mut v_t78 = 0u64;
-    let mut p_t78 = 0u64;
-    let mut r_t78 = [0u64; RING];
+    let mut c_t73 = 0u64;
+    let mut v_t79 = 0u64;
+    let mut p_t79 = 0u64;
+    let mut r_t79 = [0u64; RING];
     let mut m_lf = vec![0u64; nw];
     let mut m_ws = vec![0u64; nw];
     let mut m_hash = vec![0u64; nw];
@@ -1734,10 +1742,10 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     let mut t52 = vec![0u64; nw];
     let mut t69 = vec![0u64; nw];
     let mut t70 = vec![0u64; nw];
-    let mut t76 = vec![0u64; nw];
-    let mut t78 = vec![0u64; nw];
+    let mut t71 = vec![0u64; nw];
     let mut t77 = vec![0u64; nw];
     let mut t79 = vec![0u64; nw];
+    let mut t78 = vec![0u64; nw];
     let mut t80 = vec![0u64; nw];
     let mut t81 = vec![0u64; nw];
     let mut t82 = vec![0u64; nw];
@@ -1763,6 +1771,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     let mut t102 = vec![0u64; nw];
     let mut t103 = vec![0u64; nw];
     let mut t104 = vec![0u64; nw];
+    let mut t105 = vec![0u64; nw];
     let mut lv_1 = 0u64;
     // The errors' bits in the blocks so far, ORed.
     let mut errors = 0u64;
@@ -1812,7 +1821,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
     let m_p_start = {
-        let Stage1 { m_lf, m_ws, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_pair_byte_5c, t1, m_p1, m_p2, m_raw_q, m_bytes_q, m_format_q, m_template_q, m_sq3, m_dq3, t14, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t45, m_num_run, t47, t48, m_two_start, m_two_start_three, t52, t69, t70, t76, t78, t77, t79, t80, t81, t82, t83, t84, t85, t86, t87, t88, t89, t90, t91, t92, t93, t94, t95, t96, t97, t98, t99, t100, t101, t102, t103, t104, refused: _ } = stage1_best(&src[..n]);
+        let Stage1 { m_lf, m_ws, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_pair_byte_5c, t1, m_p1, m_p2, m_raw_q, m_bytes_q, m_format_q, m_template_q, m_sq3, m_dq3, t14, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t16, t17, t18, t19, t20, t21, t22, t23, t24, t25, t26, t27, t28, t45, m_num_run, t47, t48, m_two_start, m_two_start_three, t52, t69, t70, t71, t77, t79, t78, t80, t81, t82, t83, t84, t85, t86, t87, t88, t89, t90, t91, t92, t93, t94, t95, t96, t97, t98, t99, t100, t101, t102, t103, t104, t105, refused: _ } = stage1_best(&src[..n]);
         // Each word's bits inside the file.
         let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
@@ -2880,81 +2889,81 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     t69[q] = v_t69;
                 }
                 // prev(lf)
-                let v_t73 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
+                let v_t74 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
                 // ~blank
-                let v_t74 = !v_m_blank & lv;
+                let v_t75 = !v_m_blank & lv;
                 // fill(prev(lf), ~blank)
-                let v_t72 = {
-                        let (s, e) = (v_t73, v_t74);
+                let v_t73 = {
+                        let (s, e) = (v_t74, v_t75);
                         let b = !e | s;
-                        let into = s.wrapping_add(b).wrapping_add(c_t72) ^ s ^ b;
+                        let into = s.wrapping_add(b).wrapping_add(c_t73) ^ s ^ b;
                         let f = s | (!e & into);
-                        c_t72 = f >> 63;
+                        c_t73 = f >> 63;
                         f & lv
                     };
                 // tab_ff & fill(prev(lf), ~blank)
-                let v_t71 = v_m_tab_ff & v_t72;
+                let v_t72 = v_m_tab_ff & v_t73;
                 // a tab or a form feed in a line's indentation
                 if q < nw {
-                    errors |= v_t71;
+                    errors |= v_t72;
                 }
                 // tab_ff & ~prev(~empty)
-                let v_t75 = v_m_tab_ff & (!(v_t69 << 1 | p_t69 >> 63) & lv);
+                let v_t76 = v_m_tab_ff & (!(v_t69 << 1 | p_t69 >> 63) & lv);
                 // a tab or a form feed starting the file
                 if q < nw {
-                    errors |= v_t75;
+                    errors |= v_t76;
                 }
-                p_t78 = v_t78;
+                p_t79 = v_t79;
                 // empty
-                v_t78 = 0;
-                r_t78[q % RING] = v_t78;
+                v_t79 = 0;
+                r_t79[q % RING] = v_t79;
                 if q < nw {
-                    t78[q] = v_t78;
+                    t79[q] = v_t79;
                 }
                 // lf & ~escaped(bslash)
-                let v_t81 = v_m_lf & (!v_t14 & lv);
+                let v_t82 = v_m_lf & (!v_t14 & lv);
                 if q < nw {
-                    t81[q] = v_t81;
+                    t82[q] = v_t82;
                 }
                 // (quote | bslash) | lf
-                let v_t87 = ((v_m_quote | v_m_bslash) | v_m_lf);
-                if q < nw {
-                    t87[q] = v_t87;
-                }
-                // lbrace | lf
-                let v_t88 = (v_m_lbrace | v_m_lf);
+                let v_t88 = ((v_m_quote | v_m_bslash) | v_m_lf);
                 if q < nw {
                     t88[q] = v_t88;
                 }
-                // prev(eq_end) | (prev(blank) & prev(eq_end, 2))
-                let v_t89 = ((v_m_eq_end << 1 | p_m_eq_end >> 63) & lv | (v_m_blank << 1 | p_m_blank >> 63) & lv & (v_m_eq_end << 2 | p_m_eq_end >> 62) & lv);
+                // lbrace | lf
+                let v_t89 = (v_m_lbrace | v_m_lf);
                 if q < nw {
                     t89[q] = v_t89;
                 }
-                // ~bslash & ~(escaped(bslash) & ((quote | bslash) | lf))
-                let v_t90 = (!v_m_bslash & lv) & (!(v_t14 & ((v_m_quote | v_m_bslash) | v_m_lf)) & lv);
+                // prev(eq_end) | (prev(blank) & prev(eq_end, 2))
+                let v_t90 = ((v_m_eq_end << 1 | p_m_eq_end >> 63) & lv | (v_m_blank << 1 | p_m_blank >> 63) & lv & (v_m_eq_end << 2 | p_m_eq_end >> 62) & lv);
                 if q < nw {
                     t90[q] = v_t90;
                 }
-                // (sq | dq) | bslash
-                let v_t91 = ((v_m_sq | v_m_dq) | v_m_bslash);
+                // ~bslash & ~(escaped(bslash) & ((quote | bslash) | lf))
+                let v_t91 = (!v_m_bslash & lv) & (!(v_t14 & ((v_m_quote | v_m_bslash) | v_m_lf)) & lv);
                 if q < nw {
                     t91[q] = v_t91;
                 }
-                // (((sq | dq) | bslash) | lbrace) | rbrace
-                let v_t92 = ((((v_m_sq | v_m_dq) | v_m_bslash) | v_m_lbrace) | v_m_rbrace);
+                // (sq | dq) | bslash
+                let v_t92 = ((v_m_sq | v_m_dq) | v_m_bslash);
                 if q < nw {
                     t92[q] = v_t92;
                 }
-                // opens | closes
-                let v_t93 = (v_m_opens | v_m_closes);
+                // (((sq | dq) | bslash) | lbrace) | rbrace
+                let v_t93 = ((((v_m_sq | v_m_dq) | v_m_bslash) | v_m_lbrace) | v_m_rbrace);
                 if q < nw {
                     t93[q] = v_t93;
                 }
-                // dot | exp_l
-                let v_t98 = (v_m_dot | v_m_exp_l);
+                // opens | closes
+                let v_t94 = (v_m_opens | v_m_closes);
                 if q < nw {
-                    t98[q] = v_t98;
+                    t94[q] = v_t94;
+                }
+                // dot | exp_l
+                let v_t99 = (v_m_dot | v_m_exp_l);
+                if q < nw {
+                    t99[q] = v_t99;
                 }
             }
             // The masks 1 block behind the classes.
@@ -3158,85 +3167,90 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 if q < nw {
                     m_two_start_three[q] = v_m_two_start_three;
                 }
-                // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
-                let v_t70 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
+                // ~raw_q
+                let v_t70 = !v_m_raw_q & lv;
                 if q < nw {
                     t70[q] = v_t70;
                 }
-                // opens | (i_open & prev(empty))
-                let v_t77 = (p_m_opens | v_m_i_open & (p_t78 << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv);
+                // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
+                let v_t71 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
                 if q < nw {
-                    t77[q] = v_t77;
+                    t71[q] = v_t71;
+                }
+                // opens | (i_open & prev(empty))
+                let v_t78 = (p_m_opens | v_m_i_open & (p_t79 << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv);
+                if q < nw {
+                    t78[q] = v_t78;
                 }
                 // (opens | (i_open & prev(empty))) | closes
-                let v_t79 = ((p_m_opens | v_m_i_open & (p_t78 << 1 | r_t78[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
-                if q < nw {
-                    t79[q] = v_t79;
-                }
-                // ~next(~empty)
-                let v_t80 = !(p_t69 >> 1 | v_t69 << 63) & lv;
+                let v_t80 = ((p_m_opens | v_m_i_open & (p_t79 << 1 | r_t79[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
                 if q < nw {
                     t80[q] = v_t80;
                 }
-                // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
-                let v_t82 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+                // ~next(~empty)
+                let v_t81 = !(p_t69 >> 1 | v_t69 << 63) & lv;
                 if q < nw {
-                    t82[q] = v_t82;
+                    t81[q] = v_t81;
+                }
+                // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
+                let v_t83 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+                if q < nw {
+                    t83[q] = v_t83;
                 }
                 // next(nn_l)
-                let v_t85 = (p_m_nn_l >> 1 | v_m_nn_l << 63);
-                if q < nw {
-                    t85[q] = v_t85;
-                }
-                // next(bytes_esc)
-                let v_t86 = (p_m_bytes_esc >> 1 | v_m_bytes_esc << 63);
+                let v_t86 = (p_m_nn_l >> 1 | v_m_nn_l << 63);
                 if q < nw {
                     t86[q] = v_t86;
                 }
-                // (alpha & ~p1) & ~p2
-                let v_t94 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
+                // next(bytes_esc)
+                let v_t87 = (p_m_bytes_esc >> 1 | v_m_bytes_esc << 63);
                 if q < nw {
-                    t94[q] = v_t94;
+                    t87[q] = v_t87;
                 }
-                // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
-                let v_t95 = p_m_zero & (p_t45 >> 1 | v_t45 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+                // (alpha & ~p1) & ~p2
+                let v_t95 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
                 if q < nw {
                     t95[q] = v_t95;
                 }
-                // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
-                let v_t96 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t45 >> 1 | v_t45 << 63)) & lv);
+                // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
+                let v_t96 = p_m_zero & (p_t45 >> 1 | v_t45 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
                 if q < nw {
                     t96[q] = v_t96;
                 }
-                // (dot & next(digit)) & ~prev(word)
-                let v_t97 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
+                // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
+                let v_t97 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t45 >> 1 | v_t45 << 63)) & lv);
                 if q < nw {
                     t97[q] = v_t97;
                 }
-                // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
-                let v_t99 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+                // (dot & next(digit)) & ~prev(word)
+                let v_t98 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
                 if q < nw {
-                    t99[q] = v_t99;
+                    t98[q] = v_t98;
+                }
+                // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
+                let v_t100 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+                if q < nw {
+                    t100[q] = v_t100;
                 }
                 // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
-                let v_t101 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
-                if q < nw {
-                    t101[q] = v_t101;
-                }
-                // p1 | p2
-                let v_t102 = (v_m_p1 | v_m_p2);
+                let v_t102 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
                 if q < nw {
                     t102[q] = v_t102;
                 }
-                // ~prev(p1)
-                let v_t103 = !(v_m_p1 << 1 | p_m_p1 >> 63) & lv;
+                // p1 | p2
+                let v_t103 = (v_m_p1 | v_m_p2);
                 if q < nw {
                     t103[q] = v_t103;
                 }
-                // ~prev(p2, 2)
-                let v_t104 = !(v_m_p2 << 2 | p_m_p2 >> 62) & lv;
+                // ~prev(p1)
+                let v_t104 = !(v_m_p1 << 1 | p_m_p1 >> 63) & lv;
                 if q < nw {
                     t104[q] = v_t104;
+                }
+                // ~prev(p2, 2)
+                let v_t105 = !(v_m_p2 << 2 | p_m_p2 >> 62) & lv;
+                if q < nw {
+                    t105[q] = v_t105;
                 }
             }
             // The masks 2 blocks behind the classes.
@@ -3244,24 +3258,24 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 let q = t - 2;
                 let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
                 // ((punct & ~prev(two_start)) & two_start_three) & next(two_start_two, 2)
-                let v_t76 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+                let v_t77 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
                 if q < nw {
-                    t76[q] = v_t76;
+                    t77[q] = v_t77;
                 }
                 // (~escaped(bslash) & sq) & next(sq3_c)
-                let v_t83 = (!r_t14[q % RING] & lv) & r_m_sq[q % RING] & (p_m_sq3_c >> 1 | v_m_sq3_c << 63);
-                if q < nw {
-                    t83[q] = v_t83;
-                }
-                // (~escaped(bslash) & dq) & next(dq3_c)
-                let v_t84 = (!r_t14[q % RING] & lv) & r_m_dq[q % RING] & (p_m_dq3_c >> 1 | v_m_dq3_c << 63);
+                let v_t84 = (!r_t14[q % RING] & lv) & r_m_sq[q % RING] & (p_m_sq3_c >> 1 | v_m_sq3_c << 63);
                 if q < nw {
                     t84[q] = v_t84;
                 }
-                // two_start_three & next(two_start_two, 2)
-                let v_t100 = p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+                // (~escaped(bslash) & dq) & next(dq3_c)
+                let v_t85 = (!r_t14[q % RING] & lv) & r_m_dq[q % RING] & (p_m_dq3_c >> 1 | v_m_dq3_c << 63);
                 if q < nw {
-                    t100[q] = v_t100;
+                    t85[q] = v_t85;
+                }
+                // two_start_three & next(two_start_two, 2)
+                let v_t101 = p_m_two_start_three & (p_t50 >> 2 | v_t50 << 62);
+                if q < nw {
+                    t101[q] = v_t101;
                 }
             }
             lv_1 = lv_0;
@@ -3328,15 +3342,15 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 6 | 7 | 8 | 9 | 10 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
+                bit(&t100, s)
             } {
                     3
                 } else {
                     usize::MAX
                 },
                 // `"`
-                11 => if (bit(&t103, s) && bit(&t104, s)) {
+                11 => if (bit(&t104, s) && bit(&t105, s)) {
                     6
                 } else {
                     usize::MAX
@@ -3344,36 +3358,36 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 // `#`
                 12 => 5,
                 // `'`
-                13 => if (bit(&t103, s) && bit(&t104, s)) {
+                13 => if (bit(&t104, s) && bit(&t105, s)) {
                     6
                 } else {
                     usize::MAX
                 },
                 // `.`
-                14 => if bit(&t97, s) {
+                14 => if bit(&t98, s) {
                     2
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
+                bit(&t100, s)
             } {
                     3
-                } else if bit(&t101, s) {
+                } else if bit(&t102, s) {
                     4
                 } else {
                     usize::MAX
                 },
                 // `0`
-                15 => if bit(&t95, s) {
+                15 => if bit(&t96, s) {
                     1
-                } else if bit(&t96, s) {
+                } else if bit(&t97, s) {
                     2
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                16 => if bit(&t96, s) {
+                16 => if bit(&t97, s) {
                     2
                 } else {
                     usize::MAX
@@ -3382,23 +3396,23 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 17 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
+                bit(&t100, s)
             } {
                     3
                 } else {
                     usize::MAX
                 },
                 // `ACDEGHIJKLMNOPQSVWXYZ_acdeghijklmnopqsvwxyz`
-                18 | 19 | 20 => if bit(&t94, s) {
+                18 | 19 | 20 => if bit(&t95, s) {
                     0
                 } else {
                     usize::MAX
                 },
                 // `BFRTUbfrtu`
-                21 | 22 => if bit(&t94, s) {
+                21 | 22 => if bit(&t95, s) {
                     0
-                } else if bit(&t102, s) {
+                } else if bit(&t103, s) {
                     6
                 } else {
                     usize::MAX
@@ -3407,8 +3421,8 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                 23 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
+                bit(&t100, s)
             } {
                     3
                 } else {
@@ -3427,7 +3441,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         continue 'pass;
                     }
                     // a string prefix of three letters or more
-                    if bit(&t70, s) {
+                    if bit(&t71, s) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3477,11 +3491,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         wait = (2 * made - b).min(nw);
                         continue 'pass;
                     }
-                    if count_in(&t98, s, l) >= 1 {
+                    if count_in(&t99, s, l) >= 1 {
                         hits |= 1 << 6;
                     }
                     // a string prefix of three letters or more
-                    if any_in(&t70, s + 1, l) {
+                    if any_in(&t71, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3499,8 +3513,8 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     }
                     // scan depth: its bits in the token's bytes, all of them code
                     let mut q = s;
-                    while let Some(i) = first_in(&t79, q, l) {
-                        if bit(&t77, i) {
+                    while let Some(i) = first_in(&t80, q, l) {
+                        if bit(&t78, i) {
                             c_depth += 1;
                             if c_depth > 31 {
                                 refused = true;
@@ -3514,7 +3528,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                     // A template's code: its brackets, as the walk counts them (`i_deep`: past its bound, or a close at its level 0).
                     if rd_on {
                         let mut q = s;
-                        while let Some(i) = first_in(&t93, q, l) {
+                        while let Some(i) = first_in(&t94, q, l) {
                             if bit(&m_opens, i) {
                                 if rd_total == 7 {
                                     refused = true;
@@ -3533,7 +3547,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         }
                     }
                     // punct: a triple's last byte starts a pair: at the token's first byte
-                    if bit(&t100, s) {
+                    if bit(&t101, s) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3606,7 +3620,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x80 != 0 && bit(&t82, q) {
+                        if fl & 0x80 != 0 && bit(&t83, q) {
                             // a triple-quoted string opened by four quotes or more
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3628,7 +3642,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
                         let mut at = t0;
                         let (c, cl, opened) = loop {
-                            let stops: &[u64] = if fl & 0x04 != 0 { &t92 } else { &t91 };
+                            let stops: &[u64] = if fl & 0x04 != 0 { &t93 } else { &t92 };
                             let Some(p) = first_bit(&stops[..made], at) else {
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -3656,7 +3670,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                                 more += 1;
                             }
                                 }
-                            if bit(&t85, p) {
+                            if bit(&t86, p) {
                                 // a `\N{…}` escape
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -3665,7 +3679,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            if fl & 0x02 != 0 && bit(&t86, p) {
+                            if fl & 0x02 != 0 && bit(&t87, p) {
                                 // a `\N`, `\u` or `\U` in a bytes string
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -3759,7 +3773,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             }
                             break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
                         };
-                        if any_in(&t80, seg, c - 1) {
+                        if any_in(&t81, seg, c - 1) {
                             // a string open at the end of the file
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3768,7 +3782,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x80 == 0 && any_in(&t81, seg, c - 1) {
+                        if fl & 0x80 == 0 && any_in(&t82, seg, c - 1) {
                             // a line break in a one-line string that no backslash escapes
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3786,7 +3800,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x80 != 0 && any_in([&t83[..], &t84[..]][usize::from(qi)], o1, c - 1) {
+                        if fl & 0x80 != 0 && any_in([&t84[..], &t85[..]][usize::from(qi)], o1, c - 1) {
                             // a triple-quoted string closed by four quotes or more
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3795,7 +3809,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x01 != 0 && o1 < c && !any_in(&t90, o1, c - 1) {
+                        if fl & 0x01 != 0 && o1 < c && !any_in(&t91, o1, c - 1) {
                             // a raw string of backslashes only
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3866,7 +3880,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             wait = (2 * made - b).min(nw);
                             continue 'pass;
                         }
-                        if bit(&t89, s) {
+                        if bit(&t90, s) {
                             // an interpolation's `=`
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -3897,7 +3911,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
                         let mut at = t0;
                         let (c, cl, opened) = loop {
-                            let stops: &[u64] = if fl & 0x04 != 0 { &t92 } else { &t91 };
+                            let stops: &[u64] = if fl & 0x04 != 0 { &t93 } else { &t92 };
                             let Some(p) = first_bit(&stops[..made], at) else {
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -3925,7 +3939,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                                 more += 1;
                             }
                                 }
-                            if bit(&t85, p) {
+                            if bit(&t86, p) {
                                 // a `\N{…}` escape
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -3934,7 +3948,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                                 refused = true;
                                 break 'tokens;
                             }
-                            if fl & 0x02 != 0 && bit(&t86, p) {
+                            if fl & 0x02 != 0 && bit(&t87, p) {
                                 // a `\N`, `\u` or `\U` in a bytes string
                                 if made < nw {
                                     wait = (2 * made - b).min(nw);
@@ -4028,7 +4042,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             }
                             break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
                         };
-                        if any_in(&t80, seg, c - 1) {
+                        if any_in(&t81, seg, c - 1) {
                             // a string open at the end of the file
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4037,7 +4051,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x80 == 0 && any_in(&t81, seg, c - 1) {
+                        if fl & 0x80 == 0 && any_in(&t82, seg, c - 1) {
                             // a line break in a one-line string that no backslash escapes
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4055,7 +4069,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x80 != 0 && any_in([&t83[..], &t84[..]][usize::from(qi)], o1, c - 1) {
+                        if fl & 0x80 != 0 && any_in([&t84[..], &t85[..]][usize::from(qi)], o1, c - 1) {
                             // a triple-quoted string closed by four quotes or more
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4064,7 +4078,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        if fl & 0x01 != 0 && o1 < c && !any_in(&t90, o1, c - 1) {
+                        if fl & 0x01 != 0 && o1 < c && !any_in(&t91, o1, c - 1) {
                             // a raw string of backslashes only
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4135,7 +4149,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             wait = (2 * made - b).min(nw);
                             continue 'pass;
                         }
-                        if bit(&t89, s) {
+                        if bit(&t90, s) {
                             // an interpolation's `=`
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4181,7 +4195,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             break 'tokens;
                         };
                         let c = e - 1;
-                        if any_in(&t88, s, c - 1) {
+                        if any_in(&t89, s, c - 1) {
                             // a `{` or a line break in a format spec
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4214,7 +4228,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             wait = (2 * made - b).min(nw);
                             continue 'pass;
                         }
-                        if bit(&t89, s) {
+                        if bit(&t90, s) {
                             // an interpolation's `=`
                             if made < nw {
                                 wait = (2 * made - b).min(nw);
@@ -4232,7 +4246,7 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                         continue 'pass;
                     }
                     // a string prefix of three letters or more
-                    if any_in(&t70, s + 1, l) {
+                    if any_in(&t71, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }

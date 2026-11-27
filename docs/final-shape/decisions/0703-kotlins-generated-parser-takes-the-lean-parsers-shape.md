@@ -278,6 +278,93 @@ them.
    number's end. The other numbers' masks (a hex fill in a decimal number's test, `nb` in a hex number's) stay, read
    after the bytes' tests. The token loop's reads of a fill back: 111, against 223 after 32. Measured (same run,
    m1max, best of 15): tier 1 15.7 to 15.9 ms against 16.3 ms.
+34. **A number's end tests read one kind of number, as the grammar's assumptions say**: a test at a run's end (33)
+   reads its masks as the token's kind's assumptions (`assume … in KIND m = e`) read them, as its run does: each
+   assumed mask, made of the masks in place as the test is (`in_region`), is replaced where it is a part of the test,
+   and each term of a union assumed empty is empty too. A test build checks the test so read against the rule's at
+   that byte where an assumption is not proved. A fill whose start holds nowhere holds nowhere (`simplify`). The
+   grammar says a number of one kind holds no other kind's mask (`in integer_literal hx = empty`, `in hex_literal
+   nb = empty`, ...), as the lean lexer reads one kind of number at a time. Every test at a number's end is then the
+   terms its run ended in and the bytes there: `a number that ends in _` is `(end_last >> 0 & 1 == 1 || …) && src[l]
+   == b'_'`, a hex number's `end_last >> 1 & 1 == 1 && src[l] == b'_'`. The token loop's reads of a fill back: 29,
+   against 111 after 33.
+35. **Past a number's end, the byte is none of the class its last term stopped at**: a run read forward ends where no
+   term holds; where it ended in a fill stopped by a class's complement (`fill(…, ~decd)`, `fill(…, ~hexd)`), that
+   fill's stop held at the byte after, so the byte is none of the class. A test at the run's end that asks of that
+   byte a class within it is empty (`past_run`), and a test so emptied is not written. The terms a run ended in are
+   of no byte, so no `prev` or `next` reads them elsewhere. `a digit after a binary number` is then tested in the
+   binary number's row alone, where a digit past `0`, `1` and `_` may follow; a decimal or hex number, whose digits
+   hold every digit, ends at none, as the lean lexer's `digits`.
+36. **A stop a scan found is told by its bytes**: a region's reader scans for its next stop (`first_bit` of a union of
+   terms, its byte `c`, or `close` where a template's tail keeps it). A test at that byte, where it is one of the
+   union's terms and each other term has a test of a byte that the term's tests of that byte hold none of, is the
+   term's tests of the bytes alone (`at_found`); where it is no term and each term is so apart, it holds there at no
+   byte. The string readers' `${` is then `src[c] == b'$' && src[c + 1] == b'{'`, with no scan back over
+   backslashes (`escaped(bs)`), as the lean lexer's `string_end` matches the byte it stopped at; a one-`$` opener in a
+   `$$` string holds at no stop, and its branch is not written (`drop_never`). The token loop reads a fill back once:
+   `a ; after a line break and a comment`.
+37. **A `;` after a line break and a comment is the loop's, as the lean lexer's gap**: the token loop keeps a fill as
+   each token's last-byte value where its start `X` holds in no region, or at a region token's first byte alone; there
+   `X` is read as the loop knows it at a token's start (`at_start`), with the region and its opener's bytes known
+   (`opener_start`). So is a stop at a region token's first byte. A mask of the regions that a fill reads at the byte
+   before (`prev(code)` in `r_first`) is kept as a fill's `X` is (`fill(prev(M), empty)`, its `X` alone: `xl_I` at a
+   token's last byte, `xs_I = s > at || xl_I` before the next, where `M` holds at every skipped byte); a test over a
+   token's bytes reads no such fill. A mask at a token's first or last byte tests no bound (`s`, `l` are in the
+   file), and `X` at a token's last byte is of its bytes where it is the same at each. The grammar's escape is as it
+   was: written of the region openers (`o_line | o_block`), the masks' prover proves none of the blank marks it proves
+   with `r_first`. `fill(lf & code, …)` is the lean lexer's `nl` in `skip`, `fill(cmt_on_lf, …)` its comment after
+   it: a comment's row sets `fill_13 = (xs_3 && fs_9) || fs_13` and keeps a line break through it (`fill_9 = !xs_3
+   && fs_9`), a token of code clears both, and the `;` row tests `src[s] == b';' && fs_13`, where the code pass read
+   the fill back (`rcaf_5`). What the code pass still reads back is two masks: `as_lt` (a fill) and `number`
+   (`rca_as_lt`, `rca_number`).
+38. **The code pass reads no mask back: `number` and `as_lt` are the loop's**: a mask of the regions that an escape
+   reads at the byte before is kept as a fill's `X` is (step 37), and an escape that reads one is tested at a token's
+   start and over its bytes after its first, read through the kind's assumptions (`kind_names`: a name's bytes are
+   code and hold no number's bytes after its first; a hex or a binary number is a number; an operator's bytes are
+   code and no number's). The name's escape is the lean lexer's `name_end` `wide` flag: `matches!(src[s],
+   0x80..=0xff) && xs_5` at its first byte, and over its tail a fill the loop keeps (`fs_7`) and a scan for a
+   letter past ASCII. Where an assumption is not proved, a test build checks the loop's value against the mask.
+   An escape `prev(F) & prev(C) & R` that holds at skipped bytes, with `F` a kept fill and `C` a class no token's
+   later byte meets where a byte of the token may be `R`, holds only at a gap's first byte (`at`), so it is tested
+   there at each token's start and after the last token, as the lean parser asks what follows a `>`: `fill_13 &&
+   src[at - 1] == b'>'` and `src[at]` a blank, `/` or `\r`. In a region after its start it is none where the byte
+   before is in no fill the loop keeps at a region token's last byte. `rca_as_lt`, `rca_number` and `any_at` are
+   gone. The loop keeps `as_run`, `as_dot` and `as_lt` per token for it, and their rows' values are written as scans
+   over the token's bytes (`fill_11` in a name's row reads `wlast_in` and `wfirst_in`), where the lean parser reads
+   the type's tokens (`as_split`).
+39. **A kept fill's row reads its kind's assumptions and its bytes' classes**: in a token of code's row, a fill's
+   `X` and `E` are read as the token's kind assumes them (`kind_read`; a test build checks the value against the
+   mask where an assumption is not proved), a one-byte `text` is a class, and a class is tested at the token's
+   first byte as one of the bytes it may be (`class_at`: `matches!(src[s], b'.' | b'<' | b'>' | b'?')`), and over
+   an operator's bytes after its first byte by byte (`known_tail`: `l > s && src[s + 1] == b'.'`). Where nothing
+   starts after the last stop, the value is `!stop && v`. A fill within a kept fill reads the row's `fill_J` as set,
+   not its expression again, and `Known`'s `&&` and `||` name each operand once. A name's row keeps `as_run` as
+   `fill_11 = (xs_11 || fs_11)` and `as_dot` as `((xs_11 || fs_11) && fs_12)`; an operator's reads its bytes. A
+   number's row still scans its tail for a stop (a sign after `e`), as does the gap before a token for one.
+40. **A token's fills read no scan: the gap, a run and an operator's bytes keep them**: step 39's name row still
+   scanned its bytes for `as_kw` (`fill_11 = … || wfirst_in(n, s, l - 1, …)`), which it said it did not; now a
+   `prev(X)` fill reads `X` before a token's last byte as none where the row's start allows it none, or where the
+   grammar assumes it none at starts (`assume … at starts as_end = empty`, `as_end = prev(as_kw)`, proved), and the
+   name's row is `fill_11 = (xs_11 || fs_11)`. Over the gap, a fill whose stop is every skipped byte is `s > at`
+   (`fs_7 = fill_7 && s == at`), and a `prev(X)` fill reads the gap's last stop once a token (`gap_last_t90`, as the
+   lean lexer's `skip` notes the gap): `match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11
+   }`. A token's run read forward (a number's) keeps what is asked of its bytes after its first as it reads them, as
+   the lean lexer's `number` knows it read an exponent: the classes (`seen`, `end_seen`: `fill_11 = … !(end_seen >> 0
+   & 1 == 1) && (xs_11 || fs_11)`) and the fills (`run_fill`, `fills`, `end_fills`: `fill_7 = (end_fills >> 0 & 1 ==
+   1)`), where no jump of the run passes a byte they read unread; else as before. `X` a part of the row's start
+   holds at its first byte (`int_at = num_start & …`). A kind's assumptions are of its token's bytes: read through no
+   call but a `prev` of one byte past the first byte (`replace_here`), so `fill(num_start, ~w)` in a name keeps the
+   number before it (`xl_5 = fs_7`) under `assume … in simple_identifier num_start = empty`. Over an operator's bytes
+   a stop that is no class is tested at each byte the pairs allow it (`l >= s + 2 && …src[s + 2]…`).
+41. **A fill a run keeps reads the terms at the byte before, as the lean lexer's number**: in a run read forward, a
+   byte after the first follows one of the run's bytes, and the run knows which terms held there (`last`). So a
+   fill's `X` there is, for each term, `X` given that term at the byte before (`in_run_test`): a `prev(Y)` of it is
+   decided by the bytes the term may hold at and what it states of the byte before it (`decide`), read of the ways
+   it may hold (`ways`, as the generator's `cubes`: the exponent's digits `ex` start at a digit, never at its sign).
+   The bytes at the byte itself are one class, what is left of the byte before a class of the term's bytes, and the
+   run's own class tests are of the run's bytes. `num_start` in a number's run is `last >> 5 & 1 == 1 &&
+   matches!(src[q], b'0'..=b'9')`, a digit after the exponent's sign, and its stop `matches!(src[q], b'+' | b'-' |
+   b'.')`; the run notes a sign as `matches!(src[q], b'+' | b'-')`.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

@@ -542,6 +542,7 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
                 // The block's words its rows read, made once a block (`partial_line`).
                 let head = "    'tokens: while b < nw {\n        let base = b * 64;\n";
                 let sec = if sec.contains(head) { sec.replacen(head, &format!("{head}{}", by.block_decls()), 1) } else { sec };
+                let sec = by.seen_tests(&sec);
                 // A field's word of the 64 bytes from `p`: its writes of the window (`win_put`, `win_set`, `win_clear`).
                 if text[a..].starts_with(super::T2_BEGIN) {
                     t.push_str(&sec.replace("wput(&mut fwin, ", "win_put(&mut fwin, p, ").replace("set(&mut fwin, ", "win_set(&mut fwin, p, ").replace("clear(&mut fwin, ", "win_clear(&mut fwin, p, "));
@@ -551,7 +552,7 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
                 at = b;
             }
             t.push_str(&text[at..]);
-            return format!("{t}\n{}", by.code());
+            return format!("{}\n{}", drop_never(&t), by.code());
         }
         for k in keep {
             cands.remove(k);
@@ -762,4 +763,55 @@ pub(super) fn stage1_for_tests(text: &str) -> String {
     text.replacen(head, &format!("        // Stage 1 for the test build's checks alone: the product reads none of it.\n        {cfg}\n{head}"), 1)
         .replacen(fin, &format!("    {cfg}\n{fin}"), 1)
         .replacen(past, &format!("    #[cfg(not(feature = \"test-hooks\"))]\n    let _ = (src, &st, &s1);\n    {cfg}\n{past}"), 1)
+}
+
+/// `text` without the tests at a token's end the bytes' form showed hold nowhere (`if … (false) {`): their comment, the
+/// test and its block.
+fn drop_never(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let mut out: Vec<&str> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let never = |l: &str| {
+            let t = l.trim();
+            t.starts_with("if ") && t.ends_with(" {") && {
+                let c = &t[3..t.len() - 2];
+                c == "(false)" || c.strip_prefix("l + ").and_then(|r| r.split_once(" < n && ")).is_some_and(|(k, r)| k.parse::<u32>().is_ok() && r == "(false)")
+            }
+        };
+        if lines[i].trim_start().starts_with("// ") && lines[i].trim_end().ends_with("where it may hold") && i + 1 < lines.len() && never(lines[i + 1]) {
+            let ind = lines[i + 1].len() - lines[i + 1].trim_start().len();
+            if let Some(e) = (i + 2..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() == ind && lines[j].trim() == "}") {
+                i = e + 1;
+                continue;
+            }
+        }
+        // `if (false) { … } else { B }` over lines: `B`, a level less in.
+        if lines[i].trim() == "if (false) {" {
+            let ind = lines[i].len() - lines[i].trim_start().len();
+            let at = |j: usize, t: &str| lines[j].len() - lines[j].trim_start().len() == ind && lines[j].trim() == t;
+            if let Some(m) = (i + 1..lines.len()).find(|&j| at(j, "} else {") || at(j, "}"))
+                && at(m, "} else {")
+                && let Some(e) = (m + 1..lines.len()).find(|&j| at(j, "}"))
+            {
+                for l in &lines[m + 1..e] {
+                    out.push(l.strip_prefix("    ").unwrap_or(l));
+                }
+                i = e + 1;
+                continue;
+            }
+        }
+        out.push(lines[i]);
+        i += 1;
+    }
+    // A branch the bytes' form showed holds nowhere: `if (false) { X } else ` is its `else`'s.
+    let mut t = out.join("\n");
+    while let Some(a) = t.find("if (false) { ") {
+        let Some(e) = t[a..].find(" } else ").map(|e| a + e) else { break };
+        if t[a + "if (false) { ".len()..e].contains(['{', '}']) {
+            break;
+        }
+        t.replace_range(a..e + " } else ".len(), "");
+    }
+    t
 }
