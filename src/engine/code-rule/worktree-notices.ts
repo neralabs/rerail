@@ -56,7 +56,7 @@ export function noticeCounts(seen: WorktreeRead, event: "change" | "rename", pat
   const parts = path.split("/");
   const git = parts.indexOf(".git");
   if (git >= 0 && underOrTimesOf(parts, git, event)) return false;
-  if (inLeftOut(seen, event, parts)) return false;
+  if (inLeftOut(seen.leftOut, event, parts)) return false;
   return event === "rename" || !seen.folders.has(path);
 }
 
@@ -73,13 +73,21 @@ function underOrTimesOf(parts: readonly string[], index: number, event: "change"
  * What the read left out may come or go (a file where an ignored folder was is no longer ignored); its own times and
  * anything under it do not matter.
  */
-function inLeftOut(seen: WorktreeRead, event: "change" | "rename", parts: readonly string[]): boolean {
+function inLeftOut(leftOut: ReadonlySet<string>, event: "change" | "rename", parts: readonly string[]): boolean {
   let prefix = "";
   for (const [index, part] of parts.entries()) {
     prefix = index === 0 ? part : `${prefix}/${part}`;
-    if (seen.leftOut.has(prefix) && underOrTimesOf(parts, index, event)) return true;
+    if (leftOut.has(prefix) && underOrTimesOf(parts, index, event)) return true;
   }
   return false;
+}
+
+/**
+ * Whether a read that left out `leftOut` (`WorktreeRead.leftOut`) read nothing at `path` (relative to the worktree): it
+ * left out the path itself or a folder on its way.
+ */
+export function leftOutOn(leftOut: ReadonlySet<string>, path: string): boolean {
+  return inLeftOut(leftOut, "change", path.split("/"));
 }
 
 /**

@@ -47,6 +47,7 @@ import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-r
 import { defaultRerailDatabasePath, failWhileWriteLocked } from "../engine/storage/database.js";
 import { makeLedgerFolder, openLedgerFile, readLedgerFile, readLedgerLines, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepFolderPrivate } from "../engine/storage/private-files.js";
+import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -996,11 +997,22 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 }
 
 /**
+ * Interrupts the session's queued and running scans and releases its owner while `claim` still holds it, in one record
+ * write that reads the owner row as it is made (`endOwnership`): never on this thread while another process holds the
+ * write lock, and after the claim when that still waits for it. A claim kept for the lock and not made is told only to
+ * the open session of the runtime that asked for it (`#claimNotMade`): a suspension, or a runtime made again that took
+ * it from one, still holds it, and the write then finds another runtime's row and leaves that runtime's scans.
+ */
+function endHeldOwnership(controls: SqliteAuditControlStore, sessionId: string, claim: PolicyOwnerClaim | undefined): void {
+  if (claim !== undefined) controls.endOwnership(sessionId, claim);
+}
+
+/**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one: their queued scans are
- * interrupted, their owner released and their record ended at `endedAt`, the time their end came. Without one, as when
- * the daemon stops, each record ends when its session was suspended (`suspendedAt`): nothing was heard from it after. One
- * that fails is reported and the rest are still ended, as a runtime's close ends each of its sessions whatever another's
- * does.
+ * interrupted and their owner released while their claim holds it (`endHeldOwnership`), and their record ended at
+ * `endedAt`, the time their end came. Without one, as when the daemon stops, each record ends when its session was
+ * suspended (`suspendedAt`): nothing was heard from it after. One that fails is reported and the rest are still ended,
+ * as a runtime's close ends each of its sessions whatever another's does.
  */
 export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[], endedAt?: number): void {
   const sessions = new SqliteSessionStore(databasePath);
@@ -1008,10 +1020,7 @@ export function endSuspendedSessions(databasePath: string, suspensions: readonly
   try {
     for (const { descriptor, ownerClaim, suspendedAt } of suspensions) {
       try {
-        if (ownerClaim !== undefined) {
-          controls.interrupt(descriptor.sessionId);
-          controls.releaseOwner(descriptor.sessionId, ownerClaim);
-        }
+        endHeldOwnership(controls, descriptor.sessionId, ownerClaim);
         sessions.closeSession(descriptor.sessionId, endedAt ?? suspendedAt);
       } catch (error) {
         process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1401,6 +1410,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #modelPath: string | undefined;
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
+  /** The database's record writer, for the seen time of the checkout a session starts in (`#startingCheckout`). */
+  readonly #checkoutRecords: RecordWriter;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
   readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
@@ -1498,18 +1509,22 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let audits: SqliteAuditStore | undefined;
     let controls: SqliteAuditControlStore | undefined;
     let startWatch: RepositoryStartWatch | undefined;
+    let checkoutRecords: RecordWriter | undefined;
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
       sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
+      checkoutRecords = openRecordWriter(databasePath);
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
+      this.#checkoutRecords = checkoutRecords;
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
       this.#startWatch = startWatch;
     } catch (error) {
+      checkoutRecords?.close();
       sessionStore?.close();
       audits?.close();
       controls?.close();
@@ -1676,8 +1691,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk. The read makes none of
    * this process's waiting record writes first, which would hold this thread, and so every session's hooks, for the lock
-   * until the oldest of them is 5 s old. A session this process opened has its row on disk already: its open ends with
-   * the owner claim, which this process's waiting writes are made before (`requireRecordWritesMade`), or fails.
+   * until the oldest of them is 5 s old. A session this process opened while another process held the lock can have its
+   * row still waiting: it reads as unrecorded, and its next open takes its start from its ledger's first dated event;
+   * the waiting row, made first, keeps the start it was written with (`SqliteSessionStore.openSession` leaves it).
    */
   #recordedStart(sessionId: string): number | undefined {
     return this.#sessionStore.storedSession(sessionId)?.startedAt;
@@ -2521,6 +2537,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
     this.#audits.close();
+    this.#checkoutRecords.close();
     this.#sessionStore.close();
     this.#sessionStoreClosed = true;
     this.#catalogs.close();
@@ -2740,15 +2757,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
    * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
    * meanwhile registers as before, and is refused while this one owns it. It is taken only once the claim is made: an
-   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record.
+   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record. A claim kept
+   * for the write lock and not made is let go (`#claimNotMade`).
    */
   #registerOwner(sessionId: string): PolicyOwnerClaim {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId, claim => { this.#claimNotMade(sessionId, claim); });
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /**
+   * The session's claim, kept for the write lock, was not made: refused once the lock was given back, as when another
+   * runtime claimed the session first, or dropped. The session is no longer this runtime's to scan, release or
+   * interrupt, which would act on a claim the database does not hold.
+   */
+  #claimNotMade(sessionId: string, claim: PolicyOwnerClaim): void {
+    const state = this.#sessions.get(sessionId);
+    if (state?.ownerClaim?.token === claim.token) state.ownerClaim = undefined;
   }
 
   /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
@@ -2970,9 +2998,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#sessions.delete(sessionId);
     this.#pollControlsWhileSessionsOpen();
     if (opened.ownerClaim !== undefined) {
-      this.#controls.interrupt(sessionId);
       this.#controls.interruptRepositoryAudit(sessionId);
-      this.#controls.releaseOwner(sessionId, opened.ownerClaim);
+      this.#controls.endOwnership(sessionId, opened.ownerClaim);
       this.#sessionStore.closeSession(sessionId);
     }
     try {
@@ -3158,15 +3185,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Interrupts the session's queued and running scans and releases its owner, unless it is being suspended, which keeps
-   * both for its next open. Its checkout audit is interrupted either way: the evaluator running it closes.
+   * Interrupts the session's queued and running scans and releases its owner while its claim holds it
+   * (`endHeldOwnership`), unless it is being suspended, which keeps both for its next open. Its checkout audit is
+   * interrupted either way: the evaluator running it closes.
    */
   #endOwnership(sessionId: string, state: RuntimeSessionState): void {
     if (state.ownerClaim === undefined) return;
     this.#controls.interruptRepositoryAudit(sessionId);
-    if (state.suspending) return;
-    this.#controls.interrupt(sessionId);
-    this.#controls.releaseOwner(sessionId, state.ownerClaim);
+    if (!state.suspending) endHeldOwnership(this.#controls, sessionId, state.ownerClaim);
   }
 
   /**
@@ -3753,7 +3779,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = checkoutRealpath(session.cwd);
-    const known = recordCheckout(this.#catalogs.database, cwd);
+    // A checkout recorded already is only seen again, a record write that never waits here for another process's lock,
+    // but for the first adoption of a remote its clone-keyed repository gained (`recordCheckout`).
+    const known = recordCheckout(this.#catalogs.database, cwd, Date.now(), this.#checkoutRecords);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
     // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
