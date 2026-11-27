@@ -12394,3 +12394,27 @@ Checked under Relax: rerail-setfix (148), tests-lang syntax (111, field_reads am
 (54, the term atoms' case among them) and phases::tests (23), tests-logic native::tests (20) and plan::tests (114: 50
 at 2 threads before that process passed the 12 GB cap, the other 64 at 1). rerail-boot's cost_shape_tests: the same
 15 red. Relax has no clippy: none run. No Metal or farm runs.
+
+### Q598. Roll-up 170 (main cce09e3c36 onto Pulling-it-all-together): what the merge chose
+
+main's commit (#1181): a running session checks a checkout replaced at its path with the rules of the clone now there.
+A recorded row is taken only when it is the folder's own (`isOwnRow`, the resolver's rule), and the registry exports
+its location check (`stillPlaces`) and fresh read (`locationNow`).
+
+Conflicts, resolved by invariant:
+- repository-registry.ts: main's one-line `recordedRepositoryAt` doc (the full text moved to `isOwnRow`); main's
+  `locationNow` and `locatedAfresh` split, `locationNow` returning the hub's checkout `identity` too, as a kept
+  location keeps it (roll-up 161).
+
+Fixed on the way (red on the hub before the merge):
+- The `regex` grammar (0495 step 2) is registered as a language (`languages/regex.json`) and is a `parse` grammar in
+  the engine, but the TypeScript schema and the engine's capabilities did not name it: `CODE_RULE_PARSE_GRAMMARS`,
+  `CODE_RULE_PARSE_KINDS` (its kinds, `literal::regex::KINDS`) and `CodeRuleDslParseGrammar` take it, and
+  capabilities.json's `ast.languages` takes `regex: native:regex`, as the registry lists it. The pins of parse's
+  grammars and of the language keys pass.
+- code-rule-schema.test: the stored note's issue is at `rule.stored` (the schema's refine names that path since #508);
+  the embedding refusals' expected list is the registry's (`CODE_RULE_EMBEDDING_LANGUAGES`), which the message is made
+  from, not a copy that predates python, rr, html and markdown embedding.
+
+Checked: tsc --noEmit; vitest on main's router, catalog, router-cost tests, the registry tests and code-rule-schema
+(all pass). No Rust changed but capabilities.json, read by lookup of a rule's language. No Metal or farm runs.
