@@ -18,7 +18,7 @@ const ALLOWED: [(&str, usize, &str); 8] = [
     ("native/crates/tests_corpus/src/code_rule_dsl/logic/plan/coverage.rs", 1, "the coverage ledger and matrix, hand-kept documents, their lines split in one place (`ledger_cells`)"),
     ("native/crates/typing/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),
     ("native/crates/ygraph/src/code_rule_dsl/facts/ygraph/mod.rs", 2, "the y-graph's member lists and its recorded edges (fixtures of the replay)"),
-    ("native/crates/tape_format/src/f16.rs", 1, "a language's format 16 code table, as the lab ships it (`Table::from_text`)"),
+    ("native/crates/tape_format/src/codes.rs", 1, "a language's format 16 code table, as the lab ships it (`codes::line`; 0697 moved it from `f16.rs`)"),
     ("native/crates/plan_search/src/code_rule_dsl/logic/plan/prepared.rs", 1, "the sizes log a measurement aid writes (`RERAIL_SIZES_LOG`), read back by Q290's oracle (`RERAIL_SIZES_FROM`)"),
     ("accel/src/upkeep.rs", 2, "the upkeep jobs' last finish times, a record of the job's own (`.upkeep`)"),
 ];

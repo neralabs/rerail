@@ -32,7 +32,7 @@ fn main() {
         t.elapsed()
     };
     let lex = || files.iter().map(|t| rerail_rr_syntax::lean::token_count(t)).sum::<usize>();
-    let tape = || files.iter().map(|t| rerail_rr_syntax::lean::tape(t).len()).sum::<usize>();
+    let tape = || files.iter().map(|t| rerail_rr_syntax::lean::tape(t).expect("an .rr file parses").len()).sum::<usize>();
     let mut best = [Duration::MAX; 2];
     // `RR_ONLY=lex`: the lexer alone, for a count of its work (instructions, cycles) apart from the parse's.
     if std::env::var("RR_ONLY").as_deref() == Ok("lex") {

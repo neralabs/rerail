@@ -485,7 +485,9 @@ impl State {
                 match Slab::lease(self.next_slab + 1, length) {
                     Ok(slab) => {
                         self.next_slab += 1;
-                        let offset = slab.room(bytes).ok_or(Error::BackendCapacity)?;
+                        let Some(offset) = slab.room(bytes) else {
+                            return Err(refused(&format!("a new slab of {} bytes holds no room of {bytes}", slab.byte_length())));
+                        };
                         self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock, tapes: false });
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
