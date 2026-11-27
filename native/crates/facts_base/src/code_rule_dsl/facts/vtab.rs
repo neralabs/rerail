@@ -372,6 +372,7 @@ pub trait Source: Send + Sync {
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
     /// place first (a view of a batch's documents) finds it once.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         for (o, &c) in out.iter_mut().zip(columns) {
             *o = self.value(row, c);
         }

@@ -410,6 +410,7 @@ impl Within {
     /// The solve made: for an `inside` given its set's `nearest` (`Solves`), that one where no member's nearest member
     /// ancestor has one (the chains are single), so both read one relation.
     fn solve(&self, nearest: Option<&OnceLock<Arc<Solved>>>) -> Arc<Solved> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
         let nearest = nearest.filter(|_| matches!(self.mode, Mode::Axis(Axis::Inside)));
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -1103,6 +1104,7 @@ impl Source for Within {
         Some(self.lookup(0, &[n])?.into_iter().filter(|&r| self.value(r, 1) == a).collect())
     }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.mode != Mode::Tree {
             return None;
         }
@@ -1120,6 +1122,7 @@ impl Source for Within {
     /// The nearest axis's one row by `n`, read from the batch's solve (`lookup_read`'s rows, at most one). `None`
     /// where the axis is not solved for the batch: its rows are made per lookup, which the caller probes.
     fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], _cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.row_column() != Some(column) || !self.reads_solved() || columns.len() > out.len() {
             return None;
         }
@@ -1138,6 +1141,7 @@ impl Source for Within {
     /// `read_one_at` of a chunk's values, on the batch's solve: its starts and rows taken once, each value's node
     /// found with the search's hint carried from row to row.
     fn read_many_at(&self, column: usize, values: &[i64], columns: &[usize], out: &mut [i64], alive: &mut [u64], _cursor: &mut super::super::ProbeCursor) -> Option<()> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let n = values.len();
         if self.row_column() != Some(column) || !self.reads_solved() || out.len() < columns.len() * n || alive.len() * 64 < n {
             return None;
@@ -1188,6 +1192,9 @@ impl Source for Within {
         Some(out)
     }
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         for &v in values {
