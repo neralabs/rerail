@@ -238,15 +238,16 @@ check integer   = digit ([us] digit)* ['.' [digit ([us] digit)*]] [exp_l [sign] 
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run; past it the
-# run's dots are operators, as the lean lexer reads `....`. Two dots are two operators.
+# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run: the run of dots, which must be
+# three (`check`). The lean lexer reads `....` as an ellipsis and a `.`; here it is refused, to the lean parser.
+# Two dots are two operators.
 mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
-mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
-mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
+mask p_start    = code & punct & ~second & ~number & ~conv_at & ~fill(ell_at, ~dot)
 assume "an ellipsis starts at the first of three dots" at starts ell_at = dot & next(dot) & next(dot, 2) & ~prev(dot)
 assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
 token punct     = start p_start pair two_start
-token ellipsis  = start ell_at run ell
+token ellipsis  = start ell_at run dot
+check ellipsis  = '.' '.' '.'
 
 token comment   = start hash & o_cmt read cmt
 

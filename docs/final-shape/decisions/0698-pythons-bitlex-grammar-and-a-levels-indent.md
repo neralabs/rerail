@@ -453,5 +453,7 @@ statements and blocks end.
     - A byte past ASCII is no `junk`. Its escape refuses the file in code, and its bytes stay free for the kinds a
       reader moves (0509). With them in `junk`, `spec_text` had no byte left.
 
-    The ellipsis stays a run over `ell`. A pairs triple's first two bytes must be a pair, and Python's `..` is two
-    tokens.
+79. **An ellipsis is a run of dots, and its check is three.** `token ellipsis = start ell_at run dot`, with
+    `check ellipsis = '.' '.' '.'`, in place of the run over `ell`. A pairs triple, as the lean lexer's table has it,
+    cannot hold `...`: a triple's first two bytes must be a pair, and Python's `..` is two tokens. Four dots or more
+    are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.

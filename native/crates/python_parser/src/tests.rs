@@ -145,7 +145,10 @@ fn comprehensions_are_the_lean_parsers() {
 fn await_ellipsis_and_async_are_the_lean_parsers() {
     same(&["x = await a.b(c)\n", "await a\n", "x = [await a for a in b]\n", "x: tuple[int, ...] = ...\n", "def f():\n    ...\n", "x = a[...]\n"]);
     same(&["async def f():\n    async for a in b:\n        c\n    async with a as b:\n        c\n", "async def f() -> int:\n    a\n"]);
-    same(&["from . import a\n", "from .. import a\n"]);
+    same(&["from . import a\n", "from .. import a\n", "x = a[1:...]\n"]);
+    // An ellipsis is a run of three dots (`check ellipsis`): four or more are refused, to the lean parser. Not read
+    // yet: an import's prefix of three dots, which tree-sitter reads as three `.` leaves.
+    refused(&["x = ....__class__\n", "from .... import a\n", "from ... import a\n"]);
 }
 
 #[test]
