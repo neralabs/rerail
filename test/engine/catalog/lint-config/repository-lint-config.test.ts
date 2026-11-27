@@ -462,8 +462,8 @@ describe("readRepositoryLintConfig", () => {
   });
 
   it.each([
-    ["a second positional option the port does not declare", ["error", "type", "interface"], "option2 is not an option the port declares"],
-    ["a nested option the port does not declare", ["error", { style: { prefer: "type" } }], "style.prefer is not an option the port declares"],
+    ["a second positional option the port does not declare", ["error", "type", "interface"], "option2 is not an option the port takes"],
+    ["a nested option the port does not declare", ["error", { style: { prefer: "type" } }], "style.prefer is not an option the port takes"],
     ["a list of objects", ["error", [{}]], "option: [{}] is not a value Rerail maps"],
     ["an option set positionally and by name", ["error", "type", { option: "interface" }], "option is set twice"],
   ])("maps no options for %s", async (_, value, reason) => {
