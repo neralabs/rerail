@@ -39,7 +39,10 @@ export class AttachRetry<Context> {
   #failing: Context | undefined;
   /** What arrived for `#failing`'s session meanwhile: the attached runtime records it as a gap. */
   #drops: { sessionId: string; gap: DroppedEvents } | undefined;
-  /** The context of the host's newest attach, which its reattach attaches, whether that attach succeeded, failed or still runs. */
+  /**
+   * The context of the host's newest attach, which its reattach attaches, whether that attach succeeded, failed or still
+   * runs; none once the host shuts down.
+   */
   #requested: Context | undefined;
 
   constructor(host: AttachRetryHost<Context>) {
@@ -162,9 +165,13 @@ export class AttachRetry<Context> {
     return context === undefined ? Promise.resolve() : this.attach(context, true);
   }
 
-  /** The host is shutting down in `context`: no try is made again, and the failing session's marker gets its final count. */
+  /**
+   * The host is shutting down in `context`: no try is made again, the failing session's marker gets its final count, and
+   * the newest attach is forgotten, so a reattach after it rebuilds only a session the host still holds.
+   */
   stop(context: Context): void {
     this.cancel();
+    this.#requested = undefined;
     this.markFinal(context);
     this.#drops = undefined;
     this.#host.reportDropped(0);

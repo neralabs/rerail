@@ -821,6 +821,31 @@ describe("Pi conversation-rules extension", () => {
         expect(sent(requests, "record-gap")).toEqual([]);
       });
 
+      it("attaches nothing when `/rerail-start` or `/rerail-stop` reattaches after Pi shut the session down", async () => {
+        const harness = createHarness();
+        daemonRoute.main = true;
+        daemonRoute.startDaemonForPackage.mockResolvedValue(daemon(harness.context.cwd));
+        const requests = answering();
+        const footer = footerOf(harness);
+        vi.spyOn(process.stderr, "write").mockReturnValue(true);
+        await install(harness, [messageRule], true);
+        await harness.handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, harness.context);
+        // From here the daemon refuses every request, so an attach of the closed session would fail and arm a retry.
+        requests.length = 0;
+        vi.stubGlobal("fetch", async (_url: URL, init: { body?: string }) => {
+          if (init.body !== undefined) requests.push(JSON.parse(init.body) as (typeof requests)[number]);
+          throw new TypeError("fetch failed");
+        });
+        vi.useFakeTimers();
+        const reattached = await Promise.allSettled([hostCommands.reattach!()]);
+        // A retry armed would fire now and send an initialize of its own.
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(sent(requests, "initialize")).toEqual([]);
+        expect(footer.at(-1)).toBeUndefined();
+        expect(reattached).toEqual([{ status: "fulfilled", value: undefined }]);
+      });
+
       it("takes the footer down when Pi detaches for Rerail's removal, so a failed start's count does not stay once Rerail is gone", async () => {
         const { footer } = await startFails("down");
         expect(droppedShown(footer)).toBe("Rerail: 1 session event dropped — daemon not answering");

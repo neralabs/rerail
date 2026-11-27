@@ -1071,6 +1071,29 @@ describe("OMP conversation-rules extension", () => {
       expect(daemon.gaps).toEqual([]);
       vi.useRealTimers();
     });
+
+    it("attaches nothing when `/rerail-start` or `/rerail-stop` reattaches after OMP shut the session down", async () => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      const footer: Array<string[] | undefined> = [];
+      Object.assign(harness.context, { hasUI: true, mode: "tui", ui: { setWidget: (_key: string, lines?: string[]) => { footer.push(lines); } } });
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false })(harness.pi);
+      await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
+      await harness.handlers.get("session_shutdown")!({}, harness.context);
+      // From here the daemon refuses the session, so an attach of the closed session would fail and arm a retry.
+      daemon.state.down.add("omp-test-session");
+      daemon.requests.length = 0;
+      vi.useFakeTimers();
+      const reattached = await Promise.allSettled([hostCommands.reattach!()]);
+      // A retry armed would fire now and send an initialize of its own.
+      await vi.runOnlyPendingTimersAsync();
+
+      expect(daemon.initializes("omp-test-session")).toBe(0);
+      expect(footer.at(-1)).toBeUndefined();
+      expect(reattached).toEqual([{ status: "fulfilled", value: undefined }]);
+      vi.useRealTimers();
+    });
   });
 
   describe("daemon faults", () => {
