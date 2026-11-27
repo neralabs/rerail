@@ -1,10 +1,10 @@
 # python-14: flake8-comprehensions C400 to C406, C408
 
 Ruff checks a string type definition (an annotation, `cast("…", x)`'s type, a TypeVar bound, a string inside one) as
-code and reports what it finds at the string. Every difference of these rules from their originals was there: the
-translations found nothing in a parsed string (C400 to C406), and C408 took every parsed call for one without
-arguments. The rules now share `lib/python/python-14.rerail` (new), which reaches the parsed trees through
-python-01's `typedef_node` and says each shape without the relations that miss those trees.
+code and reports what it finds at the string. The original port's differences were in these trees: C400 to C406
+found nothing there and C408 treated every parsed call as argument-free. Native guest tapes and field-bound
+matchers are now fixed in #1185. `lib/python/python-14.rerail` keeps the explicit `typedef_node` domain and
+Ruff-specific host lookup, global-declaration order and shape semantics.
 
 Ground truth: `ruff check --select C4 --no-cache` (Ruff on the fleet box), on the corpus probes and on
 `t1.py` below.
@@ -56,26 +56,16 @@ def h(dict: int):
     return w
 ```
 
-## Engine gaps (repros on the box, `rerail-engine run-policies`)
+## Native prerequisites and callee normalization
 
-Both make library relations silently miss the nodes of a parsed string; python-14 works around them.
+#1185 retains guest tapes and runs field-bound matchers over them, keyed by document rather than shared parsed
+facts. The old missing field joins and argument facts are no longer an engine limitation.
 
-1. A body joining `kind(c, K)`, `field(c, F, x)` and `kind(x, K2)` gives no row for a node of a parsed string, while
-   each pair of those atoms does. `typedef_node(c), kind(c, "call"), field(c, "function", f), kind(f, "identifier")`
-   has no row for `a: "list(x)"`; without `kind(c, "call")`, or through a relation `fn(c, f) :- typedef_node(c),
-   field(c, "function", f)` and then `fn(c, f), kind(f, "identifier")`, it has. python/ruff's `call_item` and
-   comprehensions' `c4_call`, `c4_named` and `c4_only` are such bodies, so every rule built on them misses parsed
-   strings.
-2. A count over an input relation counts no node of a parsed string: `n = count : { child(al, _, _) }` is 0 for a
-   parsed call's argument list, while a count over a derived relation of the same nodes (`c14_item`) is right.
-   python-01 notes this for counts in general; python/ruff's `call_nargs`, `call_nkwargs`, comprehensions'
-   `c4_pair` and `c4_simple` count children.
+`c14_fn` removes callee parentheses once, before any name or binding lookup. Previously only the file-local
+`c14_builtin` path did that, so `cast("(dict)()", value)` was missed while the equivalent bare callee worked.
+Ruff 0.17.6 reports the parenthesized call; the guest-isolation regression now checks every expected line, the
+Literal exclusion, twin-policy equality and the separate guest-request packs.
 
-## Library changes proposed
-
-- Fix (1) and (2) in the engine; then python-14's `c14_only`, `c14_nopos`, `c14_nokw`, `c14_two` fold back into
-  python/ruff (`call_only`, `call_nargs`, `call_nkwargs`) and comprehensions (`c4_only`, `c4_pair`), and
-  `c14_call` (a file's call or a `typedef_node` call) is what the C4 rules start from.
-- python/names (`wstart`) or python/upgrade (`builtin_at`): look a parameter's annotation and the return annotation
-  up from the scope around the def, and give a name parsed from any `typedef_node` string a start (today only
-  `parsed_in`'s annotation strings have one). `c14_name_at` does this for the C4 collection names only.
+The domain and lookup distinctions still matter: signature annotations are evaluated around the def, parsed
+type-definition strings need their host as a lookup start, and C408's `global` handling follows Ruff's visit order.
+The tuple predicates also retain the C4 rules' specific treatment of starred elements and comments.

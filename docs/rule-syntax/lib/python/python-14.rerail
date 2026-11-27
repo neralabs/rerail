@@ -1,10 +1,8 @@
 // python/python-14: the calls and shapes of the flake8-comprehensions (C4) rules C400 to C406 and C408, in a file and
 // in the tree parsed from a string type definition, which Ruff checks as code and reports at the string.
-// comprehensions' and ruff's relations miss the nodes of a parsed string (engine gaps, NOTES-python-14): a body that
-// joins kind(c, K), field(c, F, x) and kind(x, K2) gives no row for them (call_item, c4_call, c4_named are such
-// bodies), and a count over an input relation (`child`) counts none of them. So call_nargs and call_nkwargs are 0
-// for every parsed call, c4_only never holds there, and C408 took `list(x)` for `list()`. These relations step from
-// the call to its parts through relations of their own, and say "one" and "none" by negation.
+// The call domain explicitly admits type-definition guests but excludes Literal values. Host lookup models
+// signature annotations and Ruff's order of visits to global declarations; argument and shape relations keep
+// that same domain. Normalize callees once: Ruff's AST has no parenthesis nodes around a callee.
 //
 // Interface
 //   c14_call(c)            c is a call of a file, or of a string type definition's tree (python-01's typedef_node):
@@ -35,15 +33,15 @@ c14_call(c) :- kind(c, "call"), c14_file(c).
 c14_call(c) :- typedef_node(c), kind(c, "call").
 .decl c14_file(n: node)
 c14_file(n) :- docof(n, d), doc_role(d, "primary").
-.decl c14_fn(c: node, f: node)  // c's callee, as written
-c14_fn(c, f) :- c14_call(c), field(c, "function", f).
+.decl c14_fn(c: node, f: node)  // c's callee, parentheses removed as in Ruff's AST
+c14_fn(c, f) :- c14_call(c), field(c, "function", written), unparen(written, f).
 .decl c14_named(c: node, x: symbol)
 c14_named(c, x) :- c14_fn(c, f), kind(f, "identifier"), text(f, x).
 .decl c14_bname(c: node, x: symbol)
 c14_bname(c, x) :- c14_fn(c, f), c14_file(c), kind(f, "identifier"), builtin_at(f, x), !c14_global_ref(f, _).
 c14_bname(c, x) :- c14_name_at(c, x, p), c4_builtin_here(p, x).
 .decl c14_builtin(c: node, x: symbol)
-c14_builtin(c, x) :- c14_fn(c, f), c14_file(c), unparen(f, m), builtin_at(m, x), !c14_global_ref(m, _).
+c14_builtin(c, x) :- c14_fn(c, f), c14_file(c), builtin_at(f, x), !c14_global_ref(f, _).
 c14_builtin(c, x) :- c14_fn(c, f), c14_global_ref(f, s), c14_seen(f, s), builtin_at(f, x).
 c14_builtin(c, x) :- c14_name_at(c, x, p), c4_builtin_here(p, x).
 
