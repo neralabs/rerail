@@ -1,0 +1,1 @@
+`rerail events` (internal testing) in an installed Rerail answers an event of a session the daemon has not started, or has ended, with the error code `inactive-session` and the runtime's own message, as a build from a checkout does, not with `invalid-event`.

@@ -25,8 +25,11 @@ import {
   WorktreeRegistryPass,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
+import { placementInputs } from "./checkouts/git-placement.js";
+import { configFilesText, remoteConfigFiles } from "./checkouts/kept-remote.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
+import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -185,15 +188,48 @@ const adoptionChecked = new Set<RepositoryKey>();
 /**
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
  * recorded for another clone id (a re-clone) is recorded again and loses its own settings. A clone-keyed repository
- * adopts the checkout's remote once per process.
+ * adopts the checkout's remote once per process. Given the database's record writer, `records`, a checkout recorded
+ * with the same clone id is only seen again, which never waits for another process's write lock ({@link seenCheckout}),
+ * but for that adoption: the first time a process sees a remote on a clone-keyed checkout, it writes on `db`, which
+ * waits for the lock as before.
  */
-export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
+export function recordCheckout(
+  db: RerailDatabase,
+  workspace: string,
+  now = Date.now(),
+  records?: RecordWriter,
+): CheckoutContext & { readonly cloneId: string } {
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace, located => refusedCheckoutCloneId(db, located));
   const checkoutPath = physicalPath(location.workspaceRoot);
-  // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
-  const repositoryKey = db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  const repositoryKey = (records === undefined ? undefined : seenCheckout(db, records, { location, checkoutPath, cloneId, now }))
+    // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
+    ?? db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
   return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
+}
+
+/** A checkout as `recordCheckout` resolved it, and when it was seen. */
+interface SeenAt {
+  readonly location: RepositoryIdentityLocation;
+  readonly checkoutPath: string;
+  readonly cloneId: string;
+  readonly now: number;
+}
+
+/**
+ * The repository of the checkout recorded at `checkoutPath` for `cloneId`, read as the database holds it now, with no
+ * lock; its record (`recordCheckoutRow`, the statements of `recordCheckout`'s transaction, which here only move its
+ * seen time) is a record write: made at once when the write lock is free, else kept until another process gives the
+ * lock back, so a session's start in a checkout Rerail knows never waits for the lock on the daemon's thread. Made
+ * later, it records the checkout again if it was forgotten meanwhile. Undefined, nothing written, for a checkout
+ * recorded under another clone id or not at all, which takes the transaction: its repository comes from its write.
+ */
+function seenCheckout(db: FileReader, records: RecordWriter, seen: SeenAt): RepositoryKey | undefined {
+  const recorded = db.select({ cloneId: checkouts.cloneId, repositoryKey: checkouts.repositoryKey }).from(checkouts)
+    .where(eq(checkouts.checkoutPath, seen.checkoutPath)).get();
+  if (recorded?.cloneId !== seen.cloneId) return undefined;
+  records.write(database => { recordCheckoutRow(database, seen.location, seen.checkoutPath, seen.cloneId, seen.now); });
+  return recorded.repositoryKey;
 }
 
 /**
@@ -317,7 +353,7 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
     throw error;
   }
   const location = repositoryIdentityLocation(workspace);
-  return lookupAt(db, location, {}, readCloneIdAt(location.identityPath));
+  return lookupAt(db, location, () => remoteKeyOf(location), readCloneIdAt(location.identityPath));
 }
 
 /**
@@ -325,26 +361,24 @@ export function lookupCheckout(db: FileReader, workspace: string): CheckoutConte
  * the thread): a recorded checkout is found with no Git process.
  */
 export function lookupCheckoutAt(db: FileReader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
-  return lookupAt(db, location, {}, readCloneIdAt(location.identityPath));
+  return lookupAt(db, location, () => remoteKeyOf(location), readCloneIdAt(location.identityPath));
 }
 
-/** Where a lookup keeps its checkout's remote: unset until it is read, then its key, undefined where it names none. */
-interface RemoteHolder {
-  remote?: { readonly key: RepositoryKey | undefined };
-}
-
-/** {@link lookupCheckout} at `location`, given the clone id read at its identity path. */
+/**
+ * {@link lookupCheckout} at `location`, given the clone id read at its identity path; `remoteKey` gives the key of the
+ * checkout's remote, asked only for a checkout neither recorded nor of a recorded clone.
+ */
 function lookupAt(
   db: FileReader,
   location: RepositoryIdentityLocation,
-  holder: RemoteHolder,
+  remoteKey: () => RepositoryKey | undefined,
   readId: string | undefined,
 ): CheckoutContext | undefined {
   const cloneId = readId ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const repositoryKey = recordedRepositoryAt(db, location, checkoutPath, cloneId)
     ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
-    ?? remoteRepository(db, location, holder);
+    ?? remoteRepository(db, location, remoteKey);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
 }
 
@@ -364,24 +398,60 @@ function recordedRepositoryAt(db: Reader, location: RepositoryIdentityLocation, 
   return recorded.cloneId === cloneId || (cloneId === null && idUnread) ? recorded.key : undefined;
 }
 
-/** The known repository the checkout's remote names, its remote read once per `holder`; a folder outside git has none. */
-function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, holder: RemoteHolder): RepositoryKey | undefined {
+/** The known repository the checkout's remote names (`remoteKey`); a folder outside git has none. */
+function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, remoteKey: () => RepositoryKey | undefined): RepositoryKey | undefined {
   if (!location.git) return undefined;
-  holder.remote ??= { key: remoteKeyOf(location) };
-  const remoteKey = holder.remote.key;
-  return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
+  const key = remoteKey();
+  return key === undefined ? undefined : repositoryByKeyOrAlias(db, key)?.repositoryKey;
+}
+
+/**
+ * A checkout's remote as the resolver keeps it: its key, undefined where it names none; the config files it is read
+ * from ({@link remoteFilesOf}); and what they held just before Git was asked ({@link configFilesText}).
+ */
+interface KeptRemote {
+  readonly key: RepositoryKey | undefined;
+  readonly files: readonly string[];
+  readonly text: string;
 }
 
 /**
  * A Git location the resolver read for a workspace, with what was there then: the clone id at its identity path, the
  * identity of its top level's `.git` ({@link folderIdentity}; undefined where it could not be read), and the checkout's
- * remote once it was read. Each workspace keeps its own, so a second folder of a checkout reads the remote at its first
- * read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config files read the same.
+ * remote once it was read ({@link keptRemoteKey}). Each workspace keeps its own, so a second folder of a checkout reads
+ * the remote at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config
+ * files read the same.
  */
-interface KeptLocation extends RemoteHolder {
+interface KeptLocation {
   readonly location: RepositoryIdentityLocation;
   readonly cloneId: string | undefined;
   readonly gitEntry: string | undefined;
+  remote?: KeptRemote;
+}
+
+/**
+ * The config files `location`'s remotes are read from ({@link remoteConfigFiles}): its common Git folder's, and its own
+ * Git folder's, which is the common one for a main checkout. A linked worktree's is found from its `.git` file with no
+ * Git process ({@link placementInputs}); where Git's placement of it is not read from its files, the first alone.
+ */
+function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] {
+  const common = dirname(location.identityPath);
+  return remoteConfigFiles(common, location.main ? common : placementInputs(location.workspaceRoot)?.gitFolder);
+}
+
+/**
+ * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
+ * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
+ * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
+ * ({@link remoteKeyOf}).
+ */
+function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
+  const files = kept.remote?.files ?? remoteFilesOf(kept.location);
+  // Read before Git is asked: a config written between the two reads as changed at the next lookup.
+  const text = configFilesText(files);
+  if (kept.remote?.text === text) return kept.remote.key;
+  kept.remote = { key: remoteKeyOf(kept.location), files, text };
+  return kept.remote.key;
 }
 
 /**
@@ -413,7 +483,9 @@ function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): K
  * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each workspace's Git
  * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
  * too, once another checkout takes its path; a folder outside Git is located again each time, so a later `git init` is
- * seen. The database is read on every call, so adoption and new records show at once.
+ * seen. A checkout's remote is kept while its repository's config files read the same ({@link keptRemoteKey}), so a
+ * remote changed in place names its repository at the next lookup. The database is read on every call, so adoption
+ * and new records show at once.
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const located = new Map<string, KeptLocation>();
@@ -426,7 +498,7 @@ export function createCheckoutResolver(db: FileReader): (workspace: string) => C
     }
     const known = located.get(workspace);
     const kept = known !== undefined && stillPlaces(known) ? known : locatedAfresh(located, workspace);
-    return lookupAt(db, kept.location, kept, kept.cloneId);
+    return lookupAt(db, kept.location, () => keptRemoteKey(kept), kept.cloneId);
   };
 }
 
@@ -1345,8 +1417,24 @@ export async function pruneCheckouts(
   const answered = (): void => { unanswered.looking = undefined; };
   void looking.then(answered, answered);
   const gone = await unlessAborted(looking, signal);
-  if (gone === undefined || gone.length === 0 || signal?.aborted === true) return [];
+  if (gone === undefined || gone.length === 0 || !await seenTimesMade(db.$client.name, signal)) return [];
   return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
+}
+
+/**
+ * True once this process's record writes to the database at `path` are made, waiting off the thread while another
+ * process holds the write lock; false once `signal` aborts first. A session that starts in a checkout meanwhile keeps
+ * its seen time waiting there ({@link recordCheckout}): the forget after this reads it, so a worktree made again at a
+ * removed one's path while the pass looked stays.
+ */
+async function seenTimesMade(path: string, signal: AbortSignal | undefined): Promise<boolean> {
+  const records = openRecordWriter(path);
+  try {
+    await unlessAborted(records.settled(), signal);
+  } finally {
+    records.close();
+  }
+  return signal?.aborted !== true;
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */

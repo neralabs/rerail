@@ -32,6 +32,13 @@ export interface RerailApiStores {
   preferences(): SqlitePresentationPreferenceStore;
   /** Writable handle on the one database: repositories, checkouts, rule configuration and the library. */
   database(): RerailDatabase;
+  /**
+   * Makes `write` on the database in one immediate transaction once its write lock is free, behind this process's
+   * waiting record writes (`RecordWriter.writeWhenFree`): tried at once, then at the pauses of SQLite's busy handler,
+   * the thread answering other requests and every session's hooks between tries. False, nothing made, once another
+   * process held the lock through those pauses, SQLite's 5 s, after which a statement waiting for the lock failed too.
+   */
+  writeWhenFree(write: (database: RerailDatabase) => void): Promise<boolean>;
   /** The rules and packs that ship with Rerail. */
   ruleCatalog(): RuleCatalog;
   /** Passive checkout lookup (never records), with each workspace's git location cached. */
@@ -126,6 +133,17 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+/**
+ * What `write` returns, made once the database's write lock is free (`RerailApiStores.writeWhenFree`), so a change
+ * waits for another process's lock off the thread that answers every session's hooks. A lock held past SQLite's 5 s
+ * answers `503 database-busy`: nothing was made, and the same change asked again once the holder ends is made.
+ */
+export async function writtenWhenFree<T>(stores: RerailApiStores, write: (database: RerailDatabase) => T): Promise<T> {
+  const answer: { made?: { readonly value: T } } = {};
+  if (await stores.writeWhenFree(database => { answer.made = { value: write(database) }; }) && answer.made !== undefined) return answer.made.value;
+  throw new ApiError(503, "database-busy", "the change was not made: another process held the Rerail database's write lock for 5 s, as rerail scrub or rerail reset does while it runs; try it again once that has finished");
 }
 
 /** Whether `operation` runs in this process: it belongs to no experimental feature, or to one that is on. */

@@ -499,15 +499,16 @@ export class SqliteSessionStore {
   /**
    * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
    * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
-   * of the stretch it looked over. One read: the session's rows newest first, to the first of those kinds, after this
-   * process's waiting record writes are made (`#recorded`). A row whose write the lock still keeps waiting past the bound
-   * of that wait reads as not recorded; `recordLostEvents` looks for it again once its own write is made, behind it.
+   * of the stretch it looked over. One read: the session's rows newest first, to the first of those kinds, as the
+   * database holds them now. It makes none of this process's waiting record writes first, which would hold this thread,
+   * and so every session's hooks, for another process's write lock up to 5 s at each session's open: a row whose write
+   * waits reads as not recorded, and `recordLostEvents` looks for it again once its own write is made, behind it.
    */
   lastRecordedEvent(sessionId: string, kinds: ReadonlySet<string>): string | undefined {
     const wanted = [...kinds, LOST_EVENTS_KIND].map(kind => sql`${kind}`);
     // `+kind` keeps SQLite on `events_session_sequence`, newest first, stopping at the first row of those kinds; on
     // `events_session_kind_sequence` it would read every row of each kind and sort them.
-    const row = this.#recorded().get<{ kind: string; eventId: string } | undefined>(sql`
+    const row = this.#database.get<{ kind: string; eventId: string } | undefined>(sql`
       SELECT ${events.kind} AS kind, ${events.eventId} AS eventId FROM ${events}
       WHERE ${events.sessionId} = ${sessionId} AND +${events.kind} IN (${sql.join(wanted, sql`, `)})
       ORDER BY ${events.sequence} DESC LIMIT 1
@@ -524,8 +525,8 @@ export class SqliteSessionStore {
    * (`lastObservedEventAt`, `rerail status`) reads the newest event's time.
    * The record counts only the events whose rows the history lacks when its write is made, after the last event an
    * earlier record of the session named (`uncountedLostEvents`). The write is made behind every record write this
-   * process asked for before it: an event whose row waited for another process's lock past the bound of
-   * `lastRecordedEvent`'s wait is on disk by then and is not counted, and an event whose row never came is counted by
+   * process asked for before it: an event whose row still waited for another process's lock when `lastRecordedEvent`
+   * read is on disk by then and is not counted, and an event whose row never came is counted by
    * one record, however often the session opened while rows waited. When it would count none it writes nothing, and,
    * when no write waits, takes no write lock (`writeUnless`).
    */
@@ -702,10 +703,14 @@ export class SqliteSessionStore {
 
   /**
    * The first `limit` places the record holds that the session's walks could not check (`recordDiscoveryGap`), in the order
-   * met, with the record that says they met more where it falls: the bridge reads it as its bound.
+   * met, with the record that says they met more where it falls: the bridge reads it as its bound, at each open of a
+   * session's evaluator. Read as the database holds them now: it makes none of this process's waiting record writes
+   * first, which would hold this thread, and so every session's hooks, for another process's write lock up to 5 s. A
+   * place whose write still waits reads as not held, and the bridge tells it once more at most, since a told place
+   * counts as held from then on; its event id is its key's digest, so its record is not doubled.
    */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
-    return listDiscoveryGaps(this.#recorded(), sessionId, limit, true);
+    return listDiscoveryGaps(this.#database, sessionId, limit, true);
   }
 
   close(): void {

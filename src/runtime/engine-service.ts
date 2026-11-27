@@ -11,11 +11,14 @@ import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
+  decodeEngineRefusal,
   decodeRerailEventResult,
+  encodeEngineRefusal,
   encodeRerailEventResult,
   EVENT_ANSWER_HEADER,
   EVENT_ANSWER_WITH_FACTS,
   RERAIL_EVENT_MAX_FRAME_BYTES,
+  type RerailEventErrorCode,
   type RerailEventSuccessFrame,
   SteerReceiptSchema,
   type SteerReceipt,
@@ -1257,7 +1260,8 @@ async function answerReceipt(incoming: IncomingMessage, response: ServerResponse
 /**
  * Answers one request to the engine socket: the capability proof, a hook's event, or the receipt of a steer a hook's
  * answer carried; anything else is not found. A request without the capability is refused before its body is read, so
- * nothing of it reaches a runtime; a body that cannot be read or run is answered with why.
+ * nothing of it reaches a runtime; a body that cannot be read or run is answered with why, and with the protocol's code
+ * when the error carries one (`encodeEngineRefusal`), as for an event of a session the runtime does not hold.
  */
 async function answerEngineRequest(
   incoming: IncomingMessage,
@@ -1284,7 +1288,7 @@ async function answerEngineRequest(
   try {
     await answer(incoming, response, service);
   } catch (error) {
-    response.writeHead(400).end(JSON.stringify({ error: errorMessage(error) }));
+    response.writeHead(400).end(encodeEngineRefusal(error));
   }
 }
 
@@ -1610,10 +1614,34 @@ async function postEngineEvent(
   const { sent, answer } = postEngine(endpoint, call, EVENTS_PATH, body);
   sent.setTimeout(answerWaitMs(endpoint), () => sent.destroy(new Error("Kernel request timed out")));
   const { status, text } = await answer;
-  if (status !== 200) throw new Error(`Kernel request failed (${status}): ${text}`);
+  if (status !== 200) throw failedAnswer(status, text);
   const result = decodeRerailEventResult(text);
   if (result.eventId !== event.eventId) throw new Error("Kernel response event identity mismatch");
   return result;
+}
+
+/**
+ * The daemon refused the event with a code of the event protocol, so the stream's frame says it as a runtime in the
+ * stream's own process would have thrown it (`eventErrorCode`): an event of a session the daemon does not hold is
+ * `inactive-session`, with the runtime's own message.
+ */
+class EngineRefusalError extends Error {
+  override readonly name = "EngineRefusalError";
+  readonly code: RerailEventErrorCode;
+
+  constructor(message: string, code: RerailEventErrorCode) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/**
+ * What an event's request throws for the daemon's answer `status` with `text`: the daemon's refusal by its code when the
+ * answer carries one (`decodeEngineRefusal`), else the status and the text, as from a daemon older than the code.
+ */
+function failedAnswer(status: number, text: string): Error {
+  const refusal = decodeEngineRefusal(text);
+  return refusal === undefined ? new Error(`Kernel request failed (${status}): ${text}`) : new EngineRefusalError(refusal.message, refusal.code);
 }
 
 /** What the engine socket answered a request: its status and its text. */
