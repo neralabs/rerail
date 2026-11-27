@@ -49,6 +49,8 @@ pub struct Scratch {
     /// kernel over the same slot claims room as the twin does. `'static` only inside: the scratch never leaves `lend`,
     /// and `arena` gives it out for the borrow of the scratch.
     arena: Option<Arena<'static>>,
+    /// A lent scratch's bytes before its arena's header (to the slot's first 64-byte boundary).
+    lead: usize,
 }
 
 fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
@@ -60,13 +62,13 @@ impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
         let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)), arena: None }
+        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)), arena: None, lead: 0 }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
     pub fn over(backing: Box<dyn Backing>) -> Scratch {
         let ledger = ledger_of(backing.base(), backing.len());
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger), arena: None }
+        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger), arena: None, lead: 0 }
     }
 
     /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: a
@@ -78,7 +80,7 @@ impl Scratch {
         let (base, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: the bytes are borrowed for this call, and the scratch (with its arena) is dropped before it returns.
         let arena = Arena::init(unsafe { Region::from_raw(base, len) }, Bucket::Phase).expect("a scratch slot of at least an arena's header");
-        let s = Scratch { base, len, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None, arena: Some(arena) };
+        let s = Scratch { base, len, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None, arena: Some(arena), lead: skip };
         f(&s)
     }
 
@@ -86,6 +88,12 @@ impl Scratch {
     /// this borrow of the scratch. None for an owned scratch.
     pub fn arena(&self) -> Option<&Arena<'_>> {
         self.arena.as_ref()
+    }
+
+    /// The bytes of the slot a lent scratch is over that the work which ran out (`f`, its arena's) needs: what the
+    /// slot's capacity is grown to before the phase runs again (`Ctx::reach`).
+    pub fn slot_need(&self, f: &Full) -> usize {
+        self.lead + rerail_delta_core::flat::arena::HEAD + f.wanted as usize
     }
 
     /// `n` values of `T`, or the room that ran out (`Full`): a lent scratch's claim of its arena.

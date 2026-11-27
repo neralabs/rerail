@@ -627,18 +627,32 @@ fn encoded<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile, perms: bool) {
     };
     // The added rows' source items, in the block's work (`place` wrote them; this phase only reads them).
     let addsrc: &[u32] = words(block.bytes(addsrc_at, addsrc_at + 4 * n_add.max(1)), 0, n_add.max(1));
+    // The scratch slot's room is its capacity: a Dict column whose distinct values do not fit asks for more
+    // (`Ctx::reach`), and the phase runs again over the grown slot, the columns written before left as they are.
+    let room = c.capacity(O::SCRATCH);
     for x in t.items() {
         let (sb, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
         let src = O::src(sb, table, params);
         let added = Added { src: &src, addsrc: &addsrc[..n_add] };
-        let ok = Scratch::lend(scratch, |s| {
+        let lent = room.min(scratch.len());
+        let scratch = &mut scratch[..lent];
+        let wrote = Scratch::lend(scratch, |s| {
             if perms {
-                layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, s)
+                if layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, s) { Ok(()) } else { Err(None) }
             } else {
-                layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added, s)
+                layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added, s).map_err(|e| match e {
+                    layer_write::Short::Block => None,
+                    layer_write::Short::Work(f) => Some(s.slot_need(&f)),
+                })
             }
         });
-        assert!(ok, "room for the layer's encoded rows");
+        match wrote {
+            Ok(()) => {}
+            Err(Some(need)) => {
+                c.reach(O::SCRATCH, need);
+            }
+            Err(None) => panic!("room for the layer's encoded rows"),
+        }
     }
 }
 

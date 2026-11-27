@@ -158,7 +158,7 @@ impl Shape {
         }
         // Its layers' own rows: open (the relation's rows chunks), or written once in the fewest bits, read in place:
         // `packed::Packed` (a column an `IntCol`, the smallest of `col`'s), `Dict` (the same, `DICT` taken where
-        // smallest: `col::choose_for_reads`), or `ranged::Columns` (a column cut in ranges, each its own encoding).
+        // smallest: `col::for_reads`), or `ranged::Columns` (a column cut in ranges, each its own encoding).
         let encoding = match self.encoding {
             Encoding::Open => ENC_OPEN,
             Encoding::Packed => ENC_PACKED,

@@ -125,13 +125,13 @@ mod tests {
                 let l = c.cons(0, 1).unwrap();
                 let l = c.cons(l, 2).unwrap();
                 sum += c.read().walk(l).map(|&v| v as u64).sum::<u64>();
-                let m = Map::<u64, u64>::make(&a, 4, 1000, u64::MAX, u64::MAX).unwrap();
+                let m = Map::<u32, u32>::make(&a, 4, 1000, u32::MAX, u32::MAX).unwrap();
                 for k in 0..1000 {
                     m.claim_min(k % 300, k).unwrap();
                 }
                 m.remove(7);
-                sum += m.iter().map(|(_, v)| v).sum::<u64>();
-                let t = Stamped::<u32>::make(&a, 5, 100).unwrap();
+                sum += m.iter().map(|(_, v)| v as u64).sum::<u64>();
+                let t = Stamped::<u32, u32>::make(&a, 5, 100).unwrap();
                 let c = t.claim(&a, 3).unwrap();
                 t.set_at(c.slot, 4);
                 sum += t.get(&a, 3).unwrap() as u64;

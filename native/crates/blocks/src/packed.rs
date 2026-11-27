@@ -455,7 +455,7 @@ fn place_at(block: &Block, plan: &Plan, okey: &[u16]) -> *mut Packed {
             jobs.push((ch, JobVals::Made(v), d, r));
         }
     }
-    let write = |(ch, v, d, r): Job| crate::col::write(ch, &v, d, r);
+    let write = |(ch, v, d, r): Job| crate::col::write(ch, &v, d, r, &[]);
     if n * plan.arity >= PAR_MIN { rerail_context::on_cores(|| jobs.into_par_iter().for_each(write)) } else { jobs.into_iter().for_each(write) }
     p
 }
@@ -771,45 +771,59 @@ pub mod writer {
         let Some(w) = block.try_claim_clear_t::<u64>(words.max(1)) else { return false };
         // SAFETY: `w` holds `words` clear words, just claimed; `this` is the caller's.
         let (d, r) = unsafe { IntCol::lay_out_at(this, w, ch) };
-        rerail_delta_core::flat::encode::write(ch, v, d, r, dict);
+        rerail_delta_core::flat::encode::write(ch, v, d, r, dict, &rerail_delta_core::flat::encode::Serial);
         true
+    }
+
+    /// Why a column's write did not finish: its block had no room, or the phase's work arena ran out (`Full`: what
+    /// it was asked for, so the phase's scratch slot is grown to it and the phase runs again).
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Short {
+        Block,
+        Work(rerail_delta_core::flat::Full),
+    }
+
+    /// Whether column `c` of `p` is written: a phase run again over a grown slot writes only the columns it had not
+    /// (a written column's descriptor holds its rows, which a laid out one does not).
+    pub fn col_written(p: &Packed, c: usize) -> bool {
+        p.n > 0 && p.cols.as_slice()[c].hi.n == p.n
     }
 
     /// Column `c` of `p` (laid out by `lay_out` in `block`), from `rows`: planned as `pack` plans it (`plan_col`:
     /// whole or split, relative to column 0 where it may be, the smallest), or, `dict`, whole, as the floor's
     /// `IntFrom` plans a column read at random (`DICT` where it is smallest, its distinct values counted in
-    /// `scratch`'s arena; past its room, without `DICT`). False when the block has no room.
+    /// `scratch`'s arena). A column already written is left as it is.
     ///
     /// # Safety
     /// `p` lies in `block`, open, laid out by `lay_out`; column `c` is written by this call alone.
-    pub unsafe fn write_col(block: &Block, p: &Packed, c: usize, rows: &dyn RowsIn, dict: bool, scratch: &Scratch) -> bool {
+    pub unsafe fn write_col(block: &Block, p: &Packed, c: usize, rows: &dyn RowsIn, dict: bool, scratch: &Scratch) -> Result<(), Short> {
         use rerail_delta_core::flat::IntFrom;
+        if col_written(p, c) {
+            return Ok(());
+        }
         let n = p.n as usize;
         let src = Src::Rows(rows);
         let lead = &p.okey[..p.nokey as usize];
         // SAFETY: column `c`'s descriptor, this call's alone (the caller's contract).
         let pc = unsafe { p.cols.as_ptr().cast_mut().add(c) };
+        let room = |ok: bool| if ok { Ok(()) } else { Err(Short::Block) };
         if dict {
             let v = Part { src, order: None, n, c, form: Form::Whole };
-            let f = match IntFrom::plan(v, scratch.arena(), 0) {
-                Ok(f) => f,
-                Err(_) => IntFrom::plan(v, None, 0).expect("a plan without a work arena takes no room"),
-            };
+            let f = IntFrom::plan(v, scratch.arena(), 0).map_err(Short::Work)?;
             // SAFETY: as below, the column whole.
-            return unsafe { put(block, &raw mut (*pc).hi, f.choice(), f.vals(), f.dict()) };
+            return room(unsafe { put(block, &raw mut (*pc).hi, f.choice(), f.vals(), f.dict()) });
         }
         let plan = plan_col(src, None, n, c, rel_to(lead, c), false);
         unsafe {
             (*pc).split = plan.split;
             (*pc).rel = u32::from(plan.rel);
-            for (k, (v, ch)) in plan.parts.iter().enumerate() {
+            // The low part first, so the column reads as written (`col_written`) once both are.
+            for (k, (v, ch)) in plan.parts.iter().enumerate().rev() {
                 let at = if k == 0 { &raw mut (*pc).hi } else { &raw mut (*pc).lo };
-                if !put(block, at, ch, v, &[]) {
-                    return false;
-                }
+                room(put(block, at, ch, v, &[]))?;
             }
         }
-        true
+        Ok(())
     }
 
     /// Permutation index `x` of `p` (its column, `lay_out`'s `perms[x]`), from `rows`, its temporaries from

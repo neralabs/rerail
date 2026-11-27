@@ -14,7 +14,7 @@
 //! - `DICT` (decision 0622 step 4, MLDB's table): the column's distinct values, sorted, each less `base` in `bits` bits
 //!   (`runs`, `nruns` of them), and each row's index among them in `rbits` bits (`data`). A column of few values
 //!   spread wide (atoms, kinds, a few documents' ids): its codes take the bits its count needs, not its range. Taken
-//!   for a relation's sealed chunks only (`choose_for_reads`), where it is smaller than every other encoding.
+//!   for a relation's sealed chunks only (`rerail_blocks::col::for_reads`), where it is smaller than every other encoding.
 //!
 //! Reads are arithmetic on the words: the same on a GPU, where a column is read for its bandwidth and the extra
 //! instructions to decode it cost nothing.

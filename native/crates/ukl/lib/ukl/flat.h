@@ -11,9 +11,9 @@
 // `UKL_NONE`, its failure recorded where the Rust form records it (an arena's header; a vector's length counting on),
 // so the owner sizes the room again and the phase runs again (*0686: Operations* §6).
 //
-// Only 32-bit atomics: every backend has them, and Metal has no 64-bit compare-and-swap. So the map here is the 32-bit
-// one (`Map<u32, u32>`); the 64-bit-keyed map and `Stamped` (a slot's round and key in one 64-bit word) are the host's
-// until they have a two-word claim.
+// Only 32-bit atomics: every backend has them, and Metal has no 64-bit compare-and-swap. The Rust forms hold 32-bit
+// words alone for the same reason: a key wider than a word is claimed by its row's index, hashed and compared by the
+// row's values where they lie (`ukl_flat_map_claim_i64`, `Map::claim_by`).
 
 #pragma once
 #include <ukl/bits.h>
@@ -69,7 +69,8 @@ UKL_INLINE uint32_t ukl_flat_claim(UKL_GLOBAL uint8_t* r, uint32_t a, uint32_t p
     return a + ((start + align - 1u) & ~(align - 1u));
 }
 
-// ---- a growing vector (`GrowHead`, 20 bytes): its room, length (counting on), length that fit, cap, part ---------
+// ---- a growing vector (`GrowHead`, 32 bytes): its room, length (counting on), length that fit, cap, part, and its
+// spare (a room it gave up) and the spare's bytes: a kernel claims; its owner grows it on the host --------------
 
 // `n` items of `size` bytes claimed in the vector at `g` by one atomic add: the first's offset, or `UKL_NONE` past its
 // room, its length counting on (`Grow::wanted`) for its owner to grow it to. `Grow::claim`.
@@ -148,13 +149,16 @@ UKL_INLINE void ukl_flat_chain_push(UKL_GLOBAL uint8_t* r, uint32_t c, uint32_t 
 
 // ---- a 32-bit map (`MapHead`, 32 bytes): keys, values, mask, probe bound, length, part, empty key ----------------
 
-// A key's hash, as `Word::hash` makes it: the CLIF's `rel_key_mix` from the seed (`rerail_delta_core::hash::mix`),
-// its low 32 bits.
-UKL_INLINE uint32_t ukl_flat_hash_u32(uint32_t k)
+// A value's hash in a table, as `hash_word` makes it: the CLIF's `rel_key_mix` from the seed
+// (`rerail_delta_core::hash::mix`), its low 32 bits.
+UKL_INLINE uint32_t ukl_flat_hash_i64(int64_t x)
 {
-    uint64_t h = (0x243F6A8885A308D3ull ^ (uint64_t)k) * 0x9E3779B97F4A7C15ull;
+    uint64_t h = (0x243F6A8885A308D3ull ^ (uint64_t)x) * 0x9E3779B97F4A7C15ull;
     return (uint32_t)(h ^ (h >> 29));
 }
+
+// A key's hash (`Word::hash`).
+UKL_INLINE uint32_t ukl_flat_hash_u32(uint32_t k) { return ukl_flat_hash_i64((int64_t)k); }
 
 // `k`'s slot in the map at `m`, claiming a free one by compare-and-swap if it has none (`| UKL_FLAT_FRESH` when this
 // claim put it there); `UKL_NONE` when no free slot lies within the probe bound (`Full`: a rehash phase moves it to
@@ -169,8 +173,6 @@ UKL_INLINE uint32_t ukl_flat_map_claim(UKL_GLOBAL uint8_t* r, uint32_t m, uint32
         uint32_t s = (h + i) & mask;
         UKL_GLOBAL uint32_t* at = ukl_flat_word(r, keys + 4u * s);
         uint32_t cur = ukl_atomic_load(at);
-        if (cur == k)
-            return s;
         if (cur == empty) {
             uint32_t seen = ukl_atomic_cas(at, empty, k);
             if (seen == empty) {
@@ -179,6 +181,37 @@ UKL_INLINE uint32_t ukl_flat_map_claim(UKL_GLOBAL uint8_t* r, uint32_t m, uint32
             }
             if (seen == k)
                 return s;
+        } else if (cur == k) {
+            return s;
+        }
+    }
+    return UKL_NONE;
+}
+
+// The slot of the key row `i` stands for in the map at `m`, its key the 64-bit value `vals[i]`: a slot holds the index
+// of the first row that claimed it, hashed and compared by its value (`Map::claim_by`, as `distinct_in` claims a
+// column's values). `| UKL_FLAT_FRESH` when this claim put `i` there; `UKL_NONE` past the probe bound.
+UKL_INLINE uint32_t ukl_flat_map_claim_i64(UKL_GLOBAL uint8_t* r, uint32_t m, uint32_t i, UKL_GLOBAL const int64_t* vals)
+{
+    uint32_t keys = ukl_flat_rel(r, m);
+    uint32_t mask = ukl_atomic_load(ukl_flat_word(r, m + 8u)), bound = ukl_atomic_load(ukl_flat_word(r, m + 12u));
+    uint32_t empty = ukl_atomic_load(ukl_flat_word(r, m + 24u));
+    int64_t x = vals[i];
+    uint32_t h = ukl_flat_hash_i64(x);
+    for (uint32_t p = 0u; p < bound; p++) {
+        uint32_t s = (h + p) & mask;
+        UKL_GLOBAL uint32_t* at = ukl_flat_word(r, keys + 4u * s);
+        uint32_t cur = ukl_atomic_load(at);
+        if (cur == empty) {
+            uint32_t seen = ukl_atomic_cas(at, empty, i);
+            if (seen == empty) {
+                ukl_atomic_add(ukl_flat_word(r, m + 16u), 1u);
+                return s | UKL_FLAT_FRESH;
+            }
+            if (vals[seen] == x)
+                return s;
+        } else if (vals[cur] == x) {
+            return s;
         }
     }
     return UKL_NONE;
@@ -194,10 +227,10 @@ UKL_INLINE uint32_t ukl_flat_map_find(UKL_GLOBAL uint8_t* r, uint32_t m, uint32_
     for (uint32_t i = 0u; i < bound; i++) {
         uint32_t s = (h + i) & mask;
         uint32_t cur = ukl_atomic_load(ukl_flat_word(r, keys + 4u * s));
-        if (cur == k && k != empty)
-            return s;
         if (cur == empty)
             return UKL_NONE;
+        if (cur == k)
+            return s;
     }
     return UKL_NONE;
 }
@@ -226,3 +259,54 @@ UKL_INLINE uint32_t ukl_flat_map_set(UKL_GLOBAL uint8_t* r, uint32_t m, uint32_t
         ukl_atomic_store(ukl_flat_map_val(r, m, c), v);
     return c;
 }
+
+// ---- a stamped table (`StampedHead`, 32 bytes): stamps, keys, values, mask, probe bound, part --------------------
+// A slot is live while its stamp is the arena's round: moving the round on empties the table without a write. One
+// writer (a lane's own table, as `batch_runtime`'s are a lane's evaluation's), so its stamp and key are two words.
+
+// `k`'s slot in the stamped table at `t` this `round`, claiming a stale one for it if it has none (`| UKL_FLAT_FRESH`
+// when this claim did: its value is the claimer's to write); `UKL_NONE` past the probe bound. `Stamped::claim`.
+UKL_INLINE uint32_t ukl_flat_stamped_claim(UKL_GLOBAL uint8_t* r, uint32_t t, uint32_t round, uint32_t k)
+{
+    uint32_t stamps = ukl_flat_rel(r, t), keys = ukl_flat_rel(r, t + 4u);
+    uint32_t mask = ukl_atomic_load(ukl_flat_word(r, t + 12u)), bound = ukl_atomic_load(ukl_flat_word(r, t + 16u));
+    uint32_t h = ukl_flat_hash_u32(k);
+    for (uint32_t i = 0u; i < bound; i++) {
+        uint32_t s = (h + i) & mask;
+        UKL_GLOBAL uint32_t* stamp = ukl_flat_word(r, stamps + 4u * s);
+        if (ukl_atomic_load(stamp) != round) {
+            // Its key first, then its stamp: a reader that sees the stamp sees the key.
+            ukl_atomic_store(ukl_flat_word(r, keys + 4u * s), k);
+            ukl_atomic_store(stamp, round);
+            return s | UKL_FLAT_FRESH;
+        }
+        if (ukl_atomic_load(ukl_flat_word(r, keys + 4u * s)) == k)
+            return s;
+    }
+    return UKL_NONE;
+}
+
+// `k`'s slot in the stamped table at `t` this `round`, or `UKL_NONE`. `Stamped::find`.
+UKL_INLINE uint32_t ukl_flat_stamped_find(UKL_GLOBAL uint8_t* r, uint32_t t, uint32_t round, uint32_t k)
+{
+    uint32_t stamps = ukl_flat_rel(r, t), keys = ukl_flat_rel(r, t + 4u);
+    uint32_t mask = ukl_atomic_load(ukl_flat_word(r, t + 12u)), bound = ukl_atomic_load(ukl_flat_word(r, t + 16u));
+    uint32_t h = ukl_flat_hash_u32(k);
+    for (uint32_t i = 0u; i < bound; i++) {
+        uint32_t s = (h + i) & mask;
+        if (ukl_atomic_load(ukl_flat_word(r, stamps + 4u * s)) != round)
+            return UKL_NONE;
+        if (ukl_atomic_load(ukl_flat_word(r, keys + 4u * s)) == k)
+            return s;
+    }
+    return UKL_NONE;
+}
+
+// The word holding slot `s`'s value in the stamped table at `t`.
+UKL_INLINE UKL_GLOBAL uint32_t* ukl_flat_stamped_val(UKL_GLOBAL uint8_t* r, uint32_t t, uint32_t s)
+{
+    return ukl_flat_word(r, ukl_flat_rel(r, t + 8u) + 4u * (s & ~UKL_FLAT_FRESH));
+}
+
+// The round the arena at `a` stamps its tables with (`Arena::round`).
+UKL_INLINE uint32_t ukl_flat_round(UKL_GLOBAL uint8_t* r, uint32_t a) { return ukl_atomic_load(ukl_flat_word(r, a + 24u)); }

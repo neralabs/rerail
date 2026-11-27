@@ -196,23 +196,26 @@ impl RowsW for Rows {
                 vals.clear();
                 // SAFETY: rows below `len` are written.
                 vals.extend((first..first + rows).map(|i| unsafe { d.get(self.min_log, i as u32) }));
-                // Read at random, by row id: an encoding whose read is a few words (`col::choose_for_reads`), and only
+                // Read at random, by row id: an encoding whose read is a few words (`col::for_reads`), and only
                 // where it saves a quarter of the chunk, a sealed read costing more than a raw one.
-                let choice = crate::col::choose_for_reads(&vals);
-                let bytes = std::mem::size_of::<crate::col::IntCol>() + choice.bytes();
                 let held = rows as usize * d.width as usize;
-                if bytes * 4 > held * 3 {
-                    continue;
-                }
-                let Some(at) = block.try_alloc_chunk_any(bytes, 64) else { continue };
-                // SAFETY: a fresh piece of `bytes` in this block: the descriptor, then its words.
-                unsafe {
-                    std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
-                    let this = block.ptr::<crate::col::IntCol>(at);
-                    let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
-                    let (data, runs) = <crate::col::IntCol as crate::col::IntColW>::lay_out_at(this, words, &choice);
-                    crate::col::write(&choice, &vals, data, runs);
-                }
+                let placed = crate::col::for_reads(&vals[..], |choice, vals, dict| {
+                    let bytes = std::mem::size_of::<crate::col::IntCol>() + choice.bytes();
+                    if bytes * 4 > held * 3 {
+                        return None;
+                    }
+                    let at = block.try_alloc_chunk_any(bytes, 64)?;
+                    // SAFETY: a fresh piece of `bytes` in this block: the descriptor, then its words.
+                    unsafe {
+                        std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
+                        let this = block.ptr::<crate::col::IntCol>(at);
+                        let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
+                        let (data, runs) = <crate::col::IntCol as crate::col::IntColW>::lay_out_at(this, words, choice);
+                        crate::col::write(choice, vals, data, runs, dict);
+                    }
+                    Some((at, bytes))
+                });
+                let Some((at, bytes)) = placed else { continue };
                 let old = d.chunk[k].load(Relaxed);
                 let p = unsafe { (d as *const ColDir as *const u8).offset(old as isize) };
                 let rel = block.ptr::<u8>(at) as isize as i64 - d as *const ColDir as isize as i64;

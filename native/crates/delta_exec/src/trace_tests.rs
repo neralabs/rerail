@@ -1064,3 +1064,40 @@ fn every_encoding_reads_as_its_set() {
         reg2.check(&tiled, &merge_case(&s, &runs_of, 3), &tilings).unwrap_or_else(|e| panic!("{enc:?}: {e}"));
     }
 }
+
+/// A Dict column whose distinct values do not fit the encode phase's scratch (its capacity, a page): the phase asks
+/// for the room its arena was asked for (`Ctx::reach`), the slot grows, and the phase runs again, the columns written
+/// before left as they are. The layer is the one a slot large enough writes, its wide column `DICT`.
+#[test]
+fn a_dict_column_past_its_scratch_grows_the_slot_and_runs_again() {
+    use rerail_blocks::layer::{Encoding, Layer, OwnRows};
+    let mut s = shape();
+    s.encoding = Encoding::Dict;
+    s.indexes = vec![];
+    let spread = [-(1i64 << 40), 7, 1 << 50, 3, i64::MAX - 5];
+    let pairs: Vec<(Vec<i64>, i32)> = (0..3000i64).map(|i| (vec![i / 600, spread[(i * 7 % 5) as usize] + i % 3, i * 13 % 1000], 1)).collect();
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let run = |small: bool| {
+        let mut dir = Directory::default();
+        let mut case = consolidate_case(&s, &pairs)(&mut dir);
+        if small {
+            let big = dir.capacity(case.slots[3]);
+            case.slots[3] = dir.make_capped(kind::SCRATCH, 0, 4096, big);
+        }
+        run_cpu(&reg, &dir, ops.consolidate, &case.slots, &case.params, Tiling { tile: 1, seed: 3 }).unwrap();
+        let l = dir.read("t", &[case.slots[1]]).unwrap();
+        let facts = facts_of(&l.table(), 1, l.block(0));
+        let tags: Vec<u32> = match Layer::new(l.block(0)).unwrap().own {
+            OwnRows::Packed { p, .. } => p.cols.as_slice().iter().map(|c| c.hi.tag).collect(),
+            _ => panic!("a Dict layer's rows are packed"),
+        };
+        (facts, tags, dir.capacity(case.slots[3]))
+    };
+    let (want, tags, _) = run(false);
+    assert_eq!(tags[1], rerail_blocks::col::DICT, "the wide column of 15 values is a dictionary");
+    let (got, small_tags, grown) = run(true);
+    assert!(grown > 4096, "the scratch slot grew: {grown}");
+    assert_eq!(small_tags, tags);
+    assert_eq!(got, want, "the same layer");
+}

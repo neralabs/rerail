@@ -5,7 +5,7 @@
 //! ([`distinct_in`]). The format and its reads are `crate::col`'s.
 
 use super::arena::{Arena, Full};
-use super::map::Map;
+use super::map::{Map, hash_word};
 use crate::col::{CONST, DICT, GROUP, GROUP_LOG, GROUPS, LINE, PACK, RUNS, WIDTH_BITS, bits_for, words};
 use core::ops::Range;
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -29,6 +29,11 @@ pub fn piece(p: usize, n: usize) -> Range<usize> {
 /// How a pass runs over its pieces: `f` on each piece of `0..n`, the results joined in order.
 pub trait Pieces: Sync {
     fn fold<T: Send>(&self, n: usize, f: impl Fn(Range<usize>) -> T + Sync, join: impl Fn(T, T) -> T) -> T;
+
+    /// A writer's pass that needs where each piece starts in its output: `each` writes a piece from its start (the
+    /// pieces before it's counts, summed) and gives back its own count; `count` counts a piece without writing it, for
+    /// a driver that writes the pieces at once (their counts first, then their sum before each: a scan).
+    fn scan(&self, n: usize, count: impl Fn(Range<usize>) -> usize + Sync, each: impl Fn(Range<usize>, usize) -> usize + Sync);
 }
 
 /// One piece after another: a twin's, whose items are the parallel work, and a kernel's lane.
@@ -37,6 +42,11 @@ pub struct Serial;
 impl Pieces for Serial {
     fn fold<T: Send>(&self, n: usize, f: impl Fn(Range<usize>) -> T + Sync, join: impl Fn(T, T) -> T) -> T {
         (1..pieces(n)).fold(f(piece(0, n)), |acc, p| join(acc, f(piece(p, n))))
+    }
+
+    /// One piece after another, each from the sum of the counts its writes gave: none counted twice.
+    fn scan(&self, n: usize, _count: impl Fn(Range<usize>) -> usize + Sync, each: impl Fn(Range<usize>, usize) -> usize + Sync) {
+        (0..pieces(n)).fold(0, |at, p| at + each(piece(p, n), at));
     }
 }
 
@@ -503,33 +513,25 @@ pub fn choose<V: Vals + ?Sized, P: Pieces>(v: &V, max_runs: usize, p: &P, distin
 }
 
 /// `v`'s distinct values, sorted, where there are `limit` or fewer (`None` past it: the count stops there), counted
-/// in a map in `work` and kept there.
+/// in a map in `work` and kept there. The map's keys are row indexes, hashed and compared by their values
+/// (`Map::claim_by`): 32-bit words, as a kernel claims them. Its claims are at most `distinct_bytes(v.len())`.
 pub fn distinct_in<'a, V: Vals + ?Sized>(v: &V, limit: usize, work: &'a Arena<'_>, part: u32) -> Result<Option<&'a [i64]>, Full> {
-    if limit < 2 || v.is_empty() {
+    let n = v.len();
+    if limit < 2 || n == 0 {
         return Ok(None);
     }
-    // The map's empty key is `-1`'s bits; whether `-1` is among the values is kept apart.
-    let m = Map::<u64, u32>::make(work, part, limit + 1, u64::MAX, 0)?;
-    let mut minus_one = false;
-    for i in 0..v.len() {
+    let limit = limit.min(n);
+    let m = Map::<u32, u32>::make(work, part, limit + 1, u32::MAX, 0)?;
+    for i in 0..n {
         let x = v.at(i);
-        if x == -1 {
-            minus_one = true;
-        } else {
-            m.claim(x as u64)?;
-        }
-        if m.len() + minus_one as usize > limit {
+        m.claim_by(i as u32, hash_word(x), |j| v.at(j as usize) == x)?;
+        if m.len() > limit {
             return Ok(None);
         }
     }
-    let d = work.claim::<i64>(part, m.len() + minus_one as usize)?;
-    let mut k = 0;
-    for (x, _) in m.iter() {
-        d[k].write(x as i64);
-        k += 1;
-    }
-    if minus_one {
-        d[k].write(-1);
+    let d = work.claim::<i64>(part, m.len())?;
+    for (k, (j, _)) in m.iter().enumerate() {
+        d[k].write(v.at(j as usize));
     }
     // SAFETY: every item written.
     let d = unsafe { &mut *(core::ptr::from_mut(d) as *mut [i64]) };
@@ -537,60 +539,91 @@ pub fn distinct_in<'a, V: Vals + ?Sized>(v: &V, limit: usize, work: &'a Arena<'_
     Ok(Some(&*d))
 }
 
-/// Packs `v` as `c` chose into `data` and `runs` (zero, `c.data_words` and `c.runs_words` long), one pass, one piece
-/// after another. `dict`: `DICT`'s distinct values, sorted (`distinct_in`); empty for every other encoding.
-pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64], dict: &[i64]) {
+/// The most bytes `distinct_in` claims for `n` values, whatever its limit: its map's header and slots, and the
+/// values kept, each claim's room as the arena rounds it.
+pub fn distinct_bytes(n: usize) -> usize {
+    let slots = super::map::slots_for(n + 1);
+    size_of::<Map<u32, u32>>().next_multiple_of(64) + 2 * (4 * slots).next_multiple_of(64) + (8 * n).next_multiple_of(64) + 64
+}
+
+/// Packs `v` as `c` chose into `data` and `runs` (clear, `c.data_words` and `c.runs_words` long), in pieces as `p`
+/// runs them (one after another, or at once on the host's cores). `dict`: `DICT`'s distinct values, sorted
+/// (`distinct_in`); empty for every other encoding. Pieces share no word but at their edges, where their writers OR
+/// their bits in (`BitW`); `RUNS` and `GROUPS` write a piece from where the pieces before it end (`Pieces::scan`).
+pub fn write<V: Vals + ?Sized, P: Pieces>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64], dict: &[i64], p: &P) {
     let n = v.len();
     match c.tag {
         CONST => {}
-        PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits, &Serial),
-        LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits, &Serial),
+        PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits, p),
+        LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits, p),
         RUNS => {
-            let (mut wv, mut ws) = (BitW::new(atomics(data), 0, c.bits), BitW::new(atomics(runs), 0, c.rbits));
-            for i in 0..n {
-                let x = v.at(i);
-                if i == 0 || x != v.at(i - 1) {
-                    wv.push(x.wrapping_sub(c.base) as u64);
-                    ws.push(i as u64);
+            let (d, s) = (atomics(data), atomics(runs));
+            // A piece's runs start at the runs before it.
+            p.scan(n, |r| runs_in(v, r), |r, k| {
+                let (mut wv, mut ws) = (BitW::new(d, k * c.bits as usize, c.bits), BitW::new(s, k * c.rbits as usize, c.rbits));
+                let mut m = 0;
+                for i in r {
+                    let x = v.at(i);
+                    if i == 0 || x != v.at(i - 1) {
+                        wv.push(x.wrapping_sub(c.base) as u64);
+                        ws.push(i as u64);
+                        m += 1;
+                    }
                 }
-            }
-            wv.flush();
-            ws.flush();
+                wv.flush();
+                ws.flush();
+                m
+            });
         }
         GROUPS => {
-            // Each group's minimum and width, its residuals at the running offset, its minimum and entry after.
+            // Each group's minimum and width, its residuals at the running offset, its minimum and entry after; a
+            // piece's groups (whole ones: `PIECE` is a multiple of `GROUP`) from the bits the groups before it take.
             let entries = words(n.div_ceil(GROUP), c.bits) * 64;
             let (d, s) = (atomics(data), atomics(runs));
-            let (mut mins, mut ents) = (BitW::new(s, 0, c.bits), BitW::new(s, entries, c.rbits));
-            let mut at = 0usize;
-            for (k, g) in groups_of(0..n).enumerate() {
-                debug_assert_eq!(g.start, k << GROUP_LOG);
-                let (gmin, gmax) = range_of(v, g.clone());
-                let w = bits_for((gmax as i128 - gmin as i128) as u64);
-                if c.bits > 0 {
-                    mins.push(gmin.wrapping_sub(c.base) as u64);
-                }
-                ents.push((at as u64) << WIDTH_BITS | w as u64);
-                if w > 0 {
-                    let mut out = BitW::new(d, at, w);
-                    for i in g.clone() {
-                        out.push(v.at(i).wrapping_sub(gmin) as u64);
+            let width = |g: Range<usize>| {
+                let (x, y) = range_of(v, g);
+                (x, bits_for((y as i128 - x as i128) as u64))
+            };
+            let count = |r: Range<usize>| groups_of(r).map(|g| width(g.clone()).1 as usize * g.len()).sum();
+            p.scan(n, count, |r, from| {
+                let k0 = r.start >> GROUP_LOG;
+                let (mut mins, mut ents) = (BitW::new(s, k0 * c.bits as usize, c.bits), BitW::new(s, entries + k0 * c.rbits as usize, c.rbits));
+                let mut at = from;
+                for g in groups_of(r) {
+                    let (gmin, w) = width(g.clone());
+                    if c.bits > 0 {
+                        mins.push(gmin.wrapping_sub(c.base) as u64);
                     }
-                    out.flush();
+                    ents.push((at as u64) << WIDTH_BITS | w as u64);
+                    if w > 0 {
+                        let mut out = BitW::new(d, at, w);
+                        for i in g.clone() {
+                            out.push(v.at(i).wrapping_sub(gmin) as u64);
+                        }
+                        out.flush();
+                    }
+                    at += w as usize * g.len();
                 }
-                at += w as usize * g.len();
-            }
-            mins.flush();
-            ents.flush();
+                mins.flush();
+                ents.flush();
+                at - from
+            });
         }
         DICT => {
             assert_eq!(dict.len(), c.nruns as usize, "a DICT column's distinct values");
-            pack_resid(runs, dict, Line { base: c.base, slope: 0, rmin: 0 }, c.bits, &Serial);
-            let mut w = BitW::new(atomics(data), 0, c.rbits);
-            for i in 0..n {
-                w.push(dict.binary_search(&v.at(i)).expect("a value among the column's distinct ones") as u64);
-            }
-            w.flush();
+            pack_resid(runs, dict, Line { base: c.base, slope: 0, rmin: 0 }, c.bits, p);
+            let out = atomics(data);
+            p.fold(
+                n,
+                |r| {
+                    let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
+                    for i in r {
+                        w.push(dict.binary_search(&v.at(i)).expect("a value among the column's distinct ones") as u64);
+                    }
+                    w.flush();
+                },
+                |(), ()| (),
+            );
         }
         t => panic!("an IntCol of tag {t}"),
     }

@@ -243,7 +243,8 @@ def b2(failures: list) -> None:
     for want, why in (
         (r"pub rows: &'a Relation", "a layer's rows are a Relation"),
         (r"pub parts: &'a Relation", "a layer's partitions' change is a Relation"),
-        (r"Sketch::decode", "a layer's statistics are blocks' sketch, read back from its kept form"),
+        # Read in place from the one sketch's kept form (*Flat Views and Lifecycles* step 5: no heap decode).
+        (r"sketch::reading\(crate::sketch::kept\(self\.rows, c\)", "a layer's statistics are the one sketch's, read from its kept form in place"),
         # A permutation is packed's (`packed::PIndex`): an index of a Packed or Dict layer alone, read in place.
         (r"IndexSpec::Perm\(key\) => \{\s*if !matches!\(self\.encoding, Encoding::Packed \| Encoding::Dict\)", "a Perm index of a Packed or Dict layer alone (packed's permutation, P§12)"),
         # An encoded layer's rows are blocks' own encodings, read in place through one reader (P§12).

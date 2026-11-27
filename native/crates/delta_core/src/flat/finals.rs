@@ -172,7 +172,7 @@ impl<'w, V: Vals> IntFrom<'w, V> {
         }
         if c.tag != CONST {
             let (data, runs) = body[p..].split_at_mut(c.data_words);
-            enc::write(c, &self.v, data, runs, self.dict);
+            enc::write(c, &self.v, data, runs, self.dict, &Serial);
         }
         let nbits = body.len() as u64 * 64;
         assert!(nbits <= u32::MAX as u64 && c.n <= u32::MAX as usize, "an integer table past 2^32 bits");

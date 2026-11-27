@@ -64,6 +64,38 @@ fn a_grow_against_a_vec() {
     assert_eq!(g.as_slice(), &model[..]);
 }
 
+/// The room a vector leaves when it moves is its spare (`lp_spare`: the larger kept), and its owner gives it to
+/// another vector, whose growth takes it instead of the arena's room.
+#[test]
+fn a_grow_keeps_the_room_it_leaves_as_a_spare_and_gives_it_on() {
+    let mut b = buf();
+    let a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
+    let g = Grow::<u32>::make(&a, 12, 8).unwrap();
+    assert_eq!(g.spare(), 0);
+    for i in 0..9 {
+        g.push(&a, i).unwrap();
+    }
+    assert_eq!((g.cap(), g.spare()), (16, 32), "8 items' room left, kept");
+    for i in 9..17 {
+        g.push(&a, i).unwrap();
+    }
+    assert_eq!((g.cap(), g.spare()), (32, 64), "the larger room left, kept");
+    let h = Grow::<u32>::make(&a, 13, 0).unwrap();
+    g.give_spare(&a, h);
+    assert_eq!((g.spare(), h.spare()), (0, 64));
+    let used = a.used();
+    for i in 0..16 {
+        h.push(&a, 100 + i).unwrap();
+    }
+    assert_eq!(a.used(), used, "its growth took the spare, not the arena's room");
+    assert_eq!((h.cap(), h.spare()), (16, 0));
+    assert_eq!(h.as_slice(), &(100..116).collect::<Vec<u32>>()[..]);
+    assert_eq!(g.as_slice(), &(0..17).collect::<Vec<u32>>()[..]);
+    h.push(&a, 116).unwrap();
+    assert!(a.used() > used && h.cap() == 32, "past the spare, the arena's room");
+    assert_eq!(h.as_slice(), &(100..117).collect::<Vec<u32>>()[..]);
+}
+
 #[test]
 fn shared_claims_on_a_grow_fit_or_say_what_was_wanted() {
     let mut b = buf();
@@ -213,17 +245,17 @@ fn pushes_onto_one_list_from_many_threads_keep_every_item() {
 fn a_map_against_a_hashmap() {
     let mut b = buf();
     let a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
-    let m = Map::<u64, u64>::make(&a, 7, 3000, u64::MAX, 0).unwrap();
-    let mut model: HashMap<u64, u64> = HashMap::new();
+    let m = Map::<u32, u32>::make(&a, 7, 3000, u32::MAX, 0).unwrap();
+    let mut model: HashMap<u32, u32> = HashMap::new();
     let mut r = Rng(5);
     for _ in 0..30_000 {
-        let k = r.below(4000);
+        let k = r.below(4000) as u32;
         match r.below(3) {
             0 => assert_eq!(m.remove(k), model.remove(&k)),
             1 => assert_eq!(m.get(k), model.get(&k).copied()),
             _ => {
                 if model.len() < 3000 || model.contains_key(&k) {
-                    let v = r.next() >> 1;
+                    let v = (r.next() >> 33) as u32;
                     let c = m.set(k, v).unwrap();
                     assert_eq!(c.fresh, model.insert(k, v).is_none());
                 }
@@ -231,34 +263,39 @@ fn a_map_against_a_hashmap() {
         }
         assert_eq!(m.len(), model.len());
     }
-    let mut got: Vec<(u64, u64)> = m.iter().collect();
-    let mut want: Vec<(u64, u64)> = model.into_iter().collect();
+    let mut got: Vec<(u32, u32)> = m.iter().collect();
+    let mut want: Vec<(u32, u32)> = model.into_iter().collect();
     got.sort();
     want.sort();
     assert_eq!(got, want);
 }
 
-/// Least values per key, by eight lanes in an order the seed decides.
+/// The design's dedup: a row's key is its two columns, wider than a word, so the map's keys are row indexes, hashed and
+/// compared by the rows' columns (`claim_min_by`), and each key keeps its least row. Eight lanes in an order the seed
+/// decides; the contents read by the rows' keys.
 fn shared_least(seed: u64) -> Vec<([u32; 2], u32)> {
     let mut b = buf();
     let a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
-    let m = Map::<[u32; 2], u32>::make(&a, 8, 1000, [u32::MAX; 2], u32::MAX).unwrap();
-    let mut rows: Vec<([u32; 2], u32)> = (0..8000u32).map(|i| ([i % 997, i % 997 % 13], i)).collect();
+    let m = Map::<u32, u32>::make(&a, 8, 1000, u32::MAX, u32::MAX).unwrap();
+    let keys: Vec<[u32; 2]> = (0..8000u32).map(|i| [i % 997, i % 997 % 13]).collect();
+    let hash = |k: [u32; 2]| super::map::hash_word(((k[1] as i64) << 32) | k[0] as i64);
+    let mut order: Vec<u32> = (0..8000).collect();
     let mut r = Rng(seed);
-    for i in (1..rows.len()).rev() {
-        rows.swap(i, r.below(i as u64 + 1) as usize);
+    for i in (1..order.len()).rev() {
+        order.swap(i, r.below(i as u64 + 1) as usize);
     }
     std::thread::scope(|s| {
-        for part in rows.chunks(1000) {
-            let m = &*m;
+        for part in order.chunks(1000) {
+            let (m, keys) = (&*m, &keys);
             s.spawn(move || {
-                for &(k, v) in part {
-                    m.claim_min(k, v).unwrap();
+                for &i in part {
+                    let k = keys[i as usize];
+                    m.claim_min_by(i, hash(k), |j| keys[j as usize] == k, i).unwrap();
                 }
             });
         }
     });
-    let mut got: Vec<_> = m.iter().collect();
+    let mut got: Vec<_> = m.iter().map(|(j, v)| (keys[j as usize], v)).collect();
     got.sort();
     got
 }
@@ -311,7 +348,7 @@ fn a_stamped_table_is_emptied_by_its_rounds() {
     let mut b = buf();
     let mut a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
     let at = {
-        let t = Stamped::<u32>::make(&a, 10, 100).unwrap();
+        let t = Stamped::<u32, u32>::make(&a, 10, 100).unwrap();
         for k in 0..100 {
             let c = t.claim(&a, k).unwrap();
             assert!(c.fresh);
@@ -325,7 +362,7 @@ fn a_stamped_table_is_emptied_by_its_rounds() {
     // Everything claimed after the table is given back; the table, kept, reads empty in the new round.
     let keep = a.mark();
     a.next_round(keep);
-    let t: &Stamped<u32> = a.region().view(at).unwrap();
+    let t: &Stamped<u32, u32> = a.region().view(at).unwrap();
     assert_eq!(t.live(&a), 0);
     assert_eq!(t.get(&a, 42), None);
     let c = t.claim(&a, 42).unwrap();

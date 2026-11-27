@@ -1,7 +1,9 @@
 //! A growing vector in an arena ([`Grow`]): `lp_alloc`'s regions, `Rows`' claims. Its header holds where its items
-//! are, how many, and its room; past its room it moves to room twice as large in its arena (the old room is given back
-//! with the arena). Many lanes claim items at once by one atomic add on its length (`claim`); one owner pushes, pops
-//! and grows (`&mut self`).
+//! are, how many, its room and a spare; past its room it moves to room twice as large in its arena, and the old room
+//! becomes its spare (`lp_spare`: the larger one kept). A growth the spare holds takes it instead of the arena's room,
+//! and an owner of several vectors passes one's spare to another (`give_spare`), as `lp_alloc`'s group shares its
+//! one. Many lanes claim items at once by one atomic add on its length (`claim`); one owner pushes, pops and grows
+//! (`&mut self`).
 //!
 //! A shared claim past the room fails as a value (`Full`): its length counts on, so the owner knows how many were
 //! wanted, grows to them (`reserve`) and the launch runs the failed claims again. What was claimed is the prefix of
@@ -28,6 +30,10 @@ crate::structure! {
         pub cap: AtomicU32,
         /// The part its claims are made for (`Full::part`).
         pub part: u32,
+        /// A room it gave up, in the same arena, and its bytes (0: none): what a growth takes before the arena's.
+        pub spare: Rel<u8, B32>,
+        pub spare_bytes: u32,
+        pub pad: u32,
     }
 }
 
@@ -58,7 +64,7 @@ impl<T: Pod + Copy> Grow<T> {
     pub fn make<'a>(a: &'a Arena<'_>, part: u32, cap: u32) -> Result<&'a mut Grow<T>, Full> {
         let g = a.claim::<Grow<T>>(part, 1)?;
         let g = g[0].write(Grow {
-            head: GrowHead { at: Rel::none(), len: AtomicU32::new(0), fit: AtomicU32::new(0), cap: AtomicU32::new(0), part },
+            head: GrowHead { at: Rel::none(), len: AtomicU32::new(0), fit: AtomicU32::new(0), cap: AtomicU32::new(0), part, spare: Rel::none(), spare_bytes: 0, pad: 0 },
             _t: PhantomData,
         });
         if cap > 0 {
@@ -120,8 +126,13 @@ impl<T: Pod + Copy> Grow<T> {
         self.head.len.store(fit, Relaxed);
     }
 
-    /// Room for `more` items past its length: past its room, it moves to room at least twice as large in `a`, the
-    /// arena it was made in.
+    /// Its spare's bytes: a room it gave up (0: none).
+    pub fn spare(&self) -> usize {
+        self.head.spare_bytes as usize
+    }
+
+    /// Room for `more` items past its length: past its room, it moves to its spare where that holds them, else to
+    /// room at least twice as large in `a`, the arena it was made in; the room it leaves becomes its spare when larger.
     pub fn reserve(&mut self, a: &Arena<'_>, more: usize) -> Result<(), Full> {
         self.settle_len();
         let (len, cap) = (self.len(), self.cap());
@@ -129,16 +140,44 @@ impl<T: Pod + Copy> Grow<T> {
         if want <= cap {
             return Ok(());
         }
-        let new = want.max(2 * cap).max(8).min(u32::MAX as usize);
-        let at = a.claim_at(self.head.part, new * size_of::<T>(), align_of::<T>())?;
+        let size = size_of::<T>().max(1);
+        let (spare, spare_at) = (self.spare(), addr(&self.head.spare));
+        let (at, new, took) = if spare >= want * size && spare_at.is_multiple_of(align_of::<T>()) {
+            (spare_at - a.region().addr(), (spare / size).min(u32::MAX as usize), true)
+        } else {
+            let new = want.max(2 * cap).max(8).min(u32::MAX as usize);
+            (a.claim_at(self.head.part, new * size_of::<T>(), align_of::<T>())?, new, false)
+        };
         let to = a.region().ptr(at).cast::<T>();
         if len > 0 {
-            // SAFETY: the old room's first `len` items, written, into new room no claim overlaps.
+            // SAFETY: the old room's first `len` items, written, into room no claim overlaps (new, or the spare it
+            // gave up, which nothing else holds).
             unsafe { core::ptr::copy_nonoverlapping(self.base(), to, len) };
+        }
+        let (old_at, old_bytes) = (addr(&self.head.at), cap * size_of::<T>());
+        if took {
+            self.head.spare = Rel::none();
+            self.head.spare_bytes = 0;
+        }
+        if old_bytes > self.spare() {
+            point(&self.head.spare, a, old_at - a.region().addr());
+            self.head.spare_bytes = old_bytes as u32;
         }
         point(&self.head.at, a, at);
         self.head.cap.store(new as u32, Relaxed);
         Ok(())
+    }
+
+    /// Gives its spare to `to`, another vector of its arena, where it is larger than `to`'s (`lp_spare`): an owner's
+    /// vectors share the rooms they give up, as `lp_alloc`'s group does.
+    pub fn give_spare<U: Pod + Copy>(&mut self, a: &Arena<'_>, to: &mut Grow<U>) {
+        let (bytes, at) = (self.spare(), addr(&self.head.spare));
+        if bytes > to.spare() {
+            point(&to.head.spare, a, at - a.region().addr());
+            to.head.spare_bytes = bytes as u32;
+            self.head.spare = Rel::none();
+            self.head.spare_bytes = 0;
+        }
     }
 
     /// Appends `v`, growing in `a` past its room.

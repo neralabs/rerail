@@ -122,11 +122,11 @@ fn strings_settle_and_read_back() {
 fn a_map_settles_sorted() {
     let mut wb = buf();
     let work = Arena::init(Region::of(&mut wb.0), Bucket::Launch).unwrap();
-    let m = Map::<u64, u32>::make(&work, 1, 3000, u64::MAX, 0).unwrap();
+    let m = Map::<u32, u32>::make(&work, 1, 3000, u32::MAX, 0).unwrap();
     let mut model = BTreeMap::new();
     let mut r = Rng(23);
     for i in 0..3000u32 {
-        let k = r.next() % 1_000_000;
+        let k = (r.next() % 1_000_000) as u32;
         m.set(k, i).unwrap();
         model.insert(k, i);
     }
@@ -134,7 +134,7 @@ fn a_map_settles_sorted() {
     let (mut a, mut b) = (buf(), buf());
     let (at, len) = settle_alone(&mut a, &plan);
     let base = a.0.as_ptr().addr();
-    let s: &Sorted<u64, u32> = unsafe { &*a.0.as_ptr().add(at).cast() };
+    let s: &Sorted<u32, u32> = unsafe { &*a.0.as_ptr().add(at).cast() };
     assert_eq!(s.keys(), &model.keys().copied().collect::<Vec<_>>()[..]);
     assert_eq!(s.vals(), &model.values().copied().collect::<Vec<_>>()[..]);
     for (&k, &v) in &model {
@@ -143,7 +143,7 @@ fn a_map_settles_sorted() {
     assert_eq!(s.get(1_000_001), None);
     assert!(inside(base, at, len, Some(s.keys().as_ptr().addr() as u64 * 8)) && inside(base, at, len, Some(s.vals().as_ptr().addr() as u64 * 8)));
     let dst = moved(&a, &mut b, at, len);
-    let t: &Sorted<u64, u32> = unsafe { &*b.0.as_ptr().add(dst).cast() };
+    let t: &Sorted<u32, u32> = unsafe { &*b.0.as_ptr().add(dst).cast() };
     assert_eq!(t.keys(), s.keys());
     assert_eq!(t.vals(), s.vals());
 }

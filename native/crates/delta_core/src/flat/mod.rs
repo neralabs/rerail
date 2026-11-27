@@ -41,7 +41,7 @@ pub use offset::{Aligned, AtomicWord, B16, B32, Bit32, Bits, Bytes, F32, Off, Of
 pub use arena::{Arena, ArenaHead, Bucket, Full, Mark};
 pub use finals::{BloomFrom, Csr, CsrFrom, IntFrom, IntTable, Sorted, SortedFrom, Strings, StringsFrom};
 pub use grow::{Grow, GrowHead};
-pub use map::{Claimed, Least, Map, MapHead, Stamped, StampedHead, Word};
+pub use map::{Claimed, Least, Map, MapHead, Stamped, StampedHead, Word, hash_word};
 pub use pool::{Chain, ChainHead, Link, Pool, PoolHead};
 pub use settle::{Need, Room, Settle, settle_into};
 pub use stack::Stack;

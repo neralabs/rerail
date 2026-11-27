@@ -3,7 +3,7 @@
 //! on by a kernel, and what the kernel wrote reads back through the Rust views. On the tests' device (the CPU's
 //! vector path, `tests::device`).
 
-use rerail_blocks::flat::{Arena, Bucket, Chain, Grow, Map, Pool, Region};
+use rerail_blocks::flat::{Arena, Bucket, Chain, Grow, Map, Pool, Region, Stamped, hash_word};
 use rerail_gpu::device::ComputeQueue;
 use rerail_gpu::kernels::{buffer_of, launch, program, read};
 
@@ -11,7 +11,7 @@ use rerail_gpu::kernels::{buffer_of, launch, program, read};
 #[repr(C, align(64))]
 struct Bytes([u8; BYTES]);
 
-const BYTES: usize = 1 << 16;
+const BYTES: usize = 1 << 17;
 
 /// Where each structure's header lies in the region, and the script's steps or the lanes.
 #[repr(C)]
@@ -23,21 +23,26 @@ struct FlatArgs {
     head: u32,
     m: u32,
     n: u32,
+    /// A map claimed by row index over the 64-bit values at `vals`, and a stamped table.
+    m2: u32,
+    vals: u32,
+    t: u32,
+    pad: u32,
 }
 
-// SAFETY: six u32s, no padding.
+// SAFETY: ten u32s, no padding.
 unsafe impl rerail_gpu::Pod for FlatArgs {}
 
 const KERNELS: &str = r#"
 #include <ukl/flat.h>
 
-typedef struct FlatArgs { uint32_t g; uint32_t p; uint32_t c; uint32_t head; uint32_t m; uint32_t n; } FlatArgs;
-UKL_REFLECT_STRUCT(FlatArgs, g, p, c, head, m, n)
+typedef struct FlatArgs { uint32_t g; uint32_t p; uint32_t c; uint32_t head; uint32_t m; uint32_t n; uint32_t m2; uint32_t vals; uint32_t t; uint32_t pad; } FlatArgs;
+UKL_REFLECT_STRUCT(FlatArgs, g, p, c, head, m, n, m2, vals, t, pad)
 
 // The script `script` runs in Rust, in one lane: each step's claims, in order.
 DEFINE_KERNEL2(flat, flat_script,
                ARGS,     FlatArgs, args, ,
-               RWBUFFER, uint8_t,  r,    "[65536]",
+               RWBUFFER, uint8_t,  r,    "[131072]",
                GID0,     uint32_t, lane, )
 {
     if (lane != 0u)
@@ -70,6 +75,10 @@ DEFINE_KERNEL2(flat, flat_script,
         }
         ukl_flat_map_claim_min(r, args.m, (i * 7u) % 23u, 1000u - i);
         ukl_flat_map_set(r, args.m, 100u + i % 4u, i);
+        ukl_flat_map_claim_i64(r, args.m2, i, (UKL_GLOBAL const int64_t*)(r + args.vals));
+        uint32_t st = ukl_flat_stamped_claim(r, args.t, ukl_flat_round(r, 0u), (i * 5u) % 17u);
+        if (st != UKL_NONE && (st & UKL_FLAT_FRESH) != 0u)
+            ukl_atomic_store(ukl_flat_stamped_val(r, args.t, st), i);
         if (i % 7u == 0u) {
             uint32_t a = ukl_flat_claim(r, 0u, 6u, 13u + i, 16u);
             if (a != UKL_NONE)
@@ -82,7 +91,7 @@ DEFINE_KERNEL2(flat, flat_script,
 // Lane `lane` of `n`, all at once: a map's least value a key, a vector's item, a pool's item, a chain's push.
 DEFINE_KERNEL2(flat, flat_lanes,
                ARGS,     FlatArgs, args, ,
-               RWBUFFER, uint8_t,  r,    "[65536]",
+               RWBUFFER, uint8_t,  r,    "[131072]",
                GID0,     uint32_t, lane, )
 {
     if (lane >= args.n)
@@ -99,6 +108,7 @@ DEFINE_KERNEL2(flat, flat_lanes,
         *(UKL_GLOBAL uint32_t*)(r + ukl_flat_pool_item(r, args.c, l, 4u)) = lane;
         ukl_flat_chain_push(r, args.c, args.head, l);
     }
+    ukl_flat_map_claim_i64(r, args.m2, lane, (UKL_GLOBAL const int64_t*)(r + args.vals));
 }
 "#;
 
@@ -109,17 +119,42 @@ fn bytes() -> Box<Bytes> {
     b
 }
 
-/// The structures made in `b`'s arena, each header's offset in it.
-fn made(b: &mut Bytes, grow: u32, pool: u32, chain: u32, keys: usize) -> FlatArgs {
+/// The values the row-index map's keys stand for: `n` 64-bit values of few distinct ones, spread wide.
+fn values(n: usize) -> Vec<i64> {
+    let spread = [-(1i64 << 40), 7, 1 << 50, 3, i64::MAX - 5, i64::MIN];
+    (0..n).map(|i| spread[i * 7 % 6] + (i % 4) as i64).collect()
+}
+
+/// The structures made in `b`'s arena, each header's offset in it; the stamped table filled in round 1, then the
+/// round moved on (every slot stale), the structures kept.
+fn made(b: &mut Bytes, grow: u32, pool: u32, chain: u32, keys: usize, n: usize) -> FlatArgs {
     let base = b.0.as_ptr().addr();
-    let a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
+    let mut a = Arena::init(Region::of(&mut b.0), Bucket::Launch).unwrap();
     let off = |p: usize| (p - base) as u32;
-    let g = off(std::ptr::from_ref(Grow::<u32>::make(&a, 1, grow).unwrap()).addr());
-    let p = off(std::ptr::from_ref(Pool::<u64>::make(&a, 2, pool).unwrap()).addr());
-    let c = off(std::ptr::from_ref(Chain::<u32>::make(&a, 3, chain).unwrap()).addr());
-    let head = off(a.claim_with::<u32>(4, 1, 0).unwrap().as_ptr().addr());
-    let m = off(std::ptr::from_ref(Map::<u32, u32>::make(&a, 5, keys, u32::MAX, u32::MAX).unwrap()).addr());
-    FlatArgs { g, p, c, head, m, n: 0 }
+    let mut args = {
+        let g = off(std::ptr::from_ref(Grow::<u32>::make(&a, 1, grow).unwrap()).addr());
+        let p = off(std::ptr::from_ref(Pool::<u64>::make(&a, 2, pool).unwrap()).addr());
+        let c = off(std::ptr::from_ref(Chain::<u32>::make(&a, 3, chain).unwrap()).addr());
+        let head = off(a.claim_with::<u32>(4, 1, 0).unwrap().as_ptr().addr());
+        let m = off(std::ptr::from_ref(Map::<u32, u32>::make(&a, 5, keys, u32::MAX, u32::MAX).unwrap()).addr());
+        let m2 = off(std::ptr::from_ref(Map::<u32, u32>::make(&a, 8, 64, u32::MAX, 0).unwrap()).addr());
+        let vals = a.claim::<i64>(9, n).unwrap();
+        for (x, v) in vals.iter_mut().zip(values(n)) {
+            x.write(v);
+        }
+        let vals = off(vals.as_ptr().addr());
+        let t = Stamped::<u32, u32>::make(&a, 10, 20).unwrap();
+        for k in 0..12 {
+            let c = t.claim(&a, k * 3).unwrap();
+            t.set_at(c.slot, 500 + k);
+        }
+        let t = off(std::ptr::from_ref(t).addr());
+        FlatArgs { g, p, c, head, m, n: n as u32, m2, vals, t, pad: 0 }
+    };
+    let keep = a.mark();
+    assert_eq!(a.next_round(keep), 2);
+    args.n = n as u32;
+    args
 }
 
 /// `T` at byte `at` of the region at `base`, the Rust form over what lies there.
@@ -149,14 +184,15 @@ fn on_device(b: &Bytes, name: &str, args: FlatArgs, lanes: u32) -> Box<Bytes> {
 #[test]
 fn a_script_of_claims_leaves_the_same_bytes_in_rust_and_ukl() {
     let mut a = bytes();
-    let mut args = made(&mut a, 40, 16, 24, 50);
-    args.n = 60;
+    let args = made(&mut a, 40, 16, 24, 50, 60);
+    let vals = values(60);
     let before = Box::new(Bytes(a.0));
     {
         let base = a.0.as_mut_ptr();
         // SAFETY: the arena lies at the region's start, made by `made`; each structure at its offset.
         let ar = unsafe { Arena::open(Region::from_raw(base, BYTES)) }.unwrap();
         let (g, p, c, m) = unsafe { (at::<Grow<u32>>(base, args.g), at::<Pool<u64>>(base, args.p), at::<Chain<u32>>(base, args.c), at::<Map<u32, u32>>(base, args.m)) };
+        let (m2, t) = unsafe { (at::<Map<u32, u32>>(base, args.m2), at::<Stamped<u32, u32>>(base, args.t)) };
         let head = unsafe { at::<std::sync::atomic::AtomicU32>(base, args.head) };
         let (mut last, mut tail) = (None, 0u32);
         for i in 0..args.n {
@@ -183,6 +219,13 @@ fn a_script_of_claims_leaves_the_same_bytes_in_rust_and_ukl() {
             }
             let _ = m.claim_min((i * 7) % 23, 1000 - i);
             let _ = m.set(100 + i % 4, i);
+            let x = vals[i as usize];
+            let _ = m2.claim_by(i, hash_word(x), |j| vals[j as usize] == x);
+            if let Ok(c) = t.claim(&ar, (i * 5) % 17)
+                && c.fresh
+            {
+                t.set_at(c.slot, i);
+            }
             if i % 7 == 0
                 && let Ok(o) = ar.claim_at(6, 13 + i as usize, 16)
             {
@@ -201,6 +244,18 @@ fn a_script_of_claims_leaves_the_same_bytes_in_rust_and_ukl() {
     assert_eq!((g.len(), g.wanted()), (40, 60));
     assert_eq!(g.as_slice(), &(0..40).map(|i| i * 3).collect::<Vec<u32>>()[..]);
     assert_eq!(ar.failure().map(|f| f.part), Some(7));
+    // The row-index map holds each distinct value's first row; the stamped table this round's keys alone.
+    let m2 = unsafe { at::<Map<u32, u32>>(bb, args.m2) };
+    let mut distinct: Vec<i64> = m2.iter().map(|(j, _)| vals[j as usize]).collect();
+    distinct.sort_unstable();
+    let mut want = vals.clone();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(distinct, want);
+    assert!(m2.iter().all(|(j, _)| vals.iter().position(|&v| v == vals[j as usize]) == Some(j as usize)), "a value's first row");
+    let t = unsafe { at::<Stamped<u32, u32>>(bb, args.t) };
+    assert_eq!(t.live(&ar), 17, "keys 0..17 this round, the last round's stale");
+    assert!((0..17).all(|k| t.get(&ar, k) == Some((0..60).find(|i| i * 5 % 17 == k).unwrap())), "each key's first claim");
 }
 
 /// Many lanes at once: what a kernel wrote reads back through the Rust views, as the Rust forms would have it in
@@ -208,8 +263,7 @@ fn a_script_of_claims_leaves_the_same_bytes_in_rust_and_ukl() {
 #[test]
 fn many_lanes_claim_and_rust_reads_what_they_wrote() {
     let mut a = bytes();
-    let mut args = made(&mut a, 1000, 500, 700, 300);
-    args.n = 4096;
+    let args = made(&mut a, 1000, 500, 700, 300, 4096);
     let mut b = on_device(&a, "flat_lanes", args, args.n);
     let bb = b.0.as_mut_ptr();
     let m = unsafe { at::<Map<u32, u32>>(bb, args.m) };
@@ -234,4 +288,13 @@ fn many_lanes_claim_and_rust_reads_what_they_wrote() {
     walked.sort_unstable();
     walked.dedup();
     assert_eq!(walked.len(), 700);
+    // Every lane's value claimed by its row's index: the distinct values, each once, whichever lane's row holds it.
+    let vals = values(4096);
+    let m2 = unsafe { at::<Map<u32, u32>>(bb, args.m2) };
+    let mut got: Vec<i64> = m2.iter().map(|(j, _)| vals[j as usize]).collect();
+    got.sort_unstable();
+    let mut want = vals.clone();
+    want.sort_unstable();
+    want.dedup();
+    assert_eq!(got, want);
 }

@@ -12,7 +12,7 @@
 
 use crate::dir::{BlockId, Directory, Launch};
 use crate::op::{
-    Across, Bound, Case, Found, Independence, Inside, Mode, OpId, Output, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
+    Across, Bound, Case, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
     Version, run_cpu,
 };
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
@@ -42,6 +42,8 @@ static PIPELINE: [Phase; 19] = {
     use Output::*;
     use Unit::*;
     const PASSES: &[Bound] = &[Bound::Turns(32)];
+    // A Dict column's distinct values past the scratch slot's capacity: the slot grown, the phase run again.
+    const GROWS: &[Bound] = &[Bound::Capacity(Over::Grow)];
     // A kill's search reads a layer a step; the geometric roll-up keeps a trace of n rows at O(log n) layers.
     // A commit's kill search reads at most the floor's `MAX_BELOW` layers below it (a trace's state's bound).
     const KILL_STEPS: &[Bound] = &[Bound::Steps(rerail_blocks::layer::MAX_BELOW as u32)];
@@ -53,7 +55,7 @@ static PIPELINE: [Phase; 19] = {
         ph("scan", Fixed, Threadgroup, Inside::Nothing, Across::Ordered, ByScan, &[]),
         ph("open", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
         ph("place", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, ByScan, &[]),
-        ph("encode", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("encode", Fixed, Lane, Inside::Nothing, Across::Nothing, ByIndex, GROWS),
         ph("perm", Fixed, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("kills", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, KILL_STEPS),
         ph("pstarts", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
@@ -67,6 +69,13 @@ static PIPELINE: [Phase; 19] = {
         ph("seal", Fixed, Threadgroup, Inside::Nothing, Across::Nothing, InPlace, &[]),
     ]
 };
+
+/// A launch's scratch slot over `cap` source items: `scratch_bytes(cap)` of capacity, in a reservation four times
+/// that, so a phase whose work runs out (a Dict column's distinct values, `encode`) grows it and runs again.
+fn scratch_slot(dir: &mut Directory, cap: usize) -> BlockId {
+    let bytes = scratch_bytes(cap);
+    dir.make_capped(kind::SCRATCH, 0, BODY_AT + bytes, 4 * (BODY_AT + bytes))
+}
 
 const ALONG: Independence = Independence::Along("rows: a chunk, a pair of runs, a row out, an index");
 
@@ -252,7 +261,7 @@ impl Trace {
             dir.refer(out, h, BODY_AT)?;
         }
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
-        let scratch = dir.make(kind::SCRATCH, scratch_bytes(n));
+        let scratch = scratch_slot(dir, n);
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
         let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl, scratch], &params, tiling);
@@ -307,7 +316,7 @@ impl Trace {
         if let Some(b) = below {
             dir.refer(out, BlockId(b), BODY_AT)?;
         }
-        let scratch = dir.make(kind::SCRATCH, scratch_bytes(rows));
+        let scratch = scratch_slot(dir, rows);
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
         let run = run_cpu(reg, dir, ops.merge, &[head, out, scratch], &params, tiling);
@@ -483,7 +492,7 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
         }
         let out = dir.make_room(kind::FACTS, out_bytes(rows.len()), layer_room(t.shape(), rows.len()));
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
-        let scratch = dir.make(kind::SCRATCH, scratch_bytes(rows.len()));
+        let scratch = scratch_slot(dir, rows.len());
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: NONE, pad: 0 }.write(&mut params);
         Case { slots: vec![runs, out, ctl, scratch], params }
@@ -518,7 +527,7 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
         if let Some(b) = below {
             dir.refer(out, b, BODY_AT).expect("frozen");
         }
-        let scratch = dir.make(kind::SCRATCH, scratch_bytes(total));
+        let scratch = scratch_slot(dir, total);
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.map_or(NONE, |b| b.0), pad: 0 }.write(&mut params);
         Case { slots: vec![head, out, scratch], params }

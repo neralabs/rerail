@@ -574,7 +574,7 @@ fn gpu() {
             let t_choose = t.elapsed().as_secs_f64() * 1e3;
             let mut data = vec![0u64; ch.data_words];
             let t = Instant::now();
-            col::write(&ch, &vals, &mut data, &mut []);
+            col::write(&ch, &vals, &mut data, &mut [], &[]);
             let t_write = t.elapsed().as_secs_f64() * 1e3;
             let insn = retired() - i0;
             assert_eq!(data, e.data);

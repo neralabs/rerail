@@ -97,7 +97,7 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
             |buf, Job { col, range, choice, data, runs }| {
                 let p = parts(col);
                 part(cols[col], range / p, split[col], range % p, buf);
-                write(choice, buf, data, runs);
+                write(choice, buf, data, runs, &[]);
             },
         )
     });

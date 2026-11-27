@@ -31,6 +31,7 @@
 use super::{ADDED_INDEXES, ColStats, FROZEN, Index, Relation, build_one_index};
 use crate::layer::{ENC_DICT, ENC_RANGED, LayerSpec};
 use crate::packed::RowsIn;
+pub use crate::packed::writer::Short;
 use crate::refs::Span;
 use crate::region::BlockPin;
 use crate::scratch::Scratch;
@@ -195,14 +196,17 @@ pub fn encode_open(pin: &mut BlockPin, rel: &Relation, encoding: u32, arity: usi
 }
 
 /// Column `c` of the encoded rows at `at` (`encode_open`'s), from the layer's rows `rows` where they lie, its
-/// temporaries (a Dict column's distinct values) from `scratch`. False when the block has no room.
-pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, c: usize, rows: &dyn RowsIn, scratch: &Scratch) -> bool {
+/// temporaries (a Dict column's distinct values) from `scratch`. `Short::Block` when the block has no room;
+/// `Short::Work` when `scratch`'s arena ran out, nothing written (the phase runs again over a larger scratch, and
+/// the columns written before are left as they are).
+pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, c: usize, rows: &dyn RowsIn, scratch: &Scratch) -> Result<(), Short> {
     check_open(pin, rel);
     let block = pin.block();
     // SAFETY: laid out at `at` by `encode_open` in the block the pin holds to write; column `c` is this call's alone.
     unsafe {
         if encoding == ENC_RANGED {
-            crate::ranged::writer::write_col(block, &*block.ptr::<crate::ranged::Columns>(at), c, rows)
+            // Only a Dict column takes work room, so a ranged layer's phase never runs again.
+            if crate::ranged::writer::write_col(block, &*block.ptr::<crate::ranged::Columns>(at), c, rows) { Ok(()) } else { Err(Short::Block) }
         } else {
             crate::packed::writer::write_col(block, &*block.ptr::<crate::packed::Packed>(at), c, rows, encoding == ENC_DICT, scratch)
         }
