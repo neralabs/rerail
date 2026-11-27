@@ -2,9 +2,9 @@
  * A clone's remote as Git named it, kept while the configuration Git read it from reads the same: the facts it rests on
  * ({@link remoteSource}) are the files and variables Git reads a remote from, read here before Git runs. Where one of
  * them cannot be read or named, no answer is kept and Git is asked each time. A caller that keeps a remote of its own
- * keeps it by the text of the repository's own config files ({@link configFilesText}).
+ * keeps it by what the repository's own config files hold ({@link configFilesText}).
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileText, placementInputs } from "./git-placement.js";
 import { learnGitAccess, standingGitAccess } from "../../native/git-access.js";
@@ -189,11 +189,26 @@ export function remoteConfigFiles(common: string, gitFolder: string | undefined)
 }
 
 /**
- * What `files` hold, read now as Git reads them ({@link textAsGitReads}), as one string: a file that appears or goes
- * changes it. Undefined where one is no regular file or cannot be read. An `include` is not followed, so a file it
- * names changed alone leaves this as it was: a caller that must see that asks {@link remoteSource}.
+ * What `files` hold, as one string: each one's text, read now as Git reads it ({@link textAsGitReads}), so a file that
+ * appears or goes changes it, and where its text cannot be read, what the file system says of it ({@link unreadStamp}).
+ * An `include` is not followed, so a file it names changed alone leaves this as it was: a caller that must see that
+ * asks {@link remoteSource}.
  */
-export function configFilesText(files: readonly string[]): string | undefined {
-  const texts = files.map(textAsGitReads);
-  return texts.some(text => text === undefined) ? undefined : texts.join("\0");
+export function configFilesText(files: readonly string[]): string {
+  return files.map(file => textAsGitReads(file) ?? unreadStamp(file)).join("\0");
+}
+
+/**
+ * What the file system says of a file whose text cannot be read (no regular file, too large, no permission), without
+ * reading it: its size, modification time in nanoseconds and file id, through a link at its name as the read goes, in
+ * `bigint`, which holds an NTFS file id whole; the error's code where it cannot be looked at. A rewrite in place that
+ * keeps the size and the time changes none of them.
+ */
+function unreadStamp(path: string): string {
+  try {
+    const stats = statSync(path, { bigint: true });
+    return `\0stat:${stats.size}:${stats.mtimeNs}:${stats.ino}`;
+  } catch (error) {
+    return `\0error:${(error as NodeJS.ErrnoException).code ?? "unknown"}`;
+  }
 }

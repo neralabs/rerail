@@ -373,12 +373,12 @@ function remoteRepository(db: FileReader, location: RepositoryIdentityLocation, 
 
 /**
  * A checkout's remote as the resolver keeps it: its key, undefined where it names none; the config files it is read
- * from ({@link remoteFilesOf}); and what they held just before Git was asked, undefined where one could not be read.
+ * from ({@link remoteFilesOf}); and what they held just before Git was asked ({@link configFilesText}).
  */
 interface KeptRemote {
   readonly key: RepositoryKey | undefined;
   readonly files: readonly string[];
-  readonly text: string | undefined;
+  readonly text: string;
 }
 
 /**
@@ -406,15 +406,16 @@ function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] 
 }
 
 /**
- * `kept`'s remote key, kept while the config files it is read from hold the text they held when it was read
- * ({@link configFilesText}), so no Git runs; `git remote set-url` rewrites the common `config`, and the next lookup
- * reads the remote again ({@link remoteKeyOf}), as each lookup does while one of those files cannot be read.
+ * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
+ * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
+ * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
+ * ({@link remoteKeyOf}).
  */
 function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
   const files = kept.remote?.files ?? remoteFilesOf(kept.location);
   // Read before Git is asked: a config written between the two reads as changed at the next lookup.
   const text = configFilesText(files);
-  if (text !== undefined && kept.remote?.text === text) return kept.remote.key;
+  if (kept.remote?.text === text) return kept.remote.key;
   kept.remote = { key: remoteKeyOf(kept.location), files, text };
   return kept.remote.key;
 }
