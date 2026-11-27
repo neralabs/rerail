@@ -1029,6 +1029,48 @@ describe("OMP conversation-rules extension", () => {
         vi.useRealTimers();
       });
     });
+
+    it.each([
+      ["`/rerail-start` or `/rerail-stop` reattaches while that switch runs", false],
+      ["`/rerail-uninstall` detaches while that switch runs and fails, and its failed removal reattaches", true],
+    ] as const)("attaches the session OMP switches to, not the failing one it left, when %s", async (_when, removal) => {
+      const harness = await createHarness();
+      const daemon = flakyDaemon(harness.context.cwd);
+      vi.useFakeTimers();
+      vi.spyOn(process.stderr, "write").mockReturnValue(true);
+      createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false })(harness.pi);
+      daemon.state.down.add("omp-test-session");
+      await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
+      await harness.handlers.get("message_update")!(delta("in-failing", "Guest checkout "), harness.context);
+      const next = { ...harness.context, sessionManager: { getSessionId: () => "omp-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+      const held = Promise.withResolvers<void>();
+      daemon.state.hold = held;
+      const switching = harness.handlers.get("session_switch")!({ type: "session_switch" }, next) as Promise<void>;
+      await vi.waitFor(() => expect(daemon.initializes("omp-next-session")).toBe(1));
+      if (removal) {
+        // The switch fails too, so no runtime of the session OMP switched to was made before the reattach.
+        daemon.state.down.add("omp-next-session");
+        const detaching = hostCommands.detach!();
+        held.resolve();
+        await expect(switching).rejects.toThrow("fetch failed");
+        await detaching;
+        daemon.state.down.delete("omp-next-session");
+        await hostCommands.reattach!();
+      } else {
+        const reattaching = hostCommands.reattach!();
+        held.resolve();
+        await expect(switching).resolves.toBeUndefined();
+        await reattaching;
+      }
+      await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, next);
+
+      expect(daemon.requests.filter(request => request.operation === "initialize").map(request => request.sessionId))
+        .toEqual(["omp-test-session", "omp-next-session", "omp-next-session"]);
+      expect(daemon.rebuilds).toEqual([false, false, true]);
+      expect(daemon.requests.at(-1)).toEqual({ operation: "ingest", sessionId: "omp-next-session" });
+      expect(daemon.gaps).toEqual([]);
+      vi.useRealTimers();
+    });
   });
 
   describe("daemon faults", () => {

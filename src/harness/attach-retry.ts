@@ -39,8 +39,8 @@ export class AttachRetry<Context> {
   #failing: Context | undefined;
   /** What arrived for `#failing`'s session meanwhile: the attached runtime records it as a gap. */
   #drops: { sessionId: string; gap: DroppedEvents } | undefined;
-  /** The context whose attach was failing when the host detached, which its reattach attaches; a newer attach ends it. */
-  #detached: Context | undefined;
+  /** The context of the host's newest attach, which its reattach attaches, whether that attach succeeded, failed or still runs. */
+  #requested: Context | undefined;
 
   constructor(host: AttachRetryHost<Context>) {
     this.#host = host;
@@ -55,7 +55,7 @@ export class AttachRetry<Context> {
   attach(context: Context, rebuild = false): Promise<void> {
     clearTimeout(this.#timer);
     this.#failures = 0;
-    this.#detached = undefined;
+    this.#requested = context;
     return this.#attachAs(context, ++this.#generation, rebuild);
   }
 
@@ -142,24 +142,23 @@ export class AttachRetry<Context> {
   }
 
   /**
-   * No try is made again, as for a host that detaches from Rerail; what was dropped stays for the session's marker, and the
-   * context that was failing for the host's reattach.
+   * No try is made again, as for a host that detaches from Rerail; what was dropped stays for the session's marker and for
+   * the host's reattach.
    */
   cancel(): void {
     clearTimeout(this.#timer);
     this.#generation += 1;
-    this.#detached = this.#failing;
     this.#failing = undefined;
   }
 
   /**
-   * The host's reattach (after Rerail's start or stop, or a removal that failed), rebuilt: of the session whose attach is
-   * failing, or was when the host detached, which neither host holds a context of (a failed start never activated one; a
-   * failed switch holds the session left), else of `held`, the host's. One that fails is tried again; one that attaches
-   * records what was dropped.
+   * The host's reattach (after Rerail's start or stop, or a removal that failed), rebuilt: of the session of the host's
+   * newest attach, which neither host holds a context of while that attach fails or runs (a failed start never activated
+   * one; a failed or running switch holds the session left), else of `held`, the host's. One that fails is tried again;
+   * one that attaches records what was dropped.
    */
   resume(held: Context | undefined): Promise<void> {
-    const context = this.#failing ?? this.#detached ?? held;
+    const context = this.#requested ?? held;
     return context === undefined ? Promise.resolve() : this.attach(context, true);
   }
 

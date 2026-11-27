@@ -788,6 +788,39 @@ describe("Pi conversation-rules extension", () => {
           .toEqual(["pi-test-session", "pi-next-session", "pi-next-session"]);
       });
 
+      it.each([
+        ["`/rerail-start` or `/rerail-stop` reattaches while that start runs", false],
+        ["`/rerail-uninstall` detaches while that start runs and fails, and its failed removal reattaches", true],
+      ] as const)("attaches the session Pi starts, not the failing one it left, when %s", async (_when, removal) => {
+        const { harness, requests } = await startFails("up");
+        const held = Promise.withResolvers<ReturnType<typeof daemon>>();
+        daemonRoute.startDaemonForPackage.mockImplementationOnce(() => held.promise);
+        const next = { ...harness.context, sessionManager: { getSessionId: () => "pi-next-session", getBranch: () => [] } } as unknown as ExtensionContext;
+        const switching = Promise.resolve(harness.handlers.get("session_start")!({ type: "session_start", reason: "new" }, next));
+        await vi.waitFor(() => expect(daemonRoute.startDaemonForPackage).toHaveBeenCalledTimes(2));
+        if (removal) {
+          // The start fails too, so no runtime of the session Pi starts was made before the reattach.
+          const detaching = hostCommands.detach!();
+          held.reject(failedStart());
+          await expect(switching).rejects.toThrow("before it was ready");
+          await detaching;
+          await hostCommands.reattach!();
+        } else {
+          const reattaching = hostCommands.reattach!();
+          held.resolve(daemon(harness.context.cwd));
+          await expect(switching).resolves.toBeUndefined();
+          await reattaching;
+        }
+        await prompt(harness, "Prompt in the session Pi started.", next);
+
+        const initializes = requests.filter(request => request.operation === "initialize");
+        expect(new Set(initializes.map(request => request.sessionId))).toEqual(new Set(["pi-next-session"]));
+        expect(initializes.at(-1)?.input).toEqual(expect.objectContaining({ rebuild: true }));
+        expect(requests.filter(request => request.operation === "ingest").map(request => request.event?.json))
+          .toEqual([expect.objectContaining({ kind: "user-prompt", sessionId: "pi-next-session" })]);
+        expect(sent(requests, "record-gap")).toEqual([]);
+      });
+
       it("takes the footer down when Pi detaches for Rerail's removal, so a failed start's count does not stay once Rerail is gone", async () => {
         const { footer } = await startFails("down");
         expect(droppedShown(footer)).toBe("Rerail: 1 session event dropped — daemon not answering");
