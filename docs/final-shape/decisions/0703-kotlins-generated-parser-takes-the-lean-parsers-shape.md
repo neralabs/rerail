@@ -341,6 +341,21 @@ them.
    not its expression again, and `Known`'s `&&` and `||` name each operand once. A name's row keeps `as_run` as
    `fill_11 = (xs_11 || fs_11)` and `as_dot` as `((xs_11 || fs_11) && fs_12)`; an operator's reads its bytes. A
    number's row still scans its tail for a stop (a sign after `e`), as does the gap before a token for one.
+40. **A token's fills read no scan: the gap, a run and an operator's bytes keep them**: step 39's name row still
+   scanned its bytes for `as_kw` (`fill_11 = … || wfirst_in(n, s, l - 1, …)`), which it said it did not; now a
+   `prev(X)` fill reads `X` before a token's last byte as none where the row's start allows it none, or where the
+   grammar assumes it none at starts (`assume … at starts as_end = empty`, `as_end = prev(as_kw)`, proved), and the
+   name's row is `fill_11 = (xs_11 || fs_11)`. Over the gap, a fill whose stop is every skipped byte is `s > at`
+   (`fs_7 = fill_7 && s == at`), and a `prev(X)` fill reads the gap's last stop once a token (`gap_last_t90`, as the
+   lean lexer's `skip` notes the gap): `match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11
+   }`. A token's run read forward (a number's) keeps what is asked of its bytes after its first as it reads them, as
+   the lean lexer's `number` knows it read an exponent: the classes (`seen`, `end_seen`: `fill_11 = … !(end_seen >> 0
+   & 1 == 1) && (xs_11 || fs_11)`) and the fills (`run_fill`, `fills`, `end_fills`: `fill_7 = (end_fills >> 0 & 1 ==
+   1)`), where no jump of the run passes a byte they read unread; else as before. `X` a part of the row's start
+   holds at its first byte (`int_at = num_start & …`). A kind's assumptions are of its token's bytes: read through no
+   call but a `prev` of one byte past the first byte (`replace_here`), so `fill(num_start, ~w)` in a name keeps the
+   number before it (`xl_5 = fs_7`) under `assume … in simple_identifier num_start = empty`. Over an operator's bytes
+   a stop that is no class is tested at each byte the pairs allow it (`l >= s + 2 && …src[s + 2]…`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

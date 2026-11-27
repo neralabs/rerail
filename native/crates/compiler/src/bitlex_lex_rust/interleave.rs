@@ -542,6 +542,7 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
                 // The block's words its rows read, made once a block (`partial_line`).
                 let head = "    'tokens: while b < nw {\n        let base = b * 64;\n";
                 let sec = if sec.contains(head) { sec.replacen(head, &format!("{head}{}", by.block_decls()), 1) } else { sec };
+                let sec = by.seen_tests(&sec);
                 // A field's word of the 64 bytes from `p`: its writes of the window (`win_put`, `win_set`, `win_clear`).
                 if text[a..].starts_with(super::T2_BEGIN) {
                     t.push_str(&sec.replace("wput(&mut fwin, ", "win_put(&mut fwin, p, ").replace("set(&mut fwin, ", "win_set(&mut fwin, p, ").replace("clear(&mut fwin, ", "win_clear(&mut fwin, p, "));

@@ -1121,7 +1121,7 @@ static HI_5: [u8; 16] = [0x00, 0x00, 0x10, 0x20, 0x40, 0x80, 0x00, 0x80, 0x05, 0
 /// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.
 struct Stage1 {
     /// The masks the product reads, a block's together (`S1_*` their columns).
-    m: Vec<[u64; 3]>,
+    m: Vec<[u64; 2]>,
     #[cfg(feature = "test-hooks")]
     m_ws: Vec<u64>,
     #[cfg(feature = "test-hooks")]
@@ -1269,6 +1269,8 @@ struct Stage1 {
     #[cfg(feature = "test-hooks")]
     t84: Vec<u64>,
     #[cfg(feature = "test-hooks")]
+    t85: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
     t82: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     t88: Vec<u64>,
@@ -1405,23 +1407,23 @@ struct Stage1 {
     #[cfg(feature = "test-hooks")]
     t205: Vec<u64>,
     #[cfg(feature = "test-hooks")]
-    t215: Vec<u64>,
+    t207: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
+    t208: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
+    t209: Vec<u64>,
+    #[cfg(feature = "test-hooks")]
+    t214: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     t216: Vec<u64>,
     #[cfg(feature = "test-hooks")]
     t217: Vec<u64>,
     #[cfg(feature = "test-hooks")]
-    t222: Vec<u64>,
+    t218: Vec<u64>,
     #[cfg(feature = "test-hooks")]
-    t224: Vec<u64>,
+    t219: Vec<u64>,
     #[cfg(feature = "test-hooks")]
-    t225: Vec<u64>,
-    #[cfg(feature = "test-hooks")]
-    t226: Vec<u64>,
-    #[cfg(feature = "test-hooks")]
-    t227: Vec<u64>,
-    #[cfg(feature = "test-hooks")]
-    t228: Vec<u64>,
+    t220: Vec<u64>,
     refused: bool,
 }
 
@@ -1429,14 +1431,13 @@ struct Stage1 {
 const RING_1: usize = 4;
 
 /// Each mask's column in stage 1's blocks (`Stage1::m`).
-const S1_T85: usize = 0;
-const S1_T111: usize = 1;
-const S1_T113: usize = 2;
+const S1_T111: usize = 0;
+const S1_T113: usize = 1;
 
 /// A mask's words in stage 1's blocks: its column.
 #[derive(Clone, Copy)]
 struct Col<'a> {
-    m: &'a [[u64; 3]],
+    m: &'a [[u64; 2]],
     k: usize,
 }
 
@@ -1734,9 +1735,6 @@ struct Stage1Run {
     v_t56: u64,
     p_t56: u64,
     r_t56: [u64; RING_1],
-    v_t65: u64,
-    p_t65: u64,
-    r_t65: [u64; RING_1],
     v_t66: u64,
     v_t70: u64,
     p_t70: u64,
@@ -1853,34 +1851,24 @@ struct Stage1Run {
     v_t196: u64,
     v_t201: u64,
     c_t202: u64,
-    v_t209: u64,
-    v_t207: u64,
-    p_t207: u64,
-    c_t207: u64,
-    v_t213: u64,
-    v_t212: u64,
-    v_t214: u64,
-    v_t210: u64,
-    p_t210: u64,
-    c_t210: u64,
     v_t206: u64,
-    v_t218: u64,
-    c_t219: u64,
-    v_t223: u64,
+    v_t210: u64,
+    c_t211: u64,
+    v_t215: u64,
     lv_1: u64,
     refused: bool,
 }
 
 impl Stage1Run {
     fn new() -> Self {
-        Stage1Run { t: 0, done: false, v_m_slash: 0u64, p_m_slash: 0u64, v_m_star: 0u64, p_m_star: 0u64, r_m_star: [0u64; RING_1], v_m_word: 0u64, p_m_word: 0u64, r_m_word: [0u64; RING_1], v_m_digit: 0u64, p_m_digit: 0u64, r_m_digit: [0u64; RING_1], v_m_dot: 0u64, p_m_dot: 0u64, r_m_dot: [0u64; RING_1], v_m_gt: 0u64, v_m_dq: 0u64, p_m_dq: 0u64, r_m_dq: [0u64; RING_1], v_m_u_letter: 0u64, p_m_u_letter: 0u64, v_m_zero: 0u64, p_m_zero: 0u64, v_m_x_letter: 0u64, p_m_x_letter: 0u64, v_m_b_letter: 0u64, p_m_b_letter: 0u64, v_m_e_letter: 0u64, p_m_e_letter: 0u64, r_m_e_letter: [0u64; RING_1], v_m_f_letter: 0u64, p_m_f_letter: 0u64, r_m_f_letter: [0u64; RING_1], v_m_sign: 0u64, p_m_sign: 0u64, r_m_sign: [0u64; RING_1], r_m_underscore: [0u64; RING_1], v_m_hexd: 0u64, p_m_hexd: 0u64, v_m_hex_digit: 0u64, p_m_hex_digit: 0u64, v_m_bind: 0u64, p_m_bind: 0u64, v_m_backslash: 0u64, p_m_backslash: 0u64, v_m_dollar: 0u64, p_m_dollar: 0u64, r_m_dollar: [0u64; RING_1], v_m_lbrace: 0u64, p_m_lbrace: 0u64, r_m_lbrace: [0u64; RING_1], v_m_high: 0u64, p_m_high: 0u64, v_m_cont: 0u64, p_m_cont: 0u64, v_m_u_c3: 0u64, p_m_u_c3: 0u64, v_m_u_c4: 0u64, p_m_u_c4: 0u64, v_m_u_c9: 0u64, p_m_u_c9: 0u64, v_m_u_cd: 0u64, p_m_u_cd: 0u64, v_m_u_ce: 0u64, p_m_u_ce: 0u64, v_m_u_cf: 0u64, p_m_u_cf: 0u64, v_m_u_d2: 0u64, p_m_u_d2: 0u64, v_m_u2_c3: 0u64, p_m_u2_c3: 0u64, v_m_u2_c9: 0u64, p_m_u2_c9: 0u64, v_m_u2_cd: 0u64, p_m_u2_cd: 0u64, v_m_u2_ce: 0u64, p_m_u2_ce: 0u64, v_m_u2_cf: 0u64, p_m_u2_cf: 0u64, v_m_u2_d2: 0u64, p_m_u2_d2: 0u64, v_m_u_e3: 0u64, p_m_u_e3: 0u64, v_m_u_e4: 0u64, p_m_u_e4: 0u64, v_m_u_e5: 0u64, p_m_u_e5: 0u64, v_m_u_ea: 0u64, p_m_u_ea: 0u64, v_m_u_ed: 0u64, p_m_u_ed: 0u64, v_m_u2_81: 0u64, p_m_u2_81: 0u64, v_m_u2_82: 0u64, p_m_u2_82: 0u64, v_m_u2_83: 0u64, p_m_u2_83: 0u64, v_m_u2_b8: 0u64, p_m_u2_b8: 0u64, v_m_u2_b0: 0u64, p_m_u2_b0: 0u64, v_m_u2_ed: 0u64, p_m_u2_ed: 0u64, v_m_u2_9e: 0u64, p_m_u2_9e: 0u64, v_m_u3_81: 0u64, p_m_u3_81: 0u64, v_m_u3_82: 0u64, p_m_u3_82: 0u64, v_m_u3_83: 0u64, p_m_u3_83: 0u64, v_m_u3_9e: 0u64, p_m_u3_9e: 0u64, v_m_punct: 0u64, p_m_punct: 0u64, r_m_punct: [0u64; RING_1], v_m_pair_byte_2d: 0u64, p_m_pair_byte_2d: 0u64, v_m_pair_byte_3e: 0u64, p_m_pair_byte_3e: 0u64, v_m_pair_byte_3d: 0u64, p_m_pair_byte_3d: 0u64, v_m_pair_byte_21: 0u64, p_m_pair_byte_21: 0u64, v_m_pair_byte_3c: 0u64, p_m_pair_byte_3c: 0u64, v_m_pair_byte_26: 0u64, p_m_pair_byte_26: 0u64, v_m_pair_byte_7c: 0u64, p_m_pair_byte_7c: 0u64, v_m_pair_byte_2b: 0u64, p_m_pair_byte_2b: 0u64, v_m_pair_byte_2a: 0u64, p_m_pair_byte_2a: 0u64, v_m_pair_byte_2f: 0u64, p_m_pair_byte_2f: 0u64, v_m_pair_byte_25: 0u64, p_m_pair_byte_25: 0u64, v_m_pair_byte_3a: 0u64, p_m_pair_byte_3a: 0u64, v_m_pair_byte_3f: 0u64, p_m_pair_byte_3f: 0u64, v_m_pair_byte_2e: 0u64, p_m_pair_byte_2e: 0u64, v_m_u_lead2: 0u64, v_m_u_lead3: 0u64, v_m_block_open: 0u64, v_t1: 0u64, p_t1: 0u64, c_t1: 0u64, v_m_esc0: 0u64, p_m_esc0: 0u64, v_t2: 0u64, p_t2: 0u64, r_t2: [0u64; RING_1], c_t2: 0u64, v_m_esc_dollar: 0u64, p_m_esc_dollar: 0u64, r_m_esc_dollar: [0u64; RING_1], v_m_dq_close: 0u64, p_m_dq_close: 0u64, v_m_t_dollar: 0u64, v_m_t2_dollar: 0u64, p_m_t2_dollar: 0u64, r_m_t2_dollar: [0u64; RING_1], v_m_q2: 0u64, p_m_q2: 0u64, v_m_dq3: 0u64, p_m_dq3: 0u64, v_t12: 0u64, p_t12: 0u64, r_t12: [0u64; RING_1], v_m_d_start: 0u64, p_m_d_start: 0u64, r_m_d_start: [0u64; RING_1], v_t15: 0u64, p_t15: 0u64, v_t18: 0u64, p_t18: 0u64, r_t18: [0u64; RING_1], v_t20: 0u64, p_t20: 0u64, v_t22: 0u64, p_t22: 0u64, v_t24: 0u64, p_t24: 0u64, v_b_61: 0u64, p_b_61: 0u64, v_b_73: 0u64, p_b_73: 0u64, v_b_69: 0u64, p_b_69: 0u64, v_t42: 0u64, p_t42: 0u64, v_t43: 0u64, p_t43: 0u64, v_t44: 0u64, p_t44: 0u64, v_t50: 0u64, p_t50: 0u64, c_t49: 0u64, v_m_two_start: 0u64, p_m_two_start: 0u64, r_m_two_start: [0u64; RING_1], v_m_two_start_three: 0u64, p_m_two_start_three: 0u64, r_m_two_start_three: [0u64; RING_1], v_t55: 0u64, p_t55: 0u64, r_t55: [0u64; RING_1], v_t58: 0u64, p_t58: 0u64, r_t58: [0u64; RING_1], c_t58: 0u64, v_t62: 0u64, v_t60: 0u64, p_t60: 0u64, c_t60: 0u64, v_t57: 0u64, p_t57: 0u64, r_t57: [0u64; RING_1], v_t56: 0u64, p_t56: 0u64, r_t56: [0u64; RING_1], v_t65: 0u64, p_t65: 0u64, r_t65: [0u64; RING_1], v_t66: 0u64, v_t70: 0u64, p_t70: 0u64, c_t70: 0u64, v_t73: 0u64, p_t73: 0u64, r_t73: [0u64; RING_1], v_t72: 0u64, p_t72: 0u64, v_t76: 0u64, v_t74: 0u64, p_t74: 0u64, c_t74: 0u64, v_t79: 0u64, v_t77: 0u64, p_t77: 0u64, c_t77: 0u64, v_t69: 0u64, v_t85: 0u64, p_t85: 0u64, v_t83: 0u64, p_t83: 0u64, c_t83: 0u64, v_t92: 0u64, v_t99: 0u64, p_t99: 0u64, v_t103: 0u64, c_t102: 0u64, v_t106: 0u64, v_t109: 0u64, v_t121: 0u64, p_t121: 0u64, v_t122: 0u64, p_t122: 0u64, v_t123: 0u64, p_t123: 0u64, v_t124: 0u64, p_t124: 0u64, v_t125: 0u64, p_t125: 0u64, v_t126: 0u64, p_t126: 0u64, v_t127: 0u64, p_t127: 0u64, v_t128: 0u64, p_t128: 0u64, v_t129: 0u64, p_t129: 0u64, v_t130: 0u64, p_t130: 0u64, v_t131: 0u64, p_t131: 0u64, v_t132: 0u64, p_t132: 0u64, v_t133: 0u64, p_t133: 0u64, v_t134: 0u64, p_t134: 0u64, v_b_77: 0u64, p_b_77: 0u64, v_b_68: 0u64, p_b_68: 0u64, v_b_65: 0u64, p_b_65: 0u64, v_b_72: 0u64, p_b_72: 0u64, v_b_63: 0u64, p_b_63: 0u64, v_b_74: 0u64, p_b_74: 0u64, v_b_66: 0u64, p_b_66: 0u64, v_b_6e: 0u64, p_b_6e: 0u64, v_b_6c: 0u64, p_b_6c: 0u64, v_b_79: 0u64, p_b_79: 0u64, v_t146: 0u64, v_t143: 0u64, p_t143: 0u64, c_t143: 0u64, v_t142: 0u64, p_t142: 0u64, v_t148: 0u64, v_t153: 0u64, p_t153: 0u64, r_t153: [0u64; RING_1], v_t152: 0u64, v_t150: 0u64, p_t150: 0u64, c_t150: 0u64, v_t149: 0u64, p_t149: 0u64, v_t162: 0u64, p_t162: 0u64, v_t166: 0u64, p_t166: 0u64, r_t166: [0u64; RING_1], v_t168: 0u64, p_t168: 0u64, r_t168: [0u64; RING_1], v_t174: 0u64, p_t174: 0u64, v_t183: 0u64, c_t183: 0u64, v_t187: 0u64, c_t185: 0u64, v_t188: 0u64, v_t189: 0u64, v_t192: 0u64, c_t190: 0u64, v_t193: 0u64, v_t196: 0u64, v_t201: 0u64, c_t202: 0u64, v_t209: 0u64, v_t207: 0u64, p_t207: 0u64, c_t207: 0u64, v_t213: 0u64, v_t212: 0u64, v_t214: 0u64, v_t210: 0u64, p_t210: 0u64, c_t210: 0u64, v_t206: 0u64, v_t218: 0u64, c_t219: 0u64, v_t223: 0u64, lv_1: 0u64, refused: false }
+        Stage1Run { t: 0, done: false, v_m_slash: 0u64, p_m_slash: 0u64, v_m_star: 0u64, p_m_star: 0u64, r_m_star: [0u64; RING_1], v_m_word: 0u64, p_m_word: 0u64, r_m_word: [0u64; RING_1], v_m_digit: 0u64, p_m_digit: 0u64, r_m_digit: [0u64; RING_1], v_m_dot: 0u64, p_m_dot: 0u64, r_m_dot: [0u64; RING_1], v_m_gt: 0u64, v_m_dq: 0u64, p_m_dq: 0u64, r_m_dq: [0u64; RING_1], v_m_u_letter: 0u64, p_m_u_letter: 0u64, v_m_zero: 0u64, p_m_zero: 0u64, v_m_x_letter: 0u64, p_m_x_letter: 0u64, v_m_b_letter: 0u64, p_m_b_letter: 0u64, v_m_e_letter: 0u64, p_m_e_letter: 0u64, r_m_e_letter: [0u64; RING_1], v_m_f_letter: 0u64, p_m_f_letter: 0u64, r_m_f_letter: [0u64; RING_1], v_m_sign: 0u64, p_m_sign: 0u64, r_m_sign: [0u64; RING_1], r_m_underscore: [0u64; RING_1], v_m_hexd: 0u64, p_m_hexd: 0u64, v_m_hex_digit: 0u64, p_m_hex_digit: 0u64, v_m_bind: 0u64, p_m_bind: 0u64, v_m_backslash: 0u64, p_m_backslash: 0u64, v_m_dollar: 0u64, p_m_dollar: 0u64, r_m_dollar: [0u64; RING_1], v_m_lbrace: 0u64, p_m_lbrace: 0u64, r_m_lbrace: [0u64; RING_1], v_m_high: 0u64, p_m_high: 0u64, v_m_cont: 0u64, p_m_cont: 0u64, v_m_u_c3: 0u64, p_m_u_c3: 0u64, v_m_u_c4: 0u64, p_m_u_c4: 0u64, v_m_u_c9: 0u64, p_m_u_c9: 0u64, v_m_u_cd: 0u64, p_m_u_cd: 0u64, v_m_u_ce: 0u64, p_m_u_ce: 0u64, v_m_u_cf: 0u64, p_m_u_cf: 0u64, v_m_u_d2: 0u64, p_m_u_d2: 0u64, v_m_u2_c3: 0u64, p_m_u2_c3: 0u64, v_m_u2_c9: 0u64, p_m_u2_c9: 0u64, v_m_u2_cd: 0u64, p_m_u2_cd: 0u64, v_m_u2_ce: 0u64, p_m_u2_ce: 0u64, v_m_u2_cf: 0u64, p_m_u2_cf: 0u64, v_m_u2_d2: 0u64, p_m_u2_d2: 0u64, v_m_u_e3: 0u64, p_m_u_e3: 0u64, v_m_u_e4: 0u64, p_m_u_e4: 0u64, v_m_u_e5: 0u64, p_m_u_e5: 0u64, v_m_u_ea: 0u64, p_m_u_ea: 0u64, v_m_u_ed: 0u64, p_m_u_ed: 0u64, v_m_u2_81: 0u64, p_m_u2_81: 0u64, v_m_u2_82: 0u64, p_m_u2_82: 0u64, v_m_u2_83: 0u64, p_m_u2_83: 0u64, v_m_u2_b8: 0u64, p_m_u2_b8: 0u64, v_m_u2_b0: 0u64, p_m_u2_b0: 0u64, v_m_u2_ed: 0u64, p_m_u2_ed: 0u64, v_m_u2_9e: 0u64, p_m_u2_9e: 0u64, v_m_u3_81: 0u64, p_m_u3_81: 0u64, v_m_u3_82: 0u64, p_m_u3_82: 0u64, v_m_u3_83: 0u64, p_m_u3_83: 0u64, v_m_u3_9e: 0u64, p_m_u3_9e: 0u64, v_m_punct: 0u64, p_m_punct: 0u64, r_m_punct: [0u64; RING_1], v_m_pair_byte_2d: 0u64, p_m_pair_byte_2d: 0u64, v_m_pair_byte_3e: 0u64, p_m_pair_byte_3e: 0u64, v_m_pair_byte_3d: 0u64, p_m_pair_byte_3d: 0u64, v_m_pair_byte_21: 0u64, p_m_pair_byte_21: 0u64, v_m_pair_byte_3c: 0u64, p_m_pair_byte_3c: 0u64, v_m_pair_byte_26: 0u64, p_m_pair_byte_26: 0u64, v_m_pair_byte_7c: 0u64, p_m_pair_byte_7c: 0u64, v_m_pair_byte_2b: 0u64, p_m_pair_byte_2b: 0u64, v_m_pair_byte_2a: 0u64, p_m_pair_byte_2a: 0u64, v_m_pair_byte_2f: 0u64, p_m_pair_byte_2f: 0u64, v_m_pair_byte_25: 0u64, p_m_pair_byte_25: 0u64, v_m_pair_byte_3a: 0u64, p_m_pair_byte_3a: 0u64, v_m_pair_byte_3f: 0u64, p_m_pair_byte_3f: 0u64, v_m_pair_byte_2e: 0u64, p_m_pair_byte_2e: 0u64, v_m_u_lead2: 0u64, v_m_u_lead3: 0u64, v_m_block_open: 0u64, v_t1: 0u64, p_t1: 0u64, c_t1: 0u64, v_m_esc0: 0u64, p_m_esc0: 0u64, v_t2: 0u64, p_t2: 0u64, r_t2: [0u64; RING_1], c_t2: 0u64, v_m_esc_dollar: 0u64, p_m_esc_dollar: 0u64, r_m_esc_dollar: [0u64; RING_1], v_m_dq_close: 0u64, p_m_dq_close: 0u64, v_m_t_dollar: 0u64, v_m_t2_dollar: 0u64, p_m_t2_dollar: 0u64, r_m_t2_dollar: [0u64; RING_1], v_m_q2: 0u64, p_m_q2: 0u64, v_m_dq3: 0u64, p_m_dq3: 0u64, v_t12: 0u64, p_t12: 0u64, r_t12: [0u64; RING_1], v_m_d_start: 0u64, p_m_d_start: 0u64, r_m_d_start: [0u64; RING_1], v_t15: 0u64, p_t15: 0u64, v_t18: 0u64, p_t18: 0u64, r_t18: [0u64; RING_1], v_t20: 0u64, p_t20: 0u64, v_t22: 0u64, p_t22: 0u64, v_t24: 0u64, p_t24: 0u64, v_b_61: 0u64, p_b_61: 0u64, v_b_73: 0u64, p_b_73: 0u64, v_b_69: 0u64, p_b_69: 0u64, v_t42: 0u64, p_t42: 0u64, v_t43: 0u64, p_t43: 0u64, v_t44: 0u64, p_t44: 0u64, v_t50: 0u64, p_t50: 0u64, c_t49: 0u64, v_m_two_start: 0u64, p_m_two_start: 0u64, r_m_two_start: [0u64; RING_1], v_m_two_start_three: 0u64, p_m_two_start_three: 0u64, r_m_two_start_three: [0u64; RING_1], v_t55: 0u64, p_t55: 0u64, r_t55: [0u64; RING_1], v_t58: 0u64, p_t58: 0u64, r_t58: [0u64; RING_1], c_t58: 0u64, v_t62: 0u64, v_t60: 0u64, p_t60: 0u64, c_t60: 0u64, v_t57: 0u64, p_t57: 0u64, r_t57: [0u64; RING_1], v_t56: 0u64, p_t56: 0u64, r_t56: [0u64; RING_1], v_t66: 0u64, v_t70: 0u64, p_t70: 0u64, c_t70: 0u64, v_t73: 0u64, p_t73: 0u64, r_t73: [0u64; RING_1], v_t72: 0u64, p_t72: 0u64, v_t76: 0u64, v_t74: 0u64, p_t74: 0u64, c_t74: 0u64, v_t79: 0u64, v_t77: 0u64, p_t77: 0u64, c_t77: 0u64, v_t69: 0u64, v_t85: 0u64, p_t85: 0u64, v_t83: 0u64, p_t83: 0u64, c_t83: 0u64, v_t92: 0u64, v_t99: 0u64, p_t99: 0u64, v_t103: 0u64, c_t102: 0u64, v_t106: 0u64, v_t109: 0u64, v_t121: 0u64, p_t121: 0u64, v_t122: 0u64, p_t122: 0u64, v_t123: 0u64, p_t123: 0u64, v_t124: 0u64, p_t124: 0u64, v_t125: 0u64, p_t125: 0u64, v_t126: 0u64, p_t126: 0u64, v_t127: 0u64, p_t127: 0u64, v_t128: 0u64, p_t128: 0u64, v_t129: 0u64, p_t129: 0u64, v_t130: 0u64, p_t130: 0u64, v_t131: 0u64, p_t131: 0u64, v_t132: 0u64, p_t132: 0u64, v_t133: 0u64, p_t133: 0u64, v_t134: 0u64, p_t134: 0u64, v_b_77: 0u64, p_b_77: 0u64, v_b_68: 0u64, p_b_68: 0u64, v_b_65: 0u64, p_b_65: 0u64, v_b_72: 0u64, p_b_72: 0u64, v_b_63: 0u64, p_b_63: 0u64, v_b_74: 0u64, p_b_74: 0u64, v_b_66: 0u64, p_b_66: 0u64, v_b_6e: 0u64, p_b_6e: 0u64, v_b_6c: 0u64, p_b_6c: 0u64, v_b_79: 0u64, p_b_79: 0u64, v_t146: 0u64, v_t143: 0u64, p_t143: 0u64, c_t143: 0u64, v_t142: 0u64, p_t142: 0u64, v_t148: 0u64, v_t153: 0u64, p_t153: 0u64, r_t153: [0u64; RING_1], v_t152: 0u64, v_t150: 0u64, p_t150: 0u64, c_t150: 0u64, v_t149: 0u64, p_t149: 0u64, v_t162: 0u64, p_t162: 0u64, v_t166: 0u64, p_t166: 0u64, r_t166: [0u64; RING_1], v_t168: 0u64, p_t168: 0u64, r_t168: [0u64; RING_1], v_t174: 0u64, p_t174: 0u64, v_t183: 0u64, c_t183: 0u64, v_t187: 0u64, c_t185: 0u64, v_t188: 0u64, v_t189: 0u64, v_t192: 0u64, c_t190: 0u64, v_t193: 0u64, v_t196: 0u64, v_t201: 0u64, c_t202: 0u64, v_t206: 0u64, v_t210: 0u64, c_t211: 0u64, v_t215: 0u64, lv_1: 0u64, refused: false }
     }
 }
 
 impl Stage1 {
     /// The masks, no block made yet.
     fn new(nw: usize) -> Self {
-        Stage1 { m: vec![[0u64; 3]; nw], #[cfg(feature = "test-hooks")] m_ws: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lf: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_slash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_word: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_alpha: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_digit: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dot: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_at_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_semicolon: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_gt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_u_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_zero: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_x_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_b_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_e_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_f_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_hexd: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bind: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_backslash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_high: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_punct: vec![0u64; nw], #[cfg(feature = "test-hooks")] t0: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_line_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_end: vec![0u64; nw], #[cfg(feature = "test-hooks")] t1: vec![0u64; nw], #[cfg(feature = "test-hooks")] t2: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_esc_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t2_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_lex: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq3: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rclose: vec![0u64; nw], #[cfg(feature = "test-hooks")] t3: vec![0u64; nw], #[cfg(feature = "test-hooks")] t4: vec![0u64; nw], #[cfg(feature = "test-hooks")] t5: vec![0u64; nw], #[cfg(feature = "test-hooks")] t6: vec![0u64; nw], #[cfg(feature = "test-hooks")] t7: vec![0u64; nw], #[cfg(feature = "test-hooks")] t8: vec![0u64; nw], #[cfg(feature = "test-hooks")] t9: vec![0u64; nw], #[cfg(feature = "test-hooks")] t10: vec![0u64; nw], #[cfg(feature = "test-hooks")] t11: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_pre_at: vec![0u64; nw], #[cfg(feature = "test-hooks")] t12: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_d_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] t15: vec![0u64; nw], #[cfg(feature = "test-hooks")] t18: vec![0u64; nw], #[cfg(feature = "test-hooks")] t20: vec![0u64; nw], #[cfg(feature = "test-hooks")] t22: vec![0u64; nw], #[cfg(feature = "test-hooks")] t24: vec![0u64; nw], #[cfg(feature = "test-hooks")] t37: vec![0u64; nw], #[cfg(feature = "test-hooks")] t38: vec![0u64; nw], #[cfg(feature = "test-hooks")] t41: vec![0u64; nw], #[cfg(feature = "test-hooks")] t42: vec![0u64; nw], #[cfg(feature = "test-hooks")] t43: vec![0u64; nw], #[cfg(feature = "test-hooks")] t44: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start_three: vec![0u64; nw], #[cfg(feature = "test-hooks")] t55: vec![0u64; nw], #[cfg(feature = "test-hooks")] t56: vec![0u64; nw], #[cfg(feature = "test-hooks")] t65: vec![0u64; nw], #[cfg(feature = "test-hooks")] t66: vec![0u64; nw], #[cfg(feature = "test-hooks")] t69: vec![0u64; nw], #[cfg(feature = "test-hooks")] t84: vec![0u64; nw], #[cfg(feature = "test-hooks")] t82: vec![0u64; nw], #[cfg(feature = "test-hooks")] t88: vec![0u64; nw], #[cfg(feature = "test-hooks")] t89: vec![0u64; nw], #[cfg(feature = "test-hooks")] t90: vec![0u64; nw], #[cfg(feature = "test-hooks")] t91: vec![0u64; nw], #[cfg(feature = "test-hooks")] t93: vec![0u64; nw], #[cfg(feature = "test-hooks")] t94: vec![0u64; nw], #[cfg(feature = "test-hooks")] t95: vec![0u64; nw], #[cfg(feature = "test-hooks")] t96: vec![0u64; nw], #[cfg(feature = "test-hooks")] t97: vec![0u64; nw], #[cfg(feature = "test-hooks")] t98: vec![0u64; nw], #[cfg(feature = "test-hooks")] t100: vec![0u64; nw], #[cfg(feature = "test-hooks")] t103: vec![0u64; nw], #[cfg(feature = "test-hooks")] t101: vec![0u64; nw], #[cfg(feature = "test-hooks")] t104: vec![0u64; nw], #[cfg(feature = "test-hooks")] t106: vec![0u64; nw], #[cfg(feature = "test-hooks")] t105: vec![0u64; nw], #[cfg(feature = "test-hooks")] t107: vec![0u64; nw], #[cfg(feature = "test-hooks")] t108: vec![0u64; nw], #[cfg(feature = "test-hooks")] t110: vec![0u64; nw], #[cfg(feature = "test-hooks")] t112: vec![0u64; nw], #[cfg(feature = "test-hooks")] t115: vec![0u64; nw], #[cfg(feature = "test-hooks")] t116: vec![0u64; nw], #[cfg(feature = "test-hooks")] t118: vec![0u64; nw], #[cfg(feature = "test-hooks")] t119: vec![0u64; nw], #[cfg(feature = "test-hooks")] t120: vec![0u64; nw], #[cfg(feature = "test-hooks")] t140: vec![0u64; nw], #[cfg(feature = "test-hooks")] t141: vec![0u64; nw], #[cfg(feature = "test-hooks")] t144: vec![0u64; nw], #[cfg(feature = "test-hooks")] t146: vec![0u64; nw], #[cfg(feature = "test-hooks")] t142: vec![0u64; nw], #[cfg(feature = "test-hooks")] t147: vec![0u64; nw], #[cfg(feature = "test-hooks")] t151: vec![0u64; nw], #[cfg(feature = "test-hooks")] t149: vec![0u64; nw], #[cfg(feature = "test-hooks")] t154: vec![0u64; nw], #[cfg(feature = "test-hooks")] t155: vec![0u64; nw], #[cfg(feature = "test-hooks")] t156: vec![0u64; nw], #[cfg(feature = "test-hooks")] t157: vec![0u64; nw], #[cfg(feature = "test-hooks")] t158: vec![0u64; nw], #[cfg(feature = "test-hooks")] t159: vec![0u64; nw], #[cfg(feature = "test-hooks")] t160: vec![0u64; nw], #[cfg(feature = "test-hooks")] t162: vec![0u64; nw], #[cfg(feature = "test-hooks")] t161: vec![0u64; nw], #[cfg(feature = "test-hooks")] t163: vec![0u64; nw], #[cfg(feature = "test-hooks")] t164: vec![0u64; nw], #[cfg(feature = "test-hooks")] t165: vec![0u64; nw], #[cfg(feature = "test-hooks")] t167: vec![0u64; nw], #[cfg(feature = "test-hooks")] t169: vec![0u64; nw], #[cfg(feature = "test-hooks")] t170: vec![0u64; nw], #[cfg(feature = "test-hooks")] t171: vec![0u64; nw], #[cfg(feature = "test-hooks")] t172: vec![0u64; nw], #[cfg(feature = "test-hooks")] t174: vec![0u64; nw], #[cfg(feature = "test-hooks")] t173: vec![0u64; nw], #[cfg(feature = "test-hooks")] t175: vec![0u64; nw], #[cfg(feature = "test-hooks")] t176: vec![0u64; nw], #[cfg(feature = "test-hooks")] t177: vec![0u64; nw], #[cfg(feature = "test-hooks")] t178: vec![0u64; nw], #[cfg(feature = "test-hooks")] t179: vec![0u64; nw], #[cfg(feature = "test-hooks")] t180: vec![0u64; nw], #[cfg(feature = "test-hooks")] t181: vec![0u64; nw], #[cfg(feature = "test-hooks")] t182: vec![0u64; nw], #[cfg(feature = "test-hooks")] t194: vec![0u64; nw], #[cfg(feature = "test-hooks")] t195: vec![0u64; nw], #[cfg(feature = "test-hooks")] t197: vec![0u64; nw], #[cfg(feature = "test-hooks")] t198: vec![0u64; nw], #[cfg(feature = "test-hooks")] t199: vec![0u64; nw], #[cfg(feature = "test-hooks")] t200: vec![0u64; nw], #[cfg(feature = "test-hooks")] t205: vec![0u64; nw], #[cfg(feature = "test-hooks")] t215: vec![0u64; nw], #[cfg(feature = "test-hooks")] t216: vec![0u64; nw], #[cfg(feature = "test-hooks")] t217: vec![0u64; nw], #[cfg(feature = "test-hooks")] t222: vec![0u64; nw], #[cfg(feature = "test-hooks")] t224: vec![0u64; nw], #[cfg(feature = "test-hooks")] t225: vec![0u64; nw], #[cfg(feature = "test-hooks")] t226: vec![0u64; nw], #[cfg(feature = "test-hooks")] t227: vec![0u64; nw], #[cfg(feature = "test-hooks")] t228: vec![0u64; nw], refused: Default::default() }
+        Stage1 { m: vec![[0u64; 2]; nw], #[cfg(feature = "test-hooks")] m_ws: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lf: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_slash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_word: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_alpha: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_digit: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dot: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_at_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_semicolon: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_gt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bt: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_u_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_zero: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_x_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_b_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_e_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_f_letter: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sign: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_hexd: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_bind: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_backslash: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_lbrace: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_high: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_punct: vec![0u64; nw], #[cfg(feature = "test-hooks")] t0: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_line_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_open: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_block_end: vec![0u64; nw], #[cfg(feature = "test-hooks")] t1: vec![0u64; nw], #[cfg(feature = "test-hooks")] t2: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_esc_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_sq_close: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t2_dollar: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_t_lex: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_dq3: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_rclose: vec![0u64; nw], #[cfg(feature = "test-hooks")] t3: vec![0u64; nw], #[cfg(feature = "test-hooks")] t4: vec![0u64; nw], #[cfg(feature = "test-hooks")] t5: vec![0u64; nw], #[cfg(feature = "test-hooks")] t6: vec![0u64; nw], #[cfg(feature = "test-hooks")] t7: vec![0u64; nw], #[cfg(feature = "test-hooks")] t8: vec![0u64; nw], #[cfg(feature = "test-hooks")] t9: vec![0u64; nw], #[cfg(feature = "test-hooks")] t10: vec![0u64; nw], #[cfg(feature = "test-hooks")] t11: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_pre_at: vec![0u64; nw], #[cfg(feature = "test-hooks")] t12: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_d_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] t15: vec![0u64; nw], #[cfg(feature = "test-hooks")] t18: vec![0u64; nw], #[cfg(feature = "test-hooks")] t20: vec![0u64; nw], #[cfg(feature = "test-hooks")] t22: vec![0u64; nw], #[cfg(feature = "test-hooks")] t24: vec![0u64; nw], #[cfg(feature = "test-hooks")] t37: vec![0u64; nw], #[cfg(feature = "test-hooks")] t38: vec![0u64; nw], #[cfg(feature = "test-hooks")] t41: vec![0u64; nw], #[cfg(feature = "test-hooks")] t42: vec![0u64; nw], #[cfg(feature = "test-hooks")] t43: vec![0u64; nw], #[cfg(feature = "test-hooks")] t44: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start: vec![0u64; nw], #[cfg(feature = "test-hooks")] m_two_start_three: vec![0u64; nw], #[cfg(feature = "test-hooks")] t55: vec![0u64; nw], #[cfg(feature = "test-hooks")] t56: vec![0u64; nw], #[cfg(feature = "test-hooks")] t65: vec![0u64; nw], #[cfg(feature = "test-hooks")] t66: vec![0u64; nw], #[cfg(feature = "test-hooks")] t69: vec![0u64; nw], #[cfg(feature = "test-hooks")] t84: vec![0u64; nw], #[cfg(feature = "test-hooks")] t85: vec![0u64; nw], #[cfg(feature = "test-hooks")] t82: vec![0u64; nw], #[cfg(feature = "test-hooks")] t88: vec![0u64; nw], #[cfg(feature = "test-hooks")] t89: vec![0u64; nw], #[cfg(feature = "test-hooks")] t90: vec![0u64; nw], #[cfg(feature = "test-hooks")] t91: vec![0u64; nw], #[cfg(feature = "test-hooks")] t93: vec![0u64; nw], #[cfg(feature = "test-hooks")] t94: vec![0u64; nw], #[cfg(feature = "test-hooks")] t95: vec![0u64; nw], #[cfg(feature = "test-hooks")] t96: vec![0u64; nw], #[cfg(feature = "test-hooks")] t97: vec![0u64; nw], #[cfg(feature = "test-hooks")] t98: vec![0u64; nw], #[cfg(feature = "test-hooks")] t100: vec![0u64; nw], #[cfg(feature = "test-hooks")] t103: vec![0u64; nw], #[cfg(feature = "test-hooks")] t101: vec![0u64; nw], #[cfg(feature = "test-hooks")] t104: vec![0u64; nw], #[cfg(feature = "test-hooks")] t106: vec![0u64; nw], #[cfg(feature = "test-hooks")] t105: vec![0u64; nw], #[cfg(feature = "test-hooks")] t107: vec![0u64; nw], #[cfg(feature = "test-hooks")] t108: vec![0u64; nw], #[cfg(feature = "test-hooks")] t110: vec![0u64; nw], #[cfg(feature = "test-hooks")] t112: vec![0u64; nw], #[cfg(feature = "test-hooks")] t115: vec![0u64; nw], #[cfg(feature = "test-hooks")] t116: vec![0u64; nw], #[cfg(feature = "test-hooks")] t118: vec![0u64; nw], #[cfg(feature = "test-hooks")] t119: vec![0u64; nw], #[cfg(feature = "test-hooks")] t120: vec![0u64; nw], #[cfg(feature = "test-hooks")] t140: vec![0u64; nw], #[cfg(feature = "test-hooks")] t141: vec![0u64; nw], #[cfg(feature = "test-hooks")] t144: vec![0u64; nw], #[cfg(feature = "test-hooks")] t146: vec![0u64; nw], #[cfg(feature = "test-hooks")] t142: vec![0u64; nw], #[cfg(feature = "test-hooks")] t147: vec![0u64; nw], #[cfg(feature = "test-hooks")] t151: vec![0u64; nw], #[cfg(feature = "test-hooks")] t149: vec![0u64; nw], #[cfg(feature = "test-hooks")] t154: vec![0u64; nw], #[cfg(feature = "test-hooks")] t155: vec![0u64; nw], #[cfg(feature = "test-hooks")] t156: vec![0u64; nw], #[cfg(feature = "test-hooks")] t157: vec![0u64; nw], #[cfg(feature = "test-hooks")] t158: vec![0u64; nw], #[cfg(feature = "test-hooks")] t159: vec![0u64; nw], #[cfg(feature = "test-hooks")] t160: vec![0u64; nw], #[cfg(feature = "test-hooks")] t162: vec![0u64; nw], #[cfg(feature = "test-hooks")] t161: vec![0u64; nw], #[cfg(feature = "test-hooks")] t163: vec![0u64; nw], #[cfg(feature = "test-hooks")] t164: vec![0u64; nw], #[cfg(feature = "test-hooks")] t165: vec![0u64; nw], #[cfg(feature = "test-hooks")] t167: vec![0u64; nw], #[cfg(feature = "test-hooks")] t169: vec![0u64; nw], #[cfg(feature = "test-hooks")] t170: vec![0u64; nw], #[cfg(feature = "test-hooks")] t171: vec![0u64; nw], #[cfg(feature = "test-hooks")] t172: vec![0u64; nw], #[cfg(feature = "test-hooks")] t174: vec![0u64; nw], #[cfg(feature = "test-hooks")] t173: vec![0u64; nw], #[cfg(feature = "test-hooks")] t175: vec![0u64; nw], #[cfg(feature = "test-hooks")] t176: vec![0u64; nw], #[cfg(feature = "test-hooks")] t177: vec![0u64; nw], #[cfg(feature = "test-hooks")] t178: vec![0u64; nw], #[cfg(feature = "test-hooks")] t179: vec![0u64; nw], #[cfg(feature = "test-hooks")] t180: vec![0u64; nw], #[cfg(feature = "test-hooks")] t181: vec![0u64; nw], #[cfg(feature = "test-hooks")] t182: vec![0u64; nw], #[cfg(feature = "test-hooks")] t194: vec![0u64; nw], #[cfg(feature = "test-hooks")] t195: vec![0u64; nw], #[cfg(feature = "test-hooks")] t197: vec![0u64; nw], #[cfg(feature = "test-hooks")] t198: vec![0u64; nw], #[cfg(feature = "test-hooks")] t199: vec![0u64; nw], #[cfg(feature = "test-hooks")] t200: vec![0u64; nw], #[cfg(feature = "test-hooks")] t205: vec![0u64; nw], #[cfg(feature = "test-hooks")] t207: vec![0u64; nw], #[cfg(feature = "test-hooks")] t208: vec![0u64; nw], #[cfg(feature = "test-hooks")] t209: vec![0u64; nw], #[cfg(feature = "test-hooks")] t214: vec![0u64; nw], #[cfg(feature = "test-hooks")] t216: vec![0u64; nw], #[cfg(feature = "test-hooks")] t217: vec![0u64; nw], #[cfg(feature = "test-hooks")] t218: vec![0u64; nw], #[cfg(feature = "test-hooks")] t219: vec![0u64; nw], #[cfg(feature = "test-hooks")] t220: vec![0u64; nw], refused: Default::default() }
     }
 }
 
@@ -2416,13 +2404,11 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             if q < nw {
                 o.t55[q] = st.v_t55;
             }
-            st.p_t65 = st.v_t65;
             // empty
-            st.v_t65 = 0;
-            st.r_t65[q % RING] = st.v_t65;
+            let v_t65 = 0;
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t65[q] = st.v_t65;
+                o.t65[q] = v_t65;
             }
             // ((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))
             let v_t84 = st.v_m_word & st.v_m_digit & (!(st.v_t55 << 1 | st.p_t55 >> 63) & lv) & (!(st.v_t18 << 1 | st.p_t18 >> 63) & lv);
@@ -2433,8 +2419,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.p_t85 = st.v_t85;
             // ~(word | high)
             st.v_t85 = !(st.v_m_word | st.v_m_high) & lv;
+            #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.m[q][S1_T85] = st.v_t85;
+                o.t85[q] = st.v_t85;
             }
             st.p_t83 = st.v_t83;
             // fill(((word & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot)), ~(word | high))
@@ -2621,10 +2608,10 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             st.v_t153 = st.v_m_dollar & (!st.v_t2 & lv) & (!(st.v_m_esc_dollar << 1 | st.p_m_esc_dollar >> 63) & lv);
             st.r_t153[q % RING] = st.v_t153;
             // ~prev(dollar)
-            let v_t225 = !(st.v_m_dollar << 1 | st.p_m_dollar >> 63) & lv;
+            let v_t217 = !(st.v_m_dollar << 1 | st.p_m_dollar >> 63) & lv;
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t225[q] = v_t225;
+                o.t217[q] = v_t217;
             }
         }
         // The masks 1 block behind the classes.
@@ -3281,79 +3268,43 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
             if q < nw {
                 o.t200[q] = v_t200;
             }
-            let p_t209 = st.v_t209;
-            // ((dot & prev(empty)) & next(digit)) | empty
-            st.v_t209 = (st.p_m_dot & (st.p_t65 << 1 | st.r_t65[(q + RING - 1) % RING] >> 63) & lv & (st.p_m_digit >> 1 | st.v_m_digit << 63) | 0);
-            // prev(((dot & prev(empty)) & next(digit)) | empty)
-            let v_t208 = (st.v_t209 << 1 | p_t209 >> 63) & lv;
-            st.p_t207 = st.v_t207;
-            // fill(prev(((dot & prev(empty)) & next(digit)) | empty), ~decd)
-            st.v_t207 = {
-                    let (s, e) = (v_t208, st.p_t24);
-                    let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(st.c_t207) ^ s ^ b;
-                    let f = s | (!e & into);
-                    st.c_t207 = f >> 63;
-                    f & lv
-                };
-            let p_t213 = st.v_t213;
-            // empty | fill(prev(((dot & prev(empty)) & next(digit)) | empty), ~decd)
-            st.v_t213 = (0 | st.v_t207);
-            let p_t212 = st.v_t212;
-            // (e_letter & prev(t213)) & (next(digit) | (next(sign) & next(digit, 2)))
-            st.v_t212 = st.p_m_e_letter & (st.v_t213 << 1 | p_t213 >> 63) & lv & ((st.p_m_digit >> 1 | st.v_m_digit << 63) | (st.p_m_sign >> 1 | st.v_m_sign << 63) & (st.p_m_digit >> 2 | st.v_m_digit << 62));
-            let p_t214 = st.v_t214;
-            // sign & prev(t212)
-            st.v_t214 = st.p_m_sign & (st.v_t212 << 1 | p_t212 >> 63) & lv;
-            // (prev(t212) & digit) | prev(t214)
-            let v_t211 = ((st.v_t212 << 1 | p_t212 >> 63) & lv & st.p_m_digit | (st.v_t214 << 1 | p_t214 >> 63) & lv);
-            st.p_t210 = st.v_t210;
-            // fill(t211, o.t24)
-            st.v_t210 = {
-                    let (s, e) = (v_t211, st.p_t24);
-                    let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(st.c_t210) ^ s ^ b;
-                    let f = s | (!e & into);
-                    st.c_t210 = f >> 63;
-                    f & lv
-                };
             // (zero & next(b_letter)) & ~prev(dot & ~prev(dot))
-            let v_t216 = st.p_m_zero & (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv);
+            let v_t208 = st.p_m_zero & (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv);
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t216[q] = v_t216;
+                o.t208[q] = v_t208;
             }
-            let p_t218 = st.v_t218;
+            let p_t210 = st.v_t210;
             // (((((word | high) & digit) & ~prev(word | high)) & ~prev(dot & ~prev(dot))) & zero) & next(b_letter)
-            st.v_t218 = (st.p_m_word | st.p_m_high) & st.p_m_digit & (!(st.p_t55 << 1 | st.r_t55[(q + RING - 1) % RING] >> 63) & lv) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv) & st.p_m_zero & (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63);
-            // prev(t218, 2) & bind
-            let v_t220 = (st.v_t218 << 2 | p_t218 >> 62) & lv & st.p_m_bind;
-            // fill(t220, o.t22)
-            let v_t219 = {
-                    let (s, e) = (v_t220, st.p_t22);
+            st.v_t210 = (st.p_m_word | st.p_m_high) & st.p_m_digit & (!(st.p_t55 << 1 | st.r_t55[(q + RING - 1) % RING] >> 63) & lv) & (!(st.p_t18 << 1 | st.r_t18[(q + RING - 1) % RING] >> 63) & lv) & st.p_m_zero & (st.p_m_b_letter >> 1 | st.v_m_b_letter << 63);
+            // prev(t210, 2) & bind
+            let v_t212 = (st.v_t210 << 2 | p_t210 >> 62) & lv & st.p_m_bind;
+            // fill(t212, o.t22)
+            let v_t211 = {
+                    let (s, e) = (v_t212, st.p_t22);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(st.c_t219) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(st.c_t211) ^ s ^ b;
                     let f = s | (!e & into);
-                    st.c_t219 = f >> 63;
+                    st.c_t211 = f >> 63;
                     f & lv
                 };
-            // prev(t218) | t219
-            let v_t217 = ((st.v_t218 << 1 | p_t218 >> 63) & lv | v_t219);
+            // prev(t210) | t211
+            let v_t209 = ((st.v_t210 << 1 | p_t210 >> 63) & lv | v_t211);
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t217[q] = v_t217;
+                o.t209[q] = v_t209;
             }
             // dollar & next(dq)
-            let v_t226 = st.p_m_dollar & (st.p_m_dq >> 1 | st.v_m_dq << 63);
+            let v_t218 = st.p_m_dollar & (st.p_m_dq >> 1 | st.v_m_dq << 63);
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t226[q] = v_t226;
+                o.t218[q] = v_t218;
             }
             // (punct & ~(prev(two_start) | prev(two_start_three, 2))) & ~(((dot & next(digit)) & ~prev(word)) & ~prev(dot))
-            let v_t227 = st.p_m_punct & (!((st.v_m_two_start << 1 | st.p_m_two_start >> 63) & lv | (st.v_m_two_start_three << 2 | st.p_m_two_start_three >> 62) & lv) & lv) & (!(st.p_m_dot & (st.p_m_digit >> 1 | st.v_m_digit << 63) & (!(st.p_m_word << 1 | st.r_m_word[(q + RING - 1) % RING] >> 63) & lv) & (!(st.p_m_dot << 1 | st.r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv);
+            let v_t219 = st.p_m_punct & (!((st.v_m_two_start << 1 | st.p_m_two_start >> 63) & lv | (st.v_m_two_start_three << 2 | st.p_m_two_start_three >> 62) & lv) & lv) & (!(st.p_m_dot & (st.p_m_digit >> 1 | st.v_m_digit << 63) & (!(st.p_m_word << 1 | st.r_m_word[(q + RING - 1) % RING] >> 63) & lv) & (!(st.p_m_dot << 1 | st.r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv);
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t227[q] = v_t227;
+                o.t219[q] = v_t219;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -3450,8 +3401,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
                 o.t177[q] = v_t177;
             }
             let p_t196 = st.v_t196;
-            // (((t73 & ~next(t72)) & t58) | (o.t65 & ~next(o.t65))) | (o.t65 & ~next(o.t65))
-            st.v_t196 = ((((st.p_t58 | st.p_t60) | st.p_t70) & (!(st.p_t72 >> 1 | st.v_t72 << 63) & lv) & st.p_t58 | 0 & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv)) | 0 & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv));
+            // (((t73 & ~next(t72)) & t58) | (o.t65 & ~next(t74))) | (o.t65 & ~next(t77))
+            st.v_t196 = ((((st.p_t58 | st.p_t60) | st.p_t70) & (!(st.p_t72 >> 1 | st.v_t72 << 63) & lv) & st.p_t58 | 0 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv)) | 0 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv));
             // (word & digit) & prev(t196)
             let v_t195 = st.r_m_word[q % RING] & st.r_m_digit[q % RING] & (st.v_t196 << 1 | p_t196 >> 63) & lv;
             #[cfg(feature = "test-hooks")]
@@ -3465,40 +3416,40 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], st: &mut Stage1Run, o: &
                 o.t197[q] = v_t197;
             }
             let p_t206 = st.v_t206;
-            // ((((t213 | t210) & ~next(o.t65)) & o.t65) | (t74 & ~next(t74))) | (o.t65 & ~next(o.t65))
-            st.v_t206 = ((((0 | st.p_t207) | st.p_t210) & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv) & 0 | st.p_t74 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv)) | 0 & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv));
+            // (((((o.t65 | o.t65) | o.t65) & ~next(t72)) & o.t65) | (t74 & ~next(t74))) | (o.t65 & ~next(t77))
+            st.v_t206 = ((((0 | 0) | 0) & (!(st.p_t72 >> 1 | st.v_t72 << 63) & lv) & 0 | st.p_t74 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv)) | 0 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv));
             // (word & digit) & prev(t206)
             let v_t205 = st.r_m_word[q % RING] & st.r_m_digit[q % RING] & (st.v_t206 << 1 | p_t206 >> 63) & lv;
             #[cfg(feature = "test-hooks")]
             if q < nw {
                 o.t205[q] = v_t205;
             }
-            // ((t207 | t210) | (t74 & ~next(t74))) & underscore
-            let v_t215 = ((st.p_t207 | st.p_t210) | st.p_t74 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv)) & st.r_m_underscore[q % RING];
+            // (t74 & ~next(t74)) & underscore
+            let v_t207 = st.p_t74 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv) & st.r_m_underscore[q % RING];
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t215[q] = v_t215;
+                o.t207[q] = v_t207;
             }
-            let p_t223 = st.v_t223;
-            // ((((t213 | t210) & ~next(o.t65)) & o.t65) | (o.t65 & ~next(o.t65))) | (t77 & ~next(t77))
-            st.v_t223 = ((((0 | st.p_t207) | st.p_t210) & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv) & 0 | 0 & (!(st.r_t65[q % RING] >> 1 | st.r_t65[(q + 1) % RING] << 63) & lv)) | st.p_t77 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv));
-            // (word & digit) & prev(t223)
-            let v_t222 = st.r_m_word[q % RING] & st.r_m_digit[q % RING] & (st.v_t223 << 1 | p_t223 >> 63) & lv;
+            let p_t215 = st.v_t215;
+            // (((((o.t65 | o.t65) | o.t65) & ~next(t72)) & o.t65) | (o.t65 & ~next(t74))) | (t77 & ~next(t77))
+            st.v_t215 = ((((0 | 0) | 0) & (!(st.p_t72 >> 1 | st.v_t72 << 63) & lv) & 0 | 0 & (!(st.p_t74 >> 1 | st.v_t74 << 63) & lv)) | st.p_t77 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv));
+            // (word & digit) & prev(t215)
+            let v_t214 = st.r_m_word[q % RING] & st.r_m_digit[q % RING] & (st.v_t215 << 1 | p_t215 >> 63) & lv;
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t222[q] = v_t222;
+                o.t214[q] = v_t214;
             }
-            // ((t207 | t210) | (t77 & ~next(t77))) & underscore
-            let v_t224 = ((st.p_t207 | st.p_t210) | st.p_t77 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv)) & st.r_m_underscore[q % RING];
+            // (t77 & ~next(t77)) & underscore
+            let v_t216 = st.p_t77 & (!(st.p_t77 >> 1 | st.v_t77 << 63) & lv) & st.r_m_underscore[q % RING];
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t224[q] = v_t224;
+                o.t216[q] = v_t216;
             }
             // two_start_three & next(two_start_two, 2)
-            let v_t228 = st.p_m_two_start_three & (st.p_t50 >> 2 | st.v_t50 << 62);
+            let v_t220 = st.p_m_two_start_three & (st.p_t50 >> 2 | st.v_t50 << 62);
             #[cfg(feature = "test-hooks")]
             if q < nw {
-                o.t228[q] = v_t228;
+                o.t220[q] = v_t220;
             }
         }
         st.lv_1 = lv_0;
@@ -3586,7 +3537,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         w
     };
     #[cfg(feature = "test-hooks")]
-    let (m_t_brace, m_code, m_nb, m_number, m_name_more, m_p_start, t114, t204, t221) = {
+    let (m_t_brace, m_code, m_nb, t30, m_number, m_name_more, m_p_start, t114, t204, t213) = {
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_line = vec![0u64; nw];
@@ -4230,6 +4181,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let m_cmt_on_lf: Vec<u64> = (0..nw).map(|i| m_r_first[i] & s1w.m_slash[i] & prev(&t35, i, 1)).collect();
         // mask as_kw = (kw_start & (text("as") | text("is"))) & ~next(w, 2)
         let m_as_kw: Vec<u64> = (0..nw).map(|i| m_kw_start[i] & (s1w.t37[i] | s1w.t38[i]) & (!next(&m_w, i, 2) & lv[i])).collect();
+        // mask as_end = prev(as_kw)
+        let m_as_end: Vec<u64> = (0..nw).map(|i| prev(&m_as_kw, i, 1)).collect();
         // mask as_run = fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))
         let t39: Vec<u64> = (0..nw).map(|i| prev(&m_as_kw, i, 2)).collect();
         let t40: Vec<u64> = (0..nw).map(|i| !(m_code[i] & ((((((s1w.m_word[i] | s1w.m_high[i]) | s1w.m_dot[i]) | s1w.t41[i]) | s1w.t42[i]) | s1w.t43[i]) | s1w.t44[i])) & lv[i]).collect();
@@ -4283,8 +4236,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let t86 = fill(&t87, &s1w.t65);
         let t114: Vec<u64> = (0..nw).map(|i| m_code[i] & s1w.m_high[i] & prev(&m_number, i, 1)).collect();
         let t204: Vec<u64> = (0..nw).map(|i| (prev(&m_hex_at, i, 1) | m_hx[i])).collect();
-        let t221: Vec<u64> = (0..nw).map(|i| (prev(&m_bin_at, i, 1) | m_bx[i])).collect();
-        (m_t_brace, m_code, m_nb, m_number, m_name_more, m_p_start, t114, t204, t221)
+        let t213: Vec<u64> = (0..nw).map(|i| (prev(&m_bin_at, i, 1) | m_bx[i])).collect();
+        (m_t_brace, m_code, m_nb, t30, m_number, m_name_more, m_p_start, t114, t204, t213)
     };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
@@ -4339,13 +4292,17 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let k_t108 = unsafe { w_t108::<S>(src, n, base as isize, &mut 0) };
         let k_t55 = unsafe { w_t55::<S>(src, n, base as isize, &mut 0) };
         let k_m_high = unsafe { w_m_high::<S>(src, n, base as isize, &mut 0) };
-        let k_m_dot = unsafe { w_m_dot::<S>(src, n, base as isize, &mut 0) };
-        let k_t226 = unsafe { w_t226::<S>(src, n, base as isize, &mut 0) };
+        let k_t218 = unsafe { w_t218::<S>(src, n, base as isize, &mut 0) };
         let k_t97 = unsafe { w_t97::<S>(src, n, base as isize, &mut 0) };
         let k_m_bt = unsafe { w_m_bt::<S>(src, n, base as isize, &mut 0) };
-        // The terms a run read forward ended in (`forward_run`), at its token's last byte.
+        // The terms a run read forward ended in (`forward_run`), at its token's last byte, and those it read after its first.
         #[allow(unused_assignments)]
         let mut end_last = 0u32;
+        #[allow(unused_assignments)]
+        let mut end_seen = 0u32;
+        // The fills a run read forward kept as it read (`run_fill`), at its token's last byte.
+        #[allow(unused_assignments)]
+        let mut end_fills = 0u32;
         let mut firsts = !unsafe { w_m_ws::<S>(src, n, (b * 64) as isize, &mut 0) } & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -4354,8 +4311,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         }
         // Whether `s1.m_lf` holds in the gap before the token.
         let gap_m_lf = s > at && s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_lf, at, s - 1, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) })).is_some();
-        // Whether `s1.t0` holds in the gap before the token.
-        let gap_t0 = s > at && s1_past(src, &mut st1, &mut s1, wfirst_in(n, at, s - 1, |p: isize, esc: &mut u64| unsafe { l_t0::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some();
+        // The last byte of the gap before the token where `s1.t90` holds.
+        let gap_last_t90 = if s > at { wlast_in(at, s - 1, |p: isize, esc: &mut u64| unsafe { w_t90::<S>(src, n, p, esc) }) } else { None };
         // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
         let c = src[s];
         let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
@@ -4626,9 +4583,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     // `number` at the byte before the token.
                     let xs_5 = s == at && xl_5;
                     // `fill(num_start, ~w)`: at the byte before the token.
-                    let fs_7 = fill_7 && (s == at || !gap_t0);
+                    let fs_7 = fill_7 && s == at;
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -4649,9 +4606,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     xl_3 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_code, l), "assume in simple_identifier: `code` at the token's last byte {l}"); x };
                     xl_5 = { let x = fs_7; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_number, l), "assume in simple_identifier: `number` at the token's last byte {l}"); x };
-                    fill_7 = if l > s { (fs_7 || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some()) } else { fs_7 };
+                    fill_7 = { let f = fs_7; #[cfg(feature = "test-hooks")] assert_eq!(f, bit(&t30, l), "assume in simple_identifier: `fill(num_start, ~w)` at the token's last byte {l}"); f };
                     fill_10 = false;
-                    fill_11 = if l > s { (xs_11 || fs_11 || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s, l - 1, |p: isize, esc: &mut u64| unsafe { l_t91::<S>(src, n, p, esc, upto(p, l - 1)) })).is_some()) } else { (xs_11 || fs_11) };
+                    fill_11 = (xs_11 || fs_11);
                     xl_11 = if l > s { ((l >= 1 && ((((l - 1 < n && matches!(src[l - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((l - 1) < n && !((l - 1) >= 1 && ((((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) - 1) < n && matches!(src[((l - 1) - 1)], 0x80..=0xff)))))) && (((l - 1) + 2 <= n && src[(l - 1)] == 0x61 && src[(l - 1) + 1] == 0x73) || ((l - 1) + 2 <= n && src[(l - 1)] == 0x69 && src[(l - 1) + 1] == 0x73))) && ((l - 1) < n && !((((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((l - 1) + 2) < n && matches!(src[((l - 1) + 2)], 0x80..=0xff))))))) } else { ((s >= 1 && ((((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && ((s - 1) < n && !((s - 1) >= 1 && ((((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) - 1) < n && matches!(src[((s - 1) - 1)], 0x80..=0xff)))))) && (((s - 1) + 2 <= n && src[(s - 1)] == 0x61 && src[(s - 1) + 1] == 0x73) || ((s - 1) + 2 <= n && src[(s - 1)] == 0x69 && src[(s - 1) + 1] == 0x73))) && ((s - 1) < n && !((((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((s - 1) + 2) < n && matches!(src[((s - 1) + 2)], 0x80..=0xff))))))) };
                     fill_12 = ((xs_11 || fs_11) && fs_12);
                     fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
@@ -4688,10 +4645,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 3 => {
                     // `integer_literal`: run nb, read as ((((((t183 | ((dot & prev(t183)) & next(digit))) | (((dot & next(digit)) & ~prev(s1.t55)) & ~prev(dot))) | t185) | t189) | t192) | t190) | (f_letter & prev(t193)) (assumed)
-                    // `fill(num_start, ~w)`: at the byte before the token.
-                    let fs_7 = fill_7 && (s == at || !gap_t0);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -4701,6 +4656,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a run of `decd`.
@@ -4760,6 +4717,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     };
                     // Not proved: a test build checks it against the rule over the file.
@@ -4768,6 +4727,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
+        fills |= 1 << 0;
         while q < n {
             let mut now = 0u32;
             // Term 0: a run of `decd`.
@@ -4805,6 +4767,19 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             if now == 0 && q > s {
                 break;
             }
+            if q > s && matches!(src[q], 0x00..=0x1f | b'!'..=b'-' | b'/' | b':' | b';' | b'=' | b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f) {
+                seen |= 1 << 0;
+            }
+            if q > s && src[q] == b'.' {
+                seen |= 1 << 1;
+            }
+            if q > s {
+                if ((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) {
+                    fills |= 1 << 0;
+                } else if (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff)))) {
+                    fills &= !(1 << 0);
+                }
+            }
             // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
             if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
                 last = now;
@@ -4827,6 +4802,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     }, "assume in integer_literal at byte {s}");
                     let l = l.max(s);
@@ -4838,11 +4815,11 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     xl_3 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_code, l), "assume in integer_literal: `code` at the token's last byte {l}"); x };
                     xl_5 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_number, l), "assume in integer_literal: `number` at the token's last byte {l}"); x };
-                    fill_7 = if l > s { match last_in(&Col { m: &s1.m, k: S1_T85 }, s + 1, l) { Some(q) => s1_past(src, &mut st1, &mut s1, wfirst_in(n, q, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some(), None => (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7 || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some()) } } else { (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7) };
+                    fill_7 = if l > s { (end_fills >> 0 & 1 == 1) } else { true };
                     fill_10 = false;
-                    fill_11 = if l > s { (!s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t93::<S>(src, n, p, esc, upto(p, l)) })).is_some() && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
+                    fill_11 = if l > s { (!(end_seen >> 0 & 1 == 1) && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
                     xl_11 = false;
-                    fill_12 = (fill_11 && (((xs_11 || fs_11) && fs_12) || s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_dot, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) })).is_some()));
+                    fill_12 = (fill_11 && (((xs_11 || fs_11) && fs_12) || (end_seen >> 1 & 1 == 1)));
                     fill_13 = (fill_12 && (xs_11 || fs_11) && fs_12 && fs_13);
                     fill_14 = false;
                     // a `0x` or `0b` with no digit
@@ -4875,7 +4852,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 4 => {
                     // `real_literal`: run nb, read as ((((((t183 | ((dot & prev(t183)) & next(digit))) | s1.t198) | t185) | t189) | t192) | t190) | (f_letter & prev(t193)) (assumed)
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -4885,6 +4862,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a run of `decd`.
@@ -4944,6 +4923,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     };
                     // Not proved: a test build checks it against the rule over the file.
@@ -4952,6 +4933,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a run of `decd`.
@@ -4989,6 +4972,19 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             if now == 0 && q > s {
                 break;
             }
+            if q > s && matches!(src[q], 0x00..=0x1f | b'!'..=b'-' | b'/' | b':' | b';' | b'=' | b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f) {
+                seen |= 1 << 0;
+            }
+            if q > s && src[q] == b'.' {
+                seen |= 1 << 1;
+            }
+            if q > s {
+                if ((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) {
+                    fills |= 1 << 0;
+                } else if (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff)))) {
+                    fills &= !(1 << 0);
+                }
+            }
             // `decd`'s run: term 0 alone holds over it (the lean lexer's `class_end`).
             if now == 1 << 0 && (q < n && matches!(src[q], b'0'..=b'9' | b'_')) {
                 last = now;
@@ -5011,6 +5007,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     }, "assume in real_literal at byte {s}");
                     let l = l.max(s);
@@ -5019,11 +5017,11 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     xl_3 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_code, l), "assume in real_literal: `code` at the token's last byte {l}"); x };
                     xl_5 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_number, l), "assume in real_literal: `number` at the token's last byte {l}"); x };
-                    fill_7 = if l > s { match last_in(&Col { m: &s1.m, k: S1_T85 }, s + 1, l) { Some(q) => s1_past(src, &mut st1, &mut s1, wfirst_in(n, q, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some(), None => s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some() } } else { false };
+                    fill_7 = if l > s { (end_fills >> 0 & 1 == 1) } else { false };
                     fill_10 = false;
-                    fill_11 = if l > s { (!s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t93::<S>(src, n, p, esc, upto(p, l)) })).is_some() && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
+                    fill_11 = if l > s { (!(end_seen >> 0 & 1 == 1) && (xs_11 || fs_11)) } else { (xs_11 || fs_11) };
                     xl_11 = false;
-                    fill_12 = (fill_11 && (xs_11 || fs_11 || s1_past(src, &mut st1, &mut s1, bfirst_in(n, base, k_m_dot, s + 1, l, |p: isize, esc: &mut u64| unsafe { w_m_dot::<S>(src, n, p, esc) })).is_some()));
+                    fill_12 = (fill_11 && (xs_11 || fs_11 || (end_seen >> 1 & 1 == 1)));
                     fill_13 = (fill_12 && (xs_11 || fs_11) && fs_13);
                     fill_14 = false;
                     // a `0x` or `0b` with no digit
@@ -5055,10 +5053,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
 ,
                 5 => {
                     // `hex_literal`: run prev(hex_at) | hx, read as prev(t201) | t202 (assumed)
-                    // `fill(num_start, ~w)`: at the byte before the token.
-                    let fs_7 = fill_7 && (s == at || !gap_t0);
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -5068,6 +5064,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a byte.
@@ -5091,6 +5089,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     };
                     // Not proved: a test build checks it against the rule over the file.
@@ -5099,6 +5099,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a byte.
@@ -5122,6 +5124,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     }, "assume in hex_literal at byte {s}");
                     let l = l.max(s);
@@ -5130,7 +5134,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     xl_3 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_code, l), "assume in hex_literal: `code` at the token's last byte {l}"); x };
                     xl_5 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_number, l), "assume in hex_literal: `number` at the token's last byte {l}"); x };
-                    fill_7 = if l > s { (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7 || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some()) } else { (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7) };
+                    fill_7 = true;
                     fill_10 = false;
                     fill_11 = (xs_11 || fs_11);
                     xl_11 = false;
@@ -5160,11 +5164,9 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 }
 ,
                 6 => {
-                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t218) | t219 (assumed)
-                    // `fill(num_start, ~w)`: at the byte before the token.
-                    let fs_7 = fill_7 && (s == at || !gap_t0);
+                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t210) | t211 (assumed)
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -5174,6 +5176,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a byte.
@@ -5197,14 +5201,18 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     };
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
-                    assert_eq!(run_last(&t221, s), {
+                    assert_eq!(run_last(&t213, s), {
         // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).
         let mut q = s;
         let mut last = 0u32;
+        let mut seen = 0u32;
+        let mut fills = 0u32;
         while q < n {
             let mut now = 0u32;
             // Term 0: a byte.
@@ -5228,6 +5236,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             q += 1;
         }
         end_last = last;
+        end_seen = seen;
+        end_fills = fills;
         q.saturating_sub(1)
     }, "assume in bin_literal at byte {s}");
                     let l = l.max(s);
@@ -5236,7 +5246,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
                     xl_3 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_code, l), "assume in bin_literal: `code` at the token's last byte {l}"); x };
                     xl_5 = { let x = true; #[cfg(feature = "test-hooks")] assert_eq!(x, bit(&m_number, l), "assume in bin_literal: `number` at the token's last byte {l}"); x };
-                    fill_7 = if l > s { (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7 || s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t84::<S>(src, n, p, esc, upto(p, l)) })).is_some()) } else { (((((matches!(src[s], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') && matches!(src[s], b'0'..=b'9')) && !(s >= 1 && ((s - 1 < n && matches!(src[s - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (s - 1 < n && matches!(src[s - 1], 0x80..=0xff))))) && !(s >= 1 && ((s - 1 < n && (src[s - 1] == b'.')) && ((s - 1) < n && !((s - 1) >= 1 && (((s - 1) - 1) < n && (src[((s - 1) - 1)] == b'.')))))))) || fs_7) };
+                    fill_7 = true;
                     fill_10 = false;
                     fill_11 = (xs_11 || fs_11);
                     xl_11 = false;
@@ -5829,13 +5839,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 15 => {
                     // `string_prefix`: run dollar & next(dq)
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
                     // `fill(as_dot & text("<"), ((~as_dot | text("?")) | text("<")) | (gt & prev(gt)))`: at the byte before the token.
                     let fs_13 = fill_13 && fs_12;
-                    let l = s1_past(src, &mut st1, &mut s1, brun_last(n, base, k_t226, s, |p: isize, esc: &mut u64| unsafe { w_t226::<S>(src, n, p, esc) }));
+                    let l = s1_past(src, &mut st1, &mut s1, brun_last(n, base, k_t218, s, |p: isize, esc: &mut u64| unsafe { w_t218::<S>(src, n, p, esc) }));
                     let l = l.max(s);
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
@@ -5948,7 +5958,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 18 => {
                     // `punct`: pair
                     // `fill(prev(as_kw, 2), ~(code & ((((((word | high) | dot) | text(" ")) | text("?")) | text("<")) | text(">"))))`: at the byte before the token.
-                    let fs_11 = if s > at { (xl_11 || (fill_11 && !((at < n && !(at + 1 <= n && src[at] == 0x20))))) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, at + 1, s - 1, |p: isize, esc: &mut u64| unsafe { l_t90::<S>(src, n, p, esc, upto(p, s - 1)) })).is_some() } else { fill_11 };
+                    let fs_11 = if s > at { match gap_last_t90 { None => xl_11 || fill_11, Some(q) => q == at && xl_11 } } else { fill_11 };
                     let xs_11 = s == at && xl_11;
                     // `fill(as_run & dot, ~as_run)`: at the byte before the token.
                     let fs_12 = fill_12 && fs_11;
@@ -5973,7 +5983,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                     fill_11 = if l > s { (!((l > s && !matches!(src[s + 1], b'.' | b'>')) || (l >= s + 2 && src[s + 2] == b'=')) && (xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11))) } else { (xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) };
                     xl_11 = false;
                     fill_12 = (fill_11 && (((xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) && (src[s] == b'.' || fs_12)) || (l > s && src[s + 1] == b'.')));
-                    fill_13 = ((fill_12 && (((xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) && (src[s] == b'.' || fs_12) && (src[s] == b'<' || (fs_13 && !(((src[s] == 0x3f || src[s] == 0x3c) || ((src[s] == b'>') && (s >= 1 && (s - 1 < n && (src[s - 1] == b'>'))))))))) || (l >= s + 2 && src[s + 2] == b'<')) && !s1_past(src, &mut st1, &mut s1, wfirst_in(n, s + 1, l, |p: isize, esc: &mut u64| unsafe { l_t94::<S>(src, n, p, esc, upto(p, l)) })).is_some()) || (fill_12 && l >= s + 2 && src[s + 2] == b'<'));
+                    fill_13 = ((fill_12 && (((xs_11 || (matches!(src[s], b'.' | b'<' | b'>' | b'?') && fs_11)) && (src[s] == b'.' || fs_12) && (src[s] == b'<' || (fs_13 && !(((src[s] == 0x3f || src[s] == 0x3c) || ((src[s] == b'>') && (s >= 1 && (s - 1 < n && (src[s - 1] == b'>'))))))))) || (l >= s + 2 && src[s + 2] == b'<')) && !(l >= s + 2 && ((((s + 2 + 1 <= n && src[s + 2] == 0x3f) || (s + 2 + 1 <= n && src[s + 2] == 0x3c)) || ((s + 2 < n && (src[s + 2] == b'>')) && (s + 2 >= 1 && (s + 2 - 1 < n && (src[s + 2 - 1] == b'>')))))))) || (fill_12 && l >= s + 2 && src[s + 2] == b'<'));
                     fill_14 = false;
                     // a `$` outside a string
                     if (((src[s] == b'$') && !at_pre_at(src, n, s))) {
@@ -7839,24 +7849,14 @@ unsafe fn w_m_lf<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     unsafe { cls_lf::<S>(src, n, p) }
 }
 
-/// `t0`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+/// `t90`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline(always)]
 #[allow(unused_variables)]
-unsafe fn w_t0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (!0u64 & valid(n, p))
-}
-
-/// `t0`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t0<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (live & (!0u64 & valid(n, p)))
+unsafe fn w_t90<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    (!(unsafe { wbyte::<S>(src, n, p, 0x20) }) & valid(n, p))
 }
 
 /// Class `slash`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -7933,26 +7933,6 @@ unsafe fn w_t108<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     ((unsafe { cls_slash::<S>(src, n, p) } & (unsafe { cls_star::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a)))) & ((unsafe { cls_slash::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2f)) << 1) & (unsafe { cls_star::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2a)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2a)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2a)) << 2)))
 }
 
-/// `t90`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t90<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (!(unsafe { wbyte::<S>(src, n, p, 0x20) }) & valid(n, p))
-}
-
-/// `t90`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t90<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (live & (!(unsafe { wbyte::<S>(src, n, p, 0x20) }) & valid(n, p)))
-}
-
 /// `t55`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 ///
 /// # Safety
@@ -7961,70 +7941,6 @@ unsafe fn l_t90<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
 #[allow(unused_variables)]
 unsafe fn w_t55<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     (unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) })
-}
-
-/// Class `digit`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) };
-    padded(b, q, p)
-}
-
-/// Class `dot`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x2e) };
-    padded(b, q, p)
-}
-
-/// `t84`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t84<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { cls_word::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p)))
-}
-
-/// `t84`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t84<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    ((((live & unsafe { cls_word::<S>(src, n, p) }) & unsafe { cls_digit::<S>(src, n, p) }) & (!((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & valid(n, p))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e))) & (!(unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & valid(n, (p - 1)))) & valid(n, p)))
-}
-
-/// `t91`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t91<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & ((unsafe { wbyte::<S>(src, n, (p + -1), 0x61) } & unsafe { wbyte::<S>(src, n, p, 0x73) }) | (unsafe { wbyte::<S>(src, n, (p + -1), 0x69) } & unsafe { wbyte::<S>(src, n, p, 0x73) }))) & (!((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p - 1))))
-}
-
-/// `t91`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t91<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    { let a = live; if a == 0 { 0 } else { a & ((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & ((unsafe { wbyte::<S>(src, n, (p + -1), 0x61) } & unsafe { wbyte::<S>(src, n, p, 0x73) }) | (unsafe { wbyte::<S>(src, n, (p + -1), 0x69) } & unsafe { wbyte::<S>(src, n, p, 0x73) }))) & (!((unsafe { cls_word::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 63) | (unsafe { cls_high::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x80..=0xff)) << 63)) & valid(n, (p - 1)))) } }
 }
 
 /// `m_high`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
@@ -8447,6 +8363,30 @@ unsafe fn l_t107<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
     { let a = (live & unsafe { cls_high::<S>(src, n, p) }); if a == 0 { 0 } else { a & (!unsafe { d_uni::<S>(src, n, p) } & valid(n, p)) } }
 }
 
+/// Class `digit`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) };
+    padded(b, q, p)
+}
+
+/// Class `dot`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2e) };
+    padded(b, q, p)
+}
+
 /// Class `zero`'s bits in the 64 bytes from `p`: none past the file or before it.
 ///
 /// # Safety
@@ -8639,36 +8579,6 @@ unsafe fn w_t194<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc:
 #[allow(unused_variables)]
 unsafe fn l_t194<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
     ((({ let a = (live & unsafe { cls_dot::<S>(src, n, p) }); if a == 0 { 0 } else { a & unsafe { wf_4::<S>(src, n, (p - 1)) } } } & (unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63)) | { let a = { let a = (live & unsafe { cls_e_letter::<S>(src, n, p) }); if a == 0 { 0 } else { a & (unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) } }; if a == 0 { 0 } else { a & ((unsafe { cls_digit::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 63) | ((unsafe { cls_sign::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x2b | 0x2d)) << 63) & (unsafe { cls_digit::<S>(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x30..=0x39)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x30..=0x39)) << 63))) } }) | { let a = (live & unsafe { cls_f_letter::<S>(src, n, p) }); if a == 0 { 0 } else { a & ((unsafe { wf_4::<S>(src, n, (p - 1)) } | unsafe { wf_5::<S>(src, n, (p - 1)) }) | unsafe { wf_6::<S>(src, n, (p - 1)) }) } })
-}
-
-/// `t93`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t93<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (!((((((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) | unsafe { cls_dot::<S>(src, n, p) }) | (unsafe { wbyte::<S>(src, n, p, 0x20) })) | (unsafe { wbyte::<S>(src, n, p, 0x3f) })) | (unsafe { wbyte::<S>(src, n, p, 0x3c) })) | (unsafe { wbyte::<S>(src, n, p, 0x3e) })) & valid(n, p))
-}
-
-/// `t93`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t93<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    { let a = live; if a == 0 { 0 } else { a & (!((((((unsafe { cls_word::<S>(src, n, p) } | unsafe { cls_high::<S>(src, n, p) }) | unsafe { cls_dot::<S>(src, n, p) }) | (unsafe { wbyte::<S>(src, n, p, 0x20) })) | (unsafe { wbyte::<S>(src, n, p, 0x3f) })) | (unsafe { wbyte::<S>(src, n, p, 0x3c) })) | (unsafe { wbyte::<S>(src, n, p, 0x3e) })) & valid(n, p)) } }
-}
-
-/// `m_dot`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    unsafe { cls_dot::<S>(src, n, p) }
 }
 
 /// Class `bind`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -8985,13 +8895,13 @@ unsafe fn wf_12<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u6
     { let (fs, fe) = (((((((((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & (unsafe { cls_digit::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30..=0x39)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)) << 1)) & (!((unsafe { cls_word::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 2) | (unsafe { cls_high::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x80..=0xff)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 2)) & valid(n, (p - 2)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & (!(unsafe { cls_dot::<S>(src, n, p) } << 4 | u64::from(p >= 4 && matches!(unsafe { *src.get_unchecked((p - 4) as usize) }, 0x2e)) | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) << 1 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 2 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 3) & valid(n, (p - 3)))) & valid(n, (p - 2)))) & (unsafe { cls_zero::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x30)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)) << 1)) & (unsafe { cls_b_letter::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x62 | 0x42)))) & unsafe { cls_bind::<S>(src, n, p) }), (!unsafe { cls_bind::<S>(src, n, p) } & valid(n, p))); let c = fill_back(p, |q: usize| ((q >= 2 && (((((((q - 2 < n && matches!(src[q - 2], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 2 < n && matches!(src[q - 2], 0x80..=0xff))) && (q - 2 < n && matches!(src[q - 2], b'0'..=b'9'))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (((q - 2) - 1) < n && matches!(src[((q - 2) - 1)], 0x80..=0xff)))))) && ((q - 2) < n && !((q - 2) >= 1 && ((((q - 2) - 1) < n && (src[((q - 2) - 1)] == b'.')) && (((q - 2) - 1) < n && !(((q - 2) - 1) >= 1 && ((((q - 2) - 1) - 1) < n && (src[(((q - 2) - 1) - 1)] == b'.')))))))) && (q - 2 < n && (src[q - 2] == b'0'))) && (((q - 2) + 1) < n && matches!(src[((q - 2) + 1)], b'b' | b'B')))) && (q < n && matches!(src[q], b'0' | b'1' | b'_'))), |q: usize| (q < n && !(q < n && matches!(src[q], b'0' | b'1' | b'_')))); let b = !fe | fs; let into = fs.wrapping_add(b).wrapping_add(c) ^ fs ^ b; (fs | (!fe & into)) & valid(n, p) }
 }
 
-/// `t217`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+/// `t209`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline(always)]
 #[allow(unused_variables)]
-unsafe fn w_t217<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+unsafe fn w_t209<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     ((((((((unsafe { cls_word::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f))) | (unsafe { cls_high::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)))) & (unsafe { cls_digit::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30..=0x39)))) & (!((unsafe { cls_word::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x61..=0x7a | 0x41..=0x5a | 0x30..=0x39 | 0x5f)) << 1) | (unsafe { cls_high::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x80..=0xff)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x80..=0xff)) << 1)) & valid(n, (p - 1)))) & (!((unsafe { cls_dot::<S>(src, n, p) } << 2 | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 1) & (!(unsafe { cls_dot::<S>(src, n, p) } << 3 | u64::from(p >= 3 && matches!(unsafe { *src.get_unchecked((p - 3) as usize) }, 0x2e)) | u64::from(p >= 2 && matches!(unsafe { *src.get_unchecked((p - 2) as usize) }, 0x2e)) << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x2e)) << 2) & valid(n, (p - 2)))) & valid(n, (p - 1)))) & (unsafe { cls_zero::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x30)))) & unsafe { cls_b_letter::<S>(src, n, p) }) | unsafe { wf_12::<S>(src, n, p) })
 }
 
@@ -9085,13 +8995,13 @@ unsafe fn l_t98<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: 
     ({ let a = (live & unsafe { cls_dollar::<S>(src, n, p) }); if a == 0 { 0 } else { a & unsafe { wf_0::<S>(src, n, p) } } } & ((unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) | (unsafe { cls_dollar::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x24)) << 63)))
 }
 
-/// `t226`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+/// `t218`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 ///
 /// # Safety
 /// The CPU runs `S`'s backend.
 #[inline(always)]
 #[allow(unused_variables)]
-unsafe fn w_t226<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+unsafe fn w_t218<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     (unsafe { cls_dollar::<S>(src, n, p) } & (unsafe { cls_dq::<S>(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63))
 }
 
@@ -9187,37 +9097,5 @@ unsafe fn cls_bt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u
 #[allow(unused_variables)]
 unsafe fn w_m_bt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     unsafe { cls_bt::<S>(src, n, p) }
-}
-
-/// Class `gt`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_gt<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x3e) };
-    padded(b, q, p)
-}
-
-/// `t94`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t94<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (((unsafe { wbyte::<S>(src, n, p, 0x3f) }) | (unsafe { wbyte::<S>(src, n, p, 0x3c) })) | (unsafe { cls_gt::<S>(src, n, p) } & (unsafe { cls_gt::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x3e)))))
-}
-
-/// `t94`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t94<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (((live & (unsafe { wbyte::<S>(src, n, p, 0x3f) })) | (live & (unsafe { wbyte::<S>(src, n, p, 0x3c) }))) | ((live & unsafe { cls_gt::<S>(src, n, p) }) & (unsafe { cls_gt::<S>(src, n, p) } << 1 | u64::from(p >= 1 && matches!(unsafe { *src.get_unchecked((p - 1) as usize) }, 0x3e)))))
 }
 
