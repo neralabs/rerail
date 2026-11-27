@@ -12,6 +12,9 @@
 //!   [`Chain`] (items and lists by index), [`Map`] and [`Stamped`] (hash tables, the latter emptied by a round),
 //!   [`Stack`] (its top on the machine stack, the rest spilled). Each is a `structure!` header the kernels share, its
 //!   parts reached by offsets, and a typed view; many lanes claim through `&self`, one owner grows through `&mut`.
+//! - Final forms, in an out block or a kept placement, shaped for reading: [`IntTable`] (integers in the fewest bits,
+//!   `IntCol`'s encodings, its encoder [`encode`]), [`Strings`], [`Sorted`], [`Csr`] and the floor's Bloom filter, each
+//!   settled exactly from a working form ([`Settle`]: `need`, then `settle` into a claim of exactly that).
 //! - [`rel`]: references relative to their own field ([`Rel`], [`RelSpan`], [`BitSpan`]), as the floor's `refs::Ptr`
 //!   and MLDB's `MappedPtr` are: a structure is correct at any address, and a method reaches its parts from `&self`.
 //!
@@ -24,18 +27,23 @@
 //! any view in it, as a self-relative reference must.
 
 pub mod arena;
+pub mod encode;
+pub mod finals;
 pub mod grow;
 pub mod map;
 pub mod offset;
 pub mod pool;
 pub mod rel;
+pub mod settle;
 pub mod stack;
 
 pub use offset::{Aligned, AtomicWord, B16, B32, Bit32, Bits, Bytes, F32, Off, Offset, R16, R32, R64, Unit, UnitKind};
 pub use arena::{Arena, ArenaHead, Bucket, Full, Mark};
+pub use finals::{BloomFrom, Csr, CsrFrom, IntFrom, IntTable, Sorted, SortedFrom, Strings, StringsFrom};
 pub use grow::{Grow, GrowHead};
 pub use map::{Claimed, Least, Map, MapHead, Stamped, StampedHead, Word};
 pub use pool::{Chain, ChainHead, Link, Pool, PoolHead};
+pub use settle::{Need, Room, Settle};
 pub use stack::Stack;
 pub use rel::{BitSpan, Rel, RelSpan};
 
@@ -128,5 +136,7 @@ impl<'r> Region<'r> {
 mod tests;
 #[cfg(test)]
 mod tests_arena;
+#[cfg(test)]
+mod tests_final;
 #[cfg(test)]
 mod tests_work;

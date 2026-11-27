@@ -93,22 +93,7 @@ impl IntCol {
     /// The column resolved for reads: its fields and words loaded once.
     #[inline]
     pub fn dec(&self) -> Dec<'_> {
-        let mask = |b: u32| if b == 0 { 0 } else if b == 64 { u64::MAX } else { (1u64 << b) - 1 };
-        Dec {
-            tag: self.tag,
-            bits: self.bits,
-            mask: mask(self.bits),
-            rbits: self.rbits,
-            rmask: mask(self.rbits),
-            n: self.n as usize,
-            nruns: self.nruns as usize,
-            entries: if self.tag == GROUPS { words(self.nruns as usize, self.bits) * 64 } else { 0 },
-            base: self.base,
-            slope: self.slope,
-            rmin: self.rmin,
-            data: self.data.as_slice(),
-            runs: self.runs.as_slice(),
-        }
+        Dec::of(Fields { tag: self.tag, bits: self.bits, rbits: self.rbits, n: self.n as usize, nruns: self.nruns as usize, base: self.base, slope: self.slope, rmin: self.rmin }, self.data.as_slice(), self.runs.as_slice())
     }
 
     #[inline]
@@ -308,6 +293,42 @@ pub struct Dec<'a> {
     rmin: i64,
     data: &'a [u64],
     runs: &'a [u64],
+}
+
+/// An encoding's fields, wherever its descriptor keeps them (an `IntCol`'s, or a flat `IntTable`'s body).
+#[derive(Clone, Copy, Debug)]
+pub struct Fields {
+    pub tag: u32,
+    pub bits: u32,
+    pub rbits: u32,
+    pub n: usize,
+    pub nruns: usize,
+    pub base: i64,
+    pub slope: i64,
+    pub rmin: i64,
+}
+
+impl<'a> Dec<'a> {
+    /// An encoding resolved for reads from its fields and its words.
+    #[inline]
+    pub fn of(f: Fields, data: &'a [u64], runs: &'a [u64]) -> Dec<'a> {
+        let mask = |b: u32| if b == 0 { 0 } else if b == 64 { u64::MAX } else { (1u64 << b) - 1 };
+        Dec {
+            tag: f.tag,
+            bits: f.bits,
+            mask: mask(f.bits),
+            rbits: f.rbits,
+            rmask: mask(f.rbits),
+            n: f.n,
+            nruns: f.nruns,
+            entries: if f.tag == GROUPS { words(f.nruns, f.bits) * 64 } else { 0 },
+            base: f.base,
+            slope: f.slope,
+            rmin: f.rmin,
+            data,
+            runs,
+        }
+    }
 }
 
 impl Dec<'_> {
