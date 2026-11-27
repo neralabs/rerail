@@ -48,6 +48,22 @@ function cutShort(path: string, table: "audit_settings" | "audit_requests", colu
   }
 }
 
+/**
+ * Another program's hold on the database's write lock, as `rerail scrub` or another build's migration takes it: a
+ * connection of its own in an immediate transaction, so this thread's writes meet `SQLITE_BUSY`. `release` gives it back.
+ */
+function holdWriteLock(path: string): { release: () => void } {
+  const holder = new Database(path);
+  holder.exec("BEGIN IMMEDIATE");
+  return {
+    release: () => {
+      if (!holder.open) return;
+      holder.exec("ROLLBACK");
+      holder.close();
+    },
+  };
+}
+
 /** The message `JSON.parse` gives for `text`, as the line that names its row quotes it. */
 function parseError(text: string): string {
   try {
@@ -90,6 +106,53 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
     expect(logged()).toMatch(/the settings_json of its audit_settings row holds no settings this version reads \(mode: /u);
     controls.close();
   });
+
+  // A session's start reads its checkout's settings beside another program's held write lock, and its owner claim
+  // waits in the record writer for that lock (`registerOwner`).
+  it("read as the defaults at a session's start beside another program's write lock, and its claim is made once that is given back", async () => {
+    const { root, path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    cutShort(path, "audit_settings", "settings_json");
+    const logged = spyOnStderr();
+    const lock = holdWriteLock(path);
+    try {
+      expect(controls.getWorkspaceSettings(root)).toBeUndefined();
+      const claim = controls.registerOwner("a", "background");
+      expect(controls.holdsOwner("a", claim)).toBe(true);
+      expect(controls.getSettings("a")).toMatchObject({ settings: DEFAULT_AUDIT_SETTINGS, active: false });
+      lock.release();
+      await vi.waitFor(() => expect(controls.getSettings("a").active).toBe(true), { timeout: 10_000, interval: 20 });
+      expect(controls.getSettings("a").settings).toEqual(DEFAULT_AUDIT_SETTINGS);
+      expect(logged().match(/rerail: /gu)).toHaveLength(1);
+      expect(logged()).toContain("read as the defaults: the settings_json of its audit_settings row is not JSON");
+    } finally {
+      lock.release();
+      controls.close();
+    }
+  }, 20_000);
+
+  // The scan settings save takes the write lock on the caller's thread, where the rule settings save waits for it in the
+  // record writer: beside a lock held past SQLite's 5 s wait it fails, and the damaged row still reads as the defaults.
+  it("stay the defaults when a save over them meets another program's write lock past SQLite's wait, and the same save is made once it is given back", async () => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    const left = cutShort(path, "audit_settings", "settings_json");
+    const logged = spyOnStderr();
+    const lock = holdWriteLock(path);
+    try {
+      expect(() => controls.updateSettings("a", { scope: "touched-files" })).toThrow(/database is locked/u);
+      lock.release();
+      const client = new Database(path, { readonly: true });
+      expect(client.prepare("SELECT settings_json FROM audit_settings").pluck().get()).toBe(left);
+      client.close();
+      expect(controls.getSettings("a").settings).toEqual(DEFAULT_AUDIT_SETTINGS);
+      expect(controls.updateSettings("a", { scope: "touched-files" }).settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, scope: "touched-files" });
+      expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    } finally {
+      lock.release();
+      controls.close();
+    }
+  }, 20_000);
 });
 
 describe("a session's scan requests whose stored text does not read", () => {
@@ -145,4 +208,33 @@ describe("a session's scan requests whose stored text does not read", () => {
     client.close();
     controls.close();
   });
+
+  // A session's end interrupts its scans and lets its owner go in one record write (`endOwnership`), which waits for
+  // another program's held write lock; the damaged request's row is in that write's update too.
+  it("end interrupted with the rest at a session's end beside another program's write lock, and a scan asked for beside them ends so too", async () => {
+    const { path, controls, claim, ids: [first, second, third] } = await threeQueued();
+    cutShort(path, "audit_requests", "paths_json", first);
+    const logged = spyOnStderr();
+    const asked = await controls.requestAudit("a", { scope: "repository" });
+    expect(asked.status).toBe("queued");
+    const lock = holdWriteLock(path);
+    try {
+      controls.endOwnership("a", claim);
+      expect(controls.listAuditRequests("a").map(request => [request.id, request.status]))
+        .toEqual([[second, "queued"], [third, "queued"], [asked.id, "queued"]]);
+      lock.release();
+      await vi.waitFor(() => expect(controls.getSettings("a").active).toBe(false), { timeout: 10_000, interval: 20 });
+      expect(controls.listAuditRequests("a").map(request => [request.id, request.status]))
+        .toEqual([[second, "interrupted"], [third, "interrupted"], [asked.id, "interrupted"]]);
+      const client = new Database(path, { readonly: true });
+      expect(client.prepare("SELECT status FROM audit_requests WHERE id = ?").pluck().get(first)).toBe("interrupted");
+      client.close();
+      expect(controls.hasQueuedRequest("a")).toBe(false);
+      expect(logged().match(/rerail: /gu)).toHaveLength(1);
+      expect(logged()).toContain(`: scan request ${first} of session a is left out of the session's scans`);
+    } finally {
+      lock.release();
+      controls.close();
+    }
+  }, 20_000);
 });
