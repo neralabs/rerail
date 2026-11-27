@@ -11,7 +11,9 @@
 //!   variables), from its whole body. None for a negated read.
 //!
 //! Against `rel`'s rows made, they are the least a call answering this reader could make: its query shape and its
-//! volume. A relay (`R(..) :- R_at(_, ..)`) is looked through: its readers' asks are recorded under its head. Reads
+//! volume. Where `rel` is located (the split's `R_at(d, ..)`), three more: `rr_kfile__<tag>(key.., path)`, the files
+//! answering each key asked; `rr_kpair__<rel>__<pattern>(key.., d)`, every (key, document) pair of its rows, a
+//! key-to-file index's entries; and `rr_kall__<rel>__<pattern>(key..)`, its keys. A relay (`R(..) :- R_at(_, ..)`) is looked through: its readers' asks are recorded under its head. Reads
 //! inside an aggregate are not recorded.
 
 use super::callable::request_body;
@@ -25,6 +27,12 @@ use std::sync::Arc;
 pub const KEY: &str = "rr_key__";
 /// The used rows' relations' prefix.
 pub const USED: &str = "rr_used__";
+/// The files answering each key asked: `(key.., path)`, a located relation's keyed asks alone.
+pub const FILES: &str = "rr_kfile__";
+/// Every (key, document) pair of a located relation, by the columns an ask binds: a key-to-file index's entries.
+pub const PAIRS: &str = "rr_kpair__";
+/// Every key of a located relation, by those columns.
+pub const KEYS: &str = "rr_kall__";
 
 /// Whether the run records them: `RERAIL_ASKS` set.
 pub fn on() -> bool {
@@ -38,18 +46,21 @@ pub fn recorded(v: &Arc<Version>, file_local: &BTreeSet<String>) -> Result<Optio
     // A relay the split made (`R(x..) :- R_at(_, x..)`: one positive literal, its document wild, then the head's
     // variables in order) passes a recorded relation's rows on as they are: its own asks are its readers', recorded
     // in its stead.
-    let is_relay = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, from: &BTreeSet<String>| -> bool {
+    // Its source (`R_at`) where `r` is one.
+    let relay_of = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, from: &BTreeSet<String>| -> Option<String> {
         let lits: Vec<LitRef<'_>> = r.body().collect();
-        let [one] = lits[..] else { return false };
-        let Lit::Atom(a) = one.view() else { return false };
+        let [one] = lits[..] else { return None };
+        let Lit::Atom(a) = one.view() else { return None };
         let args: Vec<TermRef<'_>> = a.args().collect();
         let head: Vec<TermRef<'_>> = r.head().args().collect();
-        !a.neg()
+        let is = !a.neg()
             && from.contains(v.rel_name(a.rel()))
             && args.len() == head.len() + 1
             && matches!(args[0], TermRef::Wild)
-            && head.iter().zip(&args[1..]).all(|(h, x)| h.var().is_some() && h.var() == x.var())
+            && head.iter().zip(&args[1..]).all(|(h, x)| h.var().is_some() && h.var() == x.var());
+        is.then(|| v.rel_name(a.rel()).to_owned())
     };
+    let is_relay = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, from: &BTreeSet<String>| relay_of(r, from).is_some();
     let mut recorded: BTreeSet<String> = file_local.iter().filter(|r| derived.contains(r.as_str())).cloned().collect();
     let mut relays: BTreeSet<String> = BTreeSet::new();
     loop {
@@ -65,11 +76,19 @@ pub fn recorded(v: &Arc<Version>, file_local: &BTreeSet<String>) -> Result<Optio
         relays.extend(more.iter().cloned());
         recorded.extend(more);
     }
+    // Each relay head's located source, the split's `R_at(d, ..)`, its document in front.
+    let sources: std::collections::BTreeMap<String, String> = v
+        .rules()
+        .filter(|r| relays.contains(v.rel_name(r.head().rel())))
+        .filter_map(|r| relay_of(r, &recorded).map(|at| (v.rel_name(r.head().rel()).to_owned(), at)))
+        .collect();
     let mut b = Builder::derive(v);
     for r in v.rules() {
         b.keep(v, r);
     }
+    let mut indexed: BTreeSet<String> = BTreeSet::new();
     let mut added: Vec<String> = Vec::new();
+    let mut r_count = 0usize;
     for r in v.rules() {
         let reader = v.rel_name(r.head().rel());
         if file_local.contains(reader) || relays.contains(reader) || reader.starts_with(KEY) || reader.starts_with(USED) {
@@ -95,7 +114,8 @@ pub fn recorded(v: &Arc<Version>, file_local: &BTreeSet<String>) -> Result<Optio
                 })
                 .collect();
             let pattern: String = (0..args.len()).map(|k| if bound.contains(&k) { 'b' } else { 'f' }).collect();
-            let n = added.len() / 2;
+            let n = r_count;
+            r_count += 1;
             let tag = format!("{n}__{rel}__{reader}__{pattern}{}", if a.neg() { "_neg" } else { "" });
             // The keys: the bound columns' terms (none where no column is bound: its rows used say it all).
             let key = format!("{KEY}{tag}");
@@ -110,6 +130,42 @@ pub fn recorded(v: &Arc<Version>, file_local: &BTreeSet<String>) -> Result<Optio
                 }
                 w.finish()?;
                 b.fields().declare(&key, &key_cols);
+                // A located relation's files: each asked key's, and its every (key, document) pair and key.
+                if let Some(at) = sources.get(rel)
+                    && let Some(at_decl) = v.decl_of(at)
+                    && let Some(path_type) = v.decl_of("doc").and_then(|d| d.cols().nth(1)).map(|(_, t)| v.text(t).to_owned())
+                {
+                    let doc_type = at_decl.cols().next().map(|(_, t)| v.text(t).to_owned()).unwrap_or_default();
+                    let kv: Vec<String> = (0..bound.len()).map(|j| format!("rr_k{j}")).collect();
+                    let mut at_args: Vec<T<'_>> = vec![T::Var("rr_d")];
+                    at_args.extend((0..args.len()).map(|k| bound.iter().position(|&x| x == k).map_or(T::Wild, |j| T::Var(kv[j].as_str()))));
+                    let kt: Vec<T<'_>> = kv.iter().map(|s| T::Var(s.as_str())).collect();
+                    let files = format!("{FILES}{tag}");
+                    let mut head = kt.clone();
+                    head.push(T::Var("rr_p"));
+                    b.rule().head(files.as_str(), &head).atom(key.as_str(), &kt).atom(at.as_str(), &at_args).atom("doc", &[T::Var("rr_d"), T::Var("rr_p"), T::Wild]).finish()?;
+                    let mut files_cols = key_cols.clone();
+                    files_cols.push(("p", path_type.as_str()));
+                    b.fields().declare(&files, &files_cols);
+                    added.push(files);
+                    let shape: String = pattern.clone();
+                    let pairs = format!("{PAIRS}{rel}__{shape}");
+                    let keys = format!("{KEYS}{rel}__{shape}");
+                    // Both read in the cross part (its relay head, then that): its rows are the cross part's to count.
+                    if indexed.insert(pairs.clone()) {
+                        let rel_args: Vec<T<'_>> = at_args[1..].to_vec();
+                        b.rule().head(keys.as_str(), &kt).atom(rel, &rel_args).finish()?;
+                        b.fields().declare(&keys, &key_cols);
+                        let mut head = kt.clone();
+                        head.push(T::Var("rr_d"));
+                        b.rule().head(pairs.as_str(), &head).atom(keys.as_str(), &kt).atom(at.as_str(), &at_args).finish()?;
+                        let mut pair_cols = key_cols.clone();
+                        pair_cols.push(("d", doc_type.as_str()));
+                        b.fields().declare(&pairs, &pair_cols);
+                        added.push(pairs);
+                        added.push(keys);
+                    }
+                }
             }
             added.push(key);
             // The rows used: the read's variable columns.

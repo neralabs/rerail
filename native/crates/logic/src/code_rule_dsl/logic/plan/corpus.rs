@@ -9603,6 +9603,69 @@ fn run_observed_within(
                                 .join(", ")
                         });
                     }
+                    // Each keyed probe of a located export (`RERAIL_ASKS`), a row of `asks-probes.tsv` beside the profile:
+                    // its keys asked, how many files answer each, a key-to-file index's keys and entries, and samples.
+                    if preparation::asks::on()
+                        && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
+                    {
+                        use std::io::Write as _;
+                        let cell = |r: &output::Rows, i: usize, c: usize| match r.cell(i, c) {
+                            output::Cell::Text(t) => t.to_owned(),
+                            output::Cell::Int(n) => n.to_string(),
+                        };
+                        let mut lines = String::new();
+                        // Every key found, with its files (`asks-keys.tsv`): the values a router is given.
+                        let mut keys_out = String::new();
+                        for (rel, files) in got.outputs.iter().filter(|(r, _)| r.starts_with(preparation::asks::FILES)) {
+                            let tag = &rel[preparation::asks::FILES.len()..];
+                            let parts: Vec<&str> = tag.split("__").collect();
+                            let (export, reader, shape) = (parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), parts.last().copied().unwrap_or(""));
+                            let w = files.width();
+                            let mut by_key: BTreeMap<Vec<String>, Vec<String>> = BTreeMap::new();
+                            for i in 0..files.len() {
+                                let k: Vec<String> = (0..w - 1).map(|c| cell(files, i, c)).collect();
+                                by_key.entry(k).or_default().push(cell(files, i, w - 1));
+                            }
+                            for (k, f) in &by_key {
+                                keys_out.push_str(&format!("{export}\t{reader}\t{shape}\t{}\t{}\n", k.join("\u{1f}").replace(['\t', '\n'], " "), f.join("\u{1f}")));
+                            }
+                            let asked = got.outputs.get(&format!("{}{tag}", preparation::asks::KEY)).map_or(0, |r| r.len());
+                            let hist = |lo: usize, hi: usize| by_key.values().filter(|f| f.len() >= lo && f.len() <= hi).count();
+                            let max = by_key.values().map(Vec::len).max().unwrap_or(0);
+                            let plain = shape.trim_end_matches("_neg");
+                            let index_keys = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::KEYS)).map_or(0, |r| r.len());
+                            let index_pairs = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::PAIRS)).map_or(0, |r| r.len());
+                            let mut samples: Vec<(&Vec<String>, &Vec<String>)> = by_key.iter().filter(|(_, f)| f.len() == 1).take(2).collect();
+                            samples.extend(by_key.iter().filter(|(_, f)| f.len() > 1).max_by_key(|(_, f)| f.len()));
+                            let samples: Vec<String> = samples
+                                .into_iter()
+                                .map(|(k, f)| {
+                                    let shown: Vec<&str> = f.iter().take(3).map(String::as_str).collect();
+                                    let more = if f.len() > 3 { format!(" +{}", f.len() - 3) } else { String::new() };
+                                    format!("({}) -> {}{more}", k.join(", "), shown.join(" "))
+                                })
+                                .collect();
+                            lines.push_str(&format!(
+                                "{export}\t{reader}\t{shape}\t{asked}\t{}\t{}\t{}\t{}\t{}\t{max}\t{index_keys}\t{index_pairs}\t{}\n",
+                                by_key.len(),
+                                hist(1, 1),
+                                hist(2, 4),
+                                hist(5, 31),
+                                hist(32, usize::MAX),
+                                samples.join(" ; ").replace(['\t', '\n'], " ")
+                            ));
+                        }
+                        if !lines.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-probes.tsv"))
+                        {
+                            let _ = f.write_all(lines.as_bytes());
+                        }
+                        if !keys_out.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-keys.tsv"))
+                        {
+                            let _ = f.write_all(keys_out.as_bytes());
+                        }
+                    }
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     let read_back: Vec<String> = cross_f.outputs().map(str::to_owned).collect();
                     let mut clean_outputs = cell.as_ref().map(|kept| cut.outputs(kept, &read_back)).unwrap_or_default();

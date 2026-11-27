@@ -168,3 +168,18 @@ in relations 50% or more asked; 360,244 in between (at most 76,812). Not measure
 spike's 20 to 28 µs is a 48-request batch's, mostly its fixed cost), the projections' per-file distinct values, and
 the keys sent that find no row.
 
+**Each probe's keys and their files** (the "Probe Routing" page, https://claude.ai/artifact/63DtrhU31j5PvjPGmfTe5U;
+`rerail-shared/callable-asks`: `asks-keys-*`, `probes-*`, `keys-home-*`). For a keyed ask of a located export
+(`R_at(d, ..)`), `RERAIL_ASKS` also makes the files answering each key asked (`rr_kfile__`, with `doc`'s path), the
+relation's every (key, document) pair (`rr_kpair__`) and its keys (`rr_kall__`), and the run writes `asks-probes.tsv`
+(a probe a row: keys, files a key, an index's keys and pairs, samples) and `asks-keys.tsv` (every key found, with its
+files) beside the profile. Over PostHog's 291 files, 162 probes found 353,614 keys (every round's): 97.61% answered
+by exactly one file, the one the key names (its path, or the longest module prefix of a term's or a definition's
+scope); 0.04% by that file and more; 1.92% by files that use a name another file of the run defines; 0.43% name
+no file of the run (an outside module, a guest's term). Over the data layer's 224, 92.80% of 16,830. Of the
+8,452 not at home, 2,138 are answered by several files (71 by 32 or more; at most 96, `structlog`). The 21
+relations they are of make 165,954 rows; an index of their every (key, file) pair is 58,165 keys and 107,580 pairs.
+The import graph, read from the sources, as a router (a key to the importers of its longest imported prefix):
+8,234 of the 8,452, sending to 50,335 files for 18,275 answers; 218 keys missed (re-exports, guests). The
+probes' relations peaked the run at 2.34 GB (1.61 GB without; 54.4 s user CPU).
+
