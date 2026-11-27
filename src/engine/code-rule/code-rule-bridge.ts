@@ -1429,6 +1429,12 @@ interface WalkStart {
    * records once for the repository (`WorktreeWalks`). Empty for the session folder's walk.
    */
   readonly records: ReadonlySet<string>;
+  /**
+   * The auditor's view the session folder's walk asked of what it found (`SourceWalk.view`), made as it starts, which
+   * groups the walk's paths by checkout too (`#byOwningCheckout`). None for the walk of the other worktrees, which one
+   * session's view reads for every session watching them (`#scanWorktree`).
+   */
+  readonly view?: WalkView | undefined;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -3664,7 +3670,8 @@ export class CodeRuleBridge {
 
   /**
    * The scan of a pass: of the paths `reads` names, else, or when one of them is a folder now, of the whole folder,
-   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against.
+   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against. Each
+   * traversal asks a view of its own, which the walk it returns keeps (`WalkStart.view`).
    */
   async #scanPass(
     discovery: SourceDiscovery,
@@ -3673,13 +3680,15 @@ export class CodeRuleBridge {
     reads: SessionReads,
   ): Promise<{ walk: WalkStart; scan: SourceScan; seen?: WorktreeRead }> {
     if (!reads.whole) {
-      const noticed = await this.#scanNoticed(discovery, walk, reads);
-      if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+      const noticing: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+      const noticed = await this.#scanNoticed(discovery, noticing, reads);
+      if (noticed !== undefined) return { walk: { ...noticing, noticed: reads.paths }, scan: noticed };
       // The whole walk notes each linked file again: counted twice, they could reach the bound they are under.
       reads.linked.restart();
     }
-    const scan = await this.#scanSources(discovery, walk, worktrees, reads.linked);
-    return { walk, scan, seen: scan.seen };
+    const whole: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+    const scan = await this.#scanSources(discovery, whole, worktrees, reads.linked);
+    return { walk: whole, scan, seen: scan.seen };
   }
 
   async #scanSources(
@@ -3717,7 +3726,7 @@ export class CodeRuleBridge {
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan,
       stack: [], roots: new Set([discovery.root]),
-      view: this.#auditor.walkView?.(discovery.root) ?? this.#auditor,
+      view: walk.view ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
       withdrawn: discovery.withdrawn,
     };
@@ -4565,7 +4574,7 @@ export class CodeRuleBridge {
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
     const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, "walked");
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, walk);
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const listed = walk.listedAtFirstSight?.get(checkout);
@@ -5256,20 +5265,21 @@ export class CodeRuleBridge {
   /**
    * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
    * not the session's checkout); `unowned` has those no checkout owns, which no lane audits. A group holds its items in
-   * the order of `items`, and the groups come in the order of their first item. A walk's paths (`walked`) are files it
-   * found, which are no symbolic links, or files the session took before, which the router accepts only where a link
-   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, looked up once a folder
-   * (`walkView`). Any other path is looked up whole.
+   * the order of `items`, and the groups come in the order of their first item. The paths of a walk (`walked`) are files
+   * it found, which are no symbolic links, or files the session took before, which the router accepts only where a link
+   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, as the view that walk asked
+   * gives it (`WalkStart.view`), else a view made here, which looks each folder up once. Any other path is looked up
+   * whole.
    */
   #byOwningCheckout<T>(
     root: string,
     items: readonly T[],
     pathOf: (item: T) => string,
-    paths: "walked" | "named" = "named",
+    walked?: WalkStart,
   ): { owned: Map<string, T[]>; unowned: T[] } {
     const owned = new Map<string, T[]>();
     const unowned: T[] = [];
-    const checkoutOf = paths === "walked" ? this.#walkedCheckoutOf(root) : (path: string) => this.#owningCheckout(root, path);
+    const checkoutOf = walked === undefined ? (path: string) => this.#owningCheckout(root, path) : this.#walkedCheckoutOf(root, walked.view);
     for (const item of items) {
       const checkout = checkoutOf(pathOf(item));
       if (checkout === undefined) unowned.push(item);
@@ -5279,13 +5289,13 @@ export class CodeRuleBridge {
   }
 
   /**
-   * `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. An
-   * auditor that judges one folder owns every path at the session folder, whatever its view says, as it does a path it
-   * is named.
+   * `#owningCheckout` of the paths a walk found, through `asked`, the view the walk asked, else a view of the auditor
+   * that looks each folder up once. An auditor that judges one folder owns every path at the session folder, whatever
+   * its view says, as it does a path it is named.
    */
-  #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+  #walkedCheckoutOf(root: string, asked: WalkView | undefined): (path: string) => string | undefined {
     if (this.#auditor.sourceRoot === undefined) return () => root;
-    const view = this.#auditor.walkView?.();
+    const view = asked ?? this.#auditor.walkView?.();
     return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
 
@@ -5342,7 +5352,7 @@ export class CodeRuleBridge {
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, "walked").owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, walk).owned) {
       const seen = new Set(paths);
       const changed = await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
       if (changed === undefined) {
