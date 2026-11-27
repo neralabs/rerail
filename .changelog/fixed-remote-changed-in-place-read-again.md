@@ -1,0 +1,1 @@
+The dashboard and the status line name a checkout Rerail has not recorded by its remote as it is now: after `git remote set-url` there, the next read names the new remote's repository and its state, not the old one until the daemon restarted.
