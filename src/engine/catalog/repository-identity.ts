@@ -105,11 +105,11 @@ const heldTopLevels = new Map<string, { readonly stamp: string; readonly locatio
 const gitPlacedCommons = new Map<string, string>();
 
 /**
- * A folder's identity on its volume: its file id and when it was made, so a folder removed and made again at its path is
- * another one (Linux file systems give a freed file id out again; NTFS keeps a name's creation time for a while after the
- * name is removed). Undefined when it cannot be read.
+ * A folder's identity on its volume, or a file's: its file id and when it was made, so a folder removed and made again at
+ * its path is another one (Linux file systems give a freed file id out again; NTFS keeps a name's creation time for a
+ * while after the name is removed). Undefined when it cannot be read.
  */
-function folderIdentity(folder: string): string | undefined {
+export function folderIdentity(folder: string): string | undefined {
   try {
     const stats = lstatSync(folder);
     return `${stats.ino}:${stats.birthtimeMs}`;
