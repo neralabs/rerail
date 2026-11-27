@@ -23,7 +23,7 @@ use cranelift_codegen::ir::{
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 25] = [
+    let fields: [(&str, &str, usize); 27] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -46,7 +46,9 @@ pub fn ukl() -> String {
         ("Run", "names", offset_of!(ViewDoc, names)),
         ("Run", "segments", offset_of!(ViewDoc, segments)),
         ("uint32_t", "place", offset_of!(ViewDoc, place)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("uint32_t", "doc_path", offset_of!(ViewDoc, doc_path)),
+        ("uint32_t", "doc_module", offset_of!(ViewDoc, doc_module)),
+        ("uint32_t", "parented", offset_of!(ViewDoc, parented)),
         ("Run", "node_table", offset_of!(ViewDoc, node_table)),
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
@@ -98,7 +100,13 @@ pub fn ukl() -> String {
     s += "UKL_INLINE uint32_t view_rows_end(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e, uint32_t k, uint32_t end) { uint32_t m = e->at + 1u; return m < d->ndocs ? view_rows(d)[((UKL_GLOBAL const uint32_t*)(view_block(d) + d->order))[m]].rows[k] : end; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }\n";
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }\n";
+    // A row's source where it lies, in its own home (its third: `ViewRow::source`), a node's text its span of it
+    // (`@rr_node_text_any`, no text made); and its length, its view's.
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }\n";
+    s += &format!(
+        "UKL_INLINE uint32_t view_source_len(UKL_GLOBAL const ViewRow* e) {{ return e->view[{}]; }}\n",
+        std::mem::offset_of!(crate::view::TapeView, source_len) / 4
+    );
     // A document's lines by their home's base and their offset there (`ViewRow::lines`): a view read takes both (`ll`,
     // `la`), as a load's base must be 8-aligned and a tape's line index is 4-aligned in it (decision 0612).
     s += "UKL_INLINE UKL_GLOBAL const uint8_t* view_lines_base(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], 0); }\n";
@@ -1250,6 +1258,16 @@ pub fn op(b: &mut B<'_, '_>) -> Value {
         let code = b.call_tape("tape_number", &[x]);
         b.entry_item(at::NAMES, code)
     })
+}
+
+/// `view_doc(l, col)`: column `col` of `doc`'s row (one a file, `l` 0): the document's key, its path's atom, its
+/// module's (`ViewDoc::doc_path`, `doc_module`: interned where its program reads `doc`, `tape_rows::derive`).
+#[cfg(feature = "ir")]
+pub fn doc(b: &mut B<'_, '_>) -> Value {
+    let col = b.arg(1);
+    let k = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    let p = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
+    b.either(I64, k, |b| b.entry_u32(at::KEY), |b| b.either(I64, p, |b| b.entry_u32(at::DOC_PATH), |b| b.entry_u32(at::DOC_MODULE)))
 }
 
 #[cfg(all(test, feature = "ir"))]

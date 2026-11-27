@@ -350,6 +350,8 @@ pub struct Blocked {
 pub struct PlacedTotal {
     pub runs: u64,
     pub on_gpu: u64,
+    /// Its runs the placement put on the device (or the CPU binding's join program), whether or not they ran there.
+    pub placed_device: u64,
     pub gpu_cheaper: u64,
     pub device: bool,
     pub forms: Vec<&'static str>,

@@ -18,4 +18,6 @@ rerail-reads = { path = "../reads" }
 # The JIT of the CLIF reads, which the Rust reads are held to (`lanes::tests`; the views' in tests_lang).
 rerail-clif = { path = "../clif", features = ["test-hooks", "ir"] }
 rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
+# The store's hash (`rerail_atoms::hash_str`'s), which `join_run::store_hash` is held to.
+foldhash = "=0.2.0"
 

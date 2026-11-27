@@ -536,6 +536,13 @@ pub trait Source: Send + Sync {
     fn device_view(&self) -> Option<DeviceView> {
         None
     }
+    /// The node reads' batch's `node` view in place (`syntax::LongTexts`'s): the directory through which a stage reads
+    /// a node's text where its source lies (`@rr_node_text_any`, the join program's `OPND_NODE`), no text made.
+    /// `None`: no node is read so.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<ViewInPlace> {
+        None
+    }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
     /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
     /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them

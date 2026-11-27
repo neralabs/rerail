@@ -56,6 +56,40 @@ pub unsafe fn doc<'a>(d: *const ViewDir, m: u32) -> Doc<'a> {
     Doc::new(e, Tape::new(tape, &row.view, cache), lines, source, (code_atoms(codes, tag, 0), code_atoms(codes, tag, 1)))
 }
 
+/// Node `low`'s (a node id's low half) span of directory `d`'s document `m`'s source, read where it lies
+/// (`join_stages`' `node_txt`, decision 0287 §2): its numbered node's bytes (`text_span`), or, for a document's `source`
+/// span or a `src_line` span (decision 0353 row 7), its line's bytes less its terminator where it has one
+/// (`line_terminated`, `lines::length_ending_at`), marked a line's (`rr_node_text_any` reads it, `rr_node_text` not).
+/// None for a node the document does not number.
+pub unsafe fn node_span(d: *const ViewDir, m: u32, low: u32) -> Option<(*const u8, u32, bool)> {
+    let doc = doc(d, m);
+    let source = doc.source.as_ptr();
+    let line = doc.line_span(low);
+    if line != u64::MAX {
+        let (from, mut to) = ((line >> 32) as u32, line as u32);
+        if doc.line_terminated(low) {
+            to = to.wrapping_sub(rerail_reads::lines::length_ending_at(doc.source, to.wrapping_sub(1) as usize) as u32);
+        }
+        return Some((source.add(from as usize), to.saturating_sub(from), true));
+    }
+    let l = doc.number(low);
+    if l == rerail_reads::views::NO_ROW {
+        return None;
+    }
+    let span = doc.text_span(l);
+    let (from, to) = ((span >> 32) as u32, span as u32);
+    Some((source.add(from as usize), to.saturating_sub(from), false))
+}
+
+/// Node `low`'s preorder key in directory `d`'s document `m` (`@rr_node_order`, `ARITH_NODE_ORDER`; the `order`
+/// view's column 1, `Doc::order_row`): none for a node the document does not number, as the host's
+/// (`LongTexts::order_any`).
+pub unsafe fn node_order(d: *const ViewDir, m: u32, low: u32) -> Option<u64> {
+    let doc = doc(d, m);
+    let l = doc.number(low);
+    (l != rerail_reads::views::NO_ROW).then(|| doc.order_row(l, 1) as u64)
+}
+
 /// A view's row found once (`at`): its document, its view (`views::VIEWS`) and its row in the document. Its document
 /// keeps the tape node its columns last selected, so a row's columns select it once.
 #[derive(Clone)]
@@ -85,6 +119,9 @@ impl<'a> At<'a> {
     }
 }
 
+/// The last view (`views::VIEWS`), `doc`: a kind past it reads it.
+pub const LAST_VIEW: u32 = (rerail_reads::views::VIEWS.len() - 1) as u32;
+
 /// Column `col` of view `k`'s (`views::VIEWS`) row `r` of document `d`: through `d`, which keeps the tape node it last
 /// selected, so a row's columns select it once.
 #[inline]
@@ -102,7 +139,8 @@ pub fn col(d: &Doc<'_>, k: u32, r: u32, col: u32) -> u64 {
         9 => d.tape_row(r, col),
         10 => d.depth_row(r, col),
         11 => d.order_row(r, col),
-        _ => d.op(r, col),
+        12 => d.op(r, col),
+        _ => d.doc(col),
     }) as u64
 }
 

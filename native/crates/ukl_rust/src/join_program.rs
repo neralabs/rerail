@@ -51,6 +51,8 @@ const PK_IX_PLACE: u32 = 5;
 const PK_IX_OFFS: u32 = 30;
 const PK_IX_MARK: u32 = 31;
 const PK_DEDUP_KEY: u32 = 32;
+/// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`), its items its rows'.
+const PK_SET_PLACE: u32 = 33;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -135,7 +137,7 @@ struct Stage {
 const _: () = assert!(size_of::<Stage>() == 2352 && core::mem::offset_of!(Stage, ops) == 208);
 const _: () = assert!(core::mem::offset_of!(Stage, arith) == 2176 && core::mem::offset_of!(Stage, v_dir) == 2304);
 
-use rerail_reads::views::{ViewDir, ViewRow};
+use rerail_reads::views::{NO_ROW, ViewDir, ViewRow};
 #[repr(C)]
 struct PlacedDir {
     dir: *const ViewDir,
@@ -178,7 +180,9 @@ struct Dedup {
     cols: [u32; 16],
     ocap: u32,
     places: u32,
-    /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567).
+    /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567):
+    /// 1. 2: the map read only, its rows out placed in it after its head's gate once written (code 7 of
+    /// `lat_rehash_one`), so a park may grow it.
     seen: u32,
     hmask: u32,
     /// Its rows made distinct in the head's first order (t58 increment A, `dedup_key_one`): no places.
@@ -486,7 +490,7 @@ unsafe fn vrow_dir(kind: u32, d: *const ViewDir, r: u32, f: &Found<'_>) -> Row {
     let k = kind - 1;
     let lo = ViewDir::doc_of_row(d, k, r, if f.d == d { f.lo } else { NONE });
     let i = r.wrapping_sub((*view_rows(d).add(lo as usize)).rows[k as usize]);
-    Row::View(d, lo, k.min(12), i)
+    Row::View(d, lo, k.min(reads::LAST_VIEW), i)
 }
 
 /// The document a walk's view reads last found (`Row::get`): its directory, its row there and its reads (one `Doc`,
@@ -633,7 +637,8 @@ impl St<'_> {
             3 => x.checked_div(y),
             4 => x.checked_rem(y),
             5 => Some(x.max(y)),
-            _ => Some(x.min(y)),
+            6 => Some(x.min(y)),
+            _ => node_order(self.s.v_dir, x, &mut { NONE }),
         }
     }
 
@@ -700,7 +705,15 @@ impl St<'_> {
     /// Whether node row `q`'s kind atom is in the stage's set (ascending).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
-        let k = vread(1, s.v_dir, q, 2, &mut self.found.borrow_mut());
+        // A `has` stage's rows are `node`'s (`rget`): a walk's candidate is the row it holds.
+        let k = {
+            let mut f = self.found.borrow_mut();
+            let row = match self.last.get() {
+                (p, Some(row)) if p == q => row,
+                _ => vrow(1, s.v_dir, q, &f),
+            };
+            row.get(2, &mut f)
+        };
         let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
         set.binary_search(&k).is_ok()
     }
@@ -718,6 +731,12 @@ impl St<'_> {
         (key || self.keys_are(r, kv)) && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
     }
 
+    /// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, a
+    /// `v_parent` probe's), whose parent column (`child`'s 0) is the parent's id, checked once by the probe.
+    fn parent_known(&self, how: u32) -> bool {
+        how == 2 && self.s.nkeys == 1 && self.s.key_rcol[0] == 0
+    }
+
     /// Whether row `r`'s keys are `kv`.
     unsafe fn keys_are(&self, r: u32, kv: &[i64; 8]) -> bool {
         (0..self.s.nkeys.min(8) as usize).all(|i| self.rget(r, self.s.key_rcol[i]) == kv[i])
@@ -729,13 +748,35 @@ impl St<'_> {
         if key < 0 || (*d).ndocs == 0 {
             return None;
         }
-        let a = ViewDir::doc_of_key(d, ((key as u64) >> 32) as u32, NONE);
+        let mut f = self.found.borrow_mut();
+        let a = ViewDir::doc_of_key(d, ((key as u64) >> 32) as u32, if f.d == d { f.lo } else { NONE });
         if a == NONE {
             return None;
         }
         let e = view_rows(d).add(a as usize);
-        let l = doc(d, e).number(key as u32);
+        let l = f.doc(d, a).number(key as u32);
         (l != NONE).then_some((e, l))
+    }
+
+    /// The `node` or `child` view probed by its id (`Stage::v_parent` 2, `Batch::by_own`): the id's document and
+    /// numbered node, its id checked (as a parent's is, `by_parent`), and its one row there, kept with its node as the
+    /// stage's last (`rget`), so its other keys and columns read it with no search; as the host's probe by a node's
+    /// own id (`Batch::node_hint`). None where no node has the id (a `child` row: the root has none).
+    unsafe fn by_own(&self, kv: &[i64; 8]) -> Walk {
+        let s = self.s;
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 1) else { return none };
+        let Some((e, l)) = self.doc_node(kv[i]) else { return none };
+        let d = s.v_dir;
+        let a = e.offset_from(view_rows(d)) as u32;
+        let k = s.r_view - 1;
+        if self.found.borrow_mut().doc(d, a).node_id(l) != kv[i] || (k == 1 && l == 0) {
+            return none;
+        }
+        let local = l - k;
+        let r = (*e).rows[k as usize].wrapping_add(local);
+        self.last.set((r, Some(Row::View(d, a, k, local))));
+        Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
     }
 
     /// The candidates of keys `kv`: [lo, hi) and how they are walked (0 rows, 1 an index's entries, 2 a parent's
@@ -759,12 +800,19 @@ impl St<'_> {
             }
             return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 0, tag: 0 };
         }
+        if s.v_parent == 2 {
+            return self.by_own(kv);
+        }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[1];
-            if l == 0 {
+            if l == 0 && doc(d, e).entry.parented == 0 {
                 let hi = view_rows_end(d, e, 1, s.nr);
                 return Walk { lo: first, hi, how: 0, tag: 0 };
+            }
+            // Its children's parent column is its id (`parent_known`): the key is checked here once, not at each child.
+            if doc(d, e).node_id(l) != kv[0] {
+                return none;
             }
             let c = doc(d, e).child_first(l);
             return if c == NONE { none } else { Walk { lo: first.wrapping_add(c), hi: NONE, how: 2, tag: 0 } };
@@ -798,21 +846,54 @@ impl St<'_> {
         if how == 1 { rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q) } else { q }
     }
 
-    /// The candidate after `q`.
-    unsafe fn cand_next(&self, how: u32, q: u32) -> u32 {
+    /// A walk of the tape (`how` 2: a parent's children from `child` row `q`; 3: a node's numbered ancestors from
+    /// `node` row `q`), each candidate's row given to `f` until it returns false: its document found once (`Found`),
+    /// each step from the tape node in hand (the next sibling, the parent), as the host's walks take them
+    /// (`each_child_node`, `Within::containers_on`), and each candidate's row kept as the stage's last (`row`) with
+    /// its node known to its document's reads (`Doc::know`), so its columns' reads select none.
+    unsafe fn walk_tape(&self, how: u32, q: u32, mut f: impl FnMut(u32) -> bool) {
         let d = self.s.v_dir;
-        match how {
-            2 => {
-                let e = view_rows(d).add(ViewDir::doc_of_row(d, 1, q, NONE) as usize);
-                let n = doc(d, e).child_next(q.wrapping_sub((*e).rows[1]));
-                if n == NONE { NONE } else { (*e).rows[1].wrapping_add(n) }
+        let k = if how == 2 { 1 } else { 0 };
+        let a = {
+            let fd = self.found.borrow();
+            ViewDir::doc_of_row(d, k, q, if fd.d == d { fd.lo } else { NONE })
+        };
+        let first = (*view_rows(d).add(a as usize)).rows[k as usize];
+        let mut i = q.wrapping_sub(first);
+        let (mut x, parent, end) = {
+            let mut fd = self.found.borrow_mut();
+            let dd = fd.doc(d, a);
+            // A `child` row's node is numbered node `i + 1`, a `node` row's node `i`.
+            let x = dd.tape_node(i.wrapping_add(k));
+            // A child's siblings end with its parent's subtree; one with no tape parent (a narrowed projection's) has
+            // none (`clif_view_child_next`).
+            let parent = if how == 2 { dd.tape.parent(x) } else { 0 };
+            let end = if how == 2 && parent != NO_ROW { dd.tape.end_of(parent) } else { 0 };
+            (x, parent, end)
+        };
+        loop {
+            let r = first.wrapping_add(i);
+            self.found.borrow_mut().doc(d, a).know(i.wrapping_add(k), x, NONE);
+            self.last.set((r, Some(Row::View(d, a, k, i))));
+            if !f(r) {
+                return;
             }
-            3 => {
-                let e = view_rows(d).add(ViewDir::doc_of_row(d, 0, q, NONE) as usize);
-                let u = doc(d, e).up(q.wrapping_sub((*e).rows[0]));
-                if u == NONE { NONE } else { (*e).rows[0].wrapping_add(u) }
+            let mut fd = self.found.borrow_mut();
+            let dd = fd.doc(d, a);
+            // The next numbered sibling within the parent, or numbered strict ancestor.
+            let mut c = match how {
+                2 if parent == NO_ROW => NO_ROW,
+                2 => dd.tape.next_in(x, end),
+                _ => dd.tape.parent(x),
+            };
+            while c != NO_ROW && !dd.is(0, c) {
+                c = if how == 2 { dd.tape.next_in(c, end) } else { dd.tape.parent(c) };
             }
-            _ => q.wrapping_add(1),
+            if c == NO_ROW {
+                return;
+            }
+            x = c;
+            i = dd.rank(c).wrapping_sub(k);
         }
     }
 
@@ -822,6 +903,11 @@ impl St<'_> {
     /// tag: it walks its places in order), else compared.
     unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
+        let known = self.parent_known(w.how);
+        if (w.how == 2 || w.how == 3) && q != NONE {
+            self.walk_tape(w.how, q, |r| f(r, r, known));
+            return;
+        }
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
         let mut last = 0u32;
         while q < w.hi {
@@ -840,10 +926,10 @@ impl St<'_> {
                     continue;
                 }
             }
-            if !f(self.cand_row(w.how, q), q, key) {
+            if !f(self.cand_row(w.how, q), q, key || known) {
                 return;
             }
-            q = self.cand_next(w.how, q);
+            q = q.wrapping_add(1);
         }
     }
 
@@ -909,9 +995,17 @@ impl St<'_> {
         }
     }
 
-    /// Text operand `k` of kind `kind` (0 a symbol, 1 `cat`'s, 2 `str_concat`'s, 3 an arena text).
+    /// Text operand `k` of kind `kind` (0 a symbol, 1 `cat`'s, 2 `str_concat`'s, 3 an arena text, 4 a node's text).
     unsafe fn txt_of(&self, t: u32, d: *const u8, a: *const u32, k: u32, kind: u32, unheld: &mut bool) -> Txt {
         let v = self.key_value(t, k);
+        if kind == 4 {
+            // A node's text through its document's source (`node_txt`, `rr_node_text_any`'s: a line's span too); one
+            // no read here finds reads as empty and sets `unheld` (the stratum then runs on the host).
+            return node_txt(self.s, v, true).unwrap_or_else(|_| {
+                *unheld = true;
+                Txt::raw(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
+            });
+        }
         if kind == 3 {
             let off = ((v as u64) >> 24) & ((1u64 << 39) - 1);
             let len = (v & 0xff_ffff) as u32;
@@ -1217,7 +1311,22 @@ unsafe fn sym_text(d: *const u8, v: i64, unheld: &mut bool) -> (*const u8, u32) 
     (atoms_at(d, 0, v as u32) as *const u8, n)
 }
 
-/// Mode 7's test of pattern `x`'s bytes [xs, xs + lx) against subject `y`: by op 0 equal, 1 a prefix, 2 a suffix.
+/// Node `v`'s preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`): its document by key in the stage's node view `d`
+/// (`memo`: the document found last, tried first), its numbered node's order there; `None` where the view numbers no
+/// node `v`, as the host's read (`LongTexts::order_any`) has none.
+#[inline]
+pub(super) unsafe fn node_order(d: *const ViewDir, v: i64, memo: &mut u32) -> Option<i64> {
+    if d.is_null() || v < 0 {
+        return None;
+    }
+    let m = ViewDir::doc_of_key(d, ((v as u64) >> 32) as u32, *memo);
+    if m == rerail_reads::views::NO_DOC {
+        return None;
+    }
+    *memo = m;
+    reads::node_order(d, m, v as u32).map(|k| k as i64)
+}
+
 /// Why a node's text is none (`node_txt`).
 enum NoText {
     /// A node the directory does not hold (another batch's, a comment span, a match's span, no node): the stratum runs
@@ -1241,29 +1350,14 @@ unsafe fn node_txt(s: &Stage, key: i64, lines: bool) -> Result<Txt, NoText> {
     if m == NONE {
         return Err(NoText::Unheld);
     }
-    let doc = reads::doc(d, m);
-    let low = key as u64 as u32;
-    let source = doc.source.as_ptr();
-    let line = doc.line_span(low);
-    if line != u64::MAX {
-        if !lines {
-            return Err(NoText::Line);
-        }
-        let (from, mut to) = ((line >> 32) as u32, line as u32);
-        if doc.line_terminated(low) {
-            to = to.wrapping_sub(rerail_reads::lines::length_ending_at(doc.source, to.wrapping_sub(1) as usize) as u32);
-        }
-        return Ok(Txt::raw(source.add(from as usize), to.saturating_sub(from)));
+    match reads::node_span(d, m, key as u64 as u32) {
+        None => Err(NoText::Unheld),
+        Some((_, _, true)) if !lines => Err(NoText::Line),
+        Some((p, n, _)) => Ok(Txt::raw(p, n)),
     }
-    let l = doc.number(low);
-    if l == NONE {
-        return Err(NoText::Unheld);
-    }
-    let span = doc.text_span(l);
-    let (from, to) = ((span >> 32) as u32, span as u32);
-    Ok(Txt::raw(source.add(from as usize), to.saturating_sub(from)))
 }
 
+/// Mode 7's test of pattern `x`'s bytes [xs, xs + lx) against subject `y`: by op 0 equal, 1 a prefix, 2 a suffix.
 unsafe fn textop_one(op: u32, x: &Txt, xs: u32, lx: u32, y: &Txt, ly: u32) -> bool {
     let fits = if op == 0 { lx == ly } else { ly >= lx };
     fits && x.same(xs, y, if op >= 2 { ly - lx } else { 0 }, lx)
@@ -1391,7 +1485,7 @@ unsafe fn bytes_le(p: *const u8, n: u32) -> u64 {
 /// The store's hash of a string (`content_store::atoms::hash_str`: foldhash 0.2's quality hasher, fixed state, seed
 /// 0x5EED71, a `str`'s bytes then 0xff), the one the atoms blocks' tables from hash to id are keyed by (decision 0666):
 /// `store_hash`.
-unsafe fn store_hash(mut v: *const u8, len: u32) -> u64 {
+pub(crate) unsafe fn store_hash(mut v: *const u8, len: u32) -> u64 {
     const S: [u64; 6] = [0xc0ac29b7c97c50dd, 0x3f84d5b5b5470917, 0x9216d5d98979fb1b, 0xd1310ba698dfb5ac, 0x2ffd72dbd01adfb7, 0xb8e1afed6a267e96];
     let at = |v: *const u8, k: u32| bytes_le(v.add(k as usize), 8);
     // The per-hasher seed: folded_multiply(0x5EED71, ARBITRARY4) ^ ARBITRARY3, rotated by the length.
@@ -1987,23 +2081,67 @@ unsafe fn rows_copy_one(src: *const u8, far: *const u8, dst: *mut u8, c: &Copy, 
     }
 }
 
-unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, r: u32) {
+/// A join from one binding's (a rule's first table's) candidates, a thread each: where its stage probes an index by
+/// keys, the places of its keys' group (`St::probe`), from `lo`; else the relation's rows from `r_from`. `n` of them;
+/// `tag` the keys' (decision 0671). A scan of every row of the relation checked each row's keys: `node(_, n, K)` read
+/// every node of the batch for its kind, where the host reads that kind's nodes alone (`Batch::by_kind`).
+#[derive(Clone, Copy)]
+struct ScanCands {
+    lo: u32,
+    n: u32,
+    tag: u32,
+    grouped: bool,
+}
+
+impl St<'_> {
+    /// The scan's keys (slot 0's or constants) and its candidates (`ScanCands`).
+    unsafe fn scan_cands(&self, j: &Job) -> ([i64; 8], ScanCands) {
+        let s = self.s;
+        let mut kv = [0i64; 8];
+        for (i, k) in kv.iter_mut().enumerate().take(s.nkeys.min(8) as usize) {
+            *k = if s.key_kind[i] == 1 { col(self.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
+        }
+        let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
+        if s.nkeys == 0 || s.v_parent == 1 || s.v_has != 0 || rows == 0 {
+            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, grouped: false });
+        }
+        // Its keys' index group, or a node's own row (`by_own`).
+        let w = self.probe(&kv);
+        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: w.how == 1 })
+    }
+
+    /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk
+    /// passes it, `St::each`).
+    #[inline]
+    unsafe fn scan_cand(&self, c: &ScanCands, r: u32) -> Option<u32> {
+        if r >= c.n {
+            return None;
+        }
+        if !c.grouped {
+            return Some(c.lo.wrapping_add(r));
+        }
+        let s = self.s;
+        let q = c.lo.wrapping_add(r);
+        let m = rel_group_mark(self.r as *const u8, s.r_at, s.r_index, q);
+        if (m ^ c.tag) & !MARK_SAME != 0 {
+            return None;
+        }
+        Some(rel_group_row(self.r as *const u8, s.r_at, s.r_index, q))
+    }
+}
+
+unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32) {
     let s = st.s;
     let counts = b.c;
     if r > s.nr {
         return;
     }
-    if r >= st.rows() || *j.totals.add(s.in_slot as usize) == 0 {
+    let Some(id) = st.scan_cand(cands, r) else {
         *counts.add(r as usize) = 0;
         return;
-    }
-    let mut kv = [0i64; 8];
-    for (i, k) in kv.iter_mut().enumerate().take(s.nkeys.min(8) as usize) {
-        *k = if s.key_kind[i] == 1 { col(st.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
-    }
-    let id = s.r_from.wrapping_add(r);
+    };
     let mut c = 0;
-    if st.matches(id, &kv, false) {
+    if st.matches(id, kv, false) {
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
@@ -2166,6 +2304,9 @@ unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
 }
 
 /// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
+/// Code 7 (a set's map its dedup only read, `Dedup::seen` 2): row `s` of a round's new rows written past the
+/// relation's rows (`Batch::append_live`), as many as the word at `h0_at` of `ob` holds (at most `n`), placed as code
+/// 4's, after its head's gate: a park before it grew the map with every row it held.
 /// Code 6 (a set's held bitmap, t58 increment A): row `s`'s bit set, at its index under the key past `p` (`held_index`).
 unsafe fn lat_rehash_one(r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
     if p.code == 6 {
@@ -2177,18 +2318,25 @@ unsafe fn lat_rehash_one(r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: 
         at((hb.add(p.h_at as usize) as *mut u32).add((x >> 5) as usize)).fetch_or(1 << (x & 31), Ordering::Relaxed);
         return;
     }
-    if p.code == 4 {
-        if s >= p.n {
+    if p.code == 4 || p.code == 7 {
+        let row = if p.code == 7 {
+            if s >= (*(ob.add(p.h0_at as usize) as *const u32)).min(p.n) {
+                return;
+            }
+            rows_len(r, p.r_rows_at) + s
+        } else if s >= p.n {
             return;
-        }
+        } else {
+            s
+        };
         let h = hb.add(p.h_at as usize) as *mut u32;
         let mut key = [0i64; 8];
         for c in 0..p.nkeys.min(8) {
-            key[c as usize] = lat_r(r, p, s, c);
+            key[c as usize] = lat_r(r, p, row, c);
         }
         let mut a = lat_hash(&key, p.nkeys, p.hmask);
         for _ in 0..=p.hmask {
-            if at(h.add(3 * a as usize)).compare_exchange(NONE, s, SeqCst, SeqCst).is_ok() {
+            if at(h.add(3 * a as usize)).compare_exchange(NONE, row, SeqCst, SeqCst).is_ok() {
                 return;
             }
             a = (a + 1) & p.hmask;
@@ -2571,10 +2719,10 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     if t0 >= t1 {
         return;
     }
-    let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { st.rows() };
-    fill_u32(b.c, t0.max(rows), t1, 0);
-    for r in t0..t1.min(rows) {
-        scan_count_one(st, j, b, r);
+    let (kv, cands) = st.scan_cands(j);
+    fill_u32(b.c, t0.max(cands.n), t1, 0);
+    for r in t0..t1.min(cands.n) {
+        scan_count_one(st, j, b, &kv, &cands, r);
     }
 }
 
@@ -2648,9 +2796,12 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     if r0 == 0 && r1 > 0 {
         *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
     }
-    kept_runs(offsets, o0, r0, r1.min(rows), |r, a, len| {
+    // Past its candidates every count is none (`scan_count_range`): nothing kept there to walk.
+    let (_, cands) = st.scan_cands(j);
+    kept_runs(offsets, o0, r0, r1.min(rows).min(cands.n), |r, a, len| {
         for i in 0..below(a, len, s.cap_out) {
-            st.write_row(0, s.r_from.wrapping_add(r + i), b.o, a + i);
+            let id = st.scan_cand(&cands, r + i).expect("a kept candidate is one of the scan's");
+            st.write_row(0, id, b.o, a + i);
         }
     });
 }
@@ -2802,7 +2953,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
     let o0 = *offsets;
     // The rows they become (`Dedup::seen`): the relation's rows as the device holds them, and their places among the
     // new ones (`Batch::append_live` writes them there).
-    let had = if d.seen != 0 { rows_len(r, d.r_rows_at) } else { 0 };
+    let had = if d.seen == 1 { rows_len(r, d.r_rows_at) } else { 0 };
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     if x0 == 0 && x1 > 0 {
         *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
@@ -2812,7 +2963,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
         for c in 0..d.ncols.min(16) {
             copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
         }
-        if d.seen != 0 {
+        if d.seen == 1 {
             dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, len, had + a);
         }
     });
@@ -3340,6 +3491,8 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         // `ROW_FIND` (bit 10): the made text's value is the atom it is, found in the atoms directory (`atom_of_text`,
         // decision 0666), or no row where none is.
         let finds = s.agg[0] & (1 << 10) != 0;
+        // `ROW_FIND_NONE` (bit 11): a text no atom is keeps its row, its value -1 (a negated atom's key: no row has it).
+        let keep_none = s.agg[0] & (1 << 11) != 0;
         let ksym = ksym as u32;
         if keeps {
             let e = text_find(vc, 0, pw(5), ksym);
@@ -3351,7 +3504,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                     core::ptr::copy_nonoverlapping(e.add(16), (a as *mut u8).add(16 + off as usize), len as usize);
                 }
                 let value = if !full && finds { atom_of_text(a, off, len, d) } else { text_value(a, table, ctl, canon, off, len, full) };
-                made(ctl, vv, counts, r, value, full);
+                made(ctl, vv, counts, r, value, full, keep_none);
                 continue;
             }
         }
@@ -3503,7 +3656,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         if unheld {
             counter(4);
         }
-        made(ctl, vv, counts, r, value, full);
+        made(ctl, vv, counts, r, value, full, keep_none);
     }
 }
 
@@ -3593,7 +3746,7 @@ unsafe fn row_strjoin(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 }
             }
         }
-        made(ctl, vv, counts, r, text_value(a, table, ctl, canon, off, total, full), full);
+        made(ctl, vv, counts, r, text_value(a, table, ctl, canon, off, total, full), full, false);
     }
 }
 
@@ -3655,13 +3808,13 @@ unsafe fn text_value(a: *mut u32, t: *mut u32, ctl: *mut u32, canon: bool, off: 
 }
 
 /// A made text's row: its value (`text_value`) and its keep bit: none for a text no atom is (`ROW_FIND`), as the CPU
-/// drops it at the function (`PROBE_OUT`).
-unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool) {
+/// drops it at the function (`PROBE_OUT`), unless `keep_none` (`ROW_FIND_NONE`).
+unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool, keep_none: bool) {
     if full {
         at(ctl.add(6)).fetch_or(64, SeqCst);
     }
     *vv.add(r as usize) = value;
-    *counts.add(r as usize) = (full || value != -1) as u32;
+    *counts.add(r as usize) = (full || keep_none || value != -1) as u32;
 }
 
 // ---- The program: a chain of dispatches, a phase a dispatch, a group an item (decision 0674). ----
@@ -3985,9 +4138,18 @@ impl Prog {
             }
             return true;
         }
-        // The group's threads, a range: all of them, then (a segment's) each stride's below its limit.
+        // The group's threads, a range: all of them, then (a segment's) each stride's, below its limit each. A
+        // segment's rows past its limit are past the room its size script placed (its counts' `count + plus`): the
+        // next job's, written there by its last group in whatever order the groups run (a scan's zeros over the next
+        // job's counts, its rows lost).
         let mut t0 = g.wrapping_mul(TG);
         let mut t1 = t0.saturating_add(TG);
+        if step != 0 {
+            t1 = t1.min(lim);
+            if t0 >= t1 {
+                return true;
+            }
+        }
         loop {
             self.range(kind, j, &bufs, t0, t1);
             match t0.checked_add(step) {
@@ -4044,6 +4206,9 @@ impl Prog {
             }
             PK_DEDUP_SCATTER => dedup_scatter_range(b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
+            // A program's tail's growth of a map that did not grow (`omask` all ones, `Batch::lattice_tail`): no
+            // thread has a place to move, so the range is skipped whole rather than thread by thread.
+            PK_LAT_REHASH if lat().omask == NONE => {}
             PK_LAT_CLEAR => lat_clear_range(b.la, b.lt, b.h, lat(), t0, t1),
             PK_SUM if t0 == 0 && t1 > 0 => sum_one(j.p as *const SumP),
             PK_ROUND if t0 == 0 && t1 > 0 => round_one(j.p as *const RoundP, self.ctl),
@@ -4061,7 +4226,7 @@ impl Prog {
     unsafe fn job(&self, kind: u32, j: &Job, b: &Bufs, t: u32) {
         let lat = || &*(j.p as *const LatP);
         match kind {
-            PK_LAT_REHASH => lat_rehash_one(j.s_, j.g, j.vc, lat(), t),
+            PK_LAT_REHASH | PK_SET_PLACE => lat_rehash_one(j.s_, j.g, j.vc, lat(), t),
             PK_LAT_CLAIM => lat_claim_one(b.l, b.la, j.cnt, lat(), t),
             PK_LAT_BEST => lat_best_one(b.l, b.la, b.lt, b.h, b.v as *const u32, j.cnt, lat(), t),
             PK_LAT_MERGE => lat_merge_one(b.l, b.la, b.lt, b.h, j.s_, j.vc, b.o, j.counters, b.v as *const u32, j.g as *const u32, lat(), t),

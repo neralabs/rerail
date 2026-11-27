@@ -500,12 +500,14 @@ impl ComputeQueue {
 
     /// Which span of its launches a buffer made resident (`GridBindContext::use_buffer`) stays resident over: while
     /// this is the same, a launch after it needs it made resident no more (decision 0641). Metal's is its open
-    /// compute encoder (`useResource` holds for the encoder's life). The other backends keep what a launch uses with
-    /// that launch alone (OpenCL's indirect-access list, the CPU's and CUDA's buffers kept), so each launch is a span.
+    /// compute encoder (`useResource` holds for the encoder's life). The CPU's is its submission: its queue keeps a
+    /// resident buffer until the work flushed with it has run. The other backends keep what a launch uses with that
+    /// launch alone (OpenCL's indirect-access list, CUDA's buffers kept), so each launch is a span.
     pub fn residency_span(&self) -> u64 {
         match &self.kind {
             #[cfg(target_os = "macos")]
             QueueKind::Native(q) => q.encoders(),
+            QueueKind::Cpu(q) => q.flushes(),
             _ => self.launches.get(),
         }
     }
@@ -612,6 +614,20 @@ impl ComputeFunctionLibrary {
         })
     }
 
+    /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
+    /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
+    /// or of a text with no kernel that has Rust, the same library. An error on the CPU where the text compiles a
+    /// kernel that has Rust but is not the source that Rust was written from: no other build runs in its place.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Result<Self, String> {
+        Ok(match self {
+            ComputeFunctionLibrary::Cpu(l) => {
+                let host = rerail_ukl_rust::kernels(text, defines)?;
+                ComputeFunctionLibrary::Cpu(l.with_host(host))
+            }
+            other => other,
+        })
+    }
+
     /// A library of code compiled ahead of time for a target the device runs (decision 0645: a shipped kernel). Only
     /// a GPU's: OpenCL's and the CPU's targets are local.
     pub fn from_compiled(device: &Device, code: &[u8]) -> Result<Self, String> {
@@ -628,19 +644,6 @@ impl ComputeFunctionLibrary {
             Device::Native(d) => native::Library::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages),
             Device::OpenCl(d) => cl::ClComputeFunctionLibrary::native_code(d, preprocessed_source, file_name_to_appear_in_error_messages, &std::env::var("RERAIL_OPENCL_NATIVE_CODE_OPTIONS").unwrap_or_default()),
             Device::Cpu(_) => Ok(None),
-        }
-    }
-
-    /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
-    /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
-    /// or of another text, the same library.
-    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Self {
-        match self {
-            ComputeFunctionLibrary::Cpu(l) => {
-                let host = rerail_ukl_rust::kernels(text, defines);
-                ComputeFunctionLibrary::Cpu(l.with_host(host))
-            }
-            other => other,
         }
     }
 

@@ -28,6 +28,8 @@ pub const VIEW_ORDER: u32 = 12;
 /// The `op` view (`View::Op`): each numbered node's anonymous children, its id and their name atoms, read in place
 /// only (decision 0353 row 7).
 pub const VIEW_OP: u32 = 13;
+/// `doc` (`tape_rows::DocRow`): a file's row of its key and its path's and module's atoms, read in its entry.
+pub const VIEW_DOC: u32 = 14;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -50,6 +52,7 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_DEPTH => 11,
         VIEW_ORDER => 12,
         VIEW_OP => 13,
+        VIEW_DOC => 14,
         _ => panic!("view {view} has no read"),
     }
 }

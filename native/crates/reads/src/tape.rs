@@ -647,6 +647,70 @@ pub fn has_kind(t: &[u8], v: &TapeView, block: u32, kind: u32) -> u32 {
     ((word_at(t, at, k) >> (kind & 63)) & 1) as u32
 }
 
+/// Named node `node`'s place among its parent's named children (decision 0656 step 4), past comments or not
+/// (`tape_place`, `tape_place_past_comments`): 0 for the first, and for the root; from the tape's auxiliary index in
+/// its home after its presence, the last every-`K`-th named sibling at or before it (SIBLINGS), then the tape's
+/// siblings stepped to it, each named one (past comments: that is no comment, COMMENTS) counted (NAMED). The CLIF's
+/// steps (`rerail_clif::reads::place_by`), written directly; the one Rust read of a place, the host's view reads'
+/// and the join program's. `parent`, `number` and `end_of` are the tape's reads, in its format. `NONE` for a tape
+/// without presence, which no writer makes.
+pub fn place(t: &[u8], v: &TapeView, node: u32, past_comments: bool, parent: impl Fn(u32) -> u32, number: impl Fn(u32) -> u32, end_of: impl Fn(u32) -> u32) -> u32 {
+    use crate::view::aux::*;
+    let presence = v.presence;
+    if presence == 0 {
+        return NONE;
+    }
+    let p = parent(node);
+    if p == NONE {
+        return 0;
+    }
+    // The index after the presence, its bytes rounded up to 16 (`f16::presence::aux_at`, `ukl_aux_in_home`).
+    let field = |k: u32| u32_at(t, presence, k);
+    let len = (field(0).wrapping_add(field(4)).wrapping_mul(field(8)) << 3).wrapping_add(field(12) << 2);
+    let aux = presence.wrapping_add(len.wrapping_add(16 + 15) & !15);
+    // Section `kind`'s offset from the index (0: none of its version), its directory searched (`aux_section`).
+    let section = |kind: u16, version: u16| {
+        let want = u32::from(kind) | u32::from(version) << 16;
+        (0..u32_at(t, aux, 4) >> 16).map(|e| 32 + 16 * e).find(|&d| u32_at(t, aux, d) == want).map_or(0, |d| u32_at(t, aux, d + 8))
+    };
+    let (sib, named) = (section(SIBLINGS, SIBLINGS_VERSION), section(NAMED, NAMED_VERSION));
+    let comments = if past_comments { section(COMMENTS, COMMENTS_VERSION) } else { 0 };
+    let sibs = aux.wrapping_add(sib);
+    let n = if sib != 0 { u32_at(t, sibs, 0) } else { 0 };
+    // Entry `i`'s parent (`k` 0) or node (`k` 4).
+    let pair = |i: u32, k: u32| u32_at(t, sibs, 16 + 8 * i + k);
+    let lower_bound = |mut lo: u32, mut hi: u32, below: &dyn Fn(u32) -> bool| {
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if below(mid) { lo = mid + 1 } else { hi = mid }
+        }
+        lo
+    };
+    let first = lower_bound(0, n, &|m| pair(m, 0) < p);
+    let past = lower_bound(first, n, &|m| pair(m, 0) < p + 1);
+    let lo = lower_bound(first, past, &|m| pair(m, 4) <= node);
+    let found = lo != first;
+    let from = if found { pair(lo - 1, 4) } else { p + 1 };
+    let mut i = (lo - first).wrapping_mul(K);
+    if past_comments && found {
+        let base = aux.wrapping_add(comments);
+        i = i.wrapping_sub(u32_at(t, base, ((lo - 1) << 2).wrapping_add(u32_at(t, base, 8))));
+    }
+    // Code `code`'s bit in the code bitmap of the section at `sec` (0 where it is missing or the code past it).
+    let bit = |sec: u32, code: u32| {
+        let base = aux.wrapping_add(sec);
+        let word = code >> 6;
+        sec != 0 && word < u32_at(t, base, 0) && (word_at(t, base, 16 + 8 * word) >> (code & 63)) & 1 != 0
+    };
+    let mut c = from;
+    while c < node {
+        let code = number(c);
+        i += u32::from(bit(named, code) && !(past_comments && bit(comments, code)));
+        c = end_of(c);
+    }
+    i
+}
+
 /// LZ4's block format, `t[from..to]`, decoded into `dst[..len]`: the bytes decoded, `len` for a whole block. The one
 /// decoder (decision 0353 step 4b): the CLIF's `tape_lz4` (`z_lz4`, the JIT's and the kernels'), written directly, the
 /// same steps and the same stops. A length's extension bytes are read one a step while the block has them; a

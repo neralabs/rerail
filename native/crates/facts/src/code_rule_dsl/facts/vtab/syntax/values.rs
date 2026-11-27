@@ -783,6 +783,10 @@ impl Layered {
             false => None,
         };
         let dir = self.values.dir(&batch)?;
+        // Each value's batch's entries hold what the view's read reads (`doc`'s atoms), as the chunk's do.
+        if !dir.batches.iter().all(|b| super::tape_rows::entries_hold(dv_ref.view, b)) {
+            return None;
+        }
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
         let (lines, locs) = views.holds();
@@ -873,6 +877,28 @@ impl Source for Layered {
     /// The base's (a part's node is read as text).
     fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
         self.base.node_text_atom(name, n)
+    }
+    /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
+    /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
+    /// source where it lies, as `node_read` finds it through the batch that holds its document.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(batch) = self.base.python_batch() else {
+            why("refused: a layered binding over no batch");
+            return None;
+        };
+        let Some(dir) = self.values.dir(&batch) else {
+            why("refused: a layered binding with no views' directory over its values");
+            return None;
+        };
+        if !super::device_chunk::ViewsInPlace::read_on_host() && !dir.views.sources {
+            why("refused: a document's source the device does not reach (a layered binding)");
+            return None;
+        }
+        let read = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place (a layered binding)" } else { "refused: the layered directory on no device" });
+        read
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

@@ -20,7 +20,9 @@ pub trait SolverDevice: Device {
     /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
     /// (decision 0307: a `shortlex_min` relation's value; decision 0659: a recursive set head's column of made texts),
     /// `head` the join's head relation among them.
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
+    /// `own_syms`: the component's own relations' columns of symbols (declared `s`, none of `own_texts`): a slot an
+    /// atom over one binds holds an atom, read as a text where the atoms blocks hold it.
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], own_syms: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
     /// The head columns `plan` makes texts into (its arena's), for a component's `own_texts`.
     fn made_columns(&self, plan: &JoinPlan) -> Vec<usize>;
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.

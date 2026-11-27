@@ -653,7 +653,6 @@ impl MetalComputeQueue {
         self.blit_encoder().copy_from_buffer(src, src_offset, dst, dst_offset, length);
     }
 
-    /// Commits the work so far; its event.
     /// A barrier between two launches' memory (decision 0674's chain): every buffer the launches before wrote,
     /// those reached by address too, seen by the launches after (`memoryBarrierWithScope:` buffers).
     pub fn memory_barrier(&self) {
@@ -665,6 +664,7 @@ impl MetalComputeQueue {
         }
     }
 
+    /// Commits the work so far; its event.
     pub fn flush(&mut self) -> MetalComputeEvent {
         Self::end(&mut self.open.borrow_mut());
         // The next command buffer stages in memory of its own (this one's is read when it runs).

@@ -278,6 +278,8 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
         f => match device_fn(f) {
             Some(d) if d.arity() != args.len() => false,
             Some(DeviceFn::Arith(_)) => args.iter().all(|&a| row_term(v, a)),
+            // A node's preorder key, of a variable (a node bound by a row): read off its tape (`ARITH_NODE_ORDER`).
+            Some(DeviceFn::NodeOrder) => args.iter().all(|a| !is_call(a)),
             // The order of two symbols' names (`<` of symbols lowers to it), or a name's characters: of names or
             // cats' texts (compared from their parts, never made), or of texts the device makes.
             Some(DeviceFn::Names { .. }) => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
@@ -788,7 +790,9 @@ pub mod tests {
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
         assert_eq!(p.missing, vec![Form::Computed]);
         assert!(p.why().contains("no computed term"), "{}", p.why());
-        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding, the device's
+        // join program on the host (`host_joins`), its Rust SIMD form, which the CPU binding always takes over the
+        // scalar joins wherever it has every form.
         let mut plain = Shape::default();
         adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
@@ -796,7 +800,8 @@ pub mod tests {
         let p = place(&plain);
         drop(device);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
-        assert!(!place(&plain).gpu, "the CPU binding keeps it");
+        let p = place(&plain);
+        assert!(p.gpu && p.host && !p.device, "the CPU binding runs it on the join program: {p:?}");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
         // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
@@ -870,6 +875,13 @@ pub mod tests {
         let wide = at(1.5);
         assert!(wide.gpu && wide.gpu_s > wide.cpu_s, "the GPU taken though priced above the CPU: {wide:?}");
         assert!(!at(2.5).gpu, "{:?}", at(2.5));
+        // Bound to the CPU, the join program is taken whatever its price: at 2.5 times, and at 100.
+        let cpu = set_device(false);
+        for ratio in [2.5, 100.0] {
+            let p = at(ratio);
+            assert!(p.gpu && p.host && p.gpu_s > p.cpu_s, "the CPU binding's join program at {ratio} times the scalar joins' price: {p:?}");
+        }
+        drop(cpu);
         let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
         drop(device);

@@ -85,16 +85,16 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 /// 0442), which holds the graphs `keep_files` kept: on a pool's thread, whose own is the tests' one, each parse derived
 /// its graph in a run of its own, nested in the pool, and none of them ended.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
-    use rayon::prelude::*;
     static PARSED: std::sync::OnceLock<Vec<(std::path::PathBuf, Arc<Version>)>> = std::sync::OnceLock::new();
     PARSED
         .get_or_init(|| {
             let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
             crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-            // On the cores (`on_cores`), as every parallel loop of the engine: each item runs in this test's run, so it
-            // finds the graphs `keep_files` kept. On rayon's own pool each read another object, and derived its own
-            // graph by a run of its own; a dozen such runs at once never finished.
-            on_cores(|| files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect())
+            // One file at a time: each file's parse is a parallel loop of its own (`on_cores`). Under a parallel loop
+            // over the files, a thread waiting in one file's loop steals another file's item and parses it on the same
+            // stack, and again, up to every file deep: about 1 MB a file in a Linux debug build, past a pool thread's
+            // stack.
+            files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
         })
         .clone()
 }

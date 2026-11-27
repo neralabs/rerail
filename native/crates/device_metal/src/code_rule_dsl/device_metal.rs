@@ -84,8 +84,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
-        joins::compile(join, spec, own_texts, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], own_syms: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
+        joins::compile(join, spec, own_texts, own_syms, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn made_columns(&self, plan: &JoinPlan) -> Vec<usize> {

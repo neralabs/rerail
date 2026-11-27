@@ -4486,7 +4486,12 @@ fn the_views_directory_is_the_hosts_too() {
     assert_eq!(views.sources, views.dir.is_some() && sources_on_device, "a node's text on the device only where it reads every source");
     let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
     let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && named.into_iter().all(|h| homes[h].gpu != 0);
-    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home its rows name");
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every tape, lines and cache its rows name");
+    // Its nodes' texts are read on the device only where it reaches every source too (`ViewsInPlace::sources`).
+    let sources_on_device = all_on_device && rows.iter().all(|r| homes[r.homes[2] as usize].gpu != 0);
+    assert_eq!(views.sources, sources_on_device, "the device reads the sources where it reaches every one");
+    // The host's join programs read the directory at its own address in the block (53a8c256c2), device or none.
+    assert_eq!(views.host.dir, block.base_ptr() as u64 + views.at as u64, "the host's address of the directory");
 }
 
 /// Decision 0353, step 3 on the CPU (step 3): `Viewed` reads each row through its document's directory row
@@ -4645,7 +4650,7 @@ fn the_join_programs_view_reads_are_the_jits() {
                 let place = format!("{} document {m}", format.name());
                 for k in 0..VIEWS.len() {
                     let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
-                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2][k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3][k];
                     for r in 0..n {
                         let found = at(doc.clone(), k as u32, r);
                         for col in 0..cols {

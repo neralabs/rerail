@@ -577,6 +577,25 @@ impl Source for LongTexts {
         view.failed = view.cache_failed();
         Some((self.batch.nodes().total(), view))
     }
+    /// Its batch's `node` view in place: a node's text is its numbered node's span of the source, where both lie
+    /// (`text_any_ref`'s, for a node; a comment no node is reads none there).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(v) = device_chunk::views_in_place(&self.batch) else {
+            why("refused: the batch has no views' directory in place");
+            return None;
+        };
+        // The host reads every source where it lies; the device those in slabs.
+        if !device_chunk::ViewsInPlace::read_on_host() && !v.sources {
+            crate::code_rule_dsl::prof::count("views.refused.not_on_device.node_texts", 1);
+            why("refused: a document's source the device does not reach");
+            return None;
+        }
+        let read = v.read_of(device_chunk::VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place" } else { "refused: the directory on no device" });
+        read
+    }
     fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<rusqlite::types::Value> {
         use rusqlite::types::Value;
         // A per-node value read as its text (core.rerail's, T's), given the value its signature returns.
@@ -4785,11 +4804,11 @@ impl Batch {
                 let [nodes, fielded, siblings, locs] = [c[0], c[1], c[2], c[3]];
                 let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, `op`, then siblings; then the host's alone: the token order's four, `spread`,
-                // `end_point`, `text`, and the tape's other relations (`tape_rows`), whose token order's four it
-                // counts too.
+                // node_order, `op`, `doc` (a free slot, written above), then siblings; then the host's alone: the token
+                // order's four, `spread`, `end_point`, `text`, and the tape's other relations (`tape_rows`), whose token
+                // order's four it counts too.
                 let views: [usize; TAPE] = [
-                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9],
+                    own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], c[9], 0,
                     own[3], 0, 0, 0, 0, if wants_spread { c[5] } else { 0 }, if wants_end { nodes } else { 0 }, c[11],
                 ];
                 let mut by: [usize; ROWS] = std::array::from_fn(|k| views.get(k).copied().unwrap_or(0));
