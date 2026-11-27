@@ -188,15 +188,10 @@ impl Gen<'_> {
         let at_place = |place: RefuseAt, byte: &str, range: Option<(&str, &str)>| -> String {
             let mut out = String::new();
             for (r, masks) in tests.iter().filter(|(r, _)| r.at == place) {
-                let mask = match masks.as_slice() {
-                    [] => None,
-                    [m] => Some(m.clone()),
-                    each => Some(format!("[{}][usize::from(qi)]", each.iter().map(|m| format!("&{m}[..]")).collect::<Vec<_>>().join(", "))),
-                };
-                let hold = match (mask, range) {
-                    (None, _) => "true".to_owned(),
-                    (Some(m), Some((a, z))) => format!("any_in({}{m}, {a}, {z})", if m.starts_with('[') { "" } else { "&" }),
-                    (Some(m), None) => format!("bit({}{m}, {byte})", if m.starts_with('[') { "" } else { "&" }),
+                let hold = match (masks.is_empty(), range) {
+                    (true, _) => "true".to_owned(),
+                    (false, Some((a, z))) => by_quote(masks, &|m| format!("any_in(&{m}, {a}, {z})")),
+                    (false, None) => by_quote(masks, &|m| format!("bit(&{m}, {byte})")),
                 };
                 let test = match when(r) {
                     Some(c) => format!("{c} && {hold}"),
@@ -210,18 +205,15 @@ impl Gen<'_> {
         // A piece after the record: its kind alone, as the lean lexer's string's pieces are no tokens of code (no word,
         // no marks): a lookahead over the tokens counts no `{` of an interpolation and no `,` of a string's text.
         let put = |a: &str, z: &str, k: &str| format!("{{\n                        let (a, z) = ({a}, {z});\n                        // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.\n                        unsafe {{ out.add(len + 1 + more).write(Rec {{ start: a as u32, last: z as u32, code: {k} }}) }};\n                        more += 1;\n                    }}");
-        let quote_of = |each: &[String]| -> String {
-            if each.len() == 1 { format!("&{}", each[0]) } else { format!("[{}][usize::from(qi)]", each.iter().map(|m| format!("&{m}[..]")).collect::<Vec<_>>().join(", ")) }
-        };
-        let (qm, q3cm) = (quote_of(&q_each), quote_of(&q3c_each));
+        let (qm, q3cm) = (by_quote(&q_each, &|m| format!("bit(&{m}, p)")), by_quote(&q3c_each, &|m| format!("bit(&{m}, p)")));
         // The text from `t0`, its pieces to its closer or an interpolation's `{`: `(c, cl, opened)`, the closer's first
         // and last byte; `seg` the region's first byte (its fill's).
         let text = |k: &[String; 7]| -> String {
             let mut t = String::new();
             let _ = writeln!(t, "                // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape{}.", if interp.is_some() { ", an interpolation's braces" } else { "" });
             let _ = write!(t, "                let mut at = t0;\n                let (c, cl, opened) = loop {{\n");
-            let stops_here = if interp.is_some() { format!("if fl & {format_bit} != 0 {{ &{stops_f} }} else {{ &{stops} }}") } else { format!("&{stops}") };
-            let _ = write!(t, "                    let stops: &[u64] = {stops_here};\n                    let Some(p) = first_bit(&stops[..made], at) else {{\n                        if made < nw {{\n                            {PAUSE}\n                        }}\n                        // A string open at the file's end.\n                        refused = true;\n                        break 'tokens;\n                    }};\n                    if p + 1 >= 64 * made && made < nw {{\n                        {PAUSE}\n                    }}\n");
+            let stops_here = if interp.is_some() { format!("(if fl & {format_bit} != 0 {{ first_bit(&{stops_f}[..made], at) }} else {{ first_bit(&{stops}[..made], at) }})") } else { format!("first_bit(&{stops}[..made], at)") };
+            let _ = write!(t, "                    let Some(p) = {stops_here} else {{\n                        if made < nw {{\n                            {PAUSE}\n                        }}\n                        // A string open at the file's end.\n                        refused = true;\n                        break 'tokens;\n                    }};\n                    if p + 1 >= 64 * made && made < nw {{\n                        {PAUSE}\n                    }}\n");
             // An escape.
             let _ = writeln!(t, "                    if bit(&{e}, p) {{");
             if let Some(rb) = &raw {
@@ -235,9 +227,9 @@ impl Gen<'_> {
                 // `{{` and `}}`: one brace each, paired from a run's first; an odd run's last `{` is an interpolation's.
                 let pair = if k[3].is_empty() { String::new() } else { format!("                        for i in 0..(r + 1 - p) / 2 {{\n                            {}\n                        }}\n", put("p + 2 * i", "p + 2 * i + 1", &k[3])) };
                 let alone = tests.iter().find(|(r, _)| r.at == RefuseAt::BraceAlone).map_or(String::new(), |(r, _)| format!("                        if (r + 1 - p) % 2 == 1 {{\n    {}                        }}\n", refuse(&r.why).replace("\n                    ", "\n                        ")));
-                let _ = write!(t, "                    if bit(&{ob}, p) || bit(&{cb}, p) {{\n                        let open = bit(&{ob}, p);\n                        let r = run_last(if open {{ &{ob} }} else {{ &{cb} }}, p);\n                        if r + 1 >= 64 * made && made < nw {{\n                            {PAUSE}\n                        }}\n                        if !open {{\n{alone}                        }}\n                        if t0 < p {{\n                            {}\n                        }}\n{pair}                        if open && (r + 1 - p) % 2 == 1 {{\n                            break (r, r, true);\n                        }}\n                        at = r + 1;\n                        t0 = at;\n                        continue;\n                    }}\n", put("t0", "p - 1", &k[0]));
+                let _ = write!(t, "                    if bit(&{ob}, p) || bit(&{cb}, p) {{\n                        let open = bit(&{ob}, p);\n                        let r = if open {{ run_last(&{ob}, p) }} else {{ run_last(&{cb}, p) }};\n                        if r + 1 >= 64 * made && made < nw {{\n                            {PAUSE}\n                        }}\n                        if !open {{\n{alone}                        }}\n                        if t0 < p {{\n                            {}\n                        }}\n{pair}                        if open && (r + 1 - p) % 2 == 1 {{\n                            break (r, r, true);\n                        }}\n                        at = r + 1;\n                        t0 = at;\n                        continue;\n                    }}\n", put("t0", "p - 1", &k[0]));
             }
-            let _ = write!(t, "                    // A quote: its own closes it (a triple's, the last three of a run); another is text.\n                    if !bit({qm}, p) {{\n                        at = p + 1;\n                        continue;\n                    }}\n                    if fl & {TRIPLE} != 0 && !bit({q3cm}, p) {{\n                        at = p + 1;\n                        continue;\n                    }}\n                    if t0 < p {{\n                        {}\n                    }}\n                    break (p, if fl & {TRIPLE} != 0 {{ p + 2 }} else {{ p }}, false);\n                }};\n", put("t0", "p - 1", &k[0]));
+            let _ = write!(t, "                    // A quote: its own closes it (a triple's, the last three of a run); another is text.\n                    if !{qm} {{\n                        at = p + 1;\n                        continue;\n                    }}\n                    if fl & {TRIPLE} != 0 && !{q3cm} {{\n                        at = p + 1;\n                        continue;\n                    }}\n                    if t0 < p {{\n                        {}\n                    }}\n                    break (p, if fl & {TRIPLE} != 0 {{ p + 2 }} else {{ p }}, false);\n                }};\n", put("t0", "p - 1", &k[0]));
             // Its place's refusals: its fill, its text, a raw string's backslashes.
             t.push_str(&at_place(RefuseAt::Fill, "", Some(("seg", "c - 1"))));
             t.push_str(&at_place(RefuseAt::Text, "", Some(("o1", "c - 1"))));
@@ -388,6 +380,17 @@ pub(super) fn arm_of(row: usize) -> String {
 }
 
 /// Whether `e` names a quote's masks (`Q`, `Q3_c`: each quote's).
+/// A read of the open string's quote's mask (`qi`, its quote's index): each quote's read, the one of `qi`.
+fn by_quote(each: &[String], read: &dyn Fn(&str) -> String) -> String {
+    match each {
+        [m] => read(m),
+        _ => {
+            let arms: Vec<String> = each.iter().enumerate().map(|(i, m)| if i + 1 == each.len() { format!("_ => {}", read(m)) } else { format!("{i} => {}", read(m)) }).collect();
+            format!("(match qi {{ {} }})", arms.join(", "))
+        }
+    }
+}
+
 fn names_quote(e: &Expr) -> bool {
     match e {
         Expr::Name(m) => m.starts_with('Q'),

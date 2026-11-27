@@ -73,6 +73,22 @@ test builds only. Python's grammar did not compile under it:
 - **The seven escapes below are the reader's refusals**, each tested where its place is (`refuse … at …`). Python's
   product tier 1 has no whole-file pass: stage 1 and the walk are a test build's.
 
+## At the merge of Parser-generators-final-shape 7f4f5f7115 (2026-11-27)
+
+Python's tier 1 has no stage 1 (0698 step 88): each block's masks are made where the loop reads them. With this
+branch's generator the tier is 1931 lines (Parser-generators' own: 2269).
+
+- **`escaped(B)` and `fill(S, E)` at a byte:** in a partial window (`partial_windows`, Kotlin's, 0703) they are read
+  back to the run's nearest start (`esc_back`, `fill_back`); everywhere else by Parser-generators' walk back over the
+  bytes. One read each, chosen by the window.
+- **The bytes form's gate:** stage 1's finals may be its errors alone (`finals_read`), the counts' scans stay where the
+  loop reads a count (`keep_scans`), beside this branch's region ends from inside (`enter_fns`, `chunked_lean`) and
+  Kotlin's row starts (`row_starts`, `row_firsts`).
+- **A count's read at a run's end and at the found close** stays, with Parser-generators' error naming the mask.
+- **Python's records in the tests:** the marks tier 2 asks of the bytes (`UNRECORDED`) and the derived and spanned marks
+  are both left out of the comparison: the mask is `unrecorded`, apart from the closure adding the derived marks.
+- Kotlin's checks of a token's escapes now search `A & fill` by `A`'s bits (`bfirst_in`): its tier regenerated.
+
 ## A lexer meant to run from the middle has no whole-file pass (2026-11-27)
 
 - `bitlex_lex_rust::middle::whole_file_passes` reads a generated tier 1's product build: it drops every item and

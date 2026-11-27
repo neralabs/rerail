@@ -893,6 +893,76 @@ impl<'a> Bytes<'a> {
         }
     }
 
+    /// `escaped(B)` where `e` is `prev(B & ~escaped(B))`, a pairs mask a byte back (`prev(two_start)`): a byte is
+    /// escaped exactly where the byte before is a `B` not escaped itself.
+    fn prev_unescaped(&self, f: &str, args: &[Arg]) -> Option<Expr> {
+        let (a, k) = Self::shift(f, args)?;
+        if k != -1 {
+            return None;
+        }
+        let mut a = a;
+        for _ in 0..64 {
+            match a {
+                Expr::Name(n) if !self.classes.contains_key(n.as_str()) => a = self.defs.get(&n)?.clone(),
+                _ => break,
+            }
+        }
+        let Expr::And(b, x) = &a else { return None };
+        let Expr::Not(x) = x.as_ref() else { return None };
+        let Expr::Call(g, xs) = x.as_ref() else { return None };
+        match xs.as_slice() {
+            [Arg::E(c)] if g == "escaped" && format!("{c:?}") == format!("{b:?}") => Some(Expr::Call("escaped".into(), vec![Arg::E(c.clone())])),
+            _ => None,
+        }
+    }
+
+    /// Whether `e` holds at no byte: `empty`, or it a byte on or back (`prev(empty)`).
+    fn none(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Empty => true,
+            Expr::Call(f, args) => Self::shift(f, args).is_some_and(|(a, _)| self.none(&a)),
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => self.defs.get(n).is_some_and(|d| self.none(d)),
+            _ => false,
+        }
+    }
+
+    /// Whether `e` reads a `fill`.
+    fn has_fill(&self, e: &Expr) -> bool {
+        match e {
+            Expr::Call(f, _) if f == "fill" => true,
+            Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if self.has_fill(x))),
+            Expr::Not(a) => self.has_fill(a),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => self.has_fill(a) || self.has_fill(b),
+            _ => false,
+        }
+    }
+
+    /// The `B` of the one `escaped(B)` `e` reads (a pairs mask a byte back's too), none where it reads two.
+    fn escaped_of(&self, e: &Expr, depth: usize) -> Option<Expr> {
+        if depth > 64 {
+            return None;
+        }
+        let both = |a: &Expr, b: &Expr| match (self.escaped_of(a, depth + 1), self.escaped_of(b, depth + 1)) {
+            (Some(x), Some(y)) if format!("{x:?}") != format!("{y:?}") => None,
+            (x, y) => x.or(y),
+        };
+        match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => self.escaped_of(self.defs.get(n)?, depth + 1),
+            Expr::Not(a) => self.escaped_of(a, depth + 1),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => both(a, b),
+            Expr::Call(f, args) if f == "escaped" => match args.as_slice() {
+                [Arg::E(b)] => Some(b.clone()),
+                _ => None,
+            },
+            Expr::Call(f, args) => match (self.prev_unescaped(f, args), args.first()) {
+                (Some(x), _) => self.escaped_of(&x, depth + 1),
+                (None, Some(Arg::E(a))) => self.escaped_of(a, depth + 1),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// `e` at byte `at` (Rust, a `usize`), a test of the bytes there: none past the file or before it. At a token's
     /// first byte (`s`) the byte is in the file.
     pub(super) fn at(&self, e: &Expr, at: &str, depth: usize) -> Result<String, String> {
@@ -989,6 +1059,7 @@ impl<'a> Bytes<'a> {
             // A token's first or last byte is in the file.
             Expr::Not(a) if at == "s" || at == "l" => not(&self.at(a, at, depth + 1)?),
             Expr::Not(a) => format!("({at} < n && !{})", self.at(a, at, depth + 1)?),
+            Expr::And(a, b) if self.none(a) || self.none(b) => "false".to_owned(),
             Expr::And(a, b) => format!("({} && {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Or(a, b) => format!("({} || {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
             Expr::Xor(a, b) => format!("({} != {})", self.at(a, at, depth + 1)?, self.at(b, at, depth + 1)?),
@@ -1008,6 +1079,19 @@ impl<'a> Bytes<'a> {
                 let tests: Vec<String> = t.iter().enumerate().map(|(k, c)| if k == 0 { format!("src[{i}] == {c:#04x}") } else { format!("src[{i} + {k}] == {c:#04x}") }).collect();
                 // At a token's first byte the byte is in the file.
                 if i == "s" && t.len() == 1 { tests.join("") } else { format!("({i} + {} <= n && {})", t.len(), tests.join(" && ")) }
+            }
+            // `escaped(B)` at a byte (outside `partial_windows`): the run of `B`s before it odd.
+            Expr::Call(f, args) if f == "escaped" => {
+                let [Arg::E(b)] = args.as_slice() else { return Err("`escaped` of no mask".into()) };
+                let k = format!("k{depth}");
+                format!("{{ let mut {k} = {at}; let mut odd = false; while {k} > 0 && {} {{ odd = !odd; {k} -= 1; }} odd }}", self.at(b, &format!("({k} - 1)"), depth + 1)?)
+            }
+            // `fill(S, E)` at a byte (outside `partial_windows`): back from it over bytes `E` does not hold, to one `S` holds (lean's walk back over a
+            // line's indent).
+            Expr::Call(f, args) if f == "fill" => {
+                let [Arg::E(s), Arg::E(e)] = args.as_slice() else { return Err("`fill` of no two masks".into()) };
+                let k = format!("k{depth}");
+                format!("{{ let mut {k} = {at}; loop {{ if {} {{ break true; }} if {} || {k} == 0 {{ break false; }} {k} -= 1; }} }}", self.at(s, &k, depth + 1)?, self.at(e, &k, depth + 1)?)
             }
             Expr::Call(f, args) => match Self::shift(f, args) {
                 Some((a, k)) if k < 0 => format!("({at} >= {} && {})", -k, self.at(&a, &format!("({at} - {})", -k), depth + 1)?),
@@ -1134,6 +1218,7 @@ impl<'a> Bytes<'a> {
                 }
             }
             Expr::Not(a) => format!("(!{} & valid(n, {p}))", self.win(a, off, depth + 1)?),
+            Expr::And(a, b) if self.none(a) || self.none(b) => "0u64".to_owned(),
             Expr::And(a, b) => {
                 let (a, b) = (self.win(a, off, depth + 1)?, self.win(b, off, depth + 1)?);
                 // A test of several windows after one that rarely holds (a `\u` escape's digits after its `\u`): read
@@ -1183,9 +1268,16 @@ impl<'a> Bytes<'a> {
                 let b = self.win(b, 0, depth + 1)?;
                 format!("escaped_step({b}, esc)")
             }
-            Expr::Call(f, args) => match Self::shift(f, args) {
-                Some((a, k)) => self.win(&a, off + k, depth + 1)?,
-                None => return Err(format!("`{f}` is no mask of the bytes 64 at a time")),
+            // A byte on: the window's escapes a byte down, the next window's first (the carry out) its last.
+            Expr::Call(f, args) if f == "escaped" && off == 1 => {
+                let Some(Arg::E(b)) = args.first() else { return Err("`escaped` of no mask".into()) };
+                let b = self.win(b, 0, depth + 1)?;
+                format!("(escaped_step({b}, esc) >> 1 | *esc << 63)")
+            }
+            Expr::Call(f, args) => match (self.prev_unescaped(f, args), Self::shift(f, args)) {
+                (Some(x), _) => self.win(&x, off, depth + 1)?,
+                (None, Some((a, k))) => self.win(&a, off + k, depth + 1)?,
+                (None, None) => return Err(format!("`{f}` is no mask of the bytes 64 at a time")),
             },
             Expr::Test { .. } => return Err("a machine's test is no mask of the bytes".into()),
         })
@@ -1301,6 +1393,7 @@ impl<'a> Bytes<'a> {
             }
             Expr::Not(a) if at == "s" || at == "l" => not(&go(a, at)?),
             Expr::Not(a) => format!("({at} < n && !{})", go(a, at)?),
+            Expr::And(a, b) if self.none(a) || self.none(b) => "false".to_owned(),
             Expr::And(a, b) => format!("({} && {})", go(a, at)?, go(b, at)?),
             Expr::Or(a, b) => format!("({} || {})", go(a, at)?, go(b, at)?),
             Expr::Xor(a, b) => format!("({} != {})", go(a, at)?, go(b, at)?),
@@ -1313,6 +1406,9 @@ impl<'a> Bytes<'a> {
                 "esc".to_owned()
             }
             Expr::Call(f, args) => {
+                if let Some(x) = self.prev_unescaped(f, args) {
+                    return go(&x, at);
+                }
                 let (a, k) = Self::shift(f, args)?;
                 if k < 0 { format!("({at} >= {} && {})", -k, go(&a, &format!("{at} - {}", -k))?) } else { go(&a, &format!("{at} + {k}"))? }
             }
@@ -1394,7 +1490,19 @@ impl<'a> Bytes<'a> {
     pub(super) fn window_fn(&mut self, m: &str) -> Result<(String, bool), String> {
         let f = format!("w_{m}");
         let e = self.expr(m)?;
-        let bits = self.win(&e, 0, 0)?;
+        let bits = self.win(&e, 0, 0).map_err(|x| format!("{x} (`{m}` = {e:?})"))?;
+        // The window's escapes once, where it reads them more than once: one carry steps once a window.
+        let bits = match bits.find("escaped_step(") {
+            Some(at) if bits.matches("escaped_step(").count() > 1 => {
+                let len = bits[at..].find(", esc)").ok_or("an escape of no carry")? + ", esc)".len();
+                let step = bits[at..at + len].to_owned();
+                if bits.matches("escaped_step(").count() != bits.matches(step.as_str()).count() {
+                    return Err(format!("`{m}` reads the escapes of two masks"));
+                }
+                format!("let escaped = {step};\n    {}", bits.replace(&step, "escaped"))
+            }
+            _ => bits,
+        };
         let esc = bits.contains("esc)");
         // A read of the token's opener (`escaped_from`): the function takes it.
         if bits.contains("esc_from(") {
@@ -1415,11 +1523,12 @@ impl<'a> Bytes<'a> {
             );
             // Its twin given the window's escaped bytes, where it reads them of one mask.
             if bits.matches("escaped_step(").count() == 1
+                && !bits.contains("*esc")
                 && let Some(at) = bits.find("escaped_step(")
                 && let Some(len) = bits[at..].find(", esc)")
             {
                 let of = bits[at + "escaped_step(".len()..at + len].to_owned();
-                let twin = bits.replacen(&format!("escaped_step({of}, esc)"), "escaped", 1);
+                let twin = bits.replacen(&format!("escaped_step({of}, esc)"), "escaped", 1).replace("let escaped = escaped;\n    ", "");
                 let _ = write!(
                     self.code,
                     "/// `{f}` given its window's escaped bytes (`escaped`).\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
@@ -1782,11 +1891,34 @@ impl<'a> Bytes<'a> {
         if !self.locals.contains_key(&m) {
             return if line.contains("assert") || self.partial { Ok(None) } else { Err(format!("`{m}` is no mask of the bytes")) };
         }
+        // A search of `A & F`, `F` a fill no window reads: `A`'s bits (its block's word, its windows), each tested of
+        // `F` at its byte, as the lean lexer reads a line's indent where its line breaks.
+        if matches!(name, "any_in" | "first_in") && args.len() == 3 {
+            let e = self.expr(&m)?;
+            let e = self.resolved(&e, 0).unwrap_or(e);
+            if let Expr::And(a, f) = &e {
+                let (a, f) = if self.has_fill(f) { (a, f) } else { (f, a) };
+                if self.has_fill(f) && !self.has_fill(a) {
+                    let la = format!("{m}_a");
+                    self.locals.insert(la.clone(), (**a).clone());
+                    let test = self.at(f, "i", 0)?;
+                    let first = self.read("first_in", &[format!("&{la}"), "q".to_owned(), args[2].trim().to_owned()], line)?.ok_or("no search of the fill's other side")?;
+                    let found = format!("{{ let mut q = {}; loop {{ match {first} {{ Some(i) if {test} => break Some(i), Some(i) => q = i + 1, None => break None }} }} }}", args[1].trim());
+                    return Ok(Some(if name == "any_in" { format!("{found}.is_some()") } else { found }));
+                }
+            }
+        }
         let from_start = |a: &str| matches!(a.trim(), "s" | "s + 1");
         let windowed = |me: &mut Self, from: &str| -> Result<String, String> {
             let (f, esc) = me.window_fn(&m)?;
             if esc && !from_start(from) {
-                return Err(format!("`{m}` reads escapes from no token's start"));
+                // From a byte inside the token: its first window's carry, whether the run of `B`s before it is odd.
+                let b = me.escaped_of(&me.expr(&m)?, 0).ok_or_else(|| format!("`{m}` reads escapes of no one mask"))?;
+                let before = me.at(&b, "(k - 1)", 0)?;
+                let from = from.trim();
+                return Ok(format!(
+                    "{{ let mut seed = Some({{ let mut k = {from}; let mut odd = 0u64; while k > 0 && {before} {{ odd ^= 1; k -= 1; }} odd }}); move |p: isize, esc: &mut u64| {{ if let Some(e) = seed.take() {{ *esc = e; }} unsafe {{ w_{m}::<S>(src, n, p, esc) }} }} }}"
+                ));
             }
             Ok(f)
         };
@@ -1854,7 +1986,7 @@ impl<'a> Bytes<'a> {
                     "close" => self.at_found(&e, self.found_close.as_ref()).unwrap_or(e),
                     _ => e,
                 };
-                format!("({})", self.at(&e, args[1].trim(), 0)?)
+                format!("({})", self.at(&e, args[1].trim(), 0).map_err(|x| format!("{x} (`{m}` = {e:?})"))?)
             }
             ("last_in", 3) if self.partial => format!("wlast_in({}, {}, {})", args[1].trim(), args[2].trim(), self.window_fn(&m)?.0),
             ("first_bit", 2) => format!("wfirst_bit(n, {}, {})", args[1].trim(), windowed(self, &args[1])?),
@@ -1896,7 +2028,7 @@ impl<'a> Bytes<'a> {
             if let Some((kind, _)) = line.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
                 self.row = Some(kind.to_owned());
             }
-            out.push_str(&self.rewrite_line(line, line)?);
+            out.push_str(&self.rewrite_line(line, line).map_err(|e| format!("{e}, in `{}`", line.trim()))?);
         }
         self.in_region = false;
         self.row = None;
@@ -1920,7 +2052,7 @@ impl<'a> Bytes<'a> {
                 self.in_region = rule.starts_with("read ");
                 self.at_row(kind);
             }
-            out.push_str(&self.rewrite_line(line, line)?);
+            out.push_str(&self.rewrite_line(line, line).map_err(|e| format!("{e}, in `{}`", line.trim()))?);
         }
         Ok(out)
     }
@@ -2600,7 +2732,10 @@ impl<'a> Bytes<'a> {
                 }
             }
             Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used)?,
-            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used)?),
+            // Its bytes in the file `off` bytes on or back: the block's own, or none before the file and past it.
+            Expr::Not(a) if off == 0 => format!("(!{} & lv)", self.blk(a, off, depth + 1, used)?),
+            Expr::Not(a) => format!("(!{} & valid(n, base as isize {} {}))", self.blk(a, off, depth + 1, used)?, if off < 0 { "-" } else { "+" }, off.abs()),
+            Expr::And(a, b) if self.none(a) || self.none(b) => "0u64".to_owned(),
             Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
             Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
             Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
@@ -3027,7 +3162,7 @@ pub(super) fn strip_pauses(code: &str) -> String {
             i += 5;
             continue;
         }
-        if t(i) == "if made < nw {" && t(i + 1) == "wait = (2 * made - b).min(nw);" && t(i + 2) == "continue 'pass;" && t(i + 3) == "}" {
+        if (t(i) == "if made < nw {" || t(i).ends_with(" >= 64 * made && made < nw {")) && t(i + 1) == "wait = (2 * made - b).min(nw);" && t(i + 2) == "continue 'pass;" && t(i + 3) == "}" {
             i += 4;
             continue;
         }
