@@ -1318,7 +1318,9 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
             let r = logic_command(&args[1..]);
             // `RERAIL_PROF`: the run's counted stages and tallies, as the tests print them.
             crate::code_rule_dsl::prof::report("logic");
-            crate::code_rule_dsl::logic::native::setfix::walk_report(25);
+            // `RERAIL_PROF_WALK_TOP=N`: the N plans that entered the most steps (25 by default), each with its steps.
+            let top = std::env::var("RERAIL_PROF_WALK_TOP").ok().and_then(|v| v.parse().ok()).unwrap_or(25);
+            crate::code_rule_dsl::logic::native::setfix::walk_report(top);
             r
         }
         Some("repeat") => repeat_script_command(&args[1..]),

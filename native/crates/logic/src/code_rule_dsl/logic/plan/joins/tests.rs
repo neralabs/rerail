@@ -247,6 +247,31 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     assert!(n.wants_search && n.proposals.is_empty(), "no wider search at the plan: {n:?}");
 }
 
+/// An equality of a bound variable and a call is a test of the variable only where the call's own variables are bound
+/// too (`pass_at`): `split_dot(r, x, f)` (`$r = @cat($x, $f)`) with `x` and `f` unbound splits `r`, a row or more for
+/// each, and is priced as a filter's share, not as one of `r`'s 3,500 values. Priced so, `rf_class_field`'s `rf_hit`
+/// passed 0.3 of its 6,209 rows, and its plan took a cross product with `rf_class_own`'s second part (46.7 M rows on
+/// `all`, 3,397 made).
+#[test]
+fn a_split_of_a_bound_value_passes_its_rows_and_is_no_test_of_the_value() {
+    let _serial = SERIAL.lock();
+    let _own = own();
+    let p = parse(".decl a(q: number, r: symbol)\n.decl h(q: number, x: symbol, f: symbol)\nh(q, x, f) :- a(q, r), split_dot(r, x, f).\n.output h\n").unwrap();
+    let placed = body::Placed::whole(p.clone());
+    let pf = placed.fields().unwrap();
+    let inputs = Inputs { facts: "main.".into(), stats: "main.".into(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = derived_of(&p);
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&pf), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
+    model.stats.card.insert("a", 6000.0);
+    for (c, ndv) in [(0, 6000.0), (1, 3500.0)] {
+        model.ndv.insert(("a", c), ndv);
+        model.stats.fan.insert(("a", c), 6000.0 / ndv);
+    }
+    let b = body::nth(&p, 0);
+    let ((_, work, rows), _) = model.plan_inner(pf, &b, None, None, false).unwrap();
+    assert!(rows >= 6000.0 * 0.1, "the split passes a filter's share of a's rows, not 1/ndv(r): {rows} rows, {work} work");
+}
+
 /// A wider search asked for is run by the upkeep job's step (here on the test's thread): its orders are the line's
 /// proposals.
 #[test]
