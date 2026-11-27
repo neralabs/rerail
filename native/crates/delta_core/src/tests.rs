@@ -57,3 +57,61 @@ fn a_reference_table_read_in_place() {
     assert_eq!(refs(&b.0), &[Ref { id: 5, at: 320 }, Ref { id: 9, at: 1024 }]);
     assert_eq!(word::<u32>(&b.0, REFS_AT + 4), 2);
 }
+
+crate::structure! {
+    /// A structure in a block, for its UKL text.
+    pub struct Pair {
+        pub id: u32,
+        pub at: u32,
+        pub cells: crate::refs::Span<i64>,
+        pub key: [u16; 4],
+    }
+}
+
+/// A writer into a fixed buffer, and each name declared once: `Decls` with no allocator.
+struct Fixed {
+    buf: [u8; 1024],
+    len: usize,
+    names: [&'static str; 8],
+    n: usize,
+}
+
+impl core::fmt::Write for Fixed {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let end = self.len + s.len();
+        self.buf.get_mut(self.len..end).ok_or(core::fmt::Error)?.copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+impl crate::kernel::Decls for Fixed {
+    fn declare(&mut self, name: &'static str, text: &dyn Fn(&mut dyn core::fmt::Write) -> core::fmt::Result) -> core::fmt::Result {
+        if self.names[..self.n].contains(&name) {
+            return Ok(());
+        }
+        self.names[self.n] = name;
+        self.n += 1;
+        text(self)
+    }
+}
+
+#[test]
+fn a_structures_ukl_text_written_with_no_allocator() {
+    use crate::kernel::KernelField;
+    let mut out = Fixed { buf: [0; 1024], len: 0, names: [""; 8], n: 0 };
+    Pair::deps(&mut out).expect("room");
+    // Declared twice, written once.
+    Pair::deps(&mut out).expect("room");
+    let text = core::str::from_utf8(&out.buf[..out.len]).expect("text");
+    assert_eq!(
+        text,
+        "typedef struct Span {\n    int64_t off;\n    uint64_t len;\n} Span;\nUKL_STATIC_ASSERT(sizeof(Span) == 16, \"Span: size\");\n\
+         typedef struct Pair {\n    uint32_t id;\n    uint32_t at;\n    Span cells;\n    uint16_t key[4];\n} Pair;\n\
+         UKL_STATIC_ASSERT(sizeof(Pair) == 32, \"Pair: size\");\n\
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, id) == 0, \"Pair.id\");\n\
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, at) == 4, \"Pair.at\");\n\
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, cells) == 8, \"Pair.cells\");\n\
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, key) == 24, \"Pair.key\");\n"
+    );
+}

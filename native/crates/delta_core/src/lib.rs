@@ -6,11 +6,18 @@
 //! - `pod`: `Pod`, a type whose bytes are its value, and the typed word reads over a block's bytes.
 //! - `block`: an operation block's reference table and where its body starts (`BODY_AT`).
 //! - `runs`: a trace's shape as its blocks hold it (`ShapeW`) and the δ runs block, the rows a layer is made from.
+//! - `refs`: references inside a block, relative to their own address (`Ptr`, `Span`).
+//! - `kernel`: how a structure in a block is declared (`structure!`) and its UKL text (`KernelField`), written with no
+//!   allocator.
+//! - `hash`: the hash every index and kernel uses for a key.
 
 #![no_std]
 
 pub mod block;
+pub mod hash;
+pub mod kernel;
 pub mod pod;
+pub mod refs;
 pub mod runs;
 
 pub use pod::{Pod, set_word, word, words, words_mut};
