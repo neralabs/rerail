@@ -29,6 +29,12 @@
       "document": "rules/pytest-practice-patch-misses-from-import.rerail",
       "title": "pytest practice: a mock patch on the defining module of a name its callers imported with from-import",
       "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "high",
+        "hazard": "test.patch-misses-target"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -75,6 +81,12 @@
       "document": "rules/pytest-practice-patch-decorator-order.rerail",
       "title": "pytest practice: stacked @patch mock parameters named in decorator order, so each holds the other's mock",
       "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "high",
+        "hazard": "test.mock-swapped"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -93,6 +105,12 @@
       "document": "rules/pytest-practice-scoped-fixture-mutated.rerail",
       "title": "pytest practice: a test changes a class-, module- or session-scoped fixture's value",
       "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -111,6 +129,12 @@
       "document": "rules/pytest-practice-environ-without-monkeypatch.rerail",
       "title": "pytest practice: test code changes os.environ without undoing it",
       "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -129,6 +153,12 @@
       "document": "rules/pytest-practice-module-state-without-monkeypatch.rerail",
       "title": "pytest practice: test code changes a module global or class attribute without undoing it",
       "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
       "mode": "log",
       "on": false,
       "examples": {

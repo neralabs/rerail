@@ -29,6 +29,12 @@
       "document": "rules/alembic-practice-index-not-concurrent.rerail",
       "title": "Alembic practice: an index, unique constraint or primary key built on an existing table without CONCURRENTLY",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.index-blocks-writes"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -47,6 +53,12 @@
       "document": "rules/alembic-practice-concurrent-index-outside-autocommit.rerail",
       "title": "Alembic practice: a concurrent index build or drop left in the migration's transaction",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.concurrently-in-transaction"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -65,6 +77,12 @@
       "document": "rules/alembic-practice-not-null-without-server-default.rerail",
       "title": "Alembic practice: a NOT NULL column added to an existing table without a server_default",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.not-null-without-default"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -83,6 +101,12 @@
       "document": "rules/alembic-practice-drop-mapped-column.rerail",
       "title": "Alembic practice: a migration drops or renames a column or table a model still maps",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.column-dropped-while-used"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -113,6 +137,12 @@
       "document": "rules/alembic-practice-constraint-without-not-valid.rerail",
       "title": "Alembic practice: a foreign key or check constraint added to an existing table without NOT VALID",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.constraint-without-not-valid"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -131,6 +161,12 @@
       "document": "rules/alembic-practice-column-type-rewrite.rerail",
       "title": "Alembic practice: a column type change that rewrites an existing table",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.type-change-rewrites"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -149,6 +185,12 @@
       "document": "rules/alembic-practice-set-not-null-scan.rerail",
       "title": "Alembic practice: a column of an existing table made NOT NULL without a validated CHECK first",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.set-not-null-scans"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -173,6 +215,12 @@
       "document": "rules/alembic-practice-missing-lock-timeout.rerail",
       "title": "Alembic practice: migrations that lock existing tables while no lock_timeout is set for them",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.no-lock-timeout"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -203,6 +251,12 @@
       "document": "rules/alembic-practice-multiple-heads.rerail",
       "title": "Alembic practice: revisions that leave one migration directory with two heads",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "migrations.multiple-heads"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -241,6 +295,12 @@
       "document": "rules/alembic-practice-rename-as-drop-add.rerail",
       "title": "Alembic practice: a column rename written as a drop and an add",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.rename-as-drop-add"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -259,6 +319,12 @@
       "document": "rules/alembic-practice-model-import-in-migration.rerail",
       "title": "Alembic practice: a migration imports the application's ORM models",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "orm.model-in-migration"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -289,6 +355,12 @@
       "document": "rules/alembic-practice-empty-downgrade.rerail",
       "title": "Alembic practice: a revision's downgrade() does nothing while its upgrade() changes the schema",
       "group": "Alembic practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "migrations",
+        "severity": "medium",
+        "hazard": "pg.irreversible-migration"
+      },
       "mode": "log",
       "on": true,
       "examples": {

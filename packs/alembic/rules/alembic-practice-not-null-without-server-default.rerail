@@ -21,10 +21,12 @@
 // columns with an implicit default); generated columns (`sa.Computed(...)`, `sa.Identity(...)`); an integer
 // `primary_key=True` column without `autoincrement=False`, which SQLAlchemy renders as SERIAL/BIGSERIAL on PostgreSQL
 // and so numbers the existing rows; downgrade(); tests; files that are no Alembic revision.
-// Flags are read by value, not spelling (lib/alembic's al_bool: a literal or a module constant, also imported), and the
-// type by the class it resolves to (al_pg_type: `BigInt = sa.BigInteger`, `from sqlalchemy import Integer as Int`, a
-// project TypeDecorator), so a SERIAL primary key is told apart however its type is spelled. A Column bound to a name
-// before add_column (`col = sa.Column(...); op.add_column("users", col)`) is read too (al_added_column).
+// Flags are read by value, not spelling (lib/alembic's al_flag_t: a literal or a module constant, also imported), and
+// the type by the class it resolves to (al_pg_type_t: `BigInt = sa.BigInteger`, `from sqlalchemy import Integer as
+// Int`, a project TypeDecorator, also imported), so a SERIAL primary key is told apart however its type is spelled. A
+// Column bound to a name before add_column (`col = sa.Column(...); op.add_column("users", col)`) is read too
+// (al_added_column). An imported constant, type or dialect test is another file's: the Column's flags and type are
+// read by its term (al_term), and the finding joins them at the Column.
 // Gaps: `nullable=` given as an expression the rule cannot evaluate. A table created by an earlier revision that no
 // database has run yet (the same unreleased batch) is still empty, and is reported: the message says when the column
 // is safe as written.
@@ -35,42 +37,46 @@
 .violation NotNullNoDefault(at: node, col: symbol, table: symbol) "NOT NULL column `{col}` added to existing `{table}` without server_default fails once it has rows. Pass `server_default=`, or add it nullable and set NOT NULL in a later revision. Fine if empty."
 .violation NotNullPythonDefault(at: node, col: symbol, table: symbol) "`default=` on NOT NULL column `{col}` never reaches the database, so adding it to existing `{table}` fails once it has rows. Use `server_default=` instead. Fine for a table that is always empty."
 
-// nn_added(col, x, t): upgrade adds Column col (named x) to existing table t, outside a non-PostgreSQL branch and
-// outside test code.
-.decl nn_added(col: node, x: symbol, t: symbol)
-nn_added(col, x, t) :- al_on_existing(c, "add_column", t, _), al_added_column(c, col), al_column_name(col, x),
-    !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+// nn_added(col, x, t, d, ct, colt): upgrade adds Column col (named x, of term colt) to existing table t in revision d
+// (outside test code), by the add_column call of term ct, outside a non-PostgreSQL branch of its own file, and is no
+// generated column.
+.decl nn_added(col: node, x: symbol, t: symbol, d: number, ct: symbol, colt: symbol)
+nn_added(col, x, t, d, ct, colt) :- al_on_existing(c, "add_column", t, _), al_added_column(c, col),
+    al_column_name(col, x), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d), !nn_generated(col),
+    al_term(c, d, ct), al_term(col, d, colt).
 
-// nn_not_null(col): the Column is NOT NULL: `nullable=False`, or a primary key not rendered as SERIAL.
-.decl nn_not_null(col: node)
-nn_not_null(col) :- al_false_kw(col, "nullable").
-nn_not_null(col) :- al_true_kw(col, "primary_key"), !nn_serial(col), !nn_nullable_true(col).
-.decl nn_nullable_true(col: node)
-nn_nullable_true(col) :- al_true_kw(col, "nullable").
+// nn_not_null(d, colt): the Column is NOT NULL: `nullable=False`, or a primary key not rendered as SERIAL.
+.decl nn_not_null(d: number, colt: symbol)
+nn_not_null(d, colt) :- al_flag_t(d, colt, "nullable", "false").
+nn_not_null(d, colt) :- al_flag_t(d, colt, "primary_key", "true"), !nn_serial(d, colt),
+    !al_flag_t(d, colt, "nullable", "true").
 
-// nn_serial(col): an integer primary key SQLAlchemy renders as SERIAL/BIGSERIAL/SMALLSERIAL on PostgreSQL (its type
-// resolves to an integer class, lib/alembic's al_pg_type, and autoincrement is not False).
-.decl nn_serial(col: node)
-nn_serial(col) :- al_column_call(col), (call_arg(col, 1, "", a) ; call_arg(col, -1, "type_", a)), unparen(a, e),
-    al_pg_type(e, k), (k = "integer" ; k = "bigint" ; k = "smallint"), !al_false_kw(col, "autoincrement").
+// nn_serial(d, colt): an integer primary key SQLAlchemy renders as SERIAL/BIGSERIAL/SMALLSERIAL on PostgreSQL (its
+// type resolves to an integer class, lib/alembic's al_pg_type_t, and autoincrement is not False).
+.decl nn_serial(d: number, colt: symbol)
+nn_serial(d, colt) :- nn_type_at(d, colt, et), al_pg_type_t(d, et, k), (k = "integer" ; k = "bigint" ; k = "smallint"),
+    !al_flag_t(d, colt, "autoincrement", "false").
+// nn_type_at(d, colt, et): the Column of term colt has the type expression of term et.
+.decl nn_type_at(d: number, colt: symbol, et: symbol)
+nn_type_at(d, colt, et) :- al_column_call(col), (call_arg(col, 1, "", a) ; call_arg(col, -1, "type_", a)), unparen(a, e),
+    al_term(col, d, colt), al_term(e, d, et).
 
-// nn_server_default(col): `server_default=` with a value other than None.
-.decl nn_server_default(col: node)
-nn_server_default(col) :- al_kw(col, "server_default", v), !al_bool(v, "none").
+// nn_default(d, colt, k): `server_default=` (or `default=`) with a value other than None.
+.decl nn_default(d: number, colt: symbol, k: symbol)
+nn_default(d, colt, k) :- al_kw_at(d, colt, k), (k = "server_default" ; k = "default"),
+    !al_flag_t(d, colt, k, "none").
 
 // nn_generated(col): a Computed or Identity column: the database computes its value.
 .decl nn_generated(col: node)
 nn_generated(col) :- al_column_call(col), call_arg(col, _, "", a), unparen(a, g), kind(g, "call"),
     field(g, "function", f), sym_of(f, q), prefix("sqlalchemy.", q), (suffix(".Computed", q) ; suffix(".Identity", q)).
 
-.decl nn_python_default(col: node)
-nn_python_default(col) :- al_kw(col, "default", v), !al_bool(v, "none").
-
-.decl nn_hit(col: node, x: symbol, t: symbol)
-nn_hit(col, x, t) :- nn_added(col, x, t), nn_not_null(col), !nn_server_default(col), !nn_generated(col).
-
-NotNullNoDefault(col, x, t) :- nn_hit(col, x, t), !nn_python_default(col).
-NotNullPythonDefault(col, x, t) :- nn_hit(col, x, t), nn_python_default(col).
+// A finding joins the Column's own facts to the answers by term: a dialect test of another module (al_np_ext), its
+// flags and type (nn_not_null, nn_default).
+NotNullNoDefault(col, x, t) :- nn_added(col, x, t, d, ct, colt), !al_np_ext(d, ct), nn_not_null(d, colt),
+    !nn_default(d, colt, "server_default"), !nn_default(d, colt, "default").
+NotNullPythonDefault(col, x, t) :- nn_added(col, x, t, d, ct, colt), !al_np_ext(d, ct), nn_not_null(d, colt),
+    !nn_default(d, colt, "server_default"), nn_default(d, colt, "default").
 
 // The cases, `cases/alembic-practice-not-null-without-server-default/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

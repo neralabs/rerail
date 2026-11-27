@@ -57,11 +57,18 @@
 .violation ColumnForeignKey(at: node, table: symbol) "This column's ForeignKey adds a validated FOREIGN KEY to `{table}` under a write lock. Pass `inline_references=True` (nullable column, no default) or add it NOT VALID. Fine for a small table."
 .violation ColumnCheck(at: node, table: symbol) "This column's CheckConstraint adds a validated CHECK to `{table}` under a write lock. Add it with `op.create_check_constraint(..., postgresql_not_valid=True)` instead. Fine for a small table."
 
-// cwn_not_valid(c): operation c passes postgresql_not_valid= something not known to be False (by value, lib/alembic's
-// al_kw_on), or a `**kwargs` splat that may carry it.
-.decl cwn_not_valid(c: node)
-cwn_not_valid(c) :- al_kw_on(c, "postgresql_not_valid").
-cwn_not_valid(c) :- al_call(c, _, _), field(c, "arguments", al), child(al, s, _), kind(s, "dictionary_splat").
+// Flags are read by value (lib/alembic's al_flag_t, al_kw_ext: a literal, or a module constant of the file or
+// imported), and a dialect test of another module by the call's term (al_np_ext): what crosses files is read by the
+// operation's term (al_term), and each finding joins it at the operation.
+// cwn_not_valid(d, ct): operation ct passes postgresql_not_valid= something not known to be False or None, or a
+// `**kwargs` splat that may carry it (cwn_splat_at, its own file's).
+.decl cwn_not_valid(d: number, ct: symbol)
+cwn_not_valid(d, ct) :- al_kw_at(d, ct, "postgresql_not_valid"), !al_flag_t(d, ct, "postgresql_not_valid", "false"),
+    !al_flag_t(d, ct, "postgresql_not_valid", "none").
+cwn_not_valid(d, ct) :- cwn_splat_at(d, ct).
+.decl cwn_splat_at(d: number, ct: symbol)
+cwn_splat_at(d, ct) :- al_call(c, _, _), field(c, "arguments", al), child(al, s, _), kind(s, "dictionary_splat"),
+    al_term(c, d, ct).
 // cwn_name(c, s): the constraint's name as the message shows it: the literal (or op.f / constant) when the rule can
 // read it, else a placeholder (None under a naming convention, an f-string).
 .decl cwn_known_name(c: node, s: symbol)
@@ -71,13 +78,16 @@ cwn_named(c) :- cwn_known_name(c, _).
 .decl cwn_name(c: node, s: symbol)
 cwn_name(c, s) :- cwn_known_name(c, s).
 cwn_name(c, "<constraint name>") :- al_call(c, _, _), !cwn_named(c).
-// cwn_live(c): c sits in a migration that is not test code, outside a branch for another database.
-.decl cwn_live(c: node)
-cwn_live(c) :- al_call(c, _, _), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
-// cwn_validating(c, m, t, f): operation m (c) in upgrade step f adds a validated constraint to existing table t.
-.decl cwn_validating(c: node, m: symbol, t: symbol, f: node)
-cwn_validating(c, m, t, f) :- al_on_existing(c, m, t, f), (m = "create_foreign_key" ; m = "create_check_constraint"),
-    !cwn_not_valid(c), cwn_live(c).
+// cwn_live(c, d, ct): operation c (term ct) sits in migration d that is not test code, outside a branch for another
+// database by its own file's tests.
+.decl cwn_live(c: node, d: number, ct: symbol)
+cwn_live(c, d, ct) :- al_call(c, _, _), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d),
+    al_term(c, d, ct).
+// cwn_adding(c, m, t, f, d, ct): operation m (c) in upgrade step f adds a constraint to existing table t; it validates
+// unless it is NOT VALID (cwn_not_valid).
+.decl cwn_adding(c: node, m: symbol, t: symbol, f: node, d: number, ct: symbol)
+cwn_adding(c, m, t, f, d, ct) :- al_on_existing(c, m, t, f), (m = "create_foreign_key" ; m = "create_check_constraint"),
+    cwn_live(c, d, ct).
 // cwn_local_col(c, x): foreign key c's local columns name x (`local_cols`, positional after the referent).
 .decl cwn_local_col(c: node, x: symbol)
 cwn_local_col(c, x) :- al_call(c, "create_foreign_key", fm), ((fm = "op", call_arg(c, 3, "", l)) ;
@@ -86,22 +96,24 @@ cwn_local_col(c, x) :- al_call(c, "create_foreign_key", fm), ((fm = "op", call_a
 // cwn_adds(f, t, x): upgrade step f adds column x to table t.
 .decl cwn_adds(f: node, t: symbol, x: symbol)
 cwn_adds(f, t, x) :- al_on_existing(c, "add_column", t, f), al_added_column(c, col), al_column_name(col, x).
-// cwn_column_part(c, t, k): add_column c on existing table t makes Alembic add a validated constraint of kind k
-// ("foreign_key" or "check") after the ADD COLUMN (lib/alembic's al_added_ddl, which resolves the classes through
-// imports and leaves `inline_references=True` alone).
-.decl cwn_column_part(c: node, t: symbol, k: symbol)
-cwn_column_part(c, t, k) :- al_added_ddl(c, t, k, _), (k = "foreign_key" ; k = "check"), cwn_live(c).
-// cwn_new_col_fk(c, t, x): foreign key c is on column x, which the same upgrade adds to t.
-.decl cwn_new_col_fk(c: node, t: symbol, x: symbol)
-cwn_new_col_fk(c, t, x) :- cwn_validating(c, "create_foreign_key", t, f), cwn_local_col(c, x), cwn_adds(f, t, x).
+// cwn_new_col_fk(c, t, x, d, ct): foreign key c is on column x, which the same upgrade adds to t.
+.decl cwn_new_col_fk(c: node, t: symbol, x: symbol, d: number, ct: symbol)
+cwn_new_col_fk(c, t, x, d, ct) :- cwn_adding(c, "create_foreign_key", t, f, d, ct), cwn_local_col(c, x),
+    cwn_adds(f, t, x).
 .decl cwn_on_new_col(c: node)
-cwn_on_new_col(c) :- cwn_new_col_fk(c, _, _).
+cwn_on_new_col(c) :- cwn_new_col_fk(c, _, _, _, _).
 
-ForeignKeyValidated(c, t, n) :- cwn_validating(c, "create_foreign_key", t, _), !cwn_on_new_col(c), cwn_name(c, n).
-CheckValidated(c, t, n) :- cwn_validating(c, "create_check_constraint", t, _), cwn_name(c, n).
-NewColumnForeignKey(c, t, x) :- cwn_new_col_fk(c, t, x).
-ColumnForeignKey(c, t) :- cwn_column_part(c, t, "foreign_key").
-ColumnCheck(c, t) :- cwn_column_part(c, t, "check").
+ForeignKeyValidated(c, t, n) :- cwn_adding(c, "create_foreign_key", t, _, d, ct), !cwn_on_new_col(c), cwn_name(c, n),
+    !cwn_not_valid(d, ct), !al_np_ext(d, ct).
+CheckValidated(c, t, n) :- cwn_adding(c, "create_check_constraint", t, _, d, ct), cwn_name(c, n),
+    !cwn_not_valid(d, ct), !al_np_ext(d, ct).
+NewColumnForeignKey(c, t, x) :- cwn_new_col_fk(c, t, x, d, ct), !cwn_not_valid(d, ct), !al_np_ext(d, ct).
+// The column's ForeignKey or CheckConstraint makes Alembic add a validated constraint of that kind after the ADD
+// COLUMN (lib/alembic's al_added_ddl, which resolves the classes through imports and leaves `inline_references=True`
+// alone: in the file, or an imported constant, al_kw_ext).
+ColumnForeignKey(c, t) :- al_added_ddl(c, t, "foreign_key", _), cwn_live(c, d, ct), !al_np_ext(d, ct),
+    !al_kw_ext(d, ct, "inline_references", "true").
+ColumnCheck(c, t) :- al_added_ddl(c, t, "check", _), cwn_live(c, d, ct), !al_np_ext(d, ct).
 
 // The cases, `cases/alembic-practice-constraint-without-not-valid/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

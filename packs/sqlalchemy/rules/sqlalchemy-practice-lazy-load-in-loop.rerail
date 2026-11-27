@@ -8,11 +8,12 @@
 // SELECT per row: the N+1 problem of the Relationship Loading Techniques docs. Many-to-one reads are
 // sqlalchemy-practice-lazy-many-to-one-in-loop's: the identity map answers a parent it has seen, so their cost depends
 // on how many rows share one.
-// The relationship and its direction are read from the models, across files (lib's sa_lazy_rel and sa_rel_dir): a
-// collection is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`, `secondary=`, a relationship whose
-// foreign key sits on the target (`foreign_keys=[B.a_id]`, or only B has a ForeignKey to this table), or the backref
-// of a many-to-one. A relationship whose direction cannot be decided is left to the many-to-one rule.
-// The loops and rows are lib/sqlalchemy_loops' sl_hit: `for o in session.scalars(select(M)…)`, `….all()`, a legacy
+// The relationship and its direction are read from the models, across files, by symbol (lib's sa_lazy_rel_q and
+// sa_rel_dir_q): a collection is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`, `secondary=`, a
+// relationship whose foreign key sits on the target (`foreign_keys=[B.a_id]`, or only B has a ForeignKey to this
+// table), or the backref of a many-to-one. A relationship whose direction cannot be decided is left to the many-to-one
+// rule.
+// The loops and rows are lib/sqlalchemy_loops' sl_hit_q: `for o in session.scalars(select(M)…)`, `….all()`, a legacy
 // query, rows or a statement held in a name, `for i, o in enumerate(rows)`, `for o, l in session.execute(select(M,
 // L))`, rows a function of the run returns (one hop: `for o in order_service.get_all(db_session=s)`), and reads made
 // by a function of the run the loop hands the row to (`[describe(o) for o in rows]`, describe reading `o.lines`).
@@ -34,13 +35,14 @@
 .violation LazyLoadInLoop(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}: the loop reads this lazy collection on every row, one SELECT each. Leave it when the loop stops after a row or two."
 .violation LazyLoadInLoopShared(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}, one SELECT per row now; that changes its other callers' query too, so pass the option in when they differ."
 
-LazyLoadInLoop(u, n, rel, src) :- lil_hit(u, rel, mq, src, "loop"), split_dot(mq, _, n).
-LazyLoadInLoopShared(u, n, rel, src) :- lil_hit(u, rel, mq, src, "callee"), split_dot(mq, _, n).
+LazyLoadInLoop(u, n, rel, src) :- sl_read_at(u, uk), lil_hit_q(uk, rel, mq, src, "loop"), split_dot(mq, _, n).
+LazyLoadInLoopShared(u, n, rel, src) :- sl_read_at(u, uk), lil_hit_q(uk, rel, mq, src, "callee"), split_dot(mq, _, n).
 
-// lil_hit(u, rel, mq, src, how): the first read of collection rel in its loop.
-.decl lil_hit(u: node, rel: symbol, mq: symbol, src: symbol, how: symbol)
-lil_hit(u, rel, mq, src, how) :- sl_hit(u, _, rel, mq, _, src, how), sl_first(u, rel), class_def(c, mq),
-    sa_rel_dir(c, rel, "many"), !sa_rel_dir(c, rel, "one").
+// lil_hit_q(uk, rel, mq, src, how): read uk is the first read of collection rel in its loop. By the read's term: the
+// relationship's direction is decided across files.
+.decl lil_hit_q(uk: symbol, rel: symbol, mq: symbol, src: symbol, how: symbol)
+lil_hit_q(uk, rel, mq, src, how) :- sl_hit_q(uk, _, _, rel, mq, _, src, how), sl_first_q(uk, rel),
+    sa_rel_dir_q(mq, rel, "many"), !sa_rel_dir_q(mq, rel, "one").
 
 // The cases, `cases/sqlalchemy-practice-lazy-load-in-loop/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

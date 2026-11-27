@@ -42,62 +42,78 @@
 // a form's own `self.cleaned_data` in `clean()` are not sources (netbox's uploaded-script `exec` is reached that way).
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each sink states what reaches it by origin (sec_fhit), and a
+// finding reads the cross-file answer by the sink's term (sec_xfirst). A `from_string` receiver bound to a module
+// variable of another file (`from app.templating import env`) is a template environment by that module's say
+// (ci_xvar, by the variable's qualified name), so a `from_string` call is a sink by the cross-file answer (ci_xfs).
+// A finding names the first source its sink takes (sec_xfirst by the sink's term), so one sink is reported once.
 .violation Interpreter(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{callee} runs {what} ({p}:{l}) as Python code. Parse it as data (json, ast.literal_eval) or map it through an allow-list; leave it only for a deliberate, admin-only scripting feature."
-Interpreter(c, cn, what, p, l) :- ci_sink(c, "interp", a), ci_reported(c, a, s), sec_origin(s, what, p, l),
-    ci_callee_text(c, cn).
+Interpreter(c, cn, what, p, l) :- ci_sink(c, "interp", _), pt_tm(c, ct), sec_xfirst("interp", ct, k),
+    sec_src_info(k, what, p, l), ci_callee_text(c, cn).
 
 .violation Deserializer(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{callee} deserializes {what} ({p}:{l}), and a crafted payload runs code. Accept JSON (json.loads, yaml.safe_load) or verify an HMAC first; leave it if the bytes are server-written."
-Deserializer(c, cn, what, p, l) :- ci_sink(c, "deser", a), ci_reported(c, a, s), !ci_hmac_checked(a),
-    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+Deserializer(c, cn, what, p, l) :- ci_sink(c, "deser", _), pt_tm(c, ct), sec_xfirst("deser", ct, k),
+    sec_src_info(k, what, p, l), ci_callee_text(c, cn).
 
 .violation TemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is template source for {callee}, so a client can run code. Use a fixed template and pass the value as render context; a jinja2 sandbox only mitigates."
-TemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), !ci_django_template(c), ci_reported(c, a, s),
-    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+TemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", _), !ci_django_template(c), pt_tm(c, ct),
+    sec_xfirst("template", ct, k), sec_src_info(k, what, p, l), ci_callee_text(c, cn).
+TemplateSource(c, cn, what, p, l) :- ci_fs_sink(c, _), pt_tm(c, ct), ci_xfs(ct, "tpl"), sec_xfirst("fs", ct, k),
+    sec_src_info(k, what, p, l), ci_callee_text(c, cn).
 .violation DjangoTemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is Django template source for {callee}, so a client can read any value its context reaches. Use a fixed template and pass the value as render context."
-DjangoTemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), ci_django_template(c), ci_reported(c, a, s),
-    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+DjangoTemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", _), ci_django_template(c), pt_tm(c, ct),
+    sec_xfirst("template", ct, k), sec_src_info(k, what, p, l), ci_callee_text(c, cn).
+DjangoTemplateSource(c, cn, what, p, l) :- ci_fs_sink(c, _), pt_tm(c, ct), ci_xfs(ct, "dj"), sec_xfirst("fs", ct, k),
+    sec_src_info(k, what, p, l), ci_callee_text(c, cn).
 // The functions that run code are this rule's sinks: a validator-named one is no check.
-sec_sink_fn(g) :- ci_sink(c, _, _), nearest(c, g, fdef).
+sec_sink_fn(gq) :- ci_sink(c, _, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_sink_fn(gq) :- ci_fs_sink(c, _), pt_tm(c, ct), ci_xfs(ct, _), nearest(c, g, fdef), pt_def(g, gq).
 
-// ci_reported(c, a, s): sink call c, outside test code, takes argument a, which holds client data from source s (the
-// first source, so one sink is reported once), and a is not a value its function checked.
-.decl ci_reported(c: node, a: node, s: node)
-ci_reported(c, a, s) :- ci_sink(c, _, a), docof(c, d), !sec_test_doc(d), !ci_checked(a),
-    s = min s2 : { sec_tainted(a, s2) }.
+// What each sink takes (sec_tainted): sink call c, outside test code, takes argument a, which holds client data,
+// unless a is a value its function checked (ci_checked); a check call of the run passes it through a gate that holds
+// where that check reaches this rule's sink (`G|e:cic:…|`). A deserializer's payload its function also verifies with
+// hmac is none.
+sec_fhit(fam, c, o) :- ci_sink(c, fam, a), ci_live(c, a), sec_tainted(a, o), !sec_echk_any("cic", a),
+    !ci_hmac_fam(fam, a).
+sec_fhit(fam, c, g) :- ci_sink(c, fam, a), ci_live(c, a), sec_tainted(a, _), sec_egate("cic", "t", a, g),
+    !ci_hmac_fam(fam, a).
+sec_fhit("fs", c, o) :- ci_fs_sink(c, a), ci_live(c, a), sec_tainted(a, o), !sec_echk_any("cic", a).
+sec_fhit("fs", c, g) :- ci_fs_sink(c, a), ci_live(c, a), sec_tainted(a, _), sec_egate("cic", "t", a, g).
+sec_gin(g, o) :- (ci_sink(_, _, a) ; ci_fs_sink(_, a)), sec_tainted(a, o), sec_egate("cic", "t", a, g).
+// ci_live(c, a): code argument a of call c, outside test code, is not checked.
+.decl ci_live(c: node, a: node)
+ci_live(c, a) :- (ci_sink(c, _, a) ; ci_fs_sink(c, a)), docof(c, d), !sec_test_doc(d), !ci_checked(a).
+.decl ci_hmac_fam(fam: symbol, a: node)
+ci_hmac_fam("deser", a) :- ci_hmac_checked(a).
 // ci_checked(a): sink argument a holds a checked value (sec_checked_expr), or reads, anywhere inside it (an f-string,
-// a concatenation), a name its function checks (`if fmt not in ALLOWED: …` then `import_module(f"pkg.{fmt}")`).
+// a concatenation), a name its function checks (`if fmt not in ALLOWED: …` then `import_module(f"pkg.{fmt}")`). The
+// same by a check call of the run (sec_echk_c "cic", decided across files).
 .decl ci_checked(a: node)
 ci_checked(a) :- sec_checked_expr(a).
-ci_checked(a) :- has(a, i, "identifier"), text(i, x), !field(_, "attribute", i), nearest(a, h, fscope),
-    sec_checked(h, x).
+ci_checked(a) :- ci_reads_in(a, h, x), sec_checked(h, x).
+sec_echk_c("cic", a, t) :- (ci_sink(_, _, a) ; ci_fs_sink(_, a)), sec_checked_expr_c(a, t).
+sec_echk_c("cic", a, t) :- (ci_sink(_, _, a) ; ci_fs_sink(_, a)), ci_reads_in(a, h, x), sec_checked_c(h, x, t).
+// ci_reads_in(a, h, x): expression a, in scope h, reads name x anywhere inside it.
+.decl ci_reads_in(a: node, h: node, x: symbol)
+ci_reads_in(a, h, x) :- (ci_sink(_, _, a) ; ci_fs_sink(_, a)), has(a, i, "identifier"), text(i, x),
+    !field(_, "attribute", i), nearest(a, h, fscope).
 .decl ci_callee_text(c: node, t: symbol)
 ci_callee_text(c, t) :- kind(c, "call"), field(c, "function", f), text(f, t).
 
 // ---- sinks -------------------------------------------------------------------------------------------------------
-// ci_sink(c, family, a): call c runs argument a as code: family "interp", "deser" or "template".
+// ci_sink(c, family, a): call c runs argument a as code: family "interp", "deser" or "template". A `from_string`
+// call is ci_fs_sink's.
 .decl ci_sink(c: node, family: symbol, a: node)
 ci_sink(c, fam, a) :- sec_call_q(c, q), ci_first_arg_q(q, fam), ci_first_arg(c, q, a), !ci_yaml_safe_call(c).
-ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, 0, "", a).
-ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, -1, "source", a).
 // `torch.load(f, weights_only=False)` and `numpy.load(f, allow_pickle=True)` unpickle what they read.
 ci_sink(c, "deser", a) :- sec_call_q(c, "torch.load"), sec_arg(c, -1, "weights_only", v), kind(v, "false"),
     (sec_arg(c, 0, "", a) ; sec_arg(c, -1, "f", a)).
 ci_sink(c, "deser", a) :- (sec_call_q(c, "numpy.load") ; sec_call_q(c, "numpy.lib.npyio.load")),
     sec_arg(c, -1, "allow_pickle", v), kind(v, "true"), (sec_arg(c, 0, "", a) ; sec_arg(c, -1, "file", a)).
-// ci_django_template(c): template sink c builds a Django template: `django.template.Template(…)`, or
-// `from_string` on a Django Engine.
+// ci_django_template(c): template sink c builds a Django template: `django.template.Template(…)` (a `from_string` on
+// a Django Engine: ci_xfs "dj").
 .decl ci_django_template(c: node)
 ci_django_template(c) :- sec_call_q(c, q), (q = "django.template.Template" ; q = "django.template.base.Template").
-ci_django_template(c) :- ci_from_string(c), field(c, "function", f), attr_of(f, r0, _), unparen(r0, r),
-    ci_django_env(r).
-.decl ci_django_env(r: node)
-ci_django_env(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q),
-    (q = "django.template.Engine" ; q = "django.template.engine.Engine").
-ci_django_env(r) :- kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"), sym_of(o, q),
-    (q = "django.template.Engine" ; q = "django.template.engine.Engine").
-ci_django_env(r) :- kind(r, "subscript"), field(r, "value", o), sym_of(o, q),
-    (q = "django.template.engines" ; q = "django.template.utils.engines").
-ci_django_env(r) :- ci_bound_value(r, v), ci_django_env(v).
 
 // ci_first_arg(c, q, a): a is the code argument of call c to q: the first positional one, or the keyword that names it.
 .decl ci_first_arg(c: node, q: symbol, a: node)
@@ -148,41 +164,84 @@ ci_yaml_safe_call(c) :- (sec_call_q(c, "yaml.load") ; sec_call_q(c, "yaml.load_a
 ci_yaml_loader(c, v) :- sec_arg(c, -1, "Loader", v).
 ci_yaml_loader(c, v) :- sec_arg(c, 1, "", v).
 // ci_safe_loader(v): loader expression v builds only plain data: a safe PyYAML loader, a class of the run deriving
-// from one, or an expression naming one (`getattr(yaml, "CSafeLoader", yaml.SafeLoader)`).
+// from one (the phase py_names), or an expression naming one (`getattr(yaml, "CSafeLoader", yaml.SafeLoader)`).
 .decl ci_safe_loader(v: node)
 ci_safe_loader(v) :- sym_of(v, q), ci_safe_loader_q(q).
-ci_safe_loader(v) :- sym_of(v, q), subclass(q, b), ci_safe_loader_q(b).
+ci_safe_loader(v) :- sym_of(v, q), docof(v, d), doc(d, p, _), py_names__reads_at(p, m), py_names__ancestor(m, q, b),
+    ci_safe_loader_q(b).
 ci_safe_loader(v) :- text(v, t), (contains("SafeLoader", t) ; contains("BaseLoader", t)).
 .decl ci_safe_loader_q(q: symbol)
 ci_safe_loader_q(cat(m, l)) :- (m = "yaml." ; m = "yaml.loader." ; m = "yaml.cyaml."),
     (l = "SafeLoader" ; l = "CSafeLoader" ; l = "BaseLoader" ; l = "CBaseLoader").
 
 // ---- template environments ---------------------------------------------------------------------------------------
-// ci_from_string(c): c is `<r>.from_string(…)` on a template environment that is not sandboxed.
-.decl ci_from_string(c: node)
-ci_from_string(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, "from_string"), unparen(r0, r),
-    ci_env(r), !ci_sandbox(r).
-ci_from_string(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, "from_string"), unparen(r0, r),
-    !ci_env(r), ci_env_named(r), !ci_sandbox(r), docof(c, d), !ci_sandbox_doc(d).
-
-// ci_env(r): expression r is a jinja2 Environment or Django template Engine: built here, or a name bound to one.
-.decl ci_env(r: node)
-ci_env(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q), ci_env_class(q).
-ci_env(r) :- kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"), sym_of(o, q), ci_env_class(q).
-ci_env(r) :- kind(r, "subscript"), field(r, "value", o), sym_of(o, q),
-    (q = "django.template.engines" ; q = "django.template.utils.engines").
-ci_env(r) :- ci_bound_value(r, v), ci_env(v).
-// ci_bound_value(r, v): name r is bound to value v: in its own scope, or, imported, at the top level of the run's
-// module that defines it (`from app.templating import env`).
-.decl ci_bound_value(r: node, v: node)
-ci_bound_value(r, v) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v0, _), unparen(v0, v).
-ci_bound_value(r, v) :- kind(r, "identifier"), sym_of(r, q), match("(?<mq>.+)\\.(?<x>[^.]+)", q), modname(m, mq),
-    asg(m, x, v0, _), unparen(v0, v).
+// ci_fs(c, r): c is `<r>.from_string(…)`. ci_fs_sink(c, a): a is its source. It is a sink on a template environment
+// that is not sandboxed: one built here, or a name bound to one, or to a module variable of the run bound to one
+// (ci_xfs, across files); or a receiver named like one in a file that builds no sandbox.
+.decl ci_fs(c: node, r: node)
+ci_fs(c, r) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, "from_string"), unparen(r0, r).
+.decl ci_fs_sink(c: node, a: node)
+ci_fs_sink(c, a) :- ci_fs(c, _), (sec_arg(c, 0, "", a) ; sec_arg(c, -1, "source", a)).
+// ci_env_kind(r, ek, o): expression r, a `from_string` receiver or what one is bound to, is a template environment of
+// kind ek, by o: "env" a jinja2 Environment or Django Engine, "dj" a Django Engine, "sb" a jinja2 sandbox (o "T"); or
+// it names module variable q of the run, which is one where q's module says so (o `M|<q>`, ci_xvar).
+.decl ci_env_kind(r: node, ek: symbol, o: symbol)
+ci_env_kind(r, "env", "T") :- ci_env_cand(r), kind(r, "call"), field(r, "function", f), ci_env_callee(f).
+ci_env_kind(r, "env", "T") :- ci_env_cand(r), kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"),
+    ci_env_callee(o).
+ci_env_kind(r, ek, "T") :- ci_env_cand(r), kind(r, "subscript"), field(r, "value", o), sym_of(o, q),
+    (q = "django.template.engines" ; q = "django.template.utils.engines"), (ek = "env" ; ek = "dj").
+ci_env_kind(r, "dj", "T") :- ci_env_cand(r), kind(r, "call"), field(r, "function", f), sym_of(f, q),
+    (q = "django.template.Engine" ; q = "django.template.engine.Engine").
+ci_env_kind(r, "dj", "T") :- ci_env_cand(r), kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"),
+    sym_of(o, q), (q = "django.template.Engine" ; q = "django.template.engine.Engine").
+ci_env_kind(r, "sb", "T") :- ci_env_cand(r), ci_sandbox_call(r).
+ci_env_kind(r, "sb", "T") :- ci_env_cand(r), text(r, t), icontains("sandbox", t).
+ci_env_kind(r, ek, o) :- ci_env_cand(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v0, _),
+    unparen(v0, v), ci_env_kind(v, ek, o).
+ci_env_kind(r, ek, cat("M|", q)) :- ci_env_cand(r), kind(r, "identifier"), sym_of(r, q), contains(".", q),
+    (ek = "env" ; ek = "dj" ; ek = "sb").
+// ci_env_cand(r): the expressions ci_env_kind reads: `from_string` receivers, what a name among them is bound to,
+// and the values of this module's variables.
+.decl ci_env_cand(r: node)
+ci_env_cand(r) :- ci_fs(_, r).
+ci_env_cand(v) :- ci_env_cand(r), kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v0, _), unparen(v0, v).
+ci_env_cand(v) :- modnode(_, m), asg(m, _, v0, _), unparen(v0, v).
+// ci_modvar(q, ek, o): module variable q of this file (`<module>.<x>`) is bound to an environment of kind ek, by o.
+.decl ci_modvar(q: symbol, ek: symbol, o: symbol)
+ci_modvar(cat(mq, cat(".", x)), ek, o) :- modnode(_, m), modname(m, mq), asg(m, x, v0, _), unparen(v0, v),
+    ci_env_kind(v, ek, o).
+// ci_xvar(q, ek): module variable q is an environment of kind ek: by its module's own binding, or through the module
+// variables it names, across files by qualified name (`from app.templating import env`, decision 0691: a module's
+// variable read in another file is a meant crossing, keyed by symbol), so it is declared cross_file.
+.decl ci_xvar(q: symbol, ek: symbol) cross_file
+ci_xvar(q, ek) :- ci_modvar(q, ek, "T").
+ci_xvar(q, ek) :- ci_modvar(q, ek, o), match("M\\|(?<q2>.*)", o), ci_xvar(q2, ek).
+// ci_xek(r, ek): `from_string` receiver r, by its term, is an environment of kind ek.
+.decl ci_xek(r: symbol, ek: symbol) cross_file
+ci_xek(rt, ek) :- ci_fs(_, r), ci_env_kind(r, ek, "T"), pt_tm(r, rt).
+ci_xek(rt, ek) :- ci_fs(_, r), ci_env_kind(r, ek, o), match("M\\|(?<q>.*)", o), ci_xvar(q, ek), pt_tm(r, rt).
+// ci_fs_at(c, r): `from_string` call c on receiver r, by their terms. ci_fs_named(c): its receiver is named like an
+// environment, in a file that builds no sandbox.
+.decl ci_fs_at(c: symbol, r: symbol)
+ci_fs_at(ct, rt) :- ci_fs(c, r), pt_tm(c, ct), pt_tm(r, rt).
+.decl ci_fs_named(c: symbol)
+ci_fs_named(ct) :- ci_fs(c, r), ci_env_named(r), docof(c, d), !ci_sandbox_doc(d), pt_tm(c, ct).
+// ci_xfs(c, how): `from_string` call c is a sink: of a Django template (how "dj") or another ("tpl").
+.decl ci_xfs(c: symbol, how: symbol) cross_file
+ci_xfs(ct, "dj") :- ci_fs_at(ct, rt), ci_xek(rt, "dj"), !ci_xek(rt, "sb").
+ci_xfs(ct, "tpl") :- ci_fs_at(ct, rt), ci_xek(rt, "env"), !ci_xek(rt, "sb"), !ci_xek(rt, "dj").
+ci_xfs(ct, "tpl") :- ci_fs_at(ct, rt), ci_fs_named(ct), !ci_xek(rt, "sb"), !ci_xek(rt, "dj").
+// ci_env_callee(f): callee f builds a template environment: a library class, or a class of the run deriving from
+// jinja2's Environment that no sandbox class is an ancestor of (the phase py_names).
+.decl ci_env_callee(f: node)
+ci_env_callee(f) :- sym_of(f, q), ci_env_class(q).
+ci_env_callee(f) :- sec_run_class(f, q), docof(f, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__ancestor(m, q, b), ci_env_class0(b), !ci_sandbox_callee(f).
 .decl ci_env_class(q: symbol)
 ci_env_class("jinja2.Environment"). ci_env_class("jinja2.environment.Environment").
 ci_env_class("jinja2.nativetypes.NativeEnvironment"). ci_env_class("django.template.Engine").
 ci_env_class("django.template.engine.Engine").
-ci_env_class(q) :- class_def(_, q), subclass(q, b), ci_env_class0(b), !ci_sandbox_class(q).
 .decl ci_env_class0(q: symbol)
 ci_env_class0("jinja2.Environment"). ci_env_class0("jinja2.environment.Environment").
 ci_env_class0("jinja2.nativetypes.NativeEnvironment").
@@ -190,17 +249,16 @@ ci_env_class0("jinja2.nativetypes.NativeEnvironment").
 .decl ci_env_named(r: node)
 ci_env_named(r) :- leaf_name(r, x), (icontains("env", x) ; icontains("engine", x) ; icontains("jinja", x)).
 
-// ci_sandbox(r): r is a jinja2 sandboxed environment, a name bound to one, or a receiver whose text says so.
-.decl ci_sandbox(r: node)
-ci_sandbox(r) :- ci_sandbox_call(r).
-ci_sandbox(r) :- ci_bound_value(r, v), ci_sandbox(v).
-ci_sandbox(r) :- text(r, t), icontains("sandbox", t).
+// ci_sandbox_call(r): r builds a jinja2 sandboxed environment: a library sandbox class, or a class of the run
+// deriving from one (the phase py_names).
 .decl ci_sandbox_call(r: node)
-ci_sandbox_call(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q), ci_sandbox_class(q).
+ci_sandbox_call(r) :- kind(r, "call"), field(r, "function", f), ci_sandbox_callee(f).
+.decl ci_sandbox_callee(f: node)
+ci_sandbox_callee(f) :- sym_of(f, q), ci_sandbox_class(q).
+ci_sandbox_callee(f) :- sym_of(f, q), docof(f, d), doc(d, p, _), py_names__reads_at(p, m), py_names__ancestor(m, q, b),
+    ci_sandbox_class(b).
 .decl ci_sandbox_class(q: symbol)
 ci_sandbox_class("jinja2.sandbox.SandboxedEnvironment"). ci_sandbox_class("jinja2.sandbox.ImmutableSandboxedEnvironment").
-ci_sandbox_class(q) :- class_def(_, q), subclass(q, b),
-    (b = "jinja2.sandbox.SandboxedEnvironment" ; b = "jinja2.sandbox.ImmutableSandboxedEnvironment").
 // ci_sandbox_doc(d): document d builds a sandboxed environment, so its unresolved environment receivers may be one.
 .decl ci_sandbox_doc(d: number)
 ci_sandbox_doc(d) :- ci_sandbox_call(c), docof(c, d).

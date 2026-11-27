@@ -1585,7 +1585,7 @@ Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an 
 cause the entire table and its indexes to be rewritten", unless the old type is binary coercible to the new one
 (PostgreSQL, ALTER TABLE notes; Squawk "changing-column-type": int → bigint rewrites, varchar → text and a longer
 varchar do not). On a large table that blocks every read and write for minutes. A migration's `AlterField` names only
-the new field, so the rule reads the old one from the app's migration history (the library's `dj_field_old`): the
+the new field, so the rule reads the old one from the app's migration history (the library's `dj_field_src`): the
 nearest earlier definition of the same model and field (a `CreateModel` `fields` item, an `AddField` or an
 `AlterField`, followed back through a `RenameField` onto the name) in a migration applied before this one (by
 `dependencies`, transitively, a dependency on a migration a squash replaces reaching the squash too) or earlier in the

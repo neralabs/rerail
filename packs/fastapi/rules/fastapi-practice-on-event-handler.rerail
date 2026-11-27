@@ -7,10 +7,10 @@
 // will no longer be called. It's all `lifespan` or all events, not both." FastAPI 0.165 (fastapi/routing.py) uses the
 // given lifespan as the router's lifespan context and its `_DefaultLifespan`, which runs on_startup/on_shutdown, only
 // when no lifespan is given. So a handler registered on an app built with `lifespan=` is dead code that looks alive.
-// Reported (lib/fastapi_events): a registration (oe_site: `o.on_event(E)`, `o.add_event_handler(E, fn)`, decorator or
-// by hand) whose receiver is an app built with `lifespan=` (oe_dead: the constructor itself, an import of it, or a
-// parameter of a def some call of the run passes such an app), and `on_startup=`/`on_shutdown=` on a constructor that
-// also passes `lifespan=`.
+// Reported (lib/fastapi_events): a registration (oe_site_at: `o.on_event(E)`, `o.add_event_handler(E, fn)`, decorator
+// or by hand) whose receiver is an app built with `lifespan=` (oe_dead_at: the constructor itself, an import of it, or
+// a parameter of a def some call of the run passes such an app; the receiver and the calls are read by symbol, so
+// they may sit in other modules), and `on_startup=`/`on_shutdown=` on a constructor that also passes `lifespan=`.
 //   app = FastAPI(lifespan=lifespan)
 //   @app.on_event("startup")                       reported: never runs
 //   def setup(app):
@@ -27,7 +27,7 @@
 #include "lib/fastapi_events.rerail"
 
 .violation OnEventNeverRuns(at: node, form: symbol) "This `{form}` handler never runs: its app is built with `lifespan=`, so FastAPI runs only the lifespan. Move the code into the lifespan (startup before `yield`, shutdown after) or delete it."
-OnEventNeverRuns(c, m) :- oe_site(c, m), oe_dead(c).
+OnEventNeverRuns(c, m) :- oe_at(c, p, t), oe_site_at(p, t, m), oe_dead_at(p, t).
 OnEventNeverRuns(v, k) :- oe_kw(r, k, v), oe_lifespan_app(r).
 
 // The cases, `cases/fastapi-practice-on-event-handler/`, read as one repository: each line ending in `# caught` is

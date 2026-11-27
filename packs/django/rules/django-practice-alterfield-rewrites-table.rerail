@@ -6,15 +6,18 @@
 // Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an ACCESS EXCLUSIVE lock and rewrites the
 // table and its indexes unless the old type is binary coercible to the new one (PostgreSQL, ALTER TABLE notes;
 // Squawk "changing-column-type"). A migration's AlterField says only the new field; the old one comes from the app's
-// migration history (the library's dj_field_old): the nearest earlier definition of the same model and field (a
+// migration history (the library's dj_field_src): the nearest earlier definition of the same model and field (a
 // CreateModel `fields` item, an AddField or an AlterField, followed back through a RenameField onto the name) in a
 // migration applied before this one (dj_mig_ran_before, which also reads a dependency on a migration a squash
 // replaces as the squash) or earlier in this one, with no other definition of the field between them.
 // Column types are resolved, not matched by name: a field class is Django's own (django.db.models,
 // django.contrib.postgres.fields, ...) or a class of the run derived from one with no `db_type` override on the way
 // (dj_custom_field: `class MoneyField(models.DecimalField)` is numeric); a ForeignKey or OneToOneField column has the
-// type of its target's primary key at that point of the history (dj_field_at of the relation call), or, when that
-// history is not in the run's app, the one type every definition of the target's key has.
+// type of its target's primary key at that point of the history (dj_field_src of the relation's target key), or,
+// when that history is not in the run's app, the one type every definition of the target's key has.
+// The history spans migration files, so it is read by key (decision 0691): each migration file describes its own
+// field calls by values (ar_fc: type, length, precision, target, label), keyed by migration, item, model and field,
+// and the old and new descriptions are compared over those keys; the finding is written at the AlterField's call.
 // Reported:
 //   - integers of another width: AutoField/IntegerField/PositiveIntegerField (integer), SmallAutoField/
 //     SmallIntegerField/PositiveSmallIntegerField (smallint), BigAutoField/BigIntegerField/PositiveBigIntegerField
@@ -59,58 +62,39 @@
 
 .violation TypeChangeRewrites(at: node, m: symbol, x: symbol, old: symbol, new: symbol) "{m}.{x} goes from {old} to {new}: PostgreSQL rewrites the table under a lock that blocks reads and writes. On a large table add a column, backfill, swap; keep it for a small table."
 
-TypeChangeRewrites(f, m, x, lo, ln) :- dj_field_old(o, fo), ar_alter(o, _, _, m, x, f), ar_rewrite(fo, f),
-    ar_label(fo, lo), ar_label(f, ln).
+TypeChangeRewrites(f, m, x, lo, ln) :- ar_alter(_, d, i, m, x, f), dj_mig_key(d, k), ar_rewrite(k, i, m, x, e, j, y),
+    ar_known(e, j, m, y, "def", lo), ar_known(k, i, m, x, "new", ln), !dj_one_row(m), !dj_mysql_only().
 
 // ---- the change --------------------------------------------------------------------------------------------------
 // ar_alter(o, d, i, m, x, f): AlterField o, item i of migration d (not test code, not a squashed migration), changes
-// field x of model m (not created in d, not a one-row table) to field call f, in a run that may use PostgreSQL. A
-// squashed migration (`replaces = [...]`) copies operations that already ran on every database that applied the
-// migrations it replaces; it runs them only on a database that applied none of them, usually a new one, and its
-// author did not choose them.
+// field x of model m (not created in d) to field call f. A squashed migration (`replaces = [...]`) copies operations
+// that already ran on every database that applied the migrations it replaces; it runs them only on a database that
+// applied none of them, usually a new one, and its author did not choose them. A one-row table (dj_one_row) and a
+// MySQL-only run (dj_mysql_only), facts about the whole repository, are tested in the output.
 .decl ar_alter(o: node, d: number, i: number, m: symbol, x: symbol, f: node)
 ar_alter(o, d, i, m, x, f) :- dj_alterfield(o, d, i, m, x), !dj_mig_attr(d, "replaces", _), !dj_mig_creates(d, m),
-    !dj_one_row(m), !dj_mysql_only(), dj_mig_arg(o, "field", f).
+    dj_mig_arg(o, "field", f).
 
-// ---- types -------------------------------------------------------------------------------------------------------
-// ar_call(f): the field calls judged: an AlterField's, its nearest earlier definition's, and the target key
-// definitions of the relations among them.
-.decl ar_call(f: node)
-ar_call(f) :- ar_alter(o, _, _, _, _, f), dj_field_old(o, _).
-ar_call(f) :- ar_alter(o, _, _, _, _, _), dj_field_old(o, f).
-ar_call(k) :- ar_call(f), ar_cls(f, t), dj_fk_class(t), ar_fk_key(f, k).
+// ---- each file's field calls, by key ------------------------------------------------------------------------------
+// ar_fc(f, e, j, m, x, w): field call f is described under key (e, j, m, x, w), e a migration's key: w "new", the
+// field an AlterField of ar_alter sets at item j of e; w "def", a definition's (dj_field_def) field call at item j.
+.decl ar_fc(f: node, e: symbol, j: number, m: symbol, x: symbol, w: symbol)
+ar_fc(f, e, i, m, x, "new") :- ar_alter(_, _, i, m, x, f), dj_key_of(f, e).
+ar_fc(f, e, j, m, x, "def") :- dj_field_def(p, _, j, m, x), dj_mig_field(p, x, f, _), dj_key_of(f, e).
 // ar_cls(f, t): call f constructs Django's field class t, or a class of the run derived from it (dj_custom_field);
 // ar_own(f): Django's own class, whose defaults (a CharField's missing max_length) the rule knows.
 .decl ar_cls(f: node, t: symbol)
-ar_cls(f, t) :- ar_call(f), ar_own(f, t).
-ar_cls(f, t) :- ar_call(f), ar_custom(f, q), dj_custom_field(q, t).
+ar_cls(f, t) :- ar_own(f, t).
+ar_cls(f, t) :- ar_fc(f, _, _, _, _, _), kind(f, "call"), field(f, "function", e), dj_custom_field(e, t).
 .decl ar_own(f: node, t: symbol)
-ar_own(f, t) :- ar_call(f), kind(f, "call"), field(f, "function", e), sym_of(e, q), split_dot(q, mo, t),
+ar_own(f, t) :- ar_fc(f, _, _, _, _, _), kind(f, "call"), field(f, "function", e), sym_of(e, q), split_dot(q, mo, t),
     dj_field_module(mo).
-.decl ar_custom(f: node, q: symbol)
-ar_custom(f, q) :- ar_call(f), kind(f, "call"), field(f, "function", e), sym_of(e, q), dj_custom_field(q, _).
 // ar_args(f): call f's arguments are its column's parameters: Django's own class, or a project class with no
 // `__init__` on the way (dj_custom_field_init), which could rewrite them.
 .decl ar_args(f: node)
 ar_args(f) :- ar_own(f, _).
-ar_args(f) :- ar_custom(f, q), !dj_custom_field_init(q).
-// ar_fk_key(f, k): relation call f's column is its target's primary key, defined by field call k. For an
-// AlterField's new relation, the key's definition at that point of the history (dj_field_at); otherwise (an old
-// definition, whose column followed every later change of the key, or a target outside the app's history) any
-// definition of the key, which must all have one type (ar_fk_type).
-.decl ar_fk_key(f: node, k: node)
-ar_fk_key(f, k) :- ar_alter(_, _, _, _, _, f), dj_field_at(f, k).
-ar_fk_key(f, k) :- dj_fk_target(f, m), !ar_fk_at(f), dj_pk_call(m, k).
-.decl ar_fk_at(f: node)
-ar_fk_at(f) :- ar_alter(_, _, _, _, _, f), dj_field_at(f, _).
-// ar_fk_type(f, y): relation call f's column has type y: the one type of its target keys, an integer or a uuid
-// (a varchar or numeric key's parameters are not followed).
-.decl ar_fk_type(f: node, y: symbol)
-ar_fk_type(f, y) :- ar_fk_key(f, k), ar_base(k, y), y != "varchar", y != "numeric", !ar_fk_mixed(f), !ar_fk_opaque(f).
-.decl ar_fk_mixed(f: node)
-ar_fk_mixed(f) :- ar_fk_key(f, a), ar_fk_key(f, b), ar_base(a, x), ar_base(b, y), x != y.
-.decl ar_fk_opaque(f: node)
-ar_fk_opaque(f) :- ar_fk_key(f, k), !ar_base(k, _).
+ar_args(f) :- ar_fc(f, _, _, _, _, _), kind(f, "call"), field(f, "function", e), dj_custom_field(e, _),
+    !dj_custom_field_init(e).
 // ar_pg(t, y): Django field class t is PostgreSQL column type y.
 .decl ar_pg(t: symbol, y: symbol)
 ar_pg("AutoField", "integer"). ar_pg("IntegerField", "integer"). ar_pg("PositiveIntegerField", "integer").
@@ -125,12 +109,9 @@ ar_pg("BooleanField", "boolean"). ar_pg("NullBooleanField", "boolean").
 ar_pg("DateField", "date"). ar_pg("DateTimeField", "timestamp with time zone"). ar_pg("TimeField", "time").
 ar_pg("DurationField", "interval"). ar_pg("UUIDField", "uuid"). ar_pg("JSONField", "jsonb").
 ar_pg("BinaryField", "bytea"). ar_pg("GenericIPAddressField", "inet"). ar_pg("IPAddressField", "inet").
-// ar_base(f, y): field call f makes a column of type y by its own class; ar_type(f, y): also a relation, by its key.
+// ar_base(f, y): field call f makes a column of type y by its own class (a relation's type is its key's, below).
 .decl ar_base(f: node, y: symbol)
 ar_base(f, y) :- ar_cls(f, t), ar_pg(t, y).
-.decl ar_type(f: node, y: symbol)
-ar_type(f, y) :- ar_base(f, y).
-ar_type(f, y) :- ar_cls(f, t), dj_fk_class(t), ar_fk_type(f, y).
 // ar_deflen(t, n, s): varchar field class t without max_length is n (text s) characters long.
 .decl ar_deflen(t: symbol, n: number, s: symbol)
 ar_deflen("SlugField", 50, "50"). ar_deflen("EmailField", 254, "254"). ar_deflen("URLField", 200, "200").
@@ -138,48 +119,27 @@ ar_deflen("FileField", 100, "100"). ar_deflen("ImageField", 100, "100"). ar_defl
 // ar_len(f, n, s): varchar call f has a limit of n characters (text s); ar_unlimited(f): it has none (a CharField
 // without max_length, or max_length=None); ar_len_unknown(f): its max_length is no literal.
 .decl ar_len(f: node, n: number, s: symbol)
-ar_len(f, n, s) :- ar_type(f, "varchar"), ar_args(f), call_arg(f, -1, "max_length", v), kind(v, "integer"),
+ar_len(f, n, s) :- ar_base(f, "varchar"), ar_args(f), call_arg(f, -1, "max_length", v), kind(v, "integer"),
     text(v, s), n = to_number(s).
 ar_len(f, n, s) :- ar_own(f, t), ar_deflen(t, n, s), !call_arg(f, -1, "max_length", _).
 .decl ar_unlimited(f: node)
 ar_unlimited(f) :- ar_own(f, "CharField"), !call_arg(f, -1, "max_length", _).
-ar_unlimited(f) :- ar_type(f, "varchar"), ar_args(f), call_arg(f, -1, "max_length", v), kind(v, "none").
+ar_unlimited(f) :- ar_base(f, "varchar"), ar_args(f), call_arg(f, -1, "max_length", v), kind(v, "none").
 .decl ar_len_unknown(f: node)
-ar_len_unknown(f) :- ar_type(f, "varchar"), !ar_len(f, _, _), !ar_unlimited(f).
+ar_len_unknown(f) :- ar_base(f, "varchar"), !ar_len(f, _, _), !ar_unlimited(f).
 // ar_dec(f, p, s, tp, ts): DecimalField call f has max_digits p and decimal_places s (texts tp, ts).
 .decl ar_dec(f: node, p: number, s: number, tp: symbol, ts: symbol)
-ar_dec(f, p, s, tp, ts) :- ar_type(f, "numeric"), ar_args(f), call_arg(f, -1, "max_digits", a), kind(a, "integer"),
+ar_dec(f, p, s, tp, ts) :- ar_base(f, "numeric"), ar_args(f), call_arg(f, -1, "max_digits", a), kind(a, "integer"),
     text(a, tp), call_arg(f, -1, "decimal_places", b), kind(b, "integer"), text(b, ts), p = to_number(tp),
     s = to_number(ts).
-// ar_known(f): the rule knows call f's column type with all its parameters.
-.decl ar_known(f: node)
-ar_known(f) :- ar_type(f, y), y != "varchar", y != "numeric".
-ar_known(f) :- ar_type(f, "varchar"), !ar_len_unknown(f).
-ar_known(f) :- ar_dec(f, _, _, _, _).
-
-// ar_rewrite(o, n): changing a column from field call o to field call n rewrites the table.
-.decl ar_rewrite(o: node, n: node)
-ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_type(fo, a), ar_type(fn, b), a != b, !ar_coercible(a, b),
-    !ar_same_target(fo, fn).
-// ar_same_target(fo, fn): both calls are relations to one model: the column follows that key either way.
-.decl ar_same_target(fo: node, fn: node)
-ar_same_target(fo, fn) :- ar_pair(fo, fn), dj_fk_target(fo, m), dj_fk_target(fn, m).
-ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_type(fo, "text"), ar_len(fn, _, _).
-ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_len(fo, a, _), ar_len(fn, b, _), b < a.
-ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_unlimited(fo), ar_len(fn, _, _).
-ar_rewrite(fo, fn) :- ar_pair(fo, fn), ar_dec(fo, p, s, _, _), ar_dec(fn, p2, s2, _, _), (s2 != s ; p2 < p).
-// ar_pair(o, n): a judged change: an AlterField's call n and its nearest earlier definition's call o, both known.
-.decl ar_pair(o: node, n: node)
-ar_pair(fo, fn) :- dj_field_old(o, fo), ar_alter(o, _, _, _, _, fn), ar_known(fo), ar_known(fn).
-// ar_coercible(a, b): PostgreSQL changes type a to b in the catalog (varchar to text; text to an unlimited varchar,
-// which a limited one rewrites above).
-.decl ar_coercible(a: symbol, b: symbol)
-ar_coercible("varchar", "text"). ar_coercible("text", "varchar").
-
-// ar_label(f, l): how the message names field call f: its class, with its length or precision when they matter.
+// ar_known_base(f): the rule knows call f's column type, by its own class, with all its parameters.
+.decl ar_known_base(f: node)
+ar_known_base(f) :- ar_base(f, y), y != "varchar", y != "numeric".
+ar_known_base(f) :- ar_base(f, "varchar"), !ar_len_unknown(f).
+ar_known_base(f) :- ar_dec(f, _, _, _, _).
+// ar_label(f, l): how the message names field call f, by its own class: with its length or precision when they matter.
 .decl ar_label(f: node, l: symbol)
-ar_label(f, l) :- ar_cls(f, t), !dj_fk_class(t), ar_type(f, y), y != "varchar", y != "numeric", l = t.
-ar_label(f, l) :- ar_cls(f, t), dj_fk_class(t), ar_fk_type(f, y), l = cat(cat(cat(t, " ("), y), ")").
+ar_label(f, l) :- ar_cls(f, t), ar_base(f, y), y != "varchar", y != "numeric", l = t.
 ar_label(f, l) :- ar_cls(f, t), call_arg(f, -1, "max_length", _), ar_len(f, _, s),
     l = cat(cat(cat(t, "(max_length="), s), ")").
 ar_label(f, l) :- ar_cls(f, t), !call_arg(f, -1, "max_length", _), ar_len(f, _, s),
@@ -187,6 +147,82 @@ ar_label(f, l) :- ar_cls(f, t), !call_arg(f, -1, "max_length", _), ar_len(f, _, 
 ar_label(f, l) :- ar_cls(f, t), ar_unlimited(f), l = cat(t, " (unlimited)").
 ar_label(f, l) :- ar_cls(f, t), ar_dec(f, _, _, tp, ts),
     l = cat(cat(cat(cat(cat(t, "(max_digits="), tp), ", decimal_places="), ts), ")").
+// The descriptions each file states of its field calls, by key (ar_fc), for the cross-file comparison:
+//   ar_vbase(…, y)      the column's type by its own class
+//   ar_vknown(…, l)     that type is known with its parameters, and l names the call
+//   ar_vlen(…, n), ar_vunl(…), ar_vdec(…, p, s)   its length, no length, its precision
+//   ar_vfk(…, t, tgt)   a relation of class t to model tgt
+.decl ar_vbase(e: symbol, j: number, m: symbol, x: symbol, w: symbol, y: symbol)
+ar_vbase(e, j, m, x, w, y) :- ar_fc(f, e, j, m, x, w), ar_base(f, y).
+.decl ar_vknown(e: symbol, j: number, m: symbol, x: symbol, w: symbol, l: symbol)
+ar_vknown(e, j, m, x, w, l) :- ar_fc(f, e, j, m, x, w), ar_known_base(f), ar_label(f, l).
+.decl ar_vlen(e: symbol, j: number, m: symbol, x: symbol, w: symbol, n: number)
+ar_vlen(e, j, m, x, w, n) :- ar_fc(f, e, j, m, x, w), ar_len(f, n, _).
+.decl ar_vunl(e: symbol, j: number, m: symbol, x: symbol, w: symbol)
+ar_vunl(e, j, m, x, w) :- ar_fc(f, e, j, m, x, w), ar_unlimited(f).
+.decl ar_vdec(e: symbol, j: number, m: symbol, x: symbol, w: symbol, p: number, s: number)
+ar_vdec(e, j, m, x, w, p, s) :- ar_fc(f, e, j, m, x, w), ar_dec(f, p, s, _, _).
+.decl ar_vfk(e: symbol, j: number, m: symbol, x: symbol, w: symbol, t: symbol, tgt: symbol)
+ar_vfk(e, j, m, x, w, t, tgt) :- ar_fc(f, e, j, m, x, w), ar_cls(f, t), dj_fk_class(t), dj_fk_target(f, tgt).
+
+// ---- across the history, by key -----------------------------------------------------------------------------------
+// ar_fk_key(e, j, m, x, w, ke, kj, km, kx): the relation under key (e, j, m, x, w) has its target's primary key as
+// column, defined at item kj of migration ke as model km's field kx. For an AlterField's new relation ("new"), the
+// key's definition at that point of the history (dj_field_src); otherwise (an old definition, whose column followed
+// every later change of the key, or a target outside the app's history) every definition of the key, which must all
+// have one type (ar_fk_type).
+.decl ar_fk_key(e: symbol, j: number, m: symbol, x: symbol, w: symbol, ke: symbol, kj: number, km: symbol, kx: symbol)
+ar_fk_key(e, j, m, x, "new", ke, kj, t, ky) :- ar_vfk(e, j, m, x, "new", _, t), dj_pk_name(t, k),
+    dj_field_src(e, j, t, k, ke, kj, ky).
+ar_fk_key(e, j, m, x, w, ke, kj, t, k) :- ar_vfk(e, j, m, x, w, _, t), !ar_fk_at(e, j, m, x, w), dj_pk_def(ke, kj, t, k).
+.decl ar_fk_at(e: symbol, j: number, m: symbol, x: symbol, w: symbol)
+ar_fk_at(e, j, m, x, "new") :- ar_vfk(e, j, m, x, "new", _, t), dj_pk_name(t, k), dj_field_src(e, j, t, k, _, _, _).
+// ar_fk_type(e, j, m, x, w, y): that relation's column has type y: the one type of its target keys, an integer or a
+// uuid (a varchar or numeric key's parameters are not followed).
+.decl ar_fk_kty(e: symbol, j: number, m: symbol, x: symbol, w: symbol, y: symbol)
+ar_fk_kty(e, j, m, x, w, y) :- ar_fk_key(e, j, m, x, w, ke, kj, km, kx), ar_vbase(ke, kj, km, kx, "def", y).
+.decl ar_fk_type(e: symbol, j: number, m: symbol, x: symbol, w: symbol, y: symbol)
+ar_fk_type(e, j, m, x, w, y) :- ar_fk_kty(e, j, m, x, w, y), y != "varchar", y != "numeric",
+    !ar_fk_mixed(e, j, m, x, w), !ar_fk_opaque(e, j, m, x, w).
+.decl ar_fk_mixed(e: symbol, j: number, m: symbol, x: symbol, w: symbol)
+ar_fk_mixed(e, j, m, x, w) :- ar_fk_kty(e, j, m, x, w, a), ar_fk_kty(e, j, m, x, w, b), a != b.
+.decl ar_fk_opaque(e: symbol, j: number, m: symbol, x: symbol, w: symbol)
+ar_fk_opaque(e, j, m, x, w) :- ar_fk_key(e, j, m, x, w, ke, kj, km, kx), !ar_vbase(ke, kj, km, kx, "def", _).
+// ar_type(…, y): the column type under a key: by its own class, or a relation's by its key. ar_known(…, l): the rule
+// knows it with all its parameters, and l names it for the message.
+.decl ar_type(e: symbol, j: number, m: symbol, x: symbol, w: symbol, y: symbol)
+ar_type(e, j, m, x, w, y) :- ar_vbase(e, j, m, x, w, y).
+ar_type(e, j, m, x, w, y) :- ar_fk_type(e, j, m, x, w, y).
+.decl ar_known(e: symbol, j: number, m: symbol, x: symbol, w: symbol, l: symbol)
+ar_known(e, j, m, x, w, l) :- ar_vknown(e, j, m, x, w, l).
+ar_known(e, j, m, x, w, l) :- ar_vfk(e, j, m, x, w, t, _), ar_fk_type(e, j, m, x, w, y), l = cat(t, " (", y, ")").
+
+// ar_pair(d, i, m, x, e, j, y): a judged change: the AlterField of model m's field x at item i of migration d, and its
+// nearest earlier definition, item j of migration e under name y, both known.
+.decl ar_pair(d: symbol, i: number, m: symbol, x: symbol, e: symbol, j: number, y: symbol)
+ar_pair(d, i, m, x, e, j, y) :- ar_known(d, i, m, x, "new", _), dj_field_src(d, i, m, x, e, j, y),
+    ar_known(e, j, m, y, "def", _).
+// ar_rewrite(d, i, m, x, e, j, y): changing the column from that definition to the AlterField's rewrites the table.
+.decl ar_rewrite(d: symbol, i: number, m: symbol, x: symbol, e: symbol, j: number, y: symbol)
+ar_rewrite(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_type(e, j, m, y, "def", a),
+    ar_type(d, i, m, x, "new", b), a != b, !ar_coercible(a, b), !ar_same_target(d, i, m, x, e, j, y).
+ar_rewrite(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_type(e, j, m, y, "def", "text"),
+    ar_vlen(d, i, m, x, "new", _).
+ar_rewrite(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_vlen(e, j, m, y, "def", a),
+    ar_vlen(d, i, m, x, "new", b), b < a.
+ar_rewrite(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_vunl(e, j, m, y, "def"),
+    ar_vlen(d, i, m, x, "new", _).
+ar_rewrite(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_vdec(e, j, m, y, "def", p, s),
+    ar_vdec(d, i, m, x, "new", p2, s2), (s2 != s ; p2 < p).
+// ar_same_target(…): both calls are relations to one model: the column follows that key either way.
+.decl ar_same_target(d: symbol, i: number, m: symbol, x: symbol, e: symbol, j: number, y: symbol)
+ar_same_target(d, i, m, x, e, j, y) :- ar_pair(d, i, m, x, e, j, y), ar_vfk(e, j, m, y, "def", _, t),
+    ar_vfk(d, i, m, x, "new", _, t).
+
+// ar_coercible(a, b): PostgreSQL changes type a to b in the catalog (varchar to text; text to an unlimited varchar,
+// which a limited one rewrites above).
+.decl ar_coercible(a: symbol, b: symbol)
+ar_coercible("varchar", "text"). ar_coercible("text", "varchar").
 
 // The cases, `cases/django-practice-alterfield-rewrites-table/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

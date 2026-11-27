@@ -32,7 +32,7 @@
 //                                                                              index-not-concurrent's concern); True
 //                                                                              is read by value: the literal, or a
 //                                                                              module constant of this file or an
-//                                                                              imported one (lib/alembic's al_bool)
+//                                                                              imported one (lib/alembic's al_kw_ext)
 //   else: op.create_index(..., postgresql_concurrently=True) after `if _is_pg(conn):`, or under
 //   `if dialect.name == "sqlite":`                                             another database ignores the keyword
 //   an env.py that runs its revisions with no transaction around them: `context.configure(...,
@@ -53,11 +53,20 @@
 .violation ConcurrentIndexInTransaction(at: node, m: symbol) "`{m}` with CONCURRENTLY runs in the revision's transaction, which PostgreSQL refuses. Wrap it in `with op.get_context().autocommit_block():`; the block commits the steps before it, so run it last."
 
 // ci_no_tx_env(e): env.py e runs its revisions outside any transaction, so CONCURRENTLY needs no autocommit block:
-// `transactional_ddl=False`, or an AUTOCOMMIT isolation level set in env.py or the module it imports its engine from.
+// `transactional_ddl=False` (a literal or a constant of env.py; an imported constant through lib/alembic's
+// al_kw_ext), or an AUTOCOMMIT isolation level set in env.py or the module it imports its engine from (al_env_reads,
+// by document: ci_autocommit_doc is each file's own).
 .decl ci_no_tx_env(e: number)
-ci_no_tx_env(e) :- al_env_configure(k), al_false_kw(k, "transactional_ddl"), docof(k, e).
-ci_no_tx_env(e) :- al_env_reads(e, d), call_arg(k, -1, "isolation_level", v), docof(k, d), unparen(v, u), str(u, s),
-    l = @lower(s), l = "autocommit".
+ci_no_tx_env(e) :- ci_off_here(e).
+ci_no_tx_env(e) :- ci_configure_at(e, t), al_kw_ext(e, t, "transactional_ddl", "false").
+ci_no_tx_env(e) :- al_env_reads(e, d), ci_autocommit_doc(d).
+.decl ci_off_here(e: number)
+ci_off_here(e) :- al_env_configure(k), al_false_kw(k, "transactional_ddl"), docof(k, e).
+.decl ci_configure_at(e: number, t: symbol)
+ci_configure_at(e, t) :- al_env_configure(k), al_term(k, e, t).
+.decl ci_autocommit_doc(d: number)
+ci_autocommit_doc(d) :- call_arg(k, -1, "isolation_level", v), docof(k, d), unparen(v, u), str(u, s), l = @lower(s),
+    l = "autocommit".
 // ci_no_transaction(d): revision d runs without a transaction: its env.py turns transactional DDL off, or it sits
 // under no env.py of the run and one env.py of the run turns it off.
 .decl ci_no_transaction(d: number)
@@ -72,11 +81,16 @@ ci_in_transaction(c) :- al_step(f, _), within(c, f), !al_in_autocommit(c).
 ci_in_transaction(c) :- al_step(f, _), kind(k, "call"), within(k, f), !al_in_autocommit(k), field(k, "function", fn),
     kind(fn, "identifier"), text(fn, x), kind(g, "function_definition"), def_name(g, x), nearest(g, s, scope),
     kind(s, "module"), docof(g, d), docof(f, d), g != f, within(c, g), !al_in_autocommit(c).
-.decl ci_concurrent(c: node, m: symbol)
-ci_concurrent(c, m) :- al_call(c, m, _), (m = "create_index" ; m = "drop_index"),
-    al_true_kw(c, "postgresql_concurrently"), docof(c, d), al_migration_doc(d), !al_test_doc(d), !ci_no_transaction(d).
+// ci_live(c, m, d, t): index operation m (c, of term t) of revision d (outside test code) runs in a step's transaction,
+// in a branch its own file does not rule out for PostgreSQL.
+.decl ci_live(c: node, m: symbol, d: number, t: symbol)
+ci_live(c, m, d, t) :- al_call(c, m, _), (m = "create_index" ; m = "drop_index"), docof(c, d), al_migration_doc(d),
+    !al_test_doc(d), ci_in_transaction(c), !al_non_pg(c), al_term(c, d, t).
 
-ConcurrentIndexInTransaction(c, m) :- ci_concurrent(c, m), ci_in_transaction(c), !al_non_pg(c).
+// The finding joins the call's own facts to what crosses files: the flag's imported constant (al_kw_ext), a test
+// function of another module (al_np_ext), and the env.py of the revision's tree (ci_no_transaction).
+ConcurrentIndexInTransaction(c, m) :- ci_live(c, m, d, t), (al_true_kw(c, "postgresql_concurrently") ;
+    al_kw_ext(d, t, "postgresql_concurrently", "true")), !al_np_ext(d, t), !ci_no_transaction(d).
 
 // The cases, `cases/alembic-practice-concurrent-index-outside-autocommit/`, read as one repository: each line ending
 // in `# caught` is reported, and no other line. `autocommit_env/` is a second Alembic tree whose env.py turns

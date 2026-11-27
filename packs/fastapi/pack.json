@@ -23,6 +23,12 @@
       "document": "rules/fastapi-practice-sync-session-in-async-route.rerail",
       "title": "FastAPI practice: blocking sync SQLAlchemy session work in an `async def` route, dependency or middleware, written there or reached through sync helpers",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "async.blocking-call-in-async"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -77,6 +83,12 @@
       "document": "rules/fastapi-practice-request-session-in-background-task.rerail",
       "title": "FastAPI practice: a background task gets a database session its middleware, a function-scoped dependency or a with block closes before the task runs",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "web.request-resource-in-background"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -123,6 +135,12 @@
       "document": "rules/fastapi-practice-yield-dependency-cleanup.rerail",
       "title": "FastAPI practice: a yield dependency releases its connection outside finally, or swallows the route's error",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "resource.cleanup-skipped-on-error"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -153,6 +171,12 @@
       "document": "rules/fastapi-practice-cors-wildcard-with-credentials.rerail",
       "title": "FastAPI practice: CORS middleware allows every origin while it allows credentials",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "web.cors-credentialed-wildcard"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -171,6 +195,12 @@
       "document": "rules/fastapi-practice-response-exposes-secret-field.rerail",
       "title": "FastAPI practice: a route's response sends a password hash, key or secret field to clients",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "data.sensitive-fields-exposed"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -201,6 +231,12 @@
       "document": "rules/fastapi-practice-route-missing-sibling-auth.rerail",
       "title": "FastAPI practice: one route of a router leaves out the auth dependency every other route requires",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.mutation-without-auth"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -231,6 +267,12 @@
       "document": "rules/fastapi-practice-route-shadowed.rerail",
       "title": "FastAPI practice: an earlier route of the same router answers this route's paths first",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "web.unreachable-route"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -249,6 +291,12 @@
       "document": "rules/fastapi-practice-on-event-handler.rerail",
       "title": "FastAPI practice: a startup/shutdown handler registered on an app built with lifespan=, which never runs it",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "web.lifecycle-handler-never-runs"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -277,6 +325,12 @@
       "document": "rules/fastapi-practice-lifecycle-event-handler.rerail",
       "title": "FastAPI practice: startup/shutdown code registered as event handlers instead of the app's lifespan",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "low",
+        "hazard": "web.lifecycle-event-handler"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -295,6 +349,12 @@
       "document": "rules/fastapi-practice-http-client-per-request.rerail",
       "title": "FastAPI practice: an httpx or aiohttp client, or a one-shot httpx.get/aiohttp.request call, per request in a route, dependency, middleware or a helper they call",
       "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "perf.client-per-request"
+      },
       "mode": "log",
       "on": true,
       "examples": {

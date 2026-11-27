@@ -32,18 +32,23 @@
 #include "lib/celery.rerail"
 
 .violation PickleSerializer(at: node, k: symbol) "`{k}` enables pickle, so anyone who can write to the broker runs code in the worker. Use json; if pickle must stay, sign messages with `app.setup_security()`."
+// Each finding is stated in its own file (ps_found), with what its task or app needs of other files (lib/celery's
+// needs); message signing is a fact of the whole run (ps_signed: cross_file).
+PickleSerializer(at, k) :- ps_found(at, k, nq, nk), cel_is(nq, nk), !ps_signed().
+.decl ps_found(at: node, k: symbol, nq: symbol, nk: symbol)
 // Settings that name one serializer.
-PickleSerializer(at, k) :- cel_setting(k, v, s), ps_one_key(k), ps_pickle(v, at), ps_live(s).
+ps_found(at, k, "", "") :- cel_setting(k, v, s), ps_one_key(k), ps_pickle(v, at), ps_live(s).
 // Settings that list accepted content types.
-PickleSerializer(at, k) :- cel_setting(k, v, s), ps_many_key(k), ps_pickle_list(v, at), ps_live(s).
+ps_found(at, k, "", "") :- cel_setting(k, v, s), ps_many_key(k), ps_pickle_list(v, at), ps_live(s).
 // A task's own option.
-PickleSerializer(at, "serializer") :- cel_task_option(f, "serializer", v), ps_pickle(v, at), ps_live(f).
+ps_found(at, "serializer", nq, nk) :- cel_task_option(f, "serializer", v, nq, nk), ps_pickle(v, at), ps_live(f).
 // A Task subclass's class attribute.
-PickleSerializer(at, "serializer") :- ps_task_class(c), field(c, "body", b), body_stmt(b, st, _),
+ps_found(at, "serializer", "", "") :- ps_task_class(c), field(c, "body", b), body_stmt(b, st, _),
     kind(st, "expression_statement"), child(st, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "serializer"),
     field(a, "right", v), ps_pickle(v, at), ps_live(a).
 // A send's execution option: `apply_async` on a Celery task (lib/celery's cel_send) or any `send_task`.
-PickleSerializer(at, "serializer") :- cel_send(c, _), call_arg(c, -1, "serializer", v), ps_pickle(v, at), ps_live(c).
+ps_found(at, "serializer", nq, nk) :- cel_send(c, _, nq, nk), call_arg(c, -1, "serializer", v), ps_pickle(v, at),
+    ps_live(c).
 
 .decl ps_one_key(k: symbol)
 ps_one_key("task_serializer"). ps_one_key("result_serializer"). ps_one_key("event_serializer").
@@ -63,21 +68,24 @@ ps_pickle_list(e, at) :- unparen(e, u), (kind(u, "list") ; kind(u, "tuple") ; ki
     ps_pickle(x, at).
 ps_pickle_list(e, e) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, m), kind(m, "module"),
     asg(m, x, v, _), ps_pickle_list(v, _).
-// ps_task_class(c): c derives from celery's Task, through the run's classes.
+// ps_task_class(c): c derives from celery's Task, through the run's classes (py_names' ancestors, python/names'
+// class_anc).
 .decl ps_task_class_q(q: symbol)
 ps_task_class_q("celery.Task"). ps_task_class_q("celery.app.task.Task").
-ps_task_class_q(q) :- class_def(c, q), class_base(c, b), ps_task_class_q(b).
 .decl ps_task_class(c: node)
 ps_task_class(c) :- kind(c, "class_definition"), class_base(c, b), ps_task_class_q(b).
-// ps_live(n): n is in code the rule reads: no test file, no test settings file, and no message signing in the run.
+ps_task_class(c) :- kind(c, "class_definition"), class_anc(c, b), ps_task_class_q(b).
+// ps_live(n): n is in code the rule reads: no test file, no test settings file.
 .decl ps_live(n: node)
-ps_live(n) :- docof(n, d), !cel_test_doc(d), !ps_test_settings(d), !ps_signed().
+ps_live(n) :- docof(n, d), !cel_test_doc(d), !ps_test_settings(d).
 .decl ps_test_settings(d: number)
 ps_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py", s)).
 // ps_signed(): the run calls `<app>.setup_security(...)` outside tests: Celery then sends and accepts only signed
-// ("auth") messages.
-.decl ps_signed()
-ps_signed() :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "setup_security"), docof(c, d), !cel_test_doc(d).
+// ("auth") messages. A fact of the whole run, from each document's own calls (ps_signs): cross_file, with no column.
+.decl ps_signed() cross_file
+ps_signed() :- ps_signs(_).
+.decl ps_signs(d: number)
+ps_signs(d) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "setup_security"), docof(c, d), !cel_test_doc(d).
 
 // The cases, `cases/celery-practice-pickle-serializer/`: `proj/` is one repository, in which each line ending in
 // `# caught` is reported and no other line; `signing/` is a second one that calls app.setup_security() and is silent.

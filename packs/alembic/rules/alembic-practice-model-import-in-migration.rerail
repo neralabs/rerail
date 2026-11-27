@@ -14,7 +14,7 @@
 //   from app.models import user as m; db.query(m.User)    a model module imported whole: its first use of each model
 //                                                         (outside type annotations)
 // A mapped class is a class of the run that declares `__tablename__`, is a sqlmodel `table=True` class, subclasses
-// either (al_mapped_class), or subclasses a declarative base (`class Base(DeclarativeBase)`, `Base = declarative_base()`,
+// either (lib/alembic's al_model_q), or subclasses a declarative base (`class Base(DeclarativeBase)`, `Base = declarative_base()`,
 // Flask-SQLAlchemy's `db.Model` for a module-level `db = SQLAlchemy(...)`, all resolved through imports) without
 // `__abstract__ = True` (Netflix/dispatch names every table with a `declared_attr` on its base). A model imported only
 // for its table name (`User.__tablename__`, `User.__table__.name`) gets a message of its own: nothing queries its
@@ -40,24 +40,26 @@
 .violation ModelTableName(at: node, x: symbol) "This migration imports {x} only for its table name, which loads the application when the migration runs. Write the table name as a string instead; leave it if the app must load anyway."
 
 // ---- mapped classes ----------------------------------------------------------------------------------------------
-// mi_base_q(q): q is a declarative base: `class Base(DeclarativeBase)` or a module-level `Base = declarative_base()`.
+// Classes are read by symbol (decision 0677): each file states its classes, their ancestry (python/names' class_anc,
+// the phase py_names) and its declarative bases by qualified name; which classes are models, and which name a
+// migration's import denotes, is joined by symbol, and each finding reads its node in its own file.
+// mi_base(q): q is a declarative base: `class Base(DeclarativeBase)` or a module-level `Base = declarative_base()`.
+// Each file states its own (mi_base_at); the run's bases, by qualified name, span files on purpose (cross_file).
 .decl mi_decl_root(q: symbol)
 mi_decl_root("sqlalchemy.orm.DeclarativeBase"). mi_decl_root("sqlalchemy.orm.DeclarativeBaseNoMeta").
 mi_decl_root("sqlalchemy.orm.decl_api.DeclarativeBase").
 .decl mi_base_factory(q: symbol)
 mi_base_factory("sqlalchemy.orm.declarative_base"). mi_base_factory("sqlalchemy.ext.declarative.declarative_base").
 mi_base_factory("sqlalchemy.orm.decl_api.declarative_base").
-.decl mi_base_q(q: symbol)
-mi_base_q(q) :- class_def(k, q), class_base(k, r), mi_decl_root(r).
-mi_base_q(q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
+.decl mi_base_at(d: number, q: symbol)
+mi_base_at(d, q) :- class_def(k, q), class_base(k, r), mi_decl_root(r), docof(k, d).
+mi_base_at(d, q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
     mi_base_factory(r), doc(d, _, m), q = @dot(m, x).
 // Flask-SQLAlchemy: `db = SQLAlchemy(...)` at module level makes `db.Model` a declarative base.
-mi_base_q(q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
+mi_base_at(d, q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
     prefix("flask_sqlalchemy.", r), suffix(".SQLAlchemy", r), doc(d, _, m), q = @dot(@dot(m, x), "Model").
-// mi_sub_q(q): class q derives from a declarative base, directly or through other classes of the run.
-.decl mi_sub_q(q: symbol)
-mi_sub_q(q) :- class_def(k, q), class_base(k, b), mi_base_q(b).
-mi_sub_q(q) :- class_def(k, q), class_base(k, b), mi_sub_q(b).
+.decl mi_base(q: symbol) cross_file
+mi_base(q) :- mi_base_at(_, q).
 .decl mi_abstract(k: node)
 mi_abstract(k) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__abstract__"), field(a, "right", v),
     unparen(v, u), kind(u, "true").
@@ -66,10 +68,28 @@ mi_abstract(k) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__abstract_
 .decl mi_frozen_doc(d: number)
 mi_frozen_doc(d) :- al_migration_doc(d).
 mi_frozen_doc(d) :- doc(d, _, _), (path_part(d, "migrations") ; path_part(d, "alembic")).
-// mi_model(k, x): class k, named x, is a mapped class of the application.
-.decl mi_model(k: node, x: symbol)
-mi_model(k, x) :- al_mapped_class(k), def_name(k, x), docof(k, d), !mi_frozen_doc(d).
-mi_model(k, x) :- mi_sub_q(q), class_def(k, q), !mi_abstract(k), def_name(k, x), docof(k, d), !mi_frozen_doc(d).
+// mi_cls_at(d, q, x, a, p, top): class q, named x, of document d (path p) outside the migrations' own modules; a
+// "abstract" when it says `__abstract__ = True`; top "top" when it is defined at module level. mi_anc_at(d, q, b):
+// it inherits from b, at any depth (class_anc).
+.decl mi_cls_at(d: number, q: symbol, x: symbol, a: symbol, p: symbol, top: symbol)
+mi_cls_at(d, q, x, a, p, top) :- class_def(k, q), def_name(k, x), docof(k, d), !mi_frozen_doc(d), doc(d, p, _),
+    mi_abs(k, a), mi_top(k, top).
+.decl mi_abs(k: node, a: symbol)
+mi_abs(k, "abstract") :- class_def(k, _), mi_abstract(k).
+mi_abs(k, "concrete") :- class_def(k, _), !mi_abstract(k).
+.decl mi_top(k: node, top: symbol)
+mi_top(k, "top") :- class_def(k, _), nearest(k, s, scope), kind(s, "module").
+mi_top(k, "nested") :- class_def(k, _), nearest(k, s, scope), !kind(s, "module").
+.decl mi_anc_at(d: number, q: symbol, b: symbol)
+mi_anc_at(d, q, b) :- class_def(k, q), class_anc(k, b), docof(k, d), !mi_frozen_doc(d).
+// mi_model(d, q, x): class q of document d, named x, is a mapped class of the application: it names its table, or
+// inherits from one that does (al_model_q), or from a declarative base and is not abstract (mi_base).
+.decl mi_cls_anc_at(d: number, q: symbol, x: symbol, a: symbol, b: symbol)
+mi_cls_anc_at(d, q, x, a, b) :- mi_cls_at(d, q, x, a, _, _), mi_anc_at(d, q, b).
+.decl mi_model(d: number, q: symbol, x: symbol)
+mi_model(d, q, x) :- mi_cls_at(d, q, x, _, _, _), al_model_q(q).
+mi_model(d, q, x) :- mi_cls_anc_at(d, q, x, _, b), al_model_q(b).
+mi_model(d, q, x) :- mi_cls_anc_at(d, q, x, "concrete", b), mi_base(b).
 
 // ---- what a migration reads --------------------------------------------------------------------------------------
 .decl mi_doc(d: number)
@@ -84,21 +104,32 @@ mi_import(a, q0) :- import_alias(_, a, m, y, _), y != "", docof(a, d), mi_doc(d)
 // mi_attr(n, d, q0): attribute expression n of migration d (outside annotations) reads the qualified name q0.
 .decl mi_attr(n: node, d: number, q0: symbol)
 mi_attr(n, d, q0) :- kind(n, "attribute"), docof(n, d), mi_doc(d), !mi_typing_only(n), sym_of(n, q0).
-.decl mi_query(q0: symbol)
-mi_query(q0) :- mi_import(_, q0).
-mi_query(q0) :- mi_attr(_, _, q0).
-// mi_names(q0, k): the qualified name q0 denotes class k: through re-exports to its qualname, or (a module inside a
-// namespace package, whose qualname lacks the package: Netflix/dispatch's `dispatch/feedback/` has no __init__.py)
-// a top-level class named y of the file whose path ends in m's path, for q0 = "m.y".
-.decl mi_names(q0: symbol, k: node)
-mi_names(q0, k) :- mi_query(q0), resolve_export(q0, q), class_def(k, q).
-mi_names(q0, k) :- mi_query(q0), split_dot(q0, m, y), mi_model(k, y), nearest(k, s, scope), kind(s, "module"),
-    docof(k, d), doc(d, p, _), mp = @replace_all(m, "\\.", "/"),
-    (suffix(cat("/", mp, ".py"), cat("/", p)) ; suffix(cat("/", mp, "/__init__.py"), cat("/", p))).
+// mi_query_at(d, q0, q): migration d names q0, which denotes q: module m's export x for q0 = "m.x", followed through
+// re-exports (the phase py_names, read by a module d reads), or q0 itself where no module exports it.
+.decl mi_query(d: number, q0: symbol)
+mi_query(d, q0) :- mi_import(a, q0), docof(a, d).
+mi_query(d, q0) :- mi_attr(_, d, q0).
+.decl mi_exported(d: number, q0: symbol, q: symbol)
+mi_exported(d, q0, q) :- mi_query(d, q0), split_dot(q0, m, x), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__exports(m, x, q).
+.decl mi_is_exported(d: number, q0: symbol)
+mi_is_exported(d, q0) :- mi_exported(d, q0, _).
+.decl mi_query_at(d: number, q0: symbol, q: symbol)
+mi_query_at(d, q0, q) :- mi_exported(d, q0, q).
+mi_query_at(d, q0, q0) :- mi_query(d, q0), !mi_is_exported(d, q0).
+// mi_named(q0, q, x): the name q0 a migration reads denotes model q, named x: through re-exports to its qualname, or
+// (a module inside a namespace package, whose qualname lacks the package: Netflix/dispatch's `dispatch/feedback/` has
+// no __init__.py) a top-level class named y of the file whose path ends in m's path, for q0 = "m.y". It joins a
+// migration's names to the classes of other files, so it spans files on purpose (cross_file), by symbol and path.
+.decl mi_named(q0: symbol, q: symbol, x: symbol) cross_file
+mi_named(q0, q, x) :- mi_query_at(_, q0, q), mi_model(_, q, x).
+mi_named(q0, q, y) :- mi_query_at(_, q0, _), split_dot(q0, m, y), mi_cls_at(e, q, y, _, p, "top"), mi_model(e, q, y),
+    mp = @replace_all(m, "\\.", "/"), (suffix(cat("/", mp, ".py"), cat("/", p)) ;
+    suffix(cat("/", mp, "/__init__.py"), cat("/", p))).
 // `from m import X [as Y]`: one finding per imported name that resolves to a model; a model the migration uses only
 // for its table name gets ModelTableName.
-ModelImport(a, x) :- mi_import(a, q0), mi_names(q0, k), mi_model(k, x), !mi_name_only(a, q0).
-ModelTableName(a, x) :- mi_import(a, q0), mi_names(q0, k), mi_model(k, x), mi_name_only(a, q0).
+ModelImport(a, x) :- mi_import(a, q0), mi_named(q0, _, x), !mi_name_only(a, q0).
+ModelTableName(a, x) :- mi_import(a, q0), mi_named(q0, _, x), mi_name_only(a, q0).
 // mi_ref(a, q0, n): identifier n of the importing migration, outside import statements, names the imported q0.
 .decl mi_ref(a: node, q0: symbol, n: node)
 mi_ref(a, q0, n) :- mi_import(a, q0), docof(a, d), kind(n, "identifier"), docof(n, d), sym_of(n, q0), !mi_in_import(n).
@@ -112,17 +143,32 @@ mi_name_use(n) :- attr_of(p, n, "__table__"), attr_of(_, p, "name").
 mi_full_use(a, q0) :- mi_ref(a, q0, n), !mi_name_use(n).
 .decl mi_name_only(a: node, q0: symbol)
 mi_name_only(a, q0) :- mi_ref(a, q0, n), mi_name_use(n), !mi_full_use(a, q0).
-// `m.X` where m names a model module: the first use of each model in the file.
-.decl mi_attr_use(n: node, d: number, k: node, x: symbol)
-mi_attr_use(n, d, k, x) :- mi_attr(n, d, q0), mi_names(q0, k), mi_model(k, x), field(n, "object", o),
-    !mi_model_ref(o).
-// mi_model_ref(o): o itself names a model (`User.Address` would be an attribute of a model, not of a module).
-.decl mi_model_ref(o: node)
-mi_model_ref(o) :- mi_attr(o, _, q0), mi_names(q0, k), mi_model(k, _).
-mi_model_ref(o) :- kind(o, "identifier"), docof(o, d), mi_doc(d), sym_of(o, q), class_def(k, q), mi_model(k, _).
-ModelUse(n, x) :- mi_attr_use(n, d, k, x), !mi_later_use(n, d, k).
-.decl mi_later_use(n: node, d: number, k: node)
-mi_later_use(n, d, k) :- mi_attr_use(n, d, k, _), mi_attr_use(p, d, k, _), earlier(p, n).
+// `m.X` where m names a model module: the first use of each model in the file. Each attribute is stated by its term
+// (al_term) and its rank among the file's such attributes (mi_rank, compared in the file: no position leaves it):
+// mi_attr_at(d, nt, i, q0), it reads q0; mi_obj_at(d, nt, w, oq), its object is an attribute (w "attr") or a name
+// (w "ident") that reads oq.
+.decl mi_attr_n(n: node, d: number)
+mi_attr_n(n, d) :- mi_attr(n, d, _).
+.decl mi_rank(n: node, d: number, i: number)
+mi_rank(n, d, i) :- mi_attr_n(n, d), i = count : { mi_attr_n(p, d), earlier(p, n) }.
+// mi_attr_node(n, d, nt, i): attribute n of migration d, of term nt and rank i, a finding reads back.
+.decl mi_attr_node(n: node, d: number, nt: symbol, i: number)
+mi_attr_node(n, d, nt, i) :- mi_rank(n, d, i), al_term(n, d, nt).
+.decl mi_attr_at(d: number, nt: symbol, i: number, q0: symbol)
+mi_attr_at(d, nt, i, q0) :- mi_attr(n, d, q0), mi_attr_node(n, d, nt, i).
+.decl mi_obj_at(d: number, nt: symbol, w: symbol, oq: symbol)
+mi_obj_at(d, nt, "attr", oq) :- mi_attr_node(n, d, nt, _), field(n, "object", o), mi_attr(o, _, oq).
+mi_obj_at(d, nt, "ident", oq) :- mi_attr_node(n, d, nt, _), field(n, "object", o), kind(o, "identifier"),
+    sym_of(o, oq).
+// mi_model_ref(d, nt): the attribute's object itself names a model (`User.Address` would be an attribute of a model,
+// not of a module).
+.decl mi_model_ref(d: number, nt: symbol)
+mi_model_ref(d, nt) :- mi_obj_at(d, nt, "attr", oq), mi_named(oq, _, _).
+mi_model_ref(d, nt) :- mi_obj_at(d, nt, "ident", oq), mi_model(_, oq, _).
+// mi_attr_use(d, nt, i, q, x): attribute nt (rank i) of migration d reads model q, named x, through a module.
+.decl mi_attr_use(d: number, nt: symbol, i: number, q: symbol, x: symbol)
+mi_attr_use(d, nt, i, q, x) :- mi_attr_at(d, nt, i, q0), mi_named(q0, q, x), !mi_model_ref(d, nt).
+ModelUse(n, x) :- mi_attr_node(n, d, nt, i), mi_attr_use(d, nt, i, q, x), i = min j : { mi_attr_use(d, _, j, q, _) }.
 
 // The cases, `cases/alembic-practice-model-import-in-migration/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.

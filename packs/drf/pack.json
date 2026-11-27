@@ -23,6 +23,12 @@
       "document": "rules/drf-practice-object-permission-skipped.rerail",
       "title": "DRF practice: a handler that reads or changes its row itself, skipping the view's object permission",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.object-permission-skipped"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -61,6 +67,12 @@
       "document": "rules/drf-practice-view-without-permission.rerail",
       "title": "DRF practice: a view that sets no permission classes in a project whose default permission is AllowAny",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.endpoint-without-auth"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -107,6 +119,12 @@
       "document": "rules/drf-practice-serializer-exposes-secret-field.rerail",
       "title": "DRF practice: a ModelSerializer that returns a password, token or API key",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "data.sensitive-fields-exposed"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -137,6 +155,12 @@
       "document": "rules/drf-practice-declared-field-meta-ignored.rerail",
       "title": "DRF practice: read_only_fields or extra_kwargs naming a declared serializer field",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "input.mass-assignment"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -155,6 +179,12 @@
       "document": "rules/drf-practice-validate-returns-value.rerail",
       "title": "DRF practice: serializer validate_<field>() or validate() that can end without returning",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "validation.hook-returns-none"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -173,6 +203,12 @@
       "document": "rules/drf-practice-page-size-uncapped.rerail",
       "title": "DRF practice: pagination that lets the client choose the page size with no upper bound",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "api.unbounded-page-size"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -219,6 +255,12 @@
       "document": "rules/drf-practice-related-field-not-prefetched.rerail",
       "title": "DRF practice: a list view's serializer reads a relation its queryset does not load",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium",
+        "hazard": "orm.query-in-loop"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -257,6 +299,12 @@
       "document": "rules/drf-practice-list-without-pagination.rerail",
       "title": "DRF practice: list endpoint with no pagination, or a pagination class with no page size",
       "group": "Django REST framework",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "api.unpaginated-list"
+      },
       "mode": "log",
       "on": false,
       "examples": {

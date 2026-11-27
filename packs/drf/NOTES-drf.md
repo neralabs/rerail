@@ -87,11 +87,13 @@ non-test code, before any rule existed; the writers' engine runs give the real n
 ## 4. The library
 
 `rules/lib/drf.rerail` is the pack's vocabulary (its interface comment lists every relation): DRF classes through
-the run's class hierarchy and known third-party bases (`drf_lib_q`, `drf_ext_base`), views and their handlers,
-serializers and their Meta options as Python inherits them (`drf_meta_opt`, `class Meta(Base.Meta)` included),
-declared fields, permission classes (`drf_effective_perm`: a view's own or inherited `permission_classes`, else the
+the run's class hierarchy and known third-party bases (`drf_lib`, `drf_ext_base`), views and their handlers,
+serializers and their Meta options as Python inherits them (`drf_opt`, `class Meta(Base.Meta)` included),
+declared fields, permission classes (`drf_effective_perm_q`: a view's own or inherited `permission_classes`, else the
 settings default), settings (`REST_FRAMEWORK` as a dict, `dict(...)`, subscript assignment or `.update()`), and
-`select_related`/`prefetch_related` loads. It includes `rules/lib/django.rerail`, a verbatim copy of the django pack's
+`select_related`/`prefetch_related` loads. What it says about a class it says by symbol (qualified names, and the
+values a class's attributes hold by their home, `q.x`), so no node crosses files (decision 0691); a rule reads the
+answers back at its own file's nodes in its findings. It includes `rules/lib/django.rerail`, a verbatim copy of the django pack's
 library (a pack's rules can include only core's library and files beside them), for models, querysets and test files.
 
 Proven by a probe rule (one finding per relation) on a case repository of six files (settings, models, permissions,

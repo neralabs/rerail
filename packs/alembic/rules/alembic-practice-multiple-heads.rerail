@@ -74,18 +74,25 @@ mh_down_elem(d, e) :- mh_down_value(d, u), (kind(u, "tuple") ; kind(u, "list")),
 // mh_down(d, r): revision d names the parent id r.
 .decl mh_down(d: number, r: symbol)
 mh_down(d, r) :- mh_down_elem(d, e), mh_value(e, r).
-.decl mh_known(r: symbol)
+// The graph spans the revision files of the run on purpose: each file states its own id, directory and parent ids
+// (mh_rev, mh_dir, mh_down), and the cross_file relations below join them by revision id string and directory path.
+// They hold documents, ids and paths: no node, no position.
+// mh_known(r): some revision of the run has id r. mh_dir_has(p, r): directory p holds a revision with id r.
+.decl mh_known(r: symbol) cross_file
 mh_known(r) :- mh_rev(_, r).
-.decl mh_dir_has(p: symbol, r: symbol)
+.decl mh_dir_has(p: symbol, r: symbol) cross_file
 mh_dir_has(p, r) :- mh_rev(d, r), mh_dir(d, p).
 // mh_parent(n, m): n's parent m, in n's directory first, else anywhere in the run.
-.decl mh_parent(n: number, m: number)
+.decl mh_parent(n: number, m: number) cross_file
 mh_parent(n, m) :- mh_dir(n, p), mh_down(n, r), mh_rev(m, r), mh_dir(m, p), m != n.
 mh_parent(n, m) :- mh_dir(n, p), mh_down(n, r), !mh_dir_has(p, r), mh_rev(m, r), m != n.
-// mh_unknown(d): a parent of d is unknown: an element that is no readable value, or an id no revision of the run has.
+// mh_unknown(d): a parent of d is unknown: an element that is no readable value (mh_unread, in d's own file), or an
+// id no revision of the run has.
 .decl mh_unknown(d: number)
-mh_unknown(d) :- mh_down_elem(d, e), !mh_valued(e).
+mh_unknown(d) :- mh_unread(d).
 mh_unknown(d) :- mh_down(d, r), !mh_known(r).
+.decl mh_unread(d: number)
+mh_unread(d) :- mh_down_elem(d, e), !mh_valued(e).
 // mh_up(n, m): m is n or an ancestor of n.
 .decl mh_up(n: number, m: number)
 mh_up(n, n) :- mh_rev(n, _).

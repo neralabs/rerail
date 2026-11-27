@@ -40,16 +40,20 @@
 #include "lib/fastapi.rerail"
 #include "python/calls.rerail"
 
+// The request path is walked over defs' symbols (decision 0691: no node crosses files): FastAPI's per-request defs
+// (lib/fastapi's fa_per_request) and python/calls' call targets by symbol, each def's calls stated in its own file
+// (hc_edge). A finding reads its constructor's def in its own file (pt_def) and names the per-request def that
+// reaches it by its path and line (hc_def_at, stated in that def's file).
 .violation ClientPerRequest(at: node, what: symbol, fx: symbol)
     "`{what}(...)` builds an HTTP client and its connection pool on every request to `{fx}`. Reuse one app-wide client; keep this if the call needs its own transport, proxy or per-user credentials."
-ClientPerRequest(c, what, fx) :- hc_ctor(c, h, what), hc_start(h), def_name(h, fx).
-.violation ClientReached(at: node, what: symbol, hx: symbol, fx: symbol, p: symbol, r: node)
-    "`{what}(...)` in `{hx}` builds an HTTP client on each request (`{fx}` at {p}:{r.line} reaches it). Reuse one app-wide client; keep this if it needs its own transport, proxy or per-user credentials."
-ClientReached(c, what, hx, fx, p, r) :- hc_ctor(c, h, what), !hc_start(h), def_name(h, hx),
-    r = min f : { hc_reach(f, h) }, def_name(r, fx), docof(r, d), doc(d, p, _).
+ClientPerRequest(c, what, fx) :- hc_ctor(c, h, what), pt_def(h, hq), hc_start(hq), def_name(h, fx).
+.violation ClientReached(at: node, what: symbol, hx: symbol, fx: symbol, p: symbol, l: number)
+    "`{what}(...)` in `{hx}` builds an HTTP client on each request (`{fx}` at {p}:{l} reaches it). Reuse one app-wide client; keep this if it needs its own transport, proxy or per-user credentials."
+ClientReached(c, what, hx, fx, p, l) :- hc_ctor(c, h, what), pt_def(h, hq), !hc_start(hq), def_name(h, hx),
+    hc_first(hq, fq), hc_def_at(fq, fx, p, l).
 
 // ---- clients -----------------------------------------------------------------------------------------------------
-// hc_client_q(q): an HTTP client class that owns a connection pool.
+// hc_lib(q): an HTTP client class that owns a connection pool; hc_client(e): e names one, or a subclass of the run.
 .decl hc_lib(q: symbol)
 hc_lib("httpx.AsyncClient"). hc_lib("httpx.Client"). hc_lib("httpx._client.AsyncClient"). hc_lib("httpx._client.Client").
 hc_lib("httpx2.AsyncClient"). hc_lib("httpx2.Client").
@@ -59,9 +63,8 @@ hc_lib("aiohttp.ClientSession"). hc_lib("aiohttp.client.ClientSession").
 hc_per_call(cat(m, x)) :- (m = "httpx." ; m = "httpx2."), (x = "get" ; x = "post" ; x = "put" ; x = "patch" ;
     x = "delete" ; x = "head" ; x = "options" ; x = "request" ; x = "stream").
 hc_per_call("aiohttp.request"). hc_per_call("aiohttp.client.request").
-.decl hc_client_q(q: symbol)
-hc_client_q(q) :- hc_lib(q).
-hc_client_q(q) :- class_def(c, q), class_base(c, b), hc_client_q(b).
+.decl hc_client(e: node)
+hc_client(e) :- fa_names(e, b), hc_lib(b).
 // hc_custom_kw(k): a keyword that gives the client a transport of its own; such a client is left alone.
 .decl hc_custom_kw(k: symbol)
 hc_custom_kw("transport"). hc_custom_kw("mounts"). hc_custom_kw("connector").
@@ -69,7 +72,7 @@ hc_custom_kw("transport"). hc_custom_kw("mounts"). hc_custom_kw("connector").
 // hc_ctor(c, h, what): call c, in def h's frame (a lambda's calls are its def's) outside test code, builds a client
 // that is not kept as a shared one (hc_kept) and has no transport of its own; what is the callee as written.
 .decl hc_ctor(c: node, h: node, what: symbol)
-hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), hc_client_q(q), owner(c, h),
+hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), hc_client(fn), owner(c, h),
     !hc_custom(c), !hc_kept(c, h), docof(c, d), !fa_test_doc(d), text(fn, what).
 hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), hc_per_call(q), owner(c, h),
     !hc_custom(c), docof(c, d), !fa_test_doc(d), text(fn, what).
@@ -86,18 +89,36 @@ hc_kept(c, h) :- owner(c, h), kind(s, "assignment"), field(s, "left", l), kind(l
 
 // ---- the request path --------------------------------------------------------------------------------------------
 // hc_start(f): a def FastAPI calls per request, outside test code, and not cached (a cached dependency runs once).
-.decl hc_start(f: node)
-hc_start(f) :- fa_per_request(f), docof(f, d), !fa_test_doc(d), !hc_cached(f).
+// hc_def_ok(f): a def outside test code and not cached, stated in its file.
+.decl hc_def_ok(f: symbol)
+hc_def_ok(fq) :- kind(f, "function_definition"), docof(f, d), !fa_test_doc(d), !hc_cached(f), pt_def(f, fq).
+.decl hc_start(f: symbol)
+hc_start(fq) :- fa_per_request(fq), hc_def_ok(fq).
 // hc_reach(f, h): per-request f runs def h: f itself, or through calls (sync or awaited), not through a cached def or a
 // call whose result is kept (hc_kept: a lazily built singleton).
-.decl hc_reach(f: node, h: node)
+.decl hc_reach(f: symbol, h: symbol)
 hc_reach(f, f) :- hc_start(f).
-hc_reach(f, h) :- hc_reach(f, g), owner(c, g), call_target(c, h), !hc_kept(c, g), !hc_cached(h).
-// hc_cached(g): g's result is cached across calls (`@functools.lru_cache`, `@functools.cache`, `@alru_cache`).
+hc_reach(f, h) :- hc_reach(f, g), hc_edge(g, h), !hc_cached_q(h).
+// hc_edge(g, h): a call in def g's frame, whose result is not kept, may run def h. Stated in g's file.
+.decl hc_edge(g: symbol, h: symbol)
+hc_edge(gq, h) :- owner(c, g), call_target(c, h), !hc_kept(c, g), pt_def(g, gq).
+// hc_first(h, f): the least per-request f (by symbol) that reaches h.
+.decl hc_first(h: symbol, f: symbol)
+hc_first(h, f) :- hc_reach(f, h), !hc_later(h, f).
+.decl hc_later(h: symbol, f: symbol)
+hc_later(h, f) :- hc_reach(f, h), hc_reach(g, h), g < f.
+// hc_def_at(f, fx, p, l): def f is named fx, at line l of path p. Stated in its file.
+.decl hc_def_at(f: symbol, fx: symbol, p: symbol, l: number)
+hc_def_at(fq, fx, p, l) :- kind(f, "function_definition"), pt_def(f, fq), def_name(f, fx), docof(f, d), doc(d, p, _),
+    line(f, l).
+// hc_cached(g): g's result is cached across calls (`@functools.lru_cache`, `@functools.cache`, `@alru_cache`);
+// hc_cached_q(g): by its symbol.
 .decl hc_cached(g: node)
 hc_cached(g) :- decorator(g, e0), unparen(e0, e), sym_of(e, q), hc_cache_q(q).
 hc_cached(g) :- decorator(g, e0), unparen(e0, e), kind(e, "call"), field(e, "function", fn), sym_of(fn, q),
     hc_cache_q(q).
+.decl hc_cached_q(g: symbol)
+hc_cached_q(gq) :- hc_cached(g), pt_def(g, gq).
 .decl hc_cache_q(q: symbol)
 hc_cache_q("functools.lru_cache"). hc_cache_q("functools.cache"). hc_cache_q("async_lru.alru_cache").
 

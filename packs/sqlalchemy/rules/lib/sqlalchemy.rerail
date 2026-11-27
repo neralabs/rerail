@@ -1,41 +1,52 @@
 // lib/sqlalchemy: SQLAlchemy 2.0's models, relationships, sessions, statements and events, with SQLModel and
 // Flask-SQLAlchemy, as the sqlalchemy-practice rules read them. Names resolve through imports (python/names'
 // sym_of), so `from sqlalchemy.orm import Session`, `import sqlalchemy.orm as orm; orm.Session` and `from sqlmodel
-// import Session` all reach a session class; class bases resolve across the files of the run (class_base), so a
-// model whose declarative base sits in another module is still a model, and a relationship declared on a model in
-// models/ is known where a loop in services/ reads it.
+// import Session` all reach a session class; a model whose declarative base sits in another module is still a model,
+// and a relationship declared on a model in models/ is known where a loop in services/ reads it.
 //
-// Interface
+// Two layers, so that no node crosses files (decisions 0652, 0677). Each file states its own syntax by node:
+// statements, rows, instances, sessions, writes. A class a node names is the qualified name the file resolves it to
+// (mq), unchecked: whether it is a model is a fact of the run. What spans files is stated by symbol alone: which classes
+// of the run are models, their relationships, foreign keys and tables, which module attributes hold a session factory
+// or a Flask-SQLAlchemy extension, which parameters callers fill with a session, what a function of the run returns.
+// Each file states its own part of those facts by symbol, and the symbol relations join them across files. A rule's
+// output joins the two: by the symbol a node names (`sa_model_q(mq)`), by a condition key (`sa_session_key(k)`), or by
+// a node's term (python/points-to's `pt_tm`, the symbol a node is known by) for a fact about that node that other
+// files decide. A per-file relation never reads a symbol relation that spans files: it would follow it into the
+// cross-file part with its nodes.
+//
+// Interface (by symbol: spans files; by node: per file)
 //   Models:        sa_root_q(q)                q names a mapped base: DeclarativeBase (and its NoMeta and AsyncAttrs
 //                                              combinations), a module-level `Base = declarative_base()` or
 //                                              `registry().generate_base()`, Flask-SQLAlchemy's `db.Model` for
 //                                              `db = SQLAlchemy(...)`, flask_appbuilder's Model
 //                  sa_model_q(q)               q is a class of the run deriving from a mapped base (SQLModel only
 //                                              with `table=True`), through the run's classes
-//                  sa_model(c)                 class c is a mapped model (sa_model_q, not `__abstract__ = True`)
-//                  sa_model_ref(e)             expression e names a model class of the run
-//                  sa_model_super(c, b)        class b of the run is among model c's bases, directly or not
-//   Relationships: sa_relationship(c, x, call) model c's body declares relationship x as `x = relationship(...)`
+//                  sa_mapped_q(q)              q is a mapped model (sa_model_q, not `__abstract__ = True`)
+//                  sa_model_super_q(cq, bq)    class bq of the run is among mapped model cq's bases, directly or not
+//                  sa_model_of(mr, mq)         model reference mr (sa_model_expr) denotes model mq
+//   Relationships: sa_rel_ok_q(cq, x)          class cq's body declares relationship x as `x = relationship(...)`
 //                                              (or `x: Mapped[...] = relationship(...)`, SQLModel's
 //                                              `Relationship(...)`, Flask-SQLAlchemy's `db.relationship(...)`)
-//                  sa_rel_lazy(call, l)        relationship call's loading strategy: the `lazy=` literal (SQLModel:
-//                                              `sa_relationship_kwargs={"lazy": ...}`), "select" when none is given,
-//                                              "?" when it is not a literal
-//                  sa_has_rel(c, x, call, l)   model c has relationship x with strategy l, declared in its body, in a
-//                                              base of the run, or as a `backref="x"` (or `backref=backref("x")`)
-//                                              on another model's relationship that targets c (l "select")
-//                  sa_lazy_rel(c, x)           sa_has_rel with a strategy that emits a SELECT when the attribute is
+//                  sa_has_rel_q(mq, x, l)      model mq has relationship x with loading strategy l (the `lazy=`
+//                                              literal, SQLModel's `sa_relationship_kwargs={"lazy": ...}`, "select"
+//                                              when none is given, "?" when it is not a literal), declared in its body,
+//                                              in a base of the run, or as a `backref="x"` (or `backref=backref("x")`)
+//                                              on another model's relationship that targets mq
+//                  sa_lazy_rel_q(mq, x)        sa_has_rel_q with a strategy that emits a SELECT when the attribute is
 //                                              first read: "select" (the default, and `lazy=True`)
-//                  sa_rel_target(call, mq)     relationship call targets model class mq: `relationship(B)`,
+//                  sa_rel_target_q(cq, x, mq)  relationship x of class cq targets model mq: `relationship(B)`,
 //                                              `relationship("B")`, `Mapped[list["B"]]`, `Mapped["B"]`
-//                  sa_rel_dir(c, x, d)         reading x on an instance of c gives a collection (d "many") or one
+//                  sa_rel_dir_q(mq, x, d)      reading x on an instance of mq gives a collection (d "many") or one
 //                                              object (d "one"): from `secondary=`, the annotation, `uselist=`, or
 //                                              the side the foreign key sits on; a backref takes the opposite
-//                  sa_fk_on(c, col, mq)        column col of class c (or a base) has a ForeignKey to model mq's table
+//                  sa_rel_fk_arg_q(cq, x)      relationship x of cq says `foreign_keys=`; sa_rel_fk_col_q(cq, x, col):
+//                                              col is a column one of its elements names
+//                  sa_fk_on_q(cq, col, mq)     column col of class cq (or a base) has a ForeignKey to model mq's table
 //                  sa_table_named(mq, tb)      model mq maps table tb (`__tablename__`, else its snake-case name)
 //   Statements:    sa_select_fn(q)             q is select(): sqlalchemy.select, sqlmodel.select, ...
-//                  sa_select_of(s, mq)         s is `select(M)` (M first) or a chain from one, M model class mq
-//                  sa_query_of(q, mq)          q is a legacy query over model mq: `session.query(M)`, `M.query`,
+//                  sa_select_of(s, mq)         s is `select(M)` (M first) or a chain from one, M resolving to mq
+//                  sa_query_of(q, mq)          q is a legacy query over class mq: `session.query(M)`, `M.query`,
 //                                              chains of them
 //                  sa_stmt_of(s, mq)           sa_select_of or sa_query_of
 //                  sa_stmt_has(s, m)           statement chain s calls method m somewhere along it
@@ -54,41 +65,48 @@
 //                                              annotated M, or `self.<a>` its class annotates or assigns as one
 //   Sessions:      sa_session_class(q)         q is a session class: Session, AsyncSession, scoped_session, SQLModel's
 //                  sa_async_class(q)           q is an asyncio session class: AsyncSession, async_scoped_session
+//                  sa_session_cls(e, q, a)     e names session class q (a "sync"/"async"): a library one, or a class of
+//                                              the run deriving from one (its ancestors through the phase py_names)
 //                  sa_factory_q(q, a)          module attribute q holds a session factory: `q = sessionmaker(...)`
 //                                              (a "sync"), `async_sessionmaker(...)` (a "async"), `scoped_session(...)`
-//                  sa_session_new(c, a)        call c makes a new session (a "sync" or "async"): `Session(...)`,
-//                                              `AsyncSession(...)`, `<factory>()`, `sessionmaker(...)()`
+//                  sa_session_new(c, k)        call c makes a new session under condition k: `Session(...)`,
+//                                              `AsyncSession(...)`, `sessionmaker(...)()` (k ""), `<factory>()` (k
+//                                              "factory <q>": the callee q is a session factory, sa_factory_q)
 //                  sa_session_ann(x, a)        annotation x names a session class (a "sync"/"async"), maybe in an
 //                                              Optional/Union/Annotated
-//                  sa_session(e, a)            e is a session: a name bound (`=`, `with … as`) to sa_session_new, a
-//                                              parameter or variable annotated as one, `<db>.session` for
-//                                              Flask-SQLAlchemy's `db`; a is "sync", "async" or "" (unknown)
-//                  sa_session_like(e)          sa_session, or a name or attribute spelled like one (`session`,
+//                  sa_session(e, k)            e is a session under condition k: a name bound (`=`, `with … as`) to
+//                                              sa_session_new, a parameter or variable annotated as one, `<db>.session`
+//                                              (k "flask <db>": db holds a Flask-SQLAlchemy extension), a module-level
+//                                              scoped_session (k "scoped <q>")
+//                  sa_session_like(e, k)       sa_session, or a name or attribute spelled like one (`session`,
 //                                              `db_session`, `self.session`, `*_session`) in a file importing
-//                                              SQLAlchemy, SQLModel or Flask-SQLAlchemy, or a parameter of any name
-//                                              that a caller of the run fills with an sa_session
-//                  sa_session_call(c, s, m)    call c is `s.m(...)` on sa_session_like s
+//                                              SQLAlchemy, SQLModel or Flask-SQLAlchemy (k ""), or a parameter of any
+//                                              name (k "param <g> <x>": a caller of the run fills parameter x of def g
+//                                              with an sa_session)
+//                  sa_session_call(c, s, m, k) call c is `s.m(...)` on sa_session_like s, under condition k
+//                  sa_session_key(k)           condition k holds (by symbol, across files; "" always holds)
 //                  sa_tx_with(w, b)            with-statement w opens a transaction around body b: `with s.begin():`,
 //                                              `with engine.begin() as conn:`, `with Session.begin() as s:`
 //   Writes:        sa_dml_fn(q)                q is insert(), update() or delete() (sqlalchemy, sqlmodel, dialects)
-//                  sa_model_expr(e, mq)        e names model mq as a statement's target: the class, `M.__table__`,
-//                                              or `self.model` bound to M by the method's class or a subclass
-//                  sa_dml(s, op, mq)           s is a DML statement on sa_model_expr mq, or a chain from one: op
-//                                              "insert"/"update"/"delete"
-//                  sa_dml_value(s, d, op, mq)  executed statement s is DML chain d: inline, through a name, or
-//                                              returned by a function of the run
-//                  sa_bulk_write(c, op, mq)    call c writes rows of model mq in bulk, past the unit of work:
-//                                              `session.execute(update(M)…)` (sa_dml_value),
+//                  sa_model_expr(e, mr)        e names a model as a statement's target: the class or `M.__table__`
+//                                              (mr the class's symbol), or `self.model` (mr "self <k> <x>": the model a
+//                                              class attribute x of the method's class k, or of a subclass, binds;
+//                                              sa_model_of resolves it)
+//                  sa_dml(s, op, mr)           s is a DML statement on sa_model_expr mr, or a chain from one: op
+//                                              "insert"/"update"/"delete"; sa_dml_q(dk, op, mr) the same by s's term
+//                  sa_exec_stmt_q(wk, dk)      `session.execute(s)` call wk (its term) runs DML chain dk: inline,
+//                                              through a name, or returned by a function of the run, across files
+//                  sa_bulk_local_q(wk, op, mr) call wk writes rows of mr in bulk, by its own syntax:
 //                                              `session.query(M)….update(...)`/`.delete()`,
 //                                              `session.bulk_insert_mappings(M, ...)`, `bulk_update_mappings(M, ...)`
-//   Calls:         sa_callee(c, g)             call c runs def g of the run (by resolved name or the call graph)
+//   Calls:         sa_callee_q(c, g)           call c runs def g of the run, by symbol (by resolved name or the call
+//                                              graph's call_target)
 //                  sa_returns(g, v)            def g returns v
-//                  sa_arg_for(k, g, x, a)      call k of g passes a for parameter x (asked for by sa_arg_need)
-//   Events:        sa_mapper_event(mq, ev, at) a mapper event ev (before_/after_ insert, update, delete) listens on
-//                                              model mq, connected at at: `@event.listens_for(M, "after_update")`
-//                                              or `event.listen(M, "after_update", fn)`
-//                  sa_attr_event(mq, x, at)    an attribute event (`set`, `append`, `remove`) listens on `M.x`
-//                  sa_validates(mq, f, x)      model mq's method f is `@validates("x", ...)` for attribute x
+//                  sa_param_q(g, i, x)         def g (its symbol) has parameter x at position i
+//                  sa_param_for(g, i, b, x)    positional argument i of a call of g fills parameter x: one further for
+//                                              a bound method (b "attr", `obj.m(...)`, whose first parameter is self or
+//                                              cls); sa_call_form(c, b) says which form call c is
+//   Events:        sa_event_call(c, tgt, ev)   c is `event.listen(tgt, "ev", fn)` or `@event.listens_for(tgt, "ev")`
 //   Text SQL:      sa_text_call(c)             call c is SQLAlchemy's `text(...)`
 //   Files:         sa_doc(d)                   document d imports sqlalchemy, sqlmodel or flask_sqlalchemy
 //                  sa_test_doc(d)              document d is test code: a tests/test/testing directory, test_*.py,
@@ -110,20 +128,22 @@
 //     directly: no mapper events (before_/after_update...), no `@validates`, no attribute events, no in-Python
 //     cascades.
 //   e.g.  class Base(DeclarativeBase): ...                    sa_root_q("app.db.Base") (a library base's subclass)
-//         class Order(Base):                                  sa_model(<Order>)
+//         class Order(Base):                                  sa_mapped_q("app.models.Order")
 //             lines: Mapped[list["Line"]] = relationship(back_populates="order")
-//                                                             sa_relationship(<Order>, "lines", <call>),
-//                                                             sa_rel_lazy(<call>, "select"), sa_lazy_rel(<Order>, "lines")
+//                                                             sa_has_rel_q("app.models.Order", "lines", "select"),
+//                                                             sa_lazy_rel_q("app.models.Order", "lines")
 //         stmt = select(Order).options(selectinload(Order.lines))
 //                                                             sa_select_of(<select…>, "app.models.Order"),
 //                                                             sa_stmt_loads(<select…>, "lines")
 //         for o in session.scalars(select(Order)): ...        sa_rows(<session.scalars(…)>, <select(Order)>, "app.models.Order")
-//         session.execute(update(Order).where(...).values(...))   sa_bulk_write(<call>, "update", "app.models.Order")
+//         session.execute(update(Order).where(...).values(...))   sa_exec_stmt_q(<execute's term>, <update's term>),
+//                                                             sa_dml_q(<update's term>, "update", "app.models.Order")
 #include "python/ast.rerail"
-#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+#include "python/calls.rerail"   // call_arg, posarg, call_target; pt_tm and pt_def (python/points-to)
 
 // ---- module variables --------------------------------------------------------------------------------------------
-// sa_module_var(q, v): a module-level `x = v` (or `x: T = v`) binds module attribute q to value v.
+// sa_module_var(q, v): a module-level `x = v` (or `x: T = v`) binds module attribute q to value v. Per file: a rule
+// reads another module's variables by the symbol facts each file states about its own (sa_factory_q, sa_root_q, ...).
 .decl sa_module_var(q: symbol, v: node)
 sa_module_var(@dot(mq, x), v) :- modnode(_, m), modname(m, mq), asg(m, x, v, _).
 // sa_call_of(v, fq): v (through parentheses) is a call whose callee resolves to fq.
@@ -145,9 +165,10 @@ sa_declarative_fn("sqlalchemy.orm.declarative_base"). sa_declarative_fn("sqlalch
 sa_declarative_fn("sqlalchemy.orm.decl_api.declarative_base").
 .decl sa_flask_db_class(q: symbol)
 sa_flask_db_class("flask_sqlalchemy.SQLAlchemy"). sa_flask_db_class("flask_sqlalchemy.extension.SQLAlchemy").
-// sa_flask_db_q(q): module attribute q holds a Flask-SQLAlchemy extension: `db = SQLAlchemy(...)`.
+// sa_flask_db_q(q): module attribute q holds a Flask-SQLAlchemy extension: `db = SQLAlchemy(...)`. Stated in q's file.
 .decl sa_flask_db_q(q: symbol)
 sa_flask_db_q(q) :- sa_module_var(q, v), sa_call_of(v, fq), sa_flask_db_class(fq).
+// sa_root_q(q): q names a mapped base. Each row is stated in q's own file (a library's by its name).
 .decl sa_root_q(q: symbol)
 sa_root_q(q) :- sa_mapped_lib(q).
 sa_root_q(q) :- class_def(c, q), class_base(c, b), sa_base_lib(b).
@@ -155,45 +176,74 @@ sa_root_q(q) :- sa_module_var(q, v), sa_call_of(v, fq), sa_declarative_fn(fq).
 sa_root_q(q) :- sa_module_var(q, v), unparen(v, k), kind(k, "call"), field(k, "function", f),
     attr_of(f, _, "generate_base").
 sa_root_q(@dot(q, "Model")) :- sa_flask_db_q(q).
+// sa_class_base_q(q, b): class q of the run lists base b (python/scopes' class_base), stated in q's file.
+// sa_run_class_q(q): q is a class of the run.
+.decl sa_class_base_q(q: symbol, b: symbol)
+sa_class_base_q(q, b) :- class_def(c, q), class_base(c, b).
+.decl sa_run_class_q(q: symbol)
+sa_run_class_q(q) :- class_def(_, q).
 // sa_model_q(q): a class of the run with a mapped base among its bases, through the run's classes (a linear
-// closure, as lib/django's dj_model_q). SQLModel counts only with `table=True`.
-.decl sa_model_q(q: symbol)
-sa_model_q(q) :- class_def(c, q), class_base(c, b), sa_root_q(b).
-sa_model_q(q) :- class_def(c, q), class_base(c, b), sa_model_q(b).
-sa_model_q(q) :- class_def(c, q), class_base(c, b), (b = "sqlmodel.SQLModel" ; b = "sqlmodel.main.SQLModel" ;
-    sa_sqlmodel_q(b)), sa_table_kw(c).
-// sa_sqlmodel_q(q): a class of the run deriving from SQLModel (a table or not).
-.decl sa_sqlmodel_q(q: symbol)
-sa_sqlmodel_q(q) :- class_def(c, q), class_base(c, b), (b = "sqlmodel.SQLModel" ; b = "sqlmodel.main.SQLModel").
-sa_sqlmodel_q(q) :- class_def(c, q), class_base(c, b), sa_sqlmodel_q(b).
+// closure, as lib/django's dj_model_q). SQLModel counts only with `table=True`. It spans files on purpose (a model's
+// base, and the module variable that makes it, sit in other modules), keyed by qualified names alone.
+.decl sa_model_q(q: symbol) cross_file
+sa_model_q(q) :- sa_class_base_q(q, b), sa_root_q(b).
+sa_model_q(q) :- sa_class_base_q(q, b), sa_model_q(b).
+sa_model_q(q) :- sa_class_base_q(q, b), (b = "sqlmodel.SQLModel" ; b = "sqlmodel.main.SQLModel" ; sa_sqlmodel_q(b)),
+    sa_table_kw_q(q).
+// sa_sqlmodel_q(q): a class of the run deriving from SQLModel (a table or not), across files as sa_model_q.
+.decl sa_sqlmodel_q(q: symbol) cross_file
+sa_sqlmodel_q(q) :- sa_class_base_q(q, b), (b = "sqlmodel.SQLModel" ; b = "sqlmodel.main.SQLModel").
+sa_sqlmodel_q(q) :- sa_class_base_q(q, b), sa_sqlmodel_q(b).
 .decl sa_table_kw(c: node)
 sa_table_kw(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, ka, _),
     kind(ka, "keyword_argument"), field(ka, "name", n), text(n, "table"), field(ka, "value", v), kind(v, "true").
-.decl sa_model(c: node)
-sa_model(c) :- class_def(c, q), sa_model_q(q), !sa_abstract(c).
+.decl sa_table_kw_q(q: symbol)
+sa_table_kw_q(q) :- class_def(c, q), sa_table_kw(c).
 // `__abstract__ = True` in the body: a base that maps no table.
 .decl sa_abstract(c: node)
 sa_abstract(c) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
     child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "__abstract__"), field(a, "right", v),
     kind(v, "true").
-.decl sa_model_ref(e: node)
-sa_model_ref(e) :- sym_of(e, q), class_def(c, q), sa_model(c).
-// sa_model_super(c, b): class b of the run is among model c's bases, directly or through other classes of the run.
-.decl sa_model_super(c: node, b: node)
-sa_model_super(c, b) :- sa_model(c), class_base(c, q), class_def(b, q).
-sa_model_super(c, b) :- sa_model_super(c, m), class_base(m, q), class_def(b, q).
+.decl sa_abstract_q(q: symbol)
+sa_abstract_q(q) :- class_def(c, q), sa_abstract(c).
+.decl sa_mapped_q(q: symbol)
+sa_mapped_q(q) :- sa_model_q(q), !sa_abstract_q(q).
+// sa_model_super_q(cq, bq): class bq of the run is among mapped model cq's bases, directly or through other classes
+// of the run.
+.decl sa_model_super_q(cq: symbol, bq: symbol)
+sa_model_super_q(cq, bq) :- sa_mapped_q(cq), sa_class_base_q(cq, bq), sa_run_class_q(bq).
+sa_model_super_q(cq, bq) :- sa_model_super_q(cq, mq), sa_class_base_q(mq, bq), sa_run_class_q(bq).
+// sa_model_named(n, mq): n is the class name (last dotted part) of model mq, or mq itself.
+.decl sa_model_named(n: symbol, mq: symbol)
+sa_model_named(n, mq) :- sa_model_q(mq), split_dot(mq, _, n).
+sa_model_named(mq, mq) :- sa_model_q(mq).
+// sa_model_of(mr, mq): model reference mr (sa_model_expr) denotes model mq: mr is mq; or mr is "self <kq> <x>" and
+// class kq, or a class of the run deriving from it, binds class attribute x to mq (a generic repository's
+// `model = Item`).
+.decl sa_model_of(mr: symbol, mq: symbol)
+sa_model_of(mq, mq) :- sa_model_q(mq).
+sa_model_of(mr, mq) :- sa_self_ref_q(mr, kq, x), sa_subclass_q(kq, sq), sa_class_ref_q(sq, x, mq), sa_model_q(mq).
+// sa_subclass_q(kq, sq): class sq is kq, or a class of the run deriving from kq, directly or not (from the classes
+// sa_self_ref_q names only).
+.decl sa_subclass_q(kq: symbol, sq: symbol)
+sa_subclass_q(kq, kq) :- sa_self_ref_q(_, kq, _).
+sa_subclass_q(kq, sq) :- sa_subclass_q(kq, mq), sa_class_base_q(sq, mq).
+// sa_class_ref_q(sq, x, q): class sq's body has `x = <name>`, the name resolving to q.
+.decl sa_class_ref_q(sq: symbol, x: symbol, q: symbol)
+sa_class_ref_q(sq, x, q) :- class_def(s, sq), sa_class_attr(s, x, v, _), sym_of(v, q).
 
 // ---- relationships -----------------------------------------------------------------------------------------------
 .decl sa_relationship_fn(q: symbol)
 sa_relationship_fn("sqlalchemy.orm.relationship"). sa_relationship_fn("sqlalchemy.orm.relationships.relationship").
 sa_relationship_fn("sqlalchemy.orm._orm_constructors.relationship"). sa_relationship_fn("sqlalchemy.orm.relation").
 sa_relationship_fn("sqlmodel.Relationship"). sa_relationship_fn("sqlmodel.main.Relationship").
-// sa_relationship_call(call): call builds a relationship: one of the functions above, or `<db>.relationship(...)` on
-// a Flask-SQLAlchemy extension.
-.decl sa_relationship_call(call: node)
-sa_relationship_call(call) :- sa_call_of(call, fq), sa_relationship_fn(fq).
-sa_relationship_call(call) :- kind(call, "call"), field(call, "function", f), attr_of(f, o, "relationship"),
-    sym_of(o, q), sa_flask_db_q(q).
+// sa_relationship_call(call, via): call builds a relationship: one of the functions above (via ""), or
+// `<o>.relationship(...)`, o resolving to via, a relationship when via holds a Flask-SQLAlchemy extension (sa_rel_ok_q
+// asks sa_flask_db_q, across files).
+.decl sa_relationship_call(call: node, via: symbol)
+sa_relationship_call(call, "") :- sa_call_of(call, fq), sa_relationship_fn(fq).
+sa_relationship_call(call, q) :- kind(call, "call"), field(call, "function", f), attr_of(f, o, "relationship"),
+    sym_of(o, q).
 // sa_class_attr(c, x, v, ann): class c's body has `x = v` or `x: T = v` (ann the annotation node, or c itself
 // when there is none).
 .decl sa_class_attr(c: node, x: symbol, v: node, ann: node)
@@ -203,15 +253,20 @@ sa_class_attr(c, x, v, c) :- kind(c, "class_definition"), field(c, "body", b), b
 sa_class_attr(c, x, v, t) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
     text(l, x), field(a, "right", v), field(a, "type", t).
+// sa_relationship(c, x, call): class c's body declares x as relationship call.
 .decl sa_relationship(c: node, x: symbol, call: node)
-sa_relationship(c, x, call) :- sa_class_attr(c, x, v, _), unparen(v, call), sa_relationship_call(call).
+sa_relationship(c, x, call) :- sa_class_attr(c, x, v, _), unparen(v, call), sa_relationship_call(call, _).
+// sa_rel_at(cq, x, call): the same by the class's qualified name: each relationship's facts below are stated, by
+// (cq, x), in the file that declares it.
+.decl sa_rel_at(cq: symbol, x: symbol, call: node)
+sa_rel_at(cq, x, call) :- sa_relationship(c, x, call), class_def(c, cq).
 // sa_rel_lazy(call, l): the loading strategy of relationship call.
 .decl sa_rel_lazy(call: node, l: symbol)
-sa_rel_lazy(call, l) :- sa_relationship_call(call), call_arg(call, -1, "lazy", v), sa_lazy_value(v, l).
-sa_rel_lazy(call, l) :- sa_relationship_call(call), call_arg(call, -1, "sa_relationship_kwargs", d), unparen(d, dd),
+sa_rel_lazy(call, l) :- sa_relationship_call(call, _), call_arg(call, -1, "lazy", v), sa_lazy_value(v, l).
+sa_rel_lazy(call, l) :- sa_relationship_call(call, _), call_arg(call, -1, "sa_relationship_kwargs", d), unparen(d, dd),
     kind(dd, "dictionary"), child(dd, p, _), kind(p, "pair"), field(p, "key", k), str(k, "lazy"), field(p, "value", v),
     sa_lazy_value(v, l).
-sa_rel_lazy(call, "select") :- sa_relationship_call(call), !call_arg(call, -1, "lazy", _), !sa_kw_lazy(call).
+sa_rel_lazy(call, "select") :- sa_relationship_call(call, _), !call_arg(call, -1, "lazy", _), !sa_kw_lazy(call).
 .decl sa_kw_lazy(call: node)
 sa_kw_lazy(call) :- call_arg(call, -1, "sa_relationship_kwargs", d), unparen(d, dd), kind(dd, "dictionary"),
     child(dd, p, _), kind(p, "pair"), field(p, "key", k), str(k, "lazy").
@@ -221,97 +276,14 @@ sa_lazy_value(v, "select") :- unparen(v, s), kind(s, "true").
 sa_lazy_value(v, "noload") :- unparen(v, s), kind(s, "none").
 sa_lazy_value(v, "joined") :- unparen(v, s), kind(s, "false").
 sa_lazy_value(v, "?") :- unparen(v, s), !str(s, _), !kind(s, "true"), !kind(s, "none"), !kind(s, "false").
-// sa_rel_target(call, mq): the model class relationship call targets: its first argument (a class or a string
-// naming one, matched by class name among the run's models), or the class inside the `Mapped[...]` annotation.
-.decl sa_rel_target(call: node, mq: symbol)
-sa_rel_target(call, mq) :- sa_relationship_call(call), posarg(call, 0, a), sym_of(a, mq), sa_model_q(mq).
-sa_rel_target(call, mq) :- sa_relationship_call(call), posarg(call, 0, a), str(a, n), sa_model_named(n, mq).
-sa_rel_target(call, mq) :- sa_class_attr(_, _, v, t), unparen(v, call), sa_relationship_call(call),
-    kind(t, "type"), sa_ann_model(t, mq).
-// sa_ann_model(t, mq): annotation t mentions model class mq: as a name, or as a string literal naming it.
-.decl sa_ann_model(t: node, mq: symbol)
-sa_ann_model(t, mq) :- within(i, t), kind(i, "identifier"), text(i, n), sa_model_named(n, mq).
-sa_ann_model(t, mq) :- within(s, t), kind(s, "string"), str(s, n), sa_model_named(n, mq).
-sa_ann_model(t, mq) :- within(s, t), kind(s, "string"), str(s, n),
-    match("\\s*(?:list|List|set|Set|Sequence)\\[\\s*\\w+\\s*\\]\\s*", n),
-    sa_model_named(@replace_all(n, "^\\s*\\w+\\[\\s*|\\s*\\]\\s*$", ""), mq).
-// sa_model_named(n, mq): n is the class name (last dotted part) of model mq, or mq itself.
-.decl sa_model_named(n: symbol, mq: symbol)
-sa_model_named(n, mq) :- sa_model_q(mq), split_dot(mq, _, n).
-sa_model_named(mq, mq) :- sa_model_q(mq).
-// sa_has_rel(c, x, call, l): model c has relationship x with strategy l: declared in its body or a base of the run,
-// or given by another model's `backref=` (a backref's loader is "select" unless backref("x", lazy=...) says).
-.decl sa_has_rel(c: node, x: symbol, call: node, l: symbol)
-sa_has_rel(c, x, call, l) :- sa_model(c), sa_relationship(c, x, call), sa_rel_lazy(call, l).
-sa_has_rel(c, x, call, l) :- sa_model_super(c, b), sa_relationship(b, x, call), sa_rel_lazy(call, l).
-sa_has_rel(c, x, call, "select") :- sa_relationship_call(call), call_arg(call, -1, "backref", v), str(v, x),
-    sa_rel_target(call, mq), class_def(c, mq), sa_model(c).
-sa_has_rel(c, x, call, l) :- sa_relationship_call(call), call_arg(call, -1, "backref", v), unparen(v, bc),
-    kind(bc, "call"), field(bc, "function", bf), sym_of(bf, bq), suffix(".backref", bq), posarg(bc, 0, n), str(n, x),
-    sa_backref_lazy(bc, l), sa_rel_target(call, mq), class_def(c, mq), sa_model(c).
-.decl sa_backref_lazy(bc: node, l: symbol)
-sa_backref_lazy(bc, l) :- call_arg(bc, -1, "lazy", v), sa_lazy_value(v, l).
-sa_backref_lazy(bc, "select") :- kind(bc, "call"), !call_arg(bc, -1, "lazy", _).
-// sa_lazy_rel(c, x): reading x on an instance of c that was loaded without it emits a SELECT.
-.decl sa_lazy_rel(c: node, x: symbol)
-sa_lazy_rel(c, x) :- sa_has_rel(c, x, _, "select").
-
-// ---- relationship direction --------------------------------------------------------------------------------------
-// sa_rel_dir(c, x, d): reading relationship x on an instance of model c gives a collection (d "many": one-to-many or
-// many-to-many) or a single object (d "one": many-to-one or one-to-one). Read as SQLAlchemy decides it: `secondary=`
-// (SQLModel's `link_model=`) is many-to-many; a declared collection (`Mapped[list[...]]`, `uselist=True`,
-// `collection_class=`) is one-to-many; a declared single object (`Mapped["B"]`, `Optional[...]`, `uselist=False`)
-// or, with nothing declared, the side the foreign key sits on: on the declaring model (`b_id = Column(ForeignKey(
-// "b.id"))`, `foreign_keys=[b_id]`, `remote_side=`) many-to-one, on the target (`foreign_keys=[B.a_id]`, B's column
-// to this table) one-to-many. A `backref=` takes the other side's opposite. Undecidable relationships have no row.
-.decl sa_rel_dir(c: node, x: symbol, d: symbol)
-sa_rel_dir(c, x, d) :- sa_model(c), sa_relationship(c, x, call), sa_rel_card(call, d).
-sa_rel_dir(c, x, d) :- sa_model_super(c, b), sa_relationship(b, x, call), sa_rel_card(call, d).
-sa_rel_dir(c, x, d) :- sa_relationship_call(call), call_arg(call, -1, "backref", v), str(v, x), sa_backref_card(call, v, d),
-    sa_rel_target(call, mq), class_def(c, mq), sa_model(c).
-sa_rel_dir(c, x, d) :- sa_relationship_call(call), call_arg(call, -1, "backref", v), unparen(v, bc), kind(bc, "call"),
-    field(bc, "function", bf), sym_of(bf, bq), suffix(".backref", bq), posarg(bc, 0, n), str(n, x),
-    sa_backref_card(call, bc, d), sa_rel_target(call, mq), class_def(c, mq), sa_model(c).
-// sa_rel_card(call, d): the cardinality relationship call declares or implies.
-.decl sa_rel_card(call: node, d: symbol)
-sa_rel_card(call, "many") :- sa_rel_kind(call, k), (k = "m2m" ; k = "o2m").
-sa_rel_card(call, "one") :- sa_rel_kind(call, k), (k = "m2o" ; k = "o2o").
-sa_rel_card(call, "one") :- sa_rel_single(call), !sa_rel_secondary(call), !sa_rel_kind(call, _).
-// sa_backref_card(call, v, d): the backref v of relationship call: `backref("x", uselist=...)` says, else the
-// opposite of call (many-to-one gives a collection; one-to-many and one-to-one a single object; many-to-many a
-// collection).
-.decl sa_backref_card(call: node, v: node, d: symbol)
-sa_backref_card(call, v, "many") :- call_arg(call, -1, "backref", v), unparen(v, bc), call_arg(bc, -1, "uselist", u),
-    unparen(u, t), kind(t, "true").
-sa_backref_card(call, v, "one") :- call_arg(call, -1, "backref", v), unparen(v, bc), call_arg(bc, -1, "uselist", u),
-    unparen(u, t), kind(t, "false").
-sa_backref_card(call, v, d) :- call_arg(call, -1, "backref", v), !sa_backref_uselist(v), sa_rel_kind(call, k),
-    sa_opposite(k, d).
-.decl sa_backref_uselist(v: node)
-sa_backref_uselist(v) :- unparen(v, bc), kind(bc, "call"), call_arg(bc, -1, "uselist", _).
-.decl sa_opposite(k: symbol, d: symbol)
-sa_opposite("m2o", "many"). sa_opposite("o2m", "one"). sa_opposite("o2o", "one"). sa_opposite("m2m", "many").
-// sa_rel_kind(call, k): "m2m", "o2m", "m2o" or "o2o".
-.decl sa_rel_kind(call: node, k: symbol)
-sa_rel_kind(call, "m2m") :- sa_rel_secondary(call).
-sa_rel_kind(call, "o2m") :- sa_rel_coll(call), !sa_rel_secondary(call).
-sa_rel_kind(call, "m2o") :- sa_rel_fk_side(call, "local"), !sa_rel_coll(call), !sa_rel_secondary(call).
-sa_rel_kind(call, "o2o") :- sa_rel_fk_side(call, "remote"), sa_rel_single(call), !sa_rel_secondary(call).
-sa_rel_kind(call, "o2m") :- sa_rel_fk_side(call, "remote"), !sa_rel_single(call), !sa_rel_coll(call),
-    !sa_rel_secondary(call).
-.decl sa_rel_secondary(call: node)
-// `relationship("B", secondary=t)`, `relationship("B", t)` (secondary is the second positional parameter)
-sa_rel_secondary(call) :- sa_relationship_call(call), (call_arg(call, -1, "secondary", _) ; call_arg(call, -1, "link_model", _) ;
-    posarg(call, 1, _)).
-.decl sa_rel_coll(call: node)
-sa_rel_coll(call) :- sa_relationship_call(call), call_arg(call, -1, "uselist", v), unparen(v, t), kind(t, "true").
-sa_rel_coll(call) :- sa_relationship_call(call), call_arg(call, -1, "collection_class", _).
-sa_rel_coll(call) :- sa_class_attr(_, _, v, t), unparen(v, call), sa_relationship_call(call), kind(t, "type"),
-    sa_ann_coll(t).
-.decl sa_rel_single(call: node)
-sa_rel_single(call) :- sa_relationship_call(call), call_arg(call, -1, "uselist", v), unparen(v, t), kind(t, "false").
-sa_rel_single(call) :- sa_class_attr(_, _, v, t), unparen(v, call), sa_relationship_call(call), kind(t, "type"),
-    !sa_ann_coll(t), sa_ann_model(t, _), !sa_rel_coll(call).
+// sa_ann_name(t, n): annotation t mentions class name n: as a name, as a string literal, or as the element of a
+// `list[...]`-like string.
+.decl sa_ann_name(t: node, n: symbol)
+sa_ann_name(t, n) :- sa_class_attr(_, _, _, t), within(i, t), kind(i, "identifier"), text(i, n).
+sa_ann_name(t, n) :- sa_class_attr(_, _, _, t), within(s, t), kind(s, "string"), str(s, n).
+sa_ann_name(t, n) :- sa_class_attr(_, _, _, t), within(s, t), kind(s, "string"), str(s, n0),
+    match("\\s*(?:list|List|set|Set|Sequence)\\[\\s*\\w+\\s*\\]\\s*", n0),
+    n = @replace_all(n0, "^\\s*\\w+\\[\\s*|\\s*\\]\\s*$", "").
 // sa_ann_coll(t): annotation t declares a collection: list, set, Sequence, dict... (as names or inside a string).
 .decl sa_ann_coll(t: node)
 sa_ann_coll(t) :- kind(t, "type"), within(i, t), kind(i, "identifier"), text(i, n), sa_coll_name(n).
@@ -322,55 +294,185 @@ sa_coll_name("list"). sa_coll_name("List"). sa_coll_name("set"). sa_coll_name("S
 sa_coll_name("MutableSequence"). sa_coll_name("Collection"). sa_coll_name("Iterable"). sa_coll_name("AbstractSet").
 sa_coll_name("MutableSet"). sa_coll_name("dict"). sa_coll_name("Dict"). sa_coll_name("Mapping").
 sa_coll_name("MutableMapping"). sa_coll_name("DynamicMapped"). sa_coll_name("WriteOnlyMapped").
-// sa_rel_fk_side(call, side): the foreign key of relationship call sits on the declaring model ("local") or on the
-// target ("remote"). `foreign_keys=` decides when given; else the models' ForeignKey columns, when only one side has
-// one; `remote_side=` marks the many-to-one side of a self-referential relationship, which without it is one-to-many.
-.decl sa_rel_fk_side(call: node, side: symbol)
-sa_rel_fk_side(call, "local") :- sa_rel_fk_given(call, "local"), !sa_rel_fk_given(call, "remote").
-sa_rel_fk_side(call, "remote") :- sa_rel_fk_given(call, "remote"), !sa_rel_fk_given(call, "local").
-sa_rel_fk_side(call, "local") :- sa_rel_ends(call, c, _, mq), !sa_rel_has_fk_arg(call), call_arg(call, -1, "remote_side", _),
-    class_def(c, mq).
-sa_rel_fk_side(call, "remote") :- sa_rel_ends(call, c, _, mq), !sa_rel_has_fk_arg(call),
-    !call_arg(call, -1, "remote_side", _), class_def(c, mq).
-sa_rel_fk_side(call, "local") :- sa_rel_ends(call, c, cq, mq), cq != mq, !sa_rel_has_fk_arg(call), sa_fk_on(c, _, mq),
-    class_def(t, mq), !sa_fk_on(t, _, cq).
-sa_rel_fk_side(call, "remote") :- sa_rel_ends(call, c, cq, mq), cq != mq, !sa_rel_has_fk_arg(call), class_def(t, mq),
-    sa_fk_on(t, _, cq), !sa_fk_on(c, _, mq).
-// sa_rel_ends(call, c, cq, mq): relationship call is declared on class c (qualified name cq) and targets model mq.
-.decl sa_rel_ends(call: node, c: node, cq: symbol, mq: symbol)
-sa_rel_ends(call, c, cq, mq) :- sa_relationship(c, _, call), class_def(c, cq), sa_rel_target(call, mq).
-.decl sa_rel_has_fk_arg(call: node)
-sa_rel_has_fk_arg(call) :- sa_relationship_call(call), call_arg(call, -1, "foreign_keys", _).
-// sa_rel_fk_given(call, side): an element of `foreign_keys=` names a column of the declaring class (a bare name in its
-// body, `Own.col`, "col", "Own.col") or of the target (`B.col`, "B.col").
-.decl sa_rel_fk_given(call: node, side: symbol)
-sa_rel_fk_given(call, "local") :- sa_rel_fk_elem(call, e), unparen(e, i), kind(i, "identifier").
-sa_rel_fk_given(call, side) :- sa_rel_fk_elem(call, e), unparen(e, a), attr_of(a, o, _), sym_of(o, oq),
-    sa_rel_ends(call, _, cq, mq), sa_fk_side_of(oq, cq, mq, side).
-sa_rel_fk_given(call, side) :- sa_rel_fk_elem(call, e), str(e, s), match("\\s*\\[?\\s*\\w+\\.\\w+.*", s),
-    sa_rel_ends(call, _, cq, mq), sa_model_named(@replace_all(s, "^\\s*\\[?\\s*(\\w+)\\..*$", "$1"), oq),
-    sa_fk_side_of(oq, cq, mq, side).
-sa_rel_fk_given(call, "local") :- sa_rel_fk_elem(call, e), str(e, s), match("\\s*\\[?\\s*\\w+\\s*\\]?\\s*", s).
-.decl sa_fk_side_of(oq: symbol, cq: symbol, mq: symbol, side: symbol)
-sa_fk_side_of(oq, cq, mq, "local") :- sa_rel_ends(_, _, cq, mq), oq = cq, cq != mq.
-sa_fk_side_of(oq, cq, mq, "remote") :- sa_rel_ends(_, _, cq, mq), oq = mq, cq != mq.
 // sa_rel_fk_elem(call, e): e is the `foreign_keys=` value of call, or an element of its list or tuple.
 .decl sa_rel_fk_elem(call: node, e: node)
-sa_rel_fk_elem(call, e) :- sa_relationship_call(call), call_arg(call, -1, "foreign_keys", v), unparen(v, e),
+sa_rel_fk_elem(call, e) :- sa_relationship_call(call, _), call_arg(call, -1, "foreign_keys", v), unparen(v, e),
     !kind(e, "list"), !kind(e, "tuple").
-sa_rel_fk_elem(call, e) :- sa_relationship_call(call), call_arg(call, -1, "foreign_keys", v), unparen(v, l),
+sa_rel_fk_elem(call, e) :- sa_relationship_call(call, _), call_arg(call, -1, "foreign_keys", v), unparen(v, l),
     (kind(l, "list") ; kind(l, "tuple")), child(l, e, _), !kind(e, ","), !kind(e, "["), !kind(e, "]"), !kind(e, "("),
     !kind(e, ")"), !kind(e, "comment").
-// sa_fk_on(c, col, mq): column col of class c, or of a class of the run among its bases, has a ForeignKey to model
-// mq's table: `ForeignKey("tbl.id")` (in `Column`, `mapped_column`, `db.Column`), SQLModel's `Field(foreign_key=
+// sa_backref_lazy(bc, l): the strategy `backref("x", lazy=...)` gives the other side.
+.decl sa_backref_lazy(bc: node, l: symbol)
+sa_backref_lazy(bc, l) :- call_arg(bc, -1, "lazy", v), sa_lazy_value(v, l).
+sa_backref_lazy(bc, "select") :- kind(bc, "call"), !call_arg(bc, -1, "lazy", _).
+
+// What each file states about the relationships its classes declare, by (cq, x): relationship x of class cq.
+// sa_rel_q(cq, x, via): declared (via as sa_relationship_call's). sa_rel_lazy_q(cq, x, l): its strategy.
+.decl sa_rel_q(cq: symbol, x: symbol, via: symbol)
+sa_rel_q(cq, x, via) :- sa_rel_at(cq, x, call), sa_relationship_call(call, via).
+.decl sa_rel_lazy_q(cq: symbol, x: symbol, l: symbol)
+sa_rel_lazy_q(cq, x, l) :- sa_rel_at(cq, x, call), sa_rel_lazy(call, l).
+// sa_rel_arg_q(cq, x, q): its first argument resolves to q (`relationship(B)`). sa_rel_name_q(cq, x, n): it is a
+// string naming a class n (`relationship("B")`). sa_rel_ann_q(cq, x, n): its annotation mentions class name n.
+.decl sa_rel_arg_q(cq: symbol, x: symbol, q: symbol)
+sa_rel_arg_q(cq, x, q) :- sa_rel_at(cq, x, call), posarg(call, 0, a), sym_of(a, q).
+.decl sa_rel_name_q(cq: symbol, x: symbol, n: symbol)
+sa_rel_name_q(cq, x, n) :- sa_rel_at(cq, x, call), posarg(call, 0, a), str(a, n).
+.decl sa_rel_ann_q(cq: symbol, x: symbol, n: symbol)
+sa_rel_ann_q(cq, x, n) :- class_def(c, cq), sa_class_attr(c, x, v, t), unparen(v, call), sa_relationship_call(call, _),
+    kind(t, "type"), sa_ann_name(t, n).
+// sa_rel_secondary_q: `secondary=`, SQLModel's `link_model=`, or a second positional argument (many-to-many).
+.decl sa_rel_secondary_q(cq: symbol, x: symbol)
+sa_rel_secondary_q(cq, x) :- sa_rel_at(cq, x, call), (call_arg(call, -1, "secondary", _) ;
+    call_arg(call, -1, "link_model", _) ; posarg(call, 1, _)).
+// sa_rel_coll_q: a declared collection: `uselist=True`, `collection_class=`, a collection annotation.
+.decl sa_rel_coll_q(cq: symbol, x: symbol)
+sa_rel_coll_q(cq, x) :- sa_rel_at(cq, x, call), call_arg(call, -1, "uselist", v), unparen(v, t), kind(t, "true").
+sa_rel_coll_q(cq, x) :- sa_rel_at(cq, x, call), call_arg(call, -1, "collection_class", _).
+sa_rel_coll_q(cq, x) :- class_def(c, cq), sa_class_attr(c, x, v, t), unparen(v, call), sa_relationship_call(call, _),
+    kind(t, "type"), sa_ann_coll(t).
+// sa_rel_nouselist_q: `uselist=False`. sa_rel_ann_one_q: annotated, not as a collection (one object, when the
+// annotation names a model and nothing else declares a collection: sa_rel_single_q).
+.decl sa_rel_nouselist_q(cq: symbol, x: symbol)
+sa_rel_nouselist_q(cq, x) :- sa_rel_at(cq, x, call), call_arg(call, -1, "uselist", v), unparen(v, t), kind(t, "false").
+.decl sa_rel_ann_one_q(cq: symbol, x: symbol)
+sa_rel_ann_one_q(cq, x) :- class_def(c, cq), sa_class_attr(c, x, v, t), unparen(v, call), sa_relationship_call(call, _),
+    kind(t, "type"), !sa_ann_coll(t).
+// sa_rel_fk_arg_q: `foreign_keys=` is given. sa_rel_remote_q: `remote_side=` is given.
+.decl sa_rel_fk_arg_q(cq: symbol, x: symbol)
+sa_rel_fk_arg_q(cq, x) :- sa_rel_at(cq, x, call), call_arg(call, -1, "foreign_keys", _).
+.decl sa_rel_remote_q(cq: symbol, x: symbol)
+sa_rel_remote_q(cq, x) :- sa_rel_at(cq, x, call), call_arg(call, -1, "remote_side", _).
+// The elements of `foreign_keys=`: sa_rel_fk_local_q, one names a column of the declaring class (a bare name in its
+// body, "col"); sa_rel_fk_obj_q(cq, x, oq), one is `O.col`, O resolving to oq; sa_rel_fk_objname_q(cq, x, on), one is
+// the string "O.col"; sa_rel_fk_col_q(cq, x, col), one names column col.
+.decl sa_rel_fk_local_q(cq: symbol, x: symbol)
+sa_rel_fk_local_q(cq, x) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), unparen(e, i), kind(i, "identifier").
+sa_rel_fk_local_q(cq, x) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), str(e, s),
+    match("\\s*\\[?\\s*\\w+\\s*\\]?\\s*", s).
+.decl sa_rel_fk_obj_q(cq: symbol, x: symbol, oq: symbol)
+sa_rel_fk_obj_q(cq, x, oq) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), unparen(e, a), attr_of(a, o, _),
+    sym_of(o, oq).
+.decl sa_rel_fk_objname_q(cq: symbol, x: symbol, on: symbol)
+sa_rel_fk_objname_q(cq, x, on) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), str(e, s),
+    match("\\s*\\[?\\s*\\w+\\.\\w+.*", s), on = @replace_all(s, "^\\s*\\[?\\s*(\\w+)\\..*$", "$1").
+.decl sa_rel_fk_col_q(cq: symbol, x: symbol, col: symbol)
+sa_rel_fk_col_q(cq, x, col) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), unparen(e, i), kind(i, "identifier"),
+    text(i, col).
+sa_rel_fk_col_q(cq, x, col) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), unparen(e, a), attr_of(a, _, col).
+sa_rel_fk_col_q(cq, x, col) :- sa_rel_at(cq, x, call), sa_rel_fk_elem(call, e), str(e, s),
+    col = @replace_all(s, "^\\s*\\[?\\s*(?:\\w+\\.)?(\\w+)\\s*\\]?\\s*$", "${1}").
+// sa_rel_backref_q(cq, x, y, l, u): relationship x of cq gives its target a backref y (`backref="y"`, or
+// `backref=backref("y", ...)`) with strategy l; u is "true" or "false" when backref() says `uselist=`, else "".
+.decl sa_rel_backref_q(cq: symbol, x: symbol, y: symbol, l: symbol, u: symbol)
+sa_rel_backref_q(cq, x, y, "select", "") :- sa_rel_at(cq, x, call), call_arg(call, -1, "backref", v), str(v, y).
+sa_rel_backref_q(cq, x, y, l, u) :- sa_rel_at(cq, x, call), call_arg(call, -1, "backref", v), unparen(v, bc),
+    kind(bc, "call"), field(bc, "function", bf), sym_of(bf, bq), suffix(".backref", bq), posarg(bc, 0, n), str(n, y),
+    sa_backref_lazy(bc, l), sa_backref_uselist(bc, u).
+.decl sa_backref_uselist(bc: node, u: symbol)
+sa_backref_uselist(bc, "true") :- call_arg(bc, -1, "uselist", v), unparen(v, t), kind(t, "true").
+sa_backref_uselist(bc, "false") :- call_arg(bc, -1, "uselist", v), unparen(v, t), kind(t, "false").
+sa_backref_uselist(bc, "") :- kind(bc, "call"), !call_arg(bc, -1, "uselist", _).
+
+// Across files, by symbol: relationships join the models of the run (their targets, bases and foreign keys sit in
+// other modules).
+// sa_rel_ok_q(cq, x): relationship x of cq is one: a SQLAlchemy or SQLModel function, or `db.relationship` on a
+// Flask-SQLAlchemy extension.
+.decl sa_rel_ok_q(cq: symbol, x: symbol)
+sa_rel_ok_q(cq, x) :- sa_rel_q(cq, x, "").
+sa_rel_ok_q(cq, x) :- sa_rel_q(cq, x, q), sa_flask_db_q(q).
+// sa_rel_target_q(cq, x, mq): the model class relationship x of cq targets: its first argument (a class or a string
+// naming one, matched by class name among the run's models), or the class inside the `Mapped[...]` annotation.
+.decl sa_rel_target_q(cq: symbol, x: symbol, mq: symbol)
+sa_rel_target_q(cq, x, mq) :- sa_rel_ok_q(cq, x), sa_rel_arg_q(cq, x, mq), sa_model_q(mq).
+sa_rel_target_q(cq, x, mq) :- sa_rel_ok_q(cq, x), sa_rel_name_q(cq, x, n), sa_model_named(n, mq).
+sa_rel_target_q(cq, x, mq) :- sa_rel_ok_q(cq, x), sa_rel_ann_q(cq, x, n), sa_model_named(n, mq).
+// sa_has_rel_q(mq, x, l): model mq has relationship x with strategy l: declared in its body or a base of the run,
+// or given by another model's `backref=` (a backref's loader is "select" unless backref("x", lazy=...) says).
+.decl sa_has_rel_q(mq: symbol, x: symbol, l: symbol)
+sa_has_rel_q(mq, x, l) :- sa_mapped_q(mq), sa_rel_ok_q(mq, x), sa_rel_lazy_q(mq, x, l).
+sa_has_rel_q(mq, x, l) :- sa_model_super_q(mq, bq), sa_rel_ok_q(bq, x), sa_rel_lazy_q(bq, x, l).
+sa_has_rel_q(mq, y, l) :- sa_rel_backref_q(cq, x, y, l, _), sa_rel_target_q(cq, x, mq), sa_mapped_q(mq).
+// sa_lazy_rel_q(mq, x): reading x on an instance of mq that was loaded without it emits a SELECT.
+.decl sa_lazy_rel_q(mq: symbol, x: symbol)
+sa_lazy_rel_q(mq, x) :- sa_has_rel_q(mq, x, "select").
+
+// ---- relationship direction --------------------------------------------------------------------------------------
+// sa_rel_dir_q(mq, x, d): reading relationship x on an instance of model mq gives a collection (d "many": one-to-many
+// or many-to-many) or a single object (d "one": many-to-one or one-to-one). Read as SQLAlchemy decides it:
+// `secondary=` (SQLModel's `link_model=`) is many-to-many; a declared collection (`Mapped[list[...]]`, `uselist=True`,
+// `collection_class=`) is one-to-many; a declared single object (`Mapped["B"]`, `Optional[...]`, `uselist=False`)
+// or, with nothing declared, the side the foreign key sits on: on the declaring model (`b_id = Column(ForeignKey(
+// "b.id"))`, `foreign_keys=[b_id]`, `remote_side=`) many-to-one, on the target (`foreign_keys=[B.a_id]`, B's column
+// to this table) one-to-many. A `backref=` takes the other side's opposite. Undecidable relationships have no row.
+.decl sa_rel_dir_q(mq: symbol, x: symbol, d: symbol)
+sa_rel_dir_q(mq, x, d) :- sa_mapped_q(mq), sa_rel_ok_q(mq, x), sa_rel_card_q(mq, x, d).
+sa_rel_dir_q(mq, x, d) :- sa_model_super_q(mq, bq), sa_rel_ok_q(bq, x), sa_rel_card_q(bq, x, d).
+sa_rel_dir_q(mq, y, d) :- sa_rel_backref_q(cq, x, y, _, u), sa_backref_card_q(cq, x, u, d), sa_rel_target_q(cq, x, mq),
+    sa_mapped_q(mq).
+// sa_rel_card_q(cq, x, d): the cardinality relationship x of cq declares or implies.
+.decl sa_rel_card_q(cq: symbol, x: symbol, d: symbol)
+sa_rel_card_q(cq, x, "many") :- sa_rel_kind_q(cq, x, k), (k = "m2m" ; k = "o2m").
+sa_rel_card_q(cq, x, "one") :- sa_rel_kind_q(cq, x, k), (k = "m2o" ; k = "o2o").
+sa_rel_card_q(cq, x, "one") :- sa_rel_single_q(cq, x), !sa_rel_secondary_q(cq, x), !sa_rel_kind_q(cq, x, _).
+// sa_backref_card_q(cq, x, u, d): the backref of relationship x of cq: `backref("y", uselist=...)` says, else the
+// opposite of x (many-to-one gives a collection; one-to-many and one-to-one a single object; many-to-many a
+// collection).
+.decl sa_backref_card_q(cq: symbol, x: symbol, u: symbol, d: symbol)
+sa_backref_card_q(cq, x, "true", "many") :- sa_rel_backref_q(cq, x, _, _, "true").
+sa_backref_card_q(cq, x, "false", "one") :- sa_rel_backref_q(cq, x, _, _, "false").
+sa_backref_card_q(cq, x, "", d) :- sa_rel_backref_q(cq, x, _, _, ""), sa_rel_kind_q(cq, x, k), sa_opposite(k, d).
+.decl sa_opposite(k: symbol, d: symbol)
+sa_opposite("m2o", "many"). sa_opposite("o2m", "one"). sa_opposite("o2o", "one"). sa_opposite("m2m", "many").
+// sa_rel_kind_q(cq, x, k): "m2m", "o2m", "m2o" or "o2o".
+.decl sa_rel_kind_q(cq: symbol, x: symbol, k: symbol)
+sa_rel_kind_q(cq, x, "m2m") :- sa_rel_ok_q(cq, x), sa_rel_secondary_q(cq, x).
+sa_rel_kind_q(cq, x, "o2m") :- sa_rel_ok_q(cq, x), sa_rel_coll_q(cq, x), !sa_rel_secondary_q(cq, x).
+sa_rel_kind_q(cq, x, "m2o") :- sa_rel_fk_side_q(cq, x, "local"), !sa_rel_coll_q(cq, x), !sa_rel_secondary_q(cq, x).
+sa_rel_kind_q(cq, x, "o2o") :- sa_rel_fk_side_q(cq, x, "remote"), sa_rel_single_q(cq, x), !sa_rel_secondary_q(cq, x).
+sa_rel_kind_q(cq, x, "o2m") :- sa_rel_fk_side_q(cq, x, "remote"), !sa_rel_single_q(cq, x), !sa_rel_coll_q(cq, x),
+    !sa_rel_secondary_q(cq, x).
+// sa_rel_single_q(cq, x): declared as one object: `uselist=False`, or an annotation naming a model, not a collection.
+.decl sa_rel_single_q(cq: symbol, x: symbol)
+sa_rel_single_q(cq, x) :- sa_rel_ok_q(cq, x), sa_rel_nouselist_q(cq, x).
+sa_rel_single_q(cq, x) :- sa_rel_ann_one_q(cq, x), !sa_rel_coll_q(cq, x), sa_rel_ann_q(cq, x, n), sa_model_named(n, _).
+// sa_rel_fk_side_q(cq, x, side): the foreign key of relationship x of cq sits on the declaring model ("local") or on
+// the target ("remote"). `foreign_keys=` decides when given; else the models' ForeignKey columns, when only one side
+// has one; `remote_side=` marks the many-to-one side of a self-referential relationship, which without it is
+// one-to-many.
+.decl sa_rel_fk_side_q(cq: symbol, x: symbol, side: symbol)
+sa_rel_fk_side_q(cq, x, "local") :- sa_rel_fk_given_q(cq, x, "local"), !sa_rel_fk_given_q(cq, x, "remote").
+sa_rel_fk_side_q(cq, x, "remote") :- sa_rel_fk_given_q(cq, x, "remote"), !sa_rel_fk_given_q(cq, x, "local").
+sa_rel_fk_side_q(cq, x, "local") :- sa_rel_target_q(cq, x, cq), !sa_rel_fk_arg_q(cq, x), sa_rel_remote_q(cq, x).
+sa_rel_fk_side_q(cq, x, "remote") :- sa_rel_target_q(cq, x, cq), !sa_rel_fk_arg_q(cq, x), !sa_rel_remote_q(cq, x).
+sa_rel_fk_side_q(cq, x, "local") :- sa_rel_target_q(cq, x, mq), cq != mq, !sa_rel_fk_arg_q(cq, x),
+    sa_fk_on_q(cq, _, mq), sa_run_class_q(mq), !sa_fk_on_q(mq, _, cq).
+sa_rel_fk_side_q(cq, x, "remote") :- sa_rel_target_q(cq, x, mq), cq != mq, !sa_rel_fk_arg_q(cq, x),
+    sa_run_class_q(mq), sa_fk_on_q(mq, _, cq), !sa_fk_on_q(cq, _, mq).
+// sa_rel_fk_given_q(cq, x, side): an element of `foreign_keys=` names a column of the declaring class (a bare name in
+// its body, `Own.col`, "col", "Own.col") or of the target (`B.col`, "B.col").
+.decl sa_rel_fk_given_q(cq: symbol, x: symbol, side: symbol)
+sa_rel_fk_given_q(cq, x, "local") :- sa_rel_ok_q(cq, x), sa_rel_fk_local_q(cq, x).
+sa_rel_fk_given_q(cq, x, side) :- sa_rel_fk_obj_q(cq, x, oq), sa_rel_target_q(cq, x, mq), cq != mq,
+    (oq = cq, side = "local" ; oq = mq, side = "remote").
+sa_rel_fk_given_q(cq, x, side) :- sa_rel_fk_objname_q(cq, x, on), sa_rel_target_q(cq, x, mq), cq != mq,
+    sa_model_named(on, oq), (oq = cq, side = "local" ; oq = mq, side = "remote").
+// sa_fk_on_q(cq, col, mq): column col of class cq, or of a class of the run among its bases, has a ForeignKey to
+// model mq's table: `ForeignKey("tbl.id")` (in `Column`, `mapped_column`, `db.Column`), SQLModel's `Field(foreign_key=
 // "tbl.id")`, or `ForeignKey(M.id)`.
-.decl sa_fk_on(c: node, col: symbol, mq: symbol)
-sa_fk_on(c, col, mq) :- sa_fk_col(c, col, mq).
-sa_fk_on(c, col, mq) :- sa_model_super(c, b), sa_fk_col(b, col, mq).
-.decl sa_fk_col(c: node, col: symbol, mq: symbol)
-sa_fk_col(c, col, mq) :- sa_class_attr(c, col, v, _), sa_fk_table(v, tb), sa_table_named(mq, tb).
-sa_fk_col(c, col, mq) :- sa_class_attr(c, col, v, _), (k = v ; within(k, v)), kind(k, "call"), call_name(k, "ForeignKey"),
-    posarg(k, 0, a), unparen(a, aa), attr_of(aa, o, _), sym_of(o, mq), sa_model_q(mq).
+.decl sa_fk_on_q(cq: symbol, col: symbol, mq: symbol)
+sa_fk_on_q(cq, col, mq) :- sa_fk_col_q(cq, col, mq).
+sa_fk_on_q(cq, col, mq) :- sa_model_super_q(cq, bq), sa_fk_col_q(bq, col, mq).
+.decl sa_fk_col_q(cq: symbol, col: symbol, mq: symbol)
+sa_fk_col_q(cq, col, mq) :- sa_fk_tbl_q(cq, col, tb), sa_table_named(mq, tb).
+sa_fk_col_q(cq, col, mq) :- sa_fk_ref_q(cq, col, mq), sa_model_q(mq).
+// Stated in the class's file: sa_fk_tbl_q(cq, col, tb), column col's ForeignKey names table tb; sa_fk_ref_q(cq, col,
+// oq), it is `ForeignKey(O.id)`, O resolving to oq.
+.decl sa_fk_tbl_q(cq: symbol, col: symbol, tb: symbol)
+sa_fk_tbl_q(cq, col, tb) :- class_def(c, cq), sa_class_attr(c, col, v, _), sa_fk_table(v, tb).
+.decl sa_fk_ref_q(cq: symbol, col: symbol, oq: symbol)
+sa_fk_ref_q(cq, col, oq) :- class_def(c, cq), sa_class_attr(c, col, v, _), (k = v ; within(k, v)), kind(k, "call"),
+    call_name(k, "ForeignKey"), posarg(k, 0, a), unparen(a, aa), attr_of(aa, o, _), sym_of(o, oq).
 .decl sa_fk_table(v: node, tb: symbol)
 sa_fk_table(v, tb) :- sa_class_attr(_, _, v, _), (k = v ; within(k, v)), kind(k, "call"), call_name(k, "ForeignKey"),
     posarg(k, 0, a), str(a, s), tb = @replace_all(s, "^(?:.*\\.)?([^.]+)\\.[^.]+$", "$1").
@@ -379,11 +481,17 @@ sa_fk_table(v, tb) :- sa_class_attr(_, _, v, _), (k = v ; within(k, v)), kind(k,
 // sa_table_named(mq, tb): model mq maps table tb: its `__tablename__` literal, or, without one, its class name in
 // lower or snake case (Flask-SQLAlchemy's default, and declared_attr bases that derive it).
 .decl sa_table_named(mq: symbol, tb: symbol)
-sa_table_named(mq, tb) :- class_def(c, mq), sa_model(c), sa_class_attr(c, "__tablename__", v, _), str(v, tb).
-sa_table_named(mq, tb) :- class_def(c, mq), sa_model(c), !sa_class_attr(c, "__tablename__", _, _), split_dot(mq, _, n),
+sa_table_named(mq, tb) :- sa_mapped_q(mq), sa_tablename_q(mq, tb).
+sa_table_named(mq, tb) :- sa_mapped_q(mq), !sa_has_tablename_q(mq), split_dot(mq, _, n),
     (tb = @lower(n) ; tb = @lower(@replace_all(n, "([a-z0-9])([A-Z])", "${1}_${2}"))).
+.decl sa_tablename_q(cq: symbol, tb: symbol)
+sa_tablename_q(cq, tb) :- class_def(c, cq), sa_class_attr(c, "__tablename__", v, _), str(v, tb).
+.decl sa_has_tablename_q(cq: symbol)
+sa_has_tablename_q(cq) :- class_def(c, cq), sa_class_attr(c, "__tablename__", _, _).
 
 // ---- statements --------------------------------------------------------------------------------------------------
+// A statement's class mq is the symbol its argument resolves to; a rule's output asks sa_model_q whether it is a
+// model.
 .decl sa_select_fn(q: symbol)
 sa_select_fn("sqlalchemy.select"). sa_select_fn("sqlalchemy.sql.select"). sa_select_fn("sqlalchemy.sql.expression.select").
 sa_select_fn("sqlalchemy.future.select"). sa_select_fn("sqlmodel.select"). sa_select_fn("sqlmodel.sql.expression.select").
@@ -401,13 +509,13 @@ sa_chain_method("yield_per"). sa_chain_method("autoflush"). sa_chain_method("wit
 sa_chain_method("reset_joinpoint"). sa_chain_method("execution_options").
 .decl sa_select_of(s: node, mq: symbol)
 sa_select_of(s, mq) :- unparen(s, e), kind(e, "call"), field(e, "function", f), sym_of(f, fq), sa_select_fn(fq),
-    posarg(e, 0, r), sym_of(r, mq), sa_model_q(mq).
+    posarg(e, 0, r), sym_of(r, mq).
 sa_select_of(s, mq) :- unparen(s, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m),
     sa_select_of(o, mq).
 .decl sa_query_of(q: node, mq: symbol)
-sa_query_of(q, mq) :- unparen(q, e), attr_of(e, o, "query"), sym_of(o, mq), sa_model_q(mq).
+sa_query_of(q, mq) :- unparen(q, e), attr_of(e, o, "query"), sym_of(o, mq).
 sa_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, _, "query"), posarg(e, 0, r),
-    sym_of(r, mq), sa_model_q(mq).
+    sym_of(r, mq).
 sa_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m),
     sa_query_of(o, mq).
 .decl sa_stmt_of(s: node, mq: symbol)
@@ -471,31 +579,31 @@ sa_awaited_or(x, y) :- kind(x, "await"), child(x, c, 0), unparen(c, y).
 sa_awaited_or(x, y) :- kind(x, "parenthesized_expression"), unparen(x, w), kind(w, "await"), child(w, c, 0), unparen(c, y).
 .decl py_no_call_args(c: node)
 py_no_call_args(c) :- kind(c, "call"), field(c, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 0.
-// sa_instance(e, mq): e holds one instance of model class mq.
+// sa_instance(e, mq): e holds one instance of class mq.
 .decl sa_instance(e: node, mq: symbol)
 sa_instance(a, mq) :- unparen(a, e), sa_instance_value(e, mq).
 sa_instance(a, mq) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), asg(f, x, v, _), unparen(v, w),
     sa_instance_value(w, mq).
 sa_instance(a, mq) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _),
-    text(nm, x), sa_ann_names(t, mq), sa_model_q(mq).
+    text(nm, x), sa_ann_names(t, mq).
 // `self.<a>` in a class whose methods assign `self.<a>` with a model annotation (`self._theme: Optional[Theme] =
 // None`) or one instance of the model (`self._theme = session.get(Theme, pk)`)
 sa_instance(a, mq) :- unparen(a, e), attr_of(e, o, x), kind(o, "identifier"), text(o, "self"),
     nearest(e, k, sa_class_node), sa_self_slot(k, x, mq).
 .decl sa_self_slot(k: node, x: symbol, mq: symbol)
 sa_self_slot(k, x, mq) :- kind(asn, "assignment"), field(asn, "left", l), attr_of(l, lo, x), kind(lo, "identifier"),
-    text(lo, "self"), nearest(asn, k, sa_class_node), field(asn, "type", t), within(i, t), sym_of(i, mq), sa_model_q(mq).
+    text(lo, "self"), nearest(asn, k, sa_class_node), field(asn, "type", t), within(i, t), sym_of(i, mq).
 sa_self_slot(k, x, mq) :- kind(asn, "assignment"), field(asn, "left", l), attr_of(l, lo, x), kind(lo, "identifier"),
     text(lo, "self"), nearest(asn, k, sa_class_node), field(asn, "right", v), unparen(v, w), sa_instance_value(w, mq).
 .decl sa_ann_names(t: node, q: symbol)
 sa_ann_names(t, q) :- sym_of(t, q).
 sa_ann_names(t, q) :- kind(t, "type"), child(t, m, 0), sym_of(m, q).
 .decl sa_instance_value(v: node, mq: symbol)
-sa_instance_value(v, mq) :- kind(v, "call"), field(v, "function", f), sym_of(f, mq), sa_model_q(mq).
+sa_instance_value(v, mq) :- kind(v, "call"), field(v, "function", f), sym_of(f, mq).
 sa_instance_value(v, mq) :- kind(v, "await"), child(v, c, 0), unparen(c, w), sa_instance_value(w, mq).
 // `session.get(M, pk)`, `session.get_one(M, pk)`, `db.get_or_404(M, pk)`
 sa_instance_value(v, mq) :- kind(v, "call"), field(v, "function", f), attr_of(f, _, m),
-    (m = "get" ; m = "get_one" ; m = "get_or_404"), posarg(v, 0, r), sym_of(r, mq), sa_model_q(mq).
+    (m = "get" ; m = "get_one" ; m = "get_or_404"), posarg(v, 0, r), sym_of(r, mq).
 // `session.query(M)….first()`, `M.query.get(1)`
 sa_instance_value(v, mq) :- kind(v, "call"), field(v, "function", f), attr_of(f, o, m), sa_row_method(m),
     sa_query_of(o, mq).
@@ -513,6 +621,30 @@ sa_row_method("get_or_404"). sa_row_method("first_or_404"). sa_row_method("one_o
 sa_scalar_row_method("scalar_one"). sa_scalar_row_method("scalar_one_or_none"). sa_scalar_row_method("first").
 sa_scalar_row_method("one"). sa_scalar_row_method("one_or_none"). sa_scalar_row_method("scalar").
 
+// ---- calls -------------------------------------------------------------------------------------------------------
+// sa_callee_q(c, g): call c runs def g of the run, by symbol: the name its function resolves to, or the call graph's
+// target (python/calls' call_target). A rule joins g with the facts g's own file states about it.
+.decl sa_callee_q(c: node, g: symbol)
+sa_callee_q(c, g) :- kind(c, "call"), field(c, "function", f), sym_of(f, g).
+sa_callee_q(c, g) :- call_target(c, g).
+// sa_returns(g, v): def g returns v.
+.decl sa_returns(g: node, v: node)
+sa_returns(g, v) :- kind(ret, "return_statement"), nearest(ret, g, fdef), child(ret, v, _), !kind(v, "comment").
+// sa_param_q(g, i, x): def g (its symbol, pt_def) has parameter x at position i. Stated in g's file.
+.decl sa_param_q(g: symbol, i: number, x: symbol)
+sa_param_q(gq, i, x) :- kind(g, "function_definition"), pt_def(g, gq), sig_param(g, _, nm, i, _, _, _), text(nm, x).
+// sa_param_for(g, i, b, x): positional argument i of a call of g fills g's parameter x: one further when the call is
+// `obj.m(...)` (b "attr") and g's first parameter is self or cls (a bound method).
+.decl sa_param_for(g: symbol, i: number, b: symbol, x: symbol)
+sa_param_for(gq, i, "", x) :- sa_param_q(gq, i, x).
+sa_param_for(gq, i, "attr", x) :- sa_param_q(gq, 0, s), (s = "self" ; s = "cls"), sa_param_q(gq, i1, x), i = i1 - 1,
+    i >= 0.
+sa_param_for(gq, i, "attr", x) :- sa_param_q(gq, 0, s), s != "self", s != "cls", sa_param_q(gq, i, x).
+// sa_call_form(c, b): call c's function is an attribute (`obj.m(...)`, b "attr") or not (b "").
+.decl sa_call_form(c: node, b: symbol)
+sa_call_form(c, "attr") :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
+sa_call_form(c, "") :- kind(c, "call"), field(c, "function", f), !kind(f, "attribute").
+
 // ---- sessions ----------------------------------------------------------------------------------------------------
 .decl sa_session_class(q: symbol)
 sa_session_class("sqlalchemy.orm.Session"). sa_session_class("sqlalchemy.orm.session.Session").
@@ -526,10 +658,12 @@ sa_async_class("sqlmodel.ext.asyncio.session.AsyncSession"). sa_async_class("sql
 .decl sa_class_kind(q: symbol, a: symbol)
 sa_class_kind(q, "async") :- sa_async_class(q).
 sa_class_kind(q, "sync") :- sa_session_class(q), !sa_async_class(q).
-// sa_session_class_q(q, a): q is a session class: SQLAlchemy's, or a class of the run deriving from one.
-.decl sa_session_class_q(q: symbol, a: symbol)
-sa_session_class_q(q, a) :- sa_class_kind(q, a).
-sa_session_class_q(q, a) :- class_def(c, q), class_base(c, b), sa_session_class_q(b, a).
+// sa_session_cls(e, q, a): e names session class q: SQLAlchemy's, or a class of the run deriving from one, its
+// ancestors read through the phase py_names (by a module e's file reads, so the class may sit in another module).
+.decl sa_session_cls(e: node, q: symbol, a: symbol)
+sa_session_cls(e, q, a) :- sym_of(e, q), sa_class_kind(q, a).
+sa_session_cls(e, q, a) :- sym_of(e, q), docof(e, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__ancestor(m, q, b), sa_class_kind(b, a).
 .decl sa_factory_fn(q: symbol, a: symbol)
 sa_factory_fn("sqlalchemy.orm.sessionmaker", "sync"). sa_factory_fn("sqlalchemy.orm.session.sessionmaker", "sync").
 sa_factory_fn("sqlalchemy.orm.scoped_session", "sync"). sa_factory_fn("sqlalchemy.orm.scoping.scoped_session", "sync").
@@ -542,85 +676,98 @@ sa_factory_fn("sqlalchemy.ext.asyncio.async_scoped_session", "async").
 sa_factory_call(v, a) :- sa_call_of(v, fq), sa_factory_fn(fq, a), !sa_class_kw_async(v).
 sa_factory_call(v, "async") :- sa_call_of(v, fq), sa_factory_fn(fq, _), sa_class_kw_async(v).
 .decl sa_class_kw_async(v: node)
-sa_class_kw_async(v) :- unparen(v, k), call_arg(k, -1, "class_", c), sym_of(c, q), sa_session_class_q(q, "async").
+sa_class_kw_async(v) :- unparen(v, k), call_arg(k, -1, "class_", c), sa_session_cls(c, _, "async").
+// sa_factory_q(q, a): module attribute q holds a session factory. Stated in q's file.
 .decl sa_factory_q(q: symbol, a: symbol)
 sa_factory_q(q, a) :- sa_module_var(q, v), sa_factory_call(v, a).
-// sa_session_new(c, a): call c makes a new session.
-.decl sa_session_new(c: node, a: symbol)
-sa_session_new(c, a) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), sa_session_class_q(q, a),
-    !sa_scoped_q(q).
-sa_session_new(c, a) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), sa_factory_q(q, a).
-sa_session_new(c, a) :- kind(c, "call"), field(c, "function", f), unparen(f, k), sa_factory_call(k, a).
-// A name bound in the same scope to a factory: `maker = sessionmaker(...); s = maker()`.
-sa_session_new(c, a) :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x), look(f, x, s),
-    asg(s, x, v, _), sa_factory_call(v, a).
+// sa_scoped_var_q(q): module attribute q holds a scoped_session (`Session = scoped_session(...)`), used as a session
+// itself (`Session.add(...)`). Stated in q's file.
+.decl sa_scoped_var_q(q: symbol)
+sa_scoped_var_q(q) :- sa_module_var(q, v), unparen(v, k), sa_call_of(k, fq), sa_scoped_q(fq), sa_factory_call(k, _).
+// sa_session_new(c, k): call c makes a new session under condition k: a session class of the run or SQLAlchemy's, an
+// inline factory, or a name the same scope binds to a factory (`maker = sessionmaker(...); s = maker()`), k ""; a
+// call of a name resolving to q, no def of the run (python/calls finds no target), k "factory q": a session when q
+// holds a session factory, which q's own file states (sa_factory_q).
+.decl sa_session_new(c: node, k: symbol)
+sa_session_new(c, "") :- kind(c, "call"), field(c, "function", f), sa_session_cls(f, q, _), !sa_scoped_q(q).
+sa_session_new(c, cat("factory ", q)) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), !call_target(c, _),
+    !sa_session_cls(f, _, _).
+sa_session_new(c, "") :- kind(c, "call"), field(c, "function", f), unparen(f, k), sa_factory_call(k, _).
+sa_session_new(c, "") :- kind(c, "call"), field(c, "function", f), kind(f, "identifier"), text(f, x), look(f, x, s),
+    asg(s, x, v, _), sa_factory_call(v, _).
 .decl sa_scoped_q(q: symbol)
 sa_scoped_q("sqlalchemy.orm.scoped_session"). sa_scoped_q("sqlalchemy.orm.scoping.scoped_session").
 sa_scoped_q("sqlalchemy.ext.asyncio.async_scoped_session").
 // sa_session_ann(t, a): annotation t names a session class, maybe inside Optional[...], `X | None`, Annotated[...].
 .decl sa_session_ann(t: node, a: symbol)
-sa_session_ann(t, a) :- within(e, t), sym_of(e, q), sa_session_class_q(q, a), !sa_scoped_q(q).
-// sa_session(e, a): e holds a session.
-.decl sa_session(e: node, a: symbol)
+sa_session_ann(t, a) :- within(e, t), sa_session_cls(e, q, a), !sa_scoped_q(q).
+// sa_session(e, k): e holds a session, under condition k.
+.decl sa_session(e: node, k: symbol)
 // a name bound to a new session: `s = Session(engine)`, `s = SessionLocal()`, `s = await maker()` aside
-sa_session(e, a) :- kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _), unparen(v, c), sa_session_new(c, a).
+sa_session(e, k) :- kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _), unparen(v, c), sa_session_new(c, k).
 // `with Session(engine) as s:`, `async with maker() as s:`, `with maker.begin() as s:`
-sa_session(e, a) :- kind(e, "identifier"), text(e, x), look(e, x, s), sa_with_bound(s, x, a).
+sa_session(e, k) :- kind(e, "identifier"), text(e, x), look(e, x, s), sa_with_bound(s, x, k).
 // a parameter annotated as a session
-sa_session(e, a) :- kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
-    sa_session_ann(t, a).
+sa_session(e, "") :- kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
+    sa_session_ann(t, _).
 // a variable annotated as a session: `s: Session = ...`
-sa_session(e, a) :- kind(e, "identifier"), text(e, x), look(e, x, s), kind(asn, "assignment"), field(asn, "left", l),
-    text(l, x), field(asn, "type", t), nearest(asn, s, scope), sa_session_ann(t, a).
-// Flask-SQLAlchemy's `db.session`, a scoped session
-sa_session(e, "sync") :- attr_of(e, o, "session"), sym_of(o, q), sa_flask_db_q(q).
+sa_session(e, "") :- kind(e, "identifier"), text(e, x), look(e, x, s), kind(asn, "assignment"), field(asn, "left", l),
+    text(l, x), field(asn, "type", t), nearest(asn, s, scope), sa_session_ann(t, _).
+// Flask-SQLAlchemy's `db.session`, a scoped session, when db holds the extension
+sa_session(e, cat("flask ", q)) :- attr_of(e, o, "session"), sym_of(o, q).
 // a module-level scoped_session: `Session = scoped_session(...)` used as `Session.add(...)`
-sa_session(e, a) :- sym_of(e, q), sa_module_var(q, v), unparen(v, k), sa_call_of(k, fq), sa_scoped_q(fq),
-    sa_factory_call(k, a).
-// sa_with_bound(s, x, a): a with-statement in scope s binds x to a session: `with <new session> as x`, or
-// `with <factory or Session>.begin() as x` (a session in a transaction).
-.decl sa_with_bound(s: node, x: symbol, a: symbol)
-sa_with_bound(s, x, a) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
-    unparen(v, c), sa_session_new(c, a), sa_as_name(ap, x), nearest(wi, s, scope).
-sa_with_bound(s, x, a) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
-    unparen(v, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, "begin"), sym_of(o, q),
-    (sa_factory_q(q, a) ; sa_session_class_q(q, a)), sa_as_name(ap, x), nearest(wi, s, scope).
+sa_session(e, cat("scoped ", q)) :- sym_of(e, q), (kind(e, "identifier") ; kind(e, "attribute")).
+// sa_with_bound(s, x, k): a with-statement in scope s binds x to a session, under condition k: `with <new session>
+// as x`, or `with <factory or Session>.begin() as x` (a session in a transaction).
+.decl sa_with_bound(s: node, x: symbol, k: symbol)
+sa_with_bound(s, x, k) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
+    unparen(v, c), sa_session_new(c, k), sa_as_name(ap, x), nearest(wi, s, scope).
+sa_with_bound(s, x, "") :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
+    unparen(v, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, "begin"), sa_session_cls(o, _, _),
+    sa_as_name(ap, x), nearest(wi, s, scope).
+sa_with_bound(s, x, cat("factory ", q)) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"),
+    child(ap, v, 0), unparen(v, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, "begin"), sym_of(o, q),
+    !sa_session_cls(o, _, _), sa_as_name(ap, x), nearest(wi, s, scope).
 .decl sa_as_name(ap: node, x: symbol)
 sa_as_name(ap, x) :- kind(ap, "as_pattern"), field(ap, "alias", t), within(i, t), kind(i, "identifier"), text(i, x).
-// sa_session_like(e): sa_session, or spelled like one in a file importing SQLAlchemy: `session`, `db_session`,
-// `*_session`, `self.session`, `self._session`, `self.db_session`; or a parameter of any name that a caller in the run
-// fills with a session (FastAPI's unannotated `db`, called as `import_tags(db, names)` from a route whose `db:
-// Session = Depends(get_db)`).
-.decl sa_session_like(e: node)
-sa_session_like(e) :- sa_session(e, _).
-sa_session_like(e) :- kind(e, "identifier"), text(e, x), sa_session_name(x), docof(e, d), sa_doc(d).
-sa_session_like(e) :- attr_of(e, _, x), sa_session_name(x), docof(e, d), sa_doc(d).
-sa_session_like(e) :- sa_param_recv(e, g, x), sa_session_param(g, x).
+// sa_session_like(e, k): sa_session, or spelled like one in a file importing SQLAlchemy: `session`, `db_session`,
+// `*_session`, `self.session`, `self._session`, `self.db_session` (k ""); or a parameter of any name that a caller in
+// the run fills with a session (FastAPI's unannotated `db`, called as `import_tags(db, names)` from a route whose `db:
+// Session = Depends(get_db)`): k "param <g> <x>", e reading parameter x of def g (by its symbol).
+.decl sa_session_like(e: node, k: symbol)
+sa_session_like(e, k) :- sa_session(e, k).
+sa_session_like(e, "") :- kind(e, "identifier"), text(e, x), sa_session_name(x), docof(e, d), sa_doc(d).
+sa_session_like(e, "") :- attr_of(e, _, x), sa_session_name(x), docof(e, d), sa_doc(d).
+sa_session_like(e, cat("param ", gq, " ", x)) :- sa_param_recv(e, g, x), pt_def(g, gq).
 // sa_param_recv(e, g, x): e, the receiver of a method call in a file importing SQLAlchemy, reads parameter x of def g.
 .decl sa_param_recv(e: node, g: node, x: symbol)
 sa_param_recv(e, g, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, _), unparen(o, e), kind(e, "identifier"),
     text(e, x), x != "self", x != "cls", look(e, x, g), kind(g, "function_definition"), param(g, x, _), docof(e, d),
     sa_doc(d).
-// sa_session_param(g, x): a call of g in the run passes a session (sa_session) for its parameter x.
-.decl sa_session_param(g: node, x: symbol)
-sa_session_param(g, x) :- sa_param_recv(_, g, x), sa_arg_for(k, g, x, a), sa_session(a, _), kind(k, "call").
-// sa_arg_for(k, g, x, a): call k of def g passes a for g's parameter x, by keyword or by position (one further for
-// a bound method `obj.m(...)` whose first parameter is self or cls). sa_arg_need(g, x) asks for it.
-.decl sa_arg_need(g: node, x: symbol)
-sa_arg_need(g, x) :- sa_param_recv(_, g, x).
-.decl sa_arg_for(k: node, g: node, x: symbol, a: node)
-sa_arg_for(k, g, x, a) :- sa_arg_need(g, x), sa_callee(k, g), call_arg(k, -1, x, a).
-sa_arg_for(k, g, x, a) :- sa_arg_need(g, x), sa_callee(k, g), posarg(k, i, a), sa_bound_call(k, g),
-    sig_param(g, _, nm, i1, _, _, _), i1 = i + 1, text(nm, x).
-sa_arg_for(k, g, x, a) :- sa_arg_need(g, x), sa_callee(k, g), posarg(k, i, a), !sa_bound_call(k, g),
-    sig_param(g, _, nm, i, _, _, _), text(nm, x).
-.decl sa_bound_call(k: node, g: node)
-sa_bound_call(k, g) :- sa_arg_need(g, _), sa_callee(k, g), field(k, "function", f), kind(f, "attribute"),
-    sig_param(g, _, nm, 0, _, _, _), (text(nm, "self") ; text(nm, "cls")).
+// What each file's calls pass for a parameter, by the callee's symbol: sa_pass_kw_q(g, x, k), a call of g passes a
+// session (under condition k) for its parameter x by keyword; sa_pass_pos_q(g, i, b, k), as its positional argument i,
+// in call form b (sa_call_form).
+.decl sa_pass_kw_q(g: symbol, x: symbol, k: symbol)
+sa_pass_kw_q(gq, x, k) :- kind(c, "call"), sa_callee_q(c, gq), call_arg(c, -1, x, a), sa_session(a, k).
+.decl sa_pass_pos_q(g: symbol, i: number, b: symbol, k: symbol)
+sa_pass_pos_q(gq, i, b, k) :- kind(c, "call"), sa_callee_q(c, gq), posarg(c, i, a), sa_session(a, k), sa_call_form(c, b).
+// sa_session_key(k): condition k holds: "" always; "factory q", module attribute q holds a session factory; "flask
+// q", it holds a Flask-SQLAlchemy extension; "scoped q", a scoped_session; "param g x", a call of def g in the run
+// passes a session for its parameter x (by keyword or position; a session under a condition that holds). It spans
+// files on purpose (a factory, an extension and a caller sit in other modules than the session's use), keyed by
+// symbols alone.
+.decl sa_session_key(k: symbol) cross_file
+sa_session_key("").
+sa_session_key(cat("factory ", q)) :- sa_factory_q(q, _).
+sa_session_key(cat("flask ", q)) :- sa_flask_db_q(q).
+sa_session_key(cat("scoped ", q)) :- sa_scoped_var_q(q).
+sa_session_key(cat("param ", gq, " ", x)) :- sa_pass_kw_q(gq, x, k), sa_session_key(k).
+sa_session_key(cat("param ", gq, " ", x)) :- sa_pass_pos_q(gq, i, b, k), sa_param_for(gq, i, b, x), sa_session_key(k).
 .decl sa_session_name(x: symbol)
 sa_session_name(x) :- match("_?(?:db_|async_|sync_|orm_|read_|write_)?session", x).
-.decl sa_session_call(c: node, s: node, m: symbol)
-sa_session_call(c, s, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), unparen(o, s), sa_session_like(s).
+.decl sa_session_call(c: node, s: node, m: symbol, k: symbol)
+sa_session_call(c, s, m, k) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), unparen(o, s),
+    sa_session_like(s, k).
 // sa_tx_with(w, b): `with x.begin():`/`with x.begin() as s:` (x a session, sessionmaker or engine) and
 // `with x.begin_nested():`; b is its body.
 .decl sa_tx_with(w: node, b: node)
@@ -640,15 +787,14 @@ sa_dml_fn("sqlalchemy.sql.expression.update", "update"). sa_dml_fn("sqlalchemy.s
 sa_dml_fn("sqlalchemy.dialects.postgresql.insert", "insert"). sa_dml_fn("sqlalchemy.dialects.mysql.insert", "insert").
 sa_dml_fn("sqlalchemy.dialects.sqlite.insert", "insert"). sa_dml_fn("sqlmodel.insert", "insert").
 sa_dml_fn("sqlmodel.update", "update"). sa_dml_fn("sqlmodel.delete", "delete").
-// sa_model_expr(e, mq): expression e names model mq as the target of a statement: the class itself; its
-// `__table__`, whose Core writes skip the model's hooks the same way; or `self.<a>`/`cls.<a>` where the method's
-// class, or a class of the run deriving from it, binds class attribute a to the model (a generic repository's
-// `model = Item`).
-.decl sa_model_expr(e: node, mq: symbol)
-sa_model_expr(e, mq) :- sym_of(e, mq), sa_model_q(mq).
-sa_model_expr(e, mq) :- unparen(e, a), attr_of(a, o, "__table__"), sym_of(o, mq), sa_model_q(mq).
-sa_model_expr(e, mq) :- sa_self_attr_need(e, k, x), sa_subclass(k, s), sa_class_attr(s, x, v, _), sym_of(v, mq),
-    sa_model_q(mq).
+// sa_model_expr(e, mr): expression e names a model as the target of a statement: the class itself (mr its symbol);
+// its `__table__`, whose Core writes skip the model's hooks the same way; or `self.<a>`/`cls.<a>` in a method of
+// class k (mr "self <k> <a>"), the model k or a class of the run deriving from it binds class attribute a to (a
+// generic repository's `model = Item`; sa_model_of resolves it, across files).
+.decl sa_model_expr(e: node, mr: symbol)
+sa_model_expr(e, mq) :- sym_of(e, mq).
+sa_model_expr(e, mq) :- unparen(e, a), attr_of(a, o, "__table__"), sym_of(o, mq).
+sa_model_expr(e, cat("self ", kq, " ", x)) :- sa_self_attr_need(e, k, x), class_def(k, kq).
 // sa_self_attr_need(e, k, x): e, the first argument of a DML call, is `self.x`/`cls.x` in a method of class k.
 .decl sa_self_attr_need(e: node, k: node, x: symbol)
 sa_self_attr_need(e, k, x) :- kind(c, "call"), field(c, "function", f), sym_of(f, fq), sa_dml_fn(fq, _),
@@ -656,73 +802,72 @@ sa_self_attr_need(e, k, x) :- kind(c, "call"), field(c, "function", f), sym_of(f
     nearest(a, k, sa_class_node).
 .decl sa_class_node(k: symbol)
 sa_class_node("class_definition").
-// sa_subclass(k, s): class s is k, or a class of the run deriving from k, directly or not (from the classes
-// sa_self_attr_need asks about only).
-.decl sa_subclass(k: node, s: node)
-sa_subclass(k, k) :- sa_self_attr_need(_, k, _).
-sa_subclass(k, s) :- sa_subclass(k, m), class_def(m, mq), class_base(s, mq).
-// sa_dml(s, op, mq): s is an insert/update/delete statement on model mq (sa_model_expr), or a chain from one.
-.decl sa_dml(s: node, op: symbol, mq: symbol)
-sa_dml(s, op, mq) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, fq), sa_dml_fn(fq, op),
-    posarg(k, 0, r), sa_model_expr(r, mq).
-sa_dml(s, op, mq) :- unparen(s, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, _), sa_dml(o, op, mq).
-// sa_callee(c, g): call c runs def g of the run: by the name it resolves to, or by the call graph.
-.decl sa_callee(c: node, g: node)
-sa_callee(c, g) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), qualname(g, q), kind(g, "function_definition").
-sa_callee(c, g) :- call_target(c, g), kind(g, "function_definition").
-// sa_returns(g, v): def g returns v.
-.decl sa_returns(g: node, v: node)
-sa_returns(g, v) :- kind(ret, "return_statement"), nearest(ret, g, fdef), child(ret, v, _), !kind(v, "comment").
-// sa_stmt_need(e): e is the statement argument of an `.execute(...)` call, or a value it is built from: what a name
-// it reads is bound to, what a function of the run it calls returns.
+// sa_self_ref_q(mr, kq, x): model reference mr is "self <kq> <x>" (sa_model_expr). Stated in kq's file.
+.decl sa_self_ref_q(mr: symbol, kq: symbol, x: symbol)
+sa_self_ref_q(cat("self ", kq, " ", x), kq, x) :- sa_self_attr_need(_, k, x), class_def(k, kq).
+// sa_dml(s, op, mr): s is an insert/update/delete statement on model reference mr (sa_model_expr), or a chain from one.
+.decl sa_dml(s: node, op: symbol, mr: symbol)
+sa_dml(s, op, mr) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, fq), sa_dml_fn(fq, op),
+    posarg(k, 0, r), sa_model_expr(r, mr).
+sa_dml(s, op, mr) :- unparen(s, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, _), sa_dml(o, op, mr).
+// sa_dml_q(dk, op, mr): the same by the chain's term dk (pt_tm), stated in its file.
+.decl sa_dml_q(dk: symbol, op: symbol, mr: symbol)
+sa_dml_q(dk, op, mr) :- sa_dml(d, op, mr), pt_tm(d, dk).
+// sa_stmt_need(e): e is the statement argument of an `.execute(...)` call, a value a def returns, or a value either
+// is built from: what a name it reads is bound to.
 .decl sa_stmt_need(e: node)
 sa_stmt_need(s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"), posarg(c, 0, s).
+sa_stmt_need(v) :- sa_returns(_, v).
 sa_stmt_need(v) :- sa_stmt_need(s), unparen(s, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _).
-sa_stmt_need(v) :- sa_stmt_need(s), unparen(s, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, v).
-// sa_dml_value(s, d, op, mq): executed statement s is DML chain d on model mq: d itself, a name the scope binds to
-// it (`stmt = update(M)…; session.execute(stmt)`), or a function of the run that returns it
-// (`session.execute(build_update(new))`), through further names and calls.
-.decl sa_dml_value(s: node, d: node, op: symbol, mq: symbol)
-sa_dml_value(s, d, op, mq) :- sa_stmt_need(s), unparen(s, d), sa_dml(d, op, mq).
-sa_dml_value(s, d, op, mq) :- sa_stmt_need(s), unparen(s, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
-    asg(sc, x, v, _), sa_dml_value(v, d, op, mq).
-sa_dml_value(s, d, op, mq) :- sa_stmt_need(s), unparen(s, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, v),
-    sa_dml_value(v, d, op, mq).
-// sa_bulk_write(c, op, mq): c writes rows of model mq in bulk, past the unit of work.
-.decl sa_bulk_write(c: node, op: symbol, mq: symbol)
-// `session.execute(update(M)…)` / `delete(M)` / `insert(M)`, built inline, in a name or by a helper (an ORM bulk
-// insert also skips before_insert's per-object state; listed with op "insert")
-sa_bulk_write(c, op, mq) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"), posarg(c, 0, s),
-    sa_dml_value(s, _, op, mq).
-// `session.query(M)….update({...})`, `.delete()`, `M.query.filter(...).delete()`
-sa_bulk_write(c, op, mq) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, op), (op = "update" ; op = "delete"),
-    sa_query_of(o, mq).
-// `session.bulk_insert_mappings(M, rows)`, `bulk_update_mappings(M, rows)`
-sa_bulk_write(c, m, mq) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    (m = "bulk_insert_mappings" ; m = "bulk_update_mappings"), posarg(c, 0, r), sa_model_expr(r, mq).
+// sa_dml_leaf(s, d): needed value s is DML chain d, itself or through a name the scope binds to it (`stmt =
+// update(M)…; session.execute(stmt)`). sa_call_leaf(s, g): it is a call of def g, so what g returns (`session.execute(
+// build_update(new))`), itself or through a name.
+.decl sa_dml_leaf(s: node, d: node)
+sa_dml_leaf(s, d) :- sa_stmt_need(s), unparen(s, d), sa_dml(d, _, _).
+sa_dml_leaf(s, d) :- sa_stmt_need(s), unparen(s, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
+    asg(sc, x, v, _), sa_dml_leaf(v, d).
+.decl sa_call_leaf(s: node, g: symbol)
+sa_call_leaf(s, gq) :- sa_stmt_need(s), unparen(s, k), kind(k, "call"), sa_callee_q(k, gq).
+sa_call_leaf(s, gq) :- sa_stmt_need(s), unparen(s, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
+    asg(sc, x, v, _), sa_call_leaf(v, gq).
+// What a def returns, stated in its file by its symbol: sa_fn_dml_leaf_q(g, dk), DML chain dk; sa_fn_call_leaf_q(g,
+// h), what def h returns.
+.decl sa_fn_dml_leaf_q(g: symbol, dk: symbol)
+sa_fn_dml_leaf_q(gq, dk) :- sa_returns(g, v), sa_dml_leaf(v, d), pt_def(g, gq), pt_tm(d, dk).
+.decl sa_fn_call_leaf_q(g: symbol, h: symbol)
+sa_fn_call_leaf_q(gq, hq) :- sa_returns(g, v), sa_call_leaf(v, hq), pt_def(g, gq).
+// sa_fn_dml_q(g, dk): def g returns DML chain dk, through further calls, across files.
+.decl sa_fn_dml_q(g: symbol, dk: symbol)
+sa_fn_dml_q(gq, dk) :- sa_fn_dml_leaf_q(gq, dk).
+sa_fn_dml_q(gq, dk) :- sa_fn_call_leaf_q(gq, hq), sa_fn_dml_q(hq, dk).
+// sa_exec_q(c, wk): call c is `….execute(...)`, wk its term. sa_exec_dml_q(wk, dk), sa_exec_call_q(wk, g): its
+// statement is DML chain dk, or what def g returns. sa_exec_stmt_q(wk, dk): the chain it runs, across files.
+.decl sa_exec_q(c: node, wk: symbol)
+sa_exec_q(c, wk) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"), pt_tm(c, wk).
+.decl sa_exec_dml_q(wk: symbol, dk: symbol)
+sa_exec_dml_q(wk, dk) :- sa_exec_q(c, wk), posarg(c, 0, s), sa_dml_leaf(s, d), pt_tm(d, dk).
+.decl sa_exec_call_q(wk: symbol, g: symbol)
+sa_exec_call_q(wk, gq) :- sa_exec_q(c, wk), posarg(c, 0, s), sa_call_leaf(s, gq).
+.decl sa_exec_stmt_q(wk: symbol, dk: symbol)
+sa_exec_stmt_q(wk, dk) :- sa_exec_dml_q(wk, dk).
+sa_exec_stmt_q(wk, dk) :- sa_exec_call_q(wk, gq), sa_fn_dml_q(gq, dk).
+// sa_bulk_local_q(wk, op, mr): call wk writes rows of mr in bulk by its own syntax: `session.query(M)….update({...})`,
+// `.delete()`, `M.query.filter(...).delete()` (op the method); `session.bulk_insert_mappings(M, rows)`,
+// `bulk_update_mappings(M, rows)` (op the method's name).
+.decl sa_bulk_local_q(wk: symbol, op: symbol, mr: symbol)
+sa_bulk_local_q(wk, op, mq) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, op), (op = "update" ; op = "delete"),
+    sa_query_of(o, mq), pt_tm(c, wk).
+sa_bulk_local_q(wk, m, mr) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
+    (m = "bulk_insert_mappings" ; m = "bulk_update_mappings"), posarg(c, 0, r), sa_model_expr(r, mr), pt_tm(c, wk).
 
 // ---- events ------------------------------------------------------------------------------------------------------
 .decl sa_event_fn(q: symbol, how: symbol)
 sa_event_fn("sqlalchemy.event.listen", "listen"). sa_event_fn("sqlalchemy.event.api.listen", "listen").
 sa_event_fn("sqlalchemy.event.listens_for", "listens_for"). sa_event_fn("sqlalchemy.event.api.listens_for", "listens_for").
-.decl sa_mapper_event_name(ev: symbol)
-sa_mapper_event_name("before_insert"). sa_mapper_event_name("after_insert"). sa_mapper_event_name("before_update").
-sa_mapper_event_name("after_update"). sa_mapper_event_name("before_delete"). sa_mapper_event_name("after_delete").
 // sa_event_call(c, tgt, ev): c is `event.listen(tgt, "ev", fn)` or `@event.listens_for(tgt, "ev")`.
 .decl sa_event_call(c: node, tgt: node, ev: symbol)
 sa_event_call(c, t, ev) :- kind(c, "call"), field(c, "function", f), sym_of(f, fq), sa_event_fn(fq, _), posarg(c, 0, t),
     posarg(c, 1, e), str(e, ev).
-.decl sa_mapper_event(mq: symbol, ev: symbol, at: node)
-sa_mapper_event(mq, ev, c) :- sa_event_call(c, t, ev), sa_mapper_event_name(ev), sym_of(t, mq), sa_model_q(mq).
-.decl sa_attr_event(mq: symbol, x: symbol, at: node)
-sa_attr_event(mq, x, c) :- sa_event_call(c, t, ev), (ev = "set" ; ev = "append" ; ev = "remove"), unparen(t, tt),
-    attr_of(tt, o, x), sym_of(o, mq), sa_model_q(mq).
-// sa_validates(mq, f, x): `@validates("x", ...)` on method f of model mq (sqlalchemy.orm.validates; marshmallow's
-// validates on schemas is another function and does not resolve here).
-.decl sa_validates(mq: symbol, f: node, x: symbol)
-sa_validates(mq, f, x) :- decorator(f, e), kind(e, "call"), field(e, "function", vf), sym_of(vf, vq),
-    (vq = "sqlalchemy.orm.validates" ; vq = "sqlalchemy.orm.mapper.validates"), call_arg(e, _, "", a), str(a, x),
-    nearest(f, c, scope), kind(c, "class_definition"), class_def(c, mq), sa_model_q(mq).
 
 // ---- text SQL ----------------------------------------------------------------------------------------------------
 .decl sa_text_fn(q: symbol)

@@ -23,6 +23,12 @@
       "document": "rules/pydantic-practice-v1-api-in-v2.rerail",
       "title": "Pydantic practice: Pydantic 1 API that Pydantic 2 removed or ignores, in a project pinned to Pydantic 2",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "deps.removed-api"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -53,6 +59,12 @@
       "document": "rules/pydantic-practice-dump-mode-json.rerail",
       "title": "Pydantic practice: `model_dump()` handed to json.dumps, a JSONResponse or `json=` while the model has a datetime, UUID, Decimal or other field json cannot encode",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "serialization.non-json-dump"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -83,6 +95,12 @@
       "document": "rules/pydantic-practice-validator-returns-value.rerail",
       "title": "Pydantic practice: a validator that can end without returning the value (or `self`)",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "validation.validator-returns-none"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -101,6 +119,12 @@
       "document": "rules/pydantic-practice-default-factory.rerail",
       "title": "Pydantic practice: field default computed once at import instead of a default_factory",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "model.default-evaluated-once"
+      },
       "mode": "steer",
       "on": true,
       "examples": {
@@ -119,6 +143,12 @@
       "document": "rules/pydantic-practice-before-validator-raw-input.rerail",
       "title": "Pydantic practice: a before, wrap or plain validator that uses its raw input as one type without checking it",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium",
+        "hazard": "validation.unchecked-raw-input"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -137,6 +167,12 @@
       "document": "rules/pydantic-practice-secret-settings-str.rerail",
       "title": "Pydantic practice: secret on a settings class typed str instead of SecretStr",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "config",
+        "severity": "medium",
+        "hazard": "secrets.plaintext-setting"
+      },
       "mode": "log",
       "on": true,
       "examples": {
@@ -155,6 +191,12 @@
       "document": "rules/pydantic-practice-deprecated-v1-api.rerail",
       "title": "Pydantic practice: Pydantic 1 API that Pydantic 2 deprecates and Pydantic 3 removes, in a project pinned to Pydantic 2",
       "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low",
+        "hazard": "deps.deprecated-api"
+      },
       "mode": "log",
       "on": false,
       "examples": {

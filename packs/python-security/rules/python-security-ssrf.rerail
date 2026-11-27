@@ -29,7 +29,7 @@
 //   requests.post(TOKEN_URL, data={"code": request.GET["code"]})      not reported: an OAuth code exchange
 // Left alone, besides the above: a client with a connection-time guard (an httpx `transport=` or aiohttp
 // `connector=` built from a class of the run, or a requests session that mounts an adapter class of the run: the
-// private-address block a URL-fetching product needs); data sent by staff (lib/security's sec_admin_source: an
+// private-address block a URL-fetching product needs); data sent by staff (lib/security's sec_xadmin_src: an
 // admin-only Django view, ModelAdmin, DRF `IsAdminUser` view or FastAPI route depending on an admin dependency); a
 // name its function checks (sec_checked: a check call such as `is_allowed_host(urlparse(url).hostname)`, or an
 // allow-list `in` test), also through a chain of names assigned from it (`parsed = urlparse(path); host =
@@ -49,29 +49,44 @@
 
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each file states what its requests' URLs take by origin
+// (sec_fhit), and a finding reads the cross-file answer by its sink's term (sec_xfirst): its first source, so one
+// sink is reported once. An HTTP client a helper of another file returns, and the guard it was built with, are
+// yes/no origins (sec_bres), so a method sink on such a receiver waits on them (ss_xrecv).
 .violation Ssrf(at: node, what: symbol, p: symbol, l: number) "Client data from {what} ({p}:{l}) sets this request's host. Allow-list the host, or block private and link-local addresses at connection time with redirects re-checked."
+Ssrf(c, what, p, l) :- ss_sink_q(c, _), pt_tm(c, ct), sec_xfirst("ssq", ct, k), sec_src_info(k, what, p, l).
+Ssrf(c, what, p, l) :- ss_sink_m(c, _, r), pt_tm(r, rt), ss_xrecv(rt), pt_tm(c, ct), sec_xfirst("ssm", ct, k),
+    sec_src_info(k, what, p, l).
+// Data an admin-only function reads was sent by staff (lib/security's sec_xadmin_src).
+sec_xdrop(r, k) :- (r = "ssq" ; r = "ssm"), sec_xadmin_src(k).
 // The functions that send a request are this rule's sinks: a validator-named one is no check.
-sec_sink_fn(g) :- ss_sink(c, _), nearest(c, g, fdef).
+sec_sink_fn(gq) :- ss_sink_q(c, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_sink_fn(gq) :- ss_sink_m(c, _, r), pt_tm(r, rt), ss_xrecv(rt), nearest(c, g, fdef), pt_def(g, gq).
+sec_flavor("ss"). sec_flavor("ssc"). sec_flavor("ssg"). sec_flavor("ssri").
 
 // ---- where the host ends -----------------------------------------------------------------------------------------
-// ss_host_open(pre): literal text pre, before a spliced value, leaves the URL's scheme and host open: it is empty,
-// or it holds `://` with no `/`, `?` or `#` after it.
-.decl ss_host_open(pre: symbol)
-ss_host_open("").
-ss_host_open(pre) :- sec_text_before(_, _, pre), contains("://", pre), r = @rx_replace(pre, "(?s)^.*?://", ""),
-    !match("(?s).*[/?#].*", r).
-// ss_slot(s, a): built string s splices a where it decides the scheme or host.
+// ss_slot(s, a): built string s splices a where it decides the scheme or host: the literal text before it is empty,
+// or holds `://` with no `/`, `?` or `#` after it.
 .decl ss_slot(s: node, a: node)
-ss_slot(s, a) :- sec_text_before(s, a, pre), ss_host_open(pre).
+ss_slot(s, a) :- sec_text_before(s, a, "").
+ss_slot(s, a) :- sec_text_before(s, a, pre), contains("://", pre), r = @rx_replace(pre, "(?s)^.*?://", ""),
+    !match("(?s).*[/?#].*", r).
 
 // ---- checks ------------------------------------------------------------------------------------------------------
 // ss_checked(h, x): scope h checks name x (sec_checked), or checks a name derived, directly or through a chain of
 // assignments, from x's own text (`parsed = urlparse(url)`, `host = parsed.netloc`, `host in HOSTS`). A value merely
 // computed with x (`response = client.get(url)`, then a check of the response's format) clears nothing.
+// ss_checked_c(h, x, t): the same by a check call of the run (token t), which clears x where it reaches no sink
+// of this rule: a name read so passes a gate (sec_ngate "ss").
 .decl ss_checked(h: node, x: symbol)
 ss_checked(h, x) :- sec_checked(h, x).
 ss_checked(h, x) :- ss_checked(h, y), asg(h, y, v, _), ss_derives(v, x), x != y, x != "self", x != "cls",
     x != "request".
+.decl ss_checked_c(h: node, x: symbol, t: symbol)
+ss_checked_c(h, x, t) :- sec_checked_c(h, x, t).
+ss_checked_c(h, x, t) :- ss_checked_c(h, y, t), asg(h, y, v, _), ss_derives(v, x), x != y, x != "self", x != "cls",
+    x != "request".
+sec_nchk_c("ss", h, x, t) :- ss_checked_c(h, x, t).
 // ss_derives(e, x): e's value is name x or a part of it: x itself, an attribute or subscript of it, a method called
 // on it (`.strip()`, `.hostname.lower()`), or a URL parse of it (`urlparse(x)`, `urlsplit`, `yarl.URL`, `httpx.URL`,
 // a pass-through library call), through parentheses and `await`.
@@ -96,41 +111,56 @@ ss_dv(o) :- ss_dv(e), unparen(e, c), kind(c, "call"), field(c, "function", f), a
 ss_dv(a) :- ss_dv(e), unparen(e, c), ss_parse_call(c), sec_arg(c, 0, _, a).
 
 // ---- client text that sets the host ------------------------------------------------------------------------------
-// ss_step(e, a): e's whole value holds a's: lib/security's steps that keep the text's start (parentheses, await,
+// ss_stepg(e, a): e's whole value holds a's: lib/security's steps that keep the text's start (parentheses, await,
 // subscripts, attributes and method calls on it, pass-through library calls such as str() and urljoin(),
-// conditionals, and/or, containers), not those that splice it into a larger string.
-.decl ss_step(e: node, a: node)
-ss_step(p, a) :- sec_step(p, a), (kind(p, "parenthesized_expression") ; kind(p, "await") ; kind(p, "subscript") ;
-    kind(p, "attribute") ; kind(p, "conditional_expression") ; kind(p, "boolean_operator") ; sec_container(p) ;
-    kind(p, "dictionary") ; kind(p, "list_comprehension") ; kind(p, "generator_expression") ;
-    kind(p, "set_comprehension")).
-ss_step(c, f) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, _), !sec_typed(c).
-ss_step(c, a) :- sec_pass_call(c), call_arg(c, _, _, a).
-.decl ss_val(e: node, s: node)
-ss_val(e, e) :- sec_source(e, _), !sec_admin_source(e).
-ss_val(e, s) :- ss_step(e, a), ss_val(a, s).
-ss_val(s, x) :- ss_slot(s, a), ss_val(a, x).
+// conditionals, and/or, containers), not those that splice it into a larger string. ss_stepq(e, a, g): the same
+// through gate g (a pydantic field's read, sec_stepq).
+.decl ss_keeps(p: node)
+ss_keeps(p) :- kind(p, "parenthesized_expression"). ss_keeps(p) :- kind(p, "await"). ss_keeps(p) :- kind(p, "subscript").
+ss_keeps(p) :- kind(p, "attribute"). ss_keeps(p) :- kind(p, "conditional_expression").
+ss_keeps(p) :- kind(p, "boolean_operator"). ss_keeps(p) :- sec_container(p). ss_keeps(p) :- kind(p, "dictionary").
+ss_keeps(p) :- kind(p, "list_comprehension"). ss_keeps(p) :- kind(p, "generator_expression").
+ss_keeps(p) :- kind(p, "set_comprehension").
+.decl ss_stepg(e: node, a: node)
+ss_stepg(p, a) :- sec_stepg(p, a), ss_keeps(p).
+ss_stepg(c, f) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, _), !sec_typed(c).
+ss_stepg(c, a) :- sec_pass_call(c), call_arg(c, _, _, a).
+.decl ss_stepq(e: node, a: node, g: symbol)
+ss_stepq(p, a, g) :- sec_stepq("ss", p, a, g), ss_keeps(p).
+// ss_val(e, o): e's value decides a URL's host, with client text from origin o: a parameter's is what the callers
+// pass it unchecked (`P|ss|…`), a call's is what its function returns (`R|ss|…`).
+.decl ss_val(e: node, o: symbol)
+ss_val(e, o) :- sec_start(e, o).
+ss_val(e, o) :- ss_stepg(e, a), ss_val(a, o).
+ss_val(e, g) :- ss_stepq(e, a, g), ss_val(a, _).
+sec_gin(g, o) :- ss_stepq(e, a, g), ss_val(a, o).
+ss_val(s, o) :- ss_slot(s, a), ss_val(a, o).
 // The left of `+` or `%` starts the URL: `("http://" + host) + "/health"`, a client format string `tpl % x`.
-ss_val(b, s) :- kind(b, "binary_operator"), (op(b, "+") ; op(b, "%")), field(b, "left", a), ss_val(a, s).
-ss_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), !ss_checked(h, x), sec_bind(h, x, v), ss_val(v, s),
-    r != v.
-ss_val(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), !ss_checked(g, x), ss_param(g, x, s).
-ss_val(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
-    sec_holder_call(h, x, c), call_arg(c, _, _, v), ss_val(v, s).
-ss_val(c, s) :- call_target(c, g), ss_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), ss_val(a, s).
-ss_val(c, s) :- call_target(c, g), ss_returns(g, s), !sec_validator_def(g), ss_own_source(g, s).
-.decl ss_param(g: node, x: symbol, s: node)
-ss_param(g, x, p) :- sec_route_param(g, x, p), !sec_admin_source(p).
-ss_param(g, x, s) :- sec_param_at(_, g, a, x), ss_val(a, s), !sec_checked_expr(a).
-.decl ss_returns(g: node, s: node)
-ss_returns(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), ss_val(v, s),
-    !sec_checked_expr(v).
-.decl ss_own_source(g: node, s: node)
-ss_own_source(g, s) :- ss_returns(g, s), within(s, g).
-ss_own_source(g, s) :- ss_returns(g, s), ss_reach(g, h), within(s, h).
-.decl ss_reach(g: node, h: node)
-ss_reach(g, h) :- ss_returns(g, _), calls(g, h).
-ss_reach(g, k) :- ss_reach(g, h), calls(h, k).
+ss_val(b, o) :- kind(b, "binary_operator"), (op(b, "+") ; op(b, "%")), field(b, "left", a), ss_val(a, o).
+ss_val(r, o) :- ss_vin(r, h, x, o), !ss_checked(h, x), !sec_nchk_any("ss", h, x).
+ss_val(r, g) :- ss_vin(r, h, x, _), !ss_checked(h, x), sec_ngate("ss", "ss", h, x, g).
+sec_gin(g, o) :- ss_vin(_, h, x, o), !ss_checked(h, x), sec_ngate("ss", "ss", h, x, g).
+ss_val(e, o) :- attr_of(e, b, a), sec_validated_attr(a), kind(b, "identifier"), text(b, x), look(b, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), ss_val(v, o).
+ss_val(c, o) :- sec_rorig(c, "ss", o).
+// ss_vin(r, h, x, o): name r, x as scope h binds it, reads o before its checks: a value bound to it, a parameter's,
+// a route's.
+.decl ss_vin(r: node, h: node, x: symbol, o: symbol)
+ss_vin(r, h, x, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), ss_val(v, o), r != v.
+ss_vin(r, g, x, o) :- sec_porig(r, "ss", g, x, o).
+ss_vin(r, g, x, k) :- sec_param_ref(r, g, x), sec_route_param(g, x, p), sec_key(p, k).
+// Across files: what a call passes unchecked (sec_checked_expr), what a function returns unchecked; a check call of
+// the run passes it through a gate (sec_egate of lib/security's "sec" checks).
+sec_froute("ss", "seg"). sec_froute("ss", "free").
+sec_fpass("ss", c, a, o) :- call_arg(c, _, _, a), ss_val(a, o), !sec_checked_expr(a), !sec_echk_any("sec", a).
+sec_fpass("ss", c, a, g) :- call_arg(c, _, _, a), ss_val(a, _), !sec_checked_expr(a), sec_egate("sec", "ss", a, g).
+sec_gin(g, o) :- call_arg(_, _, _, a), ss_val(a, o), !sec_checked_expr(a), sec_egate("sec", "ss", a, g).
+sec_fctx("ss", c, o) :- call_arg(c, _, _, a), ss_val(a, o).
+sec_fret("ss", g, o) :- ss_ret(g, v), ss_val(v, o), !sec_echk_any("sec", v).
+sec_fret("ss", g, eg) :- ss_ret(g, v), ss_val(v, _), sec_egate("sec", "ss", v, eg).
+sec_gin(eg, o) :- ss_ret(g, v), ss_val(v, o), sec_egate("sec", "ss", v, eg).
+.decl ss_ret(g: node, v: node)
+ss_ret(g, v) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), !sec_checked_expr(v).
 
 // ---- HTTP clients ------------------------------------------------------------------------------------------------
 // ss_q0(q) / ss_q1(q): module functions whose URL is the first argument / the second (after the method), or `url=`.
@@ -154,70 +184,84 @@ ss_client_q("requests.Session"). ss_client_q("requests.session"). ss_client_q("r
 ss_client_q("requests.sessions.session"). ss_client_q("httpx.Client"). ss_client_q("httpx.AsyncClient").
 ss_client_q("aiohttp.ClientSession"). ss_client_q("aiohttp.client.ClientSession"). ss_client_q("urllib3.PoolManager").
 ss_client_q("urllib3.ProxyManager"). ss_client_q("urllib3.poolmanager.PoolManager").
-// ss_client(e): e is an HTTP client: a constructor call, a name bound to one (`s = …`, `with … as s`), a call of a
-// function of the run that returns one, a parameter annotated with the class, or `self.<attr>` that its class
-// assigns one.
-.decl ss_client(e: node)
-ss_client(c) :- sec_call_q(c, q), ss_client_q(q).
-ss_client(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, v2), ss_client(v2).
-ss_client(c) :- call_target(c, g), kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef),
-    unparen(v, v2), ss_client(v2).
-ss_client(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+// ss_client(e, o): e is an HTTP client, by yes/no origin o: a constructor call, a parameter annotated with the class
+// (o "T"), a name bound to one (`s = …`, `with … as s`), `self.<attr>` that its class assigns one, or a call of a
+// function of the run, which is one when the function returns one (`R|ssc|…`).
+.decl ss_client(e: node, o: symbol)
+ss_client(c, "T") :- sec_call_q(c, q), ss_client_q(q).
+ss_client(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, v2), ss_client(v2, o).
+ss_client(c, o) :- sec_rorig(c, "ssc", o).
+ss_client(r, "T") :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
     sec_ann(a, t), sym_of(t, q), ss_client_q(q).
-ss_client(e) :- attr_of(e, o, at), kind(o, "identifier"), text(o, "self"), nearest(e, f, fdef), nearest(f, k, scope),
-    kind(k, "class_definition"), ss_self_client(k, at).
-.decl ss_self_client(k: node, at: symbol)
-ss_self_client(k, at) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, o, at), kind(o, "identifier"),
-    text(o, "self"), field(a, "right", v), unparen(v, v2), ss_client(v2), nearest(a, f, fdef), nearest(f, k, scope),
+ss_client(e, o) :- attr_of(e, b, at), kind(b, "identifier"), text(b, "self"), nearest(e, f, fdef), nearest(f, k, scope),
+    kind(k, "class_definition"), ss_self_client(k, at, o).
+sec_bret("ssc", g, o) :- kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), unparen(v, v2),
+    ss_client(v2, o).
+.decl ss_self_client(k: node, at: symbol, o: symbol)
+ss_self_client(k, at, o) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, b, at), kind(b, "identifier"),
+    text(b, "self"), field(a, "right", v), unparen(v, v2), ss_client(v2, o), nearest(a, f, fdef), nearest(f, k, scope),
     kind(k, "class_definition").
 
-// ss_guarded(e): HTTP client e checks where it connects: built with `transport=` (httpx) or `connector=` (aiohttp)
-// set to an instance of a class of the run, a name bound to one, a call of a function of the run that returns one,
-// or a client its function or class mounts an adapter class of the run on (`s.mount("http://", GuardedAdapter())`).
-// Library transports and adapters (`httpx.HTTPTransport(retries=3)`, `HTTPAdapter(max_retries=3)`) guard nothing.
-.decl ss_guarded(e: node)
-ss_guarded(c) :- ss_client(c), kind(c, "call"), (sec_arg(c, -1, "transport", t) ; sec_arg(c, -1, "connector", t)),
-    ss_run_instance(t).
-ss_guarded(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, v2), ss_guarded(v2).
-ss_guarded(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), ss_client(r), ss_mounts(h, x).
-ss_guarded(c) :- call_target(c, g), kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef),
-    unparen(v, v2), ss_guarded(v2).
-ss_guarded(e) :- attr_of(e, o, at), kind(o, "identifier"), text(o, "self"), nearest(e, f, fdef), nearest(f, k, scope),
-    kind(k, "class_definition"), ss_self_mounts(k, at).
-// ss_mounts(h, x): scope h mounts an adapter class of the run on the client named x.
-.decl ss_mounts(h: node, x: symbol)
-ss_mounts(h, x) :- kind(m, "call"), field(m, "function", f), attr_of(f, o, "mount"), kind(o, "identifier"), text(o, x),
-    (sec_arg(m, 1, _, ad) ; sec_arg(m, -1, "adapter", ad)), ss_run_instance(ad), nearest(m, h, scope).
-.decl ss_self_mounts(k: node, at: symbol)
-ss_self_mounts(k, at) :- kind(m, "call"), field(m, "function", f), attr_of(f, o, "mount"), attr_of(o, s, at),
+// ss_guarded(e, o): HTTP client e checks where it connects, by yes/no origin o: built with `transport=` (httpx) or
+// `connector=` (aiohttp) set to an instance of a class of the run, a name bound to one, a call of a function of the
+// run that returns one (`R|ssg|…`), or a client its function or class mounts an adapter class of the run on
+// (`s.mount("http://", GuardedAdapter())`). Library transports and adapters (`httpx.HTTPTransport(retries=3)`,
+// `HTTPAdapter(max_retries=3)`) guard nothing.
+.decl ss_guarded(e: node, o: symbol)
+ss_guarded(c, o) :- ss_client(c, _), kind(c, "call"), (sec_arg(c, -1, "transport", t) ; sec_arg(c, -1, "connector", t)),
+    ss_run_instance(t, o).
+ss_guarded(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, v2),
+    ss_guarded(v2, o).
+ss_guarded(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), ss_client(r, _), ss_mounts(h, x, o).
+ss_guarded(c, o) :- sec_rorig(c, "ssg", o).
+ss_guarded(e, o) :- attr_of(e, b, at), kind(b, "identifier"), text(b, "self"), nearest(e, f, fdef), nearest(f, k, scope),
+    kind(k, "class_definition"), ss_self_mounts(k, at, o).
+sec_bret("ssg", g, o) :- kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), unparen(v, v2),
+    ss_guarded(v2, o).
+// ss_mounts(h, x, o): scope h mounts an adapter class of the run on the client named x.
+.decl ss_mounts(h: node, x: symbol, o: symbol)
+ss_mounts(h, x, o) :- kind(m, "call"), field(m, "function", f), attr_of(f, b, "mount"), kind(b, "identifier"),
+    text(b, x), (sec_arg(m, 1, _, ad) ; sec_arg(m, -1, "adapter", ad)), ss_run_instance(ad, o), nearest(m, h, scope).
+.decl ss_self_mounts(k: node, at: symbol, o: symbol)
+ss_self_mounts(k, at, o) :- kind(m, "call"), field(m, "function", f), attr_of(f, b, "mount"), attr_of(b, s, at),
     kind(s, "identifier"), text(s, "self"), (sec_arg(m, 1, _, ad) ; sec_arg(m, -1, "adapter", ad)),
-    ss_run_instance(ad), nearest(m, g, fdef), nearest(g, k, scope), kind(k, "class_definition").
-ss_self_mounts(k, at) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, o, at), kind(o, "identifier"),
-    text(o, "self"), field(a, "right", v), unparen(v, v2), ss_guarded(v2), nearest(a, f, fdef), nearest(f, k, scope),
+    ss_run_instance(ad, o), nearest(m, g, fdef), nearest(g, k, scope), kind(k, "class_definition").
+ss_self_mounts(k, at, o) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, b, at), kind(b, "identifier"),
+    text(b, "self"), field(a, "right", v), unparen(v, v2), ss_guarded(v2, o), nearest(a, f, fdef), nearest(f, k, scope),
     kind(k, "class_definition").
-// ss_run_instance(t): t is an instance of a class of the run: built here, or a name bound to one.
-.decl ss_run_instance(t: node)
-ss_run_instance(t) :- unparen(t, c), kind(c, "call"), field(c, "function", f), sym_of(f, q), class_def(_, q).
-ss_run_instance(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ss_run_instance(v).
-// A call of a function of the run that returns one (`transport = _build_transport(…)` returning
-// `AsyncSafeTransport(**kwargs)`).
-ss_run_instance(t) :- unparen(t, c), kind(c, "call"), call_target(c, g), kind(rs, "return_statement"), child(rs, v, 0),
-    nearest(rs, g, fdef), ss_run_instance(v).
+// ss_run_instance(t, o): t is an instance of a class of the run, by yes/no origin o: built here (the phase py_names),
+// a name bound to one, or a call of a function of the run that returns one (`transport = _build_transport(…)`
+// returning `AsyncSafeTransport(**kwargs)`, `R|ssri|…`).
+.decl ss_run_instance(t: node, o: symbol)
+ss_run_instance(t, "T") :- unparen(t, c), kind(c, "call"), field(c, "function", f), sec_run_class(f, _).
+ss_run_instance(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), ss_run_instance(v, o).
+ss_run_instance(t, o) :- unparen(t, c), sec_rorig(c, "ssri", o).
+sec_bret("ssri", g, o) :- kind(rs, "return_statement"), child(rs, v, 0), nearest(rs, g, fdef), ss_run_instance(v, o).
+// ss_xrecv(r): receiver r, by its term, is an HTTP client with no guard (sec_bres answers their origins).
+.decl ss_xrecv(r: symbol) cross_file
+ss_xrecv(rt) :- ss_sink_m(_, _, r), pt_tm(r, rt), ss_client(r, o), sec_bres(o), !ss_xguarded(rt).
+.decl ss_xguarded(r: symbol) cross_file
+ss_xguarded(rt) :- ss_sink_m(_, _, r), ss_guarded(r, o), sec_bres(o), pt_tm(r, rt).
 
-// ss_sink(c, e): call c sends an HTTP request to URL e, through no guarded client.
-.decl ss_sink(c: node, e: node)
-ss_sink(c, e) :- sec_call_q(c, q), ss_q0(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
-ss_sink(c, e) :- sec_call_q(c, q), ss_q1(q), (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
-ss_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ss_m0(m), unparen(o, o2), ss_client(o2),
-    !ss_guarded(o2), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
-ss_sink(c, e) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), ss_m1(m), unparen(o, o2), ss_client(o2),
-    !ss_guarded(o2), (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
-.decl ss_hit(c: node, s: node)
-ss_hit(c, s) :- ss_sink(c, e), ss_val(e, s), !sec_checked_expr(e).
-.decl ss_live(c: node)
-ss_live(c) :- ss_hit(c, _), docof(c, d), !sec_test_doc(d).
-
-Ssrf(c, what, p, l) :- ss_live(c), s = min s2 : { ss_hit(c, s2) }, sec_origin(s, what, p, l).
+// ss_sink_q(c, e): call c, a module function, sends an HTTP request to URL e. ss_sink_m(c, e, r): call c, a method
+// on receiver r, does, when r is an HTTP client with no guard (ss_xrecv).
+.decl ss_sink_q(c: node, e: node)
+ss_sink_q(c, e) :- sec_call_q(c, q), ss_q0(q), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
+ss_sink_q(c, e) :- sec_call_q(c, q), ss_q1(q), (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
+.decl ss_sink_m(c: node, e: node, r: node)
+ss_sink_m(c, e, r) :- kind(c, "call"), field(c, "function", f), attr_of(f, b, m), ss_m0(m), unparen(b, r),
+    ss_client(r, _), (sec_arg(c, 0, _, e) ; sec_arg(c, -1, "url", e)).
+ss_sink_m(c, e, r) :- kind(c, "call"), field(c, "function", f), attr_of(f, b, m), ss_m1(m), unparen(b, r),
+    ss_client(r, _), (sec_arg(c, 1, _, e) ; sec_arg(c, -1, "url", e)).
+// What a sink's URL takes, outside test code, unless its function checks it (a check call of the run: a gate).
+sec_fhit("ssq", c, o) :- ss_sink_q(c, e), ss_hit(c, e, o).
+sec_fhit("ssm", c, o) :- ss_sink_m(c, e, _), ss_hit(c, e, o).
+.decl ss_hit(c: node, e: node, o: symbol)
+ss_hit(c, e, o) :- ss_sink_at(c, e), ss_val(e, o), !sec_echk_any("sec", e).
+ss_hit(c, e, g) :- ss_sink_at(c, e), ss_val(e, _), sec_egate("sec", "ss", e, g).
+sec_gin(g, o) :- ss_sink_at(_, e), ss_val(e, o), sec_egate("sec", "ss", e, g).
+.decl ss_sink_at(c: node, e: node)
+ss_sink_at(c, e) :- (ss_sink_q(c, e) ; ss_sink_m(c, e, _)), !sec_checked_expr(e), docof(c, d), !sec_test_doc(d).
 
 // The cases, `cases/python-security-ssrf/`, read as one repository: each line ending in `# caught` is reported, and
 // no other line.

@@ -39,25 +39,51 @@
 #include "lib/celery.rerail"
 
 .violation ResultGetInTask(at: node, m: symbol, where: symbol) "`.{m}()` waits {where} on another task: Celery raises in the worker, and the pool can deadlock. Chain the next step as a callback (chain or chord) instead of waiting."
-ResultGetInTask(w, m, cat("inside task `", cat(t, "`"))) :- rg_wait(w, m), owner(w, g), rg_task(g), def_name(g, t).
-ResultGetInTask(w, m, cat("in `", cat(x, cat("()` (run by task `", cat(t, "`)"))))) :- rg_wait(w, m), owner(w, g),
-    !rg_task(g), def_name(g, x), f = min y : { rg_reach(y, g) }, def_name(f, t).
+// The tasks and the call graph between them are over definitions' symbols (decision 0677: no node crosses files):
+// a task by its symbol (`pt_def`, as python/calls' `call_target` names a def), its name with it (rg_taskq). A wait is
+// stated in its own file, with what its result needs of other files (rg_holds); its function is read by its symbol.
+ResultGetInTask(w, m, cat("inside task `", cat(t, "`"))) :- rg_wait(w, m, nq, nk), rg_holds(nq, nk), owner(w, g),
+    pt_def(g, gq), rg_taskq(gq, t).
+ResultGetInTask(w, m, cat("in `", cat(x, cat("()` (run by task `", cat(t, "`)"))))) :- rg_wait(w, m, nq, nk),
+    rg_holds(nq, nk), owner(w, g), pt_def(g, gq), !rg_is_task(gq), def_name(g, x), rg_first(gq, t).
+
+// ---- needs -------------------------------------------------------------------------------------------------------
+// rg_holds(q, k): lib/celery's cel_is, and "rg_returns": a run function (by its symbol) that returns a result. It
+// spans files on purpose (pretix's get_task_result is called from other modules); symbols alone: cross_file.
+.decl rg_holds(q: symbol, k: symbol) cross_file
+rg_holds(q, k) :- cel_is(q, k).
+rg_holds(gq, "rg_returns") :- rg_returns_if(gq, nq, nk), rg_holds(nq, nk).
+.decl rg_returns_if(g: symbol, nq: symbol, nk: symbol)
+rg_returns_if(gq, nq, nk) :- kind(r, "return_statement"), child(r, v, 0), rg_result(v, nq, nk), nearest(r, g, fdef),
+    pt_def(g, gq).
 
 // ---- tasks and what they run --------------------------------------------------------------------------------------
-// rg_task(f): a task outside test files: a cel_task def, or the `run` method of a class deriving from celery's Task.
-.decl rg_task_class_q(q: symbol)
-rg_task_class_q("celery.Task"). rg_task_class_q("celery.app.task.Task").
-rg_task_class_q(q) :- class_def(c, q), cel_class_base(c, b), rg_task_class_q(b).
-.decl rg_task(f: node)
-rg_task(f) :- cel_task(f), docof(f, d), !cel_test_doc(d).
-rg_task(f) :- kind(c, "class_definition"), cel_class_base(c, b), rg_task_class_q(b), field(c, "body", cb),
-    child(cb, f, _), kind(f, "function_definition"), def_name(f, "run"), docof(f, d), !cel_test_doc(d).
-// rg_reach(f, g): task f runs g: g is f, or a call outside `with allow_join_result():` leads from f to g.
-.decl rg_calls(f: node, g: node)
-rg_calls(f, g) :- owner(c, f), call_target(c, g), !rg_allowed(c).
-.decl rg_reach(f: node, g: node)
-rg_reach(f, f) :- rg_task(f).
-rg_reach(f, h) :- rg_reach(f, g), rg_calls(g, h).
+// rg_task(f, nq, nk): a task outside test files: a cel_task def, or the `run` method of a class deriving from celery's
+// Task (lib/celery's "task_cls", through the run's classes).
+.decl rg_task(f: node, nq: symbol, nk: symbol)
+rg_task(f, nq, nk) :- cel_task(f, nq, nk), docof(f, d), !cel_test_doc(d).
+rg_task(f, b, "task_cls") :- kind(c, "class_definition"), cel_class_base(c, b), field(c, "body", cb), child(cb, f, _),
+    kind(f, "function_definition"), def_name(f, "run"), docof(f, d), !cel_test_doc(d).
+// rg_taskq(f, t): task f, by symbol, named t. A fact of the run: what each file states of its tasks (rg_task_sym),
+// with their needs met.
+.decl rg_task_sym(f: symbol, t: symbol, nq: symbol, nk: symbol)
+rg_task_sym(fq, t, nq, nk) :- rg_task(f, nq, nk), pt_def(f, fq), def_name(f, t).
+.decl rg_taskq(f: symbol, t: symbol)
+rg_taskq(fq, t) :- rg_task_sym(fq, t, nq, nk), rg_holds(nq, nk).
+.decl rg_is_task(f: symbol)
+rg_is_task(fq) :- rg_taskq(fq, _).
+// rg_reach_q(f, g): task f runs g: g is f, or a call outside `with allow_join_result():` leads from f to g (each
+// file's calls by symbol: rg_calls_q). The call graph spans files: cross_file, symbols alone.
+.decl rg_calls_q(f: symbol, g: symbol)
+rg_calls_q(fq, gq) :- owner(c, f), call_target(c, gq), !rg_allowed(c), pt_def(f, fq).
+.decl rg_reach_q(f: symbol, g: symbol) cross_file
+rg_reach_q(fq, fq) :- rg_is_task(fq).
+rg_reach_q(fq, hq) :- rg_reach_q(fq, gq), rg_calls_q(gq, hq).
+// rg_first(g, t): of the tasks that run g, the least symbol's (one task named for the message), named t.
+.decl rg_first(g: symbol, t: symbol)
+rg_first(gq, t) :- rg_reach_q(fq, gq), !rg_later(fq, gq), rg_taskq(fq, t).
+.decl rg_later(f: symbol, g: symbol)
+rg_later(fq, gq) :- rg_reach_q(fq, gq), rg_reach_q(eq, gq), eq < fq.
 
 // ---- opt-outs ---------------------------------------------------------------------------------------------------
 // rg_allowed(n): n runs in the body of `with allow_join_result():` (in the same def).
@@ -70,8 +96,8 @@ rg_allowed(n) :- kind(ws, "with_statement"), child(ws, wc, _), kind(wc, "with_cl
 rg_optout(w) :- call_arg(w, -1, "disable_sync_subtasks", v), !kind(v, "true").
 
 // ---- results ----------------------------------------------------------------------------------------------------
-// rg_canvas(e, k): e is a signature ("sig": `t.s(...)`, `t.si(...)`, `t.signature(...)`, `signature(...)`) or a
-// group, chain or chord ("multi": `group(...)`, `chain(...)`, `chord(...)`, `a | b`), or a name last assigned one.
+// rg_canvas(e, k, nq, nk): e is a signature ("sig": `t.s(...)`, `t.si(...)`, `t.signature(...)`, `signature(...)`) or
+// a group, chain or chord ("multi": `group(...)`, `chain(...)`, `chord(...)`, `a | b`), or a name last assigned one.
 .decl rg_canvas_fn(q: symbol, k: symbol)
 rg_canvas_fn("celery.signature", "sig"). rg_canvas_fn("celery.Signature", "sig").
 rg_canvas_fn("celery.canvas.signature", "sig"). rg_canvas_fn("celery.canvas.Signature", "sig").
@@ -79,67 +105,69 @@ rg_canvas_fn("celery.group", "multi"). rg_canvas_fn("celery.canvas.group", "mult
 rg_canvas_fn("celery.chain", "multi"). rg_canvas_fn("celery.canvas.chain", "multi").
 rg_canvas_fn("celery.canvas._chain", "multi"). rg_canvas_fn("celery.chord", "multi").
 rg_canvas_fn("celery.canvas.chord", "multi").
-.decl rg_canvas(e: node, k: symbol)
-rg_canvas(e, k) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), sym_of(fn, q), rg_canvas_fn(q, k).
-rg_canvas(e, "sig") :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
-    (m = "s" ; m = "si" ; m = "signature"), unparen(o, t), cel_task_ref(t).
+.decl rg_canvas(e: node, k: symbol, nq: symbol, nk: symbol)
+rg_canvas(e, k, "", "") :- unparen(e, u), kind(u, "call"), field(u, "function", fn), sym_of(fn, q), rg_canvas_fn(q, k).
+rg_canvas(e, "sig", nq, nk) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
+    (m = "s" ; m = "si" ; m = "signature"), unparen(o, t), cel_task_ref(t, nq, nk).
 // `sig.set(queue=...)`, `sig.clone()` return a signature of the same kind.
-rg_canvas(e, k) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
-    (m = "set" ; m = "clone"), rg_canvas(o, k).
-rg_canvas(e, "multi") :- unparen(e, u), kind(u, "binary_operator"), op(u, "|"), child(u, x, _), rg_canvas(x, _).
-rg_canvas(e, k) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
-    rg_canvas(v, k).
-// rg_result_cls(q): result classes, whose constructor and `restore` give a result.
+rg_canvas(e, k, nq, nk) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
+    (m = "set" ; m = "clone"), rg_canvas(o, k, nq, nk).
+rg_canvas(e, "multi", nq, nk) :- unparen(e, u), kind(u, "binary_operator"), op(u, "|"), child(u, x, _),
+    rg_canvas(x, _, nq, nk).
+rg_canvas(e, k, nq, nk) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
+    rg_canvas(v, k, nq, nk).
+// rg_result_cls(q): result classes, whose constructor and `restore` give a result; a class of the run deriving from
+// one (pretix's SafeAsyncResult) too (lib/celery's cel_derives: py_names' ancestors).
 .decl rg_result_cls(q: symbol)
 rg_result_cls("celery.result.AsyncResult"). rg_result_cls("celery.AsyncResult").
 rg_result_cls("celery.result.GroupResult"). rg_result_cls("celery.GroupResult").
 rg_result_cls("celery.result.ResultSet"). rg_result_cls("celery.ResultSet").
-// A class of the run deriving from one (pretix's SafeAsyncResult).
-rg_result_cls(q) :- class_def(c, q), cel_class_base(c, b), rg_result_cls(b).
-// rg_result(e): e holds an AsyncResult, GroupResult or ResultSet.
-.decl rg_result(e: node)
-rg_result(e) :- unparen(e, u), cel_send(u, _).
-rg_result(e) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), cel_sym(fn, q), rg_result_cls(q).
-rg_result(e) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, _, m),
+.decl rg_result_ref(c: node)
+rg_result_ref(c) :- cel_derives(c, b), rg_result_cls(b).
+// rg_result(e, nq, nk): e holds an AsyncResult, GroupResult or ResultSet.
+.decl rg_result(e: node, nq: symbol, nk: symbol)
+rg_result(e, nq, nk) :- unparen(e, u), cel_send(u, _, nq, nk).
+rg_result(e, "", "") :- unparen(e, u), kind(u, "call"), field(u, "function", fn), rg_result_ref(fn).
+rg_result(e, "", "") :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, _, m),
     (m = "AsyncResult" ; m = "GroupResult").
-rg_result(e) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, "restore"), unparen(o, c),
-    (cel_sym(c, q), rg_result_cls(q) ; attr_of(c, _, "GroupResult")).
-rg_result(e) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
-    (m = "delay" ; m = "apply_async"), rg_canvas(o, _).
-rg_result(e) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), rg_canvas(fn, "multi").
-rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
-    rg_result(v).
-// A call of a function of the run that returns a result (pretix's get_task_result).
-rg_result(e) :- unparen(e, u), kind(u, "call"), call_target(u, g), rg_returns(g).
-.decl rg_returns(g: node)
-rg_returns(g) :- kind(r, "return_statement"), child(r, v, 0), rg_result(v), nearest(r, g, fdef).
+rg_result(e, "", "") :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, "restore"),
+    unparen(o, c), (rg_result_ref(c) ; attr_of(c, _, "GroupResult")).
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), attr_of(fn, o, m),
+    (m = "delay" ; m = "apply_async"), rg_canvas(o, _, nq, nk).
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "call"), field(u, "function", fn), rg_canvas(fn, "multi", nq, nk).
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
+    rg_result(v, nq, nk).
+// A call of a function of the run that returns a result (pretix's get_task_result): its symbol is "rg_returns".
+rg_result(e, gq, "rg_returns") :- unparen(e, u), kind(u, "call"), call_target(u, gq).
 // A result taken from a collection of them: `pending[i]` with pending a dict or list of results, and the loop
 // variable of a `for` statement or comprehension clause over one (`[r.get() for r in results]`).
-rg_result(e) :- unparen(e, u), kind(u, "subscript"), field(u, "value", c), rg_results(c).
-rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fc, "for_in_clause"), field(fc, "left", l),
-    kind(l, "identifier"), text(l, x), field(fc, "right", it), rg_results(it), child(comp, fc, _), within(u, comp),
-    u != l.
-rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fs, "for_statement"), field(fs, "left", l),
-    kind(l, "identifier"), text(l, x), field(fs, "right", it), rg_results(it), field(fs, "body", b), within(u, b).
-// rg_results(e): e holds a list, set, dict or generator of results: a literal or comprehension of them, or a name
-// whose latest plain assignment is one.
-.decl rg_results(e: node)
-rg_results(e) :- unparen(e, u), (kind(u, "list_comprehension") ; kind(u, "set_comprehension") ;
-    kind(u, "generator_expression")), field(u, "body", b), rg_result(b).
-rg_results(e) :- unparen(e, u), kind(u, "dictionary_comprehension"), field(u, "body", p), field(p, "value", v),
-    rg_result(v).
-rg_results(e) :- unparen(e, u), (kind(u, "list") ; kind(u, "tuple")), child(u, x, _), rg_result(x).
-rg_results(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
-    rg_results(v).
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "subscript"), field(u, "value", c), rg_results(c, nq, nk).
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fc, "for_in_clause"),
+    field(fc, "left", l), kind(l, "identifier"), text(l, x), field(fc, "right", it), rg_results(it, nq, nk),
+    child(comp, fc, _), within(u, comp), u != l.
+rg_result(e, nq, nk) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fs, "for_statement"),
+    field(fs, "left", l), kind(l, "identifier"), text(l, x), field(fs, "right", it), rg_results(it, nq, nk),
+    field(fs, "body", b), within(u, b).
+// rg_results(e, nq, nk): e holds a list, set, dict or generator of results: a literal or comprehension of them, or a
+// name whose latest plain assignment is one.
+.decl rg_results(e: node, nq: symbol, nk: symbol)
+rg_results(e, nq, nk) :- unparen(e, u), (kind(u, "list_comprehension") ; kind(u, "set_comprehension") ;
+    kind(u, "generator_expression")), field(u, "body", b), rg_result(b, nq, nk).
+rg_results(e, nq, nk) :- unparen(e, u), kind(u, "dictionary_comprehension"), field(u, "body", p), field(p, "value", v),
+    rg_result(v, nq, nk).
+rg_results(e, nq, nk) :- unparen(e, u), (kind(u, "list") ; kind(u, "tuple")), child(u, x, _), rg_result(x, nq, nk).
+rg_results(e, nq, nk) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
+    rg_results(v, nq, nk).
 
 // ---- waits ------------------------------------------------------------------------------------------------------
 .decl rg_wait_method(m: symbol)
 rg_wait_method("get"). rg_wait_method("join"). rg_wait_method("join_native"). rg_wait_method("wait").
 rg_wait_method("collect").
-// rg_wait(w, m): call w is `r.m(...)` on a result r, not opted out, not under allow_join_result, outside test files.
-.decl rg_wait(w: node, m: symbol)
-rg_wait(w, m) :- kind(w, "call"), field(w, "function", fn), attr_of(fn, o, m), rg_wait_method(m), rg_result(o),
-    !rg_optout(w), !rg_allowed(w), docof(w, d), !cel_test_doc(d).
+// rg_wait(w, m, nq, nk): call w is `r.m(...)` on a result r, not opted out, not under allow_join_result, outside test
+// files.
+.decl rg_wait(w: node, m: symbol, nq: symbol, nk: symbol)
+rg_wait(w, m, nq, nk) :- kind(w, "call"), field(w, "function", fn), attr_of(fn, o, m), rg_wait_method(m),
+    rg_result(o, nq, nk), !rg_optout(w), !rg_allowed(w), docof(w, d), !cel_test_doc(d).
 
 // The cases, `cases/celery-practice-result-get-in-task/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

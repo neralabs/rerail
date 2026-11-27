@@ -15,12 +15,12 @@
 //     asyncio.run(), <loop>.run_until_complete(), async_to_sync(f)() (lib: pp_loop_entry). With a loop already running
 //     in the thread these raise RuntimeError: a crash, not a stall;
 //   - such a loop start written in the async def itself (LoopStartInAsync).
-// A step of the chain (lib: pp_step_target) is a sure call target; a def under decorators that keep calling it in the
+// A step of the chain (lib: pp_step_at) is a sure call target; a def under decorators that keep calling it in the
 // caller's thread, imported from outside the run (functools.lru_cache/cache, cachetools, tenacity.retry, backoff,
 // retrying, stamina: a name list, since their code is not in the run), which the call program leaves open; or the def
 // a decorator of the run wraps, when its wrapper calls the wrapped function in its own frame (`@wraps(f) def w(*a):
-// return f(*a)`, also from a decorator factory `@retrying(3)`). One call gives one finding, naming the nearest
-// blocking site (the least node) of every target it may have.
+// return f(*a)`, also from a decorator factory `@retrying(3)`). One call gives one finding, naming the first blocking
+// site of the reached def with the least symbol.
 //   services/http.py: def fetch(url): return requests.get(url, timeout=5)
 //   routes.py:        async def page(url): r = fetch(url)                          reported at fetch(url)
 //   routes.py:        async def page(url): r = await asyncio.to_thread(fetch, url)  not reported: fetch runs in a thread
@@ -70,92 +70,140 @@
 
 #include "lib/python_practice.rerail"
 
-.violation BlockingCallReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
-    "`{g}()` blocks the event loop (`{what}` at {p}:{o.line}), stalling every task. Await `asyncio.to_thread({g}, ...)` or make it async; leave it if it runs only before serving."
-BlockingCallReached(c, x, what, p, o) :- pbr_start(c, _), !pbr_startup(c), field(c, "function", fn), text(fn, x),
-    o = min y : { pbr_start(c, g), pbr_each(g, h), pbr_blocking(y, h) }, pp_blocking(o, _, what),
-    docof(o, d), doc(d, p, _).
-.violation LoopStartReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
-    "`{g}()` starts an event loop (`{what}` at {p}:{o.line}) while one runs in this thread: it raises RuntimeError. Await the coroutine instead, or give the helper an async twin."
-LoopStartReached(c, x, what, p, o) :- pbr_start(c, _), field(c, "function", fn), text(fn, x),
-    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pp_loop_entry(y, h, _), !pp_loop_guarded(y) },
-    pp_loop_entry(o, _, what), docof(o, d), doc(d, p, _).
+// The walk is over symbols (decision 0677: no node crosses files): a def by its symbol, a call by its term (lib:
+// pp_async_start, pp_sync_reach). Each def's first blocking call and first loop start are stated in its own file
+// (pbr_ran, pbr_loop_ran); a finding reads its call's node in its own file and names the site by its path and line.
+// Of the reached defs that block, the finding names the one with the least symbol.
+.violation BlockingCallReached(at: node, g: symbol, what: symbol, p: symbol, l: number)
+    "`{g}()` blocks the event loop (`{what}` at {p}:{l}), stalling every task. Await `asyncio.to_thread({g}, ...)` or make it async; leave it if it runs only before serving."
+BlockingCallReached(c, x, what, p, l) :- pbr_site(c, ct, fq), !pbr_startup_def(fq), pbr_first(ct, hq),
+    pbr_ran(hq, what, p, l), field(c, "function", fn), text(fn, x).
+.violation LoopStartReached(at: node, g: symbol, what: symbol, p: symbol, l: number)
+    "`{g}()` starts an event loop (`{what}` at {p}:{l}) while one runs in this thread: it raises RuntimeError. Await the coroutine instead, or give the helper an async twin."
+LoopStartReached(c, x, what, p, l) :- pbr_site(c, ct, _), pbr_loop_first(ct, hq), pbr_loop_ran(hq, what, p, l),
+    field(c, "function", fn), text(fn, x).
 .violation LoopStartInAsync(at: node, what: symbol, fx: symbol)
     "`{what}` in `async def {fx}` starts an event loop while one already runs in this thread: it raises RuntimeError. Await the coroutine directly."
 LoopStartInAsync(c, what, fx) :- pp_loop_entry(c, f, what), pp_async_def(f), pp_live(c), !pp_loop_guarded(c),
     def_name(f, fx).
 
-// pbr_start(c, g): pp_async_start, with `self.m()` in a method of class K going only to what K resolves m to. The call
-// program also answers a subclass's override (a late-bound self), which runs only for that subclass; when the subclass
-// overrides the async def too, the base's async def never runs the override.
-.decl pbr_start(c: node, g: node)
-pbr_start(c, g) :- pp_async_start(c, _, g), !pbr_self_call(c, _, _).
-pbr_start(c, g) :- pp_async_start(c, _, g), pbr_self_call(c, kq, m), mro_method(kq, m, g).
-// pbr_self_call(c, kq, m): call c is `self.m(...)` in a method of class kq.
-.decl pbr_self_call(c: node, kq: symbol, m: symbol)
-pbr_self_call(c, kq, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
-    text(r, "self"), pp_frame(c, f), nearest(f, k, scope), class_def(k, kq).
+// pbr_site(c, ct, f): call c, whose term is ct, is in async def f's own frame (f its symbol), outside test code.
+.decl pbr_site(c: node, ct: symbol, f: symbol)
+pbr_site(c, ct, fq) :- kind(c, "call"), pp_frame(c, f), pp_async_def(f), pp_live(c), pt_def(f, fq), pt_tm(c, ct).
+// pbr_start(ct, g): pp_async_start, with `self.m()` in a method of class K going only to what K resolves m to. The
+// call program also answers a subclass's override (a late-bound self), which runs only for that subclass; when the
+// subclass overrides the async def too, the base's async def never runs the override.
+.decl pbr_start(ct: symbol, g: symbol)
+pbr_start(ct, g) :- pp_async_start(ct, _, g), !pbr_self_call_at(ct, _, _).
+pbr_start(ct, g) :- pp_async_start(ct, _, g), pbr_self_call_at(ct, kq, m), mro_method_sym(kq, m, g).
+// pbr_self_call_at(ct, kq, m): the call ct is `self.m(...)` in a method of class kq. Stated in its file.
+.decl pbr_self_call_at(ct: symbol, kq: symbol, m: symbol)
+pbr_self_call_at(ct, kq, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
+    text(r, "self"), pp_frame(c, f), nearest(f, k, scope), class_def(k, kq), pt_tm(c, ct).
 // pbr_each(g, h): pp_sync_reach, but not into a def that runs once per process (pbr_once_def): what blocks each time
 // g is called.
-.decl pbr_each(g: node, h: node)
+.decl pbr_each(g: symbol, h: symbol)
 pbr_each(g, g) :- pbr_start(_, g), !pbr_once_def(g).
-pbr_each(g, h) :- pbr_each(g, x), pp_sync_step(x, _, h), !pbr_once_def(h).
-// pbr_once_def(g): g is memoized (lru_cache, cache, cachetools) and takes no argument but self or cls.
-.decl pbr_once_def(g: node)
-pbr_once_def(g) :- decorator(g, e), pp_decorator_name(e, q), pp_memoizer(q), !pbr_keyed(g).
+pbr_each(g, h) :- pbr_each(g, x), pp_sync_step(x, h), !pbr_once_def(h).
+// pbr_once_def(g): g is memoized (lru_cache, cache, cachetools) and takes no argument but self or cls. Stated in g's
+// file.
+.decl pbr_once_def(g: symbol)
+pbr_once_def(gq) :- decorator(g, e), pp_decorator_name(e, q), pp_memoizer(q), !pbr_keyed(g), pt_def(g, gq).
 .decl pbr_keyed(g: node)
 pbr_keyed(g) :- param(g, x, _), x != "self", x != "cls".
+// pbr_first(c, h): of the defs that block each time the start c reaches them, the one with the least symbol (a `min`
+// over symbols would order their ids). pbr_loop_first(c, h): the same for the defs that start a loop.
+.decl pbr_hit(ct: symbol, h: symbol)
+pbr_hit(ct, hq) :- pbr_start(ct, g), pbr_each(g, hq), pbr_ran(hq, _, _, _).
+.decl pbr_first(ct: symbol, h: symbol)
+pbr_first(ct, hq) :- pbr_hit(ct, hq), !pbr_later(ct, hq).
+.decl pbr_later(ct: symbol, h: symbol)
+pbr_later(ct, hq) :- pbr_hit(ct, hq), pbr_hit(ct, iq), iq < hq.
+.decl pbr_loop_hit(ct: symbol, h: symbol)
+pbr_loop_hit(ct, hq) :- pbr_start(ct, g), pp_sync_reach(g, hq), pbr_loop_ran(hq, _, _, _).
+.decl pbr_loop_first(ct: symbol, h: symbol)
+pbr_loop_first(ct, hq) :- pbr_loop_hit(ct, hq), !pbr_loop_later(ct, hq).
+.decl pbr_loop_later(ct: symbol, h: symbol)
+pbr_loop_later(ct, hq) :- pbr_loop_hit(ct, hq), pbr_loop_hit(ct, iq), iq < hq.
+// pbr_ran(h, what, p, l): def h's first blocking call that can run more than once (pbr_blocking), `what`, at line l
+// of path p. pbr_loop_ran(h, what, p, l): its first loop start that can raise. Stated in h's file.
+.decl pbr_ran(h: symbol, what: symbol, p: symbol, l: number)
+pbr_ran(hq, what, p, l) :- pbr_blocking(_, h), o = min y : { pbr_blocking(y, h) }, pp_blocking(o, _, what),
+    pt_def(h, hq), line(o, l), docof(o, d), doc(d, p, _).
+.decl pbr_loop_ran(h: symbol, what: symbol, p: symbol, l: number)
+pbr_loop_ran(hq, what, p, l) :- pbr_loop_start(_, h), o = min y : { pbr_loop_start(y, h) }, pp_loop_entry(o, _, what),
+    pt_def(h, hq), line(o, l), docof(o, d), doc(d, p, _).
+.decl pbr_loop_start(y: node, h: node)
+pbr_loop_start(y, h) :- pp_loop_entry(y, h, _), !pp_loop_guarded(y).
 
 // ---- startup code -------------------------------------------------------------------------------------------------
-// pbr_startup(c): call c runs while no request is served: in a startup root, or in a coroutine only startup awaits.
-.decl pbr_startup(c: node)
-pbr_startup(c) :- pp_frame(c, f), pbr_startup_def(f).
+// The walk is over symbols too: each file states its roots, its calls of async defs and the names it reads.
 // pbr_lifespan(f): the roots: a lifespan, an on_event/add_event_handler startup or shutdown handler, an entry of
-// `on_startup=[...]` or `on_shutdown=[...]` (Starlette, FastAPI).
-.decl pbr_lifespan(f: node)
-pbr_lifespan(f) :- pp_cm_def(f), kind(a, "keyword_argument"), field(a, "name", n), text(n, "lifespan"),
-    field(a, "value", v), sym_of(v, q), qualname(f, q).
-pbr_lifespan(f) :- pp_async_def(f), decorator(f, e), kind(e, "call"), field(e, "function", fn),
-    attr_of(fn, _, "on_event"), posarg(e, 0, s), text(s, t), (contains("startup", t) ; contains("shutdown", t)).
-pbr_lifespan(f) :- kind(e, "call"), field(e, "function", fn), attr_of(fn, _, "add_event_handler"), posarg(e, 0, s),
-    text(s, t), (contains("startup", t) ; contains("shutdown", t)), posarg(e, 1, r), sym_of(r, q), qualname(f, q),
-    pp_async_def(f).
-pbr_lifespan(f) :- pp_kwarg(e, k, v), (k = "on_startup" ; k = "on_shutdown"), kind(v, "list"), child(v, r, _),
-    sym_of(r, q), qualname(f, q), pp_async_def(f).
+// `on_startup=[...]` or `on_shutdown=[...]` (Starlette, FastAPI). A root named in one file (`lifespan=lifespan`,
+// `add_event_handler("startup", init)`) is a def of its qualified name, in any file.
+.decl pbr_lifespan(f: symbol)
+pbr_lifespan(fq) :- pbr_named_root(q, "cm"), pp_def_q(q, fq), pbr_cm_sym(fq).
+pbr_lifespan(fq) :- pbr_named_root(q, "async"), pp_def_q(q, fq), pp_async_sym(fq).
+pbr_lifespan(fq) :- pp_async_def(f), decorator(f, e), kind(e, "call"), field(e, "function", fn),
+    attr_of(fn, _, "on_event"), posarg(e, 0, s), text(s, t), (contains("startup", t) ; contains("shutdown", t)),
+    pt_def(f, fq).
+// pbr_named_root(q, k): q is passed as a root: as `lifespan=` (k "cm", a contextmanager), or to add_event_handler or
+// in an `on_startup=`/`on_shutdown=` list (k "async", an async def). Stated in the file that passes it.
+.decl pbr_named_root(q: symbol, k: symbol)
+pbr_named_root(q, "cm") :- kind(a, "keyword_argument"), field(a, "name", n), text(n, "lifespan"), field(a, "value", v),
+    sym_of(v, q).
+pbr_named_root(q, "async") :- kind(e, "call"), field(e, "function", fn), attr_of(fn, _, "add_event_handler"),
+    posarg(e, 0, s), text(s, t), (contains("startup", t) ; contains("shutdown", t)), posarg(e, 1, r), sym_of(r, q).
+pbr_named_root(q, "async") :- pp_kwarg(e, k, v), (k = "on_startup" ; k = "on_shutdown"), kind(v, "list"),
+    child(v, r, _), sym_of(r, q).
+.decl pbr_cm_sym(f: symbol)
+pbr_cm_sym(fq) :- pp_cm_def(f), pt_def(f, fq).
 // pbr_startup_def(f): a root, or an async def awaited from one, any depth, that nothing else may run (!pbr_runtime).
-.decl pbr_startup_def(f: node)
+.decl pbr_startup_def(f: symbol)
 pbr_startup_def(f) :- pbr_lifespan(f).
-pbr_startup_def(g) :- pbr_caller(c, g), pp_frame(c, f), pbr_startup_def(f), !pbr_runtime(g).
-// pbr_caller(c, g): live call c may run async def g: c's call target, or, when c is open, any async def of its
+pbr_startup_def(g) :- pbr_caller(ct, g), pbr_call_in(ct, f), pbr_startup_def(f), !pbr_runtime(g).
+// pbr_call_in(ct, f): call ct is in def f's own frame. Stated in its file.
+.decl pbr_call_in(ct: symbol, f: symbol)
+pbr_call_in(ct, fq) :- kind(c, "call"), pp_frame(c, f), pt_def(f, fq), pt_tm(c, ct).
+// pbr_caller(ct, g): live call ct may run async def g: ct's call target, or, when ct is open, any async def of its
 // callee's name (`server.init_async()` on a global the program cannot type).
-.decl pbr_caller(c: node, g: node)
-pbr_caller(c, g) :- call_target(c, g), pp_async_def(g), pp_live(c).
-pbr_caller(c, g) :- call_open(c), pp_live(c), field(c, "function", fn), pbr_leaf(fn, x), def_name(g, x),
-    pp_async_def(g).
+.decl pbr_caller(ct: symbol, g: symbol)
+pbr_caller(ct, g) :- pbr_live_call(ct), pp_target_at(ct, g), pp_async_sym(g).
+pbr_caller(ct, g) :- pbr_open_leaf(ct, x), pbr_async_named(x, g).
+.decl pbr_live_call(ct: symbol)
+pbr_live_call(ct) :- kind(c, "call"), pp_live(c), pt_tm(c, ct).
+// pbr_open_leaf(ct, x): live open call ct calls a callee whose last name is x. Stated in its file.
+.decl pbr_open_leaf(ct: symbol, x: symbol)
+pbr_open_leaf(ct, x) :- call_open(c), pp_live(c), field(c, "function", fn), pbr_leaf(fn, x), pt_tm(c, ct).
 .decl pbr_leaf(e: node, x: symbol)
 pbr_leaf(e, x) :- kind(e, "identifier"), text(e, x).
 pbr_leaf(e, x) :- attr_of(e, _, x).
+// pbr_async_named(x, g): async def g is named x.
+.decl pbr_async_named(x: symbol, g: symbol)
+pbr_async_named(x, gq) :- pp_async_def(g), def_name(g, x), pt_def(g, gq).
 // pbr_runtime(g): async def g, not a root, may run while requests are served: nothing in the run calls it (the
 // framework does), it has a decorator not known to keep it as it is, live code names it other than as a call's
 // callee, or a live call that may run it is not awaited in a coroutine or sits in a coroutine that may so run.
-.decl pbr_runtime(g: node)
-pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), !pbr_called(g).
-pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), pp_odd_decorator(g).
-pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), def_name(g, x), pbr_named(x).
-pbr_runtime(g) :- pbr_caller(c, g), !pbr_lifespan(g), !pbr_awaited_here(c).
-pbr_runtime(g) :- pbr_caller(c, g), !pbr_lifespan(g), pp_frame(c, f), pbr_runtime(f).
-.decl pbr_called(g: node)
+.decl pbr_runtime(g: symbol)
+pbr_runtime(g) :- pp_async_sym(g), !pbr_lifespan(g), !pbr_called(g).
+pbr_runtime(g) :- pbr_odd_async(g), !pbr_lifespan(g).
+pbr_runtime(g) :- pbr_async_named(x, g), !pbr_lifespan(g), pbr_named(x).
+pbr_runtime(g) :- pbr_caller(ct, g), !pbr_lifespan(g), !pbr_awaited_here(ct).
+pbr_runtime(g) :- pbr_caller(ct, g), !pbr_lifespan(g), pbr_call_in(ct, f), pbr_runtime(f).
+.decl pbr_called(g: symbol)
 pbr_called(g) :- pbr_caller(_, g).
-// pbr_awaited_here(c): c is the operand of `await` in an async def's own frame.
-.decl pbr_awaited_here(c: node)
-pbr_awaited_here(c) :- awaited(c), pp_frame(c, f), pp_async_def(f).
+// pbr_odd_async(g): async def g has a decorator not known to call it in the caller's thread. Stated in g's file.
+.decl pbr_odd_async(g: symbol)
+pbr_odd_async(gq) :- pp_async_def(g), pp_odd_decorator(g), pt_def(g, gq).
+// pbr_awaited_here(ct): the call ct is the operand of `await` in an async def's own frame. Stated in its file.
+.decl pbr_awaited_here(ct: symbol)
+pbr_awaited_here(ct) :- awaited(c), pp_frame(c, f), pp_async_def(f), pt_tm(c, ct).
 // pbr_named(x): live code reads the name x other than as a call's callee, a def's name or an import: a reference
-// that may hand the coroutine to code the rule does not see (`partial(app.launch, argv)`, `create_task(x)`).
+// that may hand the coroutine to code the rule does not see (`partial(app.launch, argv)`, `create_task(x)`). Each
+// file states the names it reads so.
 .decl pbr_named(x: symbol)
-pbr_named(x) :- pbr_coro_name(x), kind(n, "identifier"), text(n, x), pp_live(n), !pbr_callee_name(n),
-    !pbr_def_name_node(n), !inside(n, _, pbr_import_kind).
-.decl pbr_coro_name(x: symbol)
-pbr_coro_name(x) :- pp_async_def(g), def_name(g, x).
+pbr_named(x) :- kind(n, "identifier"), text(n, x), pp_live(n), !pbr_callee_name(n), !pbr_def_name_node(n),
+    !inside(n, _, pbr_import_kind).
 .decl pbr_callee_name(n: node)
 pbr_callee_name(n) :- kind(c, "call"), field(c, "function", n).
 pbr_callee_name(n) :- kind(c, "call"), field(c, "function", fn), kind(fn, "attribute"), field(fn, "attribute", n).

@@ -46,40 +46,62 @@
 #include "lib/celery.rerail"
 
 .violation UnknownTaskName(at: node, n: symbol) "No task in this code registers \"{n}\", so a worker would discard it. Check it against the worker's registered tasks; leave it if another service or an installed package registers it."
-UnknownTaskName(at, n) :- uk_unknown(at, n), !uk_moved(n, _).
 .violation MovedTaskName(at: node, n: symbol, q: symbol) "No task registers \"{n}\"; a task \"{q}\" has its function name, so it may have moved. Check the worker's registered tasks; leave it if another service or a package registers it."
-MovedTaskName(at, n, q) :- uk_unknown(at, n), uk_moved(n, q).
+// What the run registers, owns and uses are facts of the whole run, over names alone (uk_unknown, uk_moved:
+// cross_file). Each naming site is stated in its own file, with the string it holds (uk_ref) or the constant it reads
+// (uk_ref_sym, a symbol another file binds: uk_const), and what it needs of other files (uk_holds).
+UnknownTaskName(at, n) :- uk_ref(at, n, nq, nk), uk_holds(nq, nk), uk_unknown(n), !uk_moved(n, _), uk_live(at).
+UnknownTaskName(at, n) :- uk_ref_sym(at, q, nq, nk), uk_holds(nq, nk), uk_const(q, n), uk_unknown(n), !uk_moved(n, _),
+    uk_live(at).
+MovedTaskName(at, n, q) :- uk_ref(at, n, nq, nk), uk_holds(nq, nk), uk_unknown(n), uk_moved(n, q), uk_live(at).
+MovedTaskName(at, n, mq) :- uk_ref_sym(at, q, nq, nk), uk_holds(nq, nk), uk_const(q, n), uk_unknown(n),
+    uk_moved(n, mq), uk_live(at).
+.decl uk_live(at: node)
+uk_live(at) :- docof(at, d), !cel_test_doc(d).
 
-.decl uk_unknown(at: node, n: symbol)
-uk_unknown(at, n) :- uk_ref(at, n), !uk_known(n), uk_owned(n), !uk_celery_own(n), docof(at, d), !cel_test_doc(d).
+// ---- needs -------------------------------------------------------------------------------------------------------
+// uk_holds(q, k): lib/celery's cel_is, and this rule's own kinds, closed over the run by symbol: "uk_beat_var" (a
+// module variable whose value reaches the beat setting), "uk_beat_fn" (a run function whose result reaches it) and
+// "uk_tcls" (celery's Task, or a class of the run deriving from it or from `<app>.Task`). It spans files on purpose
+// (a beat setting reads a constant another module binds); symbols alone: cross_file.
+.decl uk_holds(q: symbol, k: symbol) cross_file
+uk_holds(q, k) :- cel_is(q, k).
+uk_holds(q, "uk_beat_var") :- uk_var_beat_if(q, nq, nk), uk_holds(nq, nk).
+uk_holds(q, "uk_beat_var") :- uk_var_read(q, nq, nk), uk_holds(nq, nk).
+uk_holds(gq, "uk_beat_fn") :- uk_fn_call(gq, nq, nk), uk_holds(nq, nk).
+uk_holds(hq, "uk_beat_fn") :- uk_holds(gq, "uk_beat_fn"), reach(gq, hq).
+uk_holds("celery.Task", "uk_tcls"). uk_holds("celery.app.task.Task", "uk_tcls").
+uk_holds(q, "uk_tcls") :- uk_tcls_if(q, nq, nk), uk_holds(nq, nk).
 
 // ---- values ------------------------------------------------------------------------------------------------------
-// uk_str_value(v, n): v is the string n, or a name or attribute resolving to a constant bound once to it: a module
-// constant of the run (cel_sym follows imports, re-exports and module aliases), a class attribute (`Cls.name`), or a
-// local name of its own function.
-.decl uk_str_value(v: node, n: symbol)
-uk_str_value(v, n) :- str(v, n).
-uk_str_value(v, n) :- unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")), cel_sym(u, q), uk_const(q, n).
-uk_str_value(v, n) :- unparen(v, u), kind(u, "identifier"), text(u, x), look(u, x, s), !kind(s, "module"),
+// uk_str_here(v, n): v is the string n, or a local name of its own function bound once to it. uk_str_sym(v, q): v is
+// a name or attribute resolving to q, a module constant of the run (cel_sym follows imports, re-exports and module
+// aliases) or a class attribute (`Cls.name`), whose value uk_const states in its own file.
+.decl uk_str_here(v: node, n: symbol)
+uk_str_here(v, n) :- str(v, n).
+uk_str_here(v, n) :- unparen(v, u), kind(u, "identifier"), text(u, x), look(u, x, s), !kind(s, "module"),
     asg(s, x, w, _), str(w, n), count : { asg(s, x, _, _) } = 1.
+.decl uk_str_sym(v: node, q: symbol)
+uk_str_sym(v, q) :- unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")), cel_sym(u, q).
+// uk_const(q, n): q, a module constant or a class attribute bound once, is the string n. Stated in q's own file.
 .decl uk_const(q: symbol, n: symbol)
-uk_const(q, n) :- cel_module_var(q, w), str(w, n), count : { cel_module_var(q, _) } = 1.
-uk_const(q, n) :- split_dot(q, cq, x), class_def(c, cq), asg(c, x, w, _), str(w, n), count : { asg(c, x, _, _) } = 1.
+uk_const(@dot(mq, x), n) :- modnode(_, m), modname(m, mq), asg(m, x, w, _), str(w, n), count : { asg(m, x, _, _) } = 1.
+uk_const(@dot(cq, x), n) :- class_def(c, cq), asg(c, x, w, _), str(w, n), count : { asg(c, x, _, _) } = 1.
 
 // ---- the names the run uses --------------------------------------------------------------------------------------
-// uk_site(e, how): expression e is where a task is named: send_task's first argument or `name=`, signature's first
-// argument, a beat entry's "task".
-.decl uk_site(e: node, how: symbol)
-uk_site(e, "send_task") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "send_task"), unparen(o, u),
-    (cel_app_ref(u) ; cel_app_value(u)), (posarg(c, 0, e) ; call_arg(c, -1, "name", e)).
-uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
+// uk_site(e, how, nq, nk): expression e is where a task is named: send_task's first argument or `name=`,
+// signature's first argument, a beat entry's "task".
+.decl uk_site(e: node, how: symbol, nq: symbol, nk: symbol)
+uk_site(e, "send_task", nq, nk) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "send_task"),
+    unparen(o, u), (cel_app_ref(u, nq, nk) ; cel_app_value(u, nq, nk)), (posarg(c, 0, e) ; call_arg(c, -1, "name", e)).
+uk_site(e, "signature", "", "") :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
     (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature" ;
     q = "celery.subtask" ; q = "celery.canvas.subtask"),
     posarg(c, 0, e).
-uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "signature"), unparen(o, u),
-    (cel_app_ref(u) ; cel_app_value(u)), posarg(c, 0, e).
-uk_site(e, "beat") :- uk_entry_key(m, "task", e), uk_entry_key(m, "schedule", _).
-uk_site(e, "beat") :- uk_entry_key(m, "task", e), uk_entry_key(m, "options", _), uk_beat_part(m).
+uk_site(e, "signature", nq, nk) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "signature"),
+    unparen(o, u), (cel_app_ref(u, nq, nk) ; cel_app_value(u, nq, nk)), posarg(c, 0, e).
+uk_site(e, "beat", "", "") :- uk_entry_key(m, "task", e), uk_entry_key(m, "schedule", _).
+uk_site(e, "beat", nq, nk) :- uk_entry_key(m, "task", e), uk_entry_key(m, "options", _), uk_beat_part(m, nq, nk).
 // uk_entry_key(m, k, v): m is a dict literal with the string key k, or a `dict(...)` call with the keyword k; v its
 // value.
 .decl uk_entry_key(m: node, k: symbol, v: node)
@@ -87,93 +109,131 @@ uk_entry_key(m, k, v) :- kind(m, "dictionary"), child(m, p, _), kind(p, "pair"),
     field(p, "value", v).
 uk_entry_key(m, k, v) :- kind(m, "call"), field(m, "function", f), builtin_ref(f, "dict"), call_arg(m, -1, k, v).
 // ---- what reaches the beat setting -------------------------------------------------------------------------------
-// uk_beat_expr(e): e's value reaches the beat setting: a beat_schedule setting's value, the value of an item assigned
-// to the setting or of its `.update(...)`, a module constant read in a beat expression or in a beat function.
-.decl uk_beat_expr(e: node)
-uk_beat_expr(u) :- cel_setting("beat_schedule", v, _), unparen(v, u).
-uk_beat_expr(u) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "value", t),
-    uk_beat_target(t), field(a, "right", v), unparen(v, u).
-uk_beat_expr(u) :- kind(c, "call"), field(c, "function", f), attr_of(f, t, "update"), uk_beat_target(t),
-    call_arg(c, _, _, v), unparen(v, u).
-uk_beat_expr(u) :- uk_beat_read(r), (kind(r, "identifier") ; kind(r, "attribute")), cel_sym(r, q),
-    cel_module_var(q, w), unparen(w, u).
-// uk_beat_read(r): r is a beat expression or lies in one, or lies in a beat function.
-.decl uk_beat_read(r: node)
-uk_beat_read(e) :- uk_beat_expr(e).
-uk_beat_read(r) :- uk_beat_expr(e), within(r, e).
-uk_beat_read(r) :- uk_beat_fn(g), within(r, g).
-// uk_beat_fn(g): a run function whose result reaches the beat setting: called in a beat expression
-// (`CELERY_BEAT_SCHEDULE = parse_beat_schedule()`), or reached from one through the call graph.
-.decl uk_beat_fn(g: node)
-uk_beat_fn(g) :- uk_beat_expr(e), uk_beat_call(e, g).
-uk_beat_fn(g) :- uk_beat_expr(e), within(c, e), uk_beat_call(c, g).
-uk_beat_fn(h) :- uk_beat_fn(g), reach(g, h).
-.decl uk_beat_call(c: node, g: node)
-uk_beat_call(c, g) :- kind(c, "call"), field(c, "function", f), cel_sym(f, q), qualname(g, q),
-    kind(g, "function_definition").
-// uk_beat_target(t): t is the beat setting: `<x>.conf.beat_schedule`, or a name bound to a beat expression
+// uk_beat_expr(e, nq, nk): e's value reaches the beat setting: a beat_schedule setting's value, the value of an item
+// assigned to the setting or of its `.update(...)`, the value of a module constant that reaches it ("uk_beat_var":
+// one read in a beat expression or in a beat function, through imports).
+.decl uk_beat_expr(e: node, nq: symbol, nk: symbol)
+uk_beat_expr(u, "", "") :- cel_setting("beat_schedule", v, _), unparen(v, u).
+uk_beat_expr(u, nq, nk) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "value", t),
+    uk_beat_target(t, nq, nk), field(a, "right", v), unparen(v, u).
+uk_beat_expr(u, nq, nk) :- kind(c, "call"), field(c, "function", f), attr_of(f, t, "update"),
+    uk_beat_target(t, nq, nk), call_arg(c, _, _, v), unparen(v, u).
+uk_beat_expr(u, q, "uk_beat_var") :- cel_module_var(q, w), unparen(w, u).
+// uk_beat_read(r, nq, nk): r is a beat expression or lies in one.
+.decl uk_beat_read(r: node, nq: symbol, nk: symbol)
+uk_beat_read(e, nq, nk) :- uk_beat_expr(e, nq, nk).
+uk_beat_read(r, nq, nk) :- uk_beat_expr(e, nq, nk), within(r, e).
+// uk_var_beat_if(q, nq, nk): module variable q's own value reaches the beat setting (a beat_schedule setting's
+// value). uk_var_read(q, nq, nk): q is read in a beat expression, or in a function ("uk_beat_fn"). Each stated in
+// its own file, by symbol.
+.decl uk_var_beat_if(q: symbol, nq: symbol, nk: symbol)
+uk_var_beat_if(q, nq, nk) :- cel_module_var(q, w), unparen(w, u), uk_beat_expr(u, nq, nk).
+.decl uk_var_read(q: symbol, nq: symbol, nk: symbol)
+uk_var_read(q, nq, nk) :- uk_beat_read(r, nq, nk), (kind(r, "identifier") ; kind(r, "attribute")), cel_run_var(r, q).
+uk_var_read(q, gq, "uk_beat_fn") :- kind(g, "function_definition"), within(r, g),
+    (kind(r, "identifier") ; kind(r, "attribute")), cel_run_var(r, q), qualname(g, gq).
+// uk_fn_call(g, nq, nk): a beat expression calls run function g (`CELERY_BEAT_SCHEDULE = parse_beat_schedule()`); the
+// functions g reaches through the call graph (python/calls' reach) are beat functions too (uk_holds).
+.decl uk_fn_call(g: symbol, nq: symbol, nk: symbol)
+uk_fn_call(gq, nq, nk) :- uk_beat_read(c, nq, nk), kind(c, "call"), field(c, "function", f), cel_run_def(f, gq).
+// uk_beat_target(t, nq, nk): t is the beat setting: `<x>.conf.beat_schedule`, or a name bound to a beat expression
 // (`CELERY_BEAT_SCHEDULE`, a celeryconfig's `beat_schedule`).
-.decl uk_beat_target(t: node)
-uk_beat_target(t) :- attr_of(t, o, "beat_schedule"), attr_of(o, _, "conf").
-uk_beat_target(t) :- (kind(t, "identifier") ; kind(t, "attribute")), cel_sym(t, q), cel_module_var(q, w),
-    unparen(w, u), uk_beat_expr(u).
-// uk_beat_part(m): dict m reaches the beat setting.
-.decl uk_beat_part(m: node)
-uk_beat_part(m) :- uk_entry_key(m, "options", _), uk_beat_read(m).
-// uk_ref(e, n): site e names the task n.
-.decl uk_ref(e: node, n: symbol)
-uk_ref(e, n) :- uk_site(e, _), uk_str_value(e, n).
+.decl uk_beat_target(t: node, nq: symbol, nk: symbol)
+uk_beat_target(t, "", "") :- attr_of(t, o, "beat_schedule"), attr_of(o, _, "conf").
+uk_beat_target(t, q, "uk_beat_var") :- (kind(t, "identifier") ; kind(t, "attribute")), cel_run_var(t, q).
+// uk_beat_part(m, nq, nk): dict m reaches the beat setting: it lies in a beat expression, or in a beat function.
+.decl uk_beat_part(m: node, nq: symbol, nk: symbol)
+uk_beat_part(m, nq, nk) :- uk_entry_key(m, "options", _), uk_beat_read(m, nq, nk).
+uk_beat_part(m, gq, "uk_beat_fn") :- uk_entry_key(m, "options", _), kind(g, "function_definition"), within(m, g),
+    qualname(g, gq).
+// uk_ref(e, n, nq, nk): site e names the task n. uk_ref_sym(e, q, nq, nk): site e names the task uk_const(q, _).
+.decl uk_ref(e: node, n: symbol, nq: symbol, nk: symbol)
+uk_ref(e, n, nq, nk) :- uk_site(e, _, nq, nk), uk_str_here(e, n).
+.decl uk_ref_sym(e: node, q: symbol, nq: symbol, nk: symbol)
+uk_ref_sym(e, q, nq, nk) :- uk_site(e, _, nq, nk), uk_str_sym(e, q).
 
 // ---- the names the run registers ---------------------------------------------------------------------------------
 // uk_reg(n, how): a task of the run is registered as n, "explicit" (a name= or a class's name attribute) or "implicit"
-// (<module>.<def>, <module>.<Class>).
-.decl uk_reg(n: symbol, how: symbol)
-uk_reg(n, "explicit") :- cel_task_option(_, "name", v), uk_str_value(v, n).
-uk_reg(n, "implicit") :- cel_task_name(f, n), !cel_task_option(f, "name", _).
-// `app.task(fn)`, `app.task(fn, name=...)`, `shared_task(name=...)(fn)` called as functions.
-uk_reg(n, "explicit") :- uk_wrap_call(c, _), uk_wrap_name(c, v), uk_str_value(v, n).
-uk_reg(q, "implicit") :- uk_wrap_call(c, g), !uk_wrap_name(c, _), qualname(g, q).
-.decl uk_wrap_call(c: node, g: node)
-uk_wrap_call(c, g) :- kind(c, "call"), field(c, "function", fn), cel_task_fn(fn), posarg(c, 0, a), cel_sym(a, q),
-    qualname(g, q), kind(g, "function_definition").
-uk_wrap_call(c, g) :- kind(c, "call"), field(c, "function", k), kind(k, "call"), field(k, "function", fn),
-    cel_task_fn(fn), posarg(c, 0, a), cel_sym(a, q), qualname(g, q), kind(g, "function_definition").
+// (<module>.<def>, <module>.<Class>). A fact of the whole run (cross_file, names alone), from what each file states
+// of its own tasks: uk_reg_here (a string), uk_reg_sym (a constant, uk_const).
+.decl uk_reg(n: symbol, how: symbol) cross_file
+uk_reg(n, how) :- uk_reg_here(n, how, nq, nk), uk_holds(nq, nk).
+uk_reg(n, how) :- uk_reg_sym(q, how, nq, nk), uk_holds(nq, nk), uk_const(q, n).
+.decl uk_reg_here(n: symbol, how: symbol, nq: symbol, nk: symbol)
+.decl uk_reg_sym(q: symbol, how: symbol, nq: symbol, nk: symbol)
+uk_reg_here(n, "explicit", nq, nk) :- cel_task_option(_, "name", v, nq, nk), uk_str_here(v, n).
+uk_reg_sym(q, "explicit", nq, nk) :- cel_task_option(_, "name", v, nq, nk), uk_str_sym(v, q).
+uk_reg_here(n, "implicit", nq, nk) :- cel_task_name(f, n, nq, nk), !cel_task_named_opt(f).
+// `app.task(fn)`, `app.task(fn, name=...)`, `shared_task(name=...)(fn)` called as functions, fn a def or class of
+// the run.
+uk_reg_here(n, "explicit", nq, nk) :- uk_wrap_call(c, nq, nk), uk_wrap_name(c, v), uk_str_here(v, n).
+uk_reg_sym(q, "explicit", nq, nk) :- uk_wrap_call(c, nq, nk), uk_wrap_name(c, v), uk_str_sym(v, q).
+uk_reg_here(q, "implicit", nq, nk) :- uk_wrap_call(c, nq, nk), !uk_wrap_named(c), posarg(c, 0, a), cel_run_def(a, q).
+.decl uk_wrap_call(c: node, nq: symbol, nk: symbol)
+uk_wrap_call(c, nq, nk) :- kind(c, "call"), field(c, "function", fn), cel_task_fn(fn, nq, nk), posarg(c, 0, a),
+    cel_run_def(a, _).
+uk_wrap_call(c, nq, nk) :- kind(c, "call"), field(c, "function", k), kind(k, "call"), field(k, "function", fn),
+    cel_task_fn(fn, nq, nk), posarg(c, 0, a), cel_run_def(a, _).
 .decl uk_wrap_name(c: node, v: node)
-uk_wrap_name(c, v) :- uk_wrap_call(c, _), call_arg(c, -1, "name", v).
-uk_wrap_name(c, v) :- uk_wrap_call(c, _), field(c, "function", k), kind(k, "call"), call_arg(k, -1, "name", v).
-uk_reg(n, "explicit") :- uk_task_class(c), uk_class_name_attr(c, v), uk_str_value(v, n).
-uk_reg(@dot(mq, x), "implicit") :- uk_task_class(c), !uk_class_name_attr(c, _), def_name(c, x), docof(c, d),
-    doc(d, _, mq), mq != "", nearest(c, m, scope), kind(m, "module").
-.decl uk_known(n: symbol)
-uk_known(n) :- uk_ref(_, n), uk_reg(n, _).
-uk_known(n) :- uk_ref(_, n), uk_reg(q, "implicit"), suffix(cat(".", n), q).
-// uk_task_class(c): c derives from celery's Task, directly, through `<app>.Task`, or through the run's classes.
-.decl uk_task_class_q(q: symbol)
-uk_task_class_q("celery.Task"). uk_task_class_q("celery.app.task.Task").
-uk_task_class_q(q) :- uk_task_class(c), class_def(c, q).
-.decl uk_task_class(c: node)
-uk_task_class(c) :- kind(c, "class_definition"), cel_class_base(c, b), uk_task_class_q(b).
-uk_task_class(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"),
-    unparen(o, u), (cel_app_ref(u) ; cel_app_value(u)).
+uk_wrap_name(c, v) :- kind(c, "call"), call_arg(c, -1, "name", v).
+uk_wrap_name(c, v) :- kind(c, "call"), field(c, "function", k), kind(k, "call"), call_arg(k, -1, "name", v).
+.decl uk_wrap_named(c: node)
+uk_wrap_named(c) :- uk_wrap_name(c, _).
+// A task class: registered under its `name` attribute (such a value), else <module>.<Class>.
+uk_reg_here(n, "explicit", nq, nk) :- uk_task_class(c, nq, nk), uk_class_name_attr(c, v), uk_str_here(v, n).
+uk_reg_sym(q, "explicit", nq, nk) :- uk_task_class(c, nq, nk), uk_class_name_attr(c, v), uk_str_sym(v, q).
+uk_reg_here(@dot(mq, x), "implicit", nq, nk) :- uk_task_class(c, nq, nk), !uk_class_named(c), def_name(c, x),
+    docof(c, d), doc(d, _, mq), mq != "", nearest(c, m, scope), kind(m, "module").
+// uk_task_class(c, nq, nk): c derives from celery's Task, directly, through `<app>.Task`, or through the run's
+// classes ("uk_tcls" of a base). uk_tcls_if: the same by symbol, for the classes deriving from c.
+.decl uk_task_class(c: node, nq: symbol, nk: symbol)
+uk_task_class(c, b, "uk_tcls") :- kind(c, "class_definition"), cel_class_base(c, b).
+uk_task_class(c, nq, nk) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _),
+    attr_of(e, o, "Task"), unparen(o, u), (cel_app_ref(u, nq, nk) ; cel_app_value(u, nq, nk)).
+.decl uk_tcls_if(q: symbol, nq: symbol, nk: symbol)
+uk_tcls_if(q, nq, nk) :- uk_task_class(c, nq, nk), class_def(c, q).
 // uk_class_name_attr(c, v): `name = v` in c's body (any value: one that does not resolve registers no implicit name).
 .decl uk_class_name_attr(c: node, v: node)
 uk_class_name_attr(c, v) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "name"),
     field(a, "right", v).
+.decl uk_class_named(c: node)
+uk_class_named(c) :- uk_class_name_attr(c, _).
+
+// ---- the names asked about ---------------------------------------------------------------------------------------
+// uk_name(n): a string some site names a task by (a superset: whatever its site needs). uk_unknown(n): no task of
+// the run registers n, the run owns n, and n is none of Celery's own. Facts of the whole run, over names alone.
+.decl uk_name(n: symbol) cross_file
+uk_name(n) :- uk_ref_name(n).
+uk_name(n) :- uk_ref_const(q), uk_const(q, n).
+.decl uk_ref_name(n: symbol)
+uk_ref_name(n) :- uk_ref(_, n, _, _).
+.decl uk_ref_const(q: symbol)
+uk_ref_const(q) :- uk_ref_sym(_, q, _, _).
+.decl uk_unknown(n: symbol) cross_file
+uk_unknown(n) :- uk_name(n), !uk_known(n), uk_owned(n), !uk_celery_own(n).
+.decl uk_known(n: symbol)
+uk_known(n) :- uk_name(n), uk_reg(n, _).
+uk_known(n) :- uk_name(n), uk_reg(q, "implicit"), suffix(cat(".", n), q).
 
 // ---- ownership ---------------------------------------------------------------------------------------------------
 // uk_owned(n): n's module part is exactly a module of the run, or n's first segment is shared by an explicit dotted
 // name. A module that merely ends with n's module part (`app.tasks` for `tasks.x`) does not own it: another service's
 // worker may well have a top-level `tasks` module.
-.decl uk_owned(n: symbol)
-uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", doc(_, _, m).
-uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", h = @head(n), uk_reg(x, "explicit"), x != h, @head(x) = h.
+.decl uk_owned(n: symbol) cross_file
+uk_owned(n) :- uk_name(n), split_dot(n, m, _), m != "", uk_module(m).
+uk_owned(n) :- uk_name(n), split_dot(n, m, _), m != "", h = @head(n), uk_reg(x, "explicit"), x != h, @head(x) = h.
+.decl uk_module(m: symbol)
+uk_module(m) :- doc(_, _, m).
 // uk_celery_own(n): Celery's own tasks (celery/app/builtins.py registers them as `celery.*`).
 .decl uk_celery_own(n: symbol)
-uk_celery_own(n) :- uk_ref(_, n), @head(n) = "celery".
-// uk_moved(n, q): a task whose def is named for n's last segment is registered as q.
-.decl uk_moved(n: symbol, q: symbol)
-uk_moved(n, q) :- uk_ref(_, n), split_dot(n, _, x), cel_task(f), def_name(f, x), cel_task_name(f, q), q != n.
+uk_celery_own(n) :- uk_name(n), @head(n) = "celery".
+// uk_moved(n, q): a task whose def is named for n's last segment is registered as q. Each file states its tasks' def
+// names and registered names (uk_task_def).
+.decl uk_moved(n: symbol, q: symbol) cross_file
+uk_moved(n, q) :- uk_name(n), split_dot(n, _, x), uk_task_def(x, q, nq, nk), uk_holds(nq, nk), q != n.
+.decl uk_task_def(x: symbol, q: symbol, nq: symbol, nk: symbol)
+uk_task_def(x, q, nq, nk) :- cel_task(f, nq, nk), def_name(f, x), cel_task_name(f, q, nq, nk).
 
 // The cases, `cases/celery-practice-unknown-task-name/`: one repository in which each line ending in `# caught` is
 // reported and no other line.

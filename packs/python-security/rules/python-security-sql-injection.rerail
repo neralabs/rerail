@@ -5,7 +5,7 @@
 .scope include "**/*.py"
 // Rerail's own rule, not a port. Client request data (lib/security's sec_source, a FastAPI/Flask route parameter, a
 // Django URL kwarg captured as text) that reaches the SQL text of a query through an f-string, `%`, `+`,
-// `.format()` or `.join()` (sec_built), in the same function or through the project's helpers in other files, lets
+// `.format()` or `.join()` (sqli_built), in the same function or through the project's helpers in other files, lets
 // the client write SQL. The SQL-text argument of these calls is the sink, never the params argument:
 //   - Django: `<qs/manager>.raw(sql, …)`, the string items of `.extra(select=…, where=[…], tables=[…],
 //     order_by=[…])`, `django.db.models.expressions.RawSQL(sql, …)`;
@@ -50,14 +50,23 @@
 
 #include "lib/security.rerail"
 
+// Per file and across files (lib/security's origins): each file states what its query calls take by origin
+// (sec_fhit), and a finding reads the cross-file answer by its sink's term (sec_xfirst): its first source, so one
+// sink is reported once.
 .violation SqlInjection(at: node, what: symbol, p: symbol, l: number) "SQL text built from {what} ({p}:{l}): pass the value as a query parameter, or map identifiers through a dict. Leave it if the value is already limited to fixed choices or a number."
-SqlInjection(c, what, p, l) :- sqli_sql_arg(c, v), s = min s2 : { sqli_built(v, s2) }, sec_origin(s, what, p, l),
-    docof(c, d), !sec_test_doc(d).
+SqlInjection(c, what, p, l) :- sqli_sql_arg(c, _), pt_tm(c, ct), sec_xfirst("sql", ct, k), sec_src_info(k, what, p, l).
+sec_fhit("sql", c, o) :- sqli_sql_arg(c, v), sqli_built(v, o), docof(c, d), !sec_test_doc(d).
+// A fragment is reported per fragment, when it is no built string (sqli_xbuilt: by what other files say of it).
 .violation SqlFragment(at: node, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is used whole as an SQL fragment inside this query. Map it to a fixed column or clause through a dict; leave it if it was checked against an allow-list first."
-SqlFragment(c, what, p, l) :- sqli_fragment(c, v), !sqli_built(v, _), s = min s2 : { sqli_whole(v, s2) },
-    sec_origin(s, what, p, l), docof(c, d), !sec_test_doc(d).
+SqlFragment(c, what, p, l) :- sqli_fragment(c, v), pt_tm(v, vt), !sqli_xbuilt(vt), sec_xfirst("frag", vt, k),
+    sec_src_info(k, what, p, l).
+sec_fhit("frag", v, o) :- sqli_fragment(c, v), sqli_whole(v, o), docof(c, d), !sec_test_doc(d).
+// sqli_xbuilt(v): fragment v, by its term, holds a string built from client data.
+.decl sqli_xbuilt(v: symbol) cross_file
+sqli_xbuilt(vt) :- sqli_fragment(_, v), sqli_built(v, o), (prefix("S|", o) ; sec_xres(o, _)), pt_tm(v, vt).
 // The functions that hold a query call are this rule's sinks: a validator-named helper that runs one is no check.
-sec_sink_fn(g) :- sqli_sql_arg(c, _), nearest(c, g, fdef).
+sec_sink_fn(gq) :- sqli_sql_arg(c, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_flavor("sqb").
 
 // ---- sinks: the SQL-text argument of a query call ---------------------------------------------------------------
 // sqli_sql_arg(c, v): v is (an item of) the SQL text call c runs.
@@ -150,47 +159,64 @@ sqli_frag_method("order_by"). sqli_frag_method("where"). sqli_frag_method("filte
 sqli_frag_method("group_by"). sqli_frag_method("join"). sqli_frag_method("outerjoin").
 sqli_frag_method("select_from"). sqli_frag_method("add_columns"). sqli_frag_method("with_only_columns").
 sqli_frag_method("columns"). sqli_frag_method("returning"). sqli_frag_method("distinct").
-// sqli_whole(v, s): fragment v is client text from s that its function did not check.
-.decl sqli_whole(v: node, s: node)
-sqli_whole(v, s) :- sqli_fragment(_, v), sec_tainted(v, s), !sqli_safe_piece(v), !sec_checked_expr(v).
+// sqli_whole(v, o): fragment v is client text from origin o that its function did not check (sqli_safe_piece,
+// sec_checked_expr); a check call of the run passes it through a gate (`G|e:sqw:…|`).
+.decl sqli_whole(v: node, o: symbol)
+sqli_whole(v, o) :- sqli_whole_in(v), sec_tainted(v, o), !sec_echk_any("sqw", v).
+sqli_whole(v, g) :- sqli_whole_in(v), sec_tainted(v, _), sec_egate("sqw", "t", v, g).
+sec_gin(g, o) :- sqli_whole_in(v), sec_tainted(v, o), sec_egate("sqw", "t", v, g).
+.decl sqli_whole_in(v: node)
+sqli_whole_in(v) :- sqli_fragment(_, v), !sqli_safe_piece(v), !sec_checked_expr(v).
+sec_echk_c("sqw", v, t) :- sqli_fragment(_, v), (sqli_piece_c(v, t) ; sec_checked_expr_c(v, t)).
 
 // ---- strings built from client data, minus the pieces the rule trusts -------------------------------------------
-// lib/security's sec_built, with each spliced piece dropped when its function checks it (sec_checked: a
-// validator-named call or an `in` test), and the parts of a `%` tuple or `.format()` call judged one by one.
+// Strings built from client data (lib/security's sec_build, sec_tainted), with each spliced piece dropped when its
+// function checks it (sec_checked: a validator-named call or an `in` test), and the parts of a `%` tuple or
+// `.format()` call judged one by one. A check call of the run passes a piece through a gate (`G|e:sqp:…|`).
 .decl sqli_safe_piece(a: node)
 sqli_safe_piece(a) :- unparen(a, i), kind(i, "identifier"), text(i, x), nearest(a, h, fscope), sec_checked(h, x).
-// sqli_piece(a, s): spliced value a carries client data from s through a piece the rule does not trust.
-.decl sqli_piece(a: node, s: node)
-sqli_piece(a, s) :- sec_build(_, a), unparen(a, t), !sec_container(t), !sqli_safe_piece(a), sqli_carries(a, s).
-sqli_piece(a, s) :- sec_build(_, a), unparen(a, t), sec_container(t), child(t, i, _), !kind(i, "comment"),
-    !sqli_safe_piece(i), sqli_carries(i, s).
-// sqli_carries(a, s): a holds client data from s, as itself or as a string already built around it (`clause` in
+.decl sqli_piece_c(a: node, t: symbol)
+sqli_piece_c(a, t) :- unparen(a, i), kind(i, "identifier"), text(i, x), nearest(a, h, fscope), sec_checked_c(h, x, t).
+// sqli_piece(a, o): spliced value a carries client data from origin o through a piece the rule does not trust.
+.decl sqli_piece(a: node, o: symbol)
+sqli_piece(a, o) :- sqli_piece_at(a), sqli_carries(a, o), !sec_echk_any("sqp", a).
+sqli_piece(a, g) :- sqli_piece_at(a), sqli_carries(a, _), sec_egate("sqp", "sqb", a, g).
+sec_gin(g, o) :- sqli_piece_at(a), sqli_carries(a, o), sec_egate("sqp", "sqb", a, g).
+// sqli_piece_at(a): a, a spliced value or an item of a spliced container, is no checked piece; sqli_piece_of(a, p):
+// it stands for spliced value p.
+.decl sqli_piece_at(a: node)
+sqli_piece_at(a) :- sqli_piece_of(a, _), !sqli_safe_piece(a).
+.decl sqli_piece_of(a: node, p: node)
+sqli_piece_of(a, a) :- sec_build(_, a), unparen(a, t), !sec_container(t).
+sqli_piece_of(i, a) :- sec_build(_, a), unparen(a, t), sec_container(t), child(t, i, _), !kind(i, "comment").
+sec_echk_c("sqp", a, t) :- sqli_piece_of(a, _), sqli_piece_c(a, t).
+// sqli_carries(a, o): a holds client data from o, as itself or as a string already built around it (`clause` in
 // `clause = " OR ".join(f"t = '{t}'" for t in tags)`, which sec_tainted does not reach).
-.decl sqli_carries(a: node, s: node)
-sqli_carries(a, s) :- sec_tainted(a, s).
-sqli_carries(a, s) :- sqli_built(a, s).
-.decl sqli_build(e: node, s: node)
-sqli_build(e, s) :- sec_build(e, a), sqli_piece(a, s).
+.decl sqli_carries(a: node, o: symbol)
+sqli_carries(a, o) :- sec_tainted(a, o).
+sqli_carries(a, o) :- sqli_built(a, o).
+.decl sqli_build(e: node, o: symbol)
+sqli_build(e, o) :- sec_build(e, a), sqli_piece_of(i, a), sqli_piece(i, o).
 // `sep.join(<generator>)`: a lone generator argument is the call's whole argument list, which sec_build misses.
-sqli_build(e, s) :- kind(e, "call"), call_name(e, "join"), field(e, "arguments", g), kind(g, "generator_expression"),
-    field(g, "body", b), sqli_carries(b, s).
-.decl sqli_built(e: node, s: node)
-sqli_built(e, s) :- sqli_build(e, s).
-sqli_built(p, s) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, sqli_built(a, s).
-sqli_built(b, s) :- kind(b, "binary_operator"), op(b, "+"), (field(b, "left", a) ; field(b, "right", a)),
-    sqli_built(a, s).
-sqli_built(t, x) :- kind(t, "string"), child(t, i, _), kind(i, "interpolation"), field(i, "expression", a),
-    sqli_built(a, x).
-sqli_built(c, x) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)), sqli_built(a, x).
-sqli_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sqli_built(v, s), r != v.
-sqli_built(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), sqli_param_built(g, x, s).
-sqli_built(c, s) :- call_target(c, g), sqli_returns_built(g, s), !sec_validator_def(g), call_arg(c, _, _, a),
-    sec_tainted(a, s).
-sqli_built(c, s) :- call_target(c, g), sqli_returns_built(g, s), !sec_validator_def(g), sec_own_source(g, s).
-.decl sqli_param_built(g: node, x: symbol, s: node)
-sqli_param_built(g, x, s) :- sec_param_at(_, g, a, x), sqli_built(a, s).
-.decl sqli_returns_built(g: node, s: node)
-sqli_returns_built(g, s) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sqli_built(v, s).
+sqli_build(e, o) :- kind(e, "call"), call_name(e, "join"), field(e, "arguments", g), kind(g, "generator_expression"),
+    field(g, "body", b), sqli_carries(b, o).
+// sqli_built(e, o): e is a string built from client data from origin o: a parameter's is what the callers pass as
+// one (`P|sqb|…`), a call's is what its function returns as one (`R|sqb|…`), at a call that passed it client data
+// or of a function that read it itself.
+.decl sqli_built(e: node, o: symbol)
+sqli_built(e, o) :- sqli_build(e, o).
+sqli_built(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, sqli_built(a, o).
+sqli_built(b, o) :- kind(b, "binary_operator"), op(b, "+"), (field(b, "left", a) ; field(b, "right", a)),
+    sqli_built(a, o).
+sqli_built(t, o) :- kind(t, "string"), child(t, i, _), kind(i, "interpolation"), field(i, "expression", a),
+    sqli_built(a, o).
+sqli_built(c, o) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)), sqli_built(a, o).
+sqli_built(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sqli_built(v, o), r != v.
+sqli_built(r, o) :- sec_porig(r, "sqb", _, _, o).
+sqli_built(c, o) :- sec_rorig(c, "sqb", o).
+sec_fpass("sqb", c, a, o) :- call_arg(c, _, _, a), sqli_built(a, o).
+sec_fctx("sqb", c, o) :- call_arg(c, _, _, a), sec_tainted(a, o).
+sec_fret("sqb", g, o) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sqli_built(v, o).
 
 // The cases, `cases/python-security-sql-injection/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

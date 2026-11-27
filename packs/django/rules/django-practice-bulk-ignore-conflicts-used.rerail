@@ -27,23 +27,27 @@
 // The objects are the call's result (`created = M.objects.bulk_create(objs, ignore_conflicts=True)`, awaited or not),
 // its input list name (`objs`), or the call itself (`for o in M.objects.bulk_create(...)`), read after the call with
 // no rebinding of the name in between. A def that returns them (`return M.objects.bulk_create(...)`, or `return objs`
-// after the call) hands them to its callers (python/calls): a caller's `x = f(...)` holds them too.
+// after the call) hands them to its callers (python/calls' call_target, by the def's symbol, in any file): a caller's
+// `x = f(...)` holds them too.
 // The receiver is a Django queryset or manager (`M.objects`, `M.tags.through.objects`), a manager of a model of the
 // run by any name (`Issue.issue_objects`), or the file imports Django.
 // The model: resolved through imports, aliases and re-exports (python/names' sym_of), from the receiver (`M.<any
 // manager>`, `M.objects.using(...)`) or from the objects' constructor (`[M(...) for ...]`, `objs.append(M(...))`),
-// whatever the receiver (`self.model.objects`). Its fields and Meta are read in its body and in every class of the run
-// among its bases, in any file; a field is read by its arguments (`unique=`, `primary_key=`, `default=`), whatever
-// its class. Two cases are left alone:
+// whatever the receiver (`self.model.objects`), and read by its symbol in the rows the phase py_names hands on for the
+// modules the file reads (lib/django's dj_model_named), whatever file defines it. Its fields are read in its body and
+// in every class of the run among its ancestors (py_names' member_call/anc_call and member_kw/anc_kw), its Meta as
+// Django inherits it (lib/django's dj_model_group, dj_model_opaque); a field is read by its arguments (`unique=`,
+// `primary_key=`, `default=`), whatever its class. Two cases are left alone:
 //   - keyed objects (uses only; a len() still counts objects, not rows): the key is a Django field the code fills
 //     (`name = CharField(primary_key=True)`, `OneToOneField(primary_key=True)`: no default, no db_default, no
 //     AutoField), or the def gives the key itself, in the constructor (`Event(id=k)`, `pk=`, or the key field's
 //     name) or by assigning it (`event.pk = k`). A conflict on that key means the row with that key exists, so the
 //     object names the stored row either way.
 //   - models no row can conflict on: the key is generated (an auto id, an AutoField, or a key with `default=` or
-//     `db_default=`), no other field has `unique=` (not False) or is a OneToOneField, no Meta has `unique_together`,
-//     a UniqueConstraint, or `constraints` given by a name the rule does not follow, and every base is a class of the
-//     run or Django's Model. There `ignore_conflicts` is dead and the objects are the stored rows.
+//     `db_default=`), no other field has `unique=` (not False) or is a OneToOneField, no Meta option keeps fields
+//     unique together (`unique_together`, a UniqueConstraint, with or without a condition) or holds one the rule does
+//     not read (`constraints` given by a name), and every ancestor outside the run is Django's Model. There
+//     `ignore_conflicts` is dead and the objects are the stored rows.
 // Name lists kept, where nothing better is decidable: Django's auto field classes (AutoField, BigAutoField,
 // SmallAutoField: a closed set) and its one-object relation classes (lib/django's dj_fk_class).
 //   for invite in Invite.objects.bulk_create(invites, ignore_conflicts=True): send_invite.delay(invite.token)
@@ -74,18 +78,23 @@
 #include "lib/django.rerail"
 
 .violation IgnoredConflictRowsUsed(at: node, what: symbol) "{what} holds objects from bulk_create(ignore_conflicts=True): no keys set, conflicts skipped. Re-fetch the rows by their unique fields and use those; if no object can conflict, drop ignore_conflicts."
-IgnoredConflictRowsUsed(r, what) :- bic_read(r, _, what, c), !bic_keyed(c), bic_use(r), docof(r, d), !dj_test_doc(d).
-.violation IgnoredConflictRowsCounted(at: node, what: symbol) "len() of {what} counts the objects given to bulk_create(ignore_conflicts=True), not rows inserted. Count rows with a query where it must mean inserted; leave it where it means objects processed."
-IgnoredConflictRowsCounted(c, what) :- bic_read(r, _, what, _), bic_result(r), kind(c, "call"), field(c, "function", fn),
-    sym_of(fn, "builtins.len"), posarg(c, 0, a), unparen(a, r), !posarg(c, 1, _), !py_empty_test(c), docof(c, d),
+IgnoredConflictRowsUsed(r, what) :- bic_read0(r, _, what, c), !bic_keyed(c), bic_use(r), docof(r, d), !dj_test_doc(d).
+IgnoredConflictRowsUsed(r, what) :- bic_read1(r, _, what, gq), bic_ret(gq, "unkeyed"), bic_use(r), docof(r, d),
     !dj_test_doc(d).
-// bic_result(r): read r is of the call's result (the call, or a name assigned from it), not of the input list only:
-// `len(objs)` after `bulk_create(objs, ...)` counts the objects processed as often as it claims rows inserted.
+.violation IgnoredConflictRowsCounted(at: node, what: symbol) "len() of {what} counts the objects given to bulk_create(ignore_conflicts=True), not rows inserted. Count rows with a query where it must mean inserted; leave it where it means objects processed."
+IgnoredConflictRowsCounted(c, what) :- bic_len(c, r), bic_read0(r, _, what, _), bic_result(r).
+IgnoredConflictRowsCounted(c, what) :- bic_len(c, r), bic_read1(r, _, what, gq), bic_ret(gq, _).
+// bic_len(c, r): c is `len(r)`, read as a number (not only tested for being 0), outside test code.
+.decl bic_len(c: node, r: node)
+bic_len(c, r) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, "builtins.len"), posarg(c, 0, a), unparen(a, r),
+    !posarg(c, 1, _), !py_empty_test(c), docof(c, d), !dj_test_doc(d).
+// bic_result(r): level-0 read r is of the call's result (the call, or a name assigned from it), not of the input list
+// only: `len(objs)` after `bulk_create(objs, ...)` counts the objects processed as often as it claims rows inserted. A
+// level-1 read is always of a result: the value a def returns.
 .decl bic_result(r: node)
 bic_result(w) :- bic_value0(w, _, _, _).
-bic_result(w) :- bic_value1(w, _, _, _).
-bic_result(i) :- bic_read(i, f, _, _), kind(i, "identifier"), text(i, x), kind(a, "assignment"), field(a, "left", l),
-    kind(l, "identifier"), text(l, x), field(a, "right", v), unparen(v, w), (bic_value0(w, f, _, _) ; bic_value1(w, f, _, _)).
+bic_result(i) :- bic_read0(i, f, _, _), kind(i, "identifier"), text(i, x), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), field(a, "right", v), unparen(v, w), bic_value0(w, f, _, _).
 
 // ---- the call --------------------------------------------------------------------------------------------------
 // bic_call(c): c is `<receiver>.bulk_create(..., ignore_conflicts=True)` or abulk_create, the receiver a Django
@@ -102,148 +111,145 @@ bic_django(c, o) :- bic_bulk(c, o), bic_model(c, _).
 bic_django(c, o) :- bic_bulk(c, o), docof(c, d), dj_django_doc(d).
 
 // ---- the model -------------------------------------------------------------------------------------------------
-// bic_model(c, k): the bulk_create call c inserts rows of model class k of the run, resolved through imports and
-// aliases (python/names' sym_of): the receiver is a manager of k by any name (`M.objects`, `M.issue_objects`,
-// `M.objects.using("x")`), or the objects are built as `K(...)` (bic_elem_class), whatever the receiver
-// (`self.model.objects`).
-.decl bic_model(c: node, k: node)
-bic_model(c, k) :- bic_bulk(c, o), attr_of(o, r, _), sym_of(r, q), class_def(k, q), dj_model(k).
-bic_model(c, k) :- bic_bulk(c, o), dj_qs_model(o, k).
-bic_model(c, k) :- bic_bulk(c, _), bic_elem_class(c, q), class_def(k, q), dj_model(k).
-// bic_elem_class(c, q): call c's objects are built by calls of class q: its list argument is (or a name in its def
-// is assigned) a list, comprehension or generator of `Q(...)`, or the name collects `Q(...)` with append.
-.decl bic_elem_class(c: node, q: symbol)
-bic_elem_class(c, q) :- bic_objs_arg(c, a), bic_builds(a, q).
-bic_elem_class(c, q) :- bic_objs_arg(c, n), kind(n, "identifier"), text(n, x), def_frame(c, f), kind(s, "assignment"),
+// bic_model(c, e): the bulk_create call c inserts rows of a model class of the run that node e of c's file names
+// (lib/django's dj_model_named: sym_of through imports and aliases, the class read by its symbol): the receiver is a
+// manager of it by any name (`M.objects`, `M.issue_objects`, `M.objects.using("x")`), or the objects are built as
+// `K(...)` (bic_elem_class), whatever the receiver (`self.model.objects`). What the rule asks of the model it asks at
+// e, so no relation pairs c with the class's node in its own file.
+.decl bic_model(c: node, e: node)
+bic_model(c, r) :- bic_bulk(c, o), attr_of(o, r, _), dj_model_named(r, _).
+bic_model(c, r) :- bic_bulk(c, o), dj_qs_model(o, r).
+bic_model(c, kf) :- bic_bulk(c, _), bic_elem_class(c, kf), dj_model_named(kf, _).
+// bic_elem_class(c, kf): call c's objects are built by calls `K(...)` whose callee is kf: its list argument is (or a
+// name in its def is assigned) a list, comprehension or generator of `K(...)`, or the name collects `K(...)` with
+// append.
+.decl bic_elem_class(c: node, kf: node)
+bic_elem_class(c, kf) :- bic_objs_arg(c, a), bic_builds(a, kf).
+bic_elem_class(c, kf) :- bic_objs_arg(c, n), kind(n, "identifier"), text(n, x), def_frame(c, f), kind(s, "assignment"),
     field(s, "left", l), kind(l, "identifier"), text(l, x), def_frame(s, f), field(s, "right", v), unparen(v, w),
-    bic_builds(w, q).
-bic_elem_class(c, q) :- bic_objs_arg(c, n), kind(n, "identifier"), text(n, x), def_frame(c, f), kind(ac, "call"),
+    bic_builds(w, kf).
+bic_elem_class(c, kf) :- bic_objs_arg(c, n), kind(n, "identifier"), text(n, x), def_frame(c, f), kind(ac, "call"),
     def_frame(ac, f), field(ac, "function", afn), attr_of(afn, xo, "append"), kind(xo, "identifier"), text(xo, x),
-    posarg(ac, 0, v), unparen(v, k), kind(k, "call"), field(k, "function", kf), sym_of(kf, q).
+    posarg(ac, 0, v), unparen(v, k), kind(k, "call"), field(k, "function", kf).
 .decl bic_objs_arg(c: node, a: node)
 bic_objs_arg(c, a) :- bic_bulk(c, _), (posarg(c, 0, v) ; call_arg(c, -1, "objs", v)), unparen(v, a).
-.decl bic_builds(l: node, q: symbol)
-bic_builds(l, q) :- (kind(l, "list_comprehension") ; kind(l, "generator_expression")), field(l, "body", b), unparen(b, k),
-    kind(k, "call"), field(k, "function", kf), sym_of(kf, q).
-bic_builds(l, q) :- (kind(l, "list") ; kind(l, "tuple")), child(l, k, _), kind(k, "call"), field(k, "function", kf),
-    sym_of(kf, q).
-// bic_class_call(h, x, f): class h's body has `x = f(...)` (or `x: T = f(...)`), f any call: a field of any field
+.decl bic_builds(l: node, kf: node)
+bic_builds(l, kf) :- (kind(l, "list_comprehension") ; kind(l, "generator_expression")), field(l, "body", b),
+    unparen(b, k), kind(k, "call"), field(k, "function", kf).
+bic_builds(l, kf) :- (kind(l, "list") ; kind(l, "tuple")), child(l, k, _), kind(k, "call"), field(k, "function", kf).
+// bic_mq(e, m, mq): model node e names class mq of module m.
+.decl bic_mq(e: node, m: symbol, mq: symbol)
+bic_mq(e, m, mq) :- bic_model(_, e), dj_model_named(e, mq), dj_model_ref(e, mq, m).
+// bic_has_call(e, x, f): the model e names declares x = f(...) (or `x: T = f(...)`) in its body or in a class of the
+// run among its ancestors, f the callee's symbol (the phase py_names' member_call, anc_call): a field of any field
 // class, Django's or a third party's (`AutoSlugField(unique=True)`), read by its arguments, not its class name.
-.decl bic_class_call(h: node, x: symbol, f: node)
-bic_class_call(h, x, f) :- kind(h, "class_definition"), field(h, "body", b), body_stmt(b, s, _),
-    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
-    text(l, x), field(a, "right", f), kind(f, "call").
-// bic_has_call(k, x, f): model k declares x = f(...) in its body or in a class of the run among its bases.
-.decl bic_has_call(k: node, x: symbol, f: node)
-bic_has_call(k, x, f) :- bic_self_or_super(k, h), bic_class_call(h, x, f).
-// bic_pk(k, x, f): model k's key is field x, call f (`primary_key=True`).
-.decl bic_pk(k: node, x: symbol, f: node)
-bic_pk(k, x, f) :- bic_has_call(k, x, f), call_arg(f, -1, "primary_key", v), kind(v, "true").
+// bic_has_kw(e, x, k, v): such a declaration of x passes keyword argument k, of text v.
+.decl bic_has_call(e: node, x: symbol, f: symbol)
+bic_has_call(e, x, f) :- bic_mq(e, m, mq), (py_names__member_call(m, mq, x, f) ; py_names__anc_call(m, mq, x, f)).
+.decl bic_has_kw(e: node, x: symbol, k: symbol, v: symbol)
+bic_has_kw(e, x, k, v) :- bic_mq(e, m, mq), (py_names__member_kw(m, mq, x, k, v) ; py_names__anc_kw(m, mq, x, k, v)).
+// bic_pk(e, x, f): the model's key is field x, a call of f (`primary_key=True`).
+.decl bic_pk(e: node, x: symbol, f: symbol)
+bic_pk(e, x, f) :- bic_has_call(e, x, f), bic_has_kw(e, x, "primary_key", "True").
 // Django's own auto-incrementing field classes: a closed list, the only key classes the database numbers itself.
 .decl bic_auto_field(t: symbol)
 bic_auto_field("AutoField"). bic_auto_field("BigAutoField"). bic_auto_field("SmallAutoField").
-// bic_generated_pk(k): k's key is made without the code: no key field (Django adds an auto `id`), an AutoField, or a
-// key with a `default` or `db_default`.
-// bic_filled_pk(k): k's key is a Django field the code fills: a Django field class (lib/django's dj_field_call), not
-// an AutoField, with no default. A third-party key class (`ShortUUIDField(primary_key=True)`) may make its own key,
-// so it is neither: such a model is reported, never left alone.
-.decl bic_generated_pk(k: node)
-bic_generated_pk(k) :- dj_model(k), !bic_pk(k, _, _).
-bic_generated_pk(k) :- bic_pk(k, _, f), call_name(f, t), bic_auto_field(t).
-bic_generated_pk(k) :- bic_pk(k, _, f), call_arg(f, -1, "default", _).
-bic_generated_pk(k) :- bic_pk(k, _, f), call_arg(f, -1, "db_default", _).
-.decl bic_filled_pk(k: node)
-bic_filled_pk(k) :- bic_pk(k, _, f), dj_field_call(f, t), !bic_auto_field(t), !call_arg(f, -1, "default", _),
-    !call_arg(f, -1, "db_default", _).
-// bic_keyed(c): the objects of call c carry the key the database holds: k's key is filled by the code, or the def of
-// c gives the key itself, in k's constructor (`Event(id=k)`, `pk=`, or the key field's name) or by assigning it
-// (`event.pk = k`).
+// bic_generated_pk(e): the model's key is made without the code: no key field (Django adds an auto `id`), an
+// AutoField (by the callee's last name), or a key with a `default` or `db_default`.
+// bic_filled_pk(e): the model's key is a Django field the code fills: a Django field class (as lib/django's
+// dj_field_call reads one, by the callee's symbol), not an AutoField, with no default. A third-party key class
+// (`ShortUUIDField(primary_key=True)`) may make its own key, so it is neither: such a model is reported, never left
+// alone.
+.decl bic_generated_pk(e: node)
+bic_generated_pk(e) :- bic_mq(e, _, _), !bic_pk(e, _, _).
+bic_generated_pk(e) :- bic_pk(e, _, f), bic_auto_field(t), (f = t ; suffix(cat(".", t), f)).
+bic_generated_pk(e) :- bic_pk(e, x, _), (bic_has_kw(e, x, "default", _) ; bic_has_kw(e, x, "db_default", _)).
+.decl bic_filled_pk(e: node)
+bic_filled_pk(e) :- bic_pk(e, x, f), split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)),
+    !bic_auto_field(t), !bic_has_kw(e, x, "default", _), !bic_has_kw(e, x, "db_default", _).
+// bic_keyed(c): the objects of call c carry the key the database holds: the model's key is filled by the code, or the
+// def of c gives the key itself, in the model's constructor (`Event(id=k)`, `pk=`, or the key field's name; the
+// constructor by the class's symbol) or by assigning it (`event.pk = k`).
 .decl bic_keyed(c: node)
-bic_keyed(c) :- bic_model(c, k), bic_filled_pk(k).
-bic_keyed(c) :- bic_model(c, k), class_def(k, q), def_frame(c, f), kind(n, "call"), field(n, "function", fn),
-    sym_of(fn, q), def_frame(n, f), call_arg(n, -1, x, _), bic_key_name(k, x).
-bic_keyed(c) :- bic_model(c, k), def_frame(c, f), kind(a, "assignment"), def_frame(a, f), field(a, "left", l),
-    attr_of(l, _, x), bic_key_name(k, x), earlier(a, c).
-.decl bic_key_name(k: node, x: symbol)
-bic_key_name(k, "pk") :- dj_model(k).
-bic_key_name(k, "id") :- dj_model(k), !bic_pk(k, _, _).
-bic_key_name(k, x) :- bic_pk(k, x, _).
-// bic_unique(k): model k has a unique constraint besides its key: a field of any class with `unique=` (not False),
-// a OneToOneField, `unique_together`, a UniqueConstraint, or `constraints` given as anything but a literal list or
-// tuple (a name the rule does not follow), in a Meta of k or of a class of the run among its bases.
-.decl bic_unique(k: node)
-bic_unique(k) :- bic_has_call(k, x, f), call_arg(f, -1, "unique", v), !kind(v, "false"), !bic_pk(k, x, _).
-bic_unique(k) :- bic_has_call(k, x, f), call_name(f, "OneToOneField"), !bic_pk(k, x, _).
-bic_unique(k) :- bic_meta_attr(k, "unique_together", _).
-bic_unique(k) :- bic_meta(k, m), kind(n, "call"), within(n, m), call_name(n, "UniqueConstraint").
-bic_unique(k) :- bic_meta_attr(k, "constraints", v), !kind(v, "list"), !kind(v, "tuple").
-// bic_meta(k, m): m is the `class Meta` of model k or of a class of the run among its bases.
-// bic_meta_attr(k, x, v): such a Meta assigns x = v.
-.decl bic_meta(k: node, m: node)
-bic_meta(k, m) :- bic_self_or_super(k, h), field(h, "body", b), body_stmt(b, m, _), kind(m, "class_definition"),
-    field(m, "name", n), text(n, "Meta").
-.decl bic_meta_attr(k: node, x: symbol, v: node)
-bic_meta_attr(k, x, v) :- bic_meta(k, m), field(m, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
-    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", v).
-.decl bic_self_or_super(k: node, h: node)
-bic_self_or_super(k, k) :- dj_model(k).
-bic_self_or_super(k, h) :- dj_model_super(k, h).
-// bic_opaque(k): a base of k (or of its bases in the run) is neither a class of the run nor Django's Model: it may
-// declare a unique field or a key the rule cannot see.
-.decl bic_opaque(k: node)
-bic_opaque(k) :- bic_self_or_super(k, h), field(h, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
-    !kind(e, "comment"), !kind(e, "("), !kind(e, ")"), !kind(e, ","), !bic_known_base(e).
-.decl bic_known_base(e: node)
-bic_known_base(e) :- sym_of(e, q), class_def(_, q).
-bic_known_base(e) :- sym_of(e, "django.db.models.Model").
-bic_known_base(e) :- sym_of(e, "django.db.models.base.Model").
+bic_keyed(c) :- bic_model(c, e), bic_filled_pk(e).
+bic_keyed(c) :- bic_model(c, e), dj_model_named(e, mq), def_frame(c, f), kind(n, "call"), field(n, "function", fn),
+    sym_of(fn, mq), def_frame(n, f), call_arg(n, -1, x, _), bic_key_name(e, x).
+bic_keyed(c) :- bic_model(c, e), def_frame(c, f), kind(a, "assignment"), def_frame(a, f), field(a, "left", l),
+    attr_of(l, _, x), bic_key_name(e, x), earlier(a, c).
+.decl bic_key_name(e: node, x: symbol)
+bic_key_name(e, "pk") :- bic_mq(e, _, _).
+bic_key_name(e, "id") :- bic_mq(e, _, _), !bic_pk(e, _, _).
+bic_key_name(e, x) :- bic_pk(e, x, _).
+// bic_unique(e): the model has a unique constraint besides its key: a field of any class with `unique=` (not False),
+// a OneToOneField (by the callee's last name), or a Meta option that keeps fields unique together, with a condition
+// or without, or that the rule does not read (`constraints` given by a name): lib/django's dj_model_group,
+// dj_model_cond_group, dj_model_opaque, the model's Meta options as Django inherits them (its own, an abstract base's
+// it takes, a concrete base's).
+.decl bic_unique(e: node)
+bic_unique(e) :- bic_has_kw(e, x, "unique", v), v != "False", !bic_pk(e, x, _).
+bic_unique(e) :- bic_has_call(e, x, f), (f = "OneToOneField" ; suffix(".OneToOneField", f)), !bic_pk(e, x, _).
+bic_unique(e) :- bic_mq(e, _, _), (dj_model_group(e, _, _) ; dj_model_cond_group(e, _, _) ; dj_model_opaque(e)).
+// bic_opaque(e): an ancestor of the model outside the run (the phase py_names' library_ancestor, where each line of
+// bases leaves the run) is not Django's Model: it may declare a unique field or a key the rule cannot see.
+.decl bic_opaque(e: node)
+bic_opaque(e) :- bic_mq(e, m, mq), py_names__library_ancestor(m, mq, b), b != "django.db.models.Model",
+    b != "django.db.models.base.Model".
 // bic_free_call(c): c inserts rows of a model no row can conflict on: its key is generated and nothing else is unique.
 .decl bic_free_call(c: node)
-bic_free_call(c) :- bic_model(c, k), bic_generated_pk(k), !bic_unique(k), !bic_opaque(k).
+bic_free_call(c) :- bic_model(c, e), bic_generated_pk(e), !bic_unique(e), !bic_opaque(e).
 
 // Two levels, so that no relation is recursive through the rebinding test: level 0 is the call's own def, level 1
 // a caller of a def that returns the objects (a caller's caller is not followed).
-// bic_value0(w, f, what, c) / bic_value1: expression w, in def f, evaluates to the objects of bulk_create call c: the
-// call (awaited or not), or a call of a def of the run that returns them (bic_returns). what names it for the message.
+// bic_value0(w, f, what, c): expression w, in def f, evaluates to the objects of bulk_create call c: the call, awaited
+// or not. what names it for the message.
+// bic_value1(w, f, what, gq): expression w, in def f, is a call of def gq of the run, by its symbol (python/calls'
+// call_target), awaited or not. It holds objects of a bulk_create call when gq returns them (bic_ret): the outputs
+// read that, by symbol, so the def and its caller may be in different files.
 .decl bic_value0(w: node, f: node, what: symbol, c: node)
 bic_value0(c, f, "the result of this bulk_create()", c) :- bic_call(c), def_frame(c, f).
 bic_value0(w, f, what, c) :- kind(w, "await"), child(w, v, 0), bic_value0(v, f, what, c).
-.decl bic_value1(w: node, f: node, what: symbol, c: node)
-bic_value1(v, f, cat(cat("the result of ", x), "()"), c) :- kind(v, "call"), call_target(v, g), bic_returns(g, c),
-    def_frame(v, f), call_name(v, x).
-bic_value1(w, f, what, c) :- kind(w, "await"), child(w, v, 0), bic_value1(v, f, what, c).
+.decl bic_value1(w: node, f: node, what: symbol, gq: symbol)
+bic_value1(v, f, cat(cat("the result of ", x), "()"), gq) :- kind(v, "call"), call_target(v, gq), def_frame(v, f),
+    call_name(v, x).
+bic_value1(w, f, what, gq) :- kind(w, "await"), child(w, v, 0), bic_value1(v, f, what, gq).
 // bic_returns(g, c): def g returns the objects of call c: `return <the call>` or `return x` for x a name holding them.
 .decl bic_returns(g: node, c: node)
 bic_returns(g, c) :- kind(s, "return_statement"), def_frame(s, g), child(s, e, 0), unparen(e, r), bic_read0(r, g, _, c).
+// bic_ret(gq, k): def gq (its symbol, python/points-to's pt_def) returns objects of a bulk_create call whose objects
+// carry the stored keys (k "keyed", bic_keyed) or do not (k "unkeyed"). Node-free, read by the outputs at a caller's
+// own nodes.
+.decl bic_ret(gq: symbol, k: symbol)
+bic_ret(gq, "keyed") :- bic_returns(g, c), bic_keyed(c), pt_def(g, gq).
+bic_ret(gq, "unkeyed") :- bic_returns(g, c), !bic_keyed(c), pt_def(g, gq).
 
 // ---- names that hold the objects ---------------------------------------------------------------------------------
-// bic_holder0(f, x, w, what, c) / bic_holder1: in def f, name x holds the objects of call c from expression w on:
-// `x = w` for a bic_value w, or x is the input list of the bulk_create call w (`M.objects.bulk_create(x, ...)`, or
-// `objs=x`).
+// bic_holder0(f, x, w, what, c): in def f, name x holds the objects of call c from expression w on: `x = w` for a
+// bic_value0 w, or x is the input list of the bulk_create call w (`M.objects.bulk_create(x, ...)`, or `objs=x`).
+// bic_holder1(f, x, w, what, gq): `x = w` for a bic_value1 w, a call of def gq.
 .decl bic_holder0(f: node, x: symbol, w: node, what: symbol, c: node)
 bic_holder0(f, x, w, cat(cat("`", x), "`"), c) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
     text(l, x), field(a, "right", v), unparen(v, w), bic_value0(w, f, _, c).
 bic_holder0(f, x, c, cat(cat("`", x), "`"), c) :- bic_call(c), def_frame(c, f), (posarg(c, 0, a) ; call_arg(c, -1, "objs", a)),
     unparen(a, n), kind(n, "identifier"), text(n, x).
-.decl bic_holder1(f: node, x: symbol, w: node, what: symbol, c: node)
-bic_holder1(f, x, w, cat(cat("`", x), "`"), c) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
-    text(l, x), field(a, "right", v), unparen(v, w), bic_value1(w, f, _, c).
-// bic_read0(r, f, what, c) / bic_read1: r, in def f, reads the objects of call c: a bic_value itself, or a read of a
-// holder after its expression, with no rebinding of the name in between and not in an except handler of a try
-// around it. bic_read: either level.
+.decl bic_holder1(f: node, x: symbol, w: node, what: symbol, gq: symbol)
+bic_holder1(f, x, w, cat(cat("`", x), "`"), gq) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "right", v), unparen(v, w), bic_value1(w, f, _, gq).
+// bic_read0(r, f, what, c) / bic_read1(r, f, what, gq): r, in def f, reads the objects of call c (of a call of def
+// gq): a bic_value itself, or a read of a holder after its expression, with no rebinding of the name in between and
+// not in an except handler of a try around it. bic_read(r): either level.
 .decl bic_read0(r: node, f: node, what: symbol, c: node)
 bic_read0(w, f, what, c) :- bic_value0(w, f, what, c), !bic_awaited(w).
 bic_read0(i, f, what, c) :- bic_holder0(f, x, w, what, c), kind(i, "identifier"), text(i, x), def_frame(i, f),
     nameref(i, x), !bind_only(i), earlier(w, i), !within(i, w), !bic_failed(w, i),
     count : { bic_store(f, x, s), earlier(w, s), !within(s, w), earlier(s, i) } = 0.
-.decl bic_read1(r: node, f: node, what: symbol, c: node)
-bic_read1(w, f, what, c) :- bic_value1(w, f, what, c), !bic_awaited(w).
-bic_read1(i, f, what, c) :- bic_holder1(f, x, w, what, c), kind(i, "identifier"), text(i, x), def_frame(i, f),
+.decl bic_read1(r: node, f: node, what: symbol, gq: symbol)
+bic_read1(w, f, what, gq) :- bic_value1(w, f, what, gq), !bic_awaited(w).
+bic_read1(i, f, what, gq) :- bic_holder1(f, x, w, what, gq), kind(i, "identifier"), text(i, x), def_frame(i, f),
     nameref(i, x), !bind_only(i), earlier(w, i), !within(i, w), !bic_failed(w, i),
     count : { bic_store(f, x, s), earlier(w, s), !within(s, w), earlier(s, i) } = 0.
-.decl bic_read(r: node, f: node, what: symbol, c: node)
-bic_read(r, f, what, c) :- bic_read0(r, f, what, c).
-bic_read(r, f, what, c) :- bic_read1(r, f, what, c).
+.decl bic_read(r: node)
+bic_read(r) :- bic_read0(r, _, _, _).
+bic_read(r) :- bic_read1(r, _, _, _).
 // bic_awaited(c): the call is awaited; the await expression is the read.
 .decl bic_awaited(c: node)
 bic_awaited(c) :- kind(w, "await"), child(w, c, 0).
@@ -259,7 +265,7 @@ bic_failed(w, i) :- kind(t, "try_statement"), field(t, "body", b), within(w, b),
 // bic_elem(r, e): e reads one of the objects r reads: `r[k]`, or a `for` / comprehension variable over the objects
 // (bic_loop), read in the loop.
 .decl bic_elem(r: node, e: node)
-bic_elem(r, s) :- bic_read(r, _, _, _), kind(s, "subscript"), field(s, "value", v), unparen(v, r).
+bic_elem(r, s) :- bic_read(r), kind(s, "subscript"), field(s, "value", v), unparen(v, r).
 bic_elem(r, e) :- bic_loop(r, l, x), kind(l, "for_statement"), field(l, "body", b), kind(e, "identifier"), text(e, x),
     within(e, b), nameref(e, x), !bind_only(e).
 bic_elem(r, e) :- bic_loop(r, fc, x), kind(fc, "for_in_clause"), child(c, fc, _), kind(e, "identifier"), text(e, x),
@@ -267,11 +273,11 @@ bic_elem(r, e) :- bic_loop(r, fc, x), kind(fc, "for_in_clause"), child(c, fc, _)
 // bic_iter(it, r): iterating it yields objects r reads: r itself, a copy, reordering or slice of it (`list(r)`,
 // `tuple(r)`, `sorted(r, ...)`, `reversed(r)`, `iter(r)`, `r[a:b]`).
 .decl bic_iter(it: node, r: node)
-bic_iter(it, r) :- bic_read(r, _, _, _), unparen(it, r).
-bic_iter(it, r) :- bic_read(r, _, _, _), unparen(it, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
+bic_iter(it, r) :- bic_read(r), unparen(it, r).
+bic_iter(it, r) :- bic_read(r), unparen(it, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
     (q = "builtins.list" ; q = "builtins.tuple" ; q = "builtins.sorted" ; q = "builtins.reversed" ; q = "builtins.iter"),
     posarg(c, 0, a), unparen(a, r).
-bic_iter(it, r) :- bic_read(r, _, _, _), unparen(it, s), kind(s, "subscript"), field(s, "value", v), unparen(v, r),
+bic_iter(it, r) :- bic_read(r), unparen(it, s), kind(s, "subscript"), field(s, "value", v), unparen(v, r),
     field(s, "subscript", k), kind(k, "slice").
 // bic_target(l, t): loop l (a for statement or comprehension clause) binds target t over iterable it.
 .decl bic_target(l: node, t: node, it: node)
@@ -298,19 +304,22 @@ bic_use(r) :- bic_elem(r, e), attr_of(a, e, k), (k = "pk" ; k = "id"), expr_ctx(
 bic_use(r) :- bic_elem(r, e), call_arg(c, _, _, v), unparen(v, e), bic_row_call(c).
 bic_use(r) :- bic_elem(r, e), within(e, c), bic_dispatch(c).
 bic_use(r) :- bic_elem(r, e), kind(a, "assignment"), field(a, "right", v), unparen(v, e), field(a, "left", l),
-    attr_of(l, _, x), bic_fk_attr(x).
+    attr_of(l, _, x), docof(a, d), bic_fk_attr(d, x).
 bic_use(r) :- bic_elem(r, e), call_arg(c, _, _, v), unparen(v, e), bic_signal_send(c).
-bic_use(r) :- bic_read(r, _, _, _), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add"), kind(o, "attribute"),
+bic_use(r) :- bic_read(r), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add"), kind(o, "attribute"),
     field(c, "arguments", al), child(al, s, _), kind(s, "list_splat"), child(s, v, 0), unparen(v, r).
-bic_use(r) :- bic_read(r, _, _, _), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "set"), kind(o, "attribute"),
+bic_use(r) :- bic_read(r), kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "set"), kind(o, "attribute"),
     posarg(c, 0, v), unparen(v, r).
-bic_use(r) :- bic_read(r, _, _, _), kind(c, "call"), call_name(c, x), suffix("Serializer", x), posarg(c, 0, v),
+bic_use(r) :- bic_read(r), kind(c, "call"), call_name(c, x), suffix("Serializer", x), posarg(c, 0, v),
     unparen(v, r).
-bic_use(r) :- bic_read(r, _, _, _), kind(c, "call"), field(c, "function", fn), sym_of(fn, "django.core.serializers.serialize"),
+bic_use(r) :- bic_read(r), kind(c, "call"), field(c, "function", fn), sym_of(fn, "django.core.serializers.serialize"),
     posarg(c, 1, v), unparen(v, r).
-// bic_fk_attr(x): some class of the run declares x as a ForeignKey, OneToOneField or ParentalKey, of any import path.
-.decl bic_fk_attr(x: symbol)
-bic_fk_attr(x) :- bic_class_call(_, x, f), call_name(f, t), dj_fk_class(t).
+// bic_fk_attr(d, x): a class of a module document d reads (the phase py_names' reads_at: its own, the modules its
+// imports name, their packages) declares x as a ForeignKey, OneToOneField or ParentalKey, of any import path: the
+// phase's member_call, by the callee's last name.
+.decl bic_fk_attr(d: number, x: symbol)
+bic_fk_attr(d, x) :- doc(d, p, _), py_names__reads_at(p, m), py_names__member_call(m, _, x, f), dj_fk_class(t),
+    (f = t ; suffix(cat(".", t), f)).
 // bic_signal_send(c): c sends a Django signal: `<signal>.send(sender=...)` or send_robust, Signal's own signature
 // (`post_save.send(sender=Invite, instance=inv, created=True)` announces a row as created).
 .decl bic_signal_send(c: node)
@@ -319,7 +328,7 @@ bic_signal_send(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, 
 // bic_row_call(c): call c stores its arguments as a row's values: a model class of the run called, a queryset's
 // create / get_or_create / update_or_create, or a related manager's add (`article.tags.add(tag)`).
 .decl bic_row_call(c: node)
-bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), class_def(k, q), dj_model(k).
+bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), dj_model_named(fn, _).
 bic_row_call(c) :- dj_qs_call(c, m), (m = "create" ; m = "get_or_create" ; m = "update_or_create" ; m = "acreate").
 bic_row_call(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "add"), kind(o, "attribute").
 // bic_dispatch(c): call c enqueues a task or sends mail (lib/django's dj_side_effect), or calls a task method on any

@@ -49,20 +49,30 @@
 // branch; the connection stored on `self` or returned is not followed; an engine made autocommit by settings it
 // cannot read (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS, an event listener) is treated as transactional; a helper
 // is followed one call deep.
+// What other files decide is read by symbol (decisions 0652, 0677): what a helper the connection is handed to does
+// with its parameter (by the callee's symbol, python/calls' call_target), and what the engine is (a module variable
+// another file assigns, what a function of the run returns, through further calls). Each file states its part by
+// symbol; the output joins the answers with the connection's own file's facts, by the write's, the engine
+// expression's and the region's terms (python/points-to's pt_tm).
 
 #include "lib/sqlalchemy.rerail"
 
 .violation ConnectWithoutCommit(at: node, c: symbol, e: symbol, what: symbol) "{what}: open `{c}` with `{e}.begin()`, or call `{c}.commit()` after the writes where connections have commit(), as an uncommitted connection rolls back on close. Leave it if the engine autocommits."
-ConnectWithoutCommit(w, x, et, "This write") :- cwc_report(w, x, e, "direct"), text(e, et).
-ConnectWithoutCommit(w, x, et, "This call writes through its connection argument") :- cwc_report(w, x, e, "helper"),
+ConnectWithoutCommit(w, x, et, "This write") :- cwc_local(w, x, e, r, "direct"), !cwc_ddl_write(w), pt_tm(e, ek),
+    !cwc_auto_q(ek), pt_tm(r, rk), !cwc_commits_q(rk, x), text(e, et).
+ConnectWithoutCommit(w, x, et, "This write") :- cwc_local(w, x, e, r, "direct"), cwc_ddl_write(w), pt_tm(e, ek),
+    !cwc_auto_q(ek), !cwc_sqlite_q(ek), pt_tm(r, rk), !cwc_commits_q(rk, x), text(e, et).
+ConnectWithoutCommit(w, x, et, "This call writes through its connection argument") :- cwc_local(w, x, e, r, "helper"),
+    pt_tm(w, wk), cwc_helper_write_q(wk, x), pt_tm(e, ek), !cwc_auto_q(ek), pt_tm(r, rk), !cwc_commits_q(rk, x),
     text(e, et).
 
-// cwc_report(w, x, e, how): write or helper call w on connection x, opened from engine expression e, is never
-// committed; not in tests or migrations.
-.decl cwc_report(w: node, x: symbol, e: node, how: symbol)
-cwc_report(w, x, e, how) :- cwc_open(o, x, r, b, e), cwc_write_in(w, x, b, how), !cwc_committed_after(r, x, w),
-    !cwc_tx(r, x), !cwc_autocommit_region(r), !cwc_autocommit_engine(e), !cwc_sqlite_ddl(e, w), !cwc_helper_commits(r, x),
-    docof(o, d), sa_doc(d), !sa_test_doc(d), !sa_migration_doc(d).
+// cwc_local(w, x, e, r, how): write or helper call w on connection x, opened from engine expression e, with region r,
+// is not committed, nor in a transaction or autocommit, by its own file's code; not in tests or migrations. What a
+// helper does (how "helper"), whether the engine autocommits or is SQLite, and whether a helper commits on x are the
+// output's, across files.
+.decl cwc_local(w: node, x: symbol, e: node, r: node, how: symbol)
+cwc_local(w, x, e, r, how) :- cwc_open(o, x, r, b, e), cwc_write_in(w, x, b, how), !cwc_committed_after(r, x, w),
+    !cwc_tx(r, x), !cwc_autocommit_region(r), docof(o, d), sa_doc(d), !sa_test_doc(d), !sa_migration_doc(d).
 
 // ---- opening a connection ------------------------------------------------------------------------------------------
 // cwc_connect(v, e): v is `e.connect()` (no arguments), awaited, or chained with `.execution_options(...)`.
@@ -86,7 +96,7 @@ cwc_open(a, x, s, s, e) :- kind(a, "assignment"), field(a, "left", l), kind(l, "
 // cwc_write_in(w, x, b, how): call w in b (not in a def nested in it) writes on x directly, or hands x to a helper.
 .decl cwc_write_in(w: node, x: symbol, b: node, how: symbol)
 cwc_write_in(w, x, b, "direct") :- cwc_open(_, x, _, b, _), cwc_write(w, x), within_stop(w, b, sa_region_stop).
-cwc_write_in(w, x, b, "helper") :- cwc_open(_, x, _, b, _), cwc_helper_write(w, x), within_stop(w, b, sa_region_stop).
+cwc_write_in(w, x, b, "helper") :- cwc_open(_, x, _, b, _), cwc_hands(w, x), within_stop(w, b, sa_region_stop).
 // cwc_write(w, x): call w is `x.execute(<write statement>, ...)`, `x.exec_driver_sql(<write SQL>, ...)`, or
 // `<metadata>.create_all(x)` / `drop_all(bind=x)`.
 .decl cwc_write(w: node, x: symbol)
@@ -140,37 +150,43 @@ cwc_ddl_text(s) :- unparen(s, k), kind(k, "call"), sa_text_call(k), posarg(k, 0,
 cwc_ddl_text(s) :- unparen(s, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), cwc_ddl_class(q).
 
 // ---- writes through a helper -------------------------------------------------------------------------------------------
-// cwc_helper_write(c, x): call c passes name x to a function g of the run, as the argument for g's parameter p, and g
-// writes on p (cwc_write) and neither commits nor begins on any parameter.
-.decl cwc_helper_write(c: node, x: symbol)
-cwc_helper_write(c, x) :- cwc_passes(c, x, g, p), cwc_write(w, p), within_stop(w, g, sa_region_stop),
-    !cwc_fn_commits(g).
-// cwc_passes(c, x, g, p): call c passes identifier x as g's parameter p.
-.decl cwc_passes(c: node, x: symbol, g: node, p: symbol)
-cwc_passes(c, x, g, p) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
-    posarg(c, j, a), kind(a, "identifier"), text(a, x), call_target(c, g), sig_param(g, _, nm, i, _, _, _), text(nm, p),
-    cwc_arg_index(c, g, j, i).
-cwc_passes(c, x, g, p) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
-    call_arg(c, -1, p, a), kind(a, "identifier"), text(a, x), call_target(c, g), sig_param(g, _, nm, _, _, _, _),
-    text(nm, p).
-// cwc_arg_index(c, g, j, i): positional argument j of call c fills g's parameter i: i = j + 1 when c is `obj.m(...)`
-// and g's first parameter is self or cls (a bound method), i = j otherwise.
-.decl cwc_arg_index(c: node, g: node, j: number, i: number)
-cwc_arg_index(c, g, j, i) :- cwc_call_pos(c, g, j), cwc_bound_method(c, g), i = j + 1.
-cwc_arg_index(c, g, j, j) :- cwc_call_pos(c, g, j), !cwc_bound_method(c, g).
-.decl cwc_call_pos(c: node, g: node, j: number)
-cwc_call_pos(c, g, j) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop), posarg(c, j, a),
-    kind(a, "identifier"), text(a, x), call_target(c, g).
-.decl cwc_bound_method(c: node, g: node)
-cwc_bound_method(c, g) :- cwc_call_pos(c, g, _), field(c, "function", f), kind(f, "attribute"),
-    sig_param(g, _, nm, 0, _, _, _), (text(nm, "self") ; text(nm, "cls")).
-// cwc_fn_commits(g): def g calls `.commit()`, `.begin()` or `.begin_nested()` on one of its parameters.
-.decl cwc_fn_commits(g: node)
-cwc_fn_commits(g) :- kind(g, "function_definition"), sig_param(g, _, nm, _, _, _, _), text(nm, p), kind(c, "call"),
-    within_stop(c, g, sa_region_stop), field(c, "function", f), attr_of(f, o, m), cwc_tx_method(m), cwc_root(o, p).
-.decl cwc_helper_commits(r: node, x: symbol)
-cwc_helper_commits(r, x) :- cwc_open(_, x, r, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop),
-    call_arg(c, _, _, a), kind(a, "identifier"), text(a, x), call_target(c, g), cwc_fn_commits(g).
+// A call that passes name x to a function g of the run, as the argument for g's parameter p, where g writes on p
+// (cwc_write) and neither commits nor begins on any parameter. The call's file states what it passes, by g's symbol
+// (python/calls' call_target) and the call's term; g's file states what g does with its parameters.
+// cwc_hands(c, x): call c of a function of the run passes the name x.
+.decl cwc_hands(c: node, x: symbol)
+cwc_hands(c, x) :- cwc_open(_, x, _, b, _), kind(c, "call"), within_stop(c, b, sa_region_stop), call_arg(c, _, _, a),
+    kind(a, "identifier"), text(a, x), call_target(c, _).
+// cwc_pass_pos_q(ck, x, g, j, f): call ck passes x as its positional argument j to g, in call form f (lib's
+// sa_call_form). cwc_pass_kw_q(ck, x, g, p): as its keyword argument p.
+.decl cwc_pass_pos_q(ck: symbol, x: symbol, g: symbol, j: number, f: symbol)
+cwc_pass_pos_q(ck, x, gq, j, f) :- cwc_hands(c, x), posarg(c, j, a), kind(a, "identifier"), text(a, x),
+    call_target(c, gq), sa_call_form(c, f), pt_tm(c, ck).
+.decl cwc_pass_kw_q(ck: symbol, x: symbol, g: symbol, p: symbol)
+cwc_pass_kw_q(ck, x, gq, p) :- cwc_hands(c, x), call_arg(c, -1, p, a), kind(a, "identifier"), text(a, x),
+    call_target(c, gq), pt_tm(c, ck).
+// cwc_region_pass_q(rk, x, g): a call in region rk's block passes x, by position or keyword, to g.
+.decl cwc_region_pass_q(rk: symbol, x: symbol, g: symbol)
+cwc_region_pass_q(rk, x, gq) :- cwc_open(_, x, r, b, _), cwc_hands(c, x), within_stop(c, b, sa_region_stop),
+    call_target(c, gq), pt_tm(r, rk).
+// cwc_fn_writes_q(g, p): def g writes on its parameter p (cwc_write). cwc_fn_commits_q(g): it calls `.commit()`,
+// `.begin()` or `.begin_nested()` on one of its parameters. Stated in g's file, by its symbol.
+.decl cwc_fn_writes_q(g: symbol, p: symbol)
+cwc_fn_writes_q(gq, p) :- kind(g, "function_definition"), sig_param(g, _, nm, _, _, _, _), text(nm, p), cwc_write(w, p),
+    within_stop(w, g, sa_region_stop), pt_def(g, gq).
+.decl cwc_fn_commits_q(g: symbol)
+cwc_fn_commits_q(gq) :- kind(g, "function_definition"), sig_param(g, _, nm, _, _, _, _), text(nm, p), kind(c, "call"),
+    within_stop(c, g, sa_region_stop), field(c, "function", f), attr_of(f, o, m), cwc_tx_method(m), cwc_root(o, p),
+    pt_def(g, gq).
+// cwc_helper_write_q(ck, x): call ck hands x to a function that writes on it and never commits (positional argument j
+// filling parameter p as lib's sa_param_for says: one further for a bound method).
+.decl cwc_helper_write_q(ck: symbol, x: symbol)
+cwc_helper_write_q(ck, x) :- cwc_pass_pos_q(ck, x, gq, j, f), sa_param_for(gq, j, f, p), cwc_fn_writes_q(gq, p),
+    !cwc_fn_commits_q(gq).
+cwc_helper_write_q(ck, x) :- cwc_pass_kw_q(ck, x, gq, p), cwc_fn_writes_q(gq, p), !cwc_fn_commits_q(gq).
+// cwc_commits_q(rk, x): a call in region rk hands x to a function that commits or begins on a parameter.
+.decl cwc_commits_q(rk: symbol, x: symbol)
+cwc_commits_q(rk, x) :- cwc_region_pass_q(rk, x, gq), cwc_fn_commits_q(gq).
 
 // ---- commits, transactions, autocommit -----------------------------------------------------------------------------
 .decl cwc_tx_method(m: symbol)
@@ -208,36 +224,86 @@ cwc_autocommit_call(c) :- kind(c, "call"), call_arg(c, -1, _, dd), unparen(dd, d
 .decl cwc_autocommit_level(v: node)
 cwc_autocommit_level(v) :- unparen(v, s), str(s, l), match("(?i)\\s*autocommit\\s*", l).
 cwc_autocommit_level(v) :- unparen(v, s), !str(s, _).
-// cwc_engine_value(e, v): engine expression e is bound to value v: a name its scope binds, an imported module
-// variable, `self.<attr>`/`cls.<attr>` that the same class assigns, or `<obj>.<attr>` that the same file assigns.
+// The engine an engine expression e evaluates to. e's own file reads its values (cwc_engine_value): a name its scope
+// binds, `self.<attr>`/`cls.<attr>` that the same class assigns, `<obj>.<attr>` that the same file assigns, and e itself
+// when it is a call. Another module's variable it names, and what a function of the run returns (`get_engine()`, `eng
+// = get_engine()`, directly or through a name or module variable it returns, through further calls), are read by
+// symbol: the variable's and the function's files state what their values are (cwc_var_*, cwc_fn_*).
 .decl cwc_engine_value(e: node, v: node)
 cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
     asg(sc, x, v, _).
-cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), sym_of(n, q), sa_module_var(q, v).
 cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), attr_of(n, o, y), cwc_self(o), nearest(n, k, cwc_class),
     kind(a, "assignment"), nearest(a, k, cwc_class), field(a, "left", l), attr_of(l, lo, y), cwc_self(lo),
     field(a, "right", v).
 cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), attr_of(n, o, y), !cwc_self(o), docof(n, d),
     kind(a, "assignment"), docof(a, d), field(a, "left", l), attr_of(l, _, y), field(a, "right", v).
+cwc_engine_value(e, k) :- cwc_open(_, _, _, _, e), unparen(e, k), kind(k, "call").
 .decl cwc_self(o: node)
 cwc_self(o) :- kind(o, "identifier"), (text(o, "self") ; text(o, "cls")).
 .decl cwc_class(k: symbol)
 cwc_class("class_definition").
-// cwc_engine_src(e, v): engine expression e evaluates to v: cwc_engine_value, the expression itself when it is a
-// call, and what a function of the run that such a value calls returns (`get_engine()`, `eng = get_engine()`),
-// directly or through a name or module variable it returns, through further calls.
-.decl cwc_engine_src(e: node, v: node)
-cwc_engine_src(e, v) :- cwc_engine_value(e, v).
-cwc_engine_src(e, k) :- cwc_open(_, _, _, _, e), unparen(e, k), kind(k, "call").
-cwc_engine_src(e, r) :- cwc_engine_src(e, v), unparen(v, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, r).
-cwc_engine_src(e, w) :- cwc_engine_src(e, v), unparen(v, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, r),
-    unparen(r, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, w, _).
-.decl cwc_autocommit_engine(e: node)
-cwc_autocommit_engine(e) :- cwc_engine_src(e, v), kind(c, "call"), (c = v ; within(c, v)), cwc_autocommit_call(c).
-// cwc_sqlite_ddl(e, w): w is DDL text and e's engine was made from a `sqlite…` URL literal.
-.decl cwc_sqlite_ddl(e: node, w: node)
-cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_src(e, v), kind(c, "call"), (c = v ; within(c, v)),
-    call_arg(c, i, k, u), (i = 0 ; k = "url"), str(u, url), match("(?i)sqlite.*", url).
+// What a value v says of its engine: cwc_val_auto(v), it makes one with autocommit isolation (cwc_autocommit_call in
+// it); cwc_val_sqlite(v), from a `sqlite…` URL literal; cwc_val_calls(v, g), it is a call of def g, whose returns say.
+.decl cwc_val_auto(v: node)
+cwc_val_auto(v) :- cwc_val(v), kind(c, "call"), (c = v ; within(c, v)), cwc_autocommit_call(c).
+.decl cwc_val_sqlite(v: node)
+cwc_val_sqlite(v) :- cwc_val(v), kind(c, "call"), (c = v ; within(c, v)), call_arg(c, i, k, u), (i = 0 ; k = "url"),
+    str(u, url), match("(?i)sqlite.*", url).
+.decl cwc_val_calls(v: node, g: symbol)
+cwc_val_calls(v, gq) :- cwc_val(v), unparen(v, k), kind(k, "call"), sa_callee_q(k, gq).
+// cwc_val(v): the values read: an engine expression's, a module variable's, a def's returns (and what a name it
+// returns is bound to).
+.decl cwc_val(v: node)
+cwc_val(v) :- cwc_engine_value(_, v).
+cwc_val(v) :- sa_module_var(_, v).
+cwc_val(v) :- cwc_fn_val(_, v).
+.decl cwc_fn_val(g: node, v: node)
+cwc_fn_val(g, r) :- sa_returns(g, r).
+cwc_fn_val(g, w) :- sa_returns(g, r), unparen(r, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, w, _).
+// By symbol: cwc_e_*_q(ek, ...), of engine expression ek (its term); cwc_var_*_q(q, ...), of module variable q;
+// cwc_fn_*_q(g, ...), of def g's returns.
+.decl cwc_e_auto_q(ek: symbol)
+cwc_e_auto_q(ek) :- cwc_engine_value(e, v), cwc_val_auto(v), pt_tm(e, ek).
+.decl cwc_e_sqlite_q(ek: symbol)
+cwc_e_sqlite_q(ek) :- cwc_engine_value(e, v), cwc_val_sqlite(v), pt_tm(e, ek).
+.decl cwc_e_calls_q(ek: symbol, g: symbol)
+cwc_e_calls_q(ek, gq) :- cwc_engine_value(e, v), cwc_val_calls(v, gq), pt_tm(e, ek).
+.decl cwc_e_var_q(ek: symbol, q: symbol)
+cwc_e_var_q(ek, q) :- cwc_open(_, _, _, _, e), unparen(e, n), sym_of(n, q), pt_tm(e, ek).
+.decl cwc_var_auto_q(q: symbol)
+cwc_var_auto_q(q) :- sa_module_var(q, v), cwc_val_auto(v).
+.decl cwc_var_sqlite_q(q: symbol)
+cwc_var_sqlite_q(q) :- sa_module_var(q, v), cwc_val_sqlite(v).
+.decl cwc_var_calls_q(q: symbol, g: symbol)
+cwc_var_calls_q(q, gq) :- sa_module_var(q, v), cwc_val_calls(v, gq).
+.decl cwc_fn_auto_q(g: symbol)
+cwc_fn_auto_q(gq) :- cwc_fn_val(g, v), cwc_val_auto(v), pt_def(g, gq).
+.decl cwc_fn_sqlite_q(g: symbol)
+cwc_fn_sqlite_q(gq) :- cwc_fn_val(g, v), cwc_val_sqlite(v), pt_def(g, gq).
+.decl cwc_fn_calls_q(g: symbol, h: symbol)
+cwc_fn_calls_q(gq, hq) :- cwc_fn_val(g, v), cwc_val_calls(v, hq), pt_def(g, gq).
+// Across files: cwc_fn_auto_x(g), def g returns an autocommit engine, through further calls; cwc_var_auto_x(q),
+// module variable q holds one; cwc_auto_q(ek), engine expression ek evaluates to one. The same for SQLite.
+.decl cwc_fn_auto_x(g: symbol)
+cwc_fn_auto_x(gq) :- cwc_fn_auto_q(gq).
+cwc_fn_auto_x(gq) :- cwc_fn_calls_q(gq, hq), cwc_fn_auto_x(hq).
+.decl cwc_var_auto_x(q: symbol)
+cwc_var_auto_x(q) :- cwc_var_auto_q(q).
+cwc_var_auto_x(q) :- cwc_var_calls_q(q, gq), cwc_fn_auto_x(gq).
+.decl cwc_auto_q(ek: symbol)
+cwc_auto_q(ek) :- cwc_e_auto_q(ek).
+cwc_auto_q(ek) :- cwc_e_calls_q(ek, gq), cwc_fn_auto_x(gq).
+cwc_auto_q(ek) :- cwc_e_var_q(ek, q), cwc_var_auto_x(q).
+.decl cwc_fn_sqlite_x(g: symbol)
+cwc_fn_sqlite_x(gq) :- cwc_fn_sqlite_q(gq).
+cwc_fn_sqlite_x(gq) :- cwc_fn_calls_q(gq, hq), cwc_fn_sqlite_x(hq).
+.decl cwc_var_sqlite_x(q: symbol)
+cwc_var_sqlite_x(q) :- cwc_var_sqlite_q(q).
+cwc_var_sqlite_x(q) :- cwc_var_calls_q(q, gq), cwc_fn_sqlite_x(gq).
+.decl cwc_sqlite_q(ek: symbol)
+cwc_sqlite_q(ek) :- cwc_e_sqlite_q(ek).
+cwc_sqlite_q(ek) :- cwc_e_calls_q(ek, gq), cwc_fn_sqlite_x(gq).
+cwc_sqlite_q(ek) :- cwc_e_var_q(ek, q), cwc_var_sqlite_x(q).
 
 // The cases, `cases/sqlalchemy-practice-connect-without-commit/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

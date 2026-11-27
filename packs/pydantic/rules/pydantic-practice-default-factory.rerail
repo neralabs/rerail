@@ -57,12 +57,29 @@
 #include "lib/pydantic.rerail"
 
 .violation DefaultEvaluatedOnce(at: node, fn: symbol, maker: symbol) "{fn} runs once at import, so every instance shares its value. Use `{maker}(default_factory=...)` (e.g. `uuid4`, `lambda: datetime.now(timezone.utc)`) unless all instances must share it."
-DefaultEvaluatedOnce(k, x, m) :- dfo_default(d, m), (k = d ; within_stop(k, d, dfo_stop)), dfo_called(k, x),
-    docof(k, doc), !pd_test_doc(doc).
+// A call of a listed library function is read in its own file; a def of the run it calls may be another module's,
+// followed by symbol (dfo_helper); a default in a module-level alias of another module is reported in that module when
+// a field of a model names the alias (dfo_alias_used).
+DefaultEvaluatedOnce(k, x, m) :- dfo_site(k, m), dfo_volatile_call(k, q), x = cat("`", q, "()`").
+DefaultEvaluatedOnce(k, x, m) :- dfo_site(k, m), dfo_callee(k, q), dfo_helper(q, q2),
+    x = cat("`", q, "()` (it returns `", q2, "()`)").
+DefaultEvaluatedOnce(k, x, "Field") :- dfo_alias_site(k, g), dfo_alias_used(g), dfo_volatile_call(k, q),
+    x = cat("`", q, "()`").
+DefaultEvaluatedOnce(k, x, "Field") :- dfo_alias_site(k, g), dfo_alias_used(g), dfo_callee(k, q), dfo_helper(q, q2),
+    x = cat("`", q, "()` (it returns `", q2, "()`)").
 
 // dfo_stop: code in a lambda or def runs when it is called, not when the class body runs.
 .decl dfo_stop(k: symbol)
 dfo_stop("lambda"). dfo_stop("function_definition").
+// dfo_site(k, maker): call k is, or is in (outside a lambda or def), a default of this file (dfo_default), outside
+// test code.
+.decl dfo_site(k: node, maker: symbol)
+dfo_site(k, m) :- dfo_default(d, m), (k = d ; within_stop(k, d, dfo_stop)), docof(k, doc), !pd_test_doc(doc).
+// dfo_alias_site(k, g): call k is, or is in, the default of a Field that module-level alias g of this file holds
+// (lib/pydantic's pd_global_default), outside test code.
+.decl dfo_alias_site(k: node, g: symbol)
+dfo_alias_site(k, g) :- pd_global_default(g, d), (k = d ; within_stop(k, d, dfo_stop)), docof(k, doc),
+    !pd_test_doc(doc).
 
 // ---- the defaults ------------------------------------------------------------------------------------------------
 // dfo_default(d, maker): d is the default expression of a model field, a model's private attribute, or a Pydantic
@@ -71,6 +88,13 @@ dfo_stop("lambda"). dfo_stop("function_definition").
 dfo_default(d, "Field") :- pd_field(c, _, a, _), !pd_settings(c), pd_field_default(a, d).
 dfo_default(d, "PrivateAttr") :- dfo_private(c, d), !pd_settings(c).
 dfo_default(d, m) :- dfo_pdc_default(d, m).
+// dfo_alias_use_q(g): a field of a model of this file (not a settings model) names g, a module-level alias of another
+// module, in its annotation (lib/pydantic's pd_ann_global). dfo_alias_used(g): some file's model does: the alias's
+// module reads it by g, on purpose across files, holding no node.
+.decl dfo_alias_use_q(g: symbol)
+dfo_alias_use_q(g) :- pd_field(c, _, _, t), !pd_settings(c), pd_ann_global(t, g).
+.decl dfo_alias_used(g: symbol) cross_file
+dfo_alias_used(g) :- dfo_alias_use_q(g).
 
 // dfo_private(c, d): model c's private attribute gets default d: `_x: T = d`, or `PrivateAttr(d)` /
 // `PrivateAttr(default=d)` assigned to `_x`, annotated or not.
@@ -112,10 +136,6 @@ dfo_pdc_default(d, "dataclasses.field") :- dfo_pdc(c), pd_class_ann(c, _, a, t),
     field(a, "right", v), unparen(v, k), dfo_dc_field_call(k), call_arg(k, -1, "default", d).
 
 // ---- calls whose result differs per call -------------------------------------------------------------------------
-// dfo_called(k, x): call k gives a new value each time; x names it for the message.
-.decl dfo_called(k: node, x: symbol)
-dfo_called(k, x) :- dfo_volatile_call(k, q), x = cat("`", q, "()`").
-dfo_called(k, x) :- dfo_callee(k, q), dfo_helper(q, q2), x = cat("`", q, "()` (it returns `", q2, "()`)").
 // dfo_callee(k, q): call k's function resolves to q.
 .decl dfo_callee(k: node, q: symbol)
 dfo_callee(k, q) :- kind(k, "call"), field(k, "function", f), sym_of(f, q).
@@ -145,11 +165,17 @@ dfo_not_volatile("random.getstate"). dfo_not_volatile("random.setstate"). dfo_no
 
 // dfo_helper(q, q2): q is a def of the run with a `return` of its own whose value contains (not inside a lambda or a
 // nested def) a call of q2, a per-call value, or a call of another such def of the run, to any depth:
-// `def utcnow(): return datetime.now(timezone.utc)`, `def stamp(): return utcnow().isoformat()`.
-.decl dfo_helper(q: symbol, q2: symbol)
-dfo_helper(q, q2) :- dfo_return_call(q, k), dfo_volatile_call(k, q2).
-dfo_helper(q, q2) :- dfo_return_call(q, k), dfo_callee(k, q1), q1 != q, dfo_helper(q1, q2).
-// dfo_return_call(q, k): call k sits in a `return` value of def q of the run.
+// `def utcnow(): return datetime.now(timezone.utc)`, `def stamp(): return utcnow().isoformat()`. Each def's file says
+// what its returns call, by symbol (dfo_ret_volatile_q, dfo_ret_callee_q); the chain joins the defs' modules by
+// symbol, on purpose, holding no node.
+.decl dfo_helper(q: symbol, q2: symbol) cross_file
+dfo_helper(q, q2) :- dfo_ret_volatile_q(q, q2).
+dfo_helper(q, q2) :- dfo_ret_callee_q(q, q1), q1 != q, dfo_helper(q1, q2).
+.decl dfo_ret_volatile_q(q: symbol, q2: symbol)
+dfo_ret_volatile_q(q, q2) :- dfo_return_call(q, k), dfo_volatile_call(k, q2).
+.decl dfo_ret_callee_q(q: symbol, q1: symbol)
+dfo_ret_callee_q(q, q1) :- dfo_return_call(q, k), dfo_callee(k, q1).
+// dfo_return_call(q, k): call k sits in a `return` value of def q of this file.
 .decl dfo_return_call(q: symbol, k: node)
 dfo_return_call(q, k) :- kind(g, "function_definition"), qualname(g, q), kind(r, "return_statement"),
     nearest(r, g, fdef), within_stop(k, r, dfo_stop), kind(k, "call").

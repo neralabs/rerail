@@ -21,11 +21,13 @@
 // the same PostgreSQL type spelled two ways (TIMESTAMP and DateTime without a time zone, either with one; UUID and
 // Uuid; INTEGER and Integer; BIGINT and BigInteger; BOOLEAN and Boolean; TEXT and Text; JSON, JSONB, DATE), which
 // autogenerate restates next to a nullability change.
-// Types are read by the class they resolve to (lib/alembic's al_type_class and al_pg_type), through imports and
+// Types are read by the class they resolve to (lib/alembic's al_type_class_t and al_pg_type_t), through imports and
 // aliases, a project's TypeDecorator (`impl = TEXT`), a subclass of a SQLAlchemy type, and a project function that
 // returns a type (superset's `MediumText()`, `Text().with_variant(MEDIUMTEXT(), "mysql")`, is TEXT on PostgreSQL); a
-// target from `sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`) is MySQL-only. Also left alone: a length that is no
-// integer literal (`sa.String(current_length)`) where it decides; an
+// target from `sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`) is MySQL-only. A type of another module is that module's
+// answer, by symbol: the rule reads each call and type expression by its term (al_term), and the finding reads the
+// call back by its term. Also left alone: a length that is no integer literal (`sa.String(current_length)`) where it
+// decides; an
 // `existing_type` that is no type expression (a conditional); a call without `existing_type` whose target is a
 // string, text or numeric type (it may be a widening; the rule cannot tell); a table the same upgrade() creates; the
 // branch of a dialect test that runs only on another database; a call in an `except` handler (superset's non-Postgres
@@ -43,96 +45,125 @@
 .violation LengthLimitScan(at: node, col: symbol, table: symbol, change: symbol, limit: number) "Changing `{col}` of existing `{table}` {change} checks every row under an exclusive lock. Keep the type and add a NOT VALID length CHECK, validated in a later revision. Keep it for a small table."
 
 // ---- type expressions --------------------------------------------------------------------------------------------
-// ct_arg(e): e is alter_column's type_ or existing_type.
+// Each type expression of an alter_column, by its document d and term et (al_term), with its own file's syntax:
+// ct_arg_at(d, et), it is alter_column's type_ or existing_type; ct_text_at(d, et, s), its text; ct_call_at(d, et), it
+// is a call; ct_len_arg_at, ct_scale_arg_at, ct_any_arg_at: it passes a length, a scale, any argument.
 .decl ct_arg(e: node)
 ct_arg(e) :- al_kw(c, "type_", v), al_call(c, "alter_column", _), unparen(v, e).
 ct_arg(e) :- al_kw(c, "existing_type", v), al_call(c, "alter_column", _), unparen(v, e).
-// ct_name(e, n): the class type e resolves to, lowercased (lib/alembic's al_type_class).
-.decl ct_name(e: node, n: symbol)
-ct_name(e, n) :- ct_arg(e), al_type_class(e, n).
-.decl ct_mysql(e: node)
-ct_mysql(e) :- ct_arg(e), al_mysql_type(e).
-// The families PostgreSQL treats alike for a type change.
-.decl ct_string(e: node)
-ct_string(e) :- ct_arg(e), al_pg_type(e, "varchar").
-.decl ct_text(e: node)
-ct_text(e) :- ct_arg(e), al_pg_type(e, "text").
-.decl ct_numeric(e: node)
-ct_numeric(e) :- ct_arg(e), al_pg_type(e, "numeric").
-.decl ct_binary(e: node)
-ct_binary(e) :- ct_arg(e), al_pg_type(e, "bytea").
-// ct_canon(e, k): the PostgreSQL type k that e renders, when k carries no parameter the rule must compare (so
-// `sa.TIMESTAMP()` and `sa.DateTime()`, `postgresql.UUID()` and `sa.Uuid()`, `sa.INTEGER()` and `sa.Integer()` are one).
-.decl ct_canon(e: node, k: symbol)
-ct_canon(e, k) :- ct_arg(e), al_pg_type(e, k), k != "varchar", k != "numeric", k != "char".
-
-// ct_int(e, i, k, v): call e passes the integer literal v positionally at i or as keyword k (the keyword of position i).
+.decl ct_arg_at(d: number, et: symbol)
+ct_arg_at(d, et) :- ct_arg(e), al_term(e, d, et).
+.decl ct_text_at(d: number, et: symbol, s: symbol)
+ct_text_at(d, et, s) :- ct_arg(e), text(e, s), al_term(e, d, et).
+.decl ct_call_at(d: number, et: symbol)
+ct_call_at(d, et) :- ct_arg(e), kind(e, "call"), al_term(e, d, et).
+.decl ct_len_arg_at(d: number, et: symbol)
+ct_len_arg_at(d, et) :- ct_arg(e), (call_arg(e, 0, "", _) ; call_arg(e, -1, "length", _)), al_term(e, d, et).
+.decl ct_scale_arg_at(d: number, et: symbol)
+ct_scale_arg_at(d, et) :- ct_arg(e), (call_arg(e, 1, "", _) ; call_arg(e, -1, "scale", _)), al_term(e, d, et).
+.decl ct_any_arg_at(d: number, et: symbol)
+ct_any_arg_at(d, et) :- ct_arg(e), call_arg(e, _, _, _), al_term(e, d, et).
+// ct_int_at(d, et, i, k, v): call et passes the integer literal v positionally at i or as keyword k (the keyword of
+// position i).
 .decl ct_int_slot(i: number, k: symbol)
 ct_int_slot(0, "length"). ct_int_slot(0, "precision"). ct_int_slot(1, "scale").
-.decl ct_int(e: node, i: number, k: symbol, v: number)
-ct_int(e, i, k, v) :- ct_arg(e), ct_int_slot(i, k), (call_arg(e, i, "", a) ; call_arg(e, -1, k, a)), unparen(a, u),
-    kind(u, "integer"), text(u, s), v = to_number(s).
+.decl ct_int_at(d: number, et: symbol, i: number, k: symbol, v: number)
+ct_int_at(d, et, i, k, v) :- ct_arg(e), ct_int_slot(i, k), (call_arg(e, i, "", a) ; call_arg(e, -1, k, a)),
+    unparen(a, u), kind(u, "integer"), text(u, s), v = to_number(s), al_term(e, d, et).
+// ct_name(d, et, n): the class type et resolves to, lowercased (lib/alembic's al_type_class_t).
+.decl ct_name(d: number, et: symbol, n: symbol)
+ct_name(d, et, n) :- ct_arg_at(d, et), al_type_class_t(d, et, n).
+.decl ct_mysql(d: number, et: symbol)
+ct_mysql(d, et) :- ct_arg_at(d, et), al_mysql_type_t(d, et).
+// The families PostgreSQL treats alike for a type change.
+.decl ct_string(d: number, et: symbol)
+ct_string(d, et) :- ct_arg_at(d, et), al_pg_type_t(d, et, "varchar").
+.decl ct_text(d: number, et: symbol)
+ct_text(d, et) :- ct_arg_at(d, et), al_pg_type_t(d, et, "text").
+.decl ct_numeric(d: number, et: symbol)
+ct_numeric(d, et) :- ct_arg_at(d, et), al_pg_type_t(d, et, "numeric").
+.decl ct_binary(d: number, et: symbol)
+ct_binary(d, et) :- ct_arg_at(d, et), al_pg_type_t(d, et, "bytea").
+// ct_canon(d, et, k): the PostgreSQL type k that et renders, when k carries no parameter the rule must compare (so
+// `sa.TIMESTAMP()` and `sa.DateTime()`, `postgresql.UUID()` and `sa.Uuid()`, `sa.INTEGER()` and `sa.Integer()` are one).
+.decl ct_canon(d: number, et: symbol, k: symbol)
+ct_canon(d, et, k) :- ct_arg_at(d, et), al_pg_type_t(d, et, k), k != "varchar", k != "numeric", k != "char".
+
 // String lengths: a literal, none (unlimited VARCHAR), or something else (unknown).
-.decl ct_len(e: node, n: number)
-ct_len(e, n) :- ct_string(e), ct_int(e, 0, "length", n).
-.decl ct_unlimited(e: node)
-ct_unlimited(e) :- ct_string(e), !kind(e, "call").
-ct_unlimited(e) :- ct_string(e), kind(e, "call"), !call_arg(e, 0, "", _), !call_arg(e, -1, "length", _).
-.decl ct_len_unknown(e: node)
-ct_len_unknown(e) :- ct_string(e), !ct_len(e, _), !ct_unlimited(e).
+.decl ct_len(d: number, et: symbol, n: number)
+ct_len(d, et, n) :- ct_string(d, et), ct_int_at(d, et, 0, "length", n).
+.decl ct_unlimited(d: number, et: symbol)
+ct_unlimited(d, et) :- ct_string(d, et), !ct_call_at(d, et).
+ct_unlimited(d, et) :- ct_string(d, et), ct_call_at(d, et), !ct_len_arg_at(d, et).
+.decl ct_len_unknown(d: number, et: symbol)
+ct_len_unknown(d, et) :- ct_string(d, et), !ct_len(d, et, _), !ct_unlimited(d, et).
 // Numeric precision and scale (scale 0 when only a precision is given); unconstrained: no precision.
-.decl ct_num(e: node, p: number, s: number)
-ct_num(e, p, s) :- ct_numeric(e), ct_int(e, 0, "precision", p), ct_int(e, 1, "scale", s).
-ct_num(e, p, 0) :- ct_numeric(e), ct_int(e, 0, "precision", p), !call_arg(e, 1, "", _), !call_arg(e, -1, "scale", _).
-.decl ct_num_unconstrained(e: node)
-ct_num_unconstrained(e) :- ct_numeric(e), !kind(e, "call").
-ct_num_unconstrained(e) :- ct_numeric(e), kind(e, "call"), !call_arg(e, _, _, _).
+.decl ct_num(d: number, et: symbol, p: number, s: number)
+ct_num(d, et, p, s) :- ct_numeric(d, et), ct_int_at(d, et, 0, "precision", p), ct_int_at(d, et, 1, "scale", s).
+ct_num(d, et, p, 0) :- ct_numeric(d, et), ct_int_at(d, et, 0, "precision", p), !ct_scale_arg_at(d, et).
+.decl ct_num_unconstrained(d: number, et: symbol)
+ct_num_unconstrained(d, et) :- ct_numeric(d, et), !ct_call_at(d, et).
+ct_num_unconstrained(d, et) :- ct_numeric(d, et), ct_call_at(d, et), !ct_any_arg_at(d, et).
 
 // ---- the change ----------------------------------------------------------------------------------------------------
-// ct_change(c, x, t, n): upgrade changes column x of existing table t to type n, outside a non-PostgreSQL branch, an
-// except handler and test code.
-.decl ct_change(c: node, x: symbol, t: symbol, n: node)
-ct_change(c, x, t, n) :- al_on_existing(c, "alter_column", t, _), al_kw(c, "type_", v), unparen(v, n),
+// ct_change_at(d, ct, x, t, nt): alter_column ct of revision d changes column x of existing table t to type nt,
+// outside a non-PostgreSQL branch of its own file, an except handler and test code; ct_old_at(d, ct, ot): its
+// existing_type. ct_change: no test function of another module rules PostgreSQL out (al_np_ext).
+.decl ct_change_at(d: number, ct: symbol, x: symbol, t: symbol, nt: symbol)
+ct_change_at(d, ct, x, t, nt) :- al_on_existing(c, "alter_column", t, _), al_kw(c, "type_", v), unparen(v, n),
     al_role(c, "column_name", e), al_name_value(e, x), !al_non_pg(c), !ct_in_except(c), docof(c, d),
-    al_migration_doc(d), !al_test_doc(d).
+    al_migration_doc(d), !al_test_doc(d), al_term(c, d, ct), al_term(n, d, nt).
 .decl ct_in_except(c: node)
 ct_in_except(c) :- al_call(c, "alter_column", _), kind(h, "except_clause"), within(c, h).
-.decl ct_old(c: node, o: node)
-ct_old(c, o) :- ct_change(c, _, _, _), al_kw(c, "existing_type", v), unparen(v, o).
+.decl ct_old_at(d: number, ct: symbol, ot: symbol)
+ct_old_at(d, ct, ot) :- al_call(c, "alter_column", _), al_kw(c, "existing_type", v), unparen(v, o), al_term(c, d, ct),
+    al_term(o, d, ot).
+.decl ct_change(d: number, ct: symbol, x: symbol, t: symbol, nt: symbol)
+ct_change(d, ct, x, t, nt) :- ct_change_at(d, ct, x, t, nt), !al_np_ext(d, ct).
+.decl ct_old(d: number, ct: symbol, ot: symbol)
+ct_old(d, ct, ot) :- ct_change(d, ct, _, _, _), ct_old_at(d, ct, ot).
+.decl ct_has_old(d: number, ct: symbol)
+ct_has_old(d, ct) :- ct_old(d, ct, _).
 
-// ct_safe(o, n): PostgreSQL changes type o to n in the catalog only (binary coercible, or a widened limit).
-.decl ct_safe(o: node, n: node)
-ct_safe(o, n) :- ct_old(_, o), ct_change(_, _, _, n), text(o, s), text(n, s).
-ct_safe(o, n) :- ct_old(_, o), ct_canon(o, k), ct_change(_, _, _, n), ct_canon(n, k).
-ct_safe(o, n) :- ct_old(_, o), ct_len(o, a), ct_change(_, _, _, n), ct_len(n, b), b >= a.
-ct_safe(o, n) :- ct_old(_, o), ct_string(o), ct_change(_, _, _, n), ct_unlimited(n).
-ct_safe(o, n) :- ct_old(_, o), (ct_string(o) ; ct_text(o)), ct_change(_, _, _, n), ct_text(n).
-ct_safe(o, n) :- ct_old(_, o), ct_text(o), ct_change(_, _, _, n), ct_unlimited(n).
-ct_safe(o, n) :- ct_old(_, o), ct_num(o, p, s), ct_change(_, _, _, n), ct_num(n, p2, s), p2 >= p.
-ct_safe(o, n) :- ct_old(_, o), ct_numeric(o), ct_change(_, _, _, n), ct_num_unconstrained(n).
-ct_safe(o, n) :- ct_old(_, o), ct_binary(o), ct_change(_, _, _, n), ct_binary(n).
+// ct_safe(d, ct): PostgreSQL changes call ct's type ot to nt in the catalog only (binary coercible, or a widened limit).
+.decl ct_safe(d: number, ct: symbol)
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_change(d, ct, _, _, nt), ct_text_at(d, ot, s), ct_text_at(d, nt, s).
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_canon(d, ot, k), ct_change(d, ct, _, _, nt), ct_canon(d, nt, k).
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_len(d, ot, a), ct_change(d, ct, _, _, nt), ct_len(d, nt, b), b >= a.
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_string(d, ot), ct_change(d, ct, _, _, nt), ct_unlimited(d, nt).
+ct_safe(d, ct) :- ct_old(d, ct, ot), (ct_string(d, ot) ; ct_text(d, ot)), ct_change(d, ct, _, _, nt), ct_text(d, nt).
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_text(d, ot), ct_change(d, ct, _, _, nt), ct_unlimited(d, nt).
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_num(d, ot, p, s), ct_change(d, ct, _, _, nt), ct_num(d, nt, p2, s), p2 >= p.
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_numeric(d, ot), ct_change(d, ct, _, _, nt), ct_num_unconstrained(d, nt).
+ct_safe(d, ct) :- ct_old(d, ct, ot), ct_binary(d, ot), ct_change(d, ct, _, _, nt), ct_binary(d, nt).
 
-// ct_unknown(c): the rule cannot judge the change: a MySQL-only target, a length that is no literal where it decides,
-// an existing_type that is no type expression, or no existing_type and a target that may widen.
-.decl ct_unknown(c: node)
-ct_unknown(c) :- ct_change(c, _, _, n), ct_mysql(n).
-ct_unknown(c) :- ct_change(c, _, _, n), ct_len_unknown(n).
-ct_unknown(c) :- ct_change(c, _, _, n), ct_len(n, _), ct_old(c, o), ct_len_unknown(o).
-ct_unknown(c) :- ct_old(c, o), !ct_name(o, _).
-ct_unknown(c) :- ct_change(c, _, _, n), !ct_old(c, _), (ct_string(n) ; ct_text(n) ; ct_numeric(n)).
+// ct_unknown(d, ct): the rule cannot judge the change: a MySQL-only target, a length that is no literal where it
+// decides, an existing_type that is no type expression, or no existing_type and a target that may widen.
+.decl ct_unknown(d: number, ct: symbol)
+ct_unknown(d, ct) :- ct_change(d, ct, _, _, nt), ct_mysql(d, nt).
+ct_unknown(d, ct) :- ct_change(d, ct, _, _, nt), ct_len_unknown(d, nt).
+ct_unknown(d, ct) :- ct_change(d, ct, _, _, nt), ct_len(d, nt, _), ct_old(d, ct, ot), ct_len_unknown(d, ot).
+ct_unknown(d, ct) :- ct_old(d, ct, ot), !ct_name(d, ot, _).
+ct_unknown(d, ct) :- ct_change(d, ct, _, _, nt), !ct_has_old(d, ct), (ct_string(d, nt) ; ct_text(d, nt) ;
+    ct_numeric(d, nt)).
 
-.decl ct_hit(c: node, x: symbol, t: symbol, n: node, change: symbol)
-ct_hit(c, x, t, n, ch) :- ct_change(c, x, t, n), ct_old(c, o), !ct_safe(o, n), !ct_unknown(c), text(o, so), text(n, sn),
-    ch = cat(cat(cat(cat("from `", so), "` to `"), sn), "`").
-ct_hit(c, x, t, n, ch) :- ct_change(c, x, t, n), !ct_old(c, _), !ct_unknown(c), text(n, sn),
+.decl ct_hit(d: number, ct: symbol, x: symbol, t: symbol, change: symbol)
+ct_hit(d, ct, x, t, ch) :- ct_change(d, ct, x, t, nt), ct_old(d, ct, ot), !ct_safe(d, ct), !ct_unknown(d, ct),
+    ct_text_at(d, ot, so), ct_text_at(d, nt, sn), ch = cat(cat(cat(cat("from `", so), "` to `"), sn), "`").
+ct_hit(d, ct, x, t, ch) :- ct_change(d, ct, x, t, nt), !ct_has_old(d, ct), !ct_unknown(d, ct), ct_text_at(d, nt, sn),
     ch = cat(cat("to `", sn), "`").
 
 // A length limit: a literal-length VARCHAR target from a string or text type.
-.decl ct_limit(c: node, m: number)
-ct_limit(c, m) :- ct_change(c, _, _, n), ct_len(n, m), ct_old(c, o), (ct_string(o) ; ct_text(o)).
+.decl ct_limit(d: number, ct: symbol, m: number)
+ct_limit(d, ct, m) :- ct_change(d, ct, _, _, nt), ct_len(d, nt, m), ct_old(d, ct, ot), (ct_string(d, ot) ;
+    ct_text(d, ot)).
 
-TypeChangeRewrites(c, x, t, ch) :- ct_hit(c, x, t, _, ch), !ct_limit(c, _).
-LengthLimitScan(c, x, t, ch, m) :- ct_hit(c, x, t, _, ch), ct_limit(c, m).
+// ct_call(c, d, ct): alter_column c of document d has the term ct, by which a finding reads its answers.
+.decl ct_call(c: node, d: number, ct: symbol)
+ct_call(c, d, ct) :- al_call(c, "alter_column", _), al_term(c, d, ct).
+
+TypeChangeRewrites(c, x, t, ch) :- ct_call(c, d, ct), ct_hit(d, ct, x, t, ch), !ct_limit(d, ct, _).
+LengthLimitScan(c, x, t, ch, m) :- ct_call(c, d, ct), ct_hit(d, ct, x, t, ch), ct_limit(d, ct, m).
 
 // The cases, `cases/alembic-practice-column-type-rewrite/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

@@ -23,7 +23,7 @@
 // Left alone:
 //   monkeypatch.setitem(app.config, "RETRY", 4)       the fix: undone after the test
 //   app.config["X"] = 1 ... finally: app.config.pop("X", None)
-//                                                      undone (the library's pt_undo and pt_covers): in a finally,
+//                                                      undone (the library's pt_restored and pt_covers): in a finally,
 //                                                      after a fixture's yield, in an addCleanup / addfinalizer
 //                                                      callback, a def undo code calls, or the teardown of a
 //                                                      function-scoped fixture the test requests, by any write of the
@@ -70,7 +70,14 @@
 #include "lib/pytest.rerail"
 
 .violation ScopedFixtureMutated(at: node, name: symbol, scope: symbol) "`{name}` is a {scope}-scoped fixture shared with later tests. Change it with monkeypatch.setitem/setattr or copy it in a function-scoped fixture; keep it if it collects state on purpose."
-ScopedFixtureMutated(n, x, s) :- sfm_hit(n, k, t, x, g), !sfm_later(n, k, t), pt_fixture_scope(g, s).
+ScopedFixtureMutated(n, x, sc) :- sfm_cand(n, t, _, p, _), pt_def(t, tq), pt_order(n, o), sfm_hit(tq, k, o, x, gq),
+    k = cat(x, p), sfm_first(tq, k, o), pt_fx_sym(gq, _, sc).
+
+// Which fixture a value comes from is a question of other files (a conftest.py, a helper's callers), asked by
+// symbol (decision 0677): a file names each value its defs read by a source (sfm_src: a fixture parameter by its
+// name, a helper's parameter by its position), hands on which calls pass which source to which def (sfm_flow), and
+// the library's pt_resolves resolves the fixtures (sfm_holds). A change is handed on by its def's symbol, source,
+// path and order (sfm_at), and the finding reads the answer back at its own node.
 
 .decl sfm_broad(s: symbol)
 sfm_broad("class"). sfm_broad("module"). sfm_broad("package"). sfm_broad("session").
@@ -80,32 +87,57 @@ sfm_broad("class"). sfm_broad("module"). sfm_broad("package"). sfm_broad("sessio
 sfm_runner(t) :- pt_test(t).
 sfm_runner(t) :- pt_fixture(t), pt_fixture_scope(t, "function").
 
-// sfm_value(e, t, x, g): identifier e, in runner t, reads the value of fixture x, which resolves to g: the parameter
-// x (not rebound before e), or a name t binds to `request.getfixturevalue("x")`.
-.decl sfm_value(e: node, t: node, x: symbol, g: node)
-sfm_value(e, t, x, g) :- sfm_runner(t), pt_resolves(t, x, g), sig_param(t, _, nm, _, _, _, _), text(nm, x),
+// sfm_fxv(e, t, x): identifier e, in runner t, reads the value of the fixture t requests as x: the parameter x (not
+// rebound before e), or a name t binds to `request.getfixturevalue("x")`.
+.decl sfm_fxv(e: node, t: node, x: symbol)
+sfm_fxv(e, t, x) :- sfm_runner(t), pt_requests(t, x, _), sig_param(t, _, nm, _, _, _, _), text(nm, x),
     kind(e, "identifier"), text(e, x), look(e, x, t), !bind_only(e), !latest_assign(e, x, _).
-sfm_value(e, t, x, g) :- sfm_runner(t), pt_resolves(t, x, g), pt_getfixturevalue(c, x), def_frame(c, t),
+sfm_fxv(e, t, x) :- sfm_runner(t), pt_getfixturevalue(c, x), def_frame(c, t),
     kind(a, "assignment"), field(a, "right", c), field(a, "left", v), kind(v, "identifier"), text(v, y),
     kind(e, "identifier"), text(e, y), look(e, y, t), !bind_only(e), latest_assign(e, y, a).
-// A plain function of a test document that code holding the value calls with it: its parameter holds the same
-// object (`_enable(app)`, `finally: _reset(app)`).
-sfm_value(e, h, x, g) :- sfm_pass(h, j, x, g), sfm_hparam(h, j, y), kind(e, "identifier"), text(e, y), look(e, y, h),
+// sfm_src(e, t, s): identifier e, in def t, reads source s: "fx x", a fixture value (sfm_fxv), or "arg j", the j-th
+// positional parameter of a plain function of a test document, which holds what its callers pass (`_enable(app)`,
+// `finally: _reset(app)`).
+.decl sfm_src(e: node, t: node, s: symbol)
+sfm_src(e, t, cat("fx ", x)) :- sfm_fxv(e, t, x).
+sfm_src(e, h, cat("arg ", to_string(j))) :- sfm_hparam(h, j, y), kind(e, "identifier"), text(e, y), look(e, y, h),
     !bind_only(e), !latest_assign(e, y, _).
-.decl sfm_pass(h: node, j: number, x: symbol, g: node)
-sfm_pass(h, j, x, g) :- sfm_value(a, t, x, g), posarg(c, j, a), field(c, "function", f), kind(f, "identifier"),
-    call_target(c, h), def_frame(c, t), docof(h, d), pt_test_doc(d).
 .decl sfm_hpos(h: node, i: number, y: symbol)
 sfm_hpos(h, i, y) :- kind(h, "function_definition"), docof(h, d), pt_test_doc(d), sig_param(h, _, nm, i, k, _, _),
     (k = "pos" ; k = "posonly"), text(nm, y).
 .decl sfm_hparam(h: node, j: number, y: symbol)
 sfm_hparam(h, j, y) :- sfm_hpos(h, i, y), j = count : { sfm_hpos(h, i2, _), i2 < i }.
+// sfm_flow(t, s, j, h): a call in t passes what source s holds as the j-th argument of def h (python/calls'
+// call_target, by symbol). sfm_holds(t, s, x, g): source s of t holds the value of fixture g, requested as x.
+.decl sfm_flow(t: symbol, s: symbol, j: number, h: symbol)
+sfm_flow(tq, s, j, hq) :- sfm_src(a, t, s), posarg(c, j, a), field(c, "function", f), kind(f, "identifier"),
+    call_target(c, hq), def_frame(c, t), pt_def(t, tq).
+.decl sfm_fx_at(t: symbol, x: symbol)
+sfm_fx_at(tq, x) :- sfm_fxv(_, t, x), pt_def(t, tq).
+.decl sfm_holds(t: symbol, s: symbol, x: symbol, g: symbol)
+sfm_holds(tq, cat("fx ", x), x, gq) :- sfm_fx_at(tq, x), pt_resolves(tq, x, gq).
+sfm_holds(hq, cat("arg ", to_string(j)), x, gq) :- sfm_flow(tq, s, j, hq), sfm_holds(tq, s, x, gq).
 
-// sfm_change(n, t, x, g, e, p): n, in t, changes path p below e, the value of fixture x resolving to broad g.
-.decl sfm_change(n: node, t: node, x: symbol, g: node, e: node, p: symbol)
-sfm_change(n, t, x, g, e, p) :- sfm_value(e, t, x, g), pt_fixture_scope(g, s), sfm_broad(s), pt_loc(n, e, p, how),
-    how != "restore", p != "", pt_change(n), !sfm_factory(g), !sfm_collector(g), !sfm_parametrized(t, x),
-    !sfm_uniform(t, g), !sfm_not_collection(n), !sfm_client_call(n, x), !sfm_defensive(n).
+// sfm_cand(n, t, s, p, e): change n changes path p below e, which reads source s of t; not undo code, not hidden by
+// parametrize, a list/dict/set change by its shape, not a defensive removal, and not put back by a patch of the same
+// source active where it runs (sfm_kept).
+.decl sfm_cand(n: node, t: node, s: symbol, p: symbol, e: node)
+sfm_cand(n, t, s, p, e) :- sfm_src(e, t, s), pt_loc(n, e, p, how), how != "restore", p != "", pt_change(n),
+    !sfm_hidden(t, s), !sfm_not_collection(n), !sfm_defensive(n), !pt_undo_at(n, _), !sfm_kept(n, t, s, e, p).
+.decl sfm_hidden(t: node, s: symbol)
+sfm_hidden(t, cat("fx ", x)) :- sfm_parametrized(t, x).
+.decl sfm_kept(n: node, t: node, s: symbol, e: node, p: symbol)
+sfm_kept(n, t, s, e, p) :- sfm_src(e, t, s), pt_loc(n, e, p, _), pt_guard_restore(n, e2, a), sfm_src(e2, t, s),
+    pt_covers(n, e, p, a).
+// sfm_fx_ok(g, s): fixture g has broad scope s and is neither a factory nor a collector; sfm_uniform(t, g): t is an
+// autouse fixture and g is class- or module-scoped: every test sharing g's value runs t, so the change is the same
+// for all of them (module-wide set-up).
+.decl sfm_fx_ok(g: symbol, s: symbol)
+sfm_fx_ok(gq, s) :- pt_fixture_scope(g, s), sfm_broad(s), !sfm_factory(g), !sfm_collector(g), pt_def(g, gq).
+.decl sfm_auto(t: symbol)
+sfm_auto(tq) :- pt_autouse(t), pt_def(t, tq).
+.decl sfm_uniform(t: symbol, g: symbol)
+sfm_uniform(tq, gq) :- sfm_auto(tq), sfm_fx_ok(gq, s), (s = "module" ; s = "class").
 
 // sfm_collector(g): yield fixture g asserts on the value it yielded after the yield: a collector the tests fill on
 // purpose and its teardown checks (`refs = []; yield refs; assert all(r() is None for r in refs)`). A teardown that
@@ -133,18 +165,8 @@ sfm_defensive(n) :- pt_mcall(n, _, "pop"), posarg(n, 1, _).
 .decl sfm_last_name(r: node, y: symbol)
 sfm_last_name(r, y) :- attr_of(r, _, y).
 sfm_last_name(r, y) :- kind(r, "identifier"), text(r, y).
-// sfm_client_call(n, x): a method call through a fixture named as an API or HTTP client (`client`, `api_client`,
-// `sdk`): `client.agents.update(agent_id=a, tags=[])` writes to a server, not to the client object.
-.decl sfm_client_call(n: node, x: symbol)
-sfm_client_call(n, x) :- sfm_client_name(x), pt_mcall(n, _, _).
-.decl sfm_client_name(x: symbol)
-sfm_client_name(x) :- pt_requests(_, x, _), z = @lower(x),
-    (z = "client" ; suffix("_client", z) ; suffix("client", z) ; z = "api" ; suffix("_api", z) ; z = "sdk").
-
-// sfm_uniform(t, g): t is an autouse fixture and g is class- or module-scoped: every test sharing g's value runs t,
-// so the change is the same for all of them (module-wide set-up).
-.decl sfm_uniform(t: node, g: node)
-sfm_uniform(t, g) :- pt_autouse(t), pt_fixture(g), (pt_fixture_scope(g, "module") ; pt_fixture_scope(g, "class")).
+// A method call through a fixture named as an API or HTTP client (`client`, `api_client`, `sdk`):
+// `client.agents.update(agent_id=a, tags=[])` writes to a server, not to the client object. sfm_hit reads the name.
 
 // sfm_factory(g): fixture g returns (or yields) a def or lambda of its own body: each call makes a fresh object.
 .decl sfm_factory(g: node)
@@ -163,17 +185,34 @@ sfm_parametrized(t, x) :- sfm_runner(t), (decorator(t, e0) ; pt_class_of(t, c), 
 .decl sfm_indirect(e: node)
 sfm_indirect(e) :- kind(e, "call"), call_arg(e, -1, "indirect", v), !kind(v, "false").
 
-// sfm_restored(n): an undo or patch the library sees puts n's change back: a restore below a value of the same
-// fixture (in t, a lambda or local def of t, or a fixture t requests) that covers n's path (pt_covers).
-.decl sfm_restored(n: node)
-sfm_restored(n) :- sfm_change(n, _, _, g, e, p), pt_restore(n, e2, a), sfm_value(e2, _, _, g), pt_covers(n, e, p, a).
+// By symbol: each file hands on its candidates (sfm_at: the change's def, the source's def, source, path, whether it
+// is a method call, order) and the paths that put each back (sfm_cov, the library's pt_covers). sfm_restored(u, t, s,
+// p, g): undo code that runs after u, or a function-scoped fixture u requests, puts back a path covering p below a
+// value of the same fixture g (the library's pt_restored, its state named by the def and source that read it).
+pt_root(e, cat(tq, "|", s)) :- sfm_src(e, t, s), pt_def(t, tq).
+.decl sfm_at(u: symbol, t: symbol, s: symbol, p: symbol, m: symbol, o: number)
+sfm_at(uq, tq, s, p, "call", o) :- sfm_cand(n, t, s, p, _), pt_mcall(n, _, _), def_frame(n, u), pt_def(u, uq),
+    pt_def(t, tq), pt_order(n, o).
+sfm_at(uq, tq, s, p, "", o) :- sfm_cand(n, t, s, p, _), !pt_mcall(n, _, _), def_frame(n, u), pt_def(u, uq),
+    pt_def(t, tq), pt_order(n, o).
+.decl sfm_cov(u: symbol, t: symbol, s: symbol, p: symbol, a: symbol)
+sfm_cov(uq, tq, s, p, a) :- sfm_cand(n, t, s, p, e), pt_covers(n, e, p, a), def_frame(n, u), pt_def(u, uq),
+    pt_def(t, tq).
+.decl sfm_key_holds(k: symbol, g: symbol)
+sfm_key_holds(cat(tq, "|", s), gq) :- sfm_holds(tq, s, _, gq).
+.decl sfm_restored(u: symbol, t: symbol, s: symbol, p: symbol, g: symbol)
+sfm_restored(uq, tq, s, p, gq) :- sfm_cov(uq, tq, s, p, a), sfm_holds(tq, s, _, gq), pt_restored(uq, k, a),
+    sfm_key_holds(k, gq).
 
-// sfm_hit(n, k, t, x, g): a change of k (the fixture's def and the path) in t that is not undo code and that nothing
-// puts back; sfm_later(n, k, t): another one of k comes before it in t.
-.decl sfm_hit(n: node, k: symbol, t: node, x: symbol, g: node)
-sfm_hit(n, cat(x, p), t, x, g) :- sfm_change(n, t, x, g, _, p), !pt_undo(n, _), !sfm_restored(n).
-.decl sfm_later(n: node, k: symbol, t: node)
-sfm_later(n, k, t) :- sfm_hit(n, k, t, _, _), sfm_hit(m, k, t, _, _), earlier(m, n).
+// sfm_hit(t, k, o, x, g): a change of k (the fixture's name and the path) at order o, read through t, of the value of
+// broad fixture g requested as x, that is not undo code and that nothing puts back; sfm_first(t, k, o): the first of
+// them in t, the one reported.
+.decl sfm_hit(t: symbol, k: symbol, o: number, x: symbol, g: symbol)
+sfm_hit(tq, cat(x, p), o, x, gq) :- sfm_at(uq, tq, s, p, m, o), sfm_holds(tq, s, x, gq), sfm_fx_ok(gq, _),
+    !sfm_uniform(tq, gq), !pt_undo_body(uq), !sfm_restored(uq, tq, s, p, gq),
+    (m = "" ; z = @lower(x), !suffix("client", z), z != "api", !suffix("_api", z), z != "sdk").
+.decl sfm_first(t: symbol, k: symbol, o: number)
+sfm_first(tq, k, o) :- sfm_hit(tq, k, o, _, _), o = min o2 : { sfm_hit(tq, k, o2, _, _) }.
 
 // The cases, `cases/pytest-practice-scoped-fixture-mutated/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.

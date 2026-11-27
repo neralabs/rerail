@@ -69,8 +69,11 @@
 // v1i_at(n) collects every node a check below may report, so the shim test runs on those nodes only.
 .decl v1i_at(n: node)
 pd_shim_demand(n) :- v1i_at(n).
-.decl v1i_report(n: node)
-v1i_report(n) :- v1i_at(n), docof(n, d), pd_v2_doc(d), !pd_version_guarded(n).
+// v1i_report(n, nk): what n's own file says: a v2 project's document, no shim its file shows; nk is n's term
+// (python/points-to-file's pt_tm, relative to its def, class or module), by which each output asks whether a flag
+// another module defines guards n (`!pd_shim_elsewhere(nk)`).
+.decl v1i_report(n: node, nk: symbol)
+v1i_report(n, nk) :- v1i_at(n), docof(n, d), pd_v2_doc(d), !pd_version_guarded(n), pt_tm(n, nk).
 
 // ---- removed Field arguments --------------------------------------------------------------------------------------
 // pydantic's own Field: sqlmodel.Field still takes `regex=` and the item counts, and maps them itself.
@@ -84,7 +87,7 @@ v1i_removed_kw("unique_items", "a `set[...]` annotation, or a validator if the o
 .decl v1i_field_crash(k: node, kw: symbol, use: symbol)
 v1i_field_crash(k, kw, use) :- v1i_pd_field(k), call_arg(k, -1, kw, _), v1i_removed_kw(kw, use).
 v1i_at(k) :- v1i_field_crash(k, _, _).
-RemovedFieldArg(k, kw, use) :- v1i_field_crash(k, kw, use), v1i_report(k).
+RemovedFieldArg(k, kw, use) :- v1i_field_crash(k, kw, use), v1i_report(k, nk), !pd_shim_elsewhere(nk).
 
 // ---- pydantic.BaseSettings ----------------------------------------------------------------------------------------
 // `from pydantic import BaseSettings` (the import line), `pydantic.BaseSettings` (each use).
@@ -92,7 +95,7 @@ RemovedFieldArg(k, kw, use) :- v1i_field_crash(k, kw, use), v1i_report(k).
 v1i_settings(a) :- import_alias(_, a, m, "BaseSettings", _), (m = "pydantic" ; m = "pydantic.env_settings").
 v1i_settings(n) :- kind(n, "attribute"), sym_of(n, q), (q = "pydantic.BaseSettings" ; q = "pydantic.env_settings.BaseSettings").
 v1i_at(n) :- v1i_settings(n).
-RemovedBaseSettings(n) :- v1i_settings(n), v1i_report(n).
+RemovedBaseSettings(n) :- v1i_settings(n), v1i_report(n, nk), !pd_shim_elsewhere(nk).
 
 // ---- a post root_validator (no `pre=True`) without `skip_on_failure=True`, bare or called --------------------------
 .decl v1i_skip(e: node)
@@ -100,7 +103,7 @@ v1i_skip(e) :- call_arg(e, -1, "skip_on_failure", v), kind(v, "true").
 .decl v1i_root_crash(e: node)
 v1i_root_crash(e) :- pd_validator_deco(_, "root_validator", e), !pd_pre_true(e), !v1i_skip(e).
 v1i_at(e) :- v1i_root_crash(e).
-RootValidatorCrash(e) :- v1i_root_crash(e), v1i_report(e).
+RootValidatorCrash(e) :- v1i_root_crash(e), v1i_report(e, nk), !pd_shim_elsewhere(nk).
 
 // ---- keys of a nested `class Config:` that v2 drops (removed) or reads only by their new name (renamed) ------------
 .decl v1i_config_key(c: node, k: node, x: symbol, a: node)
@@ -130,34 +133,44 @@ v1i_renamed_cfg("max_anystr_length", "str_max_length").
 v1i_renamed_cfg("min_anystr_length", "str_min_length").
 v1i_renamed_cfg("keep_untouched", "ignored_types").
 v1i_at(a) :- v1i_config_key(_, _, _, a).
-RemovedConfigKey(a, x, fix) :- v1i_config_key(_, _, x, a), v1i_removed_cfg(x, fix), v1i_report(a).
-RenamedConfigKey(a, x, new) :- v1i_config_key(_, _, x, a), v1i_renamed_cfg(x, new), v1i_report(a).
+RemovedConfigKey(a, x, fix) :- v1i_config_key(_, _, x, a), v1i_removed_cfg(x, fix), v1i_report(a, nk),
+    !pd_shim_elsewhere(nk).
+RenamedConfigKey(a, x, new) :- v1i_config_key(_, _, x, a), v1i_renamed_cfg(x, new), v1i_report(a, nk),
+    !pd_shim_elsewhere(nk).
 
 // ---- calls on a model ---------------------------------------------------------------------------------------------
-// v1i_own(c, m): model c defines m itself, as a method of c or of a run class among its bases, or as a field.
+// v1i_own(q, m): model q defines m itself, as a method of q or of a run class among its bases (the phase py_names'
+// member_method, anc_method), or as a field of q or of a run base (v1i_field_q, by symbol). It joins the classes'
+// modules by symbol, on purpose, holding no node; the outputs read it by the model's qualified name.
 .decl v1i_method(m: symbol)
 v1i_method("json"). v1i_method("from_orm").
-.decl v1i_own(c: node, m: symbol)
-v1i_own(c, m) :- pd_model(c), v1i_method(m), class_def(c, q), mro_method(q, m, _).
-v1i_own(c, m) :- pd_model(c), v1i_method(m), pd_has_field(c, m, _, _).
-// v1i_call(k, m, c): call k is `o.m(...)` on model c (class or instance), m not the project's own.
-.decl v1i_call(k: node, m: symbol, c: node)
-v1i_call(k, m, c) :- pd_model_call(k, _, m, c), v1i_method(m), !v1i_own(c, m).
+.decl v1i_own(q: symbol, m: symbol) cross_file
+v1i_own(q, m) :- py_names__member_method(_, q, m), v1i_method(m).
+v1i_own(q, m) :- py_names__anc_method(_, q, m), v1i_method(m).
+v1i_own(q, m) :- v1i_field_q(q, m).
+v1i_own(q, m) :- pd_ancestor(q, b), v1i_field_q(b, m).
+// v1i_field_q(q, m): model q of this file declares field m, one of those methods' names.
+.decl v1i_field_q(q: symbol, m: symbol)
+v1i_field_q(q, m) :- pd_field(c, m, _, _), v1i_method(m), class_def(c, q).
+// v1i_call(k, m, q): call k is `o.m(...)` on model q (class or instance); whether m is the project's own is the
+// outputs' question (v1i_own).
+.decl v1i_call(k: node, m: symbol, q: symbol)
+v1i_call(k, m, q) :- pd_model_call(k, _, m, q), v1i_method(m).
 
 // `.json(...)` with any argument but the ones v2's deprecated `.json()` still takes.
 .decl v1i_json_ok(kw: symbol)
 v1i_json_ok("include"). v1i_json_ok("exclude"). v1i_json_ok("by_alias"). v1i_json_ok("exclude_unset").
 v1i_json_ok("exclude_defaults"). v1i_json_ok("exclude_none").
-.decl v1i_json_crash(k: node)
-v1i_json_crash(k) :- v1i_call(k, "json", _), call_arg(k, -1, kw, _), !v1i_json_ok(kw).
-v1i_at(k) :- v1i_json_crash(k).
-JsonDumpsArgs(k) :- v1i_json_crash(k), v1i_report(k).
+.decl v1i_json_crash(k: node, q: symbol)
+v1i_json_crash(k, q) :- v1i_call(k, "json", q), call_arg(k, -1, kw, _), !v1i_json_ok(kw).
+v1i_at(k) :- v1i_json_crash(k, _).
+JsonDumpsArgs(k) :- v1i_json_crash(k, q), !v1i_own(q, "json"), v1i_report(k, nk), !pd_shim_elsewhere(nk).
 
-// `M.from_orm(...)` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes).
-.decl v1i_orm_crash(k: node)
-v1i_orm_crash(k) :- v1i_call(k, "from_orm", c), !pd_from_attributes(c).
-v1i_at(k) :- v1i_orm_crash(k).
-FromOrmCrash(k) :- v1i_orm_crash(k), v1i_report(k).
+// `M.from_orm(...)` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes, a cross-file
+// answer by the model's qualified name).
+v1i_at(k) :- v1i_call(k, "from_orm", _).
+FromOrmCrash(k) :- v1i_call(k, "from_orm", q), !v1i_own(q, "from_orm"), !pd_from_attributes(q), v1i_report(k, nk),
+    !pd_shim_elsewhere(nk).
 
 // The cases, `cases/pydantic-practice-v1-api-in-v2/`, read as one repository pinned to Pydantic 2 with a `legacy/`
 // project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other line.

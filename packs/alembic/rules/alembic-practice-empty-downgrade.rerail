@@ -101,10 +101,17 @@ ed_counted(d, p, g) :- al_rev_dir(d, p), !ed_merge(d), ed_schema_up(d), al_step(
     !ed_excused(d, g).
 .decl ed_empty(d: number, p: symbol, g: node)
 ed_empty(d, p, g) :- ed_counted(d, p, g), !ed_does_something(g).
-// ed_tree(p, k, n): tree p has n counted revisions, k of them with a downgrade that does something.
-.decl ed_tree(p: symbol, k: number, n: number)
-ed_tree(p, k, n) :- ed_counted(_, p, _), n = count : { ed_counted(_, p, _) },
-    k = count : { ed_counted(_, p, g), ed_does_something(g) }.
+// ed_tree(p, k, n): tree p has n counted revisions, k of them with a downgrade that does something. It counts the
+// revision files of a directory, so it spans files on purpose (cross_file): each file states its own counted
+// downgrade by the directory path and the downgrade's term (ed_counted_at, ed_doing_at), and the tree's counts hold
+// paths and numbers alone.
+.decl ed_counted_at(d: number, p: symbol, g: symbol)
+ed_counted_at(d, p, gt) :- ed_counted(d, p, g), al_term(g, d, gt).
+.decl ed_doing_at(d: number, p: symbol, g: symbol)
+ed_doing_at(d, p, gt) :- ed_counted(d, p, g), ed_does_something(g), al_term(g, d, gt).
+.decl ed_tree(p: symbol, k: number, n: number) cross_file
+ed_tree(p, k, n) :- ed_counted_at(_, p, _), n = count : { ed_counted_at(_, p, _) },
+    k = count : { ed_doing_at(_, p, _) }.
 
 EmptyDowngrade(g, k, n) :- ed_empty(_, p, g), ed_tree(p, k, n), n >= 5, k * 5 >= n * 4.
 

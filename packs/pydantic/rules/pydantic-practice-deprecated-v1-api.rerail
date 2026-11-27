@@ -62,17 +62,28 @@
 // v1d_at(n) collects every node a check below may report, so the shim test runs on those nodes only.
 .decl v1d_at(n: node)
 pd_shim_demand(n) :- v1d_at(n).
-.decl v1d_report(n: node)
-v1d_report(n) :- v1d_at(n), docof(n, d), pd_v2_doc(d), !pd_test_doc(d), !pd_version_guarded(n).
+// v1d_report(n, nk): what n's own file says: a v2 project's document, not a test, no shim its file shows; nk is n's
+// term (python/points-to-file's pt_tm, relative to its def, class or module), by which each output asks whether a
+// flag another module defines guards n (`!pd_shim_elsewhere(nk)`).
+.decl v1d_report(n: node, nk: symbol)
+v1d_report(n, nk) :- v1d_at(n), docof(n, d), pd_v2_doc(d), !pd_test_doc(d), !pd_version_guarded(n), pt_tm(n, nk).
 
 // ---- what the project defines itself ------------------------------------------------------------------------------
-// v1d_own(c, m): model c defines m itself, as a method of c or of a run class among its bases, or as a field.
-.decl v1d_own(c: node, m: symbol)
-v1d_own(c, m) :- pd_model(c), v1d_old_method(m, _), class_def(c, q), mro_method(q, m, _).
-v1d_own(c, m) :- pd_model(c), v1d_old_method(m, _), pd_has_field(c, m, _, _).
-// v1d_call(k, m, c): call k is `o.m(...)` on model c (class or instance), m not the project's own.
-.decl v1d_call(k: node, m: symbol, c: node)
-v1d_call(k, m, c) :- pd_model_call(k, _, m, c), v1d_old_method(m, _), !v1d_own(c, m).
+// v1d_own(q, m): model q defines m itself, as a method of q or of a run class among its bases (the phase py_names'
+// member_method, anc_method), or as a field of q or of a run base (v1d_field_q, by symbol). It joins the classes'
+// modules by symbol, on purpose, holding no node; the output reads it by the model's qualified name.
+.decl v1d_own(q: symbol, m: symbol) cross_file
+v1d_own(q, m) :- py_names__member_method(_, q, m), v1d_old_method(m, _).
+v1d_own(q, m) :- py_names__anc_method(_, q, m), v1d_old_method(m, _).
+v1d_own(q, m) :- v1d_field_q(q, m).
+v1d_own(q, m) :- pd_ancestor(q, b), v1d_field_q(b, m).
+// v1d_field_q(q, m): model q of this file declares field m, an old method's name.
+.decl v1d_field_q(q: symbol, m: symbol)
+v1d_field_q(q, m) :- pd_field(c, m, _, _), v1d_old_method(m, _), class_def(c, q).
+// v1d_call(k, m, q): call k is `o.m(...)` on model q (class or instance); whether m is the project's own is the
+// output's question (v1d_own).
+.decl v1d_call(k: node, m: symbol, q: symbol)
+v1d_call(k, m, q) :- pd_model_call(k, _, m, q), v1d_old_method(m, _).
 
 // ---- what pydantic-practice-v1-api-in-v2 reports: left to it ------------------------------------------------------
 // `Field(regex=, const=, unique_items=)`, pydantic's own Field (sqlmodel.Field maps them itself).
@@ -92,9 +103,8 @@ v1d_json_ok("include"). v1d_json_ok("exclude"). v1d_json_ok("by_alias"). v1d_jso
 v1d_json_ok("exclude_defaults"). v1d_json_ok("exclude_none").
 .decl v1d_json_crash(k: node)
 v1d_json_crash(k) :- v1d_call(k, "json", _), call_arg(k, -1, kw, _), !v1d_json_ok(kw).
-// `from_orm()` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes).
-.decl v1d_orm_crash(k: node)
-v1d_orm_crash(k) :- v1d_call(k, "from_orm", c), !pd_from_attributes(c).
+// `from_orm()` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes, cross-file): the
+// output asks it.
 
 // ---- methods ------------------------------------------------------------------------------------------------------
 .decl v1d_old_method(m: symbol, new: symbol)
@@ -110,10 +120,13 @@ v1d_old_method("schema", "`.model_json_schema()`").
 v1d_old_method("schema_json", "`json.dumps(Model.model_json_schema())`").
 v1d_old_method("update_forward_refs", "`.model_rebuild()`").
 v1d_old_method("validate", "`.model_validate()`").
-.decl v1d_old_call(k: node, m: symbol, new: symbol)
-v1d_old_call(k, m, new) :- v1d_call(k, m, _), v1d_old_method(m, new), !v1d_json_crash(k), !v1d_orm_crash(k).
-v1d_at(k) :- v1d_old_call(k, _, _).
-DeprecatedMethod(k, x, new) :- v1d_old_call(k, m, new), v1d_report(k), x = cat(".", m, "()").
+.decl v1d_old_call(k: node, m: symbol, new: symbol, q: symbol)
+v1d_old_call(k, m, new, q) :- v1d_call(k, m, q), v1d_old_method(m, new), !v1d_json_crash(k).
+v1d_at(k) :- v1d_old_call(k, _, _, _).
+DeprecatedMethod(k, x, new) :- v1d_old_call(k, m, new, q), m != "from_orm", !v1d_own(q, m), v1d_report(k, nk),
+    !pd_shim_elsewhere(nk), x = cat(".", m, "()").
+DeprecatedMethod(k, ".from_orm()", new) :- v1d_old_call(k, "from_orm", new, q), !v1d_own(q, "from_orm"),
+    pd_from_attributes(q), v1d_report(k, nk), !pd_shim_elsewhere(nk).
 
 // `__fields__` and `__fields_set__` on a model class or instance.
 .decl v1d_old_attr(a: symbol, new: symbol)
@@ -122,28 +135,28 @@ v1d_old_attr("__fields_set__", "`model_fields_set`").
 .decl v1d_old_dunder(n: node, a: symbol, new: symbol)
 v1d_old_dunder(n, a, new) :- v1d_old_attr(a, new), attr_of(n, o, a), unparen(o, u), (pd_instance(u, _) ; pd_class_ref(u, _)).
 v1d_at(n) :- v1d_old_dunder(n, _, _).
-DeprecatedMethod(n, a, new) :- v1d_old_dunder(n, a, new), v1d_report(n).
+DeprecatedMethod(n, a, new) :- v1d_old_dunder(n, a, new), v1d_report(n, nk), !pd_shim_elsewhere(nk).
 
 // ---- validators (pydantic's only: the library resolves the decorator to pydantic's own names) ---------------------
 .decl v1d_validator(e: node)
 v1d_validator(e) :- pd_validator_deco(_, "validator", e).
 v1d_at(e) :- v1d_validator(e).
-DeprecatedValidator(e) :- v1d_validator(e), v1d_report(e).
+DeprecatedValidator(e) :- v1d_validator(e), v1d_report(e, nk), !pd_shim_elsewhere(nk).
 .decl v1d_root(e: node)
 v1d_root(e) :- pd_validator_deco(_, "root_validator", e), !v1d_root_crash(e).
 v1d_at(e) :- v1d_root(e).
-DeprecatedRootValidator(e) :- v1d_root(e), v1d_report(e).
+DeprecatedRootValidator(e) :- v1d_root(e), v1d_report(e, nk), !pd_shim_elsewhere(nk).
 
 // ---- the nested `class Config:` of a v2 model, once ---------------------------------------------------------------
 v1d_at(k) :- pd_config_class(_, k).
-DeprecatedConfigClass(k) :- pd_config_class(_, k), v1d_report(k).
+DeprecatedConfigClass(k) :- pd_config_class(_, k), v1d_report(k, nk), !pd_shim_elsewhere(nk).
 
 // ---- `Field(min_items=, max_items=)`, once a call, unless the call has a removed argument -------------------------
 .decl v1d_field_items(k: node)
 v1d_field_items(k) :- v1d_pd_field(k), call_arg(k, -1, kw, _), (kw = "min_items" ; kw = "max_items"),
     !v1d_field_crash(k).
 v1d_at(k) :- v1d_field_items(k).
-DeprecatedFieldArg(k) :- v1d_field_items(k), v1d_report(k).
+DeprecatedFieldArg(k) :- v1d_field_items(k), v1d_report(k, nk), !pd_shim_elsewhere(nk).
 
 // ---- module functions, at each use (not the import line) ----------------------------------------------------------
 .decl v1d_old_fn(q: symbol, name: symbol, new: symbol)
@@ -168,7 +181,7 @@ v1d_fn_use(n, x, new) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(
 v1d_in_import(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q), v1d_old_fn(q, _, _),
     within(n, i), import_stmt(i).
 v1d_at(n) :- v1d_fn_use(n, _, _).
-DeprecatedMethod(n, x, new) :- v1d_fn_use(n, x, new), v1d_report(n).
+DeprecatedMethod(n, x, new) :- v1d_fn_use(n, x, new), v1d_report(n, nk), !pd_shim_elsewhere(nk).
 
 // The cases, `cases/pydantic-practice-deprecated-v1-api/`, read as one repository pinned to Pydantic 2 with a
 // `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other line.

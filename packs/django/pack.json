@@ -564,6 +564,12 @@
       "document": "rules/django-practice-settings-in-test.rerail",
       "title": "Django practice: a test that writes `django.conf.settings` directly and leaves the change for later tests",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -661,6 +667,12 @@
       "document": "rules/django-practice-settings-env-fails-open.rerail",
       "title": "Django practice: DEBUG, ALLOWED_HOSTS or SECRET_KEY falls back to an insecure value when its environment variable is unset",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "config",
+        "severity": "critical",
+        "hazard": "config.insecure-default"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -690,6 +702,12 @@
       "document": "rules/django-practice-addfield-default-runs-once.rerail",
       "title": "Django practice: an AddField on an existing table whose generated or unique default every existing row shares",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "migration.default-evaluated-once"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -719,6 +737,12 @@
       "document": "rules/django-practice-bulk-ignore-conflicts-used.rerail",
       "title": "Django practice: objects from bulk_create(ignore_conflicts=True) used as the inserted rows",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "orm.ignored-conflict-rows-used"
+      },
       "mode": "steer",
       "examples": {
         "caught": {
@@ -736,6 +760,12 @@
       "document": "rules/django-practice-runpython-with-schema-change.rerail",
       "title": "Django practice: a RunPython that writes rows in the same migration transaction as a schema change to that table",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.data-and-schema-in-one-transaction"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -754,6 +784,12 @@
       "document": "rules/django-practice-alterfield-rewrites-table.rerail",
       "title": "Django practice: an AlterField whose column type change makes PostgreSQL rewrite an existing table",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.type-change-rewrites"
+      },
       "mode": "log",
       "on": false,
       "examples": {
@@ -800,6 +836,12 @@
       "document": "rules/django-practice-runpython-live-model.rerail",
       "title": "Django practice: RunPython code that reaches live model classes through a helper in another module",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "migration.live-model-in-data-migration"
+      },
       "mode": "steer",
       "examples": {
         "caught": {

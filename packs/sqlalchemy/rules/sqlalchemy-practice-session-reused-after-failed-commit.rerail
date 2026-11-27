@@ -46,23 +46,35 @@
 // Gaps: a session whose name does not look like one (`self.db`, an unannotated `db` parameter); a later use through a
 // helper the session is passed to; a rollback done by a helper whose name does not say "rollback"; `self.<session>`
 // whose owner's callers reuse it; callers more than one call away, or reached only through an open call.
+// What other files decide is read by symbol (decisions 0652, 0677): whether the receiver is a session (a factory, a
+// Flask-SQLAlchemy extension or a scoped_session another module holds, a parameter a caller fills with one: lib's
+// sa_session_key), and whether a caller goes on using the session it passed in (srf_reused_q, stated in each caller's
+// file by the callee's symbol). The output joins them with the handler's own file's facts.
 
 #include "lib/sqlalchemy.rerail"
 
 .violation SessionReusedAfterFailedCommit(at: node, s: symbol, m: symbol, why: symbol) "Call `{s}.rollback()` in this handler, or re-raise: after a failed `{s}.{m}()` the session raises PendingRollbackError until rolled back, and {why}."
-SessionReusedAfterFailedCommit(x, st, m, why) :- srf_candidate(t, x, s, m), srf_why(t, x, s, why), text(s, st).
-// srf_why(t, x, s, why): the one reason given for a handler, the first that holds.
+SessionReusedAfterFailedCommit(x, st, m, why) :- srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k),
+    srf_why(t, x, s, why), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "a caller goes on using the session it passed in") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), srf_param_at(s, fq, n),
+    srf_reused_q(fq, n), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "the session is shared beyond this function (module-level or request-scoped), so later code runs on it") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), !srf_param_at(s, _, _),
+    srf_shared(s), !srf_in_command(t), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "the session is shared beyond this function (module-level or request-scoped), so later code runs on it") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), srf_param_at(s, fq, n),
+    !srf_reused_q(fq, n), srf_shared(s), !srf_in_command(t), text(s, st).
+// srf_why(t, x, s, why): the reason given for a handler, the first of those its own file decides that holds (0-2);
+// the output tries the caller's reuse (3), then the shared session (4), when none does.
 .decl srf_why(t: node, x: node, s: node, why: symbol)
 srf_why(t, x, s, "the handler itself uses the session again") :- srf_handler_use(t, x, s).
 srf_why(t, x, s, "the next loop iteration uses the same session") :- srf_candidate(t, x, s, _), !srf_handler_use(t, x, s),
     srf_loop_reuse(t, x, s).
 srf_why(t, x, s, "code after the try uses the session again") :- srf_candidate(t, x, s, _), !srf_handler_use(t, x, s),
     !srf_loop_reuse(t, x, s), srf_later_use(t, x, s).
-srf_why(t, x, s, "a caller goes on using the session it passed in") :- srf_candidate(t, x, s, _),
-    !srf_handler_use(t, x, s), !srf_loop_reuse(t, x, s), !srf_later_use(t, x, s), srf_param_reused(s).
-srf_why(t, x, s, "the session is shared beyond this function (module-level or request-scoped), so later code runs on it") :-
-    srf_candidate(t, x, s, _), !srf_handler_use(t, x, s), !srf_loop_reuse(t, x, s), !srf_later_use(t, x, s),
-    !srf_param_reused(s), srf_shared(s), !srf_in_command(t).
+.decl srf_why_any(t: node, x: node, s: node)
+srf_why_any(t, x, s) :- srf_why(t, x, s, _).
 // srf_handler_use(t, x, s): handler x itself calls a method on s (`session.execute(update(...))` to mark a failure).
 .decl srf_handler_use(t: node, x: node, s: node)
 srf_handler_use(t, x, s) :- srf_candidate(t, x, s, _), srf_use(u, s), within_stop(u, x, sa_region_stop).
@@ -75,9 +87,13 @@ srf_handler_use(t, x, s) :- srf_candidate(t, x, s, _), srf_use(u, s), within_sto
 srf_candidate(t, x, s, m) :- srf_commit(t, c, s, m), !srf_shielded(t, c, s), child(t, x, _), kind(x, "except_clause"),
     srf_catches_db(x), !srf_reraises(x), !srf_recovers(x, s), !srf_rebinds(x, s), docof(t, d), !sa_test_doc(d),
     !sa_migration_doc(d).
+// srf_commit(t, c, s, m): call c, in try t's body, is `s.m()` with m commit or flush, s session-like (under the
+// conditions srf_sess(s, k) names, which the output checks).
 .decl srf_commit(t: node, c: node, s: node, m: symbol)
-srf_commit(t, c, s, m) :- kind(t, "try_statement"), field(t, "body", b), sa_session_call(c, s, m),
+srf_commit(t, c, s, m) :- kind(t, "try_statement"), field(t, "body", b), sa_session_call(c, s, m, _),
     (m = "commit" ; m = "flush"), within_stop(c, b, sa_region_stop).
+.decl srf_sess(s: node, k: symbol)
+srf_sess(s, k) :- srf_commit(_, c, s, m), sa_session_call(c, s, m, k).
 // srf_shielded(t, c, s): the error from c never reaches t's handlers with s still open: c sits in the body of an inner
 // try, of a `with s.begin()`/`begin_nested()` block, or of a with-block in the try body that binds s's name (`with
 // Session() as s:` closes s, which rolls back, before the handler runs).
@@ -207,7 +223,7 @@ srf_climb(n, n) :- srf_candidate(n, _, _, _).
 srf_climb(n, st) :- srf_candidate(n, _, _, _), inside(n, st, srf_stmt_kind).
 srf_climb(n, n) :- srf_candidate(t, _, _, _), inside(t, n, srf_loop_kind).
 srf_climb(n, st) :- srf_candidate(t, _, _, _), inside(t, n, srf_loop_kind), inside(n, st, srf_stmt_kind).
-srf_climb(n, st) :- srf_passed(_, _, n, _), inside(n, st, srf_stmt_kind).
+srf_climb(n, st) :- srf_arg(n, _), inside(n, st, srf_stmt_kind).
 // srf_stmt_kind(k): the statements a block holds (body_stmt's children).
 .decl srf_stmt_kind(k: symbol)
 srf_stmt_kind("expression_statement"). srf_stmt_kind("return_statement"). srf_stmt_kind("if_statement").
@@ -231,35 +247,43 @@ srf_use(u, s) :- srf_candidate(_, _, s, _), nearest(s, f, fdef), text(s, st), ha
 // keyword or position) and goes on using that name: the call sits in a loop the name is bound outside of, or a later
 // statement of the caller mentions the name. A callee whose callers only roll back or close afterwards (dify's
 // RagPipelineDslService, whose controller rolls back on a FAILED result) stays silent; so does `self.<x>`, whose
-// owner's callers are not followed.
+// owner's callers are not followed. The callers sit in other files: each states, by the callee's symbol (python/calls'
+// call_target), which of its parameters it goes on using (srf_pass_kw_q, srf_pass_pos_q), and srf_reused_q joins them
+// with the callee's signature (lib's sa_param_for).
 .decl srf_param(s: node, f: node, n: symbol)
 srf_param(s, f, n) :- srf_candidate(_, _, s, _), kind(s, "identifier"), text(s, n), look(s, n, f),
     binding(f, n, _, "param"), !srf_rebound(f, n).
 .decl srf_rebound(f: node, n: symbol)
 srf_rebound(f, n) :- binding(f, n, _, form), form != "param".
-// srf_passed(f, n, c, an): call c (in the run) targets f and passes the name an as its parameter n.
-.decl srf_passed(f: node, n: symbol, c: node, an: symbol)
-srf_passed(f, n, c, an) :- srf_param(_, f, n), call_target(c, f), call_arg(c, -1, n, a), kind(a, "identifier"),
-    text(a, an).
-srf_passed(f, n, c, an) :- srf_param(_, f, n), sig_param(f, _, nm, i, _, _, _), text(nm, n), call_target(c, f),
-    !srf_bound_method(f, c), call_arg(c, i, "", a), kind(a, "identifier"), text(a, an).
-srf_passed(f, n, c, an) :- srf_param(_, f, n), sig_param(f, _, nm, i, _, _, _), text(nm, n), call_target(c, f),
-    srf_bound_method(f, c), j = i - 1, call_arg(c, j, "", a), kind(a, "identifier"), text(a, an).
-// srf_bound_method(f, c): f's first parameter is self or cls and c calls it on an object (`self.f(...)`, `svc.f(...)`).
-.decl srf_bound_method(f: node, c: node)
-srf_bound_method(f, c) :- srf_param(_, f, _), sig_param(f, _, nm, 0, _, _, _), (text(nm, "self") ; text(nm, "cls")),
-    call_target(c, f), field(c, "function", g), kind(g, "attribute").
-// srf_param_reused(s): some caller of s's function goes on using the name it passed for s.
-.decl srf_param_reused(s: node)
-srf_param_reused(s) :- srf_param(s, f, n), srf_passed(f, n, c, an), srf_caller_loop(c, an, l), !srf_name_bound_in(c, an, l).
-srf_param_reused(s) :- srf_param(s, f, n), srf_passed(f, n, c, an), srf_caller_later(c, an).
+// srf_param_at(s, f, n): session s is parameter n of def f (its symbol).
+.decl srf_param_at(s: node, f: symbol, n: symbol)
+srf_param_at(s, fq, n) :- srf_param(s, f, n), pt_def(f, fq).
+// srf_arg(c, an): call c, of a def of the run, passes the name an.
+.decl srf_arg(c: node, an: symbol)
+srf_arg(c, an) :- kind(c, "call"), call_target(c, _), call_arg(c, _, _, a), kind(a, "identifier"), text(a, an).
+// srf_goes_on(c, an): the caller goes on using the name an it passes in call c.
+.decl srf_goes_on(c: node, an: symbol)
+srf_goes_on(c, an) :- srf_caller_loop(c, an, l), !srf_name_bound_in(c, an, l).
+srf_goes_on(c, an) :- srf_caller_later(c, an).
+// srf_pass_kw_q(f, n): a call of def f passes, by keyword for its parameter n, a name its caller goes on using.
+// srf_pass_pos_q(f, i, b): the same as its positional argument i, in call form b (lib's sa_call_form).
+.decl srf_pass_kw_q(f: symbol, n: symbol)
+srf_pass_kw_q(fq, n) :- srf_arg(c, an), call_target(c, fq), call_arg(c, -1, n, a), kind(a, "identifier"), text(a, an),
+    srf_goes_on(c, an).
+.decl srf_pass_pos_q(f: symbol, i: number, b: symbol)
+srf_pass_pos_q(fq, i, b) :- srf_arg(c, an), call_target(c, fq), call_arg(c, i, "", a), kind(a, "identifier"),
+    text(a, an), sa_call_form(c, b), srf_goes_on(c, an).
+// srf_reused_q(f, n): some caller of def f goes on using the name it passed for f's parameter n.
+.decl srf_reused_q(f: symbol, n: symbol)
+srf_reused_q(fq, n) :- srf_pass_kw_q(fq, n).
+srf_reused_q(fq, n) :- srf_pass_pos_q(fq, i, b), sa_param_for(fq, i, b, n).
 .decl srf_caller_loop(c: node, an: symbol, l: node)
-srf_caller_loop(c, an, l) :- srf_passed(_, _, c, an), srf_loop(l, lb), within_stop(c, lb, sa_region_stop).
+srf_caller_loop(c, an, l) :- srf_arg(c, an), srf_loop(l, lb), within_stop(c, lb, sa_region_stop).
 .decl srf_name_bound_in(c: node, an: symbol, l: node)
 srf_name_bound_in(c, an, l) :- srf_caller_loop(c, an, l), nearest(c, g, fdef), binding(g, an, site, form), form != "param",
     within(site, l).
 .decl srf_caller_later(c: node, an: symbol)
-srf_caller_later(c, an) :- srf_passed(_, _, c, an), nearest(c, g, fdef), srf_climb(c, st), body_stmt(b, st, i),
+srf_caller_later(c, an) :- srf_arg(c, an), nearest(c, g, fdef), srf_climb(c, st), body_stmt(b, st, i),
     !srf_exit_inside(c, st), within(b, g), body_stmt(b, st2, j), j > i, has(st2, r, "identifier"), text(r, an),
     nearest(r, g, fdef).
 // srf_shared(s): the session is not the function's own: `<module>.session` on a module-level name (Flask-SQLAlchemy's

@@ -46,57 +46,82 @@
 
 #include "lib/celery.rerail"
 
+// Each call and argument is stated in its own file, with what its task and its value need of other files (lib/celery's
+// needs, cel_is): the task def a call names (q, "task"), the model class an argument is an instance of. What the run
+// does as a whole (a pickling app, a Task subclass that rewrites arguments, a task declared pickled) are facts over
+// symbols (tas_app_pickled, tas_wrapped, tas_pickled_q: cross_file).
 .violation TaskArgModel(at: node, task: symbol, arg: symbol) "`{arg}` is a SQLAlchemy model passed to task `{task}`: JSON cannot encode it, and pickle sends a copy that is stale when the task runs. Pass its primary key and load the row in the task."
-TaskArgModel(a, t, x) :- tas_call(c, t), cel_task_arg(c, a), tas_model(a), text(a, x), docof(c, d),
-    !cel_django_doc(d), !tas_arg_wrapper(_).
+TaskArgModel(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_model(a, mq, mk),
+    cel_is(mq, mk), text(a, x), docof(c, d), !cel_django_doc(d), !tas_wrapped().
 
-// tas_model(a): lib/celery's sa_instance, `self` in a method of a model (`notify.delay(self)` in `Order.place`),
-// Flask-Login's current_user, or a list, tuple or dict literal holding one.
-.decl tas_model(a: node)
-tas_model(a) :- sa_instance(a).
-tas_model(a) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e, "self", f), param(f, "self", 0),
-    nearest(f, k, scope), sa_model(k).
-tas_model(a) :- unparen(a, e), (sym_of(e, "flask_login.current_user") ; sym_of(e, "flask_login.utils.current_user")).
-tas_model(a) :- unparen(a, e), (kind(e, "list") ; kind(e, "tuple")), child(e, x, _), tas_model(x).
-tas_model(a) :- unparen(a, e), cel_dict_value(e, x), tas_model(x).
+// tas_model(a, nq, nk): lib/celery's sa_instance, `self` in a method of a model (`notify.delay(self)` in
+// `Order.place`), Flask-Login's current_user, or a list, tuple or dict literal holding one.
+.decl tas_model(a: node, nq: symbol, nk: symbol)
+tas_model(a, nq, nk) :- sa_instance(a, nq, nk).
+tas_model(a, nq, nk) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e, "self", f),
+    param(f, "self", 0), nearest(f, k, scope), sa_model(k, nq, nk).
+tas_model(a, "", "") :- unparen(a, e), (sym_of(e, "flask_login.current_user") ;
+    sym_of(e, "flask_login.utils.current_user")).
+tas_model(a, nq, nk) :- unparen(a, e), (kind(e, "list") ; kind(e, "tuple")), child(e, x, _), tas_model(x, nq, nk).
+tas_model(a, nq, nk) :- unparen(a, e), cel_dict_value(e, x), tas_model(x, nq, nk).
 
-// tas_arg_wrapper(g): g is `apply_async` in a Task subclass and assigns `args` or `kwargs`: the run converts
-// arguments before they reach the serializer.
-.decl tas_arg_wrapper(g: node)
-tas_arg_wrapper(g) :- kind(g, "function_definition"), def_name(g, "apply_async"), nearest(g, k, scope),
-    kind(k, "class_definition"), tas_task_class(k), (asg(g, "args", _, _) ; asg(g, "kwargs", _, _)).
-// tas_task_class(k): k derives from celery's Task (through the run's classes), or from `<app>.Task`, the app's task
-// base (`app.Task`, or `self.Task` in a method of a Celery subclass).
-.decl tas_task_class(k: node)
-tas_task_class(k) :- cel_class_base(k, b), cel_task_class_q(b).
-tas_task_class(k) :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
-    cel_app_ref(u).
-tas_task_class(k) :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
-    text(u, "self"), nearest(k, f, fdef), nearest(f, c, scope), class_def(c, q), cel_app_class(q).
+// tas_wrapped(): a Task subclass of the run defines `apply_async` and assigns `args` or `kwargs` there: the run
+// converts arguments before they reach the serializer. A fact of the whole run (cross_file, no column), from each
+// file's wrappers (tas_arg_wrapper) with their needs met.
+.decl tas_wrapped() cross_file
+tas_wrapped() :- tas_wrapper_need(nq, nk), cel_is(nq, nk).
+.decl tas_wrapper_need(nq: symbol, nk: symbol)
+tas_wrapper_need(nq, nk) :- tas_arg_wrapper(_, nq, nk).
+.decl tas_arg_wrapper(g: node, nq: symbol, nk: symbol)
+tas_arg_wrapper(g, nq, nk) :- kind(g, "function_definition"), def_name(g, "apply_async"), nearest(g, k, scope),
+    kind(k, "class_definition"), tas_task_class(k, nq, nk), (asg(g, "args", _, _) ; asg(g, "kwargs", _, _)).
+// tas_task_class(k, nq, nk): k derives from celery's Task (lib/celery's "task_cls", through the run's classes), or
+// from `<app>.Task`, the app's task base (`app.Task`, or `self.Task` in a method of a Celery subclass: py_names'
+// ancestors, python/names' class_anc).
+.decl tas_task_class(k: node, nq: symbol, nk: symbol)
+tas_task_class(k, b, "task_cls") :- cel_class_base(k, b).
+tas_task_class(k, nq, nk) :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
+    cel_app_ref(u, nq, nk).
+tas_task_class(k, "", "") :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
+    text(u, "self"), nearest(k, f, fdef), nearest(f, c, scope), kind(c, "class_definition"), class_anc(c, b),
+    cel_app_class(b).
 
 .violation TaskArgSession(at: node, task: symbol, arg: symbol) "`{arg}` is a SQLAlchemy session passed to task `{task}`; no serializer can carry it to a worker. Pass the ids the task needs and open a session inside the task."
-TaskArgSession(a, t, x) :- tas_call(c, t), cel_task_arg(c, a), tas_session(a), text(a, x).
+TaskArgSession(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_session(a, sq, sk),
+    cel_is(sq, sk), text(a, x).
 
 .violation TaskArgSet(at: node, task: symbol, arg: symbol) "`{arg}` is a set passed to task `{task}`; Celery's default JSON serializer cannot encode sets. Pass a list (`sorted(...)` or `list(...)`) and rebuild the set in the task."
-TaskArgSet(a, t, x) :- tas_call(c, t), cel_task_arg(c, a), tas_set(a), !tas_pickled(c), text(a, x).
+TaskArgSet(a, t, x) :- tas_call(c, t, q, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_set(a), !tas_pickled_here(c),
+    !tas_pickled_q(q), !tas_app_pickled(), text(a, x).
 
 .violation TaskArgFile(at: node, task: symbol, arg: symbol) "`{arg}` is an open file passed to task `{task}`; no serializer can encode it, and the worker may run elsewhere. Pass the file's path, or its contents if they are small."
-TaskArgFile(a, t, x) :- tas_call(c, t), cel_task_arg(c, a), tas_file(a), text(a, x).
+TaskArgFile(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_file(a), text(a, x).
 
 .violation TaskArgCallable(at: node, task: symbol, arg: symbol, what: symbol) "`{arg}` is {what} passed to task `{task}`; Celery's default JSON serializer cannot encode it. Pass the values themselves, or a name the task maps to the function."
-TaskArgCallable(a, t, x, w) :- tas_call(c, t), cel_task_arg(c, a), tas_callable(c, a, w), text(a, x).
-TaskArgCallable(g, t, x, "a generator expression") :- tas_call(c, t), tas_bare_generator(c, g), text(g, x).
+TaskArgCallable(a, t, x, w) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_callable(c, a, w),
+    text(a, x).
+// A function of the run named bare: a module-level function pickles by reference, so a pickled message leaves it.
+TaskArgCallable(a, t, x, "a function") :- tas_call(c, t, q, nq, nk), cel_is(nq, nk), cel_task_arg(c, a),
+    tas_function(a), !tas_pickled_here(c), !tas_pickled_q(q), !tas_app_pickled(), text(a, x).
+TaskArgCallable(g, t, x, "a generator expression") :- tas_call(c, t, _, nq, nk), cel_is(nq, nk),
+    tas_bare_generator(c, g), text(g, x).
 
-// tas_call(c, t): c is a task call or send outside test files; t names the task for the message.
-.decl tas_call(c: node, t: symbol)
-tas_call(c, t) :- cel_task_call(c, f, _), def_name(f, t), tas_live(c).
-tas_call(c, t) :- cel_send(c, m), m != "send_task", !cel_task_call(c, _, _), field(c, "function", fn),
+// tas_call(c, t, q, nq, nk): c is a task call or send outside test files; t names the task for the message; q is the
+// task def's symbol when c names one (cel_task_call), else "".
+.decl tas_call(c: node, t: symbol, q: symbol, nq: symbol, nk: symbol)
+tas_call(c, t, q, q, "task") :- cel_task_call(c, q, _), split_dot(q, _, t), tas_live(c).
+tas_call(c, t, "", nq, nk) :- cel_send(c, m, nq, nk), m != "send_task", !tas_def_call(c), field(c, "function", fn),
     attr_of(fn, o, _), text(o, t), tas_live(c).
-tas_call(c, t) :- cel_send(c, "send_task"), cel_name_ref(e, t, "send_task"), child(al, e, _), field(c, "arguments", al),
-    tas_live(c).
-tas_call(c, "?") :- cel_send(c, "send_task"), !tas_named_send(c), tas_live(c).
+tas_call(c, t, "", "", "") :- cel_send(c, "send_task", _, _), cel_name_ref(e, t, "send_task", _, _),
+    child(al, e, _), field(c, "arguments", al), tas_live(c).
+tas_call(c, "?", "", "", "") :- cel_send(c, "send_task", _, _), !tas_named_send(c), tas_live(c).
+// tas_def_call(c): c's receiver resolves to a def of the run (cel_task_call), named by the first rule when it is a
+// task, and no task otherwise.
+.decl tas_def_call(c: node)
+tas_def_call(c) :- cel_task_call(c, _, _).
 .decl tas_named_send(c: node)
-tas_named_send(c) :- cel_send(c, "send_task"), field(c, "arguments", al), child(al, e, _), cel_name_ref(e, _, "send_task").
+tas_named_send(c) :- cel_send(c, "send_task", _, _), field(c, "arguments", al), child(al, e, _),
+    cel_name_ref(e, _, "send_task", _, _).
 .decl tas_live(c: node)
 tas_live(c) :- kind(c, "call"), docof(c, d), !cel_test_doc(d).
 
@@ -105,21 +130,27 @@ tas_live(c) :- kind(c, "call"), docof(c, d), !cel_test_doc(d).
 tas_bare_generator(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, m), (m = "delay" ; m = "s" ;
     m = "si"), field(c, "arguments", g), kind(g, "generator_expression").
 
-// tas_pickled(c): the message of call c is pickled: its task says `serializer="pickle"`, the call does, or an app of
-// the run sets task_serializer to a pickle serializer.
-.decl tas_pickled(c: node)
-tas_pickled(c) :- cel_task_call(c, f, _), cel_task_option(f, "serializer", v), tas_pickle_str(v).
-tas_pickled(c) :- kind(c, "call"), call_arg(c, -1, "serializer", v), tas_pickle_str(v).
-tas_pickled(c) :- kind(c, "call"), cel_setting("task_serializer", v, _), tas_pickle_str(v).
+// The message of call c is pickled when its task says `serializer="pickle"` (tas_pickled_q, the task's symbol), the
+// call does (tas_pickled_here), or an app of the run sets task_serializer to a pickle serializer (tas_app_pickled).
+.decl tas_pickled_here(c: node)
+tas_pickled_here(c) :- kind(c, "call"), call_arg(c, -1, "serializer", v), tas_pickle_str(v).
+.decl tas_pickled_q(q: symbol) cross_file
+tas_pickled_q(q) :- tas_pickled_def(q, nq, nk), cel_is(nq, nk).
+.decl tas_pickled_def(q: symbol, nq: symbol, nk: symbol)
+tas_pickled_def(q, nq, nk) :- cel_task_option(f, "serializer", v, nq, nk), tas_pickle_str(v), qualname(f, q).
+.decl tas_app_pickled() cross_file
+tas_app_pickled() :- tas_pickle_setting(_).
+.decl tas_pickle_setting(d: number)
+tas_pickle_setting(d) :- cel_setting("task_serializer", v, _), tas_pickle_str(v), docof(v, d).
 .decl tas_pickle_str(v: node)
 tas_pickle_str(v) :- str(v, s), contains("pickle", s).
 
-// tas_session(a): a session proven by what binds it (lib/celery's sa_session_proven), or the name fallback
-// (sa_session_guess) only for a name its function never assigns (an unannotated parameter): an attribute or a local
-// the engine cannot follow is not reported.
-.decl tas_session(a: node)
-tas_session(a) :- unparen(a, e), sa_session_proven(e).
-tas_session(a) :- unparen(a, e), kind(e, "identifier"), sa_session_guess(e), text(e, x), look(e, x, f),
+// tas_session(a, nq, nk): a session proven by what binds it (lib/celery's sa_session_proven), or the name fallback
+// (sa_session_guess, in a run that imports SQLAlchemy) only for a name its function never assigns (an unannotated
+// parameter): an attribute or a local the engine cannot follow is not reported.
+.decl tas_session(a: node, nq: symbol, nk: symbol)
+tas_session(a, nq, nk) :- unparen(a, e), sa_session_proven(e, nq, nk).
+tas_session(a, "", "sa_run") :- unparen(a, e), kind(e, "identifier"), sa_session_guess(e), text(e, x), look(e, x, f),
     param(f, x, _), !asg(f, x, _, _), !sa_with_alias(e, _).
 
 // tas_set(a): a set or frozenset value.
@@ -147,15 +178,16 @@ tas_file(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), kind(wi, "with_
 .decl tas_open(v: node)
 tas_open(v) :- kind(v, "call"), field(v, "function", f), (sym_of(f, "builtins.open") ; sym_of(f, "io.open")).
 
-// tas_callable(c, a, what): a lambda, a generator expression, or a function of the run named bare. A module-level
-// function pickles by reference, so a pickled message leaves the last shape alone.
+// tas_callable(c, a, what): a lambda or a generator expression. tas_function(a): a function of the run named bare (a
+// def of the run, py_names' defined and no class, or a def its own scope binds).
 .decl tas_callable(c: node, a: node, what: symbol)
 tas_callable(c, a, "a lambda") :- cel_task_arg(c, a), unparen(a, e), kind(e, "lambda").
 tas_callable(c, a, "a generator expression") :- cel_task_arg(c, a), unparen(a, e), kind(e, "generator_expression").
-tas_callable(c, a, "a function") :- cel_task_arg(c, a), unparen(a, e), kind(e, "identifier"), sym_of(e, q),
-    qualname(g, q), kind(g, "function_definition"), !tas_pickled(c).
-tas_callable(c, a, "a function") :- cel_task_arg(c, a), unparen(a, e), kind(e, "identifier"), text(e, x),
-    look(e, x, s), !kind(s, "module"), defn(s, x, g), kind(g, "function_definition"), !tas_pickled(c).
+.decl tas_function(a: node)
+tas_function(a) :- unparen(a, e), kind(e, "identifier"), sym_of(e, q), docof(e, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__defined(m, q), !py_names__class(m, q).
+tas_function(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"),
+    defn(s, x, g), kind(g, "function_definition").
 
 // The cases, `cases/celery-practice-task-arg-not-serializable/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line. `pickled/` is an app that sets task_serializer to pickle, so it is its
