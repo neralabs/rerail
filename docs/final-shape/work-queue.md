@@ -12505,3 +12505,13 @@ match) and the paged directory, by invariant:
 Checked under Relax: rerail-reads, rerail-ukl-rust, rerail-setfix (150), tests-lang syntax (113), the device
 crate's join_rust digests. Not run: node_probed_by_kind_reads_its_batches_lists, which runs on Metal (no local
 Metal, no farm). No clippy runs.
+
+### Q603. Roll-up 175 (sync-integration-hub-tape 4c4a176b97 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's five: decision 0725's spike measured further. Callable candidates give their keys'
+distinct values; the asks of the exported relations are recorded (RERAIL_ASKS: each reader's shape, keys, rows
+used, and the files answering a keyed ask), each exported relation's disposition from its asks, and probes read a
+relation's own document or node column, so every keyed ask names its file (0725: 97.6% before).
+
+No conflicts. Checked under Relax: tests-rr callable_tests (5; 9 ignored, as the feeder has them). No Metal,
+farm or clippy runs.

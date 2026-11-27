@@ -183,3 +183,30 @@ fn a_run_names_the_relations_it_could_call() {
     assert!(lines.iter().any(|l| l.contains("same_globals bbbf by file (")), "{lines:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The asks of a program's exported relations are recorded reader by reader (`RERAIL_ASKS`): `unsafe_pair` reads
+/// `same_globals` with its file and both functions bound (`bbbf`), so its keys and rows used are two relations
+/// named for that shape, and outputs, with the files answering each key (its document column names them); `runs_in`
+/// reads `calls_in` with nothing bound.
+#[test]
+fn the_asks_of_exported_relations_are_recorded_by_shape() {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::asks;
+    // With the run's `doc` (a document's path), which a corpus run's programs read.
+    let program = format!("{}.decl doc(d: number, p: symbol, q: symbol)\n.input doc\n", whole());
+    let v = crate::code_rule_dsl::logic::rr::parse_version(&program).unwrap();
+    let pre = crate::code_rule_dsl::typing::file_local::programs_of(v.clone()).unwrap();
+    let got = asks::recorded(&v, &pre.file_local, &pre.locations).unwrap();
+    assert!(got.unlocated.is_empty(), "every relation asked by key names its file: {:?}", got.unlocated);
+    assert!(got.located.iter().any(|(tag, how)| tag.ends_with("__same_globals__unsafe_pair__bbbf") && how == "document column 0, key 0"), "its key names its file: {:?}", got.located);
+    let out = got.version.expect("asks recorded");
+    let outputs: Vec<String> = out.outputs().map(|o| out.text(o).to_owned()).collect();
+    let named = |prefix: &str, tail: &str| outputs.iter().any(|o| o.starts_with(prefix) && o.ends_with(tail));
+    assert!(named(asks::KEY, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(named(asks::USED, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(named(asks::USED, "__calls_in__runs_in__fff"), "{outputs:?}");
+    assert!(!named(asks::KEY, "__calls_in__runs_in__fff"), "no keys where none is bound: {outputs:?}");
+    // `same_globals` names its file by its own document column, no relay: its asked keys' files, and its index.
+    assert!(named(asks::FILES, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(outputs.iter().any(|o| o == &format!("{}same_globals__bbbf", asks::PAIRS)), "{outputs:?}");
+    assert!(outputs.iter().any(|o| o == "unsafe_pair"), "the program's own outputs stay");
+}

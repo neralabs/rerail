@@ -2778,6 +2778,25 @@ fn run_observed_within(
             // (`lower::atom_columns`, decision 0170).
             // Callable relations (the "Callable Per-file Relations" spike): a callable's rules leave the program, and
             // each reader asks for it (`preparation::callable`); the run answers the asks in their files (`calls`).
+            // `RERAIL_ASKS` (a measurement aid): each exported relation's asks recorded, reader by reader.
+            let version = if preparation::asks::on() {
+                let pre = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+                let got = preparation::asks::recorded(&version, &pre.file_local, &pre.locations).map_err(Error::Plan)?;
+                if !got.unlocated.is_empty() {
+                    eprintln!("RERAIL_ASKS: asked by key, naming no file: {}", got.unlocated.iter().cloned().collect::<Vec<_>>().join(", "));
+                }
+                // How each probe names its file (`asks-located.tsv` beside the profile): a row a probe's tag.
+                if let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+                    use std::io::Write as _;
+                    let rows: String = got.located.iter().map(|(tag, how)| format!("{tag}\t{how}\n")).collect();
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-located.tsv")) {
+                        let _ = f.write_all(rows.as_bytes());
+                    }
+                }
+                got.version.unwrap_or(version)
+            } else {
+                version
+            };
             let version = match preparation::callable::split(&version).map_err(Error::Plan)? {
                 Some(split) => {
                     crate::code_rule_dsl::logic::profile::decision("callable relations", || split.callees.iter().map(|c| format!("{} {}", c.callable.rel, c.callable.pattern())).collect::<Vec<_>>().join(", "));
@@ -9039,12 +9058,19 @@ fn run_observed_within(
         let all: usize = by.iter().map(|b| b.0).sum();
         format!("{all} rows of {} exports; the largest: {}", by.len(), by.iter().take(8).map(|(n, r)| format!("{r} {n}")).collect::<Vec<_>>().join(", "))
     });
+    // Each export's rows, for the asks recorded (`RERAIL_ASKS`): a relation of the files is handed on as itself, or
+    // located (`R_at`).
+    let export_rows: BTreeMap<String, usize> = if preparation::asks::on() { split.exports.iter().filter_map(|r| totals.rows(r).map(|n| (r.clone(), n))).collect() } else { BTreeMap::new() };
     // The exports the cross part could call instead (the callable spike's feedback, first version): by their rows.
     crate::code_rule_dsl::logic::profile::decision("callable candidates: the files' relations every reader asks for by columns", || {
         let located = |r: &str| split.locations.get(r).is_some_and(|l| l.contains(&0));
         let mut by: Vec<(usize, String, std::result::Result<preparation::callable::Candidate, String>)> = preparation::callable::candidates(&lowered.version, &split.file_local, &split.exports, &located).into_iter().map(|(r, c)| (totals.rows(&r).unwrap_or(0), r, c)).collect();
         by.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| format!("{} {} by {} ({n} rows, {} readers{})", c.rel, c.pattern(), if c.by_file { "file" } else { "key" }, c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default()))).take(12).collect();
+        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| {
+            // The keys' distinct values, column by column (the rows a key is at least rows / the largest).
+            let keys: Vec<String> = c.bound.iter().filter(|&&k| !(c.by_file && k == 0)).map(|&k| totals.ndv(&c.rel, k).map_or_else(|| format!("c{k} ?"), |d| format!("c{k} {d}"))).collect();
+            format!("{} {} by {} ({n} rows; distinct {}; {} readers{})", c.rel, c.pattern(), if c.by_file { "file" } else { "key" }, keys.join(", "), c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default())
+        })).take(12).collect();
         let not: Vec<String> = by.iter().filter_map(|(n, r, c)| c.as_ref().err().map(|why| format!("{r} ({n} rows): {why}"))).take(8).collect();
         format!("{} of {} exports: {}; the largest not: {}", by.iter().filter(|b| b.2.is_ok()).count(), split.exports.len(), shown.join(", "), not.join("; "))
     });
@@ -9863,6 +9889,84 @@ fn run_observed_within(
                             if gone + added > 0 {
                                 crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {gone} gone, {added} added"));
                             }
+                        }
+                    }
+                    // The asks recorded (`RERAIL_ASKS`): each reader's keys and rows used, beside its relation's rows made.
+                    if preparation::asks::on() {
+                        crate::code_rule_dsl::logic::profile::decision("asks of the exported relations (RERAIL_ASKS)", || {
+                            let made_of = |rel: &str| export_rows.get(&format!("{rel}_at")).or_else(|| export_rows.get(rel)).map_or_else(|| "?".to_owned(), |n| n.to_string());
+                            let tags: BTreeSet<&str> = got.outputs.keys().filter_map(|r| r.strip_prefix(preparation::asks::KEY).or_else(|| r.strip_prefix(preparation::asks::USED))).collect();
+                            let count = |prefix: &str, tag: &str| got.outputs.get(&format!("{prefix}{tag}")).map_or_else(|| "-".to_owned(), |r| r.len().to_string());
+                            tags.into_iter()
+                                .map(|tag| {
+                                    let rel = tag.split("__").nth(1).unwrap_or("");
+                                    format!("{tag} made {} keys {} used {}", made_of(rel), count(preparation::asks::KEY, tag), count(preparation::asks::USED, tag))
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        });
+                    }
+                    // Each keyed probe of a located export (`RERAIL_ASKS`), a row of `asks-probes.tsv` beside the profile:
+                    // its keys asked, how many files answer each, a key-to-file index's keys and entries, and samples.
+                    if preparation::asks::on()
+                        && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
+                    {
+                        use std::io::Write as _;
+                        let cell = |r: &output::Rows, i: usize, c: usize| match r.cell(i, c) {
+                            output::Cell::Text(t) => t.to_owned(),
+                            output::Cell::Int(n) => n.to_string(),
+                        };
+                        let mut lines = String::new();
+                        // Every key found, with its files (`asks-keys.tsv`): the values a router is given.
+                        let mut keys_out = String::new();
+                        for (rel, files) in got.outputs.iter().filter(|(r, _)| r.starts_with(preparation::asks::FILES)) {
+                            let tag = &rel[preparation::asks::FILES.len()..];
+                            let parts: Vec<&str> = tag.split("__").collect();
+                            let (export, reader, shape) = (parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), parts.last().copied().unwrap_or(""));
+                            let w = files.width();
+                            let mut by_key: BTreeMap<Vec<String>, Vec<String>> = BTreeMap::new();
+                            for i in 0..files.len() {
+                                let k: Vec<String> = (0..w - 1).map(|c| cell(files, i, c)).collect();
+                                by_key.entry(k).or_default().push(cell(files, i, w - 1));
+                            }
+                            for (k, f) in &by_key {
+                                keys_out.push_str(&format!("{export}\t{reader}\t{shape}\t{}\t{}\n", k.join("\u{1f}").replace(['\t', '\n'], " "), f.join("\u{1f}")));
+                            }
+                            let asked = got.outputs.get(&format!("{}{tag}", preparation::asks::KEY)).map_or(0, |r| r.len());
+                            let hist = |lo: usize, hi: usize| by_key.values().filter(|f| f.len() >= lo && f.len() <= hi).count();
+                            let max = by_key.values().map(Vec::len).max().unwrap_or(0);
+                            let plain = shape.trim_end_matches("_neg");
+                            let index_keys = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::KEYS)).map_or(0, |r| r.len());
+                            let index_pairs = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::PAIRS)).map_or(0, |r| r.len());
+                            let mut samples: Vec<(&Vec<String>, &Vec<String>)> = by_key.iter().filter(|(_, f)| f.len() == 1).take(2).collect();
+                            samples.extend(by_key.iter().filter(|(_, f)| f.len() > 1).max_by_key(|(_, f)| f.len()));
+                            let samples: Vec<String> = samples
+                                .into_iter()
+                                .map(|(k, f)| {
+                                    let shown: Vec<&str> = f.iter().take(3).map(String::as_str).collect();
+                                    let more = if f.len() > 3 { format!(" +{}", f.len() - 3) } else { String::new() };
+                                    format!("({}) -> {}{more}", k.join(", "), shown.join(" "))
+                                })
+                                .collect();
+                            lines.push_str(&format!(
+                                "{export}\t{reader}\t{shape}\t{asked}\t{}\t{}\t{}\t{}\t{}\t{max}\t{index_keys}\t{index_pairs}\t{}\n",
+                                by_key.len(),
+                                hist(1, 1),
+                                hist(2, 4),
+                                hist(5, 31),
+                                hist(32, usize::MAX),
+                                samples.join(" ; ").replace(['\t', '\n'], " ")
+                            ));
+                        }
+                        if !lines.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-probes.tsv"))
+                        {
+                            let _ = f.write_all(lines.as_bytes());
+                        }
+                        if !keys_out.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-keys.tsv"))
+                        {
+                            let _ = f.write_all(keys_out.as_bytes());
                         }
                     }
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
@@ -10986,6 +11090,15 @@ impl Totals {
             let m = &self.sketches[t.sketch as usize];
             (m.ndv().round() as i64, m.sq().round() as i64)
         }
+    }
+    /// `rel`'s column `c`'s distinct values over the chunks, if it was measured (its sketch's estimate past its few).
+    fn ndv(&self, rel: &str, c: usize) -> Option<i64> {
+        let (r, col) = (self.names.find(rel)? as u32, self.names.find(&format!("c{c}"))? as u32);
+        if let Some(&at) = self.val_at.get(&[r, col]) {
+            let t = &self.vals[at as usize];
+            return self.live(t).then(|| self.moments(t).0);
+        }
+        self.cols.get(&[r, col]).filter(|v| v[4] == i64::from(self.born(r))).map(|v| v[1])
     }
     /// `rel`'s rows measured, if it was.
     fn rows(&self, rel: &str) -> Option<usize> {

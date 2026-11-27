@@ -125,7 +125,7 @@ fn made_from(reads: &BTreeMap<String, BTreeSet<String>>, from: &BTreeSet<String>
 /// Which of rule `r`'s literals a request for its call at literal `call` keeps, and the variables they bind: every
 /// positive atom but those of the called relation, then each filter, comparison and axis whose variables those bind
 /// (an equality binds its one unbound side's variable from the other's).
-fn request_body(v: &Version, lits: &[LitRef<'_>], call: usize, rel: &str) -> (Vec<usize>, VarSet) {
+pub(super) fn request_body(v: &Version, lits: &[LitRef<'_>], call: usize, rel: &str) -> (Vec<usize>, VarSet) {
     let mut keep = vec![false; lits.len()];
     let mut bound = VarSet::new();
     for (i, l) in lits.iter().enumerate() {
