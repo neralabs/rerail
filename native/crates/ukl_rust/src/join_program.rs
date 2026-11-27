@@ -144,7 +144,7 @@ struct Stage {
 const _: () = assert!(size_of::<Stage>() == 2352 && core::mem::offset_of!(Stage, ops) == 208);
 const _: () = assert!(core::mem::offset_of!(Stage, arith) == 2176 && core::mem::offset_of!(Stage, v_dir) == 2304);
 
-use rerail_reads::views::{ViewDir, ViewRow};
+use rerail_reads::views::{KindSeg, KindTable, ViewDir, ViewRow};
 #[repr(C)]
 struct PlacedDir {
     dir: *const ViewDir,
@@ -868,6 +868,9 @@ impl St<'_> {
         if s.v_parent == 2 {
             return self.by_own(kv);
         }
+        if s.v_parent == 3 {
+            return self.by_kind(kv);
+        }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[1];
@@ -909,7 +912,40 @@ impl St<'_> {
 
     /// Candidate `q`'s row.
     unsafe fn cand_row(&self, how: u32, q: u32) -> u32 {
-        if how == 1 { rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q) } else { q }
+        match how {
+            1 => rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q),
+            5 => self.kind_row(q),
+            _ => q,
+        }
+    }
+
+    /// The `node` view's rows by kind (`Stage::v_parent` 3, `Batch::by_kind`, `KindTable`), at `v_set`, its offsets
+    /// in the directory's block (decision 0706 step 0).
+    #[inline]
+    unsafe fn kind_table(&self) -> (*const u8, &KindTable) {
+        (view_block(self.s.v_dir), &*(self.s.v_set as *const KindTable))
+    }
+
+    /// Kind `kv`'s candidates (the key of column 2): `vstart[k]..vstart[k + 1]`, walk 5; none for a kind the
+    /// directory has no node of.
+    unsafe fn by_kind(&self, kv: &[i64; 8]) -> Walk {
+        let s = self.s;
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 2) else { return none };
+        let (c, t) = self.kind_table();
+        let kinds = core::slice::from_raw_parts(c.add(t.kinds as usize) as *const i64, t.nkinds as usize);
+        let Ok(a) = kinds.binary_search(&kv[i]) else { return none };
+        let vstart = c.add(t.vstart as usize) as *const u32;
+        Walk { lo: *vstart.add(a), hi: *vstart.add(a + 1), how: 5, tag: 0 }
+    }
+
+    /// Candidate `q` of a walk by kind: its node's row, its segment's entry `q - v` (`[document, local id, tape node]`).
+    unsafe fn kind_row(&self, q: u32) -> u32 {
+        let (c, t) = self.kind_table();
+        let segs = core::slice::from_raw_parts(c.add(t.segs as usize) as *const KindSeg, t.nsegs as usize);
+        let g = &segs[segs.partition_point(|g| g.v <= q).saturating_sub(1)];
+        let at = (c.add(g.at as usize) as *const [u32; 3]).add((q - g.v) as usize);
+        (*view_rows(self.s.v_dir).add((g.doc_base + (*at)[0]) as usize)).rows[0] + (*at)[1]
     }
 
     /// A walk of the tape (`how` 2: a parent's children from `child` row `q`; 3: a node's numbered ancestors from
@@ -1921,7 +1957,8 @@ struct ScanCands {
     lo: u32,
     n: u32,
     tag: u32,
-    grouped: bool,
+    /// The walk's (`Walk::how`): 1 an index group's places, 5 a kind's candidates (`kind_row`), else rows.
+    how: u32,
 }
 
 impl St<'_> {
@@ -1934,11 +1971,11 @@ impl St<'_> {
         }
         let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
         if s.nkeys == 0 || s.v_parent == 1 || s.v_has != 0 || rows == 0 {
-            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, grouped: false });
+            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, how: 0 });
         }
         // Its keys' index group, or a node's own row (`by_own`).
         let w = self.probe(&kv);
-        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: w.how == 1 })
+        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, how: w.how })
     }
 
     /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk
@@ -1948,7 +1985,10 @@ impl St<'_> {
         if r >= c.n {
             return None;
         }
-        if !c.grouped {
+        if c.how == 5 {
+            return Some(self.kind_row(c.lo.wrapping_add(r)));
+        }
+        if c.how != 1 {
             return Some(c.lo.wrapping_add(r));
         }
         let s = self.s;

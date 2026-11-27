@@ -1883,6 +1883,13 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
             return Ok((dev, Some(Rc::new(ix)), place, consts));
         }
         let keyed: Vec<usize> = by.iter().copied().chain(consts.iter().map(|&(c, _)| c as usize)).collect();
+        // `node` by its kind (a constant's or a key's): its batches' lists, the others checked on each (decision 0706
+        // step 0).
+        if let Some(ix) = batch.by_kind(&dev, &keyed, view.src.kind_table()).map_err(|e| format!("{e:?}: a probe by kind"))? {
+            crate::code_rule_dsl::prof::count("device.view_read.by_kind", 1);
+            rep.kind_walks += 1;
+            return Ok((dev, Some(Rc::new(ix)), place, consts));
+        }
         let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered view's {} rows", dev.rows))?);
         index_counted(rel, &ix, rep);
         return Ok((dev, Some(ix), place, consts));
@@ -1967,6 +1974,12 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     }
     // By its own id: its one row, no index of the view.
     if let Some(ix) = batch.by_own(&dev, &by).map_err(|e| format!("{e:?}: a probe by own id"))? {
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
+    }
+    // `node` by its kind: its batches' lists, no index of the view (decision 0706 step 0).
+    if let Some(ix) = batch.by_kind(&dev, &by, rel.view.as_ref().and_then(|v| v.src.kind_table())).map_err(|e| format!("{e:?}: a probe by kind"))? {
+        crate::code_rule_dsl::prof::count("device.view_read.by_kind", 1);
+        rep.kind_walks += 1;
         return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);

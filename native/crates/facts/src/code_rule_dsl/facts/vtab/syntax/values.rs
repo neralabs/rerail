@@ -368,6 +368,9 @@ pub(super) struct Dir {
     /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
     homes: [std::sync::OnceLock<Option<(usize, Arc<crate::code_rule_dsl::facts::rows::IndexHome>)>>; 16],
     batches: Vec<Arc<super::Batch>>,
+    /// The `node` view's rows by kind over the directory (`Batch::kind_table_over`: the chunk's batch's lists, then
+    /// each value's), its offset in the chunk's block: made the first time a stage probes the layered view by kind.
+    kinds: std::sync::OnceLock<u64>,
 }
 
 impl Values {
@@ -496,7 +499,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone(), kinds: std::sync::OnceLock::new() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -1536,6 +1539,22 @@ impl Source for Layered {
         let keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
         let (_, nodes) = dir.views.node_view(&base.batch().block, Arc::clone(&keep))?;
         base.walk_over(&dir.views, nodes, keep)
+    }
+    /// The `node` view's rows by kind (`Source::kind_table`): the base's, or with values admitted the layered
+    /// directory's, over the chunk's batch's lists and each value's, where the layered view is read in place.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn kind_table(&self) -> Option<crate::code_rule_dsl::facts::vtab::KindTableAt> {
+        if !self.has_parts() {
+            return self.base.kind_table();
+        }
+        self.base.kind_table()?;
+        let batch = self.base.python_batch()?;
+        let dir = self.values.dir(&batch)?;
+        let at = *dir.kinds.get_or_init(|| {
+            let all: Vec<&super::Batch> = std::iter::once(&*batch).chain(dir.batches.iter().map(|b| &**b)).collect();
+            super::Batch::kind_table_over(&all)
+        });
+        Some(crate::code_rule_dsl::facts::vtab::KindTableAt { at, dirs: [dir.views.host.dir, dir.views.dir.unwrap_or(0)], dir_at: dir.views.at as u64 })
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {

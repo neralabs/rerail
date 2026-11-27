@@ -466,9 +466,46 @@ UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
     return u == NONE ? NONE : e->rows[0] + u;
 }
 
+// The `node` view's rows by kind (`Stage::v_parent` 3, `metal_join::Batch::by_kind`, `rerail_reads::views::KindTable`),
+// at `v_set` (its address, the directory's block's offsets in it): its kinds, ascending, each kind's candidates `vstart[k]..vstart[k + 1]`, and the
+// segments they lie in (each a run of one batch's list, `KindRows`: its first candidate, its batch's first document of
+// the directory, its first entry), ascending by first candidate (decision 0706 step 0).
+typedef struct { uint32_t nkinds; uint32_t nsegs; uint64_t kinds; uint64_t vstart; uint64_t segs; } KindTable;
+typedef struct { uint32_t v; uint32_t doc_base; uint64_t at; } KindSeg;
+UKL_INLINE UKL_GLOBAL const KindTable* kind_table(StageP s) { return (UKL_GLOBAL const KindTable*)s->v_set; }
+
+// Kind `key`'s candidates: none for a kind the directory has no node of.
+UKL_INLINE void by_kind(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
+    *lo = 0u; *hi = 0u;
+    uint32_t i = 0u;
+    while (i < s->nkeys && i < 8u && s->key_rcol[i] != 2u) i++;
+    if (i >= s->nkeys || i >= 8u) return;
+    int64_t key = kv[i];
+    UKL_GLOBAL const uint8_t* c = view_block(s->v_dir);
+    UKL_GLOBAL const KindTable* t = kind_table(s);
+    UKL_GLOBAL const int64_t* kinds = (UKL_GLOBAL const int64_t*)(c + t->kinds);
+    uint32_t a = 0u, b = t->nkinds;
+    while (a < b) { uint32_t m = (a + b) >> 1; if (kinds[m] < key) a = m + 1u; else b = m; }
+    if (a >= t->nkinds || kinds[a] != key) return;
+    UKL_GLOBAL const uint32_t* vstart = (UKL_GLOBAL const uint32_t*)(c + t->vstart);
+    *lo = vstart[a]; *hi = vstart[a + 1u];
+}
+
+// Candidate `q` of a walk by kind: its node's row, its segment's entry `q - v`, `[document, local id, tape node]`.
+UKL_INLINE uint32_t kind_row(StageP s, uint32_t q) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    UKL_GLOBAL const uint8_t* c = view_block(d);
+    UKL_GLOBAL const KindTable* t = kind_table(s);
+    UKL_GLOBAL const KindSeg* segs = (UKL_GLOBAL const KindSeg*)(c + t->segs);
+    uint32_t a = 0u, b = t->nsegs;
+    while (b - a > 1u) { uint32_t m = (a + b) >> 1; if (segs[m].v <= q) a = m; else b = m; }
+    UKL_GLOBAL const uint32_t* at = (UKL_GLOBAL const uint32_t*)(c + segs[a].at) + 3u * (q - segs[a].v);
+    return view_rows(d)[segs[a].doc_base + at[0]].rows[0] + at[1];
+}
+
 // A walk's candidate `q`: its row, and the next candidate.
 UKL_INLINE uint32_t cand_row(StageP s, RelB R, uint32_t how, uint32_t q) {
-    return how == 1u ? group_row(s, R, q) : q;
+    return how == 1u ? group_row(s, R, q) : (how == 5u ? kind_row(s, q) : q);
 }
 UKL_INLINE uint32_t cand_next(StageP s, uint32_t how, uint32_t q) {
     return how == 2u ? child_next(s, q) : (how == 3u ? has_up(s, q) : (how == 4u && has_member(s, q) ? has_skip(s, q) : q + 1u));
@@ -487,6 +524,7 @@ UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVA
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
     if (s->v_has != 0u) { by_has(s, kv[has_key(s)], lo, hi, how); return; }
     if (s->v_parent == 2u) { by_own(s, kv, lo, hi); *how = 0u; return; }
+    if (s->v_parent == 3u) { by_kind(s, kv, lo, hi); *how = 5u; return; }
     if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
     *how = 1u;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
@@ -1967,6 +2005,12 @@ UKL_INLINE uint32_t scan_cand(StageP s, Longs L, RelB R, UKL_PRIVATE int64_t* kv
         uint32_t lo, hi;
         by_own(s, kv, &lo, &hi);
         return r < hi - lo ? lo + r : NONE;
+    }
+    // The `node` view by its kind (`by_kind`): its `r`th candidate's row.
+    if (s->v_parent == 3u) {
+        uint32_t lo, hi;
+        by_kind(s, kv, &lo, &hi);
+        return r < hi - lo ? kind_row(s, lo + r) : NONE;
     }
     uint32_t lo, hi;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, &lo, &hi);

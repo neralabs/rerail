@@ -2798,6 +2798,100 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// Decision 0706 step 0: the `node` view probed by its kind reads its batches' lists (`KindRows`, a batch's, made
+    /// once) through the directory's table (`KindTable`), no index of the view built: over a chunk's batch alone, and
+    /// layered with a value admitted after it (`views_over`: the chunk's lists, then the value's). The rows are the
+    /// CPU's, on the device and on the host's join program, for kinds the batches have and one none has.
+    #[test]
+    fn node_probed_by_kind_reads_its_batches_lists() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source;
+        use crate::code_rule_dsl::facts::vtab::syntax::values::{Layered, Values};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, Matchers, Projection};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let doc = |key: u32, source: &str| {
+            let path = format!("d{key}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        };
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-node-by-kind-{}-{nonce}.sqlite", std::process::id()));
+        let content = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+        let projection = Projection::core();
+        let chunk = vec![doc(20, "import os\nx = f(1, y=[2, g(3)])\n"), doc(23, "class C(B):\n    def m(self, a, *b):\n        return [a for a in b]\n")];
+        let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+        let values = Arc::new(Values::default());
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q=[1]):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
+        values.add(&[5], &[], admitted);
+        let plain = Arc::clone(&sources.iter().find(|(n, _)| n == "node").expect("node").1);
+        let layered: Arc<dyn Source> = Arc::new(Layered::new("node", Arc::clone(&plain), Arc::clone(&values)));
+        assert!(layered.len() > plain.len(), "the value's nodes layered over the chunk's");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        for (what, node) in [("plain", &plain), ("layered", &layered)] {
+            assert!(node.device_view().is_some(), "{what}: node, read in place");
+            assert!(node.kind_table().is_some(), "{what}: its table by kind");
+            let rows: Vec<(i64, i64)> = (0..node.len()).map(|r| (node.value(r, 1), node.value(r, 2))).collect();
+            let mut kinds: Vec<i64> = rows.iter().map(|&(_, k)| k).collect();
+            kinds.sort_unstable();
+            kinds.dedup();
+            assert!(kinds.len() > 5, "{what}: {} kinds", kinds.len());
+            // Each pass's kinds a table of its own: a table of the same name made again is read as the run kept it.
+            let table = format!("q_{what}");
+            db.execute_batch(&format!("CREATE TEMP TABLE {table} (c0);")).unwrap();
+            for &k in kinds.iter().chain(&[kinds[kinds.len() - 1] + 1, -3]) {
+                db.execute(&format!("INSERT INTO {table} VALUES (?1)"), [k]).unwrap();
+            }
+            let name = format!("node_kind_{what}");
+            super::super::hold_source(&db, &name, Arc::clone(node), b"iiiii".to_vec());
+            let q = format!("t:x:{}:{}:i", hex(&format!("temp.{table}")), hex("c0"));
+            let v = format!("r:{}", hex(&name));
+            let rule = format!("pos {q} v0\npos {v} v1 v2 v0 v3 v4\nhead v2 v0");
+            let mut want = rows.clone();
+            want.sort_unstable();
+            let mut got = Vec::new();
+            for (device, host) in [(false, false), (true, false), (true, true)] {
+                let _host = host.then(rerail_accel::gpu::shared::on_host);
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name node_kind_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "node_kind_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "node_kind_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "{what} (host {host}): on the device: {r:?}");
+                    assert_eq!(r.sorts, 0, "{what} (host {host}): no index of node: {r:?}");
+                    assert_eq!(r.kind_walks, 1, "{what} (host {host}): node read by its kind's lists: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "{what}: the CPU's rows are the view's");
+            assert_eq!(got[1], want, "{what}: the device's rows are the CPU's");
+            assert_eq!(got[2], want, "{what}: the host's join program's rows are the CPU's");
+        }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
     /// Containment (`within(n, a)`, `Mode::Tree`: `n` strictly below `a`) is `has` of every kind, read off the tape by
     /// the device with no pair made or indexed: by its node, the node's numbered ancestors; by its ancestor, its
     /// subtree; by both, the node's climb, each ancestor checked against the bound one. The rows are the CPU's, and
