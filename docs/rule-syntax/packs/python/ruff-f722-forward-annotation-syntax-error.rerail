@@ -18,7 +18,7 @@
 #include "python/pyflakes.rerail"
 //   string_annotation(s)       s is a string Ruff reads as a type, nested ones included (core)
 //   str(s, v), value(s, v)     a string's, a concatenated string's decoded value (core)
-//   @parse("python", x)        x parsed as a module: a text that does not parse has no doc_root (core)
+//   parse_of(x, "python", t)   x parsed as a module, tape t: a text that does not parse has no doc_root (core)
 
 .violation F722(at: node) code "F722" "Syntax error in forward annotation"
     suppress ruff "F722"
@@ -29,7 +29,7 @@ F722(s) :- ann_parse(s, t), !one_expression(t), !no_type_check(s), !not_a_type(s
 // (`parsed(s, "annotation", r)`) wraps every string as `( … )`, which accepts those and refuses
 // `"Literal[0]#"` (its comment swallows the `)`), and reads `''` as `()`: it is not Ruff's verdict.
 .decl ann_parse(s: node, t: tape)
-ann_parse(s, t) :- ann_text(s, x), t = @parse("python", x).
+ann_parse(s, t) :- ann_text(s, x), parse_of(x, "python", t).
 .decl ann_text(s: node, x: symbol)
 ann_text(s, cat("(", cat(v, "\n)"))) :- ann_string(s), kind(s, "string"), str(s, v), parenthesized(s, v).
 ann_text(s, v) :- ann_string(s), kind(s, "string"), str(s, v), !parenthesized(s, v).

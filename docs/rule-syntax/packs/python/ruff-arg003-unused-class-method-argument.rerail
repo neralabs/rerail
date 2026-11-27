@@ -11,7 +11,7 @@
 //   class C:
 //       @classmethod
 //       def f(cls, x): print(1)         ← ARG003 at x
-#include "python/pt1120-python-07.rerail"
+#include "python/visit-order-bindings.rerail"
 //   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
 
 .violation ARG003(at: node, name: symbol) code "ARG003"

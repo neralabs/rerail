@@ -4,7 +4,7 @@ Ground truth: Ruff 0.17.6 on a check box (`ruff check --select CODE --no-cache F
 translation suite on `tbelanger/pack-translations-1120` and its engine (`rerail-engine-1120`), and each differing key
 was run through Ruff. Every rule stays per file: run with `RERAIL_SHOW_CROSSINGS=1`, none reports a crossing.
 
-New library: `lib/python/pt1120-python-03.rerail`, `ann_tree_node(n)` (a node of a string annotation's parsed tree,
+New library: `lib/python/annotation-code.rerail`, `ann_tree_node(n)` (a node of a string annotation's parsed tree,
 the tree asked for), read by F601 and F632.
 
 ## ruff-f541-f-string-missing-placeholders

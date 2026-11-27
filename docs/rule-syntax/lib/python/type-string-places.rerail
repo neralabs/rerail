@@ -1,4 +1,4 @@
-// python/pt1120-python-02: where Ruff places the nodes it parses from a string type definition, and what a name
+// python/type-string-places: where Ruff places the nodes it parses from a string type definition, and what a name
 // there is (PYI054, PYI055).
 //
 // Interface

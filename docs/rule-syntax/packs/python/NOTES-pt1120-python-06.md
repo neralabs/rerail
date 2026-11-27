@@ -75,7 +75,7 @@ After the changes below, every translation reports exactly what the tool reports
      tuple counts. `except (ValueError, (ImportError,)):` is not an ImportError handler, so
      `provide_bucket_name()` (line 12) is AIR302. `air_caught` recursed into the nested tuple.
 
-  New library `lib/python/pt1120-python-06.rerail`, shared by the four Airflow rules. It provides `air_q` (the
+  New library `lib/python/airflow-bindings.rerail`, shared by the four Airflow rules. It provides `air_q` (the
   binding Ruff sees, through parentheses), `air_at`, `air_callq`, `air_dag_at`, `air_kind_at`, and `air_safe` (the
   guard for that binding, with flat handler types). The guard is still asked through misc-airflow's
   `air_needs_guard`. The library is per file: every relation is keyed by node, and no name table crosses (run with

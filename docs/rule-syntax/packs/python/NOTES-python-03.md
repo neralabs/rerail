@@ -76,7 +76,7 @@ RUF034, RUF037, RUF046 and RUF048. `ruff_dataclass` is used by RUF033 and RUF049
    the literal type itself. RUF034's `lit_type`/`flat` guards are that check and could move into compare as
    `cmp_differs`. The BoolOp flattening (`flat`) belongs there too.
 4. `python/ruff`: relations that count children (`call_item`, `call_nargs`, `empty_literal`, `same_child`, …) give
-   wrong rows on a guest's nodes (E2). python-03's `type_arg`/`type_nargs`/`type_nkwargs`/`type_kwarg` are the
+   wrong rows on a guest's nodes (E2). python-03's `tree_call_arg`/`type_nargs`/`type_nkwargs`/`type_kwarg` are the
    guest-safe versions. Once E2 is fixed they can go.
 
 ## Engine gaps found

@@ -23,7 +23,7 @@ RUF037(c, m) :- deque_param(c, "iterable", a), empty_iterable(a), deque_size(c, 
 .decl deque_param(c: node, x: symbol, a: node)
 deque_param(c, x, a) :- call_param(c, x, a).
 deque_param(c, x, a) :- type_str_node(c), call_q(c, "collections.deque"), param_slot("collections.deque", x, i),
-    (type_arg(c, i, a) ; type_kwarg(c, x, a)).
+    (tree_call_arg(c, i, a) ; type_kwarg(c, x, a)).
 .decl deque_size(c: node, n: number)
 deque_size(c, n + k) :- call_param(c, "iterable", _), call_nargs(c, n), call_nkwargs(c, k).
 deque_size(c, n + k) :- deque_param(c, "iterable", _), type_nargs(c, n), type_nkwargs(c, k).

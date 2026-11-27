@@ -7,7 +7,7 @@
 // Ruff SLOT000 (flake8-slots): a class with the builtin `str` among its bases and no `__slots__` in its body.
 // Enums (`class E(str, Enum)`) and stub files are exempt. A base read as a member of a class of the file
 // (`Outer.Inner`) is what that class's body binds to the name last, as Ruff's lookup reads it; a type parameter
-// named `str` does not hide the builtin from the class's bases (python/pt1120-python-08).
+// named `str` does not hide the builtin from the class's bases (python/slots-bases).
 //   class Foo(str):              ← SLOT000
 //       pass
 //   class Bar(str):              not reported
@@ -17,7 +17,7 @@
 //       class Gone(Enum): ...
 //       Gone = 1
 //   class Rebound(str, Outer.Gone): ...   ← SLOT000: Outer's Gone is 1, no enum
-#include "python/pt1120-python-08.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
+#include "python/slots-bases.rerail"   // slots_unsub, slots_tp_builtin; python/misc2-slots
 
 .violation SLOT000(at: node) code "SLOT000"
     "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead."

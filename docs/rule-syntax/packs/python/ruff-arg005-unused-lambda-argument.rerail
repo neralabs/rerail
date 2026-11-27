@@ -12,7 +12,7 @@
 //   lambda _: print(1)                  not reported: a dummy name
 //   lambda a: [y for y in locals()]     not reported: locals() in the lambda's scope
 //   lambda a, c=a: c                    ← ARG005 at a
-#include "python/pt1120-python-07.rerail"
+#include "python/visit-order-bindings.rerail"
 //   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
 
 .violation ARG005(at: node, name: symbol) code "ARG005"

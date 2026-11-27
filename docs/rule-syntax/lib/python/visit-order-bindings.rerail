@@ -1,4 +1,4 @@
-// python/pt1120-python-07: the binding Ruff's semantic model gives a name where it is read, and what the batch's
+// python/visit-order-bindings: the binding Ruff's semantic model gives a name where it is read, and what the
 // flake8-unused-arguments (ARG002-ARG005) and flake8-logging-format (G002, G003, G201, G202) rules build on it.
 //
 // Interface

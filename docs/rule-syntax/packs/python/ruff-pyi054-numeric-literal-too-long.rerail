@@ -7,12 +7,12 @@
 // Ruff PYI054 (flake8-pyi), stubs only: a number literal written with more than 10 characters, anywhere,
 // annotations included. `-1234567890` is fine: the literal is the 10 digits. Inside a string type definition, the
 // number is found in its parsed tree; Ruff can place it only in a plain string (no escapes, no adjacent
-// pieces). Otherwise every node of the parsed tree has the whole string's range (python/pt1120-python-02), so
+// pieces). Otherwise every node of the parsed tree has the whole string's range (python/type-string-places), so
 // Ruff measures that: any number in such a string written with more than 10 characters is reported, at the string.
 //   x: int = 12345678901        ← PYI054
 //   y: Literal[1_000_000_000]   ← PYI054
 //   z: "Literal[1]" ""          ← PYI054 at the string: its range is 15 characters
-#include "python/pt1120-python-02.rerail"
+#include "python/type-string-places.rerail"
 
 .violation PYI054(at: node, msg: symbol) code "PYI054" "{msg}"
     suppress ruff "PYI054"

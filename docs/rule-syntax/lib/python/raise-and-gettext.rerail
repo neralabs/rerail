@@ -1,4 +1,4 @@
-// python/pt1120-python-09: what batch pt1120-python-09's rules share beyond python/exceptions and
+// python/raise-and-gettext: what the TRY and INT rules share beyond python/exceptions and
 // python/misc2-messages: the raised expression of a raise statement continued with a backslash (TRY002, TRY003),
 // and a translation call's first argument inside type strings (INT001, INT002).
 //
@@ -18,7 +18,7 @@
 //   - Ruff visits the expressions it parses from string type definitions (an annotation's `"…"`, `cast("…", x)`'s
 //     type, a TypeVar bound) like any other, so a translation call written inside one is checked. misc2-messages'
 //     msg_arg counts children in an aggregate, which sees none of a guest tree's nodes (python-03's background):
-//     python-03's type_arg counts derived rows instead.
+//     python-03's tree_call_arg counts derived rows instead.
 //   - A guest tree's rows are reached only from its string, through `parsed`: a relation that starts from
 //     `kind(l, "subscript")` finds no guest subscript. names' literal_str does, so a string inside `Literal[…]`
 //     inside a string annotation (`x: "Literal['_(f\"{a}\")']"`) passes ann_str and is parsed as a type, which Ruff
@@ -32,7 +32,7 @@
 //   z: "Literal['_(f\"{a}\")']" = 1   none: a Literal's string is a value, not parsed
 #include "python/exceptions.rerail"
 #include "python/misc2-messages.rerail"
-#include "python/python-03.rerail"   // type_str_node, type_arg
+#include "python/python-03.rerail"   // type_str_node, tree_call_arg
 
 // ---- raises ------------------------------------------------------------------------------------------------------
 // A raise statement's children are its exception, its cause (field `cause`), and continuations and comments.
@@ -46,7 +46,7 @@ p09_raised_class(e, e) :- p09_raise(_, e), !kind(e, "call").
 // ---- translation calls -------------------------------------------------------------------------------------------
 .decl p09_gettext_arg(c: node, a: node)
 p09_gettext_arg(c, a) :- msg_gettext(c), msg_arg(c, 0, a).
-p09_gettext_arg(c, a) :- msg_gettext(c), type_str_node(c), !p09_in_literal(c), type_arg(c, 0, a0), unparen(a0, a).
+p09_gettext_arg(c, a) :- msg_gettext(c), type_str_node(c), !p09_in_literal(c), tree_call_arg(c, 0, a0), unparen(a0, a).
 // p09_in_literal(e): e is in a tree parsed from a string that stands inside a guest tree's `Literal[…]` or
 // `x.Literal[…]`, or from a string nested in one.
 .decl p09_in_literal(e: node)

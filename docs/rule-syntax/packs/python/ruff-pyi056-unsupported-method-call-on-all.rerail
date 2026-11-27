@@ -10,7 +10,7 @@
 // TypeAlias's string value, a string nested in one), and checks the calls in them too; not `Literal["…"]`.
 //   __all__.append("f")       ← PYI056: write `__all__ += ["f"]`
 //   x: "__all__.extend(['g'])"  ← PYI056
-#include "python/pt1120-python-02.rerail"   // str_tree
+#include "python/type-string-places.rerail"   // str_tree
 
 .violation PYI056(at: node, msg: symbol) code "PYI056" "{msg}"
     suppress ruff "PYI056"

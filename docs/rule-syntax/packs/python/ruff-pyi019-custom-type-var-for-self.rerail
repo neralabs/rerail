@@ -32,7 +32,7 @@ PYI019(at, x) :- cand(f, t, e), sig_at(f, at), tvar(f, t, e, x).
 cand(f, t, m) :- receiver(f, "instance", t), recv_type(t, m).
 cand(f, t, e) :- receiver(f, k, t), k != "instance", recv_type(t, m), tsub(m, h, 0, e), kind(h, "identifier"),
     tsub_n(m, 1), !sub_comma(m), builtin_type(f, t, h).
-// sub_comma(m): subscript m, or the type_parameter of generic_type m, ends in a `,`: python/pt1120-python-01's
+// sub_comma(m): subscript m, or the type_parameter of generic_type m, ends in a `,`: python/stub-version-checks'
 // bracket_comma test, asked of m here. A relation that ranges over node kinds has no rows for a string's parsed
 // tree (`cls: "type[_S,]"`), so the library's cannot be read.
 .decl sub_comma(m: node)
@@ -72,11 +72,11 @@ tvar(f, t, e, x) :- tv_site(f, t, e, x, _), deferred(f, t).
 tvar(f, t, e, x) :- tv_site(f, t, e, x, a), node(_, a, _, sa, _), node(_, f, _, sf, _), sa < sf.
 .decl tv_site(f: node, t: node, e: node, x: symbol, a: node)
 tv_site(f, t, e, x, a) :- cand(f, t, e), kind(e, "identifier"), text(e, x), ref_site(e, a), kind(a, "assignment"),
-    !field(a, "type", _), assign_value(a, v0), unparen(v0, v), typevar_call(v, "TypeVar").
-// assign_value(a, v): the value a plain assignment stores; `_C = _D = TypeVar("_C")` stores the call in both.
-.decl assign_value(a: node, v: node)
-assign_value(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
-assign_value(a, v) :- kind(a, "assignment"), field(a, "right", b), kind(b, "assignment"), assign_value(b, v).
+    !field(a, "type", _), tv_stored(a, v0), unparen(v0, v), typevar_call(v, "TypeVar").
+// tv_stored(a, v): the value a plain assignment stores; `_C = _D = TypeVar("_C")` stores the call in both.
+.decl tv_stored(a: node, v: node)
+tv_stored(a, v) :- kind(a, "assignment"), field(a, "right", v), !kind(v, "assignment").
+tv_stored(a, v) :- kind(a, "assignment"), field(a, "right", b), kind(b, "assignment"), tv_stored(b, v).
 // deferred(f, t): Ruff resolves annotation t of f at the end of the module, when every module binding is made: in
 // a stub, in a string, under `from __future__ import annotations`, or from Python 3.14. Otherwise it resolves t
 // where the def stands, and a TypeVar assigned below the def is unbound there (tvar's last clause).

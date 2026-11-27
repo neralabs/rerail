@@ -16,7 +16,7 @@
 //   BashOperator(task_id="t", sla=None) ← AIR311: `sla` has no replacement
 //   from airflow.sdk import task
 //   @task                               not reported: `task` is airflow.sdk's now, whatever was imported above
-#include "python/pt1120-python-06.rerail"   // air_at, air_safe, air_callq, air_dag_at, air_kind_at
+#include "python/airflow-bindings.rerail"   // air_at, air_safe, air_callq, air_dag_at, air_kind_at
 
 .violation AIR311(at: node, x: symbol, m: symbol) code "AIR311"
     "Import `{x}` from `{m}` instead; the old name still works in Airflow 3 but is expected to be removed later."

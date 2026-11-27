@@ -1,4 +1,4 @@
-// python/pt1120-python-06: Airflow references by the binding Ruff sees at each read, for AIR001, AIR302, AIR311 and
+// python/airflow-bindings: Airflow references by the binding Ruff sees at each read, for AIR001, AIR302, AIR311 and
 // AIR312. python/misc-airflow's air_ref, air_call and air_guarded read python/ruff's ruff_qual, which takes the scope
 // Python's lookup ends in and every import of the name there, wherever it sits; Ruff takes the one binding its walk
 // has reached, in the innermost scope that has one by then.

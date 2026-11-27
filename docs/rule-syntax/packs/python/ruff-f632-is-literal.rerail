@@ -14,7 +14,7 @@
 #include "python/pyflakes.rerail"
 //   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
 //   const_non_singleton(e), mutable_literal(e)
-#include "python/pt1120-python-03.rerail"
+#include "python/annotation-code.rerail"
 //   ann_tree_node(n)           n is in the parsed tree of a string annotation: Ruff checks `x: "1 is y"` too
 
 .violation F632(at: node, msg: symbol) code "F632" "{msg}"

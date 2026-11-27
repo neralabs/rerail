@@ -17,7 +17,7 @@
 //   except ModuleNotFoundError:
 //       from airflow.triggers.file import FileTrigger
 //   FileTrigger()                  not reported: the fallback is guarded
-#include "python/pt1120-python-06.rerail"   // air_at, air_safe: by the binding Ruff sees
+#include "python/airflow-bindings.rerail"   // air_at, air_safe: by the binding Ruff sees
 #include "../packs/python/ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail"   // air312_moved(old, m, x)
 
 .violation AIR312(at: node, q: symbol, m: symbol) code "AIR312"

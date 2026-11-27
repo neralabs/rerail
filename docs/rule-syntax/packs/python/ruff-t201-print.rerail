@@ -7,12 +7,12 @@
 // Ruff T201 (flake8-print): a call of the builtin `print`. Output meant for users goes to `sys.stdout` or
 // `sys.stderr`, so those (and `file=None`) are reported too; a call writing to any other `file=` is not. Ruff checks
 // the code of string type definitions too (`cast("print(1)", x)`, a TypeVar's bound), where `print` is the builtin
-// unless the module binds the name (python/pt1120-python-10). Reported at the callee. (Ruff's fix deletes the
+// unless the module binds the name (python/type-string-names). Reported at the callee. (Ruff's fix deletes the
 // statement, unsafely; none here.)
 //   print("Hello, world!", file=sys.stderr)     ← T201
 //   print("Hello, world!", file=fp)             not reported
 //   T = TypeVar("T", bound="print(8)")          ← T201
-#include "python/pt1120-python-10.rerail"
+#include "python/type-string-names.rerail"
 
 .violation T201(at: node) code "T201"
     "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."

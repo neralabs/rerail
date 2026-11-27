@@ -5,7 +5,7 @@ their JSON originals, and each differing key against Ruff 0.17.6 (`ruff check --
 fleet box. Final: 7 `same`, PYI020 `different` (1 key each way, explained below). Every rule stays per file: no
 relation is declared `cross_file`, and a run of all eight with `RERAIL_SHOW_CROSSINGS=1` printed nothing.
 
-New library: `lib/python/pt1120-python-01.rerail` (PYI002–PYI005 share it): `one_cmp` (one comparison, comments
+New library: `lib/python/stub-version-checks.rerail` (PYI002–PYI005 share it): `one_cmp` (one comparison, comments
 and line continuations not operands), `vi_cmp` (Ruff's ExpectedComparator for `sys.version_info`, read through
 python/ruff's `slice_part` and `ruff_int`), `vi_tuple_len`/`vi_int_tuple`, `pyi_test_part` and `bracket_comma`.
 

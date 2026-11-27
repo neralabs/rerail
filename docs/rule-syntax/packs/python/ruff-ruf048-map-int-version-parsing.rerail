@@ -21,9 +21,9 @@ RUF048(at) :- map_call(c, at), call_nargs(c, 2), call_nkwargs(c, 0), ruff_arg(c,
     (ruff_arg(sc, 0, d) ; call_kwarg(sc, "sep", d)), unparen(d, ds), plain_str(ds, ".").
 // In a type string, with python/python-03's argument relations; a guest's strings have no decoded value, so the
 // separator is read by its text.
-RUF048(c) :- type_str_node(c), call_q(c, "builtins.map"), type_nargs(c, 2), type_nkwargs(c, 0), type_arg(c, 0, f),
-    ruff_qual(f, "builtins.int"), type_arg(c, 1, s), unparen(s, sc), split_call(sc), type_nargs(sc, a),
-    type_nkwargs(sc, k), a + k = 1, (type_arg(sc, 0, d) ; type_kwarg(sc, "sep", d)), unparen(d, ds), kind(ds, "string"),
+RUF048(c) :- type_str_node(c), call_q(c, "builtins.map"), type_nargs(c, 2), type_nkwargs(c, 0), tree_call_arg(c, 0, f),
+    ruff_qual(f, "builtins.int"), tree_call_arg(c, 1, s), unparen(s, sc), split_call(sc), type_nargs(sc, a),
+    type_nkwargs(sc, k), a + k = 1, (tree_call_arg(sc, 0, d) ; type_kwarg(sc, "sep", d)), unparen(d, ds), kind(ds, "string"),
     text(ds, t), match("[rRuU]?('\\.'|\"\\.\")", t).
 // map_call(c, at): c calls map, reported at at. In a list, set or tuple display tree-sitter reads `*map(…)` as a
 // call of `*map`, where Ruff's parser reads `*` of the call `map(…)`: there the report is at `map`.
