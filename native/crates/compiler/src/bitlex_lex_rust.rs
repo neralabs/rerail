@@ -73,7 +73,7 @@ impl Known {
         match self {
             Known::No => Known::Yes,
             Known::Yes => Known::No,
-            Known::Test(t) => Known::Test(format!("!{t}")),
+            Known::Test(t) => Known::Test(negated(&t)),
         }
     }
 
@@ -81,7 +81,7 @@ impl Known {
         match (self, b) {
             (Known::No, _) | (_, Known::No) => Known::No,
             (Known::Yes, x) | (x, Known::Yes) => x,
-            (Known::Test(a), Known::Test(b)) => Known::Test(format!("({a} && {b})")),
+            (Known::Test(a), Known::Test(b)) => Known::Test(joined(&a, &b, "&&")),
         }
     }
 
@@ -89,7 +89,7 @@ impl Known {
         match (self, b) {
             (Known::Yes, _) | (_, Known::Yes) => Known::Yes,
             (Known::No, x) | (x, Known::No) => x,
-            (Known::Test(a), Known::Test(b)) => Known::Test(format!("({a} || {b})")),
+            (Known::Test(a), Known::Test(b)) => Known::Test(joined(&a, &b, "||")),
         }
     }
 
@@ -108,6 +108,152 @@ impl Known {
             Known::Test(t) => t.clone(),
         }
     }
+}
+
+/// `!t`, folded where `t` is a class test (`class_at`) or a negation, and wrapped where `t` is not
+/// one term.
+fn negated(t: &str) -> String {
+    let is_lit = |r: &str| (0..=255u8).any(|b| bytes::lit(b) == r);
+    for (eq, ne) in [(" == ", " != "), (" != ", " == ")] {
+        if let Some(i) = t.find(eq)
+            && t.starts_with("src[")
+            && t[..i].ends_with(']')
+            && is_lit(&t[i + eq.len()..])
+        {
+            return format!("{}{ne}{}", &t[..i], &t[i + eq.len()..]);
+        }
+    }
+    if let Some(u) = t.strip_prefix('!')
+        && term(u)
+    {
+        return u.to_owned();
+    }
+    if term(t) { format!("!{t}") } else { format!("!({t})") }
+}
+
+/// Whether Rust expression `t` is one term: a name, a call or a macro's, or in parentheses.
+fn term(t: &str) -> bool {
+    let head = t.find(['(', '[']).unwrap_or(t.len());
+    if !t[..head].chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '!' || c == ':') || t[..head].contains("!!") {
+        return false;
+    }
+    head == t.len() || (t.ends_with([')', ']']) && balanced_outer(&t[head..]))
+}
+
+/// Whether `u`'s first `(` closes at its end.
+fn balanced_outer(u: &str) -> bool {
+    let b = u.as_bytes();
+    let mut depth = 0i32;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\'' => {
+                if let Some(j) = b[i + 1..].iter().take(6).position(|&c| c == b'\'') {
+                    i += j + 2;
+                    continue;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 && i + 1 < b.len() {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    true
+}
+
+/// Whether `src[at]` is one of `x`'s bytes, where it is one of `within`: of the fewer of the bytes it
+/// is and is not.
+fn class_at(at: &str, x: &[bool; 256], within: &[bool; 256]) -> Known {
+    let inn: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && x[usize::from(b)]).collect();
+    let out: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && !x[usize::from(b)]).collect();
+    if inn.is_empty() {
+        return Known::No;
+    }
+    if out.is_empty() {
+        return Known::Yes;
+    }
+    let (set, neg) = if inn.len() <= out.len() { (inn, "") } else { (out, "!") };
+    // Runs of bytes in a row, as ranges.
+    let mut pats: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < set.len() {
+        let mut j = i;
+        while j + 1 < set.len() && set[j + 1] == set[j] + 1 {
+            j += 1;
+        }
+        pats.push(match j - i {
+            0 => bytes::lit(set[i]),
+            1 => format!("{} | {}", bytes::lit(set[i]), bytes::lit(set[j])),
+            _ => format!("{}..={}", bytes::lit(set[i]), bytes::lit(set[j])),
+        });
+        i = j + 1;
+    }
+    Known::Test(if set.len() == 1 {
+        if neg.is_empty() { format!("src[{at}] == {}", pats[0]) } else { format!("src[{at}] != {}", pats[0]) }
+    } else {
+        format!("{neg}matches!(src[{at}], {})", pats.join(" | "))
+    })
+}
+
+/// `a op b` (`op` `&&` or `||`), each operand once: the operands of `a` and `b` that are of `op`
+/// themselves are read as theirs.
+fn joined(a: &str, b: &str, op: &str) -> String {
+    let mut terms: Vec<&str> = Vec::new();
+    for t in operands(a, op).into_iter().chain(operands(b, op)) {
+        if !terms.contains(&t) {
+            terms.push(t);
+        }
+    }
+    if terms.len() == 1 {
+        return terms[0].to_owned();
+    }
+    format!("({})", terms.join(&format!(" {op} ")))
+}
+
+/// The operands of Rust expression `t` where it is `(x op y op …)` at its outer level, else `t`.
+fn operands<'a>(t: &'a str, op: &str) -> Vec<&'a str> {
+    let b = t.as_bytes();
+    if b.first() != Some(&b'(') || b.last() != Some(&b')') {
+        return vec![t];
+    }
+    let (mut depth, mut i, mut cuts, mut from) = (0i32, 0usize, Vec::new(), 1usize);
+    while i < b.len() {
+        match b[i] {
+            // A byte or char literal (`b'('`, `'\x0a'`): skipped.
+            b'\'' => {
+                if let Some(j) = b[i + 1..].iter().take(6).position(|&c| c == b'\'') {
+                    i += j + 2;
+                    continue;
+                }
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth == 0 && i + 1 < b.len() {
+                    return vec![t];
+                }
+            }
+            _ if depth == 1 && t[i..].starts_with(&format!(" {op} ")) => {
+                cuts.push(&t[from..i]);
+                from = i + op.len() + 2;
+                i = from;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if cuts.is_empty() {
+        return vec![t];
+    }
+    cuts.push(&t[from..b.len() - 1]);
+    cuts
 }
 
 /// A fill made of the regions that the token loop keeps, as the lean lexer keeps "a `;` since
@@ -2776,6 +2922,15 @@ impl Gen<'_> {
             Shape::Not(a) => self.exact_of(a).map(Bytes::not),
             Shape::And(a, b) => Some(self.exact_of(a)?.and(self.exact_of(b)?)),
             Shape::Or(a, b) => Some(self.exact_of(a)?.or(self.exact_of(b)?)),
+            // One byte's text: its class.
+            Shape::Call(f, args) if self.name_strs.borrow()[f as usize] == "text" => match &*args {
+                [ArgShape::S(t)] if t.len() == 1 => {
+                    let mut b = [false; 256];
+                    b[t[0] as usize] = true;
+                    Some(Bytes::of(&b))
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -2794,6 +2949,35 @@ impl Gen<'_> {
             return Some(Known::Yes);
         }
         test().map(Known::Test)
+    }
+
+    /// `known_over` of `e` at a token's first byte (`sb` its bytes), with `v` its mask: where `e`
+    /// is a class, a test of the byte, as the lean lexer's.
+    fn known_first(&self, e: &Expr, sb: &[bool; 256], v: Option<&String>) -> Option<Known> {
+        let k = self.known_over(e, sb, || v.map(|v| format!("bit(&{v}, s)")))?;
+        match (&k, self.exact_bytes(e)) {
+            (Known::Test(_), Some(x)) => Some(class_at("s", &x.bools(), sb)),
+            _ => Some(k),
+        }
+    }
+
+    /// `known_over` of `e` over a token's bytes after its first (`tb`), with `v` its mask: over an
+    /// operator's few bytes (`Pairs`), where `e` is a class, a test of each byte.
+    fn known_tail(&self, e: &Expr, tb: &[bool; 256], rule: &Option<TokenRule>, v: Option<&String>) -> Option<Known> {
+        let k = self.known_over(e, tb, || v.map(|v| format!("any_in(&{v}, s + 1, l)")))?;
+        let (Known::Test(_), Some(x), Some(TokenRule::Pairs { pairs, .. })) = (&k, self.exact_bytes(e), rule) else { return Some(k) };
+        let x = x.bools();
+        let most = pairs.iter().map(|p| p.len()).max().unwrap_or(1);
+        let mut t = Known::No;
+        for k in 1..most {
+            let mut at = [false; 256];
+            for p in pairs.iter().filter(|p| p.len() > k) {
+                at[usize::from(p[k])] = true;
+            }
+            let here = if k == 1 { "l > s".to_owned() } else { format!("l >= s + {k}") };
+            t = t.or(Known::Test(here).and(class_at(&format!("s + {k}"), &x, &at)));
+        }
+        Some(t)
     }
 
     /// The fills made of the regions the loop can keep (`LoopFill`): `fill(X, E)` or
@@ -2900,6 +3084,9 @@ impl Gen<'_> {
             let mut codes = Vec::new();
             let mut info = Vec::new();
             let mut ok = true;
+            // The rows whose values read their kind's assumptions.
+            let mut assumed_rows: Vec<(usize, String)> = Vec::new();
+            let (e0_, x0_) = (e0.clone(), x0.clone());
             for (row, st) in rows {
                 let Stmt::Token { kind, start, last, rule, .. } = st else { continue };
                 if matches!(rule, Some(TokenRule::Inside(..))) {
@@ -2972,11 +3159,16 @@ impl Gen<'_> {
                     info.push(RowFill { row: *row, at_s: v_s, at_l: v.clone(), tail_starts: false, tail_stop: Known::No, region: true, dies: row_dies });
                     (v, Known::No)
                 } else {
-                    // A token of code: `X` and `E` stage 1's over its bytes.
+                    // A token of code: `X` and `E` stage 1's over its bytes, as the token's kind's assumptions
+                    // read them (a test build checks the value where they are not proved).
                     let tb = self.row_tail_bytes(kind, rule, last);
                     let has_tail = (0..256).any(|i| tb[i]);
                     let bit = |v: &Option<String>, at: &str| v.as_ref().map(|v| format!("bit(&{v}, {at})"));
-                    let (Some(es), Some(xs)) = (self.known_over(&e0, &sb, || bit(&ev, "s")), self.known_over(&x0, &sb, || bit(&xv, "s"))) else {
+                    let (e0, x0) = (self.kind_read(kind, &e0), self.kind_read(kind, &x0));
+                    if e0 != e0_ || x0 != x0_ {
+                        assumed_rows.push((*row, kind.clone()));
+                    }
+                    let (Some(es), Some(xs)) = (self.known_first(&e0, &sb, ev.as_ref()), self.known_first(&x0, &sb, xv.as_ref())) else {
                         ok = false;
                         break;
                     };
@@ -2985,7 +3177,7 @@ impl Gen<'_> {
                         info.push(RowFill { row: *row, at_s: fs.clone(), at_l: fs.clone(), tail_starts: false, tail_stop: Known::No, region: false, dies: false });
                         (fs, xs)
                     } else {
-                        let Some(et) = self.known_over(&e0, &tb, || ev.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) else {
+                        let Some(et) = self.known_tail(&e0, &tb, rule, ev.as_ref()) else {
                             ok = false;
                             break;
                         };
@@ -3016,7 +3208,11 @@ impl Gen<'_> {
                                 } else {
                                     (over(&tb, format!("any_in(&{xv_}, q, l)")), fs.clone().or(over(&tb, format!("any_in(&{xv_}, s + 1, l)"))))
                                 };
-                                Known::Test(format!("match last_in(&{ev_}, s + 1, l) {{ Some(q) => {}, None => {} }}", after.code(), none.code()))
+                                match after {
+                                    // Nothing starts after the last stop: none where one is.
+                                    Known::No => et.clone().not().and(none),
+                                    after => Known::Test(format!("match last_in(&{ev_}, s + 1, l) {{ Some(q) => {}, None => {} }}", after.code(), none.code())),
+                                }
                             }
                         };
                         let tail_starts = (0..256).any(|i| (if prev { all[i] } else { tbx[i] }) && xb[i]);
@@ -3033,6 +3229,19 @@ impl Gen<'_> {
             }
             if !ok {
                 continue;
+            }
+            // Read as the kind's assumptions read it, not proved: a test build checks it against the mask. One
+            // line: the unread masks' lines are dropped whole.
+            if !assumed_rows.is_empty() {
+                let fv = self.val(e)?;
+                for (row, kind) in &assumed_rows {
+                    let proved = self.x.assumed.iter().filter(|a| a.0.as_deref() == Some(kind.as_str())).all(|a| a.3);
+                    if let Some(c) = codes.iter_mut().find(|c| c.0 == *row)
+                        && !proved
+                    {
+                        c.1 = format!("{{ let f = {}; #[cfg(feature = \"test-hooks\")] assert_eq!(f, bit(&{fv}, l), \"assume in {kind}: `{}` at the token's last byte {{l}}\"); f }}", c.1, self.brief(e));
+                    }
+                }
             }
             // `X` at every skipped byte: true over any gap.
             let xg_all = matches!(&xg, Expr::Not(a) if matches!(**a, Expr::Empty));
@@ -3207,13 +3416,18 @@ impl Gen<'_> {
             }
             let Some(fr) = self.fills[j].info.iter().find(|r| r.row == *row) else { return Ok(false) };
             let (f_s, f_l, region, dies, tail_starts, tail_stop) = (fr.at_s.clone(), fr.at_l.clone(), fr.region, fr.dies, fr.tail_starts, fr.tail_stop.clone());
+            // `F` at the last byte: the row has set `fill_J` (the fills' rows run in order).
+            let f_l = match f_l {
+                Known::Test(_) => Known::Test(format!("fill_{j}")),
+                k => k,
+            };
             let sb = self.bytes_at(start, 0, &mut HashMap::new());
             let sb: [bool; 256] = std::array::from_fn(|b| sb[b] && !self.skipped[b]);
             let bit = |at: &str| yv.as_ref().map(|v| format!("bit(&{v}, {at})"));
-            let Some(ys) = self.known_over(y, &sb, || bit("s")) else { return Ok(false) };
+            let Some(ys) = self.known_first(y, &sb, yv.as_ref()) else { return Ok(false) };
             // The stop `Z` at the first byte, and none over the bytes after.
             let zs = match &z {
-                Some(z) => match self.known_over(z, &sb, || zv.as_ref().map(|v| format!("bit(&{v}, s)"))) {
+                Some(z) => match self.known_first(z, &sb, zv.as_ref()) {
                     Some(k) => k,
                     None => return Ok(false),
                 },
@@ -3224,10 +3438,10 @@ impl Gen<'_> {
             let z_tail = match (&z, region) {
                 (Some(z), false) => {
                     let tb = self.row_tail_bytes(kind, rule, last);
-                    match self.known_over(z, &tb, || zv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) {
+                    match self.known_tail(z, &tb, rule, zv.as_ref()) {
                         Some(Known::No) => None,
                         Some(k) => {
-                            let yt = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))).unwrap_or(Known::No);
+                            let yt = self.known_tail(y, &tb, rule, yv.as_ref()).unwrap_or(Known::No);
                             Some((k, yt))
                         }
                         None => return Ok(false),
@@ -3251,7 +3465,7 @@ impl Gen<'_> {
                 if !(0..256).any(|b| tb[b]) {
                     g_s.clone()
                 } else if !tail_starts {
-                    let Some(yt) = self.known_over(y, &tb, || yv.as_ref().map(|v| format!("any_in(&{v}, s + 1, l)"))) else { return Ok(false) };
+                    let Some(yt) = self.known_tail(y, &tb, rule, yv.as_ref()) else { return Ok(false) };
                     f_l.clone().and(g_s.clone().or(yt))
                 } else if matches!(self.known_over(y, &tb, || None), Some(Known::No)) {
                     // A start of `F` may be over them, and no `Y`: the first byte's while `F` holds,

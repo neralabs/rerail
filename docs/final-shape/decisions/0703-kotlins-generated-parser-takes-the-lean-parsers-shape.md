@@ -332,6 +332,15 @@ them.
    gone. The loop keeps `as_run`, `as_dot` and `as_lt` per token for it, and their rows' values are written as scans
    over the token's bytes (`fill_11` in a name's row reads `wlast_in` and `wfirst_in`), where the lean parser reads
    the type's tokens (`as_split`).
+39. **A kept fill's row reads its kind's assumptions and its bytes' classes**: in a token of code's row, a fill's
+   `X` and `E` are read as the token's kind assumes them (`kind_read`; a test build checks the value against the
+   mask where an assumption is not proved), a one-byte `text` is a class, and a class is tested at the token's
+   first byte as one of the bytes it may be (`class_at`: `matches!(src[s], b'.' | b'<' | b'>' | b'?')`), and over
+   an operator's bytes after its first byte by byte (`known_tail`: `l > s && src[s + 1] == b'.'`). Where nothing
+   starts after the last stop, the value is `!stop && v`. A fill within a kept fill reads the row's `fill_J` as set,
+   not its expression again, and `Known`'s `&&` and `||` name each operand once. A name's row keeps `as_run` as
+   `fill_11 = (xs_11 || fs_11)` and `as_dot` as `((xs_11 || fs_11) && fs_12)`; an operator's reads its bytes. A
+   number's row still scans its tail for a stop (a sign after `e`), as does the gap before a token for one.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
