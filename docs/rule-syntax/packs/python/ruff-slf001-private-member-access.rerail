@@ -5,12 +5,13 @@
 .scope include "**/*"
 
 // Ruff SLF001 (flake8-self): `obj._name` where obj is not the class's own instance or the class itself.
-// Not reported: dunders (`__x__`) and sunders (`_x_`); option `flake8-self.ignore-names` (default `_make`, `_asdict`,
-// `_replace`, `_fields`, `_field_defaults`, `_name_`, `_value_`); annotations; os._exit; inside a dunder
-// operator method (`__eq__`, `__add__`, …); `super()._x`; a receiver spelled `self`, `cls` or `mcs`; a class
-// read from inside its own body; and a name that holds the same class's instance: a method's first parameter,
-// a parameter annotated with `Self` or the enclosing class, or a variable assigned `self`, `cls()`, `mcs()`,
-// `Class()`, `Class[T]()` or `super().__new__(…)`.
+// Not reported: dunders (`__x__`, also `__` and `___`) and sunders (`_x_`, also `_`); option
+// `flake8-self.ignore-names` (default `_make`, `_asdict`, `_replace`, `_fields`, `_field_defaults`, `_name_`,
+// `_value_`); annotations; os._exit; inside a dunder operator method (`__eq__`, `__add__`, …); `super()._x`; a
+// receiver spelled `self`, `cls` or `mcs`; a class read from inside its own body; and a name that holds the same
+// class's instance: a method's first parameter, a parameter annotated with `Self` or the enclosing class, a variable
+// assigned `self`, `cls()`, `mcs()`, `Class()`, `Class[T]()` or `super().__new__(…)`, or a def whose return is
+// annotated so (`def make() -> Class`, read as Ruff's check_type reads a function binding).
 //   print(foo._private_thing)       ← SLF001
 //   self.bar._private               ← SLF001: the receiver is `self.bar`, not `self`
 //   def __eq__(self, other): return self._x == other._x     not reported
@@ -23,12 +24,32 @@
 .violation SLF001(at: node, attr: symbol) code "SLF001"
     "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
     suppress ruff "SLF001"
-SLF001(e, a) :- attr_of(e, v, a), prefix("_", a), !glob("__*__", a), !slf_sunder(e), !slf_ignored(a),
+SLF001(e, a) :- attr_of(e, v, a), prefix("_", a), !slf_magic(e), !slf_ignored(a),
     !annotation(e), !pyi_sym(e, "os._exit"), !slf_in_operator(e), unparen(v, o), !slf_super(o),
-    !slf_receiver_name(o), !slf_own_class(o), !slf_same_instance(o, e).
-// slf_sunder(e): e's attribute is a sunder, `_x_`. Keyed by the access, so the rule stays within its file.
-.decl slf_sunder(e: node)
-slf_sunder(e) :- attr_of(e, _, a), glob("_*_", a), !prefix("__", a), !suffix("__", a).
+    !slf_receiver_name(o), !slf_own_class(o), !slf_same_instance(o, e), !slf_returns_own(o, e).
+// slf_magic(e): e's attribute is a dunder or a sunder, as Ruff's is_dunder and is_sunder: `__…__` (`__` itself
+// too), or `_…_` (`_` itself too) that neither starts nor ends with `__`. Keyed by the access, so the rule stays
+// within its file.
+.decl slf_magic(e: node)
+slf_magic(e) :- attr_of(e, _, a), prefix("__", a), suffix("__", a).
+slf_magic(e) :- attr_of(e, _, a), prefix("_", a), suffix("_", a), !prefix("__", a), !suffix("__", a).
+// slf_returns_own(o, e): o names a def whose return annotation is `Self` or the class around e, through
+// `Annotated[…]` and `C[T]` as a parameter's annotation (python/misc2-self's slf_ann_head, which reads parameters
+// and calls only).
+.decl slf_returns_own(o: node, e: node)
+slf_returns_own(o, e) :- attr_of(e, o, _), slf_bind(o, f), kind(f, "function_definition"),
+    field(f, "return_type", t), slf_ret_head(t, h), slf_self(h).
+slf_returns_own(o, e) :- attr_of(e, o, _), slf_bind(o, f), kind(f, "function_definition"),
+    field(f, "return_type", t), slf_ret_head(t, h), kind(h, "identifier"), text(h, x), slf_class_around(e, x).
+.decl slf_ret_head(t: node, h: node)
+slf_ret_head(t, t) :- kind(f, "function_definition"), field(f, "return_type", t).
+slf_ret_head(t, h) :- slf_ret_head(t, m), (kind(m, "type") ; kind(m, "parenthesized_expression")), child(m, h, 0).
+slf_ret_head(t, h) :- slf_ret_head(t, m), kind(m, "generic_type"), child(m, g, 0), !slf_annotated(g), h = g.
+slf_ret_head(t, h) :- slf_ret_head(t, m), kind(m, "generic_type"), child(m, g, 0), slf_annotated(g),
+    child(m, l, 1), child(l, h, 0).
+slf_ret_head(t, h) :- slf_ret_head(t, m), kind(m, "subscript"), field(m, "value", g), !slf_annotated(g), h = g.
+slf_ret_head(t, h) :- slf_ret_head(t, m), kind(m, "subscript"), field(m, "value", g), slf_annotated(g),
+    field(m, "subscript", h).
 .decl slf_ignored(a: symbol)
 slf_ignored(a) :- option_item("flake8-self.ignore-names", _, a).
 slf_ignored(a) :- !slf_names_set(), (a = "_make" ; a = "_asdict" ; a = "_replace" ; a = "_fields" ;
@@ -36,8 +57,14 @@ slf_ignored(a) :- !slf_names_set(), (a = "_make" ; a = "_asdict" ; a = "_replace
 .decl slf_names_set()
 slf_names_set() :- option_item("flake8-self.ignore-names", _, _).
 .decl slf_in_operator(e: node)
-slf_in_operator(e) :- attr_of(e, _, _), nearest(e, f, lscope), def_name(f, x), kind(f, "function_definition"),
-    slf_operator(x).
+slf_in_operator(e) :- slf_runs_in(e, f), def_name(f, x), kind(f, "function_definition"), slf_operator(x).
+// slf_runs_in(e, s): access e runs in scope s, Ruff's current scope. A parameter's default runs in the scope around
+// its def or lambda: in `def __eq__(self, o): f = lambda a=o._c: a._d`, `o._c` runs in `__eq__`, `a._d` does not.
+.decl slf_runs_in(e: node, s: node)
+slf_runs_in(e, l) :- attr_of(e, _, _), nearest(e, l, lscope), !slf_in_params(e, l).
+slf_runs_in(e, s) :- attr_of(e, _, _), nearest(e, l, lscope), slf_in_params(e, l), nearest(l, s, lscope).
+.decl slf_in_params(e: node, l: node)
+slf_in_params(e, l) :- attr_of(e, _, _), nearest(e, l, lscope), field(l, "parameters", ps), within(e, ps).
 .decl slf_operator(x: symbol)
 slf_operator("__lt__"). slf_operator("__le__"). slf_operator("__eq__"). slf_operator("__ne__").
 slf_operator("__gt__"). slf_operator("__ge__"). slf_operator("__add__"). slf_operator("__sub__").
@@ -51,3 +78,33 @@ slf_operator("__rxor__"). slf_operator("__ror__"). slf_operator("__iadd__"). slf
 slf_operator("__imul__"). slf_operator("__imatmul__"). slf_operator("__itruediv__"). slf_operator("__ifloordiv__").
 slf_operator("__imod__"). slf_operator("__ipow__"). slf_operator("__ilshift__"). slf_operator("__irshift__").
 slf_operator("__iand__"). slf_operator("__ixor__"). slf_operator("__ior__").
+
+// Ruff 0.17.6: SLF001 at lines 9, 10, 11 and 18. Before: also at 2, 3, 4 (`_`, `__`, `___` are a sunder and
+// dunders to Ruff), 7 (defs annotated to return the class) and 12 (`o._s`, a default, runs in `__eq__`), twice at
+// 11 (`o._q` the same), and not at 10 (`o._p`, `__eq__`'s own default, runs in the class body).
+.test magic_names_returns_and_defaults exactly
+    .fixture "a.py" ```
+        from typing import Self, Annotated
+        x._
+        x.__
+        x.___
+        class Outer:
+            def m(self):
+                return mk1._a, mk2._b, mk3._c
+            def n(self):
+                return mk4._d, mk5._e
+            def __eq__(self, o, d=o._p):
+                f = lambda a=o._q: a._r
+                def g(z=o._s): pass
+        def mk1() -> Self: ...
+        def mk2() -> Annotated[Outer, 1]: ...
+        def mk3() -> Outer[int]: ...
+        def mk4() -> "Outer": ...
+        def mk5() -> Other: ...
+        x.__a
+        ```
+    .expect SLF001 at "a.py":9
+    .expect SLF001 at "a.py":10
+    .expect SLF001 at "a.py":11
+    .expect SLF001 at "a.py":18
+.end
