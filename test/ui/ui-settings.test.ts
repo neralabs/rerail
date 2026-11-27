@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope } from "../../ui/poll.js";
 import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
 import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
-import { agentStatus, installedLabel, isNewerVersion, newerRelease, preReleaseNote, releaseUrl } from "../../ui/settings-model.js";
+import { agentStatus, availableRelease, installedLabel, isNewerVersion, preReleaseNote, promotedNote, releaseHeadline, releaseUrl } from "../../ui/settings-model.js";
 import { data } from "../../ui/state.js";
 import { actions as settingsActions } from "../../ui/views/settings.js";
 import type * as Shell from "../../ui/shell.js";
@@ -87,13 +87,36 @@ describe("the version in About Rerail and the top bar", () => {
   });
 
   it("names a newer version only when the daemon reports one above the version running", () => {
-    expect(newerRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
-    expect(newerRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
-    expect(newerRelease({ version: "0.3.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    expect(availableRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
+    expect(availableRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    expect(availableRelease({ version: "0.3.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
     // A daemon that doesn't check, or hasn't had an answer yet, says nothing; a page that has not heard from it has no health.
-    expect(newerRelease({ version: "0.2.0" })).toBeNull();
-    expect(newerRelease({ version: "0.2.0", update: null })).toBeNull();
-    expect(newerRelease(null)).toBeNull();
+    expect(availableRelease({ version: "0.2.0" })).toBeNull();
+    expect(availableRelease({ version: "0.2.0", update: null })).toBeNull();
+    expect(availableRelease(null)).toBeNull();
+  });
+
+  it("names the release a pre-release install reaches: the same version once promoted, or a newer one, never an older one", () => {
+    const on = (version: string, updateChannel: string | null, latest: string) => ({ version, updateChannel, update: { latest, checkedAt: 1 } });
+    // 0.3.0 installed from next, then promoted to latest: updating moves this computer to latest.
+    expect(availableRelease(on("0.3.0", "next", "0.3.0"))).toBe("0.3.0");
+    expect(availableRelease(on("0.3.0-beta.1", "beta", "0.3.0"))).toBe("0.3.0");
+    expect(availableRelease(on("0.3.0-next.2", "next", "0.3.1"))).toBe("0.3.1");
+    // A next build latest has not reached yet: nothing to update to.
+    expect(availableRelease(on("0.3.0", "next", "0.2.1"))).toBeNull();
+    expect(availableRelease(on("0.3.0-next.2", "next", "0.2.1"))).toBeNull();
+    // On latest, or where the daemon cannot tell the channel, the same version is up to date.
+    expect(availableRelease(on("0.3.0", "latest", "0.3.0"))).toBeNull();
+    expect(availableRelease(on("0.3.0", null, "0.3.0"))).toBeNull();
+  });
+
+  it("says a promoted version running is now a release, and that updating moves this computer to releases", () => {
+    const promoted = { version: "0.3.0", updateChannel: "next", update: { latest: "0.3.0", checkedAt: 1 } };
+    expect(releaseHeadline(promoted, "0.3.0")).toBe("Rerail 0.3.0 is now a release");
+    expect(promotedNote(promoted, "0.3.0")).toBe("Updating moves this computer from next to releases.");
+    const newer = { version: "0.3.0", updateChannel: "next", update: { latest: "0.3.1", checkedAt: 1 } };
+    expect(releaseHeadline(newer, "0.3.1")).toBe("Rerail 0.3.1 is available");
+    expect(promotedNote(newer, "0.3.1")).toBeNull();
   });
 
   it("marks a pre-release: a version from a channel other than latest, or one with a prerelease part", () => {

@@ -8,7 +8,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `index.html` is the frame: the top bar over both columns, the sidebar (`#sidenav`), the content column (`#content`)
   and the sheet (`#panel`). `app.js` renders it and routes clicks to the region's actions.
 - `frame/` draws the frame: `topbar.js` the top bar (sidebar toggle, the wordmark, which opens Overview, repository
-  pill and menu, status with the version, "Pre-release" while it is one, and while a newer Rerail is out "Update available", whose popover gives the
+  pill and menu, status with the version, "Pre-release" while it is one, and while there is a release to update to (a newer one, or the pre-release running once promoted to `latest`) "Update available", whose popover gives the
   command to paste into a coding agent's session, `/rerail-update`, with Copy and Details in Settings) and `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its
   rules are on, Created by you, Add rule packs, Create a rule, History by rule and by session, Merge Assist with how
   many of its conflicts are open and not quiet, Settings).

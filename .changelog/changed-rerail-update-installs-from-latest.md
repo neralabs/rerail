@@ -1,0 +1,1 @@
+`rerail update` and `/rerail-update` always install from `latest`, even on a computer that `rerail update --channel next` moved to `next`, and move it back to `latest` once `latest` has its version or a newer one. A `next` version newer than `latest` stays. `rerail update check` asks about `latest` too.

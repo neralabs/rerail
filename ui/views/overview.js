@@ -7,7 +7,7 @@ import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingI
 import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
 import { awaitingApproval, awaitingYourApproval, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
 import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
-import { newerRelease } from "../settings-model.js";
+import { availableRelease, promotedNote } from "../settings-model.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
 import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
@@ -93,7 +93,7 @@ function renderBanner(root, state) {
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
 }
 
-/* A newer Rerail: once per version, until dismissed, on a repository that is set up. */
+/* A release to update to (`availableRelease`): once per version, until dismissed, on a repository that is set up. */
 
 const updateKey = latest => `rerail-update-dismissed:${latest}`;
 /** The versions dismissed in this visit, which holds when storage is blocked. */
@@ -105,23 +105,25 @@ function updateDismissed(latest) {
 }
 
 function dismissUpdate() {
-  const latest = newerRelease(data.health);
+  const latest = availableRelease(data.health);
   if (latest === null) return;
   updateDismissedHere.add(latest);
   try { localStorage.setItem(updateKey(latest), "1"); } catch { /* private mode: dismissed for this visit */ }
 }
 
 /**
- * "Rerail 0.3.0 just launched.", from the newest version the daemon reports (`/healthz.update`), with how to update:
- * the command to paste into a coding agent's session and its Copy, and Details in Settings, which goes to About Rerail
- * and its release notes. It sits below the banners that ask for something, since it doesn't.
+ * "Rerail 0.3.0 just launched.", from the release the daemon reports (`/healthz.update`, `availableRelease`), with how to
+ * update: the command to paste into a coding agent's session and its Copy, and Details in Settings, which goes to About
+ * Rerail and its release notes. The version running, promoted, says updating moves this computer to releases. It sits
+ * below the banners that ask for something, since it doesn't.
  */
 function renderUpdate(root) {
-  const latest = data.loaded && isSetUp() ? newerRelease(data.health) : null;
+  const latest = data.loaded && isSetUp() ? availableRelease(data.health) : null;
   const show = latest !== null && !updateDismissed(latest);
-  setContent(root, show ? latest : "", () => (!show ? null : h("div.welcome", { role: "status" }, icon("rocket", 22), h("div", null,
+  const promoted = show ? promotedNote(data.health, latest) : null;
+  setContent(root, show ? `${latest}\0${promoted}` : "", () => (!show ? null : h("div.welcome", { role: "status" }, icon("rocket", 22), h("div", null,
     h("b", null, `Rerail ${latest} just launched.`),
-    h("p", null, "To update, paste ", h("code", null, AGENT_UPDATE_COMMAND), " into a session with your coding agent. It updates your rule packs too, and backs up your rules and history first."),
+    h("p", null, `${promoted === null ? "" : `${promoted} `}To update, paste `, h("code", null, AGENT_UPDATE_COMMAND), " into a session with your coding agent. It updates your rule packs too, and backs up your rules and history first."),
     h("p.acts", null, updateCopyButton("button.btn.sm", "Copy update command"), updateDetailsLink())),
   h("button.x", { "data-act": "dismissupdate", "aria-label": "Dismiss" }, "✕"))));
 }

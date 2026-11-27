@@ -161,6 +161,9 @@ describe("signed customer profiles", () => {
     const policy = await signedUpdatePolicy(setup.activation, setup.profileStore, "acme", NOW);
     expect(authorizedUpdateChannel(policy, undefined)).toBe("latest");
     expect(() => authorizedUpdateChannel(policy, "beta")).toThrow("restricts updates to channel latest");
+    // A bare `rerail update` (no --profile, no --channel) gets the active profile's channel, not the public `latest`.
+    expect(await signedUpdatePolicy(setup.activation, setup.profileStore, undefined, NOW)).toEqual(policy);
+    expect(authorizedUpdateChannel({ ...policy!, channel: "beta" }, undefined)).toBe("beta");
     expect(policy).toEqual({
       profileName: "acme",
       localEngine: true,

@@ -96,12 +96,18 @@ export interface UpdateStatus {
 }
 
 export interface UpdateCheck extends UpdateStatus {
+  /** The channel asked about: the one given, else `latest`. */
+  availableChannel: string;
   availableVersion: string;
   updateAvailable: boolean;
 }
 
 export interface UpdateResult extends UpdateStatus {
   changed: boolean;
+  /** What an update asked npm: the channel and the version it has. Absent for an install. */
+  asked?: { channel: string; version: string };
+  /** The channel recorded before, when the update recorded another. */
+  channelBefore?: string;
 }
 
 export interface PackageRegistry {
@@ -909,18 +915,25 @@ export class ManagedUpdater {
     };
   }
 
+  /**
+   * The version `update(channel)` would install, `latest`'s without a channel. An update is available when it would
+   * change something: a newer version, or the version running from another channel, which the update records
+   * (`0.3.0` from `next` once `0.3.0` is promoted to `latest`).
+   */
   async check(channel?: string): Promise<UpdateCheck> {
     const state = await this.readState();
-    const selectedChannel = channel ?? state.channel;
+    const selectedChannel = channel ?? DEFAULT_UPDATE_CHANNEL;
     assertChannel(selectedChannel);
     const availableVersion = await this.registry.resolveVersion(selectedChannel);
+    const order = compareSemver(availableVersion, state.current.version);
     return {
-      channel: selectedChannel,
+      channel: state.channel,
       current: state.current,
       ...(state.previous === undefined ? {} : { previous: state.previous }),
       ...(state.lastCheckAt === undefined ? {} : { lastCheckAt: state.lastCheckAt }),
+      availableChannel: selectedChannel,
       availableVersion,
-      updateAvailable: compareSemver(availableVersion, state.current.version) > 0,
+      updateAvailable: order > 0 || (order === 0 && state.channel !== selectedChannel),
     };
   }
 
@@ -1005,11 +1018,16 @@ export class ManagedUpdater {
     return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
   }
 
-  /** Installs and activates the newest version on `channel` (the recorded one by default), reporting each step to `progress`. */
+  /**
+   * Installs and activates the newest version on `channel`, reporting each step to `progress`, and records the channel,
+   * which `rerail packs update` follows. Without a channel it is `latest`, whatever channel is recorded, and recorded
+   * only once `latest` has the version running or a newer one: a computer on a `next` build newer than `latest` keeps
+   * that version and its channel, so it stays marked Pre-release until `latest` reaches it.
+   */
   async update(channel?: string, progress: Progress = NO_PROGRESS): Promise<UpdateResult> {
     return await this.withLock(async () => {
       const state = await this.readState();
-      const selectedChannel = channel ?? state.channel;
+      const selectedChannel = channel ?? DEFAULT_UPDATE_CHANNEL;
       assertChannel(selectedChannel);
       const checkedAt = this.now().toISOString();
       let next: Installation;
@@ -1019,15 +1037,19 @@ export class ManagedUpdater {
           async () => await this.registry.resolveVersion(selectedChannel),
           npmStall(NPM_QUERY_STALL_MS, NPM_QUERY_TIMEOUT_MS),
         );
-        if (compareSemver(availableVersion, state.current.version) <= 0) {
+        const order = compareSemver(availableVersion, state.current.version);
+        if (order <= 0) {
           // The installed version stays current while Node's ABI may not have: repair it in place rather than skip it.
           await this.validateOrRepair(state.current, progress);
-          await this.writeState({ ...state, channel: selectedChannel, lastCheckAt: checkedAt });
-          return { ...(await this.status()), changed: false };
+          // A channel given is recorded; `latest` by default only once it has this version (a newer one installs).
+          const recorded = channel ?? (order === 0 ? selectedChannel : state.channel);
+          await this.writeState({ ...state, channel: recorded, lastCheckAt: checkedAt });
+          return await this.updated(false, state.channel, { channel: selectedChannel, version: availableVersion });
         }
         next = await this.materializeVersion(availableVersion, progress);
       } catch (error) {
-        await this.writeState({ ...state, channel: selectedChannel, lastCheckAt: checkedAt }).catch(() => undefined);
+        // A failed bare update leaves the recorded channel as it was.
+        await this.writeState({ ...state, channel: channel ?? state.channel, lastCheckAt: checkedAt }).catch(() => undefined);
         throw error;
       }
       await progress.step(`Switching to Rerail ${next.version}`, async () => await this.writeState({
@@ -1037,8 +1059,13 @@ export class ManagedUpdater {
         previous: state.current,
         lastCheckAt: checkedAt,
       }));
-      return { ...(await this.status()), changed: true };
+      return await this.updated(true, state.channel, { channel: selectedChannel, version: next.version });
     });
+  }
+
+  private async updated(changed: boolean, channelBefore: string, asked: { channel: string; version: string }): Promise<UpdateResult> {
+    const status = await this.status();
+    return { ...status, changed, asked, ...(status.channel === channelBefore ? {} : { channelBefore }) };
   }
 
   /**

@@ -15,7 +15,7 @@ import { applyTheme, invalidate, toast } from "../shell.js";
 import { loadRepoRuleCounts } from "../repo-rule-counts.js";
 import { repoTag } from "../repo-rules.js";
 import { repoCounts } from "../render/repos.js";
-import { agentStatus, installedLabel, newerRelease, preReleaseNote, releaseUrl } from "../settings-model.js";
+import { agentStatus, availableRelease, installedLabel, preReleaseNote, promotedNote, releaseHeadline, releaseUrl } from "../settings-model.js";
 
 export const needs = [];
 
@@ -127,7 +127,7 @@ const releaseLink = (version, label) =>
   h("a.rel", { href: releaseUrl(version), target: "_blank", rel: "noopener noreferrer", title: `Rerail ${version}’s release notes, on GitHub` }, label, " ↗");
 
 /**
- * About Rerail: Version, Installed and, only while the daemon reports a newer version, Update to <version>. Rerail never
+ * About Rerail: Version, Installed and, only while a release is available (`availableRelease`), Update to <version>. Rerail never
  * updates on its own, and the dashboard can't run the update: updating replaces the daemon that serves this page. So
  * the rows give the command. Until the daemon's daily update check has answered (and always for a daemon that doesn't
  * check: a checkout's, or one run with `RERAIL_UPDATE_CHECK=0`), the Version row says how to update; once it has, the
@@ -136,7 +136,7 @@ const releaseLink = (version, label) =>
 function about() {
   const version = data.health?.version ?? null, installed = installedLabel(data.health?.installedAt);
   if (version === null && installed === null) return null;
-  const latest = newerRelease(data.health);
+  const latest = availableRelease(data.health);
   return h("section", { id: "about" }, h("div.ghead", null, h("h2", null, "About Rerail")),
     h("div.list", null,
       version === null ? null : versionRow(version, latest),
@@ -153,17 +153,21 @@ function versionRow(version, latest) {
   const knows = typeof data.health?.update?.latest === "string";
   const how = knows ? [] : [" To update, run ", h("code", null, UPDATE_COMMAND), " in a terminal or ask your coding agent: ", h("code", null, "/rerail-update"), "."];
   const notes = latest === null ? h("span.relline", null, releaseLink(version, `${version} release notes`)) : null;
-  const badge = latest === null ? null : h("span.badge.info", { title: `Rerail ${latest} is out` }, "Update available");
+  const badge = latest === null ? null : h("span.badge.info", { title: releaseHeadline(data.health, latest) }, "Update available");
   const note = preReleaseNote(data.health);
   const pre = note === null ? null : h("span.badge.pre", { title: note }, "Pre-release");
   return row("Version", ["Rerail never updates on its own.", ...how, notes], h("span.val.vrow", null, pre, badge, h("span", null, version)));
 }
 
-/** Update to <latest>: the command, what it keeps, and that version's release notes. */
+/**
+ * Update to <latest>: the command, what it keeps, and that version's release notes. For the version running, promoted
+ * (`promotedNote`), it says updating moves this computer to releases, since no new version comes.
+ */
 function updateRow(latest) {
-  return row(`Update to ${latest}`,
+  const promoted = promotedNote(data.health, latest);
+  return row(promoted === null ? `Update to ${latest}` : `Update to the ${latest} release`,
     ["Run ", h("code", null, UPDATE_COMMAND), " in a terminal, or ask your coding agent: ", h("code", null, "/rerail-update"),
-      ". It backs up your rules and history first; new sessions use the new version.",
+      promoted === null ? ". It backs up your rules and history first; new sessions use the new version." : `. ${promoted}`,
       h("span.relline", null, releaseLink(latest, `What’s new in ${latest}`))],
     copyButton(UPDATE_COMMAND, "Copy update command"));
 }

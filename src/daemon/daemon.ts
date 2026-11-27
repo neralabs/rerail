@@ -155,7 +155,8 @@ export interface RerailDaemonOptions {
    */
   updateChecks?: () => { newest(): DaemonHealth["update"]; stop(): void };
   /**
-   * The channel a bare `rerail update` installs from, read on every `/healthz` (`updateChannel`). A managed install's
+   * The channel `update-state.json` records, the one this computer's Rerail and rule packs update from, read on every
+   * `/healthz` (`updateChannel`). A managed install's
    * entry point passes set-up's, whether or not it checks for updates; omitted, as for a checkout's daemon, it is null.
    */
   updateChannel?: () => string | undefined;

@@ -64,14 +64,34 @@ export function isNewerVersion(a, b) {
 }
 
 /**
- * The newer Rerail out, from `/healthz.update` (`{ latest, checkedAt }`: the newest version the daemon last found and
- * when, from its daily update check), or `null`: when the daemon has no answer, when it can't be read, and when the
- * version running is as new.
+ * The release a bare `rerail update` would move this computer to, from `/healthz.update` (`{ latest, checkedAt }`: the
+ * version under `latest` the daemon last found and when, from its daily update check), or `null`. It is a version newer
+ * than the one running, or the one running itself on a computer that updates from a pre-release channel
+ * (`/healthz.updateChannel`), once it is promoted to `latest`: updating then moves that computer to `latest`. Null when
+ * the daemon has no answer, when it can't be read, and otherwise.
  */
-export function newerRelease(health) {
-  const latest = health?.update?.latest;
-  if (typeof latest !== "string" || typeof health?.version !== "string") return null;
-  return isNewerVersion(latest, health.version) ? latest : null;
+export function availableRelease(health) {
+  const latest = health?.update?.latest, version = health?.version;
+  if (typeof latest !== "string" || typeof version !== "string") return null;
+  if (isNewerVersion(latest, version)) return latest;
+  return latest === version && preReleaseChannel(health) !== null ? latest : null;
+}
+
+/** "Rerail 0.3.0 is available", or for the version running (`availableRelease`), "Rerail 0.3.0 is now a release". */
+export function releaseHeadline(health, release) {
+  return release === health?.version ? `Rerail ${release} is now a release` : `Rerail ${release} is available`;
+}
+
+/** What updating does for the version running (`availableRelease`): it moves to `latest`. Null for a newer version. */
+export function promotedNote(health, release) {
+  const channel = preReleaseChannel(health);
+  return release !== health?.version || channel === null ? null : `Updating moves this computer from ${channel} to releases.`;
+}
+
+/** The pre-release channel this computer updates from (`/healthz.updateChannel` other than `latest`), else null. */
+function preReleaseChannel(health) {
+  const channel = health?.updateChannel;
+  return typeof channel === "string" && channel !== "latest" ? channel : null;
 }
 
 /**
@@ -81,8 +101,8 @@ export function newerRelease(health) {
  * (a checkout's, or one with a signed customer profile) reports null, and only the version decides.
  */
 export function preReleaseNote(health) {
-  const version = health?.version, channel = health?.updateChannel;
+  const version = health?.version, channel = preReleaseChannel(health);
   if (typeof version !== "string") return null;
-  if (typeof channel === "string" && channel !== "latest") return `This computer updates from ${channel}, a pre-release channel: versions still in QA, not releases.`;
+  if (channel !== null) return `This computer updates from ${channel}, a pre-release channel: versions still in QA, not releases.`;
   return parseVersion(version)?.[3] == null ? null : `Rerail ${version} is a pre-release, still in QA.`;
 }

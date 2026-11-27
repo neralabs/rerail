@@ -167,6 +167,55 @@ describe("ManagedUpdater", () => {
     expect(registry.installedVersions).toEqual([]);
   });
 
+  describe("a bare update on next", () => {
+    /** An updater on 1.0.0 that `rerail update --channel next` moved to `next`, with npm answering `latest` next. */
+    async function onNext(latest: string, validateInstallation = assertPackageIdentity): Promise<{ updater: ManagedUpdater; registry: FakeRegistry }> {
+      const { home, packageRoot } = await fixture();
+      const registry = new FakeRegistry("1.0.0");
+      const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry, validateInstallation });
+      await expect(updater.update("next")).resolves.toMatchObject({ changed: false, channel: "next" });
+      registry.availableVersion = latest;
+      registry.resolvedChannels.length = 0;
+      return { updater, registry };
+    }
+
+    it("installs latest's newer version and moves the computer to latest", async () => {
+      const { updater, registry } = await onNext("1.1.0");
+      await expect(updater.check()).resolves.toMatchObject({ channel: "next", availableChannel: "latest", availableVersion: "1.1.0", updateAvailable: true });
+      const result = await updater.update();
+      expect(registry.resolvedChannels).toEqual(["latest", "latest"]);
+      expect(result).toMatchObject({ changed: true, channel: "latest", channelBefore: "next", current: { version: "1.1.0" } });
+    });
+
+    it("moves the computer to latest once its own version is promoted, installing nothing", async () => {
+      const { updater, registry } = await onNext("1.0.0");
+      await expect(updater.check()).resolves.toMatchObject({ availableVersion: "1.0.0", updateAvailable: true });
+      const result = await updater.update();
+      expect(result).toMatchObject({ changed: false, channel: "latest", channelBefore: "next", asked: { channel: "latest", version: "1.0.0" } });
+      expect(registry.installedVersions).toEqual([]);
+      // Then it is up to date: nothing more to update to.
+      await expect(updater.check()).resolves.toMatchObject({ channel: "latest", updateAvailable: false });
+    });
+
+    it("keeps next when latest's newer version fails to install", async () => {
+      const { updater } = await onNext("1.1.0", async installation => {
+        if (installation.version === "1.1.0") throw new Error("health check failed");
+        await assertPackageIdentity(installation);
+      });
+      await expect(updater.update()).rejects.toThrow("health check failed");
+      await expect(updater.status()).resolves.toMatchObject({ channel: "next", current: { version: "1.0.0" } });
+    });
+
+    it("keeps a version latest has not reached, and its channel, never moving back", async () => {
+      const { updater, registry } = await onNext("0.9.0");
+      await expect(updater.check()).resolves.toMatchObject({ availableVersion: "0.9.0", updateAvailable: false });
+      const result = await updater.update();
+      expect(result).toMatchObject({ changed: false, channel: "next", asked: { channel: "latest", version: "0.9.0" }, current: { version: "1.0.0" } });
+      expect(result.channelBefore).toBeUndefined();
+      expect(registry.installedVersions).toEqual([]);
+    });
+  });
+
   it("keeps the active version unchanged when staged validation fails", async () => {
     const { home, packageRoot } = await fixture();
     const registry = new FakeRegistry("1.1.0");
