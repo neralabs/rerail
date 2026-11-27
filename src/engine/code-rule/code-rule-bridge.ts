@@ -1440,6 +1440,12 @@ interface WalkStart {
    * records once for the repository (`WorktreeWalks`). Empty for the session folder's walk.
    */
   readonly records: ReadonlySet<string>;
+  /**
+   * The auditor's view the session folder's walk asked of what it found (`SourceWalk.view`), made as it starts, which
+   * groups the walk's paths by checkout too (`#byOwningCheckout`). None for the walk of the other worktrees, which one
+   * session's view reads for every session watching them (`#scanWorktree`).
+   */
+  readonly view?: WalkView | undefined;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -1790,7 +1796,7 @@ function refusedPath(error: unknown): string | undefined {
 function noteRefusal(walk: SourceWalk, absolute: string, error: unknown, before: EntryId | undefined): void {
   if (!hasErrorCode(error, "EPERM")) return;
   const refused = refusedPath(error) ?? absolute;
-  const path = sessionPath(walk.discovery.root, absolute);
+  const path = walkPath(walk, absolute);
   if (startRefused(walk, absolute, refused) || walk.held(path || ".")) return;
   (walk.refusals ??= []).push(refusalOf(path, absolute, refused, before));
 }
@@ -1963,12 +1969,34 @@ function scanGaps(errors: readonly ScanError[]): WalkGap[] {
   return byPath(errors.map(({ path, readError, unrecorded }): WalkGap => ({ path: path || ".", reason: readError, ...(unrecorded ? { unrecorded } : {}) })));
 }
 /**
+ * Whether a listed name may be the `.git` entry a lookup of its folder finds. Compared in upper case: Windows and macOS
+ * find `.GIT` as `.git`, and elsewhere such a name costs a lookup that finds none.
+ */
+function mayBeGitEntry(name: string): boolean {
+  return name.toUpperCase() === ".GIT";
+}
+
+/**
+ * Every entry of `listing`, the folder `folder`'s, read whole, the walk's view told whether one may be its `.git`
+ * (`WalkView.folderListed`) before the walk asks about any; none once the walk is cancelled.
+ */
+async function wholeListing(walk: SourceWalk, folder: string, listing: AsyncIterable<Dirent>): Promise<Dirent[]> {
+  const entries: Dirent[] = [];
+  for await (const entry of listing) {
+    if (walk.discovery.cancelled) return [];
+    entries.push(entry);
+  }
+  walk.view.folderListed?.(folder, entries.some(entry => mayBeGitEntry(entry.name)));
+  return entries;
+}
+
+/**
  * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
  * left to its own examination, which finds it gone (`goneWhenExamined`): it never fails the folder that listed it.
  */
 function ignoredFolder(walk: SourceWalk, child: string): boolean {
   try {
-    return walk.view.ignoresPath?.(sessionPath(walk.discovery.root, child), true) === true;
+    return walk.view.ignoresPath?.(walkPath(walk, child), true) === true;
   } catch (error) {
     if (vanished(error)) return false;
     throw error;
@@ -2121,6 +2149,19 @@ function inSessionFolder(worktrees: ReadonlySet<string>, path: string): boolean 
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
 function sessionPath(root: string, absolute: string): string {
   return relative(root, absolute).split(sep).join("/");
+}
+/**
+ * `sessionPath` of a path `walk` reached: the walk joins each name a listing gives to the path of its folder, from its
+ * root, so the part after the root and a separator is the path, and no `relative` resolves both paths again for each
+ * file. A path that does not start so (none the walk builds) is worked out by `sessionPath`.
+ */
+function walkPath(walk: SourceWalk, absolute: string): string {
+  const { root } = walk.discovery;
+  if (absolute === root) return "";
+  const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+  if (!absolute.startsWith(prefix)) return sessionPath(root, absolute);
+  const below = absolute.slice(prefix.length);
+  return sep === "/" ? below : below.replaceAll(sep, "/");
 }
 /** `configuredPath` (as a tool names it) relative to the session folder `root`, `/`-separated; undefined for the folder itself or another drive. */
 function sessionRelativePath(root: string, configuredPath: string): string | undefined {
@@ -3653,7 +3694,8 @@ export class CodeRuleBridge {
 
   /**
    * The scan of a pass: of the paths `reads` names, else, or when one of them is a folder now, of the whole folder,
-   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against.
+   * with what the whole walk walked into and left out (`seen`), which the next notices are weighed against. Each
+   * traversal asks a view of its own, which the walk it returns keeps (`WalkStart.view`).
    */
   async #scanPass(
     discovery: SourceDiscovery,
@@ -3662,13 +3704,15 @@ export class CodeRuleBridge {
     reads: SessionReads,
   ): Promise<{ walk: WalkStart; scan: SourceScan; seen?: WorktreeRead }> {
     if (!reads.whole) {
-      const noticed = await this.#scanNoticed(discovery, walk, reads);
-      if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+      const noticing: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+      const noticed = await this.#scanNoticed(discovery, noticing, reads);
+      if (noticed !== undefined) return { walk: { ...noticing, noticed: reads.paths }, scan: noticed };
       // The whole walk notes each linked file again: counted twice, they could reach the bound they are under.
       reads.linked.restart();
     }
-    const scan = await this.#scanSources(discovery, walk, worktrees, reads.linked);
-    return { walk, scan, seen: scan.seen };
+    const whole: WalkStart = { ...walk, view: this.#auditor.walkView?.(discovery.root) };
+    const scan = await this.#scanSources(discovery, whole, worktrees, reads.linked);
+    return { walk: whole, scan, seen: scan.seen };
   }
 
   async #scanSources(
@@ -3706,7 +3750,7 @@ export class CodeRuleBridge {
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan,
       stack: [], roots: new Set([discovery.root]),
-      view: this.#auditor.walkView?.(discovery.root) ?? this.#auditor,
+      view: walk.view ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
       withdrawn: discovery.withdrawn,
     };
@@ -3771,10 +3815,11 @@ export class CodeRuleBridge {
     }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
-    const asked = this.#auditor.walkView?.(request.root) ?? this.#auditor;
+    const asked: WalkView = this.#auditor.walkView?.(request.root) ?? this.#auditor;
     const view: WalkView = {
       acceptsPath: path => asked.acceptsPath(named(path)),
       ignoresPath: (path, directory) => asked.ignoresPath?.(named(path), directory) === true,
+      folderListed: (path, holdsGitEntry) => asked.folderListed?.(named(path), holdsGitEntry),
     };
     const abandoned = (): boolean => this.#abandoned(discovery);
     const scope: WalkScope = { root: request.root, startedAt: request.startedAt, get cancelled() { return abandoned(); } };
@@ -4602,7 +4647,7 @@ export class CodeRuleBridge {
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
     const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, "walked");
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, walk);
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const listed = walk.listedAtFirstSight?.get(checkout);
@@ -5038,16 +5083,19 @@ export class CodeRuleBridge {
   /**
    * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed.
    * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   * The listing is read whole first, so the view learns whether it names a `.git` entry before any of its entries is
+   * asked about (`WalkView.folderListed`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     const listing = await opendir(absolute);
     const seen = walk.scan.seen;
-    seen?.folders.add(sessionPath(walk.discovery.root, absolute));
-    for await (const entry of listing) {
+    const folder = walkPath(walk, absolute);
+    seen?.folders.add(folder);
+    for (const entry of await wholeListing(walk, folder, listing)) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
       else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));
-      else seen?.leftOut.add(sessionPath(walk.discovery.root, join(absolute, entry.name)));
+      else seen?.leftOut.add(walkPath(walk, join(absolute, entry.name)));
     }
   }
 
@@ -5060,7 +5108,7 @@ export class CodeRuleBridge {
   #noteCheckout(walk: SourceWalk, gitEntry: string): void {
     let checkout: string | undefined;
     try {
-      checkout = walk.checkoutOf(sessionPath(walk.discovery.root, gitEntry));
+      checkout = walk.checkoutOf(walkPath(walk, gitEntry));
     } catch (error) {
       if (vanished(error)) return;
       throw error;
@@ -5081,7 +5129,7 @@ export class CodeRuleBridge {
    * `.gitignore` is observed by its stamp whatever Git says of it, since it decides what is ignored.
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: FoundEntry): Promise<void> {
-    const path = sessionPath(walk.discovery.root, absolute);
+    const path = walkPath(walk, absolute);
     if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
   }
@@ -5130,7 +5178,7 @@ export class CodeRuleBridge {
 
   /** `file` when the path is known to be a file: an unlisted one fails as a source, not as a folder walked. */
   #recordObservationFailure(walk: SourceWalk, absolute: string, error: unknown, file: boolean): void {
-    const path = sessionPath(walk.discovery.root, absolute);
+    const path = walkPath(walk, absolute);
     const language = sourceLanguageOfPath(path) ?? (file ? UNLISTED_TEXT_LANGUAGE : undefined);
     const readError = errorMessage(error);
     if (language === undefined) failFolder(walk, path, readError);
@@ -5301,20 +5349,21 @@ export class CodeRuleBridge {
   /**
    * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
    * not the session's checkout); `unowned` has those no checkout owns, which no lane audits. A group holds its items in
-   * the order of `items`, and the groups come in the order of their first item. A walk's paths (`walked`) are files it
-   * found, which are no symbolic links, or files the session took before, which the router accepts only where a link
-   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, looked up once a folder
-   * (`walkView`). Any other path is looked up whole.
+   * the order of `items`, and the groups come in the order of their first item. The paths of a walk (`walked`) are files
+   * it found, which are no symbolic links, or files the session took before, which the router accepts only where a link
+   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, as the view that walk asked
+   * gives it (`WalkStart.view`), else a view made here, which looks each folder up once. Any other path is looked up
+   * whole.
    */
   #byOwningCheckout<T>(
     root: string,
     items: readonly T[],
     pathOf: (item: T) => string,
-    paths: "walked" | "named" = "named",
+    walked?: WalkStart,
   ): { owned: Map<string, T[]>; unowned: T[] } {
     const owned = new Map<string, T[]>();
     const unowned: T[] = [];
-    const checkoutOf = paths === "walked" ? this.#walkedCheckoutOf(root) : (path: string) => this.#owningCheckout(root, path);
+    const checkoutOf = walked === undefined ? (path: string) => this.#owningCheckout(root, path) : this.#walkedCheckoutOf(root, walked.view);
     for (const item of items) {
       const checkout = checkoutOf(pathOf(item));
       if (checkout === undefined) unowned.push(item);
@@ -5324,13 +5373,13 @@ export class CodeRuleBridge {
   }
 
   /**
-   * `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. An
-   * auditor that judges one folder owns every path at the session folder, whatever its view says, as it does a path it
-   * is named.
+   * `#owningCheckout` of the paths a walk found, through `asked`, the view the walk asked, else a view of the auditor
+   * that looks each folder up once. An auditor that judges one folder owns every path at the session folder, whatever
+   * its view says, as it does a path it is named.
    */
-  #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+  #walkedCheckoutOf(root: string, asked: WalkView | undefined): (path: string) => string | undefined {
     if (this.#auditor.sourceRoot === undefined) return () => root;
-    const view = this.#auditor.walkView?.();
+    const view = asked ?? this.#auditor.walkView?.();
     return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
 
@@ -5387,7 +5436,7 @@ export class CodeRuleBridge {
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, "walked").owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, walk).owned) {
       const seen = new Set(paths);
       const changed = await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
       if (changed === undefined) {

@@ -178,6 +178,15 @@ export class CheckoutOwners {
     return outgrown.length > 0;
   }
 
+  /**
+   * Whether a recorded checkout outside Git (`addPlainRoot`) has its top level at `real`, a physical folder: such a
+   * folder owns its files though it holds no `.git` entry.
+   */
+  plainRootAt(real: string): boolean {
+    const root = this.#plainRoot(real);
+    return root !== undefined && relative(root, real) === "";
+  }
+
   /** How many folders it holds an answer for. */
   cachedFolders(): number {
     return new Set([...this.#roots.keys(), ...this.#confirmed.keys()]).size;

@@ -1,0 +1,1 @@
+A walk of the session's folder names each file it finds by cutting the session folder off its path, where it worked the path out again for each file, so walks of large checkouts take less of the daemon's time.

@@ -9,6 +9,7 @@ import {
   ManagedUpdater,
   NpmPackageRegistry,
   compareSemver,
+  isNewerRelease,
   gitBashShim,
   launcherShim,
   machinePackageSpecs,
@@ -79,6 +80,15 @@ describe("semantic version ordering", () => {
     expect(compareSemver("1.2.0-beta.2", "1.2.0-beta.11")).toBe(-1);
     expect(compareSemver("1.2.0", "1.2.0-beta.11")).toBe(1);
     expect(() => compareSemver("v1.2.0", "1.2.0")).toThrow("invalid semantic version");
+  });
+
+  it("isNewerRelease finds a newer release as the tray's update item asks, as the dashboard's isNewerVersion does", () => {
+    // The daemon's tray is handed it as its `isNewer` (cli/daemon-entry.ts).
+    expect(isNewerRelease("0.2.3", "0.2.2")).toBe(true);
+    expect(isNewerRelease("0.2.3", "0.2.3-next.1")).toBe(true);
+    expect(isNewerRelease("0.2.3-next.2", "0.2.3-next.1")).toBe(true);
+    expect(isNewerRelease("0.2.3", "0.2.3")).toBe(false);
+    expect(isNewerRelease("0.2.3-next.1", "0.2.3")).toBe(false);
   });
 });
 

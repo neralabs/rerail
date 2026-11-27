@@ -1,0 +1,1 @@
+When an older Node replaced the one set-up recorded at the same path (a package downgraded, Homebrew's `node` linked to an older formula), the hooks named `rerail install --refresh`, which ran that older Node and refused. The hooks' line now names `node <Rerail home>/current/dist/cli/cli.js install --refresh`, which runs the Node first on `PATH`.
