@@ -59,18 +59,9 @@ impl Plan {
     }
 }
 
-/// The reservation for `rules`' tables (`admit`), waited for while waiting is worth what the CPU would take over
-/// them (`placement::worth_waiting`); its wait counted in `rep`.
-fn admitted(rules: &[(&Plan, &JoinRule, usize)], rep: &mut Report) -> Result<rerail_accel::gpu::shared::Admitted, String> {
-    let (bytes, work) = rules.iter().map(|r| r.0.expected()).fold((0, 0.0), |(b, w), (pb, pw)| (b + pb, w + pw));
-    let patience = crate::code_rule_dsl::logic::plan::placement::admission_patience(work);
-    let got = rerail_accel::gpu::shared::admit(bytes, patience)?;
-    if got.waited > 0.0 {
-        rep.admit_waits += 1;
-        rep.admit_seconds += got.waited;
-        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata that waited for the device's memory", 1);
-    }
-    Ok(got)
+/// The reservation for `rules`' tables (`admit`): it fits, or the run ends with the memory it needs.
+fn admitted(rules: &[(&Plan, &JoinRule, usize)]) -> rerail_accel::gpu::shared::Admitted {
+    rerail_accel::gpu::shared::admit(rules.iter().map(|r| r.0.expected().0).sum())
 }
 
 /// A join stage's table, in rows, before it runs: the growth the stage was seen to have (`seen`, rows out a row in);
@@ -2320,7 +2311,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
     // `ruff_safe_operand` refused, 193 MB short, 1.1 s on the CPU).
     made_before_encoding(rules);
     // Its tables' room, reserved whole before anything is encoded: a wait for it holds no command buffer (0386).
-    let _room = admitted(rules, &mut rep)?;
+    let _room = admitted(rules);
     use crate::code_rule_dsl::logic::lanes::wave::with_open;
     // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
     crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
@@ -2437,7 +2428,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
     // reaching a block through two wraps misreads on G15 (`mj::Batch::queue`). Cut there, the stratum would be two
     // launches (decision 0603: a stratum is one launch); encoded again, every bind takes the grown wrap.
     for _ in 0..REWRAPS_MOST {
-        let room = admitted(rules, rep)?;
+        let room = admitted(rules);
         let mut batch = direct_batch(None)?;
         batch.again_on_rewrap();
         let runs = encode_runs(rules, &mut batch, rep, names, store)?;

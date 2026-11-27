@@ -1364,9 +1364,8 @@ impl LoweredWave {
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
         let found = waves().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
-        // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
-        // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
-        // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
+        // Past the device's room at one tape, in as few lanes and states as it runs in (its workspace's sizes; one past
+        // the memory budget ends the run instead, `gpu::shared::admit`): the cores take it (0334).
         // Its roots are found there, counted and named. A Metal failure of any other kind still stops the run (0382
         // §6). The room is the pool's ledger and leases alone: the driver's figure, which counts the host pages
         // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).

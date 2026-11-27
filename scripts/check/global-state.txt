@@ -13,7 +13,7 @@ accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
-accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
+accel/src/gpu/shared.rs::OUT_OF_MEMORY_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::SHARED	stays	the device and its one queue: the forest's, one per process (code registered at load)
 accel/src/models.rs::MODELS	stays	code registered at load (the learned models, rerail-accel-gpu's)
 accel/src/price.rs::FIRST_PRICE	stays	code registered at load (a hook)
@@ -264,7 +264,6 @@ native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::SAMPLED	stays	the 
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::SPLIT	run	the width census's split-layout bytes (RERAIL_WIDTH_CENSUS): a run's measurement, summed across the process's runs
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::START	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
 native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::STARTED	stays	the process's footprint sampler (RERAIL_PROF_MEMORY_MS): it measures the process (the OS's figures for it) and the spans open on all its threads, as the heap sampler does
-native/crates/prof/src/code_rule_dsl/logic/profile/memory.rs::TOLD	stays	the process's footprint sampler's refusal reporter (Q203 (c)): it tells the first few device leases the process refuses, with the heap sampler's holdings
 native/crates/prof/src/code_rule_dsl/prof.rs::DEVICE_MEMORY	stays	code a crate above registers at load
 native/crates/prof/src/code_rule_dsl/prof.rs::RISEN	stays	the process's footprint high-water mark (RERAIL_PROF_RISES), as the OS reports it
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is

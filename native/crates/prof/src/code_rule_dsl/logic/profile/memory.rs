@@ -240,18 +240,13 @@ pub(super) fn sample() {
                     rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::BLOCKS);
                 }
             });
-            // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
-            // few refusals of a process).
-            rerail_accel::gpu::shared::set_refusal_hook(|why| {
-                // Every refusal by the span that asked (one line), the holdings for the first few.
-                static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                eprintln!("rerail: refused in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
-                if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
-                    return;
-                }
+            // Q203 (c): what holds the device's budget when the run ends for its device memory, by the span that leased
+            // it, and the span that asked.
+            rerail_accel::gpu::shared::set_out_of_memory_hook(|why| {
+                eprintln!("rerail: out of device memory in {}: {why}", rerail_prof::heap::name(rerail_prof::heap::span()));
                 let held: Vec<(u32, u64)> = rerail_prof::heap::snapshot().into_iter().filter(|(id, _)| id & rerail_prof::heap::DEVICE != 0).collect();
                 let all: u64 = held.iter().map(|h| h.1).sum();
-                let mut out = format!("rerail: refused, device leases by span ({} MB sampled): {why}", all >> 20);
+                let mut out = format!("rerail: out of device memory, device leases by span ({} MB sampled): {why}", all >> 20);
                 for (id, bytes) in held.iter().take(12) {
                     out.push_str(&format!("\n  {:>6.1} MB  {}", *bytes as f64 / 1048576.0, rerail_prof::heap::name(*id)));
                 }
