@@ -48,8 +48,9 @@
 // Number(), parseInt(), parseFloat(), Math.*, BigInt(), .toFixed(), .toISOString(), .length, a variable initialised
 // to one of these, calls named escape…/quote… or …Escape…/…Quote… at a camelCase boundary (`escapeLiteral`,
 // `pgEscape`; not `unescapeHtml`), and `s.replace(/'/g, "''")`. Placeholder text: a template that is only `$` and one
-// `${…}` (`$${i + 1}`), a list of them joined, a variable holding either, or a call of a function of this file that
-// returns one (`const bind = (v) => `$${values.push(v)}``): it pastes `$N`, never a value. A ternary or a `+`, `??`,
+// `${…}` (`$${i + 1}`), a string that is only `?` (MySQL, SQLite), a list of them joined (`.map(…).join(…)`,
+// `Array(n).fill("?").join(",")`), `"?, ".repeat(n)` (sliced or trimmed), a variable holding one, or a call of a
+// function of this file that returns one (`const bind = (v) => `$${values.push(v)}``): it pastes marks, never a value.
 // `||`, `&&` pasted whole is looked into: each branch or operand that can carry text is checked in its place
 // (`${q + "%"}`, `${cond ? q : ""}`). Prisma 8
 // (release candidate) has no Unsafe methods and no Prisma.raw: its raw SQL is the tagged `db.raw.sql` and
@@ -268,14 +269,27 @@ rui_coerced(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", 
 rui_coerced(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), text(f, n),
     match("^(?:[\\w$]+\\.)*(?:(?:escape|quote)(?:[A-Z_]\\w*)?|[\\w$]*[a-z0-9](?:Escape|Quote)(?:[A-Z_]\\w*)?)$", n).
 
-// rui_placeholder(e): e pastes only `$N` placeholder text. A template that is `$` and one `${…}` (`$${i + 1}`), a
-// list of them joined (`ids.map((_, i) => `$${i + 1}`).join(",")`), or a call of a function of this file whose body
-// or a return gives one (`const bind = (v) => `$${values.push(v)}``, the value going to the parameter list).
+// rui_placeholder(e): e pastes only placeholder marks, Postgres `$N` or the `?` of MySQL and SQLite, the values going
+// to the parameter list. A mark (rui_mark: a template that is `$` and one `${…}`, `$${i + 1}`, or a string or template
+// that is only `?`), a list of marks joined (`ids.map((_, i) => `$${i + 1}`).join(",")`,
+// `ids.map(() => "?").join(", ")`, `Array(n).fill("?").join(",")`), marks repeated (`"?, ".repeat(n)`, also sliced or
+// trimmed: `"?,".repeat(n).slice(0, -1)`), or a call of a function of this file whose body or a return gives a mark
+// (`const bind = (v) => `$${values.push(v)}``).
 .decl rui_placeholder(e: node)
-rui_placeholder(e) :- rui_cand(e), rui_dollar(e).
-rui_placeholder(e) :- rui_cand(e), rui_mapjoin(e, b), rui_dollar(b).
+rui_placeholder(e) :- rui_cand(e), rui_mark(e).
+rui_placeholder(e) :- rui_cand(e), rui_mapjoin(e, b), rui_mark(b).
+rui_placeholder(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), static_prop(f, m0, "join"),
+    rui_unwrap(m0, m), kind(m, "call_expression"), field(m, "function", g), static_prop(g, _, "fill"),
+    call_arg(m, x0, 0), rui_unwrap(x0, x), rui_mark(x).
+rui_placeholder(e) :- rui_cand(e), rui_repeat(e).
+rui_placeholder(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), static_prop(f, o0, m),
+    (m = "slice" ; m = "substring" ; m = "substr" ; m = "trim" ; m = "trimEnd"), rui_unwrap(o0, o), rui_repeat(o).
 rui_placeholder(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f0), deparen(f0, id),
-    kind(id, "identifier"), ref_site(id, s), rui_fn_of(s, fn), rui_gives(fn, b), rui_dollar(b).
+    kind(id, "identifier"), ref_site(id, s), rui_fn_of(s, fn), rui_gives(fn, b), rui_mark(b).
+// rui_repeat(e): `"?, ".repeat(n)`: a string of `?` marks, commas and spaces, repeated.
+.decl rui_repeat(e: node)
+rui_repeat(e) :- kind(e, "call_expression"), field(e, "function", f), static_prop(f, s0, "repeat"), rui_unwrap(s0, s),
+    str(s, t), match("[\\s,]*\\?[\\s,]*", t).
 // rui_fn_of(s, fn): declaration site s names function fn: `function f() {}`, `const f = (…) => …`.
 .decl rui_fn_of(s: node, fn: node)
 rui_fn_of(s, s) :- kind(s, "function_declaration").
@@ -286,9 +300,12 @@ rui_fn_of(s, fn) :- kind(s, "variable_declarator"), binding_value(s, v0), rui_un
 rui_gives(fn, b) :- rui_fn_of(_, fn), kind(fn, "arrow_function"), field(fn, "body", b0), rui_unwrap(b0, b).
 rui_gives(fn, b) :- rui_fn_of(_, fn), kind(r, "return_statement"), nearest(r, fn, fn_scope), child(r, x, 0),
     rui_unwrap(x, b).
-.decl rui_dollar(t: node)
-rui_dollar(t) :- kind(t, "template_string"), child(t, f, 0), kind(f, "string_fragment"), text(f, "$"),
+.decl rui_mark(t: node)
+rui_mark(t) :- kind(t, "template_string"), child(t, f, 0), kind(f, "string_fragment"), text(f, "$"),
     child(t, s, 1), kind(s, "template_substitution"), !child(t, _, 2).
+rui_mark(t) :- kind(t, "string"), str(t, s), match("\\s*\\?\\s*", s).
+rui_mark(t) :- kind(t, "template_string"), child(t, f, 0), kind(f, "string_fragment"), text(f, s),
+    match("\\s*\\?\\s*", s), !child(t, _, 1).
 // Quotes doubled by hand: `s.replace(/'/g, "''")`, `s.replaceAll("'", "''")`.
 rui_coerced(e) :- rui_cand(e), kind(e, "call_expression"), field(e, "function", f), static_prop(f, _, m),
     (m = "replace" ; m = "replaceAll"), call_arg(e, a, 0), text(a, t), contains("'", t).
@@ -356,6 +373,8 @@ rui_checked(p) :- rui_string_param(p), ref_site(u, p), kind(b, "binary_expressio
     .expect _ at "src/server/placeholders.ts":28
     .expect _ at "src/server/placeholders.ts":29
     .expect _ at "src/server/placeholders.ts":30
+    .expect _ at "src/server/placeholders.ts":45
+    .expect _ at "src/server/placeholders.ts":47
     .expect _ at "src/app/api/search/route.ts":8
     .expect _ at "src/app/api/search/route.ts":15
     .expect _ at "src/app/api/search/route.ts":16

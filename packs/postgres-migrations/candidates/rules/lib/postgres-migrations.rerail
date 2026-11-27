@@ -64,8 +64,9 @@
 //   A project may keep migrations for another database beside its PostgreSQL ones (MySQL and PostgreSQL Prisma folders
 //   side by side, ClickHouse migrations beside Prisma ones, a SQLite Drizzle folder for an edge app). The ORM's own
 //   declaration decides first (pgm_declared): the Prisma `migration_lock.toml` of the folder (`provider = …`), the
-//   datasource `provider` of the Prisma schema files under the folder's parent (`<x>/schema.prisma`,
-//   `<x>/schema/*.prisma` for `<x>/migrations`), and the `dialect` (or drizzle-kit 0.20's `driver`) of a Drizzle
+//   datasource `provider` of the Prisma schema beside the folder (`<x>/*.prisma` or `<x>/schema/**/*.prisma` for
+//   `<x>/migrations`; a schema deeper under `<x>/`, such as `<x>/postgresql/schema.prisma`, declares its own
+//   `<x>/postgresql/migrations` only), and the `dialect` (or drizzle-kit 0.20's `driver`) of a Drizzle
 //   config (`*.config.[cm]?[jt]s`, found by the checkout walk) whose `out` folder (default `drizzle`) is the folder.
 //   A folder declared PostgreSQL (or CockroachDB) is PostgreSQL. A folder declared another database is another
 //   database's; so, when nothing declares PostgreSQL, is one whose path names a database (`prisma/sqlite/migrations/…`,
@@ -130,14 +131,21 @@ pgm_other_group(g) :- pgm_mig(d, g, _), !pgm_declared(g, "pg"), kind(s, "stateme
 pgm_other_group(g) :- pgm_mig(d, g, _), !pgm_declared(g, "pg"), kind(n, "identifier"), quoted(n, "`"), docof(n, d).
 // pgm_declared(g, k): the ORM declares the database of migrations folder g: k = "pg" for PostgreSQL (or CockroachDB),
 // "other" for any other. Prisma: g's migration_lock.toml (any provider but postgresql/cockroachdb is another
-// database), or a datasource `provider` in a `.prisma` file under g's parent folder. Drizzle: a config whose out
-// folder is g.
+// database), or a datasource `provider` in the schema beside g (pgm_schema_of). Drizzle: a config whose out folder is
+// g.
 .decl pgm_declared(g: symbol, k: symbol)
 pgm_declared(g, "pg") :- pgm_lock_provider(g, v), match("(?i)postgres.*|cockroach.*", v).
 pgm_declared(g, "other") :- pgm_lock_provider(g, v), !match("(?i)postgres.*|cockroach.*", v).
-pgm_declared(g, k) :- pgm_mig(_, g, _), match("(?<b>(?:.*/)?)migrations", g), doc(ds, sp, _), suffix(".prisma", sp),
-    prefix(b, sp), split_line(ds, _, t), match("\\s*provider\\s*=\\s*\"(?<v>[^\"]*)\".*", t), pgm_db_kind(@lower(v), k).
+pgm_declared(g, k) :- pgm_schema_of(g, ds), split_line(ds, _, t), match("\\s*provider\\s*=\\s*\"(?<v>[^\"]*)\".*", t),
+    pgm_db_kind(@lower(v), k).
 pgm_declared(g, k) :- pgm_mig(_, g, _), pgm_dz_out(p, g), pgm_dz_kind(p, k).
+// pgm_schema_of(g, ds): `.prisma` document ds is the schema of migrations folder `<x>/migrations`: a file directly in
+// `<x>/` (`<x>/schema.prisma`) or under `<x>/schema/` (a multi-file schema). Another schema deeper under `<x>/` has a
+// migrations folder of its own: snagtime's `prisma/postgresql/schema.prisma` declares `prisma/postgresql/migrations`,
+// not the SQLite `prisma/migrations` beside it.
+.decl pgm_schema_of(g: symbol, ds: number)
+pgm_schema_of(g, ds) :- pgm_mig(_, g, _), match("(?<b>(?:.*/)?)migrations", g), doc(ds, sp, _), suffix(".prisma", sp),
+    prefix(b, sp), r = @slice(sp, strlen(b), strlen(sp)), match("[^/]+\\.prisma|schema/.+\\.prisma", r).
 // pgm_lock_provider(g, v): folder g's Prisma migration_lock.toml says `provider = "v"`.
 .decl pgm_lock_provider(g: symbol, v: symbol)
 pgm_lock_provider(g, v) :- pgm_mig(_, g, _), doc(dl, cat(g, "/migration_lock.toml"), _), split_line(dl, _, t),

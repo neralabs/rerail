@@ -1,0 +1,1 @@
+{ "name": "@launch/store", "private": true, "type": "module", "scripts": { "db:migrate": "node ./scripts/migrate.mjs" } }

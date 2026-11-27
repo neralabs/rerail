@@ -30,8 +30,9 @@ Every SQL rule reads its migrations through the pack's library,
   `up.sql` (a `rollback.sql` or `backfill.sql` kept there, run by hand if at all).
 - **PostgreSQL only.** Every rule reads a migrations folder only when it holds PostgreSQL migrations. The ORM's own
   declaration decides first: the folder's Prisma `migration_lock.toml` (`provider = "postgresql"`), the datasource
-  `provider` of the Prisma schema files under the folder's parent (`prisma/schema.prisma` or `prisma/schema/*.prisma`
-  for `prisma/migrations/`), or the `dialect` (drizzle-kit 0.20's `driver`) of a Drizzle config
+  `provider` of the Prisma schema beside the folder (`prisma/*.prisma` or `prisma/schema/**/*.prisma` for
+  `prisma/migrations/`; a schema deeper, such as `prisma/postgresql/schema.prisma`, declares only its own
+  `prisma/postgresql/migrations/`), or the `dialect` (drizzle-kit 0.20's `driver`) of a Drizzle config
   (`drizzle.config.ts`, found by the checkout walk) whose `out` folder (default `drizzle`) is the folder. A folder
   declared PostgreSQL or CockroachDB is read; one declared MySQL, SQLite/libSQL/Turso/D1, SQL Server, SingleStore or
   MongoDB is skipped. With no PostgreSQL declaration, a folder is also skipped when its path names another database
@@ -297,7 +298,8 @@ records the migration as failed and refuses every later deploy (P3009) until `pr
 none is left applied.
 
 Catches:
-- `ALTER TABLE "User" …` (any action but VALIDATE CONSTRAINT) on a table the migration did not create earlier;
+- `ALTER TABLE "User" …` (any action but those below that take SHARE UPDATE EXCLUSIVE) on a table the migration did
+  not create earlier, `SET (user_catalog_table = …)` included;
 - a foreign key, in `CREATE TABLE … REFERENCES "User"` or `ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY … REFERENCES
   "User"`, even from a brand-new table: it locks `"User"` (SHARE ROW EXCLUSIVE);
 - `CREATE [UNIQUE] INDEX` without CONCURRENTLY on an existing table (SHARE: queues writers);
@@ -311,7 +313,11 @@ Leaves alone:
 - tables created earlier in the same migration, or by a migration of the same folder missing from the Git base
   (nobody else holds a lock on them; a table only emptied, or given a required column, still has); Prisma's init
   migration and any migration whose foreign keys only point at tables it creates;
-- `CREATE INDEX CONCURRENTLY`, `ALTER TABLE … VALIDATE CONSTRAINT` (neither blocks reads or writes);
+- `CREATE INDEX CONCURRENTLY`, and an `ALTER TABLE` whose every action takes SHARE UPDATE EXCLUSIVE, which blocks no
+  read or write (PostgreSQL's ALTER TABLE reference): `VALIDATE CONSTRAINT`; `SET (…)`/`RESET (…)` of autovacuum
+  (`autovacuum_*`), TOAST (`toast.*`, `toast_tuple_target`), `fillfactor` or `parallel_workers` storage parameters;
+  `ALTER COLUMN … SET STATISTICS` and a column's `SET (n_distinct = …)`; `CLUSTER ON`, `SET WITHOUT CLUSTER`. Beside
+  any other action in the same statement it is reported;
 - statements on a table the migration has already locked itself with `LOCK TABLE t` (ACCESS EXCLUSIVE, the default
   mode): they wait for no other session, and the migration stops the table on purpose;
 - statements in a function body or DO block;
@@ -325,11 +331,15 @@ Leaves alone:
   them: `apps/web/.env` sets the web app's connection, not `packages/db`'s;
 - every migration of a folder whose runner sets the timeout on its connection: a JS/TS source file (not a test, spec,
   story or declaration file, within the same four-level walk) that sends a non-zero `SET lock_timeout` in a string or
-  template literal (`client.query("SET lock_timeout = '5s'")`) and names the folder by its last segment in another
-  (`migrate(db, { migrationsFolder: "./drizzle" })`, `resolve("migrations")`), when it lies inside the folder's
-  package (no package.json above the folder that is not above the file too). Startup code in `apps/server/src/…`
-  running the root `migrations/` counts; runtime code that sets a timeout for its own transactions names no
-  migrations folder and does not;
+  template literal (`client.query("SET lock_timeout = '5s'")`, `` `SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'` ``)
+  and names the folder in another: by a path that resolves to it, wherever the file lies (a one-line `join(…)` or
+  `resolve(…)` of a name such as `__dirname` or `HERE` and string literals, or a literal starting with `./` or `../`,
+  read from the file's folder; a path of two segments or more without `..` also from the repository root:
+  `join(HERE, "..", "..", "..", "apps", "web", "drizzle")` in `packages/store/scripts/migrate.mjs` runs
+  `apps/web/drizzle`), or by its last segment (`migrate(db, { migrationsFolder: "./drizzle" })`,
+  `resolve("migrations")`) when it lies inside the folder's package (no package.json above the folder that is not
+  above the file too). Startup code in `apps/server/src/…` running the root `migrations/` counts; runtime code that
+  sets a timeout for its own transactions names no migrations folder and does not;
 - migrations of an example project (`examples/`, `example/`), out of scope like test and fixture folders: nobody
   deploys them from the repository.
 
@@ -337,10 +347,11 @@ Gaps: a timeout set on the database role outside the repository (managed Postgre
 unknowable; the rule logs for that reason. `SET LOCAL` outside a transaction block is accepted, though under Prisma
 >= 7.4 (statements run one by one) it has no effect. `DROP INDEX` without CONCURRENTLY locks its table, which the
 statement does not name; not counted. `LOCK TABLE` itself waits in the queue like any statement but is not counted:
-a migration that takes it has planned the lock. A runner in another package than its migrations folder (an app's
-server running `packages/db/migrations`), deeper than four levels, or one that does not name the folder in a string
-literal is not read; a runner names a folder only by its last segment, so it counts for every `migrations` folder of
-its package.
+a migration that takes it has planned the lock. A runner in another package than its migrations folder that names it
+only by its last segment (an app's server running `packages/db/migrations` as `"migrations"`) or through a variable,
+a `join(…)` split over lines, a path read from the working directory (`resolve(process.cwd(), "drizzle")`), a runner
+deeper than four levels, or one that names no folder in a string literal is not read; a runner that names a folder
+by its last segment counts for every folder of that name in its package.
 
 Sources:
 - GoCardless, Zero-downtime Postgres migrations: the hard parts

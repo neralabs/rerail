@@ -1,0 +1,1 @@
+{ "name": "@launch/web", "private": true, "scripts": { "db:migrate": "node ../../packages/store/scripts/migrate.mjs --set=product" } }

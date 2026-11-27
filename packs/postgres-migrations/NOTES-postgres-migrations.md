@@ -449,6 +449,59 @@ reports (drizzle-kit `migrate`, drizzle-orm's `migrate()`, a runner that wraps e
 test (`packages/db/drizzle/0007_user_email_idx.sql`, `packages/v1/drizzle/…/migration.sql`) and `own_runner`'s
 billing package.
 
+`lock-timeout` again (off; 14 of 17 real on the second test set, 37 apps, after the fixes above). One fix per false
+shape, each with a case; measured as above. It stays off; the next test set decides.
+
+- **A runner in another package than the folder, naming it by a resolved path** (launchstack
+  `apps/web/drizzle/20261121070044_document_public_links.sql:15`, not real: `packages/store/scripts/migrate.mjs` sends
+  `SET LOCAL lock_timeout = '${LOCK_TIMEOUT}'`, default 10s, and applies `apps/web/drizzle` as its `--set=product`).
+  `lt_runner_timeout`'s second clause and `lt_runner_path`/`lt_runner_rel` (rule file, after `lt_config_sets`): a
+  runner (`lt_runner_sets`) holding a one-line `join(…)`/`resolve(…)` of a name and string literals, or a literal
+  starting with `./`/`../`, that resolves (lib's `@join`, `..` popped) from the file's folder to the migrations
+  folder, or with two segments or more and no `..` from the root, counts wherever it lies; a runner naming the folder
+  only by its last segment still counts only inside the folder's package. Case: `runner-other-package/` (the
+  launchstack shape, the web app's folder and the store's own left alone; an admin app's `drizzle/` that the runner
+  names only by its last segment, from another package: caught). The other test-set apps whose JS/TS sends a
+  `SET lock_timeout` (chatbotx's backfill scripts and purge batch, chat-js's billing, deft's API libraries) hold no
+  path that resolves to a migrations folder, read by the same expressions: their real matches stay.
+- **A SQLite Prisma folder beside a PostgreSQL one** (snagtime `prisma/migrations/202608240003_payment_investor_safety/
+  migration.sql:3`, not real: `datetime(…)`, `RAISE(ABORT, …)`, `INSERT OR IGNORE`, `randomblob`). The gate let it
+  through because lib's `pgm_declared` read every `.prisma` file under the folder's parent: `prisma/postgresql/
+  schema.prisma` (postgresql) declared `prisma/migrations` PostgreSQL too, over `prisma/schema.prisma` (sqlite); its
+  `prisma/migration_lock.toml` sits outside the folder and is not read. Lib's `pgm_schema_of` now takes only the
+  schema beside the folder: a `.prisma` file directly in `<x>/` or under `<x>/schema/` for `<x>/migrations`; a schema
+  deeper declares only its own folder. Every rule of the pack reads it (`candidates/rules/lib/` kept identical). Case:
+  `mixed-db/` in lock-timeout's `mixed_databases` test (the SQLite folder left alone; the PostgreSQL
+  `prisma/postgresql/migrations/…:1` caught). snagtime's PostgreSQL finding (`prisma/postgresql/migrations/…:9`,
+  real) stays.
+- **An ALTER TABLE that takes SHARE UPDATE EXCLUSIVE** (zws `drizzle/20261022200929_visits_insert_autovacuum/
+  migration.sql:1`, `SET (autovacuum_vacuum_insert_scale_factor = 0.01)`, not real: it blocks no read or write, so
+  nothing queues behind it while it waits). `lt_weak_alter`/`lt_weak_action`: an ALTER TABLE whose every action is
+  one the ALTER TABLE reference gives SHARE UPDATE EXCLUSIVE: VALIDATE CONSTRAINT (as before), `SET (…)`/`RESET (…)`
+  naming only autovacuum, TOAST, fillfactor or parallel_workers parameters (`user_catalog_table` takes ACCESS
+  EXCLUSIVE), a column's `SET STATISTICS` or attribute options, `CLUSTER ON`, `SET WITHOUT CLUSTER`. Cases in the
+  `cases` test: `modules/stats/migrations/0005_tuning.sql` (each weak form left alone, then `SET (user_catalog_table
+  = true)` caught at :11) and `modules/tuned/migrations/0002_visit_note.sql` (a storage parameter beside `ADD COLUMN`:
+  caught). None of the 14 real test-set findings is such a statement.
+
+Checked on the test-set files themselves: launchstack's runner, its package.json files and the reported migration;
+snagtime's two schemas and two reported migrations; zws's reported migration, as fixture repositories: the fixed
+rule reports only snagtime's PostgreSQL `…:9`, the branch head's reports all four.
+
+Before → after (the library's change counted in both: "before" is the branch head's rule and library, renamed):
+
+| Set | Before | After | Changed (verdict) |
+|---|--:|--:|---|
+| Second test set, 37 apps (read from the files, above) | 17 in 16 apps | 14 in 14 | launchstack, snagtime `prisma/migrations/…:3`, zws: gone, all not real |
+| First test set, 20 apps | 7 in 7 apps | 7 in 7 | none |
+| Held-out, 8 apps | 5 in 4 | 5 in 4 | none |
+| Corpus, 33 apps | 15 in 13 | 15 in 13 | none |
+
+No match appeared or disappeared on the three measured sets. The library's narrower schema reading changes no
+folder's declaration there: of the measured apps, only dossier (`prisma/sqlite/schema.prisma`) and webstudio (a
+`schema.prisma` copy inside each migration folder) keep a datasource deeper than the folder's own schema, and both
+also have one beside the folder that declares PostgreSQL.
+
 ## Every match read, with its verdict
 
 The writers' runs read each repository's whole migration history (every migration counted as pending, before the

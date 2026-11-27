@@ -31,6 +31,7 @@ Only raw-unsafe-interpolation and query-in-loop ship; the other rules named here
 | 18 | Syntax guide: `match` is a whole-string match; aggregate bodies share outer variables; `package_field` keys are JSON pointers | raw-unsafe-interpolation, sensitive-fields-to-client | documentation |
 | 19 | A variable bound by a `match` named group cannot be used inside an aggregate body | dev-migration-in-deploy | open |
 | 20 | Memory on large repositories: the whole pack did not finish on three large monorepos of the test set | every rule (the pack run together) | open |
+| 21 | A rule's findings change when an unrelated rule is added or an unrelated negation removed; one held-out count varied between identical runs | query-in-loop (its mutation checks) | open |
 
 ---
 
@@ -269,3 +270,33 @@ The held-out teableio/teable rerun after the generalization round stopped the sa
 the run before the round had finished. The finished apps took up to 544 s (AmruthPillai/Reactive-Resume). Which rule or
 relation holds the memory was not traced: the runs measured the pack together, not each rule. A fourth app,
 polarsource/polar, gave no result for another reason: its result store was deleted by a duplicate queue run.
+
+## 21. Findings that depend on the program's shape, and a count that varies between runs
+
+Found while fixing query-in-loop after the first test set (2026-11-27, the branch head's engine `~/rer133/engine-head`
+on the fleet workspace ts-prisma-b, built 14:23). The repro files stay on that workspace under
+`~/rer133/src/packs/prisma-repro/` (the pack's cases as of the fix, and two rule files in `mut/`):
+
+- `mut/noternary-single.rerail` is query-in-loop with one rule of `prq_data_obj` removed (the one that reads the
+  branches of `data: cond ? {…} : {…}`). Without it nothing can exempt the case `src/server/attributes.ts:133`
+  (`commitAll`, whose `data` is a ternary), yet `cd ~/rer133/src && ~/rer133/engine-head test-rr
+  packs/prisma-repro/mut/noternary-single.rerail` passes: `:133` is not reported.
+- `mut/dbg.rerail` is the same rule plus a `.violation Dbg` whose two rules read `prq_cas` and `prq_data_obj`.
+  `engine-head run-rr packs/prisma-repro/mut/dbg.rerail packs/prisma-repro/cases/prisma-practice-query-in-loop <out>`
+  (then `engine-head csv` on each `outputs.rro` folder) reports `QueryInLoop` at `attributes.ts:133`, as it should.
+- Removing any one negation from `prq_hit` in the first file, including ones that cannot hold for that line
+  (`!prq_exits(b)`, `!prq_per_group(q, op)`, `!prq_fixed_list(it)`), also brings `:133` back. A `Dbg` rule that
+  derives nothing (`prq_query(q, "nothing", _, _)`) changed the result for one such mutant and not for another.
+- Each result is the same on every run and with a fresh `XDG_CACHE_HOME`: it follows the rule file's shape, not a
+  cache.
+
+Separately, one query-in-loop file on the held-out teableio/teable gave 18 matches in one `rmeasure.sh` run
+(`computed-orchestrator.service.ts:248` missing) and 19 in the two runs of the same file that followed, the line
+present (every other version of the rule gave 19 there too); none of the rule's changes touches that line's shape.
+
+Effect on the work: a mutation check of a single condition is not conclusive (a mutant can pass for this reason, not
+because its case misses). For query-in-loop's compare-and-set, the ternary-`data` mutant was shown to report `:133` by
+run-rr with the observing `Dbg` rules above; the mutants restricting the compared value to a member chain and dropping
+`{ equals: … }` passed in every shape tried, so those two conditions rest on their cases' positive lines and the corpus
+runs (inbox-zero `labels.ts:326`, documenso `insert-contents-into-envelope-item.ts:138`) alone. Measurements were re-run
+when a count moved.

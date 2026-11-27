@@ -33,3 +33,16 @@ export async function byRequest(req: { query: Record<string, string>; body: { ID
 
 declare function getParam(req: { query: Record<string, string> }): string;
 declare function unescapeHtml(s: string): string;
+
+// MySQL and SQLite `?` marks pasted in, the values bound separately.
+export async function byIds(ids: string[], since: Date) {
+  const marks = ids.map(() => "?").join(", ");
+  await prisma.$queryRawUnsafe(`SELECT id FROM Doc WHERE id IN (${marks}) AND createdAt > ?`, ...ids, since);
+  await prisma.$queryRawUnsafe(`SELECT id FROM Doc WHERE id IN (${Array(ids.length).fill("?").join(",")})`, ...ids);
+  const slots = "?, ".repeat(ids.length).slice(0, -2);
+  await prisma.$executeRawUnsafe(`DELETE FROM Doc WHERE id IN (${slots})`, ...ids);
+  // The ids themselves pasted, quoted or not.
+  await prisma.$queryRawUnsafe(`SELECT id FROM Doc WHERE id IN (${ids.map((id) => `'${id}'`).join(", ")})`); // caught
+  const list = ids.join(", ");
+  await prisma.$queryRawUnsafe(`SELECT id FROM Doc WHERE id IN (${list})`); // caught
+}

@@ -1,0 +1,1 @@
+{ "name": "@launch/admin", "private": true, "scripts": { "db:migrate": "drizzle-kit migrate" } }
