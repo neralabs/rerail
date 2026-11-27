@@ -743,6 +743,7 @@ pub struct Load1 {
     pub before: Option<DocIds>,
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A document of a source in hand (a test's, the bootstrap's own), in a slab's room as a read places one, parsed by
 /// the `parse` operation into a room of the same slab, and the two housed as blobs.
 pub fn doc_of(reg: &Registry, ops: &AnswerOps, dir: &mut Directory, blobs: &mut BlobRows, src: &str) -> Result<DocIds, String> {

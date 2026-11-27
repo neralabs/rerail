@@ -12,9 +12,11 @@
 
 use crate::dir::{BlockId, Directory, Launch};
 use crate::op::{
-    Across, Bound, Case, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
+    Across, Bound, Found, Independence, Inside, Mode, OpId, Output, Over, ParamsLayout, Phase, Registry, Signature, SlotSpec, Tiling, Unit,
     Version, run_cpu,
 };
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::op::Case;
 use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
 use rerail_blocks::layer::MAX_COLS;
 use rerail_blocks::block::kind;
@@ -477,6 +479,7 @@ impl std::fmt::Debug for Row {
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A launch's case for the version check: a fresh trace's first commit of `rows`.
 pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> impl Fn(&mut Directory) -> Case + 'r {
     move |dir: &mut Directory| {
@@ -499,6 +502,7 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
     }
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
 /// A launch's case for the version check of `merge`: a trace of `runs` committed in turn (by the reference
 /// consolidate, whole), then its newest `count` layers merged over the layer below them.
 pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count: u32) -> impl Fn(&mut Directory) -> Case + 'r {

@@ -393,11 +393,13 @@ impl Directory {
         self.residency.counts()
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     /// The directory with a residency of `bytes`, which drops all `after` an execution (a test's).
     pub fn with_residency(self, bytes: usize, after: std::time::Duration) -> Directory {
         Directory { residency: self.residency.limited(bytes, after), ..self }
     }
 
+    #[cfg(any(test, feature = "test-hooks"))]
     /// The directory with documents' slabs of `bytes` (a test's, to fill one in a few documents).
     pub fn with_slab_bytes(self, bytes: usize) -> Directory {
         Directory { slab_bytes: bytes, ..self }
