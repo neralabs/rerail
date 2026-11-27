@@ -54,6 +54,12 @@ function saidByFailedOpen(path: string, step: string): string[] {
   }
 }
 
+/**
+ * The limit of each damaged-row case, which upgrades a file and compares it with the oracle: 2 to 3.5 s on a Linux lab
+ * host, and 5.8 s on one whose load reached 16, past vitest's 5 s default. Windows gives every case this limit.
+ */
+const UPGRADE_CASE_MS = 30_000;
+
 /** The SQL for `column`'s text cut short by 2 characters, as a power cut or another program's write can leave it. */
 const cutShort = (column: string): string => `substr(${column}, 1, length(${column}) - 2)`;
 
@@ -550,7 +556,7 @@ describe("derived audit history", () => {
     } finally {
       database.$client.close();
     }
-  });
+  }, UPGRADE_CASE_MS);
 
   // A power cut or another program's write can leave an audit's stored list cut short (the CHECK on its violations
   // refuses that on a write; none holds its rule revisions), or with an item that is no object (no CHECK reads the
@@ -633,5 +639,5 @@ describe("derived audit history", () => {
     } finally {
       database.$client.close();
     }
-  });
+  }, UPGRADE_CASE_MS);
 });
