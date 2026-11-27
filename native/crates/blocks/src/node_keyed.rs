@@ -225,7 +225,7 @@ impl NodeKeyed {
 mod tests {
     use super::*;
     use crate::block::kind;
-    use crate::relation::{RelW, Relation, Spec};
+    use crate::relation::{RelW, Relation, Spec, NODE_BITS, NODE_ROWS};
     use std::sync::Mutex;
 
     /// A small generator: the same rows each run.
@@ -273,10 +273,9 @@ mod tests {
         }
     }
 
-    /// The relation's own node-keyed index (`Relation::try_add_node_bits`, decision 0694 step 1), over nodes of several
-    /// documents, answers every test as its hashed index does, values of no document, slot or word included, in
-    /// either of a document's forms (bits, or its sorted lows); it is found by its column and rows, not by
-    /// `find_index`.
+    /// The relation's own node-keyed index (`Relation::try_add_node_index`, decision 0694 step 1), over nodes of several
+    /// documents, answers every test as its hashed index does, values of no document, slot or word included; it is
+    /// found by its column and rows, not by `find_index`. A column too sparse for 4 bytes a row takes none.
     #[test]
     fn a_relations_node_bits_answer_as_its_hashed_index() {
         let block = Block::anon(kind::FACTS, 64 << 20);
@@ -288,9 +287,11 @@ mod tests {
         let (rel, ix) = relation(&block, 1, &held);
         let n = rel.rows.len();
         // SAFETY: one thread; the rows are written.
-        let bits = unsafe { rel.try_add_node_bits(&block, 0, n) }.expect("dense enough");
-        assert_eq!(rel.find_node_bits(0, n), Some(bits));
-        assert_eq!(rel.find_node_bits(0, n + 1), None);
+        let bits = unsafe { rel.try_add_node_index(&block, 0, n, false) }.expect("dense enough");
+        assert_eq!(rel.find_node_index(NODE_BITS, 0, n), Some(bits));
+        assert_eq!(rel.find_node_index(NODE_BITS, 0, n + 1), None);
+        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n), None);
+        let bits = rel.node_index(bits);
         assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
         let mut hint = 0;
         for doc in 0..22 {
@@ -298,22 +299,87 @@ mod tests {
                 let v = node(doc, l);
                 let k = [v];
                 let hashed = rel.group(ix, crate::key_hash(&k)).iter().any(|&r| rel.rows.get(r, 0) == v);
-                assert_eq!(rel.node_bits_has(bits, v, &mut hint), hashed, "document {doc} node {l}");
+                assert_eq!(bits.has(v, &mut hint), hashed, "document {doc} node {l}");
             }
         }
-        // A column of a few values a document, far apart: each document holds its lows, and answers as the hashed
-        // index does.
+        // A column of a few values a document, far apart: more words than 4 bytes a row, so none; and a negative value.
         let sparse: Vec<i64> = (0..128).flat_map(|d| [node(d, id(d % 50, d * 997 % 200_000)), node(d, id(1_000 + d, 7))]).collect();
-        let (rel, ix) = relation(&block, 1, &sparse);
+        let (rel, _) = relation(&block, 1, &sparse);
         // SAFETY: as above.
-        let bits = unsafe { rel.try_add_node_bits(&block, 0, rel.rows.len()) }.expect("room");
-        for doc in 0..130 {
-            for l in [id(doc % 50, doc * 997 % 200_000), id(1_000 + doc, 7), id(1_000 + doc, 8), id(doc % 50, 0), 0] {
-                let v = node(doc, l);
-                let hashed = rel.group(ix, crate::key_hash(&[v])).iter().any(|&r| rel.rows.get(r, 0) == v);
-                assert_eq!(rel.node_bits_has(bits, v, &mut hint), hashed, "document {doc} id {l:#x}");
+        assert_eq!(unsafe { rel.try_add_node_index(&block, 0, rel.rows.len(), false) }, None);
+        let (rel, _) = relation(&block, 1, &[node(1, 2), -1]);
+        // SAFETY: as above.
+        assert_eq!(unsafe { rel.try_add_node_index(&block, 0, rel.rows.len(), true) }, None);
+    }
+
+    /// The relation's node-keyed index with rows (`Relation::try_add_node_index`, the shape kernel's keyed read): a
+    /// probe of any value gives the rows whose column holds it, in row order, as the hashed index's group filtered by
+    /// it, in probes in order, out of order, and of values no row holds; its bits answer as the rows do; found by its
+    /// column and rows only.
+    #[test]
+    fn a_relations_rows_by_value_are_its_hashed_indexs() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let mut s = 7u64;
+        let node = |doc: u32, l: u32| (i64::from(doc) << 32) | i64::from(l);
+        // Repeats: 3,000 rows over about 1,000 values of 9 documents.
+        let held: Vec<i64> = (0..3_000).map(|_| node(lcg(&mut s) % 9 * 2, lcg(&mut s) % 120)).collect();
+        let (rel, ix) = relation(&block, 1, &held);
+        let n = rel.rows.len();
+        // SAFETY: one thread; the rows are written.
+        let rows = unsafe { rel.try_add_node_index(&block, 0, n, true) }.expect("room");
+        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n), Some(rows));
+        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n + 1), None);
+        assert_eq!(rel.find_node_index(NODE_BITS, 0, n), None, "no node bits found for it");
+        let rows = rel.node_index(rows);
+        let hashed = |v: i64| { let mut r: Vec<u32> = rel.group(ix, crate::key_hash(&[v])).iter().copied().filter(|&r| rel.rows.get(r, 0) == v).collect(); r.sort_unstable(); r };
+        let mut hint = 0u32;
+        let in_order: Vec<i64> = (0..20).flat_map(|d| (0..130).map(move |l| node(d, l))).collect();
+        for &v in &in_order {
+            assert_eq!(rows.rows(v, &mut hint), &hashed(v)[..], "in order: {v:#x}");
+            assert_eq!(rows.has(v, &mut hint), !hashed(v).is_empty(), "its bits: {v:#x}");
+        }
+        for k in 0..in_order.len() {
+            let v = in_order[k * 7919 % in_order.len()];
+            assert_eq!(rows.rows(v, &mut hint), &hashed(v)[..], "out of order: {v:#x}");
+        }
+        assert!(rows.rows(node(u32::MAX, 0), &mut hint).is_empty());
+    }
+
+    /// Decision 0706 E2: a relation's membership filter on two columns never rejects a key a row has, rejects nearly
+    /// every key no row has, and is found only by its own finder.
+    #[test]
+    fn a_relations_filter_rejects_only_keys_no_row_has() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let mut s = 5u64;
+        let held: Vec<i64> = (0..20_000).flat_map(|_| [i64::from(lcg(&mut s) % 50_000), i64::from(lcg(&mut s) % 64)]).collect();
+        let (rel, ix) = relation(&block, 2, &held);
+        let n = rel.rows.len();
+        // SAFETY: one thread; the rows are written.
+        let f = unsafe { rel.try_add_filter(&block, &[0, 1], n) }.expect("room");
+        assert_eq!(rel.find_filter(&[0, 1], n), Some(f));
+        assert_eq!(rel.find_filter(&[1, 0], n), None, "another key's order is another filter");
+        assert_eq!(rel.find_filter(&[0, 1], n + 1), None);
+        assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
+        assert_eq!(rel.find_node_index(NODE_BITS, 0, n), None);
+        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n), None, "a filter is found by no node index's finder");
+        let mut has = std::collections::HashSet::new();
+        for r in 0..n {
+            has.insert([rel.rows.get(r, 0), rel.rows.get(r, 1)]);
+        }
+        let (mut absent, mut passed) = (0u32, 0u32);
+        for a in 0..60_000i64 {
+            for b in [0i64, 7, 63, 64, -1] {
+                let k = [a, b];
+                let may = rel.filter_may_hold(f, crate::bloom::key(&k));
+                if has.contains(&k) {
+                    assert!(may, "a held key {k:?} is never rejected");
+                } else {
+                    absent += 1;
+                    passed += u32::from(may);
+                }
             }
         }
+        assert!(passed * 100 < absent, "{passed} of {absent} absent keys passed");
     }
 
     /// A `ONE` gives each node its value; the same value again is no new row, another breaks the key and says where.

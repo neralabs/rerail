@@ -39,7 +39,7 @@ pub mod code_rule_dsl {
     pub mod logic {
         pub use rerail_run::code_rule_dsl::logic::*;
         // The logic language's core (rerail-logic-core), which the run does not read.
-        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
+        pub use rerail_logic_core::code_rule_dsl::logic::{access, analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
         #[path = "device"]
         pub mod device {
             pub use rerail_run::code_rule_dsl::logic::device::*;
@@ -77,9 +77,11 @@ pub mod code_rule_dsl {
                 pub use super::setfix::lab;
                 pub use super::setfix::spec;
                 pub use super::setfix::{DeviceReport, device_report};
+                #[cfg(any(test, feature = "test-hooks"))]
+                pub use super::setfix::{keyed_batched_rows, keyed_batches_forced, kind_batched_rows, kind_batches_forced, node_text_term_atoms, span_batches_forced, spanned_rows, summaries_built_whole, value_bit_tests, value_indexes_built};
                 pub use super::setfix::probed;
                 pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-                pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, prefetch_device_indexes, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, retain_with, Asked, kept_rel, hold_as_where_all, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, retain_flat, retain_distinct, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_source, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
+                pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, prefetch_device_indexes, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, retain_with, Asked, kept_rel, hold_as_where_all, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, retain_flat, retain_distinct, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_source, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks, prefetch_indexes, step_shapes};
             }
         }
     }

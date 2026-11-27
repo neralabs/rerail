@@ -73,6 +73,27 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
+        // SPIKE (shared strata work, A): each numbered node's tape node and id's low bits, by local id, one walk.
+        let node_table = (std::env::var("RERAIL_SPIKE_NODE_TABLE").as_deref() != Ok("off") && p.len() > 0).then(|| {
+            let n = p.len() as usize;
+            // copy: derived (each node's tape node and id low, computed once from the numbering)
+            Cells::build(block, n, |out: &mut [[u32; 2]]| {
+                for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
+                    out[l as usize] = [x, if p.defs.is_none() { l } else { low }];
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
+        // SPIKE (local fixes, 1): the nodes' locals by their place among the granules' own nodes (`local_of`).
+        let node_by_id = node_table.as_ref().filter(|_| p.defs.is_some()).map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let places = unsafe { num.own_places() };
+            // copy: derived (each node's number by its id's place, computed once from the numbering)
+            Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
+                .expect("a batch's block holds its entries")
+        });
         // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
         // in the batch's block beside the entry)
         let segments = Self::locs(p).and_then(|x| match &x.host {
@@ -93,6 +114,12 @@ impl ViewEntry {
         unsafe {
             (*d).preorder = if p.tape_ids() { rerail_clif::view_reads::IDS_TAPE } else { u32::from(p.defs.is_none()) };
             (*d).nodes = p.len();
+            if let Some(t) = &node_table {
+                Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &node_by_id {
+                Run::set(&raw mut (*d).node_by_id, t.as_ptr(), t.len());
+            }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             if let Some(names) = &names {
                 Run::set(&raw mut (*d).names, names.as_ptr(), names.len());

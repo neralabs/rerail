@@ -213,6 +213,12 @@ impl<'a> Doc<'a> {
         // the same block, which lives as long as the entry.
         unsafe { &self.entry.numbering.as_slice::<Numbering>()[0] }
     }
+    /// SPIKE (A): the entry's node table, empty where it has none.
+    #[inline(always)]
+    fn node_table(&self) -> &'a [[u32; 2]] {
+        // SAFETY: the entry's run, set where it was made to `[u32; 2]`s in its block, or empty.
+        unsafe { self.entry.node_table.as_slice::<[u32; 2]>() }
+    }
     #[inline(always)]
     fn items(&self, run: &'a crate::ids::Run) -> &'a [u32] {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
@@ -252,14 +258,16 @@ impl<'a> Doc<'a> {
         if s.l == l {
             return s.x;
         }
-        // The number after the last selected: its node is the next numbered one past it (rows read in order: an
-        // index's keys, a copy), the walk's next; else from the sample.
-        let x = if s.l != u32::MAX && l == s.l + 1 {
-            self.next_after(0, s.x)
-        } else {
-            self.walk.set(None);
-            // SAFETY: the entry's numbering (`numbering`).
-            unsafe { self.numbering().select(0, l) }
+        // The node table's entry (one load), else the number after the last selected: its node is the next numbered
+        // one past it (rows read in order: an index's keys, a copy), the walk's next; else from the sample.
+        let x = match self.node_table() {
+            [] if s.l != u32::MAX && l == s.l + 1 => self.next_after(0, s.x),
+            [] => {
+                self.walk.set(None);
+                // SAFETY: the entry's numbering (`numbering`).
+                unsafe { self.numbering().select(0, l) }
+            }
+            t => t[l as usize][0],
         };
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
@@ -292,8 +300,11 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
         let low = match self.entry.preorder {
-            // SAFETY: as `tape_node`.
-            0 => unsafe { self.low_of(l) },
+            0 => match self.node_table() {
+                // SAFETY: as `tape_node`.
+                [] => unsafe { self.low_of(l) },
+                t => t[l as usize][1],
+            },
             crate::views::IDS_TAPE => self.tape_node(l),
             _ => l,
         };

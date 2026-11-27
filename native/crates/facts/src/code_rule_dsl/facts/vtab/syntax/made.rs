@@ -748,50 +748,79 @@ const INDEXED: usize = 8;
 /// A group's index of one column of one relation (an index in its relation's block, decision 0353): nothing where
 /// the group's rows are in the column's order, else its rows in that order (stable: equal values in row order). A
 /// probe is a binary search. A hash map of a row list a value was most of a made relation's first probes' time.
-/// A made relation's node ids in one group as bits: each document's ids, by the key in their high half, a bit an id
-/// from the document's least (`Group::holds`). Built only where the words are at most twice the rows: a document's
-/// rows are a few of its nodes, near each other.
+/// A made relation's node ids in one group as bits (`Group::holds`): the ids grouped by all but their low
+/// `ID_SPLIT` bits (a document and, by definition, a granule's slot; by tape position, a stretch of 2^18 of them),
+/// and within a group a bit an id from its least, as decision 0694's set form keys its bits by slot. Built only
+/// where the words are at most 4 bytes a row, from the rows read where they lie (d2036b8dfa): a sorted copy of the
+/// ids and words up to 16 bytes a row held 1.5 GB of the heap at the peak of a run on `all`.
 pub(super) struct NodeBits {
-    /// Each document's key, its least low half, and its words' start in `words`, by key.
-    docs: Vec<(u32, u32, u32)>,
+    /// Each group's high bits, its least id's low bits, and its words' start in `words`, by group.
+    docs: Vec<(i64, u32, u32)>,
     words: Vec<u64>,
 }
 
+/// The low bits of an id within its `NodeBits` group.
+const SPLIT: u32 = rerail_blocks::packed::ID_SPLIT;
+
 impl NodeBits {
-    fn new(values: impl Iterator<Item = i64>) -> Option<Self> {
-        let mut ids: Vec<i64> = values.collect();
-        if ids.iter().any(|&v| v < 0) {
-            return None;
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        let (mut docs, mut words) = (Vec::new(), Vec::new());
-        let mut i = 0;
-        while i < ids.len() {
-            let key = (ids[i] >> 32) as u32;
-            let base = ids[i] as u32;
-            let start = words.len();
-            docs.push((key, base, start as u32));
-            while i < ids.len() && (ids[i] >> 32) as u32 == key {
-                let at = (ids[i] as u32 - base) as usize;
-                if start + at / 64 >= words.len() {
-                    words.resize(start + at / 64 + 1, 0);
-                }
-                words[start + at / 64] |= 1 << (at % 64);
-                i += 1;
-            }
-            if words.len() > 2 * ids.len() + 8 {
+    /// The bits of rows `0..rows`, row `i`'s id `at(i)`, read where they lie: once for each group's span (a group's
+    /// rows mostly lie together, its runs merged by key), once for its bits. `None` where an id is negative or the
+    /// words would be more than 4 bytes a row (`2 * words > rows`): the probe reads the rows.
+    fn new(rows: usize, at: impl Fn(usize) -> i64) -> Option<Self> {
+        let low = |v: i64| (v & ((1 << SPLIT) - 1)) as u32;
+        // Each run of rows of one group: its key, least and greatest low bits.
+        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
+        for i in 0..rows {
+            let v = at(i);
+            if v < 0 {
                 return None;
             }
+            let (key, l) = (v >> SPLIT, low(v));
+            match spans.last_mut() {
+                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+                _ => spans.push((key, l, l)),
+            }
+        }
+        // A group's runs as one, by key.
+        spans.sort_unstable_by_key(|s| s.0);
+        spans.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
+            }
+            same
+        });
+        let mut docs = Vec::with_capacity(spans.len());
+        let mut n = 0usize;
+        for &(key, least, most) in &spans {
+            docs.push((key, least, n as u32));
+            n += (most - least) as usize / 64 + 1;
+            if 2 * n > rows {
+                return None;
+            }
+        }
+        drop(spans);
+        let mut words = vec![0u64; n];
+        // The group of the row before: the next row's most often.
+        let mut d = 0;
+        for i in 0..rows {
+            let v = at(i);
+            let key = v >> SPLIT;
+            if docs[d].0 != key {
+                d = docs.partition_point(|e| e.0 < key);
+            }
+            let (_, base, start) = docs[d];
+            let x = (low(v) - base) as usize;
+            words[start as usize + x / 64] |= 1 << (x % 64);
         }
         Some(NodeBits { docs, words })
     }
     fn has(&self, value: i64) -> bool {
-        let key = (value >> 32) as u32;
+        let key = value >> SPLIT;
         let d = self.docs.partition_point(|e| e.0 < key);
         let Some(&(k, base, start)) = self.docs.get(d).filter(|e| e.0 == key) else { return false };
         let end = self.docs.get(d + 1).map_or(self.words.len(), |e| e.2 as usize);
-        let Some(at) = (value as u32).checked_sub(base) else { return false };
+        let Some(at) = ((value & ((1 << SPLIT) - 1)) as u32).checked_sub(base) else { return false };
         let w = start as usize + at as usize / 64;
         debug_assert_eq!(k, key);
         w < end && self.words[w] >> (at % 64) & 1 != 0
@@ -874,25 +903,36 @@ fn partition_near(lo: usize, hi: usize, near: usize, below: impl Fn(usize) -> bo
 mod node_bits_tests {
     use super::NodeBits;
 
-    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside.
+    fn bits(rows: &[i64]) -> Option<NodeBits> {
+        NodeBits::new(rows.len(), |i| rows[i])
+    }
+
+    /// A membership by bits answers as the rows do: each document's ids, none of another document's, none outside,
+    /// a group's rows apart from each other (another's between) too.
     #[test]
     fn bits_hold_exactly_the_rows_ids() {
         let id = |doc: i64, low: i64| doc << 32 | low;
-        let rows = [id(7, 1000), id(7, 1003), id(7, 1130), id(7, 1003), id(9, 5), id(9, 70)];
-        let bits = NodeBits::new(rows.iter().copied()).expect("dense ids take bits");
+        // By definition: a granule's slot above 18 index bits (two slots of document 7).
+        let def = |doc: i64, slot: i64, index: i64| doc << 32 | slot << 18 | index;
+        let rows = [id(9, 5), id(7, 1000), id(7, 1003), def(7, 3, 4), id(7, 1050), id(9, 70), id(7, 1003), def(7, 3, 9), def(7, 5, 0), id(7, 1001), id(9, 6)];
+        let bits = bits(&rows).expect("dense ids take bits");
         for &v in &rows {
             assert!(bits.has(v), "{v:#x}");
         }
-        for v in [id(7, 999), id(7, 1001), id(7, 1131), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5)] {
+        for v in [id(7, 999), id(7, 1002), id(7, 1051), id(7, 1 << 20), id(8, 1000), id(9, 4), id(9, 71), id(10, 5), def(7, 3, 5), def(7, 4, 4), def(7, 5, 1), def(7, 6, 0)] {
             assert!(!bits.has(v), "{v:#x}");
         }
     }
 
-    /// Ids too sparse for their words, or negative, take no bits: the probe reads the rows.
+    /// Ids whose words would be past 4 bytes a row, or negative, take no bits: the probe reads the rows.
     #[test]
     fn sparse_or_negative_ids_take_no_bits() {
-        assert!(NodeBits::new([1i64 << 32, (1i64 << 32) | 1 << 20].into_iter()).is_none());
-        assert!(NodeBits::new([-1i64].into_iter()).is_none());
+        assert!(bits(&[1i64 << 32, (1i64 << 32) | (1 << 17)]).is_none());
+        assert!(bits(&[-1i64]).is_none());
+        // Two rows a word is 4 bytes a row: bits; three words for four rows is 6: none.
+        let id = |doc: i64, low: i64| doc << 32 | low;
+        assert!(bits(&[id(1, 0), id(1, 63), id(2, 0), id(2, 63)]).is_some());
+        assert!(bits(&[id(1, 0), id(1, 200), id(2, 0), id(2, 1)]).is_none());
     }
 }
 
@@ -1016,7 +1056,11 @@ impl Group {
         let bits = self.bits[rel].get_or_init(|| {
             let range = self.ranges[rel].clone();
             let read = r.range_reader(range.clone(), column);
-            NodeBits::new(range.map(|row| read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32)))).map(Box::new)
+            let at = |i: usize| {
+                let row = range.start + i;
+                read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32))
+            };
+            NodeBits::new(range.len(), at).map(Box::new)
         });
         bits.as_ref().map(|b| b.has(value))
     }
@@ -2548,18 +2592,13 @@ impl Source for MadeRows {
             None => self.template().keys_rows(_column),
         }
     }
-    /// A chunk's tests of nodes (t57 E6) as `keys_rows` answers: the relation's once made, else its template's (a
-    /// view of the tape reads a node's document in place, makes no document's rows).
-    fn reads_tests_by(&self, by: usize) -> bool {
+    /// A batch of rows by their own id (decision 0706 E1; a fused row program's tests of the nodes it bound, t57
+    /// E6) as `keys_rows` answers: the relation's once made, else its template's (a view of the tape reads a node's
+    /// document in place, makes no document's rows).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
         match self.done() {
-            Some(t) => t.reads_tests_by(by),
-            None => self.template().reads_tests_by(by),
-        }
-    }
-    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64]) -> bool {
-        match self.done() {
-            Some(t) => t.holds_each(by, ids, col, want, cursor, out),
-            None => self.template().holds_each(by, ids, col, want, cursor, out),
+            Some(t) => t.read_own_batch(column, values, reads, out, found, cursor),
+            None => self.template().read_own_batch(column, values, reads, out, found, cursor),
         }
     }
     /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one
