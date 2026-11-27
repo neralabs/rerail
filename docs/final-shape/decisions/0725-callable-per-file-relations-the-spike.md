@@ -117,7 +117,7 @@ posthog-291` and `dl-224`.
 
 | | PostHog's 291 files, Django's points_to policies | The data layer's 224 files, `bandit-b113` |
 |---|---|---|
-| Asks (relation, reader, shape) | 425, over 260 relations | 37, over 24 relations |
+| Asks (relation, reader, shape) | 425, over 259 relations | 37, over 24 relations |
 | Exported relations' rows made | 2,848,456 | 149,589 |
 | Rows their readers use | 427,804 to 524,952 (15 to 18%) | 54,326 to 55,498 (36 to 37%) |
 
@@ -142,4 +142,29 @@ candidate findings made in every file that the cross part rejects. `pt_at` and `
 used 987 (`ff`); `pt_look_t`, 93,224, used 44,979 to 61,385 (`fbb`); `pt_vopen_l_8`, 79,319, used 1,193 (`b`);
 `pt_btype_l_0`, 50,764, used 16,601 (`fb`). Over the data layer: `imported`, 16,916 rows, used 10,941 to 11,877
 (`bb`, `fb`, `ff`); `asks_at`, 18,853, used 3,512 (`bb`); `reads_at`, 14,521, used 516 (`bf`).
+
+**Each relation's disposition** (the "Exported relations' asks" page, https://claude.ai/artifact/KujXwtdjeevwMFLKoEmW2t;
+the tables `rerail-shared/callable-asks/asks-*-disposed.tsv`, made by `asks_classify.py` and `asks_dispose.py` there).
+A relation is made whole when any reader needs it whole, so it takes one disposition from all its asks; the largest
+were read rule by rule. Over PostHog's 2,848,456 rows:
+
+| Disposition | Relations | Rows made | Rows used |
+|---|---|---|---|
+| A finding's per-file half (`fl…_violation`, `fl…_rr_diagnostic`, the sync-orm walk's keys) | 12 | 958,678 | 6 to 8 |
+| Read by no reader here (mostly lifted `_l_i` relations of library values) | 77 | 333,513 | 0 |
+| A term's document stored a row a term (`pt_at`, term to path; `pt_chk`, term to checked document) | 2 | 237,734 | 61,048 to 84,242 |
+| Read by key, a term bound (the answering file's) | 61 | 615,754 | 144,016 to 182,362 |
+| Read by key, no term of the answering file bound (`pt_qn_t` by a qualified name) | 28 | 147,240 | 16,919 to 17,937 |
+| A negated test | 11 | 60,525 | 8,807 to 8,817 |
+| A filter on file-part relations left in the cross part by 0677's lift (`pt_vopen_l_0`, `_l_6`: `!pt_tracked(k)`) | 2 | 128,415 | 987 |
+| A projection: the reader drops the location (`pt_lwant(q) :- pt_qn(_, q)`), so its rows are no file's | 7 | 94,373 | 16,407 to 20,784 |
+| A key the rule computes after the read (`res`: `defined(_, q), split_dot(q, c, a)`) | 1 | 4,160 | 1,987 to 2,823 |
+| Scanned whole by a reader | 51 | 133,202 | 126,048 to 127,739 |
+| Scanned under negations of cross-part relations, an anti-join (`pt_vpos_t` for `pt_type_open_all`) | 6 | 133,879 | 51,546 to 79,220 |
+| Scanned, partly used | 1 | 983 | 33 |
+
+Of the keyed and negated reads, 255,565 rows lie in relations under 5% asked (at most 4,047 asked) and 180,007
+in relations 50% or more asked; 360,244 in between (at most 76,812). Not measured: a request's cost at scale (the
+spike's 20 to 28 µs is a 48-request batch's, mostly its fixed cost), the projections' per-file distinct values, and
+the keys sent that find no row.
 
