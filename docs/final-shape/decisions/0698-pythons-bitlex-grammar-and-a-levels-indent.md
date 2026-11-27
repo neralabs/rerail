@@ -625,3 +625,11 @@ statements and blocks end.
     f-string's interiors are lexed recursively, by the same strata as code, where the interior is determined
     reliably. A nested f-string (an f-string opened inside an interior) is a rare path, and may refuse the file to
     tree-sitter: nested f-strings are not common.
+
+93. **The strata spike** (the user's choices).
+    - **A hand-written SIMD lexer of strata** is written beside the lean Python lexer, on the `std::simd` interface
+      (`rerail-simd`, the uglykl CPU SIMD branch's clone of it on stable Rust), so that the two can be compared for
+      speed and for accuracy.
+    - **A nested f-string bails:** the file is refused (to tree-sitter). It is a spike; the rare path is not decided.
+    - **The bracket depth's bound (31) is a rule:** a file past it is refused, as now.
+    - **The strata are made with bit operations,** the regions' openers and their terminators included.
