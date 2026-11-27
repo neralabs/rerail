@@ -365,3 +365,97 @@ describe("a checkout replaced at its path while the daemon runs", () => {
     }
   });
 });
+
+describe("a remote changed in place in a checkout not recorded, while the daemon runs", () => {
+  const APP = "git@github.com:acme/app.git";
+  const OTHER = "git@github.com:acme/other.git";
+  const gitIn = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
+
+  /** Two known repositories, acme/app and acme/other, each recorded at a clone of its own, and the daemon's own resolver. */
+  async function twoRepositories() {
+    const { root, stores, db, app } = await daemonStores();
+    const first = recordCheckout(db, cloneAt(join(root, "app"), APP)).repositoryKey;
+    const second = recordCheckout(db, cloneAt(join(root, "other"), OTHER)).repositoryKey;
+    return { root, api: app, first, second, resolveCheckout: stores.checkouts() };
+  }
+
+  /** One read of `checkout` through `resolveCheckout`: the repository it names, the remotes it read and the processes it started. */
+  function counted(resolveCheckout: (workspace: string) => { repositoryKey: string } | undefined, checkout: string) {
+    Object.assign(reads, { remotes: 0, starts: 0, counting: true });
+    try {
+      return { named: resolveCheckout(checkout)?.repositoryKey, remotes: reads.remotes, starts: reads.starts };
+    } finally {
+      reads.counting = false;
+    }
+  }
+
+  it("names the new remote's repository at the next read, and asks Git for that read alone", async () => {
+    const { root, api, first, second, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0 });
+
+    gitIn(checkout, "remote", "set-url", "origin", OTHER);
+
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 1, starts: 1 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 0, starts: 0 });
+    expect(await namedRepositories(api, checkout)).toEqual(allNaming(second));
+  });
+
+  /** Checkouts whose remotes are in a Git folder that is not their own `.git`, made in `root`, with no remote yet. */
+  const layouts: Record<string, (root: string) => string> = {
+    "a linked worktree, whose remotes are in its clone's common config": root => {
+      gitIn(cloneAt(join(root, "clone"), "https://example.invalid/clone.git"), "worktree", "add", "-q", "-b", "side", join(root, "linked"));
+      gitIn(join(root, "linked"), "remote", "remove", "origin");
+      return join(root, "linked");
+    },
+    "a submodule, whose Git folder is in its parent's": root => {
+      const parent = cloneAt(join(root, "parent"), "https://example.invalid/parent.git");
+      const source = cloneAt(join(root, "source"), "https://example.invalid/source.git");
+      gitIn(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "lib");
+      gitIn(join(parent, "lib"), "remote", "remove", "origin");
+      return join(parent, "lib");
+    },
+    "a clone made with --separate-git-dir": root => {
+      gitIn(root, "init", "-q", "-b", "main", `--separate-git-dir=${join(root, "separate.git")}`, join(root, "separate"));
+      return join(root, "separate");
+    },
+  };
+  for (const [layout, make] of Object.entries(layouts)) {
+    it(`names the new remote's repository at the next read in ${layout}`, async () => {
+      const { root, api, first, second } = await twoRepositories();
+      const checkout = make(root);
+      gitIn(checkout, "remote", "add", "origin", APP);
+      expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
+
+      gitIn(checkout, "remote", "set-url", "origin", OTHER);
+
+      expect(await namedRepositories(api, checkout)).toEqual(allNaming(second));
+    });
+  }
+
+  it("reads the remote again when only a linked worktree's own config.worktree changed, where extensions.worktreeConfig is on", async () => {
+    const { root, api, first, second } = await twoRepositories();
+    const clone = cloneAt(join(root, "clone"), APP);
+    gitIn(clone, "remote", "remove", "origin");
+    gitIn(clone, "config", "extensions.worktreeConfig", "true");
+    const linked = join(root, "linked");
+    gitIn(clone, "worktree", "add", "-q", "-b", "side", linked);
+    gitIn(linked, "config", "--worktree", "remote.origin.url", APP);
+    expect(await namedRepositories(api, linked)).toEqual(allNaming(first));
+
+    gitIn(linked, "config", "--worktree", "remote.origin.url", OTHER);
+
+    expect(await namedRepositories(api, linked)).toEqual(allNaming(second));
+  });
+
+  it("reads the remote again at each read while a config file it is read from cannot be read", async () => {
+    const { root, first, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    // A folder where Git, with extensions.worktreeConfig off, reads no file: no text can be read there.
+    mkdirSync(join(checkout, ".git", "config.worktree"));
+    expect(resolveCheckout(checkout)?.repositoryKey).toBe(first);
+    expect(counted(resolveCheckout, checkout)).toMatchObject({ named: first, remotes: 1 });
+    expect(counted(resolveCheckout, checkout)).toMatchObject({ named: first, remotes: 1 });
+  });
+});
