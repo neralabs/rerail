@@ -52,7 +52,11 @@ pub use roofline::Unit;
 struct On(bool);
 impl Default for On {
     fn default() -> Self {
-        On(setting(|| std::env::var_os("RERAIL_PROFILE").is_some()))
+        let on = setting(|| std::env::var_os("RERAIL_PROFILE").is_some());
+        if on {
+            rerail_prof::work::start();
+        }
+        On(on)
     }
 }
 
@@ -73,6 +77,9 @@ pub fn on() -> bool {
 /// Turns profiling of this caller's runs on or off (a test that profiles without the environment variable), for the
 /// rest of the extent under way here.
 pub fn set(on: bool) {
+    if on {
+        rerail_prof::work::start();
+    }
     bind_here(On(on));
 }
 
@@ -713,6 +720,8 @@ pub fn merged() -> Held {
 }
 
 pub struct Open {
+    /// Its id in the CPU sampler's words (`rerail_prof::work`; 0 off): the span path's, as the heap sampler's.
+    work: u32,
     path: String,
     start: f64,
     children: f64,
@@ -1591,7 +1600,12 @@ fn open(path: String) -> Span {
             0
         };
         rerail_prof::heap::set_span(heap);
-        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
+        // The CPU sampler's word of what this thread is doing: this span from now (`rerail_prof::work`).
+        let work = if rerail_context::work::on() { if heap != 0 { heap } else { rerail_prof::heap::intern(&path) } } else { 0 };
+        if work != 0 {
+            rerail_context::work::set_part(rerail_context::work::SPAN, u64::from(work));
+        }
+        s.opens.push(Open { work, path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
     });
     Span(true)
 }
@@ -1617,6 +1631,9 @@ impl Drop for Span {
                 None => 0,
             };
             rerail_prof::heap::set_span(after);
+            if open.work != 0 {
+                rerail_context::work::set_part(rerail_context::work::SPAN, u64::from(s.opens.last().map_or(0, |o| o.work)));
+            }
             let total = now - open.start;
             account_scope(open.accounted, ticks().wrapping_sub(open.ticks), total);
             if s.opens.is_empty() {

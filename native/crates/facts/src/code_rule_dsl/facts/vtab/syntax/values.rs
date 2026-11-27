@@ -824,6 +824,7 @@ impl Source for Layered {
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<super::super::NodeRead<'_>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if let Some(v) = self.base.node_read_ref(name, n, more) {
             return Some(v);
         }
@@ -938,6 +939,9 @@ impl Source for Layered {
     }
     /// The base's rows, then the parts' that may hold each value, numbered past the base's.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.base.lookup_each(column, values, each) {
             return false;
         }
@@ -997,6 +1001,7 @@ impl Source for Layered {
     /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, may be a part's
     /// (or a made row's): the caller probes it as one row.
     fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if !self.base.read_own_batch(column, values, reads, out, found, cursor) {
             return false;
         }
@@ -1011,6 +1016,9 @@ impl Source for Layered {
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         // No value admitted (a chunk's first run): the base's read, with no load of the parts.
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.lookup_read_at(column, value, columns, cursor, each);
@@ -1061,6 +1069,7 @@ impl Source for Layered {
     }
     /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return self.base.test_at(column, value, columns, want, cursor);
         }
@@ -1102,6 +1111,7 @@ impl Source for Layered {
     /// The base's rows in the range, then each part's, past the base's: a part with no range read is read whole (a
     /// value's rows are few). `rr_ann_node`'s range of the annotations' nodes is the values' rows.
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             return None;
         }
@@ -1166,6 +1176,7 @@ impl Source for Layered {
         true
     }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let base = self.base.holds(equal)?;
         if base || !self.has_parts() {
             return Some(base);
@@ -1258,6 +1269,7 @@ impl Source for Layered {
         self.parts(|p| p.at(row - self.base_len()).map(|(part, r)| part.src.value(r, column))).flatten().unwrap_or(0)
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.made.is_some() {
             let Some(i) = self.made_row(row) else { return self.base.row_at(row, columns, out) };
             self.scanned(|s| {

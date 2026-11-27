@@ -423,6 +423,7 @@ impl Within {
     /// The solve made: for an `inside` given its set's `nearest` (`Solves`), that one where no member's nearest member
     /// ancestor has one (the chains are single), so both read one relation.
     fn solve(&self, nearest: Option<&OnceLock<Arc<Solved>>>) -> Arc<Solved> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
         let nearest = nearest.filter(|_| matches!(self.mode, Mode::Axis(Axis::Inside)));
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -1125,6 +1126,7 @@ impl Source for Within {
         Some(self.lookup(0, &[n])?.into_iter().filter(|&r| self.value(r, 1) == a).collect())
     }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if self.mode != Mode::Tree {
             return None;
         }
@@ -1193,6 +1195,9 @@ impl Source for Within {
         Some(out)
     }
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         for &v in values {

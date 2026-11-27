@@ -12296,3 +12296,34 @@ farm runs.
 build-and-test-loop-time's commit: a Mac farm host whose free space by df is short gets it back, its APFS local snapshots thinned (farm 62).
 
 No conflicts. Checked: farm.py and farm-agent parse. No farm or Metal runs.
+
+### Q594. Roll-up 166 (final-rerail-shape 11a994d5f7 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's commit: the profile samples CPU by what each thread is doing (`rerail_prof::work`, its words in
+`rerail_context::work`): a thread's span, join, step and kind of work (walk, probe, view read, derived read, test,
+chunk, head rows, build, text, node search), charged by a sampler thread from each thread's CPU clock.
+
+Conflicts, resolved by invariant:
+- Decision A (one batched own-row read, `Source::read_own_batch`; roll-ups 141 and 157): the feeder's marks on
+  `row_column`, `read_one_at`, `read_many_at` (the layered view's, the tape view's, the nearest axis's),
+  `View::read_one`, `cands::read_one`, `read_one_in`, `one_row` and `ask_view_chunk` are not taken, as those reads are
+  not; the hub's `read_own_batch` (the tape view's and the layered view's) is marked a view read instead.
+- `by_kind`: the hub's rows a kind at a time, their making marked a build.
+- `Csr::by_value` and `node_bits_has`: the hub's (looked for again as `looks_again` says, no `RERAIL_SPIKE_INDEX`
+  print: the hub removed it with 0706's index catalogue), each index's build marked.
+- `ask_chunk` and `ask_derived_chunk`: the hub's `rowcode::Ask` forms, marked a derived read; `CHUNK_REFUSALS` the
+  hub's four.
+- The fused chunk's run: the hub's call (with `held`), marked a chunk.
+- `StepClock`: one clock. The hub's switch counts and their measured cost (`switch_ticks`, t57) and the feeder's word
+  (the join's id, the step, a walk) both; `start(j, head)`. The cost is measured with the thread's word set as a
+  walk's switch sets it, then put back, so a switch costs what was measured.
+
+Fixes the merge needed:
+- The walk's clock took the head's name as `store.rels[head]` whether or not profiling was on: join_filter's tests,
+  whose store holds no relations, panicked on it. It is read with `get`, "?" where there is none.
+
+Checked under Relax: rerail-setfix (148), rerail-prof (42), rerail-context (13), tests-lang syntax::tests (103),
+tests-corpus base_tests (54), tests-logic native::tests (20) and plan::tests (114 at 2 threads, and
+a_max_joined_back_at_its_maximum_gives_the_rows_there alone, which needs a process of its own). rerail-boot's
+cost_shape_tests: the same 15 red as before the merge (the feeder's own head has 17 red). Relax has no clippy: none
+run. No Metal or farm runs.

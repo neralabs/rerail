@@ -319,6 +319,12 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
     cpu_by_thread(&mut r, &threads, &gaps);
+    // The CPU sampler's table (`rerail_prof::work`): CPU time by span, join, step and kind of work, first.
+    std::fs::write(dir.join("work.tsv"), rerail_prof::work::tsv())?;
+    let sampled = rerail_prof::work::report(40);
+    if !sampled.is_empty() {
+        let _ = writeln!(r, "\n== {sampled}");
+    }
     let (analysis_text, analysis_json) = analysis_report::report(&state);
     std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
     std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;

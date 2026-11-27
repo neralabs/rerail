@@ -2364,6 +2364,7 @@ impl Source for MadeRows {
         }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if let Some(t) = self.done() {
             return t.row_at(row, columns, out);
         }
@@ -2376,6 +2377,7 @@ impl Source for MadeRows {
     /// By the document column, the document's group's rows of the value, each compared where it lies (`group_of`,
     /// `each_match`): no row's values copied out, no match handed on. Another column's test is the matches'.
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         // A document the batch has not: no rows.
         let Some(p) = self.group_of(column, value, &mut cursor.hint)? else { return Some(false) };
         let (g, r) = (&p.group, &p.rels[self.rel]);
@@ -2391,6 +2393,9 @@ impl Source for MadeRows {
     }
     /// By the document column, the step's cursor leads: the last probe's document and row (`read_one`).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         self.read_one(column, value, columns, &mut cursor.hint, each) || self.lookup_read(column, value, columns, each)
     }
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {

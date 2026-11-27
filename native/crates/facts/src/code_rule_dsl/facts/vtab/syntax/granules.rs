@@ -1052,6 +1052,7 @@ impl Table {
 
     /// `number_of`, its slot's entry first looked for at `hint` (`Numbering::number_of_near`): probes in key order.
     pub fn number_of_near(&self, r: &Ranks, low: u32, hint: &mut u32) -> Option<(Item, u32)> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         // SAFETY: as `low_of`.
         let (item, k) = unsafe { r.numbering().number_of_near(low, hint) }?;
         Some((if item == 0 { Item::Node } else { Item::Token }, k))

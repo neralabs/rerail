@@ -2082,6 +2082,7 @@ impl Projected {
     #[cfg_attr(feature = "tape-reads", track_caller)]
     /// `node`, its group found from `hint` (`Ranks::select_near`): probes in key order.
     pub fn node_near(&self, local: u32, hint: &mut u32) -> u32 {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         self.ranks.select_near(Item::Node, local, hint).expect("a local id of the projection")
     }
     pub fn node(&self, local: u32) -> u32 {
@@ -2564,6 +2565,7 @@ impl Projected {
     }
     /// `local_of`, the slot's entry first looked for at `hint` (`granules::Table::number_of_near`): probes in key order.
     pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
             // SPIKE (local fixes, 1): a node's, from the entry's nodes by id where it is made (`ViewDoc::node_by_id`).
@@ -4275,6 +4277,7 @@ impl Batch {
     /// block relations (else staged to go on in them). `held`: tape values the batch's growth holds, given more places
     /// (decision 0431 §6): each one's projection, document, new places and whether it is withheld.
     fn make_rows(&self, group: &[usize], first: bool, held: &[(&Projected, &Document, std::ops::Range<usize>, bool)]) -> StoreResult<made::Made> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
         let projection = &*self.projection;
         let (shape, matches, markers, metal) = (projection.shape, &self.matches[..], &self.markers[..], self.metal);
         let documents: Vec<&Document> = group.iter().map(|&i| self.docs.input(i)).collect();
@@ -4888,7 +4891,7 @@ impl Batch {
         let Some(dialect) = self.dialects.get(tag) else { return &[] };
         let places = self.kinds[at].1.get_or_init(|| (0..dialect.canonical.len()).map(|_| OnceLock::new()).collect());
         let Some(place) = places.get((kind % stride) as usize) else { return &[] };
-        &place.get_or_init(|| KindRows::new(self, tag, kind as u32)).rows
+        &place.get_or_init(|| { let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD); KindRows::new(self, tag, kind as u32) }).rows
     }
     /// `by_kind`'s rows, each with its document and local id.
     fn kind_matches(&self, kind: i64) -> impl Iterator<Item = (usize, u32)> + '_ {
@@ -5258,6 +5261,7 @@ impl Source for Viewed {
         column == self.own()
     }
     fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         if column != self.own() {
             return None;
         }
@@ -5275,12 +5279,16 @@ impl Source for Viewed {
         self.read_matches(column, value, columns, &mut super::ProbeCursor::default(), each)
     }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         self.read_matches(column, value, columns, cursor, each)
     }
     /// A node's row by its id, tested (`kind(n, k)`, `node(n, _, k)` bound): its tape node found once, each tested
     /// column read off the tape and compared as read, the first other value ending it. A view with a row for every
     /// node alone: no row is found, no values handed on.
     fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::ProbeCursor) -> Option<bool> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         use read_op::*;
         if column != self.own() || !matches!(self.view, View::Node | View::Line | View::Tape | View::Core | View::Depth | View::Order | View::Unit | View::End) {
             return None;
@@ -5309,6 +5317,7 @@ impl Source for Viewed {
     /// node memo (the read's, `node_hint`, which also keeps the tape node a directory read selected) and its plan of
     /// the reads (`plan_for`, made on the first batch).
     fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::ProbeCursor) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         use read_op::*;
         // An operator's rows are its tokens' (several to a node).
         if column != self.own() || matches!(self.view, View::Spread | View::Op) {
@@ -5667,6 +5676,7 @@ impl Source for Viewed {
     }
     /// The row's node selected once (`Projected::node`), however many columns read it.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         self.row_at_memo(row, columns, out, &mut { super::NO_MEMO });
     }
     fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
@@ -5898,6 +5908,9 @@ impl Viewed {
         Some(cursor.plan)
     }
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         use read_op::*;
         // A place's row by its node or position (`line`, `col`, `docof`, by `n`): its values read off its span, into
         // an array, no vector a probe. By another column (`docof` by file), refused.

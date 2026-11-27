@@ -153,6 +153,7 @@ pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
 /// node-keyed index (one group found, `hint` the last, and one bit), not by probing an index and reading candidates.
 /// `None` when the input has no such index (`Csr::node_bits_has`): the step probes as before.
 pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], v: i64, hint: &mut u32) -> Option<bool> {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
     let Src::In(rel, ix) = src else { return None };
     if keys.len() != 1 || !tests.is_empty() {
         return None;
@@ -269,6 +270,7 @@ pub(super) fn filter_rejects(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::PROBE);
     match src {
         Src::In(rel, ix) => {
             let (rel, ix) = j.src_in(rel, ix);
@@ -462,6 +464,7 @@ pub(super) struct Asked {
 /// a row matches its keys and its column pairs. The join's step for it (`enter`'s `Step::Atom`, a test) does the same
 /// inside a walk, with the walk's frames around it (decision 0561, "a test asked directly").
 pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked) -> bool {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::TEST);
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a test is an atom") };
     debug_assert!(binds.is_empty(), "a test binds nothing");
     let val = |k: Key| match k {
@@ -518,6 +521,7 @@ pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, chunk: 
         _ => None,
     };
     let (rel0, ix0) = j.src_in(rel, ix);
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
     let Some((col, s)) = one_key else { return ask_derived_chunk(rel0, ix0, step, test, chunk) };
     // The key's values: a column of the chunk (a test fused so reads the row, `rowcode::fused`).
     let kc = test.slots.iter().find_map(|&(x, b)| match b { rowcode::Bind::Column(k) if x == *s => Some(k), _ => None })?;
@@ -588,6 +592,7 @@ fn chunk_rows_only(alive: &mut [u64], n: usize) {
 /// the input's sorted hash (`SortedHash::candidates_word`, the index a walk's test reads) or by its block's hashed
 /// index (`Relation::group`); each candidate checked against its row, a lookup's values written from it.
 fn ask_derived_chunk(rel: &InRel, ix: &Csr, step: &Step, test: &rowcode::Test, chunk: &mut rowcode::Ask<'_>) -> Option<(u64, u64)> {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::DERIVED);
     let Step::Atom { keys, tests, binds, neg, .. } = step else { return None };
     let (neg, lookup) = (*neg, !binds.is_empty());
     let (columns, alive, params) = (&mut *chunk.columns, &mut *chunk.alive, chunk.params);
@@ -689,6 +694,7 @@ pub(super) fn chunk_refusal(j: &JoinRule, step: &Step) -> usize {
 /// the row's values: whether its one row is there and holds its keys and tests, its values of the
 /// columns it binds in `out` (by column), probed, its first matching row's.
 pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let _kind = rerail_prof::work::doing(rerail_prof::work::TEST);
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
     // A lookup that binds nothing is a test: a bit, where the view's bits by its constant are built.
     if binds.is_empty() && let Some(found) = value_bits_test(j, src, keys, tests, slots, &mut asked.bits, &mut asked.hints[0]) {

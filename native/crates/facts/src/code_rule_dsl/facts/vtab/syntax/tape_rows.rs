@@ -259,6 +259,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         out[column]
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (doc, k) = self.locate(row);
         let mut all = [0; COLUMNS];
         self.read(doc, k, &mut all);
@@ -320,6 +321,9 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.rows.keyed(column) {
             return false;
         }
