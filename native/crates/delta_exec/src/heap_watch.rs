@@ -12,13 +12,11 @@ use std::cell::{Cell, RefCell};
 
 /// The twins that still take the heap, and through what: this list only shrinks. A twin not on it that allocates
 /// fails the run. A phase that takes room in its out block takes it through the block's allocator, whose bookkeeping
-/// (`ledger::Ledger`: free lists, live bits, under a lock) and bump top (`block::Extent`) are host memory, not the
-/// block's bytes; a write pin's access is checked there too.
+/// for a free-listed block (`ledger::Ledger`: free lists, live bits, under a lock) and bump top (`block::Extent`) are
+/// host memory, not the block's bytes.
 const NOT_YET: &[(&str, &str)] = &[
     ("consolidate", "the block allocator's host bookkeeping"),
     ("merge", "the block allocator's host bookkeeping"),
-    ("square", "a write pin's access, checked in the block's ledger"),
-    ("append", "the block allocator's host bookkeeping"),
 ];
 
 struct Watch;
@@ -93,7 +91,8 @@ pub fn during<R>(on: bool, what: &str, f: impl FnOnce() -> R) -> R {
             Some(_) => {
                 use std::io::Write;
                 // One write a run, so parallel tests' records do not interleave.
-                let text: String = seen.iter().map(|s| format!("HEAP_AUDIT {what}: {}\n", s.replace('\n', " | "))).collect();
+                let test = std::thread::current().name().unwrap_or("?").to_string();
+                let text: String = seen.iter().map(|s| format!("HEAP_AUDIT {what}: {} (in {test})\n", s.replace('\n', " | "))).collect();
                 std::io::stderr().lock().write_all(text.as_bytes()).expect("stderr");
             }
             None if NOT_YET.iter().any(|(op, _)| what.split(' ').next() == Some(op)) => {}

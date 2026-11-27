@@ -313,7 +313,7 @@ static CUBE: &[TwinPhase] = &[TwinPhase { name: "map", items: SQUARE[0].items, r
 
 fn cube_tile(c: &mut rerail_delta_twins::Ctx<'_, '_, '_>, t: rerail_delta_twins::Tile) {
     let ([input], [out]) = c.views([0], [1]);
-    let src = samples::vals(input).to_vec();
+    let src = samples::vals(input);
     let dst = samples::vals_mut(out, src.len());
     for i in t.items() {
         dst[i] = src[i] * src[i] * src[i];
