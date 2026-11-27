@@ -19,26 +19,24 @@
 //! Each phase's items are independent; what one phase leaves for the next lies in the new layer's block: the work
 //! arrays in its body past the header (the freeze trims them where it can), the relations in its chunks.
 
-use rerail_blocks::layer::LayerSketch;
-use rerail_blocks::layer::OwnRowsIn;
-use rerail_blocks::bloom::BloomW;
-use rerail_blocks::relation::RelationW;
 use crate::sort::{CHUNK, chunks, merge_pairs, more, pairs, sort_chunks};
 use crate::{Ctx, Tile, TwinPhase};
-use rerail_blocks::bistate::{ColumnIndex, Read};
+use core::cmp::Ordering;
+use rerail_blocks::bistate::ColumnIndex;
 use rerail_blocks::block::Block;
+use rerail_blocks::bloom::BloomW;
 use rerail_blocks::bloom::{self, Bloom};
 use rerail_blocks::gens::{BODY_AT, Id, Table, set_word, word, words, words_mut};
+use rerail_blocks::layer::OwnRowsIn;
 use rerail_blocks::layer::{
-    ENC_OPEN, IX_BLOOM, IX_FENCES, IX_ORDER, IX_PERM, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_IX, NONE, OwnRows, Runs, ShapeW, bloom_key, bloom_words, gone_spec,
-    parts_spec, rows_spec, sketch_room,
+    ENC_OPEN, IX_BLOOM, IX_FENCES, IX_ORDER, IX_PERM, IX_PRINTS, LAYER_BODY, Layer, LayerHead, MAX_COLS, MAX_IX, MAX_LAYERS, NONE, OwnRows, Runs, ShapeW, State,
+    bloom_key, bloom_words,
 };
 use rerail_blocks::order::{FENCE, print_vals};
-use rerail_blocks::relation::{self, Relation, layer_write, row_digest};
+use rerail_blocks::relation::RelationW;
+use rerail_blocks::relation::layer_write::{self, Part};
+use rerail_blocks::relation::{Relation, row_digest};
 use rerail_blocks::scratch::Scratch;
-use rerail_blocks::sketch::Sketch;
-use std::cmp::Ordering;
-use std::sync::Arc;
 
 crate::params! {
     /// `consolidate`'s params: the trace's newest layer, which the new one goes over (`NONE` for the first).
@@ -59,10 +57,17 @@ crate::params! {
     }
 }
 
-/// Slots: the source (δ runs, or the newest layer merged), the new layer, and consolidate's control.
+/// Slots: the source (δ runs, or the newest layer merged), the new layer, and consolidate's control; each one's
+/// scratch is its last (`Op::SCRATCH`).
 const SRC: usize = 0;
 const OUT: usize = 1;
 const CTL: usize = 2;
+
+/// The bytes of the scratch slot a launch over `cap` source items takes: a call's temporaries, one index's or one
+/// order's at a time (a key range's bitmap, 2^24 bits at most, and a few words a row).
+pub fn scratch_bytes(cap: usize) -> usize {
+    ((4 << 20) + cap.max(1) * 64 + 64).next_multiple_of(rerail_blocks::block::PAGE)
+}
 
 /// A refusal, in control's first word: none, a row's diffs summing past ±1, a row gone not live below, a row added
 /// that already is.
@@ -78,34 +83,34 @@ pub const CONTROL_BYTES: usize = 48;
 // ---- the source ---------------------------------------------------------------------------------------------------
 
 /// The rows a layer is made from: a run's δ runs, or the layers merged (newest first: each one's own rows, then its
-/// kills). One a phase's call, on its stack.
+/// kills): the state they end, each merged layer's header read where it lies, and its first item (`off`, the items'
+/// end past the last). One a phase's call, on its stack.
 #[allow(clippy::large_enum_variant)]
 enum Src<'a> {
     Runs(Runs<'a>),
-    // copy: not block data (a handle and a first item a merged layer)
-    Layers { chain: relation::View<'a>, layers: Vec<Layer<'a>>, off: Vec<usize> },
+    Layers { chain: State<'a>, layers: [Option<Layer<'a>>; MAX_LAYERS], off: [usize; MAX_LAYERS + 1], k: usize },
 }
 
 impl<'a> Src<'a> {
     fn n(&self) -> usize {
         match self {
             Src::Runs(r) => r.len(),
-            Src::Layers { off, .. } => off[off.len() - 1],
+            Src::Layers { off, k, .. } => off[*k],
         }
     }
 
     fn shape(&self) -> ShapeW {
         match self {
             Src::Runs(r) => r.head.shape,
-            Src::Layers { layers, .. } => layers[0].head.shape,
+            Src::Layers { layers, .. } => layers[0].expect("a merged layer").head.shape,
         }
     }
 
     /// A merged item's layer, and its place in it: an own row's id, or a kill's place in its kills.
     fn at(&self, i: usize) -> (Layer<'a>, Result<u32, usize>) {
-        let Src::Layers { layers, off, .. } = self else { unreachable!("a merge's source") };
-        let j = off.partition_point(|&o| o <= i) - 1;
-        let (l, local) = (layers[j], i - off[j]);
+        let Src::Layers { layers, off, k, .. } = self else { unreachable!("a merge's source") };
+        let j = off[..=*k].partition_point(|&o| o <= i) - 1;
+        let (l, local) = (layers[j].expect("a merged layer"), i - off[j]);
         (l, if local < l.n() { Ok(l.start() + local as u32) } else { Err(local - l.n()) })
     }
 
@@ -144,6 +149,8 @@ trait Op {
     fn src<'a>(src: &'a [u8], table: &'a Table<'a>, params: &[u8]) -> Src<'a>;
     fn below(params: &[u8]) -> u32;
     const CONTROL: bool;
+    /// Its scratch slot.
+    const SCRATCH: usize;
 }
 
 /// `consolidate`.
@@ -159,32 +166,34 @@ impl Op for Cons {
         <ConsolidateP as crate::Params>::read(params).below
     }
     const CONTROL: bool = true;
+    const SCRATCH: usize = 3;
 }
 
 impl Op for Merge {
     fn src<'a>(src: &'a [u8], table: &'a Table<'a>, params: &[u8]) -> Src<'a> {
         let p = <MergeP as crate::Params>::read(params);
-        assert!(p.count >= 1, "a merge of one layer or more");
-        let mut layers = Vec::with_capacity(p.count as usize);
-        let mut off = vec![0usize];
+        assert!(p.count >= 1 && p.count as usize <= MAX_LAYERS, "a merge of one layer or more, and at most a state's MAX_LAYERS");
+        let mut layers = [None; MAX_LAYERS];
+        let mut off = [0usize; MAX_LAYERS + 1];
         let mut l = Layer::new(src).expect("the newest merged layer, committed");
         let arity = l.head.shape.arity();
         for k in 0..p.count as usize {
-            layers.push(l);
-            off.push(off[k] + l.n() + l.kills().len());
+            layers[k] = Some(l);
+            off[k + 1] = off[k] + l.n() + l.kills().len();
             if k + 1 < p.count as usize {
                 let (below, _) = l.below().expect("as many layers as merged");
                 l = Layer::new(table.block(below).expect("a merged layer reached by reference")).expect("committed");
             }
         }
         assert_eq!(l.below().map_or(NONE, |(b, _)| b), p.below, "the merged layers lie over the layer below them");
-        let chain = relation::View::chain(table, Some(p.head), arity).expect("the merged layers and those below, reached");
-        Src::Layers { chain, layers, off }
+        let chain = State::chain(table, Some(p.head), arity).expect("the merged layers and those below, reached");
+        Src::Layers { chain, layers, off, k: p.count as usize }
     }
     fn below(params: &[u8]) -> u32 {
         <MergeP as crate::Params>::read(params).below
     }
     const CONTROL: bool = false;
+    const SCRATCH: usize = 2;
 }
 
 // ---- the work, past the header in the new block's body --------------------------------------------------------------
@@ -282,16 +291,6 @@ impl View<'_> {
         word::<u64>(self.work, at)
     }
 
-    /// The sorted positions: the array the last pass wrote.
-    fn perm(&self) -> &[u32] {
-        let at = if self.word(W_WHICH) == 0 { self.w.perm_a } else { self.w.perm_b };
-        words(self.work, at, self.src.n())
-    }
-
-    fn seg(&self) -> &[i32] {
-        words(self.work, self.w.seg, self.src.n())
-    }
-
     fn n_out(&self) -> usize {
         self.word(W_NOUT) as usize
     }
@@ -313,10 +312,9 @@ fn refused_so_far<O: Op>(c: &Ctx<'_, '_, '_>) -> bool {
     work_word::<O>(c, W_REFUSED) != 0
 }
 
-/// The new layer's block, and its header as laid out (`scan`).
-fn out_block(c: &Ctx<'_, '_, '_>) -> (Arc<Block>, LayerHead) {
-    let pin = c.slots[OUT].pin();
-    (Arc::clone(pin.block()), LayerHead::of_open(pin.bytes()))
+/// The new layer's block, for the launch, and its header as laid out (`scan`).
+fn out_block<'p>(c: &Ctx<'_, 'p, '_>) -> (&'p Block, LayerHead) {
+    (c.block(OUT), LayerHead::of_open(c.read(OUT)))
 }
 
 fn rel(block: &Block, at: u64) -> &Relation {
@@ -324,13 +322,19 @@ fn rel(block: &Block, at: u64) -> &Relation {
 }
 
 /// The state below the new layer, read through the descriptor table.
-fn below_chain<'t>(table: &'t Table<'t>, below: u32, arity: usize) -> relation::View<'t> {
-    relation::View::chain(table, (below != NONE).then_some(below), arity).expect("the layers below, reached by reference")
+fn below_chain<'t>(table: &'t Table<'t>, below: u32, arity: usize) -> State<'t> {
+    State::chain(table, (below != NONE).then_some(below), arity).expect("the layers below, reached by reference")
 }
 
-/// A call's own scratch for an index of `n` rows: a bitmap of a key's range (2^24 bits at most) and a word a row.
-fn scratch_for(n: usize) -> Scratch {
-    Scratch::anon(((4 << 20) + n * 64).next_multiple_of(rerail_blocks::block::PAGE))
+/// Columns `cols` as a key's column indexes, on the stack: the array, of which the first `cols.len()` are the key's.
+fn col_indexes(cols: &[u8]) -> [ColumnIndex; MAX_COLS] {
+    assert!(cols.len() <= MAX_COLS, "a key of at most MAX_COLS columns");
+    core::array::from_fn(|k| ColumnIndex::new(cols.get(k).map_or(0, |&c| u16::from(c))))
+}
+
+/// Item `i`'s values in columns `cols`, on the stack.
+fn key_of(src: &Src<'_>, i: usize, cols: &[ColumnIndex]) -> [i64; MAX_COLS] {
+    core::array::from_fn(|k| cols.get(k).map_or(0, |c| src.get(i, c.get())))
 }
 
 // ---- sort -----------------------------------------------------------------------------------------------------------
@@ -387,11 +391,11 @@ fn segments<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let perm: &[u32] = words(perms, if which == 0 { v.w.perm_a } else { v.w.perm_b }, n);
     let src = &v.src;
     let same = |i: usize, j: usize| src.cmp(perm[i], perm[j]) == Ordering::Equal;
-    let mut sums = Vec::with_capacity(t.items().len()); // copy: not block data (this tile's sums)
+    let seg = words_mut::<i32>(rest, 0, n);
     let mut bad = false;
     for i in t.items() {
         if i > 0 && same(i, i - 1) {
-            sums.push(0);
+            seg[i] = 0;
             continue;
         }
         let mut sum = 0i32;
@@ -402,9 +406,8 @@ fn segments<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         }
         bad |= !(-1..=1).contains(&sum);
         // A sum of zero is dropped; past ±1, refused.
-        sums.push(sum.clamp(-1, 1));
+        seg[i] = sum.clamp(-1, 1);
     }
-    words_mut::<i32>(rest, 0, n)[t.items()].copy_from_slice(&sums);
     if bad && word::<u64>(perms, W_REFUSED) == 0 {
         set_word::<u64>(perms, W_REFUSED, REFUSED_SUM);
     }
@@ -416,17 +419,15 @@ fn count<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let v = view::<O>(c);
     let n = v.src.n();
     let ch = chunks(n) as usize;
-    // copy: not block data (this tile's counts: rows out, rows added)
-    let counts: Vec<(u64, u64)> = t
-        .items()
-        .map(|k| {
-            let s = &v.seg()[k * CHUNK..((k + 1) * CHUNK).min(n)];
-            (s.iter().filter(|&&x| x != 0).count() as u64, s.iter().filter(|&&x| x > 0).count() as u64)
-        })
-        .collect();
+    // The segments lie before the counts (`work`): read the one while the other is written.
     let (cc, ac) = (v.w.ccount, v.w.acount);
-    words_mut::<u64>(v.work, cc, ch + 1)[t.items()].copy_from_slice(&counts.iter().map(|x| x.0).collect::<Vec<_>>());
-    words_mut::<u64>(v.work, ac, ch + 1)[t.items()].copy_from_slice(&counts.iter().map(|x| x.1).collect::<Vec<_>>());
+    let (head, rest) = v.work.split_at_mut(cc);
+    let seg: &[i32] = words(head, v.w.seg, n);
+    for k in t.items() {
+        let s = &seg[k * CHUNK..((k + 1) * CHUNK).min(n)];
+        words_mut::<u64>(rest, 0, ch + 1)[k] = s.iter().filter(|&&x| x != 0).count() as u64;
+        words_mut::<u64>(rest, ac - cc, ch + 1)[k] = s.iter().filter(|&&x| x > 0).count() as u64;
+    }
 }
 
 /// The counts' exclusive prefix sums, a chunk an item, in order (each item adds its chunk's counts to the carry the
@@ -474,25 +475,27 @@ fn open<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     };
     let n_gone = n_out - n_add;
     let below_layer = (below != NONE).then(|| (below, Layer::new(table.block(below).expect("the layer below, reached by reference")).expect("committed")));
+    let block = c.block(OUT);
     let pin = c.pin_mut(OUT);
-    let block = Arc::clone(pin.block());
-    let rs = rows_spec(&shape, n_add);
-    let rows = Relation::try_continue_far(&block, &rs, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows, l.end()))).expect("room for the layer");
-    let parts = Relation::try_create(&block, &parts_spec(n_out), None).expect("room for the layer's partitions");
-    let gone = Relation::try_create(&block, &gone_spec(n_gone), None).expect("room for the layer's kills by partition");
-    assert!(layer_write::open(pin, rows, &rs, true), "room for the layer's freeze");
-    assert!(layer_write::open(pin, parts, &parts_spec(n_out), false), "room for the partitions' freeze");
-    assert!(layer_write::open(pin, gone, &gone_spec(n_gone), false), "room for the kills' freeze");
+    let rp = Part::Rows(shape);
+    let rows = layer_write::create(block, rp, n_add, below_layer.map(|(id, l)| (id, l.head.rows as usize, l.rows, l.end()))).expect("room for the layer");
+    let parts = layer_write::create(block, Part::Parts, n_out, None).expect("room for the layer's partitions");
+    let gone = layer_write::create(block, Part::Gone, n_gone, None).expect("room for the layer's kills by partition");
+    assert!(layer_write::open_part(pin, rows, rp, n_add, true), "room for the layer's freeze");
+    assert!(layer_write::open_part(pin, parts, Part::Parts, n_out, false), "room for the partitions' freeze");
+    assert!(layer_write::open_part(pin, gone, Part::Gone, n_gone, false), "room for the kills' freeze");
     // An Open layer's rows are its relation's; an encoded one's lie in its encoded form (`encode`), beside it.
     let enc = if shape.encoding == ENC_OPEN {
         rows.claim_own(pin, n_add as u32).expect("room for the layer's rows");
         0
     } else {
-        let order: Vec<u16> = shape.order().iter().map(|&c| u16::from(c)).collect(); // copy: not block data (the order's columns)
-        layer_write::encode_open(pin, rows, shape.encoding, shape.arity(), n_add, &order, &perm_cols(&shape)).expect("room for the layer's encoded rows")
+        let o = shape.order();
+        let order: [u16; MAX_COLS] = core::array::from_fn(|k| o.get(k).map_or(0, |&c| u16::from(c)));
+        let (perms, np) = perm_cols(&shape);
+        layer_write::encode_open(pin, rows, shape.encoding, shape.arity(), n_add, &order[..o.len()], &perms[..np]).expect("room for the layer's encoded rows")
     };
     gone.claim_own(pin, n_gone as u32).expect("room for the layer's kills by partition");
-    let at = |r: &Relation| block.offset_of(std::ptr::from_ref(r));
+    let at = |r: &Relation| block.offset_of(core::ptr::from_ref(r));
     let mut head = LayerHead::open(shape, at(rows), at(parts), at(gone));
     head.enc = enc as u64;
     set_word(pin.bytes_mut().expect("a write pin"), BODY_AT, head);
@@ -504,63 +507,55 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     if refused_so_far::<O>(c) {
         return;
     }
-    // copy: not block data (this tile's placements: row out, its source item, the rows added before it, and whether it
-    // is added)
-    let mut placed = Vec::new();
-    {
+    let (block, head) = out_block(c);
+    let open = head.shape.encoding == ENC_OPEN;
+    let ch = {
         let v = view::<O>(c);
         let n = v.src.n();
         let ch = chunks(n) as usize;
-        let (perm, seg) = (v.perm(), v.seg());
-        let (oc, ac): (&[u64], &[u64]) = (words(v.work, v.w.ccount, ch + 1), words(v.work, v.w.acount, ch + 1));
+        let perm_at = if v.word(W_WHICH) == 0 { v.w.perm_a } else { v.w.perm_b };
         for k in t.items() {
-            let (mut o, mut a) = (oc[k] as usize, ac[k] as usize);
+            let (mut o, mut a) = (word::<u64>(v.work, v.w.ccount + 8 * k) as usize, word::<u64>(v.work, v.w.acount + 8 * k) as usize);
             for i in k * CHUNK..((k + 1) * CHUNK).min(n) {
-                if seg[i] != 0 {
-                    placed.push((o, perm[i], a, seg[i] > 0));
-                    o += 1;
-                    a += usize::from(seg[i] > 0);
+                let s = word::<i32>(v.work, v.w.seg + 4 * i);
+                if s == 0 {
+                    continue;
                 }
+                let item = word::<u32>(v.work, perm_at + 4 * i);
+                set_word::<u32>(v.work, v.w.net + 4 * o, item);
+                set_word::<i32>(v.work, v.w.sgn + 4 * o, if s > 0 { 1 } else { -1 });
+                set_word::<u32>(v.work, v.w.abefore + 4 * o, a as u32);
+                if s > 0 && !open {
+                    // Encoded: each added row's source item, in the layer's order; its values are written by `encode`.
+                    set_word::<u32>(v.work, v.w.addsrc + 4 * a, item);
+                }
+                o += 1;
+                a += usize::from(s > 0);
             }
         }
-        let n_out = v.n_out();
-        let (net_at, sgn_at, ab_at) = (v.w.net, v.w.sgn, v.w.abefore);
-        let net = words_mut::<u32>(v.work, net_at, n_out.max(1));
-        for &(o, src, _, _) in &placed {
-            net[o] = src;
-        }
-        let sgn = words_mut::<i32>(v.work, sgn_at, n_out.max(1));
-        for &(o, _, _, add) in &placed {
-            sgn[o] = if add { 1 } else { -1 };
-        }
-        let ab = words_mut::<u32>(v.work, ab_at, n_out + 1);
-        for &(o, _, a, _) in &placed {
-            ab[o] = a as u32;
-        }
-    }
-    let (block, head) = out_block(c);
-    if head.shape.encoding != ENC_OPEN {
-        // Encoded: each added row's source item, in the layer's order; its values are written by `encode`.
-        let v = view::<O>(c);
-        let n_add = v.word(W_NADD) as usize;
-        let addsrc = v.w.addsrc;
-        let to = words_mut::<u32>(v.work, addsrc, n_add.max(1));
-        for &(_, i, at, add) in &placed {
-            if add {
-                to[at] = i;
-            }
-        }
+        ch
+    };
+    if !open {
         return;
     }
-    let rows = rel(&block, head.rows);
+    // Open: each added row's values, at its place, from the chunk's rows out just placed.
+    let rows = rel(block, head.rows);
     let (table, params) = (c.table, c.params);
     let (sb, pin) = c.read_and_pin(SRC, OUT);
     let src = O::src(sb, table, params);
+    let w = work(src.n());
     let a = head.shape.arity();
-    for &(_, i, at, add) in &placed {
-        if add {
+    for k in t.items() {
+        let wk = &pin.bytes()[w.base..];
+        let (lo, hi) = (word::<u64>(wk, w.ccount + 8 * k) as usize, word::<u64>(wk, w.ccount + 8 * (k + 1).min(ch)) as usize);
+        for o in lo..hi {
+            let wk = &pin.bytes()[w.base..];
+            if word::<i32>(wk, w.sgn + 4 * o) < 0 {
+                continue;
+            }
+            let (at, i) = (word::<u32>(wk, w.abefore + 4 * o), word::<u32>(wk, w.net + 4 * o) as usize);
             for col in 0..a {
-                rows.put_own(pin, at as u32, col, src.get(i as usize, col));
+                rows.put_own(pin, at, col, src.get(i, col));
             }
         }
     }
@@ -568,9 +563,15 @@ fn place<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
 
 // ---- encode: an encoded layer's rows, a column an item ------------------------------------------------------------
 
-/// The columns of the shape's permutation indexes (`Perm`), in its index order.
-fn perm_cols(shape: &ShapeW) -> Vec<u16> {
-    (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_PERM != 0).map(|x| u16::from(shape.index_key(x)[0])).collect() // copy: not block data (the indexes' columns)
+/// The columns of the shape's permutation indexes (`Perm`), in its index order: the array, of which the first so many
+/// are theirs.
+fn perm_cols(shape: &ShapeW) -> ([u16; MAX_IX], usize) {
+    let (mut cols, mut n) = ([0u16; MAX_IX], 0);
+    for x in (0..shape.nidx as usize).filter(|&x| shape.index_kind(x) & IX_PERM != 0) {
+        cols[n] = u16::from(shape.index_key(x)[0]);
+        n += 1;
+    }
+    (cols, n)
 }
 
 /// An encoded layer's added rows, read where they lie: row `r` is source item `addsrc[r]` (`place`'s).
@@ -598,7 +599,7 @@ fn encode_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
 
 fn perm_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
     let shape = O::src(c.read(SRC), c.table, c.params).shape();
-    if refused_so_far::<O>(c) || shape.encoding == ENC_OPEN { 0 } else { perm_cols(&shape).len() as u32 }
+    if refused_so_far::<O>(c) || shape.encoding == ENC_OPEN { 0 } else { perm_cols(&shape).1 as u32 }
 }
 
 /// An encoded layer's rows, a column an item (`layer_write::encode_col`), read from the source where they lie.
@@ -613,21 +614,20 @@ fn perm<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
 
 fn encoded<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile, perms: bool) {
     let (block, head) = out_block(c);
-    let rows = rel(&block, head.rows);
+    let rows = rel(block, head.rows);
     let (table, params) = (c.table, c.params);
     let (n_add, addsrc_at) = {
         let v = view::<O>(c);
         (v.word(W_NADD) as usize, v.w.base + v.w.addsrc)
     };
-    let (sb, pin) = c.read_and_pin(SRC, OUT);
-    let src = O::src(sb, table, params);
     // The added rows' source items, in the block's work (`place` wrote them; this phase only reads them).
     let addsrc: &[u32] = words(block.bytes(addsrc_at, addsrc_at + 4 * n_add.max(1)), 0, n_add.max(1));
-    let added = Added { src: &src, addsrc: &addsrc[..n_add] };
-    let s = scratch_for(n_add);
     for x in t.items() {
+        let (sb, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
+        let src = O::src(sb, table, params);
+        let added = Added { src: &src, addsrc: &addsrc[..n_add] };
         let ok = if perms {
-            layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, &s)
+            Scratch::lend(scratch, |s| layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, s))
         } else {
             layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added)
         };
@@ -655,17 +655,15 @@ fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let v = view::<O>(c);
     let shape = v.src.shape();
     let chain = below_chain(table, v.below, shape.arity());
-    let cols: Vec<ColumnIndex> = shape.order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect(); // copy: not block data (the probe's columns)
-    let net: &[u32] = words(v.work, v.w.net, v.n_out().max(1));
-    let sgn: &[i32] = words(v.work, v.w.sgn, v.n_out().max(1));
-    let mut found = Vec::with_capacity(t.items().len()); // copy: not block data (this tile's kill ids)
+    let order = col_indexes(shape.order());
+    let cols = &order[..shape.order().len()];
     let mut refusal = 0;
     for o in t.items() {
-        let i = net[o] as usize;
-        let sign = sgn[o];
-        let key: Vec<i64> = cols.iter().map(|c| v.src.get(i, c.get())).collect(); // copy: not block data (a probe's key)
-        let live = chain.matching(&cols, &key).next();
-        found.push(match (sign < 0, live) {
+        let i = word::<u32>(v.work, v.w.net + 4 * o) as usize;
+        let sign = word::<i32>(v.work, v.w.sgn + 4 * o);
+        let key = key_of(&v.src, i, cols);
+        let live = chain.matching(cols, &key[..cols.len()]).next();
+        let id = match (sign < 0, live) {
             (true, Some(id)) => id.get(),
             (true, None) => {
                 refusal = REFUSED_GONE;
@@ -676,13 +674,12 @@ fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
                 NONE
             }
             (false, None) => NONE,
-        });
+        };
         if sign > 0 && O::CONTROL && shape.level_col().is_some() && !one_level::<O>(&v, &chain, o) {
             refusal = REFUSED_LEVELS;
         }
+        set_word::<u32>(v.work, v.w.kid + 4 * o, id);
     }
-    let kid = v.w.kid;
-    words_mut::<u32>(v.work, kid, v.n_out().max(1))[t.items()].copy_from_slice(&found);
     if refusal != 0 && v.word(W_REFUSED) == 0 {
         set_word::<u64>(v.work, W_REFUSED, refusal);
     }
@@ -691,37 +688,37 @@ fn kills<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
 /// Whether row out `o`, added, leaves its key live at one level (0364): no other row of the run adds the key, and
 /// the key's live row below, if any, is one this run kills. The run's rows of a key lie together in the rows out (the
 /// level is last in the canonical order), so they are `o`'s neighbours; the rows below, a probe of the key's prefix.
-fn one_level<O: Op>(v: &View<'_>, chain: &relation::View<'_>, o: usize) -> bool {
+fn one_level<O: Op>(v: &View<'_>, chain: &State<'_>, o: usize) -> bool {
     let shape = v.src.shape();
-    let keys: Vec<ColumnIndex> = shape.key_order().iter().map(|&c| ColumnIndex::new(u16::from(c))).collect(); // copy: not block data (the key's columns)
+    let ko = col_indexes(shape.key_order());
+    let keys = &ko[..shape.key_order().len()];
     let level = shape.level_col().expect("levels");
-    let net: &[u32] = words(v.work, v.w.net, v.n_out().max(1));
-    let sgn: &[i32] = words(v.work, v.w.sgn, v.n_out().max(1));
-    let key_of = |p: usize| -> Vec<i64> { keys.iter().map(|c| v.src.get(net[p] as usize, c.get())).collect() }; // copy: not block data (a key)
-    let key = key_of(o);
-    let mut same = Vec::new(); // copy: not block data (the run's rows of the key)
-    let mut p = o;
-    while p > 0 && key_of(p - 1) == key {
-        p -= 1;
+    let net = |p: usize| word::<u32>(v.work, v.w.net + 4 * p) as usize;
+    let sgn = |p: usize| word::<i32>(v.work, v.w.sgn + 4 * p);
+    let key = key_of(&v.src, net(o), keys);
+    // The run's rows of the key: the range of rows out around `o` whose key is its.
+    let (mut lo, mut hi) = (o, o + 1);
+    while lo > 0 && key_of(&v.src, net(lo - 1), keys) == key {
+        lo -= 1;
     }
-    while p < v.n_out() && key_of(p) == key {
-        same.push(p);
-        p += 1;
+    while hi < v.n_out() && key_of(&v.src, net(hi), keys) == key {
+        hi += 1;
     }
-    if same.iter().any(|&q| q != o && sgn[q] > 0) {
+    if (lo..hi).any(|q| q != o && sgn(q) > 0) {
         return false;
     }
-    chain.matching(&keys, &key).all(|id| {
+    chain.matching(keys, &key[..keys.len()]).all(|id| {
         let lv = chain.get(id.get(), level);
-        same.iter().any(|&q| sgn[q] < 0 && v.src.get(net[q] as usize, level) == lv)
+        (lo..hi).any(|q| sgn(q) < 0 && v.src.get(net(q), level) == lv)
     })
 }
 
 // ---- the partitions' change: a partition an item ------------------------------------------------------------------
 
-/// Row out `o`'s partition: its source item's value in the partition column (0 without one).
-fn part_of(src: &Src<'_>, net: &[u32], part: Option<usize>, o: usize) -> i64 {
-    part.map_or(0, |p| src.get(net[o] as usize, p))
+/// Row out `o`'s partition: its source item's value in the partition column (0 without one), its item read from the
+/// work (`net`, at `net_at` of `work`).
+fn part_of(src: &Src<'_>, work: &[u8], net_at: usize, part: Option<usize>, o: usize) -> i64 {
+    part.map_or(0, |p| src.get(word::<u32>(work, net_at + 4 * o) as usize, p))
 }
 
 /// Whether each row out starts a partition (the rows out lie in the canonical order, the partition first).
@@ -730,12 +727,12 @@ fn pstarts<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         return;
     }
     let v = view::<O>(c);
-    let n = v.n_out();
     let part = v.src.shape().partition();
-    let net: &[u32] = words(v.work, v.w.net, n.max(1));
-    // copy: not block data (this tile's flags)
-    let flags: Vec<u32> = t.items().map(|o| u32::from(o == 0 || part_of(&v.src, net, part, o) != part_of(&v.src, net, part, o - 1))).collect();
-    words_mut::<u32>(v.work, v.w.st, n.max(1))[t.items()].copy_from_slice(&flags);
+    let net = v.w.net;
+    for o in t.items() {
+        let start = o == 0 || part_of(&v.src, v.work, net, part, o) != part_of(&v.src, v.work, net, part, o - 1);
+        set_word::<u32>(v.work, v.w.st + 4 * o, u32::from(start));
+    }
 }
 
 /// The partitions' starts, a chunk of rows out an item, in order (each item numbers its chunk's starts after the carry
@@ -749,8 +746,10 @@ fn pscan<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         let n = v.n_out();
         let ch = chunks(n) as usize;
         let mut np = v.word(W_NPART) as usize;
-        let st: Vec<u32> = words::<u32>(v.work, v.w.st, n.max(1)).to_vec(); // copy: not block data (the flags, read beside the starts)
-        let ps = words_mut::<u32>(v.work, v.w.pstart, n + 1);
+        // The flags lie before the starts (`work`): read the one while the other is written.
+        let (flags, rest) = v.work.split_at_mut(v.w.pstart);
+        let st: &[u32] = words(flags, v.w.st, n.max(1));
+        let ps = words_mut::<u32>(rest, 0, n + 1);
         for k in t.items() {
             for (o, &s) in st.iter().enumerate().take(((k + 1) * CHUNK).min(n)).skip(k * CHUNK) {
                 if s != 0 {
@@ -767,7 +766,7 @@ fn pscan<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     };
     if let Some(np) = last {
         let (block, head) = out_block(c);
-        rel(&block, head.parts).claim_own(c.pin_mut(OUT), np as u32).expect("room for the partitions");
+        rel(block, head.parts).claim_own(c.pin_mut(OUT), np as u32).expect("room for the partitions");
     }
 }
 
@@ -783,47 +782,44 @@ fn parts_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
 /// kills_at)`, and its kills, ascending, at `kills_at` of `gone(part, id)`. Its rows out are a range (`pscan`'s); its
 /// own rows are `first .. first + added` of the layer's, its kills `kills_at .. kills_at + gone` of `gone`.
 fn parts<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
-    // copy: not block data (this tile's partitions' entries and kills, written below)
-    let mut entries: Vec<(u32, [i64; 6], Vec<u32>)> = Vec::new();
-    {
-        let v = view::<O>(c);
-        let n = v.n_out();
-        let shape = v.src.shape();
-        let a = shape.arity();
-        let (net, sgn, kid): (&[u32], &[i32], &[u32]) = (words(v.work, v.w.net, n.max(1)), words(v.work, v.w.sgn, n.max(1)), words(v.work, v.w.kid, n.max(1)));
-        let ab: &[u32] = words(v.work, v.w.abefore, n + 1);
-        let ps: &[u32] = words(v.work, v.w.pstart, n + 1);
-        for p in t.items() {
+    let (block, head) = out_block(c);
+    let (pr, gr) = (rel(block, head.parts), rel(block, head.gone));
+    let (table, params) = (c.table, c.params);
+    let (sb, pin) = c.read_and_pin(SRC, OUT);
+    let src = O::src(sb, table, params);
+    let w = work(src.n());
+    let shape = src.shape();
+    let a = shape.arity();
+    for p in t.items() {
+        let entry = {
+            let wk = &pin.bytes()[w.base..];
+            let n = word::<u64>(wk, W_NOUT) as usize;
+            let (net, sgn): (&[u32], &[i32]) = (words(wk, w.net, n.max(1)), words(wk, w.sgn, n.max(1)));
+            let (ab, ps): (&[u32], &[u32]) = (words(wk, w.abefore, n + 1), words(wk, w.pstart, n + 1));
             let (s, e) = (ps[p] as usize, ps[p + 1] as usize);
             let first = ab[s];
             let added = ab[e] - first;
             let gone = (e - s) as u32 - added;
             let mut digest = 0u64;
-            let mut ids = Vec::with_capacity(gone as usize); // copy: derived (the partition's kills, written below)
             for o in s..e {
-                let d = row_digest((0..a).map(|col| v.src.get(net[o] as usize, col)));
-                if sgn[o] > 0 {
-                    digest = digest.wrapping_add(d);
-                } else {
-                    digest = digest.wrapping_sub(d);
-                    ids.push(kid[o]);
-                }
+                let d = row_digest((0..a).map(|col| src.get(net[o] as usize, col)));
+                digest = if sgn[o] > 0 { digest.wrapping_add(d) } else { digest.wrapping_sub(d) };
             }
-            ids.sort_unstable();
-            let part = part_of(&v.src, net, shape.partition(), s);
-            entries.push((p as u32, [part, digest as i64, i64::from(added), i64::from(gone), i64::from(first), (s as u32 - first).into()], ids));
+            let part = part_of(&src, wk, w.net, shape.partition(), s);
+            (s, e, [part, digest as i64, i64::from(added), i64::from(gone), i64::from(first), (s as u32 - first).into()])
+        };
+        let (s, e, row) = entry;
+        // The partition's kills, ascending, where its rows out's kill ids lie (an added row's is `NONE`, sorted last):
+        // `kid` is read by no later phase.
+        let n = word::<u64>(&pin.bytes()[w.base..], W_NOUT) as usize;
+        words_mut::<u32>(&mut pin.bytes_mut().expect("a write pin")[w.base..], w.kid, n.max(1))[s..e].sort_unstable();
+        for (col, v) in row.into_iter().enumerate() {
+            pr.put_own(pin, p as u32, col, v);
         }
-    }
-    let (block, head) = out_block(c);
-    let (pr, gr) = (rel(&block, head.parts), rel(&block, head.gone));
-    let pin = c.pin_mut(OUT);
-    for (p, e, ids) in entries {
-        for (col, v) in e.into_iter().enumerate() {
-            pr.put_own(pin, p, col, v);
-        }
-        for (j, id) in ids.into_iter().enumerate() {
-            gr.put_own(pin, e[5] as u32 + j as u32, 0, e[0]);
-            gr.put_own(pin, e[5] as u32 + j as u32, 1, i64::from(id));
+        for j in 0..row[3] as u32 {
+            let id = word::<u32>(&pin.bytes()[w.base..], w.kid + 4 * (s + j as usize));
+            gr.put_own(pin, row[5] as u32 + j, 0, row[0]);
+            gr.put_own(pin, row[5] as u32 + j, 1, i64::from(id));
         }
     }
 }
@@ -848,19 +844,19 @@ fn stats<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let pin = c.pin_mut(OUT);
     for x in t.items() {
         let (r, col) = if x < a {
-            (rel(&block, head.rows), x)
+            (rel(block, head.rows), x)
         } else if x < a + PARTS_COLS {
-            (rel(&block, head.parts), x - a)
+            (rel(block, head.parts), x - a)
         } else {
-            (rel(&block, head.gone), x - a - PARTS_COLS)
+            (rel(block, head.gone), x - a - PARTS_COLS)
         };
-        let own = if x < a { OwnRows::in_block(&block, &head, r) } else { OwnRows::Open(r) };
+        let own = if x < a { OwnRows::in_block(block, &head, r) } else { OwnRows::Open(r) };
         layer_write::stat(pin, r, col, &own);
     }
 }
 
 fn index_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
-    rows_spec(&O::src(c.read(SRC), c.table, c.params).shape(), 0).indexes.len() as u32
+    layer_write::index_count(&O::src(c.read(SRC), c.table, c.params).shape()) as u32
 }
 
 /// The layer's hashed indexes, an index an item (`layer_write::index`: its row index, and each `Hash` of its shape).
@@ -869,13 +865,12 @@ fn indexes<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         return;
     }
     let (block, head) = out_block(c);
-    let rows = rel(&block, head.rows);
-    let own = OwnRows::in_block(&block, &head, rows);
-    let spec = rows_spec(&head.shape, own.n() as usize);
-    let s = scratch_for(own.n() as usize);
-    let pin = c.pin_mut(OUT);
+    let rows = rel(block, head.rows);
+    let own = OwnRows::in_block(block, &head, rows);
+    let n = own.n() as usize;
     for x in t.items() {
-        layer_write::index(pin, rows, &spec, x, &s, &own);
+        let (_, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
+        Scratch::lend(scratch, |s| layer_write::index_part(pin, rows, Part::Rows(head.shape), n, x, s, &own));
     }
 }
 
@@ -886,12 +881,12 @@ fn freeze<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         return;
     }
     let (block, head) = out_block(c);
-    let (rows, pr, gr) = (rel(&block, head.rows), rel(&block, head.parts), rel(&block, head.gone));
+    let (rows, pr, gr) = (rel(block, head.rows), rel(block, head.parts), rel(block, head.gone));
     let pin = c.pin_mut(OUT);
-    let n = OwnRows::in_block(&block, &head, rows).n();
-    layer_write::seal(pin, rows, &rows_spec(&head.shape, n as usize), n);
-    layer_write::seal(pin, pr, &parts_spec(pr.rows.len() as usize), pr.rows.len());
-    layer_write::seal(pin, gr, &gone_spec(gr.rows.len() as usize), gr.rows.len());
+    let n = OwnRows::in_block(block, &head, rows).n();
+    layer_write::seal_part(pin, rows, Part::Rows(head.shape), n);
+    layer_write::seal_part(pin, pr, Part::Parts, pr.rows.len());
+    layer_write::seal_part(pin, gr, Part::Gone, gr.rows.len());
 }
 
 /// The shape's orders and Bloom filters, an index an item (a `Hash` index is the relation's, built at its freeze).
@@ -900,33 +895,44 @@ fn orders<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         return;
     }
     let (block, head) = out_block(c);
-    let rows = rel(&block, head.rows);
-    let own = OwnRows::in_block(&block, &head, rows);
+    let rows = rel(block, head.rows);
+    let own = OwnRows::in_block(block, &head, rows);
+    let n = own.n() as usize;
     let shape = head.shape;
-    let mut blooms = Vec::new(); // copy: not block data (this tile's filters' offsets)
     for x in t.items() {
         let (kind, key) = (shape.index_kind(x), shape.index_key(x));
-        let cols: Vec<u16> = key.iter().map(|&c| u16::from(c)).collect(); // copy: not block data (the key's columns)
+        let cs: [u16; MAX_COLS] = core::array::from_fn(|k| key.get(k).map_or(0, |&c| u16::from(c)));
+        let cols = &cs[..key.len()];
         let vals = |id: u32| cols.iter().map(move |&c| own.get(id, c as usize));
         if kind & IX_BLOOM != 0 {
-            let at = Bloom::try_create(&block, bloom_words(own.n() as usize)).expect("room for a Bloom filter");
-            let b = Bloom::in_block(&block, at).expect("just made");
+            let at = Bloom::try_create(block, bloom_words(n)).expect("room for a Bloom filter");
+            let b = Bloom::in_block(block, at).expect("just made");
             for id in own.ids() {
                 b.add_hashed(bloom::hash(bloom_key(vals(id))));
             }
-            blooms.push((x, at));
+            let v = view::<O>(c);
+            set_word::<u64>(v.work, W_BLOOM + 8 * x, at as u64);
         } else if kind & IX_ORDER != 0 {
-            // Its ids in the key's order, ties by id; the leading value at every `FENCE`th; each one's print.
-            let mut ids: Vec<u32> = own.ids().collect(); // copy: derived (the order, written into the layer below)
-            ids.sort_by(|&p, &q| vals(p).cmp(vals(q)).then(p.cmp(&q)));
-            let fences: Vec<i64> = if kind & IX_FENCES != 0 { ids.iter().step_by(FENCE).map(|&id| own.get(id, cols[0] as usize)).collect() } else { Vec::new() }; // copy: derived (its fences)
-            let prints: Vec<u8> = if kind & IX_PRINTS != 0 { ids.iter().map(|&id| print_vals(vals(id))).collect() } else { Vec::new() }; // copy: derived (its prints)
-            rows.add_order(c.pin_mut(OUT), &cols, &ids, &fences, &prints).expect("room for an order");
+            // Its ids in the key's order, ties by id (a total order); the leading value at every `FENCE`th; each one's
+            // print: in the scratch slot, until the order is added to the layer.
+            let (_, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
+            Scratch::lend(scratch, |s| {
+                let ids: &mut [u32] = s.take(n);
+                for (k, id) in own.ids().enumerate() {
+                    ids[k] = id;
+                }
+                ids.sort_unstable_by(|&p, &q| vals(p).cmp(vals(q)).then(p.cmp(&q)));
+                let fences: &mut [i64] = s.take(if kind & IX_FENCES != 0 { n.div_ceil(FENCE) } else { 0 });
+                for (f, &id) in fences.iter_mut().zip(ids.iter().step_by(FENCE)) {
+                    *f = own.get(id, cols[0] as usize);
+                }
+                let prints: &mut [u8] = s.take(if kind & IX_PRINTS != 0 { n } else { 0 });
+                for (p, &id) in prints.iter_mut().zip(ids.iter()) {
+                    *p = print_vals(vals(id));
+                }
+                rows.add_order(pin, cols, ids, fences, prints).expect("room for an order");
+            });
         }
-    }
-    let v = view::<O>(c);
-    for (x, at) in blooms {
-        set_word::<u64>(v.work, W_BLOOM + 8 * x, at as u64);
     }
 }
 
@@ -942,23 +948,18 @@ fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         return;
     }
     let (block, head) = out_block(c);
-    let rows = rel(&block, head.rows);
-    let own = OwnRows::in_block(&block, &head, rows);
+    let rows = rel(block, head.rows);
+    let own = OwnRows::in_block(block, &head, rows);
     let a = head.shape.arity();
     let below = O::below(c.params);
     let table = c.table;
     let chain = below_chain(table, below, a);
     let below_layer = (below != NONE).then(|| Layer::new(table.block(below).expect("reached")).expect("committed"));
+    let gone = gone_ids(block, &head);
     let pin = c.pin_mut(OUT);
     for col in t.items() {
-        let mut s = below_layer.and_then(|l| l.sketch(col)).unwrap_or_else(|| Sketch::new_in(sketch_room()));
-        for id in own.ids() {
-            s.add(own.get(id, col));
-        }
-        for &id in gone_ids(&block, &head) {
-            s.remove(chain.get(id, col));
-        }
-        assert!(layer_write::sketch(pin, rows, col, &s.encode()), "room for the layer's statistics");
+        let (mut added, mut removed) = (own.ids().map(|id| own.get(id, col)), gone.iter().map(|&id| chain.get(id, col)));
+        assert!(layer_write::sketch_change(pin, rows, col, below_layer.as_ref(), &mut added, &mut removed), "room for the layer's statistics");
     }
 }
 
@@ -977,15 +978,15 @@ fn arity_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
 fn seal<O: Op>(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let (refused, n_out, blooms) = {
         let v = view::<O>(c);
-        let blooms: [u64; MAX_IX] = std::array::from_fn(|x| v.word(W_BLOOM + 8 * x));
+        let blooms: [u64; MAX_IX] = core::array::from_fn(|x| v.word(W_BLOOM + 8 * x));
         (v.word(W_REFUSED), v.n_out() as u64, blooms)
     };
     let (mut added, mut gone) = (0u64, 0u64);
     if refused == 0 {
         let (block, mut head) = out_block(c);
-        let (rows, pr) = (rel(&block, head.rows), rel(&block, head.parts));
-        head.added = OwnRows::in_block(&block, &head, rows).n();
-        head.ngone = rel(&block, head.gone).rows.len();
+        let (rows, pr) = (rel(block, head.rows), rel(block, head.parts));
+        head.added = OwnRows::in_block(block, &head, rows).n();
+        head.ngone = rel(block, head.gone).rows.len();
         head.nparts = pr.rows.len();
         head.digest = pr.ids().fold(0u64, |d, id| d.wrapping_add(pr.own(id, 1) as u64));
         head.blooms = blooms;

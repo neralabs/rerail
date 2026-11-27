@@ -63,6 +63,31 @@ impl Scratch {
         Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger }
     }
 
+    /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: its
+    /// takes are of those bytes (from their first 64-byte boundary), and nothing is mapped, kept or given back.
+    pub fn lend<R>(bytes: &mut [u8], f: impl FnOnce(&Scratch) -> R) -> R {
+        /// The lent bytes: their owner keeps them, so dropping this lets nothing go.
+        struct Lent(*mut u8, usize);
+        // SAFETY: the bytes of a `&mut [u8]` the call holds alone, while the scratch over them lives.
+        unsafe impl Send for Lent {}
+        unsafe impl Sync for Lent {}
+        impl Backing for Lent {
+            fn base(&self) -> *mut u8 {
+                self.0
+            }
+            fn len(&self) -> usize {
+                self.1
+            }
+        }
+        let skip = bytes.as_ptr().align_offset(64).min(bytes.len());
+        let bytes = &mut bytes[skip..];
+        let s = Scratch::over(Box::new(Lent(bytes.as_mut_ptr(), bytes.len())));
+        let r = f(&s);
+        s.quiet("the end of a lent use");
+        drop(s);
+        r
+    }
+
     /// `n` values of `T`, their contents whatever the last use left.
     #[allow(clippy::mut_from_ref)]
     pub fn take<T: Pod + Copy>(&self, n: usize) -> &mut [T] {
@@ -167,6 +192,27 @@ pub fn install(s: Scratch) -> Option<Scratch> {
 mod tests {
     use super::*;
     use crate::ledger::Fence;
+
+    /// A lent scratch takes from the bytes it is lent, from their first 64-byte boundary, and lets nothing of them go:
+    /// the owner's bytes hold what the use wrote after it.
+    #[test]
+    fn a_lent_scratch_takes_from_the_bytes_it_is_lent() {
+        let mut bytes = [0u8; 4096];
+        let (lo, hi) = (bytes.as_ptr() as usize, bytes.as_ptr() as usize + bytes.len());
+        let at = Scratch::lend(&mut bytes, |s| {
+            let a = s.take::<u32>(16);
+            let b = s.take::<u64>(8);
+            a.fill(7);
+            b.fill(9);
+            for p in [a.as_ptr() as usize, b.as_ptr() as usize] {
+                assert!(p % 64 == 0 && p >= lo && p + 64 <= hi, "a take of the lent bytes, aligned");
+            }
+            a.as_ptr() as usize - lo
+        });
+        assert_eq!(&bytes[at..at + 4], &7u32.to_ne_bytes(), "the use's writes stay in the owner's bytes");
+        let full = std::panic::catch_unwind(|| Scratch::lend(&mut [0u8; 256], |s| s.take::<u64>(64).len()));
+        assert!(full.is_err(), "a take past the lent bytes fails");
+    }
 
     /// Decision 0487 step 3 at a scratch region: a kernel's bind of its bytes holds it; a reset (or a use's end) with
     /// that work queued fails, and passes once it completes; a region dropped under queued work keeps its memory until

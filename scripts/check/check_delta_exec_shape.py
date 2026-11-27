@@ -94,10 +94,12 @@ def m0(failures: list) -> None:
 
 def b1(failures: list) -> None:
     """B1, operations on blocks (Operations §2–§4, §13). A twin is phases over tiles of independent items, a function of
-    its pinned slots, the blocks its descriptor table reaches, and its params alone (Operations §3). Rust data
-    structures inside a call are allowed for now (the user, 2026-11-25); nothing may outlive a call or come from
-    outside it. The twins' crate forbids unsafe, depends on blocks alone, and names no static, thread-local,
-    Once/Lazy cell, lock or atomic, no thread's scratch, and no file, environment, process, network or time. Its
+    its pinned slots, the blocks its descriptor table reaches, and its params alone (Operations §3). The twins' crate
+    is no_std with no alloc (Operations §3: "no Rust data structures"): no Vec, map, Box or Arc of its own, so a heap
+    type fails to compile; a call's temporaries lie in its operation's scratch slot (`Scratch::lend`). Nothing may
+    outlive a call or come from outside it. The crate forbids unsafe, depends on blocks alone, and names no static,
+    thread-local, Once/Lazy cell, lock or atomic, no scratch of its own, and no file, environment, process, network or
+    time. Its
     clippy.toml disallows the same by path. A twin writes blocks' structures with blocks' own code: "the twins depend
     on blocks, and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan,
     B1). An operation's shape is phases on the six axes, with no enum of shapes
@@ -105,6 +107,9 @@ def b1(failures: list) -> None:
     lib = TWINS / "src/lib.rs"
     if "#![forbid(unsafe_code)]" not in lib.read_text():
         failures.append(f"{lib.relative_to(ROOT)}: the twins' crate lacks #![forbid(unsafe_code)]")
+    lib_code = strip_rust(lib.read_text())
+    if not re.search(r"^#!\[no_std\]", lib.read_text(), re.M) or re.search(r"extern\s+crate\s+(alloc|std)\b", lib_code):
+        failures.append(f"{lib.relative_to(ROOT)}: the twins' crate is no_std, with no alloc (no heap type of its own)")
     if not (TWINS / "clippy.toml").exists():
         failures.append(f"{TWINS.relative_to(ROOT)}: the twins' crate lacks its clippy.toml")
     manifest = (TWINS / "Cargo.toml").read_text()
@@ -119,7 +124,8 @@ def b1(failures: list) -> None:
         (r"\bstatic\b", "a static (state outliving a call)"),
         (r"thread_local|\bOnce\w*|\bLazy\w*|lazy_static|once_cell", "a thread-local or a once/lazy cell (state outliving a call)"),
         (r"\bMutex\b|\bRwLock\b|\bCondvar\b|\bAtomic\w*", "a lock or an atomic (shared state)"),
-        (r"scratch::with\b", "a thread's scratch (it outlives the call: make a Scratch of the call's own)"),
+        (r"scratch::with\b|Scratch::(anon|over)\b", "a scratch of its own (a thread's outlives the call; a call's temporaries lie in its scratch slot, Scratch::lend)"),
+        (r"\balloc::|\bVec\b|\bBox\b|(?<!::)\bString\b|\bArc\b|\bRc\b|\bBTree\w*|\bHash(Map|Set)\b|\bBinaryHeap\b|\bVecDeque\b|\bvec!|\bformat!|\bSketch\b", "a heap type (the twins are no_std, with no alloc)"),
         (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world (files, environment, processes, network, time)"),
         (r"\bunsafe\b", "unsafe"),
         (r"\bTwinFn\b", "a twin as one function (a twin is phases over tiles)"),
@@ -242,12 +248,12 @@ def b2(failures: list) -> None:
     hits(layer, code, r"\bSketchW\b|\bAMS\b|\bstruct\s+PartW\b|\bpflips\b", "a second sketch or a copy of a layer's kills", failures)
     twins_code = strip_rust(twins)
     for want, why in (
-        ("Relation::try_continue_far(", "the layer made as a Relation continuing the one below"),
-        ("layer_write::open(", "the layer's freeze laid out where it lies (blocks' layer writing)"),
-        ("layer_write::index(", "the layer's hashed indexes, an index an item"),
-        ("layer_write::seal(", "the layer frozen where it lies"),
+        ("layer_write::create(block, rp,", "the layer made as a Relation continuing the one below (layer_write::create, Part::Rows)"),
+        ("layer_write::open_part(", "the layer's freeze laid out where it lies (blocks' layer writing)"),
+        ("layer_write::index_part(", "the layer's hashed indexes, an index an item"),
+        ("layer_write::seal_part(", "the layer frozen where it lies"),
         ("add_order(", "an Order index added to the relation (P§11.2)"),
-        ("layer_write::sketch(", "the layer's sketches kept in its relation, a column an item"),
+        ("layer_write::sketch_change(", "the layer's sketches kept in its relation, a column an item (the one below's, changed)"),
     ):
         if want not in twins_code:
             failures.append(f"the twins' trace.rs: {why} ({want} missing)")
@@ -314,9 +320,13 @@ def b2(failures: list) -> None:
     if "Spec { widths: vec![crate::rows::I32, 4], sort: Some(0)" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: gone is (partition, id), sorted on the partition")
     tcode = strip_rust((TWINS / "src/trace.rs").read_text())
-    made = len(re.findall(r"Relation::try_create\(", tcode)), len(re.findall(r"Relation::try_continue_far\(", tcode))
-    if made != (2, 1):
-        failures.append(f"the twins' trace.rs makes {made[0]} relations and {made[1]} layers; a layer's rows, its parts and its gone alone")
+    # The twins name a layer's part (`layer_write::Part`); blocks makes it, its rows continuing the layer below.
+    made = re.findall(r"layer_write::create\(block, (\w+(?:::\w+)?)", tcode)
+    direct = re.findall(r"Relation::try_(?:create|continue_far)\(", tcode)
+    if sorted(made) != ["Part::Gone", "Part::Parts", "rp"] or "let rp = Part::Rows(shape);" not in tcode or direct:
+        failures.append(f"the twins' trace.rs makes {made} (and {len(direct)} relations directly); a layer's rows, its parts and its gone alone")
+    if not re.search(r"Part::Rows\(_\) => Relation::try_continue_far\(block, &spec, below\),\s*Part::Parts \| Part::Gone => Relation::try_create\(block, &spec, None\)", lw):
+        failures.append("blocks/src/relation/layer_write.rs: create makes a layer's rows continuing the one below, its parts and gone of their own")
 
 
 def axes(failures: list) -> None:

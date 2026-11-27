@@ -22,7 +22,7 @@ use rerail_blocks::gens::{BODY_AT, Table, word};
 use rerail_blocks::layer::{Layer, NONE, Runs, Shape, ShapeW, init_runs, layer_room, runs_bytes};
 use rerail_blocks::relation::View;
 use rerail_delta_twins::Params;
-use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, due, out_bytes, refused};
+use rerail_delta_twins::trace::{CONTROL_BYTES, ConsolidateP, MergeP, due, out_bytes, refused, scratch_bytes};
 
 const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across: Across, output: Output, bounds: &'static [Bound]) -> Phase {
     Phase { name, found, unit, inside, across, output, bounds }
@@ -70,13 +70,14 @@ static PIPELINE: [Phase; 19] = {
 
 const ALONG: Independence = Independence::Along("rows: a chunk, a pair of runs, a row out, an index");
 
-/// `consolidate`: scratch δ runs · write facts · rw control.
+/// `consolidate`: scratch δ runs · write facts · rw control · scratch (a call's temporaries: an index's, an order's).
 pub static CONSOLIDATE: Signature = Signature::new(
     "consolidate",
     &[
         SlotSpec { name: "δ runs", mode: Mode::Scratch, kind: kind::SCRATCH },
         SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS },
         SlotSpec { name: "control", mode: Mode::ReadWrite, kind: kind::CONTROL },
+        SlotSpec { name: "scratch", mode: Mode::Scratch, kind: kind::SCRATCH },
     ],
     ParamsLayout::of::<ConsolidateP>(),
     &PIPELINE,
@@ -84,10 +85,14 @@ pub static CONSOLIDATE: Signature = Signature::new(
     facts_of,
 );
 
-/// `merge`: read facts (the newest layer merged; older ones by reference) · write facts.
+/// `merge`: read facts (the newest layer merged; older ones by reference) · write facts · scratch.
 pub static MERGE: Signature = Signature::new(
     "merge",
-    &[SlotSpec { name: "newest", mode: Mode::Read, kind: kind::FACTS }, SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS }],
+    &[
+        SlotSpec { name: "newest", mode: Mode::Read, kind: kind::FACTS },
+        SlotSpec { name: "facts", mode: Mode::Write, kind: kind::FACTS },
+        SlotSpec { name: "scratch", mode: Mode::Scratch, kind: kind::SCRATCH },
+    ],
     ParamsLayout::of::<MergeP>(),
     &PIPELINE,
     ALONG,
@@ -247,15 +252,17 @@ impl Trace {
             dir.refer(out, h, BODY_AT)?;
         }
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
+        let scratch = dir.make(kind::SCRATCH, scratch_bytes(n));
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
-        let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl], &params, tiling);
+        let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl, scratch], &params, tiling);
         let (code, due) = {
             let l = dir.read("commit", &[ctl])?;
             (refused(l.block(0)), due(l.block(0)))
         };
         dir.release(runs);
         dir.release(ctl);
+        dir.release(scratch);
         if let Err(e) = run {
             dir.release(out);
             return Err(e);
@@ -300,9 +307,12 @@ impl Trace {
         if let Some(b) = below {
             dir.refer(out, BlockId(b), BODY_AT)?;
         }
+        let scratch = dir.make(kind::SCRATCH, scratch_bytes(rows));
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
-        if let Err(e) = run_cpu(reg, dir, ops.merge, &[head, out], &params, tiling) {
+        let run = run_cpu(reg, dir, ops.merge, &[head, out, scratch], &params, tiling);
+        dir.release(scratch);
+        if let Err(e) = run {
             dir.release(out);
             return Err(e);
         }
@@ -473,9 +483,10 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
         }
         let out = dir.make_room(kind::FACTS, out_bytes(rows.len()), layer_room(t.shape(), rows.len()));
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
+        let scratch = dir.make(kind::SCRATCH, scratch_bytes(rows.len()));
         let mut params = vec![0u8; ConsolidateP::SIZE];
         ConsolidateP { below: NONE, pad: 0 }.write(&mut params);
-        Case { slots: vec![runs, out, ctl], params }
+        Case { slots: vec![runs, out, ctl, scratch], params }
     }
 }
 
@@ -507,9 +518,10 @@ pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count:
         if let Some(b) = below {
             dir.refer(out, b, BODY_AT).expect("frozen");
         }
+        let scratch = dir.make(kind::SCRATCH, scratch_bytes(total));
         let mut params = vec![0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.map_or(NONE, |b| b.0), pad: 0 }.write(&mut params);
-        Case { slots: vec![head, out], params }
+        Case { slots: vec![head, out, scratch], params }
     }
 }
 

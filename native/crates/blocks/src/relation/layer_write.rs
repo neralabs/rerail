@@ -35,6 +35,72 @@ fn check_open(pin: &BlockPin, rel: &Relation) {
     assert!(pin.block().holds(std::ptr::from_ref(rel)) && pin.writes() && !rel.is_frozen(), "an open layer of a block pinned to write");
 }
 
+/// One of a layer's three relations, as an operation names it (its `Spec` is blocks' to build): its rows, of the
+/// trace's shape; its partitions' change; its kills by partition.
+#[derive(Clone, Copy, Debug)]
+pub enum Part {
+    Rows(crate::layer::ShapeW),
+    Parts,
+    Gone,
+}
+
+impl Part {
+    /// Its spec, for `n` rows.
+    fn spec(self, n: usize) -> Spec {
+        match self {
+            Part::Rows(shape) => crate::layer::rows_spec(&shape, n),
+            Part::Parts => crate::layer::parts_spec(n),
+            Part::Gone => crate::layer::gone_spec(n),
+        }
+    }
+}
+
+/// The hashed indexes a layer of `shape` has (`index`'s items): each `Hash` index of the shape, and its row index.
+pub fn index_count(shape: &crate::layer::ShapeW) -> usize {
+    crate::layer::rows_spec(shape, 0).indexes.len()
+}
+
+/// Layer part `part` made in `block`, for `n` rows: its rows continuing the layer below (`below`, as
+/// `Relation::try_continue_far` takes it), the others a relation of their own. `None` when the block has no room.
+pub fn create<'b>(block: &'b crate::block::Block, part: Part, n: usize, below: Option<(u32, usize, &Relation, u32)>) -> Option<&'b Relation> {
+    use crate::relation::RelationW;
+    let spec = part.spec(n);
+    match part {
+        Part::Rows(_) => Relation::try_continue_far(block, &spec, below),
+        Part::Parts | Part::Gone => Relation::try_create(block, &spec, None),
+    }
+}
+
+/// `open` of layer part `part` of `n` rows.
+pub fn open_part(pin: &mut BlockPin, rel: &Relation, part: Part, n: usize, sketched: bool) -> bool {
+    open(pin, rel, &part.spec(n), sketched)
+}
+
+/// `index` `x` of layer part `part` of `n` rows.
+pub fn index_part(pin: &mut BlockPin, rel: &Relation, part: Part, n: usize, x: usize, scratch: &Scratch, rows: &dyn RowsIn) {
+    index(pin, rel, &part.spec(n), x, scratch, rows);
+}
+
+/// `seal` of layer part `part`, its `n` own rows live.
+pub fn seal_part(pin: &mut BlockPin, rel: &Relation, part: Part, n: u32) {
+    seal(pin, rel, &part.spec(n as usize), n);
+}
+
+/// Column `c`'s statistics of the state a layer ends, into its entry (`sketch`): the sketch of the layer below's
+/// state (`below`'s kept one; none for a trace's first layer), each value of `added` added and of `removed` taken.
+/// False when the block has no room.
+pub fn sketch_change(pin: &mut BlockPin, rel: &Relation, c: usize, below: Option<&crate::layer::Layer<'_>>, added: &mut dyn Iterator<Item = i64>, removed: &mut dyn Iterator<Item = i64>) -> bool {
+    use crate::layer::LayerSketch;
+    let mut s = below.and_then(|l| l.sketch(c)).unwrap_or_else(|| crate::sketch::Sketch::new_in(crate::layer::sketch_room()));
+    for v in added {
+        s.add(v);
+    }
+    for v in removed {
+        s.remove(v);
+    }
+    sketch(pin, rel, c, &s.encode())
+}
+
 /// Lays out the freeze's directories of an open layer `rel` of `spec`: a range a column (`stat`), the index directory
 /// (`spec.indexes`, and room for the orders added after it is frozen), and a sketch a column when `sketched`
 /// (`sketch`). False when the block has no room. A layer records no change of its own: its kills are its `gone` relation's.

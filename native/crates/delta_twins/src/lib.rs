@@ -12,23 +12,26 @@
 //! would on a GPU.
 //!
 //! A twin reads only its slots, the blocks its descriptor table reaches (`Table`: its slots and what they refer to, by
-//! block id) and its params, and writes only its write slots. Rust data structures inside one tile's call are allowed
-//! for now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"). A twin
+//! block id) and its params, and writes only its write slots. The crate is `no_std`, with no `alloc`: no
+//! Rust data structure of its own (a `Vec`, a map, a `Box`, an `Arc`), only fixed arrays on a call's stack and what
+//! lies in its blocks. A twin
 //! writes a block's structures with blocks' own code, in place, through its slot's pin: "the twins depend on blocks,
 //! and a slot is the pinned block, so a twin uses blocks' layouts and freeze in place" (the rebuild plan, B1): a
 //! relation made, its rows claimed and written (`Relation::put_own`), frozen an item a call (`relation::layer_write`, under the twins' rules), its orders
 //! and sketches added; the reads every reader shares (`relation::View`). Nothing may outlive a call or come from outside it: no
-//! `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch (a call makes its
-//! own, `Scratch::anon`); no file, environment, process, network or time. `unsafe` is forbidden.
+//! `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch and no scratch mapped
+//! by a call (a call's temporaries lie in its operation's scratch slot, `Scratch::lend`); no file, environment, process, network or time. `unsafe` is forbidden.
 //! `check_delta_exec_shape.py` refuses each of these here, and this crate's `clippy.toml` disallows them by path.
 //!
 //! A params struct is declared once, here, by `params!`; the executor gives UKL its declaration from `Params::FIELDS`.
 
+#![no_std]
 #![forbid(unsafe_code)]
 // The twins' rules (`clippy.toml`) refuse, not warn.
 #![deny(clippy::disallowed_methods, clippy::disallowed_types, clippy::disallowed_macros)]
 
 use rerail_blocks::gens::Table;
+use rerail_blocks::block::Block;
 use rerail_blocks::region::BlockPin;
 
 pub mod cache;
@@ -163,6 +166,9 @@ impl Meter {
 /// its slots refer to, by id), its params' bytes (`Params::read`) and the meter of its bounded work.
 pub struct Ctx<'c, 'p, 't> {
     pub slots: &'c mut [Slot<'p>],
+    /// Each slot's block, as its pin holds it for the launch: a structure in it (a relation, a filter) is read by
+    /// reference while the slot's pin is lent to write it.
+    pub blocks: &'c [&'p Block],
     pub table: &'c Table<'t>,
     pub params: &'c [u8],
     pub meter: &'c mut Meter,
@@ -217,7 +223,7 @@ impl<'p> Ctx<'_, 'p, '_> {
     /// The bytes of slots `reads`, to read, and of slots `writes`, to write, at once (each slot once).
     pub fn views<const R: usize, const W: usize>(&mut self, reads: [usize; R], writes: [usize; W]) -> ([&[u8]; R], [&mut [u8]; W]) {
         let mut r: [Option<&[u8]>; R] = [None; R];
-        let mut w: [Option<&mut [u8]>; W] = std::array::from_fn(|_| None);
+        let mut w: [Option<&mut [u8]>; W] = core::array::from_fn(|_| None);
         for (i, s) in self.slots.iter_mut().enumerate() {
             if let Some(k) = writes.iter().position(|&x| x == i) {
                 w[k] = Some(s.bytes_mut().unwrap_or_else(|| panic!("slot {i} is written, and pinned to read")));
@@ -251,6 +257,30 @@ impl<'p> Ctx<'_, 'p, '_> {
         (r.expect("a slot read"), w.expect("a slot written"))
     }
 
+    /// Slot `i`'s block, for the launch (a reference that outlives this borrow of the context).
+    pub fn block(&self, i: usize) -> &'p Block {
+        self.blocks[i]
+    }
+
+    /// Slot `read`'s bytes, slot `write`'s pin and scratch slot `scratch`'s bytes, at once (three slots).
+    pub fn split(&mut self, read: usize, write: usize, scratch: usize) -> (&[u8], &mut BlockPin, &mut [u8]) {
+        assert!(read != write && write != scratch && read != scratch, "three slots");
+        let (mut r, mut w, mut s) = (None, None, None);
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            if i == write {
+                match slot {
+                    Slot::Write(p) => w = Some(&mut **p),
+                    Slot::Read(_) => panic!("slot {i} is written, and pinned to read"),
+                }
+            } else if i == scratch {
+                s = Some(slot.bytes_mut().unwrap_or_else(|| panic!("slot {i} is scratch, and pinned to read")));
+            } else if i == read {
+                r = Some(slot.bytes());
+            }
+        }
+        (r.expect("a slot read"), w.expect("a slot written"), s.expect("a scratch slot"))
+    }
+
     /// Slot `i`'s pin, to write through.
     pub fn pin_mut(&mut self, i: usize) -> &mut BlockPin {
         match &mut self.slots[i] {
@@ -268,7 +298,7 @@ pub struct Tile {
 }
 
 impl Tile {
-    pub fn items(self) -> std::ops::Range<usize> {
+    pub fn items(self) -> core::ops::Range<usize> {
         self.lo as usize..self.hi as usize
     }
 }

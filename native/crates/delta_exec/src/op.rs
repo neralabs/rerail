@@ -779,8 +779,10 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
             Impl::Twin(twin) | Impl::Host(twin) => {
                 let mut meter = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
                 let (pins, table) = launch.parts();
+                let held: Vec<std::sync::Arc<rerail_blocks::block::Block>> = pins.iter().map(|p| std::sync::Arc::clone(p.block())).collect();
+                let blocks: Vec<&rerail_blocks::block::Block> = held.iter().map(|b| &**b).collect();
                 let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
-                let ctx = Ctx { slots: &mut slot_views, table: &table, params, meter: &mut meter };
+                let ctx = Ctx { slots: &mut slot_views, blocks: &blocks, table: &table, params, meter: &mut meter };
                 drive(sig, v, tiling, dir, slots, &mut TwinRuns { ctx, twin })?
             }
             Impl::Ukl { source, entry } => return on_device(sig, v, dir, slots, params, tiling, device, launch, source, entry),
