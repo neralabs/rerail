@@ -337,11 +337,15 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
         p.program(&mut own);
         if matches!(own.outcome, Some(Ok(_))) {
             p.program(&mut prune::Prune::default());
-            // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` writes the rules as demand left them.
+            // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` appends the rules as demand left them, each program
+            // under a line naming its outputs.
             if let Some(path) = std::env::var_os("RERAIL_DEMAND_DUMP")
                 && let Ok(v) = p.current()
+                && let Ok(mut out) = std::fs::OpenOptions::new().create(true).append(true).open(path)
             {
-                let _ = std::fs::write(path, v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>());
+                use std::io::Write as _;
+                let outputs: Vec<&str> = v.outputs().map(|o| v.text(o)).collect();
+                let _ = write!(out, "// ---- a program, its outputs: {}\n{}", outputs.join(", "), v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>());
             }
         }
     }

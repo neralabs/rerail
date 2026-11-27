@@ -805,7 +805,7 @@ pt_cls_q(c, @dot(q, x)) :- pt_cls_q(o, q), pt_rdefn(o, x, c), kind(c, "class_def
 // - A guest's node (a quoted annotation's code): its place in the guest's own document, which every string of that
 //   text shares: `~1825239168@0+4^1`.
 .decl pt_tm(n: node, t: symbol)
-.pragma "magic-transform" "pt_tm"
+// Demanded by the readers (python/points-to), not here: the phase's solve asks nearly every node's term.
 // pt_scope_tm(s, q): a module's or a definition's term, made down from the module one scope at a time (`nearest`
 // up, so the recursion is bounded: the cycles rule 3). A definition a branch never taken holds (`py_dead_at`) is no
 // binding, so P1 numbers it not: it is named by its place, as any other node.
