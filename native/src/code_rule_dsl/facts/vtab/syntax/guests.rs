@@ -72,8 +72,15 @@ impl GuestRows {
         self.sub_tape.extend(names.iter().flatten().map(|&n| [g.at, n, tape]));
         let Some(r) = root else { return };
         self.parsed.extend(names.iter().flatten().map(|&n| [g.at, n, r]));
+        if host_nodes {
+            self.host_nodes(p, g, docs);
+        }
+    }
+
+    /// `host_node` of guest `p`'s nodes, at `g` in its host (among `docs`): each the innermost host node over it.
+    fn host_nodes(&mut self, p: &Projected, g: &Guest, docs: &[Projected]) {
         // A decoded value stands at its node as a whole: its nodes have no host node of their own.
-        if !host_nodes || matches!(g.place, Placement::At(_)) {
+        if matches!(g.place, Placement::At(_)) {
             return;
         }
         let Ok(h) = docs.binary_search_by_key(&g.host, |q| q.key) else { return };

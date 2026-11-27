@@ -326,10 +326,7 @@ pub fn run_program(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
+    use super::logic::{plan::corpus, rr};
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
     let mut suppressions = super::rr_host::suppressions::Suppressions::default();
     suppressions.add(program.settings.iter().map(|(key, text)| (key.as_str(), text.as_str())))?;
@@ -339,14 +336,9 @@ pub fn run_program(
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
     let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
-    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
-        vec![(None, out.to_path_buf())]
-    } else {
-        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
-    };
+    let runs = dialect_runs(&dialects, out);
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
-    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
-    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let binding = device_binding();
     for (dialect, dir) in &runs {
         let mut options = with_reuse(options);
         if let Some(dialect) = dialect {
@@ -553,14 +545,10 @@ fn run_pack_dialects(
     dir: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<Option<PackRuns>, String> {
-    use super::{logic::plan::corpus, typing::file_local::Binding};
+    use super::logic::plan::corpus;
     use crate::code_rule_dsl::logic::plan::output;
-    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
-    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
-        vec![(None, dir.to_path_buf())]
-    } else {
-        group.dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { dir.to_path_buf() } else { dir.join(label) })).collect()
-    };
+    let binding = device_binding();
+    let runs = dialect_runs(&group.dialects, dir);
     let mut files = 0;
     let mut outputs = Vec::with_capacity(runs.len());
     for (dialect, dir) in &runs {
@@ -575,6 +563,21 @@ fn run_pack_dialects(
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
     }
     Ok(Some((files, outputs)))
+}
+
+/// Each dialect's run and its directory: the first into `out`, each other into `out/<dialect>`; one run as written
+/// into `out` where there is no dialect.
+fn dialect_runs(dialects: &[&'static str], out: &std::path::Path) -> Vec<(Option<&'static str>, std::path::PathBuf)> {
+    if dialects.is_empty() {
+        return vec![(None, out.to_path_buf())];
+    }
+    dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
+}
+
+/// The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+fn device_binding() -> super::typing::file_local::Binding {
+    use super::typing::file_local::Binding;
+    if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu }
 }
 
 /// The files a pack's runs read, and each run's outputs (`run_pack_dialects`).
