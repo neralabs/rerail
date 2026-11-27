@@ -322,14 +322,25 @@ Leaves alone:
   deploy files (Procfile, render.yaml, railway.toml/json, fly.toml, vercel.json, netlify.toml, app.yaml), a Makefile,
   or a JS/TS script named for migrations (`migrate.mjs`, `run-migrations.ts`), four directory levels deep, past
   node_modules, tests and build output. Such a file counts for a migrations folder unless a package.json sits between
-  them: `apps/web/.env` sets the web app's connection, not `packages/db`'s.
+  them: `apps/web/.env` sets the web app's connection, not `packages/db`'s;
+- every migration of a folder whose runner sets the timeout on its connection: a JS/TS source file (not a test, spec,
+  story or declaration file, within the same four-level walk) that sends a non-zero `SET lock_timeout` in a string or
+  template literal (`client.query("SET lock_timeout = '5s'")`) and names the folder by its last segment in another
+  (`migrate(db, { migrationsFolder: "./drizzle" })`, `resolve("migrations")`), when it lies inside the folder's
+  package (no package.json above the folder that is not above the file too). Startup code in `apps/server/src/…`
+  running the root `migrations/` counts; runtime code that sets a timeout for its own transactions names no
+  migrations folder and does not;
+- migrations of an example project (`examples/`, `example/`), out of scope like test and fixture folders: nobody
+  deploys them from the repository.
 
 Gaps: a timeout set on the database role outside the repository (managed Postgres consoles, infrastructure repos) is
 unknowable; the rule logs for that reason. `SET LOCAL` outside a transaction block is accepted, though under Prisma
 >= 7.4 (statements run one by one) it has no effect. `DROP INDEX` without CONCURRENTLY locks its table, which the
 statement does not name; not counted. `LOCK TABLE` itself waits in the queue like any statement but is not counted:
-a migration that takes it has planned the lock. A runner that sets the timeout in a TypeScript file outside the listed
-names, or deeper than four levels, is not read (the test set's first false shape, below).
+a migration that takes it has planned the lock. A runner in another package than its migrations folder (an app's
+server running `packages/db/migrations`), deeper than four levels, or one that does not name the folder in a string
+literal is not read; a runner names a folder only by its last segment, so it counts for every `migrations` folder of
+its package.
 
 Sources:
 - GoCardless, Zero-downtime Postgres migrations: the hard parts
@@ -370,18 +381,25 @@ no table). Log: a timeout set on the role outside the repository cannot be seen,
 `20261012000000_required_content_step_theme_segment_columns` (the first of ten ALTERs, on `Content`), and four at low
 impact: Zero's and dittofeed's foreign keys from new tables to the existing `mail0_user` and `Workspace`,
 saas-starter-kit's `VARCHAR(256)` widening on `jackson_store` (no rewrite, but ACCESS EXCLUSIVE), latitude-llm's `ADD
-COLUMN` on `trace_deletion_requests`, a table a migration of the same day created. The two not real, each a shape
-the rule needs a structural fix for before it can start on:
+COLUMN` on `trace_deletion_requests`, a table a migration of the same day created. The two not real, each fixed since
+by what the code does:
 - **A timeout set by the app's own migration runner.** Reactive-Resume applies its migrations from TypeScript startup
   code (`apps/server/src/startup/checks.ts`), which sends `SET lock_timeout = '5s'` before them, with a comment on the
-  lock queue. The rule looks for a timeout only in migrations, config, CI and deploy files and scripts named for
-  migrations, so a runner anywhere else is not seen. Fix: count a non-zero `SET lock_timeout` (the `lt_sets` test
-  a migration's own statement passes) in a string literal of any JS/TS source file, outside tests, of the package that
-  holds the migrations folder, instead of a list of file names.
+  lock queue. The rule looked for a timeout only in migrations, config, CI and deploy files and scripts named for
+  migrations. Fixed: a JS/TS source file of the package that holds the folder that sends a non-zero `SET
+  lock_timeout` and names the folder counts as its runner (`lt_runner_timeout`; cases `runner/`, `runner-zero/`,
+  `runner-runtime/`).
 - **An example app's migration.** dittofeed's `examples/supabase/supabase/migrations/20221017024722_init.sql`, the init
   migration of an example Supabase project nobody deploys from the repository, creates `profiles` with a foreign key
-  to Supabase's `auth.users`. Fix: leave `**/examples/**` and `**/example/**` out of the rule's scope (its `.scope
-  exclude`), as test and fixture folders already are.
+  to Supabase's `auth.users`. Fixed: `**/examples/**` and `**/example/**` are out of the rule's scope (its `.scope
+  exclude`), as test and fixture folders already are (case `examples/blog/supabase/…`).
+
+Re-run on the branch head's engine (one `run-rr` per app): test set 9 → 7 matches, the two above gone; the 7 left are
+the six real ones and lobe-chat's `0230_custom_emoji_and_reactions.sql:54`, a foreign key from the new
+`channel_message_reactions` to the existing `channels` (real, low impact), which the frozen run's engine did not report.
+Held-out 5 → 5, unchanged. Corpus, 33 apps: 24 → 15; the 9 gone are all in supabase/supabase's `examples/` (example
+Supabase projects' init and auth migrations), none real by the same reading as dittofeed's; no runner fix removed a
+corpus match.
 
 Held-out, 8 apps: 6 matches, 5 real; the sixth, an operator-run migration that takes `LOCK TABLE … IN ACCESS EXCLUSIVE
 MODE` before altering the table, is left alone since the explicit-lock fix (5 of 5 on the re-run).

@@ -50,8 +50,10 @@ import of a bare package.
 **Rules affected and workaround.** Every cross-file rule resolves imports itself, keyed on file paths: relative
 specifiers with TypeScript's extensions and `index` files, `@/` and `~/` (and `#/`) by layout, and, in
 module-query-client-in-ssr and query-client-factory-called-in-render, tsconfig/jsconfig `paths` found by a `dir_entry`
-walk (the `tsr_` shim). dehydrated-state-json-stringify and same-key-different-query-fn avoid resolution: they read
-an import's binding (`import_binding`, `ref_site`) in the file only. The six resolvers are listed in
+walk (the `tsr_` shim). dehydrated-state-json-stringify avoids resolution: it reads an import's binding
+(`import_binding`, `ref_site`) in the file only. same-key-different-query-fn reads its fetchers the same way and
+resolves a key factory's root with tsx/names' `sym_of` (its declaration through imports and re-exports, after the
+fixes after the first test set). The six resolvers are listed in
 [NOTES-tanstack-query.md](NOTES-tanstack-query.md#library-candidates).
 
 **Status.** `engine-tsconfig` makes `tsconfig`, `tsconfig_for` and `tsconfig_path` (TypeScript's project reader,

@@ -31,28 +31,41 @@
 //   makeApiClient() returning the app's own `QueryClient` class            not reported: not TanStack Query's
 //   a wrapper in test-utils.tsx, testing/, mocks/ or .storybook/           not reported: a client per test is the point
 // Gaps: a factory reached only through an object (`clients.make()`), a class's static method, `export default`, a
-// workspace package imported by name, or more than one wrapper deep; a call inside a ternary or `&&` in JSX is left
-// alone with the lazy-init forms; a component whose name is not PascalCase (and not passed to memo or forwardRef) is
-// not seen as one; a non-async Server Component that never calls dehydrate is reported. Engine gap: a .tsx file's
-// cross-file join never sees .ts files (and the reverse), so a component in a .tsx file calling a factory in a .ts
-// file, the commonest layout, is missed until the engine joins the two.
+// workspace package imported by name, or more than one wrapper deep; a wrapper declared inside another function is
+// followed only to a factory of its own file; a call inside a ternary or `&&` in JSX is left alone with the lazy-init
+// forms; a component whose name is not PascalCase (and not passed to memo or forwardRef) is not seen as one; a
+// non-async Server Component that never calls dehydrate is reported. Engine gap: a .tsx file's cross-file join never
+// sees .ts files (and the reverse), so a component in a .tsx file calling a factory in a .ts file, the commonest
+// layout, is missed until the engine joins the two.
 
 #include "tsx/react-hooks.rerail"
 
 .violation QueryClientFactoryInRender(at: node, fn: symbol, line: number, path: symbol) "`{fn}()` returns a new QueryClient each time it is called ({path}:{line}), and this component or Hook calls it on every render: each re-render starts from an empty cache, so queries refetch, optimistic updates and cached pages are lost, and a suspending query can loop. Keep one client: `const [queryClient] = useState(() => {fn}())`, or, where the first render can suspend with no Suspense boundary below this component (a Next.js or SSR provider), a getter that makes a client per server request and keeps one in the browser (TanStack's `getQueryClient()` with `isServer`). Leave it in a Server Component, which renders once per request."
-QueryClientFactoryInRender(c, x, l, p) :- tqf_fresh(g, n), tqf_def(e, g), field(c, "function", e), kind(c, "call_expression"),
-    nearest(c, f, function_kind), hook_direct(f), f != g, !op(f, "async"), !tqf_kept(c, f), !tqf_server(f),
-    docof(c, d), !tqf_test_doc(d), text(e, x), line(n, l), docof(n, dn), doc(dn, p, _).
+// A top-level factory, this file's or another's, by its symbol (tqf_fresh_sym, across files); a function declared in
+// a narrower scope of this file, by its node.
+QueryClientFactoryInRender(c, x, l, p) :- tqf_render(c, f, e), tqf_callee(e, q), !tqf_key(f, q), tqf_fresh_sym(q, l, p),
+    text(e, x).
+QueryClientFactoryInRender(c, x, l, p) :- tqf_render(c, f, e), tqf_def(e, g), !tqf_key(g, _), f != g, tqf_fresh(g, n),
+    text(e, x), line(n, l), docof(n, dn), doc(dn, p, _).
+// tqf_render(c, f, e): call c of the function e names runs on every render of component or Hook f: not in a Hook's
+// argument, an assignment or a branch, not in an async or prefetching Server Component, and not in a test helper.
+.decl tqf_render(c: node, f: node, e: node)
+tqf_render(c, f, e) :- kind(c, "call_expression"), field(c, "function", e), kind(e, "identifier"),
+    nearest(c, f, function_kind), hook_direct(f), !op(f, "async"), !tqf_kept(c, f), !tqf_server(f), docof(c, d),
+    !tqf_test_doc(d).
+// tqf_callee(e, q): the called name e denotes the binding q ("module#name"): a top-level declaration of this file, or
+// an import tsx/names resolves and follows through re-exports (sym_of).
+.decl tqf_callee(e: node, q: symbol)
+tqf_callee(e, q) :- tqf_render(_, _, e), sym_of(e, q).
 
 // tqf_client(e, n): expression e is n, a `new QueryClient(…)` of TanStack Query (any adapter or query-core, or v3's
 // react-query), however the class was imported or re-exported.
 .decl tqf_client(e: node, n: node)
-tqf_client(e, n) :- kind(n, "new_expression"), field(n, "constructor", k), tqfr_sym_of(k, q), tqf_sym(q, "QueryClient"),
-    deparen(e, n).
-// tqf_sym(q, x): symbol q is TanStack Query's export x: `@tanstack/react-query#x`, any other adapter's or query-core's,
-// or v3's `react-query#x`.
-.decl tqf_sym(q: symbol, x: symbol)
-tqf_sym(q, x) :- tqfr_sym_of(_, q), match("(@tanstack/[a-z-]*query[a-z-]*|react-query)#(?<x>[A-Za-z]+)", q).
+tqf_client(e, n) :- kind(n, "new_expression"), field(n, "constructor", k), tqf_sym(k, "QueryClient"), deparen(e, n).
+// tqf_sym(n, x): name n denotes TanStack Query's export x: `@tanstack/react-query#x`, any other adapter's or
+// query-core's, or v3's `react-query#x`.
+.decl tqf_sym(n: node, x: symbol)
+tqf_sym(n, x) :- sym_of(n, q), match("(@tanstack/[a-z-]*query[a-z-]*|react-query)#(?<x>[A-Za-z]+)", q).
 
 // tqf_ret(f, v): function f returns v: an arrow's expression body, or the value of a `return` whose own function is f;
 // a returned name of f's own that is never assigned again stands for its initial value
@@ -81,8 +94,8 @@ tqf_has_value(r) :- kind(r, "return_statement"), child(r, v, _), !kind(v, "comme
 tqf_fresh0(f, n) :- tqf_ret(f, v), tqf_client(v, n), !tqf_other0(f), !tqf_bare(f).
 .decl tqf_other0(f: node)
 tqf_other0(f) :- tqf_ret(f, v), !tqf_client(v, _).
-// tqf_fresh(f, n): every value f returns is a new QueryClient or the result of a tqf_fresh0 factory (one hop:
-// `const makeClient = () => makeQueryClient()`). A factory that also returns a kept client (`browserClient`,
+// tqf_fresh(f, n): every value f returns is a new QueryClient or the result of a tqf_fresh0 factory of this file (one
+// hop: `const makeClient = () => makeQueryClient()`). A factory that also returns a kept client (`browserClient`,
 // `client ??= …`) has another return and is not fresh.
 .decl tqf_fresh(f: node, n: node)
 tqf_fresh(f, n) :- tqf_fresh0(f, n).
@@ -92,13 +105,48 @@ tqf_hop(v, n) :- deparen(v, c), kind(c, "call_expression"), field(c, "function",
 .decl tqf_other1(f: node)
 tqf_other1(f) :- tqf_ret(f, v), !tqf_client(v, _), !tqf_hop(v, _).
 
-// tqf_def(e, g): identifier e names function g: declared in this file (any scope), or imported and followed through
-// re-exports to the top-level declaration of the module that defines it.
+// A top-level factory may also hop to an imported one: each file states its top-level functions by symbol, path and
+// line, and tqf_fresh_sym joins them across files.
+// tqf_key(g, q): function g is declared at the top of its file as q ("module#name").
+.decl tqf_key(g: node, q: symbol)
+tqf_key(g, @qname(m, x)) :- tqf_site_fn(s, g), top_level(s, x), docof(s, d), ts_module(d, m).
+// tqf_ihop(v, h): returned value v calls an imported name that denotes h (sym_of).
+.decl tqf_ihop(v: node, h: symbol)
+tqf_ihop(v, h) :- tqf_ret(_, v), deparen(v, c), kind(c, "call_expression"), field(c, "function", e),
+    kind(e, "identifier"), ref_site(e, sp), import_binding(sp, _, _, _), sym_of(e, h).
+// tqf_made(h, l, p): the top-level function h is a tqf_fresh0 factory; one of its new QueryClients is at line l of the
+// file at path p.
+.decl tqf_made(h: symbol, l: number, p: symbol)
+tqf_made(h, l, p) :- tqf_fresh0(g, n), tqf_key(g, h), line(n, l), docof(n, d), doc(d, p, _).
+// tqf_top_ok(q): the top-level function q returns only new QueryClients, results of this file's tqf_fresh0
+// factories, or results of imported calls (tqf_top_hop), and has no bare `return;`.
+.decl tqf_top_ok(q: symbol)
+tqf_top_ok(q) :- tqf_key(f, q), tqf_ret(f, _), !tqf_other2(f), !tqf_bare(f).
+.decl tqf_other2(f: node)
+tqf_other2(f) :- tqf_ret(f, v), !tqf_client(v, _), !tqf_hop(v, _), !tqf_ihop(v, _).
+// tqf_top_line(q, l, p): a new QueryClient q makes, for the message: its own where it returns no factory's result,
+// else that of a factory of this file it returns.
+.decl tqf_top_line(q: symbol, l: number, p: symbol)
+tqf_top_line(q, l, p) :- tqf_key(f, q), tqf_ret(f, v), tqf_hop(v, n), line(n, l), docof(n, d), doc(d, p, _).
+tqf_top_line(q, l, p) :- tqf_key(f, q), tqf_ret(f, v), tqf_client(v, n), !tqf_hops(f), line(n, l), docof(n, d),
+    doc(d, p, _).
+.decl tqf_hops(f: node)
+tqf_hops(f) :- tqf_ret(f, v), (tqf_hop(v, _) ; tqf_ihop(v, _)).
+// tqf_top_hop(q, h): the top-level function q returns the result of h, imported.
+.decl tqf_top_hop(q: symbol, h: symbol)
+tqf_top_hop(q, h) :- tqf_key(f, q), tqf_ret(f, v), tqf_ihop(v, h).
+// tqf_unmade(q): q returns an imported call's result whose function is no tqf_fresh0 factory.
+.decl tqf_unmade(q: symbol) cross_file
+tqf_unmade(q) :- tqf_top_hop(q, h), !tqf_made(h, _, _).
+// tqf_fresh_sym(q, l, p): every value the top-level function q returns is a new QueryClient (tqf_fresh), with an
+// imported factory one hop away too; one of them is at line l of the file at path p.
+.decl tqf_fresh_sym(q: symbol, l: number, p: symbol) cross_file
+tqf_fresh_sym(q, l, p) :- tqf_top_ok(q), !tqf_unmade(q), tqf_top_line(q, l, p).
+tqf_fresh_sym(q, l, p) :- tqf_top_ok(q), !tqf_unmade(q), tqf_top_hop(q, h), tqf_made(h, l, p).
+
+// tqf_def(e, g): identifier e names function g, declared in this file (any scope).
 .decl tqf_def(e: node, g: node)
 tqf_def(e, g) :- kind(e, "identifier"), ref_site(e, s), tqf_site_fn(s, g).
-tqf_def(e, g) :- kind(e, "identifier"), ref_site(e, sp), import_binding(sp, _, _, _), tqfr_sym_of(e, q), tqf_sym_fn(q, g).
-.decl tqf_sym_fn(q: symbol, g: node)
-tqf_sym_fn(q, g) :- tqf_site_fn(s, g), top_level(s, x), docof(s, d), doc(d, _, m), q = @qname(m, x).
 // tqf_site_fn(s, g): declaration site s holds function g: `function f() {}`, `const f = () => …`, `const f = function () {}`.
 .decl tqf_site_fn(s: node, g: node)
 tqf_site_fn(s, s) :- kind(s, "function_declaration").
@@ -124,106 +172,12 @@ tqf_plain_binary(a) :- kind(a, "binary_expression"), !op(a, "&&"), !op(a, "||"),
 
 // tqf_server(f): f prefetches on the server: it calls TanStack Query's dehydrate (passed to HydrationBoundary).
 .decl tqf_server(f: node)
-tqf_server(f) :- kind(k, "call_expression"), field(k, "function", e), tqfr_sym_of(e, q), tqf_sym(q, "dehydrate"),
+tqf_server(f) :- kind(k, "call_expression"), field(k, "function", e), tqf_sym(e, "dehydrate"),
     nearest(k, f, function_kind).
 
 // tqf_test_doc(d): test helpers outside the scope's test folders: `test-utils.tsx`, `testing/`, `.storybook/`, `mocks/`.
 .decl tqf_test_doc(d: number)
 tqf_test_doc(d) :- doc(d, p, _), match("(.*/)?(test-?utils?|testUtils|test-helpers?|testing|mocks|\\.storybook)(/.*|\\.[a-z]+)", p).
-
-// ==== library candidate: import resolution (tqfr_, the tsconfig shim) ==============================================
-// core's tsconfig_for and tsconfig_path have no producer in the .rerail runners and a program may not derive them, so
-// tsx/names' target and sym_of are refused. tqfr_ re-derives them from `file` and `file_line`: the nearest
-// tsconfig.json (else jsconfig.json), relative `extends` up to four levels, the nearest `paths` block (first target of
-// each entry, joined to that file's baseUrl or directory), read line by line as JSON with `//` comments. Then names'
-// target, exports, symbol and sym_of over it: tqfr_sym_of(n, q) is names' sym_of(n, q).
-// ---- nearest config ----------------------------------------------------------------------------------------------
-.decl tqfr_anc(p: symbol, dir: symbol)  // dir is p's directory or one above it ("" the root)
-tqfr_anc(p, @dir(p)) :- doc(_, p, _).
-tqfr_anc(p, @dir(dir)) :- tqfr_anc(p, dir), dir != "".
-// tqfr_cfg_file(dir, f): directory dir holds config file f (tsconfig.json, else jsconfig.json). Found by walking the
-// tree with dir_entry, not from the documents or `file`: the runner's file_line requests may read no base relation
-// (decision 0065 §2a). The walk skips dot folders and node_modules and goes three folders deep (apps/web/src).
-.decl tqfr_walk(dir: symbol)
-tqfr_walk("").
-tqfr_walk(c) :- tqfr_walk(dir), @count_matches("/", dir) < 2, dir_entry(dir, n, 1), !prefix(".", n), n != "node_modules",
-    c = @join(dir, n).
-.decl tqfr_cfg_file(dir: symbol, f: symbol)
-tqfr_cfg_file(dir, f) :- tqfr_cfg_named(dir, f, "tsconfig.json").
-tqfr_cfg_file(dir, f) :- tqfr_cfg_named(dir, f, "jsconfig.json"), !tqfr_cfg_named(dir, _, "tsconfig.json").
-.decl tqfr_cfg_named(dir: symbol, f: symbol, n: symbol)
-tqfr_cfg_named(dir, @join(dir, n), n) :- tqfr_walk(dir), dir_entry(dir, n, 0), (n = "tsconfig.json" ; n = "jsconfig.json").
-.decl tqfr_cfg_for(p: symbol, dir: symbol)
-tqfr_cfg_for(p, dir) :- tqfr_anc(p, dir), tqfr_cfg_file(dir, _), !tqfr_nearer(p, dir).
-.decl tqfr_nearer(p: symbol, dir: symbol)
-tqfr_nearer(p, dir) :- tqfr_anc(p, dir), tqfr_cfg_file(dir, _), tqfr_anc(p, d2), tqfr_cfg_file(d2, _), strlen(d2) > strlen(dir).
-// ---- extends chain -----------------------------------------------------------------------------------------------
-.decl tqfr_chain(dir: symbol, f: symbol, k: number)  // f is the k-th config of dir's chain (0: its own)
-tqfr_chain(dir, f, 0) :- tqfr_cfg_file(dir, f).
-tqfr_chain(dir, f2, k + 1) :- tqfr_chain(dir, f, k), k < 4, tqfr_extends(f, f2).
-// tqfr_extends(f, f2): f extends the config file f2, named relative to f ("./base.json", "../../tsconfig"); a name
-// without .json is tried as written and with .json (the one that does not exist simply has no lines).
-.decl tqfr_extends(f: symbol, f2: symbol)
-tqfr_extends(f, f2) :- tqfr_extends_name(f, f2).
-tqfr_extends(f, cat(j, ".json")) :- tqfr_extends_name(f, j), !suffix(".json", j).
-.decl tqfr_extends_name(f: symbol, j: symbol)
-tqfr_extends_name(f, @join(@dir(f), x)) :- tqfr_chain(_, f, _), file_line(f, _, t),
-    match("\\s*\"extends\"\\s*:\\s*\"(?<x>\\.[^\"]*)\".*", t).
-// ---- paths -------------------------------------------------------------------------------------------------------
-.decl tqfr_paths_open(f: symbol, i: number)
-tqfr_paths_open(f, i) :- tqfr_chain(_, f, _), file_line(f, i, t), match(".*\"paths\"\\s*:\\s*\\{.*", t).
-.decl tqfr_close(f: symbol, j: number)
-tqfr_close(f, j) :- tqfr_paths_open(f, _), file_line(f, j, t), match("\\s*\\}\\s*,?\\s*", t).
-.decl tqfr_paths_line(f: symbol, i: number, t: symbol)  // a line of f's paths block
-tqfr_paths_line(f, i, t) :- tqfr_paths_open(f, o), e = min j : { tqfr_close(f, j), j > o }, file_line(f, i, t), i >= o, i <= e.
-tqfr_paths_line(f, i, t) :- tqfr_paths_open(f, o), !tqfr_closed_after(f, o), file_line(f, i, t), i >= o.
-.decl tqfr_closed_after(f: symbol, o: number)
-tqfr_closed_after(f, o) :- tqfr_paths_open(f, o), tqfr_close(f, j), j > o.
-.decl tqfr_entry(f: symbol, pat: symbol, v: symbol)  // f's paths maps pat to v (its first target)
-tqfr_entry(f, k, v) :- tqfr_paths_line(f, _, t), match_all("\"(?<k>[^\"]+)\"\\s*:\\s*\\[\\s*\"(?<v>[^\"]+)\"", t),
-    match(".*[*/@~#$].*", k).
-tqfr_entry(f, k, v) :- tqfr_paths_line(f, i, t), match(".*\"(?<k>[^\"]+)\"\\s*:\\s*\\[\\s*", t), match(".*[*/@~#$].*", k),
-    i2 = i + 1, file_line(f, i2, t2), match("\\s*\"(?<v>[^\"]+)\".*", t2).
-.decl tqfr_base(f: symbol, b: symbol)  // f's baseUrl, joined to f's directory
-tqfr_base(f, @join(@dir(f), b)) :- tqfr_chain(_, f, _), file_line(f, _, t), match("\\s*\"baseUrl\"\\s*:\\s*\"(?<b>[^\"]*)\".*", t).
-.decl tqfr_has_paths(f: symbol)
-tqfr_has_paths(f) :- tqfr_entry(f, _, _).
-.decl tqfr_cfg_path(dir: symbol, pat: symbol, to: symbol)
-tqfr_cfg_path(dir, pat, @join(r, v)) :- tqfr_chain(dir, f, k), tqfr_has_paths(f),
-    k = min j : { tqfr_chain(dir, g, j), tqfr_has_paths(g) }, tqfr_entry(f, pat, v), tqfr_root(f, r).
-.decl tqfr_root(f: symbol, r: symbol)  // what f's paths targets are relative to
-tqfr_root(f, b) :- tqfr_has_paths(f), tqfr_base(f, b).
-tqfr_root(f, @dir(f)) :- tqfr_has_paths(f), !tqfr_base(f, _).
-// ---- targets and symbols (tsx/names' target, exports, symbol, sym_of, ns_target, over tqfr_cfg_path) -------------
-.decl tqfr_target(d: number, s: symbol, t: symbol)
-tqfr_target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _), resolve_base(@join(@dir(p), s), t).
-tqfr_target(d, s, t) :- docof(i, d), import_spec(i, s), !prefix(".", s), doc(d, p, _), tqfr_cfg_for(p, dir),
-    tqfr_cfg_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(sub, t).
-tqfr_target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !prefix(".", s), !tqfr_mapped(d, s).
-.decl tqfr_mapped(d: number, s: symbol)
-tqfr_mapped(d, s) :- docof(i, d), import_spec(i, s), doc(d, p, _), tqfr_cfg_for(p, dir), tqfr_cfg_path(dir, pat, to),
-    @glob_sub(pat, to, s) != "".
-.decl tqfr_exports(m: symbol, x: symbol, q: symbol)
-tqfr_exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), exported_decl(e, x).
-tqfr_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), export_from(e, s, y, x),
-    tqfr_target(d, s, t), tqfr_symbol(t, y, q).
-tqfr_exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), star_export(e, s),
-    tqfr_target(d, s, t), tqfr_exports(t, x, q), x != "default".
-.decl tqfr_symbol(t: symbol, x: symbol, q: symbol)
-tqfr_symbol(t, x, q) :- tqfr_exports(t, x, q).
-tqfr_symbol(t, x, @qname(t, x)) :- tqfr_symbol_query(t, x), !doc(_, _, t).
-.decl tqfr_symbol_query(t: symbol, x: symbol)
-tqfr_symbol_query(t, y) :- kind(e, "export_statement"), docof(e, d), export_from(e, s, y, _), tqfr_target(d, s, t).
-tqfr_symbol_query(t, x) :- import_binding(sp, _, s, x), x != "*", docof(sp, d), tqfr_target(d, s, t).
-tqfr_symbol_query(t, x) :- tqfr_ns_target(o, t), field(n, "object", o), field(n, "property", p), text(p, x).
-.decl tqfr_ns_target(o: node, t: symbol)
-tqfr_ns_target(o, t) :- ref_site(o, sp), import_binding(sp, _, s, "*"), docof(o, d), tqfr_target(d, s, t).
-.decl tqfr_sym_of(n: node, q: symbol)
-tqfr_sym_of(n, q) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*",
-    docof(n, d), tqfr_target(d, s, t), tqfr_symbol(t, x, q).
-tqfr_sym_of(n, q) :- kind(n, "member_expression"), field(n, "object", o), tqfr_ns_target(o, t),
-    field(n, "property", p), text(p, x), tqfr_symbol(t, x, q).
-tqfr_sym_of(n, @qname(m, x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d), doc(d, _, m).
 
 // The cases, `cases/tanstack-query-practice-query-client-factory-called-in-render/`, read as one repository: each line
 // ending in `// caught` is reported, and no other line. A line marked `// cross-lane` is a real finding the engine

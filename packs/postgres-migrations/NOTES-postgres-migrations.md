@@ -373,6 +373,42 @@ Per rule, and what follows:
   as `../../rules/lib/postgres-migrations.rerail` and read the shared `../../cases/_git/` and
   `../../cases/_other-databases/`.
 
+## Fixes after the first test set
+
+`lock-timeout` (off, 6 of 8 real): one fix per false shape, each with a case, measured before and after with the
+branch head's engine (`run-rr` of the one rule per app on the fleet workspace; "before" is the rule at the branch
+head, "after" the working tree). It stays off; the second test set decides.
+
+- **The app's own migration runner sets the timeout** (Reactive-Resume `migrations/20261113160840_rapid_reaper/
+  migration.sql:1`). `lt_runner_timeout` (rule file, below `lt_config_sets`): a JS/TS source file of lib's walk (not a
+  test, spec, story or declaration file) that sends a non-zero `SET [LOCAL|SESSION] lock_timeout` or
+  `set_config('lock_timeout', …)` in a string or template literal (`lt_runner_sets`, the values `lt_sets` accepts or a
+  `${…}`), and has a string literal whose last path segment is the folder's last segment (`lt_runner_names`:
+  `resolveWorkspaceFolder("migrations")`, `migrationsFolder: "./drizzle"`), counts for the folder when it lies inside
+  the folder's package (no package.json above the folder that is not above the file). What separates it from runtime
+  code that sets a timeout for its own transactions (trigger.dev, civitai, usesend, formbricks in the corpus, lobe-chat
+  in the test set): naming the migrations folder. Cases: `runner/` (root `migrations/` run from
+  `apps/server/src/startup/database.ts`: left alone; `packages/billing/migrations/…`, another package the runner does
+  not run: caught), `runner-zero/` (`SET lock_timeout = '0'`: caught), `runner-runtime/` (a job's `SET LOCAL
+  lock_timeout` naming no folder: caught).
+- **An example project's migration** (dittofeed `examples/supabase/supabase/migrations/20221017024722_init.sql:2`).
+  `**/examples/**` and `**/example/**` join the rule's `.scope exclude`, beside tests and fixtures: nobody deploys an
+  example project from the repository. Case: `examples/blog/supabase/migrations/20221017024722_init.sql` (an FK to
+  `auth.users` and an ALTER: left alone) in the `cases` test, beside the caught `supabase/migrations/…comments.sql:1`.
+
+Before → after, every changed match read:
+
+| Set | Before | After | Gone (verdict) |
+|---|--:|--:|---|
+| Test set, 20 apps | 9 in 8 apps | 7 in 7 | Reactive-Resume `migrations/20261113160840_rapid_reaper/migration.sql:1` (not real: its runner sets 5s); dittofeed `examples/supabase/supabase/migrations/20221017024722_init.sql:2` (not real: example project) |
+| Held-out, 8 apps | 5 in 4 | 5 in 4 | none |
+| Corpus, 33 apps | 24 in 13 | 15 in 13 | 9, all supabase/supabase `examples/…/supabase/migrations/`: `database/employees/…20241205080043_add_department_to_employees_table.sql:1`, `edge-functions/…20260911000000_authenticated-mcp-server.sql:3`, `realtime/flutter-figma-clone/…20240808072352_auth.sql:1`, `todo-list/nextjs-todo-list/…20230712094349_init.sql:1`, `user-management/expo-push-notifications/…20231114120713_remote_schema.sql:13`, and the `…_init.sql:2` of `user-management/{expo,flutter,nextjs,swift}-user-management` (not real: example projects, the dittofeed shape) |
+
+No match appeared. The test set's 9 before includes lobe-chat `packages/database/migrations/
+0230_custom_emoji_and_reactions.sql:54`, which the frozen run's engine did not report: a foreign key from the new
+`channel_message_reactions` to the existing `channels` (real, low impact, like Zero's and dittofeed's); after the fixes
+the test set reads 7 of 7 real. The runner fix removed no corpus or held-out match.
+
 ## Every match read, with its verdict
 
 The writers' runs read each repository's whole migration history (every migration counted as pending, before the

@@ -31,3 +31,19 @@ export const getDailyReport = (f: ReportFilters & { groupBy: string }) =>
   getJson<{ date: string; seconds: number }[]>(`/api/reports/daily?team=${f.teamId}&groupBy=${f.groupBy}`);
 export const getDailyActivities = (employeeId: string) => getJson<{ title: string }[]>(`/api/activities/daily/${employeeId}`);
 export const getTimeLimits = (f: ReportFilters) => getJson<{ limit: number; used: number }[]>(`/api/time-limits?team=${f.teamId}`);
+
+export const listSavedSearches = (projectId: string) => getJson<{ slug: string }[]>(`/api/projects/${projectId}/saved-searches`);
+export const searchSavedSearches = (projectId: string) =>
+  getJson<{ slug: string; score: number }[]>(`/api/projects/${projectId}/saved-searches/search`);
+export const listTags = (projectId: string) => getJson<{ name: string }[]>(`/api/projects/${projectId}/tags`);
+export const listCustomBehaviors = (projectId: string) => getJson<{ id: string }[]>(`/api/projects/${projectId}/behaviors`);
+export const getBehaviorGrid = (projectId: string) => getJson<{ id: string; views: number }[]>(`/api/projects/${projectId}/behaviors/grid`);
+export const getRunMetrics = (tenant: string, range: string) => getJson<{ runs: number }>(`/api/${tenant}/runs/metrics?range=${range}`);
+export const getCloudRunMetrics = (tenant: string, range: string) =>
+  getJson<{ cpu: number }>(`/api/cloud/${tenant}/runs/metrics?range=${range}`);
+export const getRunMetricsSummary = (tenant: string, range: string) =>
+  getJson<{ total: number }>(`/api/${tenant}/runs/summary?range=${range}`);
+export const getMember = (id: string) => getJson<{ id: string; name: string }>(`/api/members/${id}`);
+export const getMemberProfile = (id: string) => getJson<{ id: string; bio: string }>(`/api/members/${id}/profile`);
+export const getTeam = (teamId: string) => getJson<{ id: string; name: string }>(`/api/teams/${teamId}`);
+export const getTeamStats = (teamId: string) => getJson<{ id: string; members: number }>(`/api/teams/${teamId}/stats`);

@@ -14,10 +14,14 @@
 // queryOptions, useQueries entries, prefetchQuery, fetchQuery, ensureQueryData, a wrapper hook's options). Its key
 // template is the key array with string, number and keyword elements kept, an object element as its sorted property
 // names (`{boardId, modified}`, `...` for a spread: the key hash sorts keys) and every other element `*`
-// (['user', *]), or a key factory call by its dotted name with its arguments read the same way
-// (`userKeys.detail(*)`). Its fetchers are the callees its queryFn calls or names (an aliased import by the name it
-// imports, any other name by its dotted text, the global `fetch`), the callees of a function of the same file it
-// calls (one hop), and for each call a string first argument (`fetch('/api/user/*')`).
+// (['user', *]), or a key factory call by the declaration it calls with its arguments read the same way
+// (`<module>#userKeys.detail(*)`: tsx/names' symbol for the factory's root, through imports, re-exports and `const
+// a = b` aliases, so two files' own `listKey` functions are two factories and an import of one is that one). A
+// definition inside a `createQueryKeyStore`/`createQueryKeys` object of @lukemorales/query-key-factory has the key
+// the library caches: its property path in front of its queryKey (['users', 'detail', *]). Its fetchers are the
+// callees its queryFn calls or names (an aliased import by the name it imports, any other name by its dotted text,
+// the global `fetch`), the callees of a function of the same file it calls (one hop), and for each call a string
+// first argument (`fetch('/api/user/*')`).
 // It reports both definitions of a pair in one package (the nearest package.json), both plain or both infinite,
 // with one key template and fetchers that have nothing in common:
 //   useQuery({ queryKey: ['user', id], queryFn: () => getUser(id) })                       a.ts
@@ -28,18 +32,28 @@
 //   - a definition with no queryFn (an observer of an entry another query fills) or a shorthand `{ queryKey,
 //     queryFn }`, and one whose key is a variable, has a spread, or (an array) has no string element;
 //   - keys whose object elements or factory arguments differ: ['boards', { teamId }] and ['boards', { boardId }];
+//     calls of two factories of one name (each file's own `const listKey = …`); and two entries of a
+//     query-key-factory store with one returned queryKey (the library puts each entry's path in front of it);
 //   - two definitions sharing a fetcher: the same callee with a different `select` or other arguments, a direct
 //     reference and a call (`queryFn: getUser` and `() => getUser(id)`), the same function under another import
 //     name, a same-file helper that calls it; the same callee with string arguments in common, or one not a string;
 //   - a queryFn that calls a parameter of an enclosing function (a wrapper hook's fetcher), or only locals and
 //     globals other than fetch (its fetcher is unknown);
 //   - a plain and an infinite query (tanstack-query-practice-infinite-and-plain-share-key reports those), and two
-//     definitions in different packages of a monorepo (different apps have different QueryClients).
+//     definitions in different packages of a monorepo (different apps have different QueryClients);
+//   - a prefetch (`fetchQuery`, `prefetchQuery`, `ensureQueryData` and their infinite forms) in a file that calls
+//     TanStack Query's `dehydrate`: a server render filling the cache it hands to the browser, whose fetcher is the
+//     server's way to the data the browser's query fetches (`ssrApi.getDashboard` and `getDashboard`), so the two
+//     have different fetchers by design.
 // Gaps: two wrappers around one endpoint in different files (`getUser` and `api.users.get`) are different
 // fetchers; the same fetcher with a transform outside `select` is the same one; `*` elements are not compared, so
 // ['user', id] and ['user', slug] meet; the v3 positional form `useQuery(key, fn)` is not read; a .ts and a .tsx
 // definition are not paired until the engine joins the two lanes; two definitions whose queryFn start on one line (a
-// one-line `useQueries`) are one, by path and line, and are not paired.
+// one-line `useQueries`) are one, by path and line, and are not paired; a factory imported from a module tsx/names
+// cannot resolve is read by the name it imports, and so meets only other calls of that name the same way; a
+// query-key-factory definition under `contextQueries` or returned from a block body has no template; a server
+// prefetch whose file does not itself call dehydrate is paired as any definition is, and one whose fetcher returns
+// another shape than the browser's query is not reported.
 
 #include "tsx/names.rerail"
 
@@ -103,16 +117,87 @@ skd_okey(e, x) :- skd_elem(_, e, _), kind(e, "object"), child(e, p, _), kind(p, 
 skd_okey(e, "...") :- skd_elem(_, e, _), kind(e, "object"), child(e, p, _), kind(p, "spread_element").
 // skd_key(o, t): o's key template. An array with a spread or no string element has none.
 .decl skd_key(o: node, t: symbol)
-skd_key(o, cat("[", s, "]")) :- skd_prop(o, "queryKey", a), kind(a, "array"),
+skd_key(o, cat("[", s, "]")) :- skd_prop(o, "queryKey", a), kind(a, "array"), !skd_in_qkf(o),
     count : { skd_elem(a, e, _), kind(e, "spread_element") } = 0,
     count : { skd_elem(a, e, _), kind(e, k), (k = "string" ; k = "template_string") } > 0,
     s = join t by i sep ", " : { skd_elem(a, e, i), skd_tok(e, t) }.
-// A key factory call: `userKeys.detail(id)` is the factory's dotted name and its arguments read as array elements
-// do, so `daily({ ...p, groupBy })` and `daily({ employeeId })` are two templates.
+// A key factory call: `userKeys.detail(id)` is the factory it calls and its arguments read as array elements do, so
+// `daily({ ...p, groupBy })` and `daily({ employeeId })` are two templates.
 skd_key(o, cat(h, "(", s, ")")) :- skd_site(o), skd_prop(o, "queryKey", c), kind(c, "call_expression"),
-    field(c, "function", g), skd_ident(g, c, h), field(c, "arguments", a),
+    !skd_in_qkf(o), field(c, "function", g), skd_fac(g, h), field(c, "arguments", a),
     count : { skd_elem(a, e, _), kind(e, "spread_element") } = 0,
     s = join t by i sep ", " : { skd_elem(a, e, i), skd_tok(e, t) }.
+// A query-key-factory definition: its path, then its queryKey's elements (none for `queryKey: null` or `[]`).
+skd_key(o, cat("[", p, ", ", s, "]")) :- skd_qkf_def(o, p), skd_prop(o, "queryKey", a), kind(a, "array"),
+    count : { skd_elem(a, e, _), kind(e, "spread_element") } = 0, count : { skd_elem(a, _, _) } > 0,
+    s = join t by i sep ", " : { skd_elem(a, e, i), skd_tok(e, t) }.
+skd_key(o, cat("[", p, "]")) :- skd_qkf_def(o, p), skd_prop(o, "queryKey", a), kind(a, "array"),
+    count : { skd_elem(a, _, _) } = 0.
+skd_key(o, cat("[", p, "]")) :- skd_qkf_def(o, p), skd_prop(o, "queryKey", a), kind(a, "null").
+
+// skd_fac(g, h): key factory callee g (`listKey`, `userKeys.detail`) is h: the symbol of the declaration its root
+// names (tsx/names' sym_of, `module#name`: a top-level declaration of this file, or an import followed through
+// re-exports to its module), after `const a = b` aliases, then the rest of the dotted path. Two files' own
+// `listKey` functions are two factories; `listKey = customListKey` and an import of customListKey are one. A root
+// sym_of cannot name is its import's imported name (`import { a as b }` is a, a namespace or default import its
+// local name), else, declared inside a function, its file, name and line. A parameter or a global names none.
+.decl skd_fac(g: node, h: symbol)
+skd_fac(g, cat(q, substr(s, n, strlen(s) - n))) :- skd_fac_root(g, r), skd_fac_name(r, q), text(r, rt),
+    n = strlen(rt), skd_path(g, s).
+.decl skd_fac_root(g: node, r: node)
+skd_fac_root(g, g) :- skd_site(o), skd_prop(o, "queryKey", c), kind(c, "call_expression"), field(c, "function", g),
+    kind(g, "identifier").
+skd_fac_root(g, r) :- skd_site(o), skd_prop(o, "queryKey", c), kind(c, "call_expression"), field(c, "function", g),
+    kind(g, "member_expression"), field(g, "object", m), skd_root_up(m, r).
+// skd_alias(r, x): root r, or the identifier a `const`/`let` alias on the way from r binds it to.
+.decl skd_alias(r: node, x: node)
+skd_alias(r, r) :- skd_fac_root(_, r).
+skd_alias(r, x) :- skd_alias(r, y), ref_site(y, sp), binding_value(sp, x), kind(x, "identifier").
+.decl skd_aliased(y: node)
+skd_aliased(y) :- skd_alias(_, y), ref_site(y, sp), binding_value(sp, x), kind(x, "identifier").
+.decl skd_fac_name(r: node, q: symbol)
+skd_fac_name(r, q) :- skd_alias(r, y), !skd_aliased(y), sym_of(y, q).
+skd_fac_name(r, x) :- skd_alias(r, y), !skd_aliased(y), !sym_of(y, _), ref_site(y, sp), import_binding(sp, _, _, x),
+    x != "*", x != "default".
+skd_fac_name(r, x) :- skd_alias(r, y), !skd_aliased(y), !sym_of(y, _), ref_site(y, sp), import_binding(sp, x, _, i),
+    (i = "*" ; i = "default").
+skd_fac_name(r, cat(p, "#", x, "@", to_string(l))) :- skd_alias(r, y), !skd_aliased(y), !sym_of(y, _),
+    ref_site(y, sp), site_form(sp, f), f != "import", f != "param", text(y, x), docof(y, d), doc(d, p, _),
+    line(sp, l).
+
+// skd_in_qkf(o): definition o is inside a `createQueryKeyStore(…)` or `createQueryKeys(…)` call of
+// @lukemorales/query-key-factory, which caches it under its path followed by its queryKey: in
+//   createQueryKeyStore({ users: { detail: (id) => ({ queryKey: [id], queryFn }) } })
+//   createQueryKeys('users', { detail: (id) => ({ queryKey: [id], queryFn }) })
+// the key is ['users', 'detail', id]. skd_qkf_def(o, p) gives a definition reached through that path its prefix p
+// (`'users', 'detail'`); one under contextQueries, or returned from a block body, has none.
+.decl skd_qkf_call(c: node, x: symbol)
+skd_qkf_call(c, x) :- kind(c, "call_expression"), field(c, "function", g), kind(g, "identifier"), ref_site(g, sp),
+    import_binding(sp, _, "@lukemorales/query-key-factory", x), (x = "createQueryKeyStore" ; x = "createQueryKeys").
+.decl skd_in_qkf(o: node)
+skd_in_qkf(o) :- skd_site(o), skd_qkf_call(c, _), within(o, c).
+// skd_pname(n, k): a property name, `detail` or `'detail'`.
+.decl skd_pname(n: node, k: symbol)
+skd_pname(n, k) :- field(pr, "key", n), kind(pr, "pair"), (kind(n, "string"), str(n, k) ; !kind(n, "string"), text(n, k)).
+// skd_qkf_schema(s, p): object s holds entries whose keys start with p.
+.decl skd_qkf_schema(s: node, p: symbol)
+skd_qkf_schema(s, cat("'", k, "'")) :- skd_qkf_call(c, "createQueryKeyStore"), field(c, "arguments", al),
+    child(al, st, _), kind(st, "object"), child(st, pr, _), kind(pr, "pair"), field(pr, "key", n), skd_pname(n, k),
+    field(pr, "value", s), kind(s, "object").
+skd_qkf_schema(s, cat("'", k, "'")) :- skd_qkf_call(c, "createQueryKeys"), field(c, "arguments", al),
+    child(al, n, _), kind(n, "string"), str(n, k), child(al, s, _), kind(s, "object").
+// skd_qkf_entry(v, p): v is an entry's value, keyed by p.
+.decl skd_qkf_entry(v: node, p: symbol)
+skd_qkf_entry(v, cat(p, ", '", k, "'")) :- skd_qkf_schema(s, p), child(s, pr, _), kind(pr, "pair"), field(pr, "key", n),
+    skd_pname(n, k), field(pr, "value", v).
+// skd_qkf_val(v, x): x is v without parentheses, `as const` and `satisfies T`, or the expression an arrow returns.
+.decl skd_qkf_val(v: node, x: node)
+skd_qkf_val(v, v) :- skd_qkf_entry(v, _).
+skd_qkf_val(v, x) :- skd_qkf_val(v, w), (kind(w, "parenthesized_expression") ; kind(w, "as_expression") ;
+    kind(w, "satisfies_expression")), child(w, x, 0).
+skd_qkf_val(v, x) :- skd_qkf_val(v, w), kind(w, "arrow_function"), field(w, "body", x).
+.decl skd_qkf_def(o: node, p: symbol)
+skd_qkf_def(o, p) :- skd_qkf_entry(v, p), skd_qkf_val(v, o), kind(o, "object"), skd_site(o).
 
 // ---- fetchers ----------------------------------------------------------------------------------------------------
 // skd_callee(g, f): g is the callee of a call in queryFn f, f itself when it names a function, the callee of a call
@@ -185,10 +270,24 @@ skd_open(o, h) :- skd_call(o, h, c), skd_first(c, a), !skd_str(a, _).
 skd_open(o, h) :- skd_fetcher(o, h), skd_prop(o, "queryFn", f), skd_callee(f, f).
 
 // ---- pairs -------------------------------------------------------------------------------------------------------
-// skd_ready(o, t, k, pk): a definition with a template, a known fetcher and no parameter call, in package pk.
+// skd_ready(o, t, k, pk): a definition with a template, a known fetcher and no parameter call, in package pk. A
+// server prefetch for hydration (skd_hydrating) is none.
 .decl skd_ready(o: node, t: symbol, k: symbol, pk: symbol)
 skd_ready(o, t, k, pk) :- skd_key(o, t), skd_kind(o, k), skd_fetcher(o, _), skd_prop(o, "queryFn", f), !skd_param(f),
-    docof(o, d), doc(d, p, _), package_for(p, pk), skd_tq_dep(pk).
+    !skd_hydrating(o), docof(o, d), doc(d, p, _), package_for(p, pk), skd_tq_dep(pk).
+// skd_hydrating(o): o is the options object of a prefetch call (`queryClient.fetchQuery({ … })`) in a file that
+// calls dehydrate of a TanStack Query package (named, renamed, or `RQ.dehydrate` of a namespace import).
+.decl skd_hydrating(o: node)
+skd_hydrating(o) :- skd_site(o), child(al, o, _), kind(al, "arguments"), field(c, "arguments", al),
+    field(c, "function", g), kind(g, "member_expression"), field(g, "property", pr), text(pr, x),
+    (x = "fetchQuery" ; x = "prefetchQuery" ; x = "ensureQueryData" ; x = "fetchInfiniteQuery" ;
+    x = "prefetchInfiniteQuery" ; x = "ensureInfiniteQueryData"), docof(o, d), skd_dehydrates(d).
+.decl skd_dehydrates(d: number)
+skd_dehydrates(d) :- kind(c, "call_expression"), field(c, "function", g), kind(g, "identifier"), ref_site(g, sp),
+    import_binding(sp, _, m, "dehydrate"), glob("{@tanstack/*query*,react-query}", m), docof(c, d).
+skd_dehydrates(d) :- kind(c, "call_expression"), field(c, "function", g), kind(g, "member_expression"),
+    field(g, "property", pr), text(pr, "dehydrate"), field(g, "object", n), kind(n, "identifier"), ref_site(n, sp),
+    import_binding(sp, _, m, "*"), glob("{@tanstack/*query*,react-query}", m), docof(c, d).
 // skd_tq_dep(dir): the package in dir (its package.json) depends on TanStack Query (any `@tanstack/*query*` package,
 // v3's `react-query`) or tRPC's React Query integration; `{ queryKey, queryFn }` objects elsewhere are not its queries.
 .decl skd_tq_dep(dir: symbol)
@@ -231,6 +330,8 @@ skd_later(a, la, b, lb) :- skd_conflict(a, la, b, lb), skd_conflict(a, la, b2, l
     .fixture "apps/admin/package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/admin/package.json"
     .fixture "apps/admin/src/users.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/admin/src/users.ts"
     .fixture "apps/web/package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/package.json"
+    .fixture "apps/web/src/features/behaviors/behavior-grid.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/behaviors/behavior-grid.ts"
+    .fixture "apps/web/src/features/behaviors/custom-behaviors.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/behaviors/custom-behaviors.ts"
     .fixture "apps/web/src/features/billing/use-billing-user.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/billing/use-billing-user.ts"
     .fixture "apps/web/src/features/boards/use-board-summary.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/boards/use-board-summary.ts"
     .fixture "apps/web/src/features/boards/use-boards.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/boards/use-boards.ts"
@@ -241,9 +342,15 @@ skd_later(a, la, b, lb) :- skd_conflict(a, la, b, lb), skd_conflict(a, la, b2, l
     .fixture "apps/web/src/features/projects/use-project.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/projects/use-project.ts"
     .fixture "apps/web/src/features/reports/use-activities.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/reports/use-activities.ts"
     .fixture "apps/web/src/features/reports/use-daily-report.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/reports/use-daily-report.ts"
+    .fixture "apps/web/src/features/runs/run-metrics.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/runs/run-metrics.ts"
+    .fixture "apps/web/src/features/saved-searches/saved-searches.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/saved-searches/saved-searches.ts"
     .fixture "apps/web/src/features/settings/use-settings.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/settings/use-settings.ts"
     .fixture "apps/web/src/features/settings/use-theme.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/settings/use-theme.ts"
     .fixture "apps/web/src/features/stats/stats.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/stats/stats.ts"
+    .fixture "apps/web/src/features/tags/tags.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/tags/tags.ts"
+    .fixture "apps/web/src/features/teams/prefetch-team.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/teams/prefetch-team.ts"
+    .fixture "apps/web/src/features/teams/team-page.server.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/teams/team-page.server.ts"
+    .fixture "apps/web/src/features/teams/use-team.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/teams/use-team.ts"
     .fixture "apps/web/src/features/todos/done-list.tsx" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/todos/done-list.tsx"
     .fixture "apps/web/src/features/todos/queries.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/todos/queries.ts"
     .fixture "apps/web/src/features/todos/use-done-todos.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/features/todos/use-done-todos.ts"
@@ -252,18 +359,30 @@ skd_later(a, la, b, lb) :- skd_conflict(a, la, b, lb), skd_conflict(a, la, b2, l
     .fixture "apps/web/src/hooks/use-resource.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/hooks/use-resource.ts"
     .fixture "apps/web/src/lib/api.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/lib/api.ts"
     .fixture "apps/web/src/lib/keys.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/lib/keys.ts"
+    .fixture "apps/web/src/lib/queries.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/lib/queries.ts"
+    .fixture "apps/web/src/lib/server-api.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/src/lib/server-api.ts"
     .fixture "apps/web/tsconfig.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/apps/web/tsconfig.json"
     .fixture "package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/package.json"
     .fixture "tools/report-cache/package.json" from "../cases/tanstack-query-practice-same-key-different-query-fn/tools/report-cache/package.json"
     .fixture "tools/report-cache/src/reports.ts" from "../cases/tanstack-query-practice-same-key-different-query-fn/tools/report-cache/src/reports.ts"
+    .expect _ at "apps/web/src/features/behaviors/behavior-grid.ts":6
+    .expect _ at "apps/web/src/features/behaviors/custom-behaviors.ts":9
     .expect _ at "apps/web/src/features/billing/use-billing-user.ts":7
     .expect _ at "apps/web/src/features/boards/use-board-summary.ts":7
     .expect _ at "apps/web/src/features/boards/use-boards.ts":12
     .expect _ at "apps/web/src/features/orders/order-badge.tsx":7
     .expect _ at "apps/web/src/features/orders/order-panel.tsx":7
     .expect _ at "apps/web/src/features/projects/prefetch.ts":8
+    .expect _ at "apps/web/src/features/runs/run-metrics.ts":10
+    .expect _ at "apps/web/src/features/runs/run-metrics.ts":15
+    .expect _ at "apps/web/src/features/saved-searches/saved-searches.ts":8
+    .expect _ at "apps/web/src/features/saved-searches/saved-searches.ts":12
+    .expect _ at "apps/web/src/features/teams/prefetch-team.ts":6
+    .expect _ at "apps/web/src/features/teams/use-team.ts":5
     .expect _ at "apps/web/src/features/projects/use-project.ts":6
     .expect _ at "apps/web/src/features/todos/queries.ts":5
     .expect _ at "apps/web/src/features/todos/use-done-todos.ts":6
+    .expect _ at "apps/web/src/lib/queries.ts":16
+    .expect _ at "apps/web/src/lib/queries.ts":22
     .expect _ at "apps/web/src/features/user/use-user.ts":7
 .end

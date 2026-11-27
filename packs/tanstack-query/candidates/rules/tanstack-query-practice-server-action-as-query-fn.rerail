@@ -35,7 +35,8 @@
 // Gaps: an action that reaches the queryFn as a prop or a function argument (`useQueryFactory(listAction)`) is not
 // seen; helpers are followed one call deep; a `'use server'` barrel that re-exports plain functions, and inline
 // `'use server'` functions (only Server Components can define them, and they reach clients as props) are not seen.
-// A prefetch in a component file without 'use client' (an event handler) counts as server code.
+// A prefetch in a component file without 'use client' (an event handler) counts as server code. An import is followed
+// only where tsx/names resolves it: a relative path, or an alias (`@/`, `~/`, `#/`) the tsconfig's `paths` map.
 
 #include "tsx/modules.rerail"
 
@@ -44,11 +45,10 @@
 ServerActionQueryFn(n, x, p) :- saqf_client_fn(v), saqf_part(v, n), saqf_sym(n, q), saqf_action(q, x, p), docof(n, d),
     saqf_next_doc(d).
 
-.violation ServerActionViaHelper(at: node, g: symbol, x: symbol, p: symbol, o: node)
-    "This `queryFn` runs `{g}`, which calls `{x}` ({p}:{o.line}), a Server Action from a 'use server' module. Next.js runs Server Actions one at a time, while React Query runs queries in parallel and refetches them, so this query queues behind other actions and can stay pending. Have `{g}` read the data through a Route Handler (`app/api/…/route.ts`) that calls the same server code, or load it in a Server Component and pass it down; keep Server Actions for mutations (`useMutation`). If this query only ever runs on the server (a prefetch in a Server Component), leave it."
-ServerActionViaHelper(n, g, x, p, o) :- saqf_client_fn(v), saqf_part(v, n), saqf_helper(n, h), !saqf_sym_action(n),
-    text(n, g), o = min y : { saqf_inner(h, y, _) }, saqf_inner(h, o, q), saqf_action(q, x, p), docof(n, d),
-    saqf_next_doc(d).
+.violation ServerActionViaHelper(at: node, g: symbol, x: symbol, p: symbol, ol: number)
+    "This `queryFn` runs `{g}`, which calls `{x}` ({p}:{ol}), a Server Action from a 'use server' module. Next.js runs Server Actions one at a time, while React Query runs queries in parallel and refetches them, so this query queues behind other actions and can stay pending. Have `{g}` read the data through a Route Handler (`app/api/…/route.ts`) that calls the same server code, or load it in a Server Component and pass it down; keep Server Actions for mutations (`useMutation`). If this query only ever runs on the server (a prefetch in a Server Component), leave it."
+ServerActionViaHelper(n, g, x, p, ol) :- saqf_client_fn(v), saqf_part(v, n), saqf_helper_key(n, hk),
+    saqf_helper_first(hk, x, p, ol), text(n, g), docof(n, d), saqf_next_doc(d).
 
 // saqf_next_doc(d): document d's package (its nearest package.json; the workspace root's for a file under no other)
 // depends on Next.js, whose Server Actions run one at a time. An `app/` folder is no proof: React Router, Remix and
@@ -118,68 +118,61 @@ saqf_part(v, n) :- saqf_name(n), inside(n, v, saqf_fn_kind), saqf_client_fn(v).
 .decl saqf_name(n: node)
 saqf_name(n) :- kind(n, "identifier"), !inside(n, _, saqf_type_kind), !field(_, "object", n).
 saqf_name(n) :- kind(n, "shorthand_property_identifier").
-saqf_name(n) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), saqf_ns(o, _).
-// saqf_sym(n, q): n denotes symbol q, "<file path>#<name>": an imported name (followed through re-exports,
-// saqf_export), a namespace member `actions.getProject`, or a top-level name of n's own file. (tsx/names' sym_of
-// does this, but the runner leaves its inputs empty; see the resolver at the bottom.)
+saqf_name(n) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), ns_target(o, _).
+// saqf_sym(n, q): n denotes symbol q ("module#name"): an imported name tsx/names resolves (a relative path, or an
+// alias the tsconfig's `paths` map) and follows through re-exports (tsx_names__exports), a namespace member
+// `actions.getProject`, or a top-level name of n's own file.
 .decl saqf_sym(n: node, q: symbol)
-saqf_sym(n, q) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, sp),
-    import_binding(sp, _, s, x), x != "*", docof(n, d), saqf_target(d, s, t), saqf_export(t, x, q).
-saqf_sym(n, q) :- kind(n, "member_expression"), field(n, "object", o), saqf_ns(o, t), field(n, "property", pr),
-    text(pr, x), saqf_export(t, x, q).
-saqf_sym(n, @qname(p, x)) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, site),
-    top_level(site, x), docof(n, d), doc(d, p, _).
-.decl saqf_ns(o: node, t: symbol)  // `import * as actions from "./actions"`: actions names module t
-saqf_ns(o, t) :- kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, "*"), docof(o, d), saqf_target(d, s, t).
-// saqf_action(q, x, p): symbol q is x, exported by the 'use server' module in file p.
-.decl saqf_action(q: symbol, x: symbol, p: symbol)
-saqf_action(q, x, p) :- saqf_sym(_, q), match("(?<p>.*)#(?<x>[^#]*)", q), doc(d, p, _),
-    saqf_directive_doc(d, "use server").
-.decl saqf_sym_action(n: node)
-saqf_sym_action(n) :- saqf_sym(n, q), saqf_action(q, _, _).
+saqf_sym(n, q) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), saqf_imported(n, q).
+saqf_sym(n, q) :- kind(n, "member_expression"), field(n, "object", o), ns_target(o, t), field(n, "property", pr),
+    text(pr, x), tsx_names__exports(t, x, q).
+saqf_sym(n, @qname(m, x)) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, site),
+    top_level(site, x), docof(n, d), ts_module(d, m).
+// saqf_imported(n, q): the name n is imported, and denotes the symbol q.
+.decl saqf_imported(n: node, q: symbol)
+saqf_imported(n, q) :- ref_site(n, sp), import_binding(sp, _, s, x), x != "*", docof(n, d), target(d, s, t),
+    tsx_names__exports(t, x, q).
+// saqf_server_name(q, x, p): q is the name x declared at the top of, or exported by, the 'use server' module in file
+// p. Each such file states its own; saqf_action reads every file's.
+.decl saqf_server_name(q: symbol, x: symbol, p: symbol)
+saqf_server_name(@qname(m, x), x, p) :- saqf_directive_doc(d, "use server"), ts_module(d, m), doc(d, p, _),
+    saqf_own_name(d, x).
+.decl saqf_own_name(d: number, x: symbol)
+saqf_own_name(d, x) :- top_level(site, x), docof(site, d).
+saqf_own_name(d, x) :- kind(e, "export_statement"), exported_decl(e, x), docof(e, d).
+// saqf_action(q, x, p): symbol q is x, of the 'use server' module in file p. Across files, by symbol.
+.decl saqf_action(q: symbol, x: symbol, p: symbol) cross_file
+saqf_action(q, x, p) :- saqf_server_name(q, x, p).
 
-// saqf_helper(n, h): name n denotes h, a function declared in the workspace (this file or another, not a 'use server'
-// module): a function declaration or a variable set to an arrow or function expression.
-.decl saqf_helper(n: node, h: node)
-saqf_helper(n, h) :- saqf_client_fn(v), saqf_part(v, n), saqf_sym(n, q), match("(?<m>.*)#(?<y>[^#]*)", q),
-    doc(d, m, _), !saqf_directive_doc(d, "use server"), top_level(site, y), docof(site, d), saqf_site_fn(site, h).
-saqf_helper(n, h) :- saqf_client_fn(v), saqf_part(v, n), ref_site(n, site), !top_level(site, _),
-    saqf_site_fn(site, h).
+// A helper is keyed by its symbol where it is declared at the top of a module (this file's or an imported one's), and
+// by its file's path and its line and column where it is declared in a narrower scope of the queryFn's own file.
+// saqf_helper_key(n, hk): name n in a queryFn denotes the helper keyed hk.
+.decl saqf_helper_key(n: node, hk: symbol)
+saqf_helper_key(n, hk) :- saqf_client_fn(v), saqf_part(v, n), saqf_sym(n, hk).
+saqf_helper_key(n, hk) :- saqf_client_fn(v), saqf_part(v, n), ref_site(n, site), !top_level(site, _),
+    saqf_site_fn(site, h), saqf_fn_key(h, hk).
+// saqf_fn_key(h, hk): function h, declared at site, is keyed hk.
+.decl saqf_fn_key(h: node, hk: symbol)
+saqf_fn_key(h, @qname(m, y)) :- saqf_site_fn(site, h), top_level(site, y), docof(site, d), ts_module(d, m).
+saqf_fn_key(h, cat(p, ":", to_string(l), ":", to_string(c))) :- saqf_site_fn(site, h), !top_level(site, _),
+    line(h, l), col(h, c), docof(h, d), doc(d, p, _).
 .decl saqf_site_fn(site: node, h: node)
 saqf_site_fn(f, f) :- kind(f, "function_declaration").
 saqf_site_fn(s, f) :- kind(s, "variable_declarator"), field(s, "value", f), saqf_fn_node(f).
-// saqf_inner(h, y, q): name y in helper h's body denotes the action q.
-.decl saqf_inner(h: node, y: node, q: symbol)
-saqf_inner(h, y, q) :- saqf_helper(_, h), saqf_name(y), inside(y, h, saqf_fn_kind), saqf_sym(y, q),
-    saqf_action(q, _, _).
-
-// ---- library candidate: import resolution -------------------------------------------------------------------------
-// The runner binds no tsconfig_for/tsconfig_path rows and gives TypeScript documents no module name (doc's third
-// column is ""), so tsx/names' `target`, `exports` and `sym_of` find nothing across files. This resolver keys modules
-// on file paths instead.
-// saqf_target(d, s, t): import specifier s in document d names the workspace file t: "./x" and "../x" from d's
-// directory, and the aliases "@/x", "~/x" and "#/x" as `<dir>/src/x` or `<dir>/x` for any directory above d (the
-// create-next-app and T3 layouts), each with TypeScript's extension and index candidates (saqf_file).
-.decl saqf_target(d: number, s: symbol, t: symbol)
-saqf_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), saqf_file(@join(@dir(p), s), t).
-saqf_target(d, s, t) :- import_spec(i, s), match("[@~#]/(?<r>.+)", s), docof(i, d), doc(d, p, _), saqf_anc(p, a),
-    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), saqf_file(b, t).
-.decl saqf_anc(p: symbol, a: symbol)  // a is a directory above document p ("" for the root)
-saqf_anc(p, a) :- import_spec(i, s), match("[@~#]/.+", s), docof(i, d), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
-saqf_anc(p, "") :- import_spec(i, s), match("[@~#]/.+", s), docof(i, d), doc(d, p, _).
-saqf_anc(p, a) :- saqf_anc(p, b), match("(?<a>.*)/[^/]*", b).
-// saqf_file(b, f): f is a document whose path is b plus one of the candidate endings (b, b.ts, b/index.tsx, …).
-.decl saqf_file(b: symbol, f: symbol)
-saqf_file(b, f) :- doc(_, f, _), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0, b = substr(f, 0, k),
-    f = cat(b, ext).
-// saqf_export(f, x, q): file f exports x, which is symbol q: its own declaration, or followed through
-// `export { y as x } from "s"` and `export * from "s"`.
-.decl saqf_export(f: symbol, x: symbol, q: symbol)
-saqf_export(f, x, @qname(f, x)) :- kind(e, "export_statement"), exported_decl(e, x), docof(e, d), doc(d, f, _).
-saqf_export(f, x, q) :- kind(e, "export_statement"), export_from(e, s, y, x), docof(e, d), doc(d, f, _),
-    saqf_target(d, s, t), saqf_export(t, y, q).
-saqf_export(f, x, q) :- star_export(e, s), docof(e, d), doc(d, f, _), saqf_target(d, s, t), saqf_export(t, x, q),
-    x != "default".
+// saqf_helper_name(hk, q, p, l, c): in its own body, the function keyed hk, of a file that is no 'use server' module,
+// names the imported symbol q at line l, column c of the file at path p. Only an imported name can be another
+// module's action: this file's own top-level names are no 'use server' module's.
+.decl saqf_helper_name(hk: symbol, q: symbol, p: symbol, l: number, c: number)
+saqf_helper_name(hk, q, p, l, c) :- saqf_fn_key(h, hk), docof(h, d), !saqf_directive_doc(d, "use server"),
+    saqf_name(y), inside(y, h, saqf_fn_kind), (saqf_imported(y, q) ; kind(y, "member_expression"), saqf_sym(y, q)),
+    line(y, l), col(y, c), doc(d, p, _).
+// saqf_helper_first(hk, x, p, l): the first name in helper hk's own body that denotes an action, x, is at line l of
+// the file at path p.
+.decl saqf_helper_hit(hk: symbol, q: symbol, p: symbol, l: number, c: number) cross_file
+saqf_helper_hit(hk, q, p, l, c) :- saqf_helper_name(hk, q, p, l, c), saqf_action(q, _, _).
+.decl saqf_helper_first(hk: symbol, x: symbol, p: symbol, l: number) cross_file
+saqf_helper_first(hk, x, p, l) :- saqf_helper_hit(hk, _, _, _, _), l = min l0 : { saqf_helper_hit(hk, _, _, l0, _) },
+    c = min c0 : { saqf_helper_hit(hk, _, _, l, c0) }, saqf_helper_hit(hk, q, p, l, c), saqf_action(q, x, _).
 
 // The cases, `cases/tanstack-query-practice-server-action-as-query-fn/`, read as one repository: each line ending
 // in `// caught` is reported, and no other line. project-list.tsx's two queries, marked `cross-lane`, are real
