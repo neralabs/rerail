@@ -163,12 +163,17 @@ def b2(failures: list) -> None:
     if (crates / "blocks/src/trace.rs").exists():
         failures.append("native/crates/blocks/src/trace.rs: a trace in one block (each layer is a block of its own)")
     layer = crates / "blocks/src/layer.rs"
-    host = [layer, CRATE / "src/trace.rs", CRATE / "src/dir.rs"]
+    # A layer's format and reads, and a trace's state read through the descriptor table, are the floor's
+    # (delta_core, no_std and no alloc: 0686 step 2); blocks keeps the writes that take room. Each check of the layer
+    # reads both, as one definition.
+    floor_layer, floor_trace = crates / "delta_core/src/layer.rs", crates / "delta_core/src/trace.rs"
+    layer_text = lambda: layer.read_text() + "\n" + floor_layer.read_text()
+    host = [layer, floor_layer, floor_trace, CRATE / "src/trace.rs", CRATE / "src/dir.rs"]
     for path in host:
         code = strip_rust(path.read_text())
         hits(path, code, r"\bMutex\b|\bRwLock\b", "a lock (claims are atomic; a block has one writer)", failures)
         hits(path, code, r"\bpub fn\s+(at|between|fork|pin|frontier)\b|\bstruct\s+Frontier\b", "a frontier API (a trace has two states)", failures)
-    for path in [layer, crates / "blocks/src/bistate.rs", TWINS / "src/trace.rs"]:
+    for path in [layer, floor_layer, floor_trace, crates / "blocks/src/bistate.rs", TWINS / "src/trace.rs"]:
         hits(path, strip_rust(path.read_text()), r"\bMAX_RUNS\b", "a bound on the layers a read or a merge follows", failures)
     code = strip_rust(layer.read_text())
     hits(layer, code, r"pub key: i64", "a partition's key in 64 bits (a module's or a document's id is 32)", failures)
@@ -181,11 +186,18 @@ def b2(failures: list) -> None:
     rel = crates / "blocks/src/relation.rs"
     rcode = strip_rust(rel.read_text())
     view = re.search(r"pub struct View<'a> \{(.*?)\}", rcode, flags=re.S)
-    if not view or "Vec" in view.group(1) or "far: Option<&'a crate::gens::Table<'a>>" not in view.group(1):
+    if not view or "Vec" in view.group(1) or "chain: Option<rerail_delta_core::trace::State<'a>>" not in view.group(1):
         failures.append(f"{rel.relative_to(ROOT)}: View reads a trace's layers through the descriptor table, holding no list")
     if "pub fn chain(table: &'a Table<'a>, head: Option<Id>, arity: usize)" not in code:
         failures.append(f"{layer.relative_to(ROOT)}: a trace's state is View::chain")
-    for path in [layer, crates / "blocks/src/bistate.rs", rel]:
+    # The floor's state reads through `Reach` (the descriptor table) and keeps no list of layers: fixed cursors alone.
+    fcode = strip_rust(floor_trace.read_text())
+    st = re.search(r"pub struct State<'a> \{(.*?)\}", fcode, flags=re.S)
+    if not st or "reach: &'a dyn Reach" not in st.group(1) or re.search(r"\bVec\b|\[", st.group(1)):
+        failures.append(f"{floor_trace.relative_to(ROOT)}: a trace's state reads its layers through the descriptor table, holding no list")
+    if "#![no_std]" not in (crates / "delta_core/src/lib.rs").read_text() or re.search(r"extern\s+crate\s+alloc", strip_rust((crates / "delta_core/src/lib.rs").read_text())):
+        failures.append("native/crates/delta_core/src/lib.rs: the floor is no_std, with no alloc")
+    for path in [layer, floor_layer, floor_trace, crates / "blocks/src/bistate.rs", rel]:
         hits(path, strip_rust(path.read_text()), r"\bstruct\s+Chain\b|\bimpl\b[^{;]*\b(Read|States)\s+for\s+Chain\b", "a second state type beside relation::View (B2: one definition)", failures)
     trace = CRATE / "src/trace.rs"
     code = strip_rust(trace.read_text())
@@ -212,7 +224,7 @@ def b2(failures: list) -> None:
     # P§12: "A layer is one blocks::relation::Relation"; the rebuild plan, B2: "built on blocks' relation and 0678's
     # bistate, as one definition". The layer's rows are a Relation continuing the one below, frozen where it lies; its
     # statistics are blocks' sketch (O§10), no second sketch; a permutation is packed's (P§12).
-    code = strip_rust(layer.read_text())
+    code = strip_rust(layer_text())
     for want, why in (
         (r"pub rows: &'a Relation", "a layer's rows are a Relation"),
         (r"pub parts: &'a Relation", "a layer's partitions' change is a Relation"),
@@ -277,7 +289,7 @@ def b2(failures: list) -> None:
     # P§: restrict is "a range of the block, by the partition's index": a partition's rows and kills are read from
     # parts, not found by a search of the layer's rows.
     layer = crates / "blocks/src/layer.rs"
-    lcode = strip_rust(layer.read_text())
+    lcode = strip_rust(layer_text())
     if "vec![crate::rows::I32, 8, 4, 4, 4, 4]" not in lcode:
         failures.append(f"{layer.relative_to(ROOT)}: parts is (part, digest, added, gone, first, kills_at), the partition index")
     hits(layer, lcode, r"leading\(self\.(rows|gone)\b", "a partition found by a search of the layer's rows or kills, not its index", failures)
@@ -529,7 +541,7 @@ def b6(failures: list) -> None:
     if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "want_rows(" not in l1:
         failures.append("l1.rs: L1 neither restricts to its want nor asks of its tape port (P§7.1)")
     boot = (CRATE / "src/boot.rs").read_text()
-    if "inst.asked(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
+    if "inst.asks_of(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
         failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")
     if "Asks::none()" in strip_rust((CRATE / "src/contract.rs").read_text()).split("pub fn none()")[-1]:
         failures.append("contract.rs: a driver runs an operator with no asks (P§7.1: demand out is a port)")
