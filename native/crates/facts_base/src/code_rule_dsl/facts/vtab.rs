@@ -380,8 +380,10 @@ pub trait Source: Send + Sync {
     fn value_bits_gen(&self) -> u32 { 0 }
     /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
     /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
-    /// where it does not: the text is read (`node_read_ref`).
-    fn node_text_atom(&self, _name: &str, _n: i64) -> Option<i64> { None }
+    /// where it does not: the text is read (`node_read_ref`). `table` is the run's atom table, its address and its
+    /// database (`AtomTable::database`): an atom is the source's only where its atoms are that table or of that
+    /// database, else `None` too (a source made in another store numbers its atoms apart).
+    fn node_text_atom(&self, _name: &str, _n: i64, _table: (*const (), Option<&std::path::Path>)) -> Option<i64> { None }
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }

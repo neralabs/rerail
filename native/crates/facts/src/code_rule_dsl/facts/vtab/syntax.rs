@@ -614,8 +614,10 @@ impl Source for LongTexts {
             _ => self.node_read(name, n, more).map(super::NodeRead::Value),
         }
     }
-    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
-        if name != "rr_node_text_any" {
+    fn node_text_atom(&self, name: &str, n: i64, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        // The batch's atoms are the run's, or of its database: else its atoms are no symbols of the run.
+        let ours = std::ptr::addr_eq(Arc::as_ptr(&self.batch.atoms), table.0) || table.1.is_some() && self.batch.atoms.database() == table.1;
+        if name != "rr_node_text_any" || !ours {
             return None;
         }
         let (key, low) = ((n >> 32) as u32, n as u32);

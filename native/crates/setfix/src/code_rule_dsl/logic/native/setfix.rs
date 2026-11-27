@@ -10170,7 +10170,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     // hash of the text (decision 0706 E1). A text deferred, it is read: the atom of a text deferred
                     // here would not be the deferred value.
                     let as_atom = more.is_empty() && probe & (TEXT_OUT | UNREAD_OUT) == 0 && cx.syms.defers_none();
-                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]))) } else { None };
+                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]), (Arc::as_ptr(cx.syms.atoms()).cast(), cx.syms.atoms().database()))) } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();
                         Some(a)
