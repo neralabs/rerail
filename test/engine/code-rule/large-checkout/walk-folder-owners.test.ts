@@ -1,11 +1,12 @@
 /**
  * What a walk of the session folder asks the disk, on the daemon's thread, to learn which checkout holds each folder it
  * walks: each lstatSync, existsSync and realpathSync naming a folder the walk entered or a path in it, over the walk at
- * a turn's end of a checkout of 200 folders; and the checkout the walk's view gives each file it found.
+ * a turn's end of a checkout of 200 folders; and the checkout the walk's view, and the grouping of the walk's changes by
+ * checkout, give each file it found.
  */
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs";
-import { mkdir, mkdtemp, realpath, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rename, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -122,6 +123,13 @@ interface Walked {
   readonly entered: Map<string, boolean>;
   /** The views of the auditor each walk asked for, with the folder it started at. */
   readonly views: () => ReadonlyArray<{ readonly start: string | undefined; readonly view: WalkView }>;
+  /**
+   * Each path a view of the auditor was asked the checkout of (`sourceRoot`), with its answer, since `grouped.length = 0`:
+   * within a walk only the grouping of what it found by checkout asks it.
+   */
+  readonly grouped: Array<[string, string | undefined]>;
+  /** The router's lookup of a path's checkout, which asks the disk. */
+  readonly owners: CheckoutOwners;
 }
 
 /**
@@ -132,8 +140,7 @@ interface Walked {
 async function routedSession(root: string, databasePath: string, recorded = root, plainRoots: readonly string[] = []): Promise<Walked> {
   setUpTestRepository(recorded, { library: [{ kind: "code", rule: NEEDLE_RULE }] }, databasePath);
   const catalogs = new CheckoutCatalogs(databasePath);
-  const routed = (): CheckoutCodeRuleRouter => {
-    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+  const routed = (owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion())): CheckoutCodeRuleRouter => {
     for (const plain of plainRoots) owners.addPlainRoot(plain);
     return new CheckoutCodeRuleRouter({
       sessionRoot: root, startingCheckout: startingCheckout(owners, root).checkoutRoot, owners, catalogs, followGitignore: true,
@@ -141,7 +148,8 @@ async function routedSession(root: string, databasePath: string, recorded = root
       audits: { start: () => "audit", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
     });
   };
-  const router = routed();
+  const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+  const router = routed(owners);
   const fresh = async (path: string): Promise<string | undefined> => {
     const other = routed();
     try {
@@ -150,8 +158,9 @@ async function routedSession(root: string, databasePath: string, recorded = root
       await other.close();
     }
   };
-  // Each view a walk asks for, its answers whether Git ignores a folder kept in `entered`.
+  // Each view a walk asks for, its answers whether Git ignores a folder kept in `entered`, its checkouts in `grouped`.
   const entered = new Map<string, boolean>();
+  const grouped: Array<[string, string | undefined]> = [];
   const walkView = router.walkView.bind(router);
   const asked = vi.spyOn(router, "walkView").mockImplementation(start => {
     const view = walkView(start);
@@ -162,6 +171,11 @@ async function routedSession(root: string, databasePath: string, recorded = root
         if (directory) entered.set(path, ignored);
         return ignored;
       },
+      sourceRoot: path => {
+        const checkout = view.sourceRoot(path);
+        grouped.push([path, checkout]);
+        return checkout;
+      },
     };
   });
   const bridge = new CodeRuleBridge(root, router, { discoveryWaitMs: Infinity });
@@ -171,7 +185,7 @@ async function routedSession(root: string, databasePath: string, recorded = root
   });
   const views = (): Array<{ start: string | undefined; view: WalkView }> =>
     asked.mock.calls.map(([start], at) => ({ start, view: asked.mock.results[at]?.value as WalkView }));
-  return { root, real: await realpath(root), bridge, fresh, entered, views };
+  return { root, real: await realpath(root), bridge, fresh, entered, views, grouped, owners };
 }
 
 async function temporaryRoot(): Promise<string> {
@@ -183,9 +197,10 @@ async function temporaryRoot(): Promise<string> {
 /**
  * The looks of the walk at a turn's end, after the session's first walk, that name a folder of `FOLDERS` or a path in
  * it, by that folder (the deepest that holds the path): a `.gitignore` apart, which Git's ignore answers look at once a
- * folder a walk; and the view that walk asked of the auditor.
+ * folder a walk; the looks at the session folder's `.git`, which the walk's top holds; and the view that walk asked of
+ * the auditor.
  */
-async function turnWalk(session: Walked): Promise<{ owners: Map<string, number>; ignoreFiles: number; view: WalkView }> {
+async function turnWalk(session: Walked): Promise<{ owners: Map<string, number>; ignoreFiles: number; atTop: number; view: WalkView }> {
   const { root, bridge } = session;
   await bridge.openWorkspace("session");
   await bridge.settleWalk();
@@ -200,13 +215,14 @@ async function turnWalk(session: Walked): Promise<{ owners: Map<string, number>;
   }
   const owners = new Map<string, number>();
   let ignoreFiles = 0;
+  const atTop = disk.looks.filter(({ path }) => path === join(root, ".git")).length;
   for (const { path } of disk.looks) {
     const folder = [...FOLDERS].reverse().find(candidate => path === join(root, candidate) || path.startsWith(join(root, candidate) + sep));
     if (folder === undefined) continue;
     if (basename(path) === ".gitignore") ignoreFiles += 1;
     else owners.set(folder, (owners.get(folder) ?? 0) + 1);
   }
-  return { owners, ignoreFiles, view };
+  return { owners, ignoreFiles, atTop, view };
 }
 
 /** The view the walk at a turn's end asked of the auditor, once that walk is done. */
@@ -230,11 +246,12 @@ describe("a walk of a checkout of many folders", () => {
     await committedCheckout(root, TOPS, []);
     const session = await routedSession(root, join(base, "rerail.sqlite"));
 
-    const { owners, ignoreFiles, view } = await turnWalk(session);
+    const { owners, ignoreFiles, atTop, view } = await turnWalk(session);
 
     // An lstat of each folder's .git, asked as the folder's parent listed it, before the folder's own listing named its
-    // entries: 200 a walk.
+    // entries: 200 a walk. The walk's top, whose listing names .git, is still looked up: the looks are counted.
     expect.soft(looksAt(owners, () => true), `looks at the folders walked: ${JSON.stringify([...owners])}`).toBe(0);
+    expect.soft(atTop, "looks at the session folder's .git").toBeGreaterThan(0);
     // Git's ignore answers look at each folder's .gitignore once a walk; this change leaves them as they are.
     expect.soft(ignoreFiles, "looks at a .gitignore of the folders walked").toBe(FOLDERS.length);
     expect(FILES.filter(path => view.sourceRoot?.(path) !== root)).toEqual([]);
@@ -264,8 +281,9 @@ describe("a walk of a checkout of many folders", () => {
     expect.soft(looksAt(owners, folder => ownTop(folder) === undefined), `looks at the folders with no .git: ${JSON.stringify([...owners])}`).toBe(0);
     // A folder holding .git costs its lookup, and the lookup of the checkout of the .git entry its listing names, as at
     // the base: 4 or 5 looks there.
-    const mostAtOne = Math.max(...["d0", "d1", "d2", "d3"].map(top => owners.get(top) ?? 0));
-    expect.soft(mostAtOne, `looks at the folders holding .git: ${JSON.stringify([...owners])}`).toBeLessThanOrEqual(5);
+    const atEach = ["d0", "d1", "d2", "d3"].map(top => owners.get(top) ?? 0);
+    expect.soft(Math.max(...atEach), `looks at the folders holding .git: ${JSON.stringify([...owners])}`).toBeLessThanOrEqual(5);
+    expect.soft(Math.min(...atEach), `looks at the folders holding .git: ${JSON.stringify([...owners])}`).toBeGreaterThan(0);
     const expected = (path: string): string => {
       const top = path.slice(0, path.indexOf("/"));
       return ["d0", "d1", "d2"].includes(top) ? join(root, top) : root;
@@ -273,6 +291,27 @@ describe("a walk of a checkout of many folders", () => {
     expect(FILES.filter(path => view.sourceRoot?.(path) !== expected(path))).toEqual([]);
     // The clone the checkout ignores is walked, as a checkout of its own.
     expect(Object.fromEntries(session.entered)).toEqual(EVERY_FOLDER_ENTERED);
+  }, 120_000);
+
+  it("groups the changes a walk finds in each folder by checkout with its own view, looking none of the folders up", async () => {
+    const base = await temporaryRoot();
+    const root = join(base, "repo");
+    await committedCheckout(root, TOPS, []);
+    const session = await routedSession(root, join(base, "rerail.sqlite"));
+    await session.bridge.openWorkspace("session");
+    await session.bridge.settleWalk();
+    for (const path of FILES) await appendFile(join(root, path), "# changed\n");
+    const lookups = [vi.spyOn(session.owners, "ownerOf"), vi.spyOn(session.owners, "ownerOfReal")];
+
+    // A turn's end reads the whole folder, whatever the change notices name.
+    await walkAtTurn(session);
+
+    const asked = lookups.flatMap(lookup => lookup.mock.calls.map(([path]) => path));
+    const kinds = `ownerOf ${lookups[0]!.mock.calls.length}, ownerOfReal ${lookups[1]!.mock.calls.length}`;
+    // The router finds each change's lane by a lookup of its file: the lookups are counted.
+    expect.soft(asked.filter(path => FILES.some(file => path === join(root, file))).length, kinds).toBeGreaterThan(0);
+    // A grouping with a view of its own looked up each folder holding a change: 200.
+    expect(asked.filter(path => FOLDERS.some(folder => path === join(root, folder))).length, kinds).toBe(0);
   }, 120_000);
 });
 
@@ -341,11 +380,16 @@ describe("the checkout a walk gives each file it found", () => {
     git(repo, "worktree", "remove", "--force", later);
     await mkdir(join(later, "a", "b"), { recursive: true });
     await writeFile(join(later, "a", "b", "x.py"), "x = 3\n");
-    const plainAgain = await handedTo(session, await walkAtTurn(session), ["later/a/b/x.py"]);
+    session.grouped.length = 0;
+    const view = await walkAtTurn(session);
+    // Each checkout the grouping of the walk's changes put the change to later/a/b/x.py under.
+    const groupedAgain = new Set(session.grouped.filter(([path]) => path === "later/a/b/x.py").map(([, owner]) => owner));
+    const plainAgain = await handedTo(session, view, ["later/a/b/x.py"]);
 
     expect(plain).toEqual([["later/a/b/x.py", repo, repo]]);
     expect(checkout).toEqual([["later/a/b/x.py", later, later]]);
     expect(plainAgain).toEqual([["later/a/b/x.py", repo, repo]]);
+    expect([...groupedAgain]).toEqual([repo]);
   }, 60_000);
 
   it("is the full lookup's in a recorded checkout outside Git inside another", async () => {
