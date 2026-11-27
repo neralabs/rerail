@@ -1,0 +1,44 @@
+.policy "probe" revision 1
+.description "probe"
+.language python
+.mode steer
+.scope include "**/*"
+#include "python/upgrade.rerail"
+#include "python/python-11.rerail"
+
+.violation P0(at: node, m: symbol) code "P0"
+    "{m}"
+P0(i, cat("chain ", q)) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, i, 0), up_chain_name(i, q, _).
+.violation P1(at: node, m: symbol) code "P1"
+    "{m}"
+P1(i, cat("astname ", x)) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, i, 0), ast_name(i, x).
+.violation P2(at: node, m: symbol) code "P2"
+    "{m}"
+P2(i, cat("look ", x)) :- kind(d, "dotted_name"), inside(d, _, "case_pattern"), child(d, i, 0), text(i, x), look(i, x, _).
+.violation P3(at: node, m: symbol) code "P3"
+    "{m}"
+P3(e, cat("tdcat ", k)) :- td_node(e, _), kind(e, "concatenated_string"), child(e, s, i), str(s, v), k = cat(v, "@").
+.violation P4(at: node, m: symbol) code "P4"
+    "{m}"
+P4(e, "lc") :- kind(e, "line_continuation"), child(p, e, _), kind(p, k), (k = "tuple" ; k = "list" ; k = "argument_list").
+
+.test probe
+    .fixture "a.py" ```
+        import typing
+        from typing import Text
+        def f(value):
+            match value:
+                case typing.Text():
+                    pass
+                case typing.Text:
+                    pass
+                case Text():
+                    pass
+        x: 'open("f", "r" "t")'
+        C = NT("C", [("a", int), \
+            ("b", str)])
+        D = NT("D", [("a", \
+            int)])
+        ```
+    .expect no P
+.end
