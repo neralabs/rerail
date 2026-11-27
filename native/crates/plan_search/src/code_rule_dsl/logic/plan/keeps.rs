@@ -74,6 +74,7 @@ pub const RULE_COPIES: usize = COPIES * 4;
 pub const SMALL: f64 = 1024.0;
 
 pub mod inline;
+pub mod latest;
 
 /// The relations inlined, and the program's version with them unfolded into their readers (an overlay of `base`);
 /// `None` when nothing is inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.

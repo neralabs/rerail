@@ -6670,6 +6670,30 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 None => None,
             };
+            // The design's S5: a min or max relation read only to be joined back at it, made in its one reader (no
+            // aggregate relation), the reads a layout's key makes one merged; corpus runs only, as inlining.
+            // The keys are the layouts' (decision 0361): declared, or proved from the rules, of the version the pass reads.
+            let latest = if corpus {
+                body::pass("plan.latest", "latest in a group", inlined.as_ref().unwrap_or(&normal_v), |p| {
+                    let layouts = super::program_image::manager::analysis::<super::program_image::layouts::Layouts>(&p.v).ok();
+                    let keys = |rel: &str| -> Vec<Vec<usize>> {
+                        let (Some(l), Some(id)) = (layouts.as_deref(), p.v.rel(rel)) else { return Vec::new() };
+                        l.of(id).filter_map(|f| match f {
+                            crate::code_rule_dsl::logic::front::LayoutFact::Key(cols) => Some(cols.iter().copied().collect()),
+                            _ => None,
+                        }).collect()
+                    };
+                    keeps::latest::latest(p, &keys)
+                }).map_err(Error::Plan)?
+            } else { None };
+            let inlined = match latest {
+                Some((done, v)) => {
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                    inlined_names.extend(done);
+                    Some(v)
+                }
+                None => inlined,
+            };
             // Relations computed for every node that rules only negate, computed for the keys those rules reach
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
@@ -9885,6 +9909,44 @@ mod climb_tests {
         assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
         assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
         assert!(!is_inner(&f, "walk", |r| walk.contains(r)), "a walk another stratum reads is not inner");
+    }
+
+    /// The design's S5: a max read only to be joined back at it is made in its one reader, and the reader's two reads
+    /// of a relation keyed by `i` are one; a max that a second rule reads too is left a relation.
+    #[test]
+    fn a_max_read_only_to_be_joined_back_is_made_in_its_reader() {
+        use crate::code_rule_dsl::logic::front::ast::AggOp;
+        use crate::code_rule_dsl::logic::program_image::{Builder, T};
+        let program = |second_reader: bool| {
+            let mut b = Builder::base();
+            for (rel, cols) in [("rd", &[("i", "node"), ("d", "number"), ("r", "number")][..]), ("def", &[("d", "number"), ("x", "symbol"), ("t", "number"), ("k", "symbol")]), ("seen_at", &[("i", "node"), ("u", "number")]), ("seen", &[("r", "number"), ("k", "symbol")]), ("also", &[("i", "node"), ("u", "number")])] {
+                b.fields().declare(rel, cols);
+            }
+            let v = |x: &'static str| T::Var(x);
+            let max = AggOp::Bounded { max: true, bound: "r".into(), strict: true };
+            b.rule().head("seen_at", &[v("i"), v("u")]).atom("rd", &[v("i"), v("d"), v("r")]).agg(v("u"), &max, Some(v("t")), "def", &[v("d"), T::Str("f"), v("t"), T::Wild]).finish().unwrap();
+            b.rule().head("seen", &[v("r"), v("k")]).atom("rd", &[v("i"), v("d"), v("r")]).atom("seen_at", &[v("i"), v("u")]).atom("def", &[v("d"), T::Str("f"), v("u"), v("k")]).finish().unwrap();
+            if second_reader {
+                b.rule().head("also", &[v("i"), v("u")]).atom("seen_at", &[v("i"), v("u")]).finish().unwrap();
+            }
+            body::Placed::whole(b.finish().unwrap().0)
+        };
+        let keys = |rel: &str| if rel == "rd" { vec![vec![0]] } else { Vec::new() };
+        let p = program(false);
+        let rid = p.v.rel("seen_at").unwrap();
+        assert!(keeps::latest::has_shape(&p.v, rid), "a max joined back at it, read by one rule");
+        let (done, out) = keeps::latest::latest(&p, &keys).unwrap().expect("made in its reader");
+        assert_eq!(done, ["seen_at"]);
+        let shown: Vec<String> = out.v.rules().map(|r| out.v.show_rule(r)).collect();
+        assert!(!shown.iter().any(|r| r.starts_with("seen_at(")), "no aggregate relation: {shown:#?}");
+        let seen: Vec<&String> = shown.iter().filter(|r| r.starts_with("seen(")).collect();
+        assert_eq!(seen.len(), 1, "{shown:#?}");
+        assert_eq!(seen[0].matches("rd(").count(), 1, "the reads keyed by i are one: {}", seen[0]);
+        assert!(seen[0].contains("max") && seen[0].contains("def("), "{}", seen[0]);
+        // A near miss: a second rule reads the max.
+        let p = program(true);
+        assert!(!keeps::latest::has_shape(&p.v, p.v.rel("seen_at").unwrap()), "read by two rules");
+        assert!(keeps::latest::latest(&p, &keys).unwrap().is_none());
     }
 
     /// The design's S4: a walk read by its climb's ends alone is inner; the ends, read by no rule but stated as

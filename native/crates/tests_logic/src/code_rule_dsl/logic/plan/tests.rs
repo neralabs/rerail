@@ -1887,6 +1887,22 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
 }
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+/// The rows the fused min or max step (the design's S5) made, from the frames file `RERAIL_JOIN_FRAMES` names: its
+/// `rows latest …` lines (`forms::account`).
+fn latest_rows(frames: &std::path::Path) -> u64 {
+    std::fs::read_to_string(frames).unwrap_or_default().lines()
+        .filter_map(|l| l.strip_prefix("rows latest ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum()
+}
+
+/// Turns the frames file on for this test's process (`RERAIL_JOIN_FRAMES`), before the engine first reads it.
+fn frames_on(name: &str) -> std::path::PathBuf {
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension(format!("{name}.frames"));
+    let _ = std::fs::remove_file(&path);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_JOIN_FRAMES", &path) };
+    path
+}
+
 fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1969,7 +1985,9 @@ earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, de
 .output seen, latest, earliest
 "#;
     let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-joined-back");
     let got = corpus_outputs("latest-joined-back", &src, program, &["seen", "latest", "earliest"]);
+    assert!(latest_rows(&frames) > 0, "the max and its join back run as one step");
     assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
     assert_eq!(got[1], [["assign"]]);
     assert_eq!(got[2], [["function"], ["tie"]]);
@@ -1978,6 +1996,38 @@ earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, de
     let two_steps = corpus_outputs("latest-joined-back-off", &src, program, &["seen", "latest", "earliest"]);
     unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
     assert_eq!(got, two_steps, "the max and its join back as two steps");
+}
+
+/// The design's S5 through the planner: a max relation read only to be joined back at it (`seen_at`, as
+/// `rf_fn_seen_at`) is made in its reader, with the same rows as the relation stored (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_relation_made_in_its_reader_gives_the_stored_relations_rows() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl rd(i: node, d: number, r: number)
+rd(i, d, r) :- node(d, i, "identifier", r, _).
+.decl seen_at(i: node, u: number)
+seen_at(i, u) :- rd(i, d, r), u = max t : { def(d, "f", t, _), t < r }.
+.decl seen(r: number, k: symbol)
+seen(r, k) :- rd(i, d, r), seen_at(i, u), def(d, "f", u, k).
+.output seen
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-in-reader");
+    let got = corpus_outputs("latest-in-reader", &src, program, &["seen"]);
+    assert!(latest_rows(&frames) > 0, "the max made in its reader runs with its join back as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let stored = corpus_outputs("latest-in-reader-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, stored, "the max relation stored");
 }
 
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
