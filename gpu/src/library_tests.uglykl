@@ -5,6 +5,7 @@
 #include <ukl/dot.h>
 #include <ukl/group.h>
 #include <ukl/lz4.h>
+#include <ukl/lz4_encode.h>
 #include <ukl/workqueue.h>
 #include <ukl/stages.h>
 
@@ -190,6 +191,26 @@ DEFINE_KERNEL2(tests, t_lz4,
         return;
     ROBUFFER(uint32_t) job = jobs + j * 4u;
     uint32_t got = ukl_lz4_decode_sg(in + job[0], job[1], outData + job[2], job[3], lane);
+    if (lane == 0u)
+        lengths[j] = got;
+}
+
+// ukl/lz4_encode.h: each job's block encoded by a SIMD group, greedily (`jobs`: its input's offset and length, its
+// output's offset and room).
+DEFINE_KERNEL2(tests, t_lz4_encode,
+               ARGS,     TestArgs, args,    ,
+               ROBUFFER, uint32_t, jobs,    "[n * 4]",
+               ROBUFFER, uint8_t,  in,      "[inLength]",
+               RWBUFFER, uint8_t,  outData, "[outLength]",
+               RWBUFFER, uint32_t, lengths, "[n]",
+               SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
+               TGID0,    uint32_t, j,       ,
+               LANE,     uint16_t, lane,    )
+{
+    if (j >= args.n)
+        return;
+    ROBUFFER(uint32_t) job = jobs + j * 4u;
+    uint32_t got = ukl_lz4_encode_sg(in + job[0], job[1], outData + job[2], job[3], table, lane __UKL_ARGS);
     if (lane == 0u)
         lengths[j] = got;
 }

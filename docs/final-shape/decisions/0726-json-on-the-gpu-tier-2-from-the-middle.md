@@ -119,7 +119,18 @@ answers from the token pass and adds the token's nodes as one child of the open 
 token's bytes. The writer's cursor answers `None`, so pass 2 writes each token's nodes as the serial walk does, and the
 oracle (`serial_entries`) reads each token itself.
 
-### 5. Every chunk on its own, in any order
+### 5. The greedy LZ4 encoder
+
+`ukl/lz4_encode.h` (`ukl_lz4_encode_sg`): a block encoded by one SIMD group, LZ4's fast parse. The walk is the
+group's, in step: from its place the lanes take a window of positions, a position a lane; a position's candidate is
+the latest earlier one with its word's hash (the nearest lane below with an equal hash, by `ukl_sg_match`, else the
+table's, in threadgroup memory); the first lane whose candidate holds its word within 64 KB starts the match (a
+ballot), every position up to it goes in the table, and the walk goes on past the match. So the parse is the serial
+one at every width and on every backend: each position looked up and then put in the table, the first match taken,
+the positions inside a match skipped. A match is measured a byte a lane, literals copied a byte a lane, and LZ4's
+limits hold (no match in the last 12 bytes, the last 5 literals), so LZ4's own decoder takes the block.
+
+### 6. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
 shape." Every pass of both tiers runs its chunks in the order an `Order` gives (a permutation asked each time a pass
@@ -135,9 +146,9 @@ The tests run them in seeded random orders, a new permutation at each ask: the a
 chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
 scan round, each chunk a thread or a group.
 
-### 6. Still to build (the design's stages)
+### 7. Still to build (the design's stages)
 
-- The greedy LZ4 encoder (`ukl/lz4_encode.h`) and the 16z pieces.
+- The 16z pieces of a tape from the middle, each encoded by a group.
 - The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
 
 ## Tests
@@ -154,4 +165,6 @@ records, every pass in order and in two random orders (270 tapes, 13,800 chunks)
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. The entries test also runs the token pass in a random order (16,684 tokens): its answers are the same in any order,
 and every chunk's summary from them is the summary of pass 1 reading each token itself. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
-`rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.
+`rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
+runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
+LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

@@ -439,6 +439,126 @@ fn lz4_blocks_decode_as_lz4_does() {
     }
 }
 
+/// `ukl/lz4_encode.h`'s parse, serially: each position from the walk's looked up (the latest earlier one with its
+/// word's hash) and then put in the table, the first match taken and measured to LZ4's limits, the positions inside it
+/// skipped. The bytes the encoder must write.
+fn lz4_greedy(s: &[u8]) -> Vec<u8> {
+    let n = s.len();
+    let word = |p: usize| u32::from_le_bytes([s[p], s[p + 1], s[p + 2], s[p + 3]]);
+    let hash = |x: u32| (x.wrapping_mul(2_654_435_761) >> 20) as usize;
+    let mut out = Vec::new();
+    let length = |out: &mut Vec<u8>, len: usize| {
+        out.extend(std::iter::repeat_n(255u8, len / 255));
+        out.push((len % 255) as u8);
+    };
+    let sequence = |out: &mut Vec<u8>, lit: &[u8], m: Option<(usize, usize)>| {
+        let token = out.len();
+        out.push(0);
+        let mut tok = (lit.len().min(15) as u8) << 4;
+        if lit.len() >= 15 {
+            length(out, lit.len() - 15);
+        }
+        out.extend_from_slice(lit);
+        if let Some((dist, ml)) = m {
+            out.extend_from_slice(&(dist as u16).to_le_bytes());
+            let l = ml - 4;
+            tok |= l.min(15) as u8;
+            if l >= 15 {
+                length(out, l - 15);
+            }
+        }
+        out[token] = tok;
+    };
+    let (mut p, mut anchor) = (0usize, 0usize);
+    if n > 12 {
+        let (mflimit, matchlimit) = (n - 12, n - 5);
+        let mut table = vec![0usize; 4096];
+        while p <= mflimit {
+            let w = word(p);
+            let h = hash(w);
+            let cand = table[h];
+            table[h] = p + 1;
+            if cand != 0 && p - (cand - 1) <= 65535 && word(cand - 1) == w {
+                let from = cand - 1;
+                let mut ml = 4;
+                while p + ml < matchlimit && s[from + ml] == s[p + ml] {
+                    ml += 1;
+                }
+                sequence(&mut out, &s[anchor..p], Some((p - from, ml)));
+                p += ml;
+                anchor = p;
+            } else {
+                p += 1;
+            }
+        }
+    }
+    sequence(&mut out, &s[anchor..], None);
+    out
+}
+
+/// LZ4's own decoder (`LZ4_decompress_safe`) on block `z` of `n` bytes.
+fn lz4_decompress(z: &[u8], n: usize) -> Option<Vec<u8>> {
+    let mut out = vec![0u8; n];
+    let k = unsafe { lz4_sys::LZ4_decompress_safe(z.as_ptr().cast(), out.as_mut_ptr().cast(), z.len() as i32, n as i32) };
+    (k == n as i32).then_some(out)
+}
+
+/// A SIMD group encodes each block as LZ4's fast parse does (`ukl/lz4_encode.h`): its bytes are the serial parse's,
+/// at every width and on every backend, and LZ4's own decoder gives the block back.
+#[test]
+fn lz4_blocks_encode_greedily() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut rng = Rng(41);
+    let mut blocks: Vec<Vec<u8>> = Vec::new();
+    for len in [0usize, 1, 5, 12, 13, 14, 31, 32, 33, 100, 1000, 4096, 70000] {
+        // Matches at every distance, short and long, runs and noise; and a run of one byte, which matches itself.
+        let mut v: Vec<u8> = Vec::with_capacity(len);
+        while v.len() < len {
+            match rng.below(4) {
+                0 if !v.is_empty() => {
+                    let far = [1, 3, 31, 33, 600, 70000][rng.below(6) as usize].min(v.len() as u64);
+                    let dist = 1 + rng.below(far) as usize;
+                    for _ in 0..[4, 7, 18, 19, 300, 2000][rng.below(6) as usize] {
+                        v.push(v[v.len() - dist]);
+                    }
+                }
+                1 => v.extend(std::iter::repeat_n(rng.next() as u8, rng.below(40) as usize)),
+                _ => v.extend((0..rng.below(300)).map(|_| rng.next() as u8)),
+            }
+        }
+        v.truncate(len);
+        blocks.push(v);
+        blocks.push(vec![7u8; len]);
+    }
+    let (mut jobs, mut src, mut out_len) = (Vec::new(), Vec::new(), 0usize);
+    for b in &blocks {
+        let cap = b.len() + b.len() / 255 + 16;
+        jobs.extend([src.len() as u32, b.len() as u32, out_len as u32, cap as u32]);
+        src.extend_from_slice(b);
+        out_len += cap;
+    }
+    src.extend_from_slice(&[0u8; 16]);
+    let n = blocks.len() as u32;
+    let (jb, sb) = (buffer_of(&jobs).unwrap(), buffer_of(&src).unwrap());
+    let ob = buffer_of(&vec![0u8; out_len]).unwrap();
+    let lb = alloc::<u32>(blocks.len()).unwrap();
+    launch(&q, p.function("t_lz4_encode").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("in", &sb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[crate::device::simd_width().max(32) as u64]).unwrap();
+    q.flush().await_().unwrap();
+    let lengths: Vec<u32> = read(&lb, blocks.len());
+    let out: Vec<u8> = read(&ob, out_len);
+    let (mut plain, mut packed) = (0usize, 0usize);
+    for (j, b) in blocks.iter().enumerate() {
+        let want = lz4_greedy(b);
+        assert_eq!(lz4_decompress(&want, b.len()).as_deref(), Some(&b[..]), "the serial parse of block {j} ({} bytes) is LZ4's", b.len());
+        let at = jobs[j * 4 + 2] as usize;
+        assert_eq!(lengths[j] as usize, want.len(), "{}: block {j}'s length ({} bytes)", crate::device::backend(), b.len());
+        assert!(out[at..at + want.len()] == want[..], "{}: block {j}'s bytes ({} bytes)", crate::device::backend(), b.len());
+        plain += b.len();
+        packed += want.len();
+    }
+    eprintln!("{}: {} blocks, {plain} bytes to {packed}, each the serial parse's", crate::device::backend(), blocks.len());
+}
+
 #[test]
 fn device_wide_scans_and_compaction() {
     let Some((_, mut q)) = setup() else { return };
