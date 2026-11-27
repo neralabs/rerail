@@ -46,10 +46,12 @@ use crate::drop::{DropOps, Parts, drop_parts};
 use crate::files::{Answer, Answerer, Doc, DocIds, Intern, Load, Load1, LeavesW, Parse, Reach, World, key_of, probe};
 use crate::intern::InternOps;
 use crate::kform::RELATIONS;
-use crate::l1::{L1, L1Ports, TAPE_PATH, row_blobs, tape_row, tape_shape};
+use crate::contract::asks_shape;
+use crate::l1::{L1, L1Ports, TAPE_ARITY, TAPE_PATH, row_blobs, tape_row, tape_shape};
+use crate::semi::{self, How, SemiOps, Side};
 use crate::op::Tiling;
 use crate::sym::Atoms;
-use crate::trace::{RollUp, Row, Trace};
+use crate::trace::{RollUp, Row, Trace, open_runs};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::BODY_AT;
@@ -89,22 +91,57 @@ impl DocSet {
         })
     }
 
-    /// Document `d` let go: nothing asks for it any more (P§7, "a file goes as X → ∅ when nothing asks for it"), its
-    /// row retracted where the set keeps it and its place forgotten.
-    pub fn forget(&mut self, bench: &mut Bench, d: i64) -> Result<(), String> {
+    /// The documents nothing asks for any more let go (P§7, "a file goes as X → ∅ when nothing asks for it"): one
+    /// launch of `semi_change`, the set read cold against the asks of it (`asks`: none, nothing is asked), its rows
+    /// whose document no ask holds (`How::UNMATCHED`), their documents into a parts block; then each such document's
+    /// rows retracted where the set keeps them, and its places, by `drop_parts` over that block.
+    pub fn forget_unasked(&mut self, bench: &mut Bench, semis: &SemiOps, asks: Option<&Trace>) -> Result<(), String> {
         let Some(h) = self.tape.head() else { return Ok(()) };
-        let runs = self.tape.open(&mut bench.dir, 4);
-        let dropped = Parts::write(&mut bench.dir, 1, |put| put(d)).and_then(|parts| {
-            let n = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, &parts, -1, runs);
-            parts.release(&mut bench.dir);
-            n
-        });
-        if let Err(e) = dropped {
-            bench.dir.release(runs);
-            return Err(e);
+        let n = self.tape.reading(&bench.dir, Some(h), |s| Read::end(s).get() as usize)?;
+        let a = Side { before: None, after: Some(h), arity: TAPE_ARITY, col: 0 };
+        let b = asks.map(|t| Side { before: None, after: t.head(), arity: 1, col: 0 });
+        let nk = match asks {
+            Some(t) => t.reading(&bench.dir, t.head(), |s| Read::end(s).get() as usize)?,
+            None => 0,
+        };
+        let (rows, keys) = (self.tape.open(&mut bench.dir, n), open_runs(&mut bench.dir, &asks_shape().encode()?, nk));
+        let release = |dir: &mut Directory| [rows, keys].into_iter().for_each(|x| dir.release(x));
+        let parts = match Parts::open(&mut bench.dir, n) {
+            Ok(p) => p,
+            Err(e) => {
+                release(&mut bench.dir);
+                return Err(e);
+            }
+        };
+        let chosen = semi::select(&bench.reg, semis, &mut bench.dir, &a, b.as_ref().map(|b| (b, keys)), How::UNMATCHED, rows, parts).and_then(|()| Parts::sealed(&bench.dir, parts));
+        release(&mut bench.dir);
+        let parts = match chosen {
+            Ok(p) => p,
+            Err(e) => {
+                bench.dir.release(parts);
+                return Err(e);
+            }
+        };
+        let dropped = self.drop_from(bench, &parts);
+        parts.release(&mut bench.dir);
+        dropped
+    }
+
+    /// The documents `parts` lists retracted from the set and from the world's places, where each keeps them.
+    fn drop_from(&mut self, bench: &mut Bench, parts: &Parts) -> Result<(), String> {
+        if parts.is_empty() {
+            return Ok(());
         }
-        self.tape.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
-        self.world.place(&bench.reg, &bench.traces, &mut bench.dir, d, None)
+        for t in [&mut self.tape, &mut self.world.places] {
+            let Some(h) = t.head() else { continue };
+            let runs = t.open(&mut bench.dir, 4);
+            if let Err(e) = drop_parts(&bench.reg, &self.drops, &mut bench.dir, h, parts, -1, runs) {
+                bench.dir.release(runs);
+                return Err(e);
+            }
+            t.commit(&bench.reg, &bench.traces, &mut bench.dir, runs, Tiling::WHOLE)?;
+        }
+        Ok(())
     }
 
     /// Reads document `path` as module `module` (B§8's first line; the engine's load names both) through the three
@@ -334,19 +371,7 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
                 _ => None,
             };
             let key = |s: &rerail_blocks::relation::View<'_>, id| Read::get(s, id, ColumnIndex::new(0));
-            let is_asked = |k: i64| sa.as_ref().is_some_and(|s| Read::matching(s, &[ColumnIndex::new(0)], &[k]).next().is_some());
-            {
-                let head = docs.tape.head();
-                let ld = docs.tape.read(&bench.dir, &[head])?;
-                let td = ld.table();
-                let sd = docs.tape.state(&td, head)?;
-                for id in sd.live_ids() {
-                    let k = key(&sd, id);
-                    if !is_asked(k) {
-                        docs.forget(bench, k)?;
-                    }
-                }
-            }
+            docs.forget_unasked(bench, &l1.semis, asks)?;
             for k in sa.iter().flat_map(|s| s.live_ids().map(move |id| key(s, id))) {
                 if k != d {
                     return Err(format!("a request for document {k}, which the run names no path for"));

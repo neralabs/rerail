@@ -98,28 +98,55 @@ fn head(h: Option<BlockId>) -> u64 {
     h.map_or(NONE, |b| u64::from(b.0))
 }
 
-fn params(a: &Side, b: Option<&Side>) -> [u8; SemiP::SIZE] {
+/// How the rows are selected: `A ▷ B` (`neg`) or `A ⋉ B`, and the sign whose rows' keys the parts block lists.
+#[derive(Clone, Copy)]
+pub struct How {
+    pub neg: bool,
+    pub parts_sign: i32,
+}
+
+impl How {
+    /// `A ⋉ B`, the parts the partitions it retracts (L1's).
+    pub const RETRACTED: How = How { neg: false, parts_sign: -1 };
+    /// `A ▷ B`, the parts the keys of the rows it adds (a cold one's: every row of `A` whose key `B` does not hold).
+    pub const UNMATCHED: How = How { neg: true, parts_sign: 1 };
+}
+
+fn params(a: &Side, b: Option<&Side>, how: How) -> [u8; SemiP::SIZE] {
     let mut p = [0u8; SemiP::SIZE];
     let b = b.copied().unwrap_or(Side { before: None, after: None, arity: 0, col: 0 });
-    SemiP { a_before: head(a.before), a_after: head(a.after), b_before: head(b.before), b_after: head(b.after), a_arity: a.arity as u32, b_arity: b.arity as u32, a_col: a.col as u32, b_col: b.col as u32 }.write(&mut p);
+    SemiP {
+        a_before: head(a.before),
+        a_after: head(a.after),
+        b_before: head(b.before),
+        b_after: head(b.after),
+        a_arity: a.arity as u32,
+        b_arity: b.arity as u32,
+        a_col: a.col as u32,
+        b_col: b.col as u32,
+        neg: u32::from(how.neg),
+        parts_sign: how.parts_sign,
+    }
+    .write(&mut p);
     p
 }
 
-/// The change of `A ⋉ B` (`b`: none, `A`'s change alone) into the open runs block `rows`, the partitions it retracts
-/// into the open parts block `parts` (`Parts::open`), and `B`'s keys' change into the open runs block `keys` (with
-/// `b`). One launch; nothing when both sides are empty (`parts` then lists none).
-pub fn select(reg: &Registry, ops: &SemiOps, dir: &mut Directory, a: &Side, b: Option<(&Side, BlockId)>, rows: BlockId, parts: BlockId) -> Result<(), String> {
-    match b {
-        None => {
-            let Some(ah) = a.after else { return Ok(()) };
-            run_cpu(reg, dir, ops.change, &[ah, rows, parts], &params(a, None), Tiling::WHOLE)
+/// The change of `A ⋉ B` (`A ▷ B`, `how.neg`; `b`: none, `A`'s change alone) into the open runs block `rows`, the
+/// keys of its rows of sign `how.parts_sign` into the open parts block `parts` (`Parts::open`), and `B`'s keys'
+/// change into the open runs block `keys` (with `b`). One launch; nothing when `A` is empty, or `B` is and every row
+/// must match (`parts` then lists none). With `B` empty under `neg`, every row of `A` is unmatched: `A`'s change alone.
+#[allow(clippy::too_many_arguments)]
+pub fn select(reg: &Registry, ops: &SemiOps, dir: &mut Directory, a: &Side, b: Option<(&Side, BlockId)>, how: How, rows: BlockId, parts: BlockId) -> Result<(), String> {
+    match (a.after, b) {
+        // `B`'s keys' change is written with `A` empty too (the boot's first round asks for l0 of an empty set): an
+        // empty `A` binds `B`'s head in its slot, and the launch reads it as `NONE`.
+        (ah, Some((b, keys))) if b.after.is_some() => {
+            let bh = b.after.expect("a head");
+            run_cpu(reg, dir, ops.semi, &[ah.unwrap_or(bh), bh, rows, parts, keys], &params(a, Some(b), how), Tiling::WHOLE)
         }
-        Some((b, keys)) => {
-            let Some(bh) = b.after else { return Ok(()) };
-            // An empty `A` binds `B`'s head in its slot: the launch reads it as `NONE`.
-            let ah = a.after.unwrap_or(bh);
-            run_cpu(reg, dir, ops.semi, &[ah, bh, rows, parts, keys], &params(a, Some(b)), Tiling::WHOLE)
-        }
+        (None, _) => Ok(()),
+        (Some(_), Some(_)) if !how.neg => Ok(()),
+        (Some(ah), _) => run_cpu(reg, dir, ops.change, &[ah, rows, parts], &params(a, None, how), Tiling::WHOLE),
     }
 }
 

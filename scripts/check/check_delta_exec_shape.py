@@ -579,8 +579,12 @@ def b6(failures: list) -> None:
         failures.append("contract.rs: set_want does not take a named want (WantRows)")
     hits(CRATE / "src/boot.rs", boot_code, r"\bBTree\w*|\bHash(Map|Set)\b", "a set of the boot run's own (productions as AtKey; demand is the want trace)", failures)
     boot = (CRATE / "src/boot.rs").read_text()
-    if "inst.asks_of(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
+    if "inst.asks_of(" not in boot or "docs.forget_unasked(bench, &l1.semis" not in boot or "inst.set_want(" not in boot:
         failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")
+    # B6, only operations: what nothing asks for is chosen by one launch (`semi_change`, the set ▷ its asks), never a
+    # host loop over the set's rows testing each against the asks.
+    if re.search(r"is_asked|for id in sd\.live_ids\(\)", strip_rust(boot)):
+        failures.append("boot.rs: the documents nothing asks for are chosen on the host (the set ▷ its asks is semi_change's)")
     if "Asks::none()" in strip_rust((CRATE / "src/contract.rs").read_text()).split("pub fn none()")[-1]:
         failures.append("contract.rs: a driver runs an operator with no asks (P§7.1: demand out is a port)")
     if re.search(r"for drop_at in \[", (CRATE / "src/l1_tests.rs").read_text()):

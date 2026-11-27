@@ -73,7 +73,8 @@ fn written(dir: &Directory, rows: BlockId, parts: BlockId, keys: Option<BlockId>
 }
 
 /// Over every pair of states `i ≤ j` of both traces: `semi_change` gives `blocks::change::semi`'s rows (their values
-/// read where they lie), the docs of the rows it retracts, and the change of the wanted docs; `change_rows` gives the
+/// read where they lie), the docs of the rows it retracts, and the change of the wanted docs; as `A ▷ B`, its rows and
+/// the docs of the rows it adds; `change_rows` gives the
 /// rows of `A`'s change alone and the docs of its gone rows.
 #[test]
 fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
@@ -89,7 +90,7 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
             let sa = Side { before: ah[i], after: ah[j], arity: 2, col: 0 };
             let sb = Side { before: bh[bi], after: bh[bj], arity: 2, col: 1 };
             // The reference: `blocks::change::semi` over the same bistates, and `A`'s change read whole.
-            let (mut want_rows, mut want_all) = (BTreeSet::new(), BTreeSet::new());
+            let (mut want_rows, mut want_all, mut want_unmatched) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
             if let Some(aj) = ah[j] {
                 let heads: Vec<BlockId> = [ah[i], ah[j], bh[bi], bh[bj]].into_iter().flatten().collect();
                 let l = dir.read("t", &heads).unwrap();
@@ -101,7 +102,9 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
                 };
                 if let Some(bjh) = bh[bj] {
                     let cb = b.change(&table, bh[bi], Some(bjh)).unwrap();
-                    change::semi(&ca, &cb, &[(ColumnIndex::new(0), ColumnIndex::new(1))], false, &mut |s, id| assert!(want_rows.insert(vals(s, id))));
+                    let on = [(ColumnIndex::new(0), ColumnIndex::new(1))];
+                    change::semi(&ca, &cb, &on, false, &mut |s, id| assert!(want_rows.insert(vals(s, id))));
+                    change::semi(&ca, &cb, &on, true, &mut |s, id| assert!(want_unmatched.insert(vals(s, id))));
                 }
                 if let Some(ab) = ca.before() {
                     ca.gone().for_each(|id| assert!(want_all.insert((row(ab, id), -1))));
@@ -114,15 +117,28 @@ fn semi_change_is_the_change_forms_semi_join_over_every_pair_of_states() {
             let gone_docs = |rows: &BTreeSet<(Vec<i64>, i32)>| rows.iter().filter(|(_, d)| *d < 0).map(|(r, _)| r[0]).collect::<BTreeSet<i64>>();
 
             let (rows, parts, ks) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap(), asks.open(&mut dir, 16));
-            select(&reg, &ops, &mut dir, &sa, Some((&sb, ks)), rows, parts).unwrap();
+            select(&reg, &ops, &mut dir, &sa, Some((&sb, ks)), How::RETRACTED, rows, parts).unwrap();
             let got = written(&dir, rows, parts, Some(ks));
             assert_eq!(got.0, want_rows, "rows, A {i}..{j}, B {bi}..{bj}");
             assert_eq!(got.1, gone_docs(&want_rows), "parts, A {i}..{j}, B {bi}..{bj}");
             assert_eq!(got.2, want_keys, "keys, A {i}..{j}, B {bi}..{bj}");
             [rows, parts, ks].into_iter().for_each(|x| dir.release(x));
 
+            // `A ▷ B`: with `B` empty after, every row of `A`'s change is unmatched (`A`'s change alone); the parts,
+            // the docs of the rows it adds.
+            if bh[bj].is_none() {
+                want_unmatched.clone_from(&want_all);
+            }
+            let (rows, parts, ks) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap(), asks.open(&mut dir, 16));
+            select(&reg, &ops, &mut dir, &sa, Some((&sb, ks)), How::UNMATCHED, rows, parts).unwrap();
+            let got = written(&dir, rows, parts, Some(ks));
+            let added_docs = want_unmatched.iter().filter(|(_, d)| *d > 0).map(|(r, _)| r[0]).collect::<BTreeSet<i64>>();
+            assert_eq!(got.0, want_unmatched, "unmatched rows, A {i}..{j}, B {bi}..{bj}");
+            assert_eq!(got.1, added_docs, "unmatched parts, A {i}..{j}, B {bi}..{bj}");
+            [rows, parts, ks].into_iter().for_each(|x| dir.release(x));
+
             let (rows, parts) = (a.open(&mut dir, 64), Parts::open(&mut dir, 16).unwrap());
-            select(&reg, &ops, &mut dir, &sa, None, rows, parts).unwrap();
+            select(&reg, &ops, &mut dir, &sa, None, How::RETRACTED, rows, parts).unwrap();
             let got = written(&dir, rows, parts, None);
             assert_eq!(got.0, want_all, "change rows, A {i}..{j}");
             assert_eq!(got.1, gone_docs(&want_all), "change parts, A {i}..{j}");

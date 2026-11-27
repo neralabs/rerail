@@ -147,7 +147,7 @@ fn doc_of(blobs: &BlobRows, dir: &Directory, row: &[i64; TAPE_ARITY]) -> Result<
 }
 
 /// The tape port's arity (`tape_shape`).
-const TAPE_ARITY: usize = 15;
+pub const TAPE_ARITY: usize = 15;
 
 /// L1's selection, written where it lies: which documents a run retracts (a parts block) and reads (a runs block of
 /// their tape rows, +1), and its asks of the tape port, by `semi_change` of the tape port's change with the want's
@@ -255,7 +255,7 @@ impl L1 {
                 return Err(e);
             }
         };
-        let ran = semi::select(cx.reg, &self.semis, cx.dir, &a, b.as_ref().map(|(s, k)| (s, *k)), rows, parts).and_then(|()| {
+        let ran = semi::select(cx.reg, &self.semis, cx.dir, &a, b.as_ref().map(|(s, k)| (s, *k)), semi::How::RETRACTED, rows, parts).and_then(|()| {
             let r = Runs::new(cx.dir.read("L1's selection", &[rows])?.block(0)).needed();
             if r > 0 { Err(format!("L1's selection outgrew its room by {r} rows: its bound is wrong")) } else { Parts::sealed(cx.dir, parts) }
         });

@@ -1,20 +1,22 @@
 //! `semi_change` and `change_rows` (decision 0686; `blocks::change::semi` as an operation over blocks): a trace's
 //! change, each of its rows with its sign, into a δ runs block, read where its layers lie.
 //!
-//! - `semi_change`: the change of `A ⋉ B` on `A.a_col = B.b_col`, `A` and `B` each between two states of its trace:
-//!   a row of `A` gone that matched before is gone; one added that matches after is added; a kept row whose key `B`'s
-//!   change made match is added, and one whose key it made match no more is gone. And `B`'s change projected on its
-//!   key, into a second runs block: a key `B` holds now and held in no row before +1, one it held and holds no more
-//!   −1, each once.
+//! - `semi_change`: the change of `A ⋉ B` on `A.a_col = B.b_col` (`A ▷ B`, its rows whose key `B` does not hold,
+//!   with `neg`), `A` and `B` each between two states of its trace: a row of `A` gone that matched before is gone;
+//!   one added that matches after is added; a kept row whose key `B`'s change made match is added, and one whose key
+//!   it made match no more is gone. And `B`'s change projected on its key, into a second runs block: a key `B` holds
+//!   now and held in no row before +1, one it held and holds no more −1, each once.
 //! - `change_rows`: `A`'s change alone (`A ⋉ B` with every key matching): each row gone (its before state's values,
 //!   −1) and each added (+1).
 //!
-//! Both write the partitions the change retracts into a parts block (`drop::put_part`, then sealed): the key of each
-//! gone row, where its rows are retracted whole (a gone row's key, and a key `B` no longer holds).
+//! Both list the keys of the rows of one sign in a parts block (`drop::put_part`, then sealed): of the rows gone, the
+//! partitions the change retracts; of the rows added, those it names.
 //!
-//! L1's selection is `semi_change` of its tape port with its want (on the document), or `change_rows` of its tape port
-//! with no want: the parts are the documents it retracts, the added rows those it reads, and the keys' change its
-//! asks of the tape port (P§7.1's demand out).
+//! - L1's selection is `semi_change` of its tape port with its want (on the document), or `change_rows` of its tape
+//!   port with no want: the parts are the documents it retracts (−1), the added rows those it reads, and the keys'
+//!   change its asks of the tape port (P§7.1's demand out).
+//! - The boot's forgetting is `semi_change` of the document set, cold, with no ask for it (`neg`): the parts are the
+//!   documents nothing asks for (+1), which `drop_parts` retracts from the set and its places.
 //!
 //! Slots: `A`'s after head and `B`'s (read; the layers below each, the before state's among them, reached by
 //! reference), the rows' runs block, the parts block and the keys' runs block (write). Nothing is gathered: a key is
@@ -39,6 +41,11 @@ crate::params! {
         pub b_arity: u32,
         pub a_col: u32,
         pub b_col: u32,
+        /// 1: `A ▷ B`, the rows of `A` whose key `B` does not hold.
+        pub neg: u32,
+        /// The sign whose rows' keys the parts block lists: −1, the partitions the change retracts (L1's); +1, those it
+        /// adds (the documents a cold `A ▷ B` names, the boot's forgetting).
+        pub parts_sign: i32,
     }
 }
 
@@ -97,70 +104,57 @@ fn flipped(b: &Bistate<View<'_>>, col: ColumnIndex, up: bool, f: &mut dyn FnMut(
     if up { b.added().for_each(&mut one) } else { b.gone().for_each(&mut one) }
 }
 
-/// What a walk of the change gives: a row with its sign and the state its values are read from, or a partition the
-/// change retracts.
-enum Item<'v, 't> {
-    Row(i32, &'v View<'t>, RowId),
-    Part(i64),
-}
-
-/// Each row of `A`'s change in `A ⋉ B` (`b`: none, every key matches), and each partition it retracts.
-fn walk<'t>(a: &Bistate<View<'t>>, b: Option<&Bistate<View<'t>>>, ac: ColumnIndex, bc: ColumnIndex, f: &mut dyn FnMut(Item<'_, 't>)) {
-    let matches = |s: Option<&View<'_>>, k: i64| b.is_none() || has(s, bc, k);
+/// Each row of `A`'s change in `A ⋉ B` (`A ▷ B` with `neg`; `b`: none, every key matches), with its sign and the
+/// state its values are read from.
+fn walk<'t>(a: &Bistate<View<'t>>, b: Option<&Bistate<View<'t>>>, ac: ColumnIndex, bc: ColumnIndex, neg: bool, f: &mut dyn FnMut(i32, &View<'t>, RowId)) {
+    let matches = |s: Option<&View<'_>>, k: i64| b.is_none() || has(s, bc, k) != neg;
     if let Some(ab) = a.before() {
         for id in a.gone() {
-            let k = Read::get(ab, id, ac);
-            if matches(b.and_then(Bistate::before), k) {
-                f(Item::Row(-1, ab, id));
-                f(Item::Part(k));
+            if matches(b.and_then(Bistate::before), Read::get(ab, id, ac)) {
+                f(-1, ab, id);
             }
         }
     }
     for id in a.added() {
         if matches(b.map(Bistate::after), Read::get(a.after(), id, ac)) {
-            f(Item::Row(1, a.after(), id));
+            f(1, a.after(), id);
         }
     }
     let (Some(b), Some(_)) = (b, a.before()) else { return };
+    // A key `B` came to hold: its kept rows come into `A ⋉ B` (go from `A ▷ B`); one it no longer holds, the reverse.
     for (up, sign) in [(true, 1), (false, -1)] {
+        let sign = if neg { -sign } else { sign };
         flipped(b, bc, up, &mut |k| {
-            let mut any = false;
             for id in Read::matching(a.after(), &[ac], &[k]) {
                 if kept(a, id) {
-                    f(Item::Row(sign, a.after(), id));
-                    any = true;
+                    f(sign, a.after(), id);
                 }
-            }
-            if any && sign < 0 {
-                f(Item::Part(k));
             }
         });
     }
 }
 
-/// The walk written: its rows into `rows` (counted, claimed at once, then written in order) and its partitions into
-/// the open parts block `parts`, sealed.
-/// A walk of the change, given what to do with each item.
-type Walk<'w> = dyn Fn(&mut dyn FnMut(Item<'_, '_>)) + 'w;
+/// A walk of the change, given what to do with each row.
+type Walk<'w, 't> = dyn Fn(&mut dyn FnMut(i32, &View<'t>, RowId)) + 'w;
 
-fn write(rows: &mut [u8], parts: &mut [u8], arity: usize, go: &Walk<'_>) {
+/// The walk written: its rows into `rows` (counted, claimed at once, then written in order), and the key in `ac` of
+/// each row of sign `parts_sign` into the open parts block `parts`, sealed (sorted, each once).
+fn write(rows: &mut [u8], parts: &mut [u8], arity: usize, ac: ColumnIndex, parts_sign: i32, go: &Walk<'_, '_>) {
     assert!(arity <= MAX_COLS, "a row of at most {MAX_COLS} columns");
     let mut n = 0u32;
-    go(&mut |i| n += matches!(i, Item::Row(..)) as u32);
+    go(&mut |_, _, _| n += 1);
     let mut at = runs_claim_in(rows, n);
     let (mut row, mut np) = ([0i64; MAX_COLS], 0usize);
-    go(&mut |i| match i {
-        Item::Row(sign, s, id) => {
-            if let Some(a) = at.as_mut() {
-                for (k, v) in row[..arity].iter_mut().enumerate() {
-                    *v = Read::get(s, id, ColumnIndex::new(k as u16));
-                }
-                runs_set_in(rows, *a, &row[..arity], sign);
-                *a += 1;
+    go(&mut |sign, s, id| {
+        if let Some(a) = at.as_mut() {
+            for (k, v) in row[..arity].iter_mut().enumerate() {
+                *v = Read::get(s, id, ColumnIndex::new(k as u16));
             }
+            runs_set_in(rows, *a, &row[..arity], sign);
+            *a += 1;
         }
-        Item::Part(p) => {
-            put_part(parts, np, p);
+        if sign == parts_sign {
+            put_part(parts, np, Read::get(s, id, ac));
             np += 1;
         }
     });
@@ -176,7 +170,7 @@ fn semi_change(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let b = bistate(table, p.b_before, p.b_after, p.b_arity as usize);
     let ([], [rows, parts, keys]) = c.views([], [ROWS, PARTS, KEYS]);
     match (&a, &b) {
-        (Some(a), Some(b)) => write(rows, parts, p.a_arity as usize, &|f| walk(a, Some(b), ac, bc, f)),
+        (Some(a), Some(b)) => write(rows, parts, p.a_arity as usize, ac, p.parts_sign, &|f| walk(a, Some(b), ac, bc, p.neg != 0, f)),
         // `A` holds nothing, or nothing is wanted, on either side: no row, no partition.
         _ => {
             seal_parts(parts, 0);
@@ -204,7 +198,7 @@ fn change_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let a = bistate(table, p.a_before, p.a_after, p.a_arity as usize);
     let ([], [rows, parts]) = c.views([], [C_ROWS, C_PARTS]);
     match &a {
-        Some(a) => write(rows, parts, p.a_arity as usize, &|f| walk(a, None, ac, ac, f)),
+        Some(a) => write(rows, parts, p.a_arity as usize, ac, p.parts_sign, &|f| walk(a, None, ac, ac, false, f)),
         None => {
             seal_parts(parts, 0);
         }
