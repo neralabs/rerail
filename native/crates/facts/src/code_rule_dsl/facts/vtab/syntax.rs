@@ -2399,6 +2399,8 @@ pub struct Batch {
     /// first lookup of one of its kinds over that tag's documents alone (Q183; decision 0494: a program's language
     /// stays unmade).
     kinds: Vec<(u8, OnceLock<KindRows>)>,
+    /// The `field` view's rows by field, made at the first lookup by a field alone (`by_field`).
+    fields: OnceLock<FieldRows>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2553,6 +2555,49 @@ impl KindRows {
         }
         starts.push(all.len() as u32);
         KindRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|&(_, d, l, x)| [d, l, x]).collect::<Vec<_>>()) }
+    }
+}
+
+/// The `field` view's rows by their field (`field($p, #f, $c)`, neither node bound): each field's rows in row order,
+/// `[document, its row among the document's fielded nodes, the child's local id, its parent's]` (the parent as a
+/// read of the view's row reads it, `Projected::parent_of_node`; `NONE` for the root's). A probe by a field alone
+/// walked every node of the batch for the few in the field, 884 probes of an idc run at 572 ns a row out (1.84 s).
+///
+/// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
+struct FieldRows {
+    /// The field atoms, ascending.
+    keys: Cells<i64>,
+    /// Where each field's rows start in `at`, and one past the last.
+    starts: Cells<u32>,
+    at: Cells<[u32; 4]>,
+}
+
+impl FieldRows {
+    fn new(b: &Batch) -> Self {
+        // The scratch the index is sorted in: the index itself is the block's.
+        let mut all: Vec<(i64, [u32; 4])> = Vec::new();
+        for doc in 0..b.docs.len() {
+            let p = &b.docs[doc];
+            for (r, x) in p.ranks().iter(Item::Field) {
+                let l = p.local_of_node(x);
+                if l == NONE {
+                    continue;
+                }
+                let up = if l == 0 { NONE } else { p.parent_of_node(x) };
+                all.push((i64::from(field_atom(p.tag(), p.f().field(x))), [doc as u32, r, l, up]));
+            }
+        }
+        // Stable: within a field, the rows stay in order.
+        all.sort_by_key(|e| e.0);
+        let (mut keys, mut starts) = (Vec::new(), Vec::new());
+        for (i, e) in all.iter().enumerate() {
+            if keys.last() != Some(&e.0) {
+                keys.push(e.0);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(all.len() as u32);
+        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
     }
 }
 
@@ -3796,6 +3841,7 @@ impl Batch {
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
             op_atoms: (0..256).map(|_| OnceLock::new()).collect(),
+            fields: OnceLock::new(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
@@ -4463,6 +4509,11 @@ impl Batch {
         let Ok(at) = self.kinds.binary_search_by_key(&tag, |e| e.0) else { return &[] };
         let k = self.kinds[at].1.get_or_init(|| KindRows::new(self, tag));
         k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
+    }
+    /// The `field` view's rows whose field is `field`, in row order (`FieldRows`).
+    fn by_field(&self, field: i64) -> &[[u32; 4]] {
+        let k = self.fields.get_or_init(|| FieldRows::new(self));
+        k.keys.binary_search(&field).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
@@ -5221,14 +5272,8 @@ impl Viewed {
         } else if matches!(self.view, View::Field) && column == 1 {
             // A field's rows by the field alone: each document's nodes walked on the tape, a row for each in the field
             // (`read_matches`' case).
-            for doc in (0..b.docs.len()).filter(|doc| kept(doc)) {
-                let p = &b.docs[doc];
-                for (l, x) in p.nodes() {
-                    if i64::from(field_atom(p.tag(), p.f().field(x))) == v {
-                        one(b.row_of_node(View::Field, doc, l, x));
-                    }
-                }
-            }
+            let firsts = b.firsts(View::Field);
+            b.by_field(v).iter().filter(|e| kept(&(e[0] as usize))).for_each(|e| one(Some(firsts.at(e[0] as usize) + e[1] as usize)));
         } else {
             return false;
         }
@@ -5298,44 +5343,38 @@ impl Viewed {
             }
             return true;
         }
-        // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound), no document narrowed to anchors:
-        // each document's nodes walked once in preorder, each one's field read off the tape, and a match's values the
-        // walk's: the parent's id (found once while its children pass; not narrowed, the walk's parent is the tape's),
-        // the field, the child's id (from the last one's granule, `global_near`). The general lookup found each row
-        // and read its values again, 978 ns a row out on idc (3.1 s); a match read as a probe's (`emit`, below), 596.
+        // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound): the batch's index of them
+        // (`Batch::by_field`), each row's values its parent's id, the field and the child's id (from the last one's
+        // granule, `global_near`, while the rows stay in a document), no row found and read again. The general lookup
+        // took 978 ns a row out on idc (3.1 s), and a walk of every node for the few in the field 572.
         if matches!(self.view, View::Field) && column == 1 && columns.len() <= 8 && columns.iter().all(|&c| c < 3) {
             let b = &*self.batch;
-            if (0..b.docs.len()).all(|doc| !b.docs[doc].anchored) {
-                let (firsts, mut vals) = (b.firsts(View::Field), [0i64; 8]);
-                for doc in 0..b.docs.len() {
-                    let p = &b.docs[doc];
-                    let (mut near, mut up_near, mut last_up) = (0u32, 0u32, (NONE, -1i64));
-                    for (l, x, up) in p.walk_up() {
-                        if i64::from(field_atom(p.tag(), p.f().field(x))) != value {
-                            continue;
-                        }
-                        let Some(r) = p.ranks().local(Item::Field, x) else { continue };
-                        let parent = match up {
-                            None => -1,
-                            Some((q, _)) if q == last_up.0 => last_up.1,
-                            Some((q, _)) => {
-                                last_up = (q, p.global_near(q, &mut up_near));
-                                last_up.1
-                            }
-                        };
-                        let child = p.global_near(l, &mut near);
-                        for (o, &c) in vals.iter_mut().zip(columns) {
-                            *o = match c {
-                                0 => parent,
-                                1 => value,
-                                _ => child,
-                            };
-                        }
-                        each(firsts.at(doc) + r as usize, &vals[..columns.len()]);
-                    }
+            let (firsts, mut vals) = (b.firsts(View::Field), [0i64; 8]);
+            let (mut doc_at, mut near, mut up_near, mut last_up) = (u32::MAX, 0u32, 0u32, (NONE, -1i64));
+            for &[doc, r, l, up] in b.by_field(value) {
+                if doc != doc_at {
+                    (doc_at, near, up_near, last_up) = (doc, 0, 0, (NONE, -1));
                 }
-                return true;
+                let p = &b.docs[doc as usize];
+                let parent = match up {
+                    NONE => -1,
+                    q if q == last_up.0 => last_up.1,
+                    q => {
+                        last_up = (q, p.global_near(q, &mut up_near));
+                        last_up.1
+                    }
+                };
+                let child = p.global_near(l, &mut near);
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = match c {
+                        0 => parent,
+                        1 => value,
+                        _ => child,
+                    };
+                }
+                each(firsts.at(doc as usize) + r as usize, &vals[..columns.len()]);
             }
+            return true;
         }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
         // passed over.
@@ -5503,18 +5542,6 @@ impl Viewed {
             // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
             for &[doc, local, x] in b.by_kind(value) {
                 emit(doc as usize, local, x, None, None, Known::default());
-            }
-        } else if matches!(self.view, View::Field) && column == 1 {
-            // A field's rows by the field alone, some document narrowed to anchors (the walk above, otherwise): each
-            // document's nodes walked once in preorder, each one's field read off the tape, each match read as a
-            // probe's with its tape node in hand.
-            for doc in 0..b.docs.len() {
-                let p = &b.docs[doc];
-                for (l, x, up) in p.walk_up() {
-                    if i64::from(field_atom(p.tag(), p.f().field(x))) == value {
-                        emit(doc, l, x, None, Some(up.map_or(-1, |(q, _)| p.global(q))), Known::default());
-                    }
-                }
             }
         } else {
             return false;
