@@ -14,6 +14,7 @@ pub mod entrypoints;
 pub mod fs;
 pub mod json;
 pub mod path;
+pub mod project;
 pub mod resolver;
 pub mod term;
 pub mod tsconfig;

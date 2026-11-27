@@ -47,7 +47,7 @@
 // files for require and packages; tryExtensions .js, .json, .node, .mjs, .cjs, and for TypeScript files the
 // tsconfig `paths` aliases and the .js -> .ts extension map), reading node_modules, which the repository walk
 // skips. Resolution reads other files, so a file's own part cannot answer it: the phase node_resolve
-// (typing/programs/node_resolve.rerail) resolves each file's specifiers, and hands the files on by path.
+// (phases/node_resolve.rerail) resolves each file's specifiers, and hands the files on by path.
 //
 // Builds on tsx/values (api_use for the global require and require.resolve, const_str, first_arg), tsx/node
 // (builtin_spec, the Node.js module table), tsx/node-package (pkg_file) and core (package_for, package_field,
@@ -55,10 +55,11 @@
 
 #include "tsx/node.rerail"   // builtin_spec
 #include "tsx/node-package.rerail"
+#include "tsx/project.rerail"  // tsconfig, tsconfig_for, tsconfig_path
 
 // spec_resolved(n, f): the phase node_resolve's answer for n's file, specifier and style, read at n's own path. The
 // phase resolves every string a specifier may be (a superset of node_target's), so each of node_target's is asked.
-.decl node_resolve__file_at(p: symbol, x: symbol, st: symbol, f: symbol)
+.decl node_resolve__file_at(p: symbol, x: symbol, st: symbol, f: symbol) by_path 3
 .decl spec_resolved(n: node, file: symbol)
 spec_resolved(n, f) :- node_target(n, x, st), docof(n, d), doc(d, p, _), node_resolve__file_at(p, x, st, f).
 

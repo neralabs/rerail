@@ -25,9 +25,12 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
+import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
+/** A reader that knows its database file, which the line naming a repository whose aliases do not read names (`listedRow`). */
+type FileReader = Reader & Pick<RerailDatabase, "$client">;
 
 const CLONE_KEY_PREFIX = "clone:";
 
@@ -43,14 +46,21 @@ function recordOf(row: RepositoryRow): RepositoryRecord {
   return { ...row, started: row.started === true };
 }
 
-function repositoryRow(db: Reader, key: RepositoryKey): RepositoryRow | undefined {
-  return db.select().from(repositories).where(eq(repositories.repositoryKey, key)).get();
+/** The row `key` names, read as the list reads it (`storedRow`). */
+function repositoryRow(db: FileReader, key: RepositoryKey): StoredRow | undefined {
+  const row = db.select(LISTED_COLUMNS).from(repositories).where(eq(repositories.repositoryKey, key)).get();
+  return row === undefined ? undefined : storedRow(row, db.$client.name);
 }
 
-/** The repository `key` names: its own key, else the one that lists it as an alias. */
-function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow | undefined {
+/**
+ * The repository `key` names: its own key, else the one that lists it as an alias. Each row is read as the list reads
+ * it (`listedRow`): a repository whose aliases do not read is still found by its own key and matches no alias, rather
+ * than failing the lookup of every checkout not recorded yet, and the list's line names it.
+ */
+function repositoryByKeyOrAlias(db: FileReader, key: RepositoryKey): StoredRow | undefined {
   return repositoryRow(db, key)
-    ?? db.select().from(repositories).where(ne(repositories.aliases, [])).all().find(row => row.aliases.includes(key));
+    ?? db.select(LISTED_COLUMNS).from(repositories).where(ne(repositories.aliases, [])).all()
+      .map(row => storedRow(row, db.$client.name)).find(row => row.aliases.includes(key));
 }
 
 /**
@@ -180,7 +190,8 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace, located => refusedCheckoutCloneId(db, located));
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
+  const repositoryKey = db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
   return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
 }
 
@@ -211,7 +222,7 @@ function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
  * clone id goes with its settings. Its repository; the caller forms the context after the write, outside its lock.
  */
 function recordCheckoutRow(
-  tx: Writer,
+  tx: Writer & FileReader,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   cloneId: string,
@@ -233,13 +244,13 @@ function recordCheckoutRow(
 }
 
 /** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
-function cloneRepository(db: Reader, cloneId: string): RepositoryKey | undefined {
+function cloneRepository(db: FileReader, cloneId: string): RepositoryKey | undefined {
   return db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).limit(1).get()?.key
     ?? repositoryByKeyOrAlias(db, `${CLONE_KEY_PREFIX}${cloneId}`)?.repositoryKey;
 }
 
 /** The repository the checkout's remote names, created when none is known: keyed by the remote, else by the clone id. */
-function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
+function remoteRepositoryCreated(tx: Writer & FileReader, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
   const remoteKey = remoteKeyOf(location);
   const known = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
   if (known !== undefined) return known;
@@ -295,7 +306,7 @@ function registryLists(checkout: string, commonDirectory: string, root: string):
  * remote names. A clone without an id file yet (a fresh clone) is still found by its remote, with `cloneId` null, so
  * a new clone of a started repository reads started. Undefined when git is unavailable or no repository is known.
  */
-export function lookupCheckout(db: Reader, workspace: string): CheckoutContext | undefined {
+export function lookupCheckout(db: FileReader, workspace: string): CheckoutContext | undefined {
   try {
     gitExecutable();
   } catch (error) {
@@ -309,11 +320,11 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
  * {@link lookupCheckout} at a location the caller read ({@link repositoryIdentityLocationAsync}, which runs its Git off
  * the thread): a recorded checkout is found with no Git process.
  */
-export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+export function lookupCheckoutAt(db: FileReader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
   return lookupAt(db, location, new Map());
 }
 
-function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
+function lookupAt(db: FileReader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
   const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
@@ -331,7 +342,7 @@ function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string 
 
 /** The known repository the checkout's remote names, its remote read once per `remoteKeys`; a folder outside git has none. */
 function remoteRepository(
-  db: Reader,
+  db: FileReader,
   location: RepositoryIdentityLocation,
   checkoutPath: string,
   remoteKeys: Map<string, RepositoryKey | undefined>,
@@ -347,7 +358,7 @@ function remoteRepository(
  * workspace's git location is read once (a folder outside git is located again, so a later `git init` is seen),
  * and the database is read on every call, so adoption and new records show at once.
  */
-export function createCheckoutResolver(db: Reader): (workspace: string) => CheckoutContext | undefined {
+export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const locations = new Map<string, RepositoryIdentityLocation>();
   const remoteKeys = new Map<string, RepositoryKey | undefined>();
   return workspace => {
@@ -383,27 +394,32 @@ function eitherStarted(left: boolean | null, right: boolean | null): boolean | n
 /**
  * Move the repository `fromKey` to `toKey`, as when a clone-keyed repository's checkout gains a remote. When `toKey`
  * is new or not set up, `fromKey` becomes it: its configuration, settings and checkouts move, it is started when
- * either was, and `fromKey` stays as an alias. When `toKey` is set up, only the checkouts move and `fromKey` is left
- * unused. A repository another process already adopted is left as it is.
+ * either was, and `fromKey` stays as an alias; while either row's stored aliases hold no JSON array, nothing moves and
+ * the repository stays under `fromKey`. When `toKey` is set up, only the checkouts move and `fromKey` is left unused.
+ * A repository another process already adopted is left as it is.
  */
 export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: RepositoryKey, now = Date.now()): void {
   if (fromKey === toKey) return;
   db.transaction(tx => {
-    const source = repositoryRow(tx, fromKey);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const source = repositoryRow(db, fromKey);
     // Another process adopted it first, moving its checkouts with it.
     if (source === undefined) return;
-    const target = repositoryRow(tx, toKey);
+    const target = repositoryRow(db, toKey);
     if (target?.configuredAt != null) {
       tx.update(checkouts).set({ repositoryKey: toKey }).where(eq(checkouts.repositoryKey, fromKey)).run();
       return;
     }
+    const aliases = aliasesAfter([source, target], [fromKey], toKey);
+    // The move would rewrite one row's aliases and remove the other's: while either text holds no array, the repository
+    // stays under its key, as it is, until a person mends the text; the lines `listedRow` wrote name the row.
+    if (aliases === undefined) return;
     if (target !== undefined) {
       tx.update(checkouts).set({ repositoryKey: fromKey }).where(eq(checkouts.repositoryKey, toKey)).run();
       tx.delete(repositories).where(eq(repositories.repositoryKey, toKey)).run();
     }
     // What `toKey` holds gives way to `fromKey`'s, rows a repository removed before left under it included.
     deleteRepositorySettings(tx, toKey);
-    const aliases = [...new Set([...source.aliases, ...(target?.aliases ?? []), fromKey])].filter(alias => alias !== toKey);
     tx.update(repositories)
       .set({
         repositoryKey: toKey,
@@ -420,17 +436,18 @@ export function adoptRemote(db: RerailDatabase, fromKey: RepositoryKey, toKey: R
 /**
  * Make the remote `address` resolve to the repository `key` (a rename, an ssh host alias, a mirror). A repository
  * already known by that address that is not set up gives its checkouts to `key` and is removed; one that is set up
- * is refused.
+ * is refused, as is the link while the stored aliases of `key` or of that repository hold no JSON array.
  */
 export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: string, now = Date.now()): RepositoryKey {
   const alias = normalizeRemoteAddress(address);
   if (alias === undefined) throw new Error(`${address} is not a remote address`);
   db.transaction(tx => {
-    const repository = repositoryRow(tx, key);
+    // `db` itself, as `recordCheckout` passes it, so a line `listedRow` writes names the file.
+    const repository = repositoryRow(db, key);
     if (repository === undefined) throw new Error(`Unknown repository: ${key}`);
     if (alias === key || repository.aliases.includes(alias)) return;
-    const merged = absorbAliasOwner(tx, key, alias);
-    const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
+    const aliases = aliasesAfter([repository], [alias, ...absorbAliasOwner(db, key, alias)], key);
+    if (aliases === undefined) throw aliasesRefused(repository);
     tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
   return alias;
@@ -438,16 +455,25 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
 
 /**
  * Gives `key` the checkouts of the repository `alias` already names and removes that repository, returning the names it
- * went by: its own key and aliases resolve to `key` too, so a fresh clone of its remote joins `key`. One set up is refused.
+ * went by, each item of its aliases as stored: its own key and aliases resolve to `key` too, so a fresh clone of its
+ * remote joins `key`. One set up is refused, and one whose stored aliases hold no array, which the removal would lose.
  */
-function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey): RepositoryKey[] {
+function absorbAliasOwner(tx: Writer & FileReader, key: RepositoryKey, alias: RepositoryKey): unknown[] {
   const other = repositoryByKeyOrAlias(tx, alias);
   if (other === undefined) return [];
   if (other.configuredAt !== null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
+  const names = storedAliasItems(other);
+  if (names === undefined) throw aliasesRefused(other);
   tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
   deleteRepositorySettings(tx, other.repositoryKey);
   tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
-  return [other.repositoryKey, ...other.aliases];
+  return [other.repositoryKey, ...names];
+}
+
+/** Why an alias is not added: `row`'s stored aliases hold no array, and adding it would write over that text. */
+function aliasesRefused(row: StoredRow): Error {
+  return new Error(`repository ${row.repositoryKey} takes no alias while the ${repositories.aliases.name} of its row is not a JSON array, `
+    + "which only a damaged file or a hand edit leaves: mend that text first");
 }
 
 /**
@@ -553,15 +579,81 @@ export interface RepositoryListing extends RepositoryRecord {
   readonly checkouts: readonly RecordedCheckout[];
 }
 
-/** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
-export function listRepositories(db: Reader): RepositoryListing[] {
+/**
+ * A `repositories` row with `aliases_json` as the text the database holds, which `listedRow` parses, so one repository's
+ * damaged text fails no page that lists repositories.
+ */
+const LISTED_COLUMNS = { ...getTableColumns(repositories), aliases: sql<string>`${repositories.aliases}` };
+type ListedRow = Omit<RepositoryRow, "aliases"> & { aliases: string };
+
+/**
+ * `row` with its aliases parsed, rather than failing every page that lists repositories. Text that is no JSON array,
+ * which only a damaged file or a hand edit leaves, reads as no aliases; an array reads without its items that are not
+ * strings (a CHECK refuses text that is no JSON array, not such an item), so each costs itself, never the aliases
+ * beside it. Either way the line that names the repository goes to `log` once, and never holds an item's text.
+ */
+function listedRow(row: ListedRow, file: string, log: StoredListLog): RepositoryRow {
+  const aliases = storedItems(row.aliases, "text");
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = repositories.aliases.name;
+  const place = { file, place: `repository ${row.repositoryKey} ${column}` };
+  if (typeof aliases === "string") {
+    nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads with no aliases: the ${column} of its row is not `
+      + `a JSON array (${aliases}), which only a damaged file or a hand edit leaves.\n`);
+    return { ...row, aliases: [] };
+  }
+  if (aliases.left > 0) nameOnce(log, place, `rerail: ${file}: repository ${row.repositoryKey} reads without ${aliases.left} of the `
+    + `${aliases.items.length + aliases.left} items of its aliases: the ${column} of its row holds no string there, which only a damaged file or a hand edit leaves.\n`);
+  return { ...row, aliases: aliases.items as RepositoryKey[] }; // each item is a string: `storedItems` kept only those
+}
+
+/** A row as `listedRow` reads it, with the text its aliases are stored as, which a write extends (`aliasesAfter`). */
+type StoredRow = RepositoryRow & { readonly storedAliases: string };
+
+/** `row` as `listedRow` reads it, keeping the text its aliases are stored as. */
+function storedRow(row: ListedRow, file: string, log: StoredListLog = process.stderr): StoredRow {
+  return { ...listedRow(row, file, log), storedAliases: row.aliases };
+}
+
+/** The items of the array `row`'s aliases are stored as, one that is no string too; none for no row; undefined for text that holds no array. */
+function storedAliasItems(row: StoredRow | undefined): unknown[] | undefined {
+  const items = row === undefined ? [] : storedArray(row.storedAliases);
+  return typeof items === "string" ? undefined : items;
+}
+
+/**
+ * The aliases a write stores for the rows it merges into one: the items each row's aliases are stored as, in order,
+ * then `added`, each name once and `key` left out, so the write keeps every item a row holds, one that is no string
+ * too, and mends none. Undefined where a row's stored text holds no array: the write then leaves that text as it is.
+ */
+export function aliasesAfter(rows: readonly (StoredRow | undefined)[], added: readonly unknown[], key: RepositoryKey): RepositoryKey[] | undefined {
+  const items = rows.map(storedAliasItems);
+  // An item that is no string is kept as stored, though the column's type names strings.
+  return items.includes(undefined) ? undefined : [...new Set([...items.flat(), ...added])].filter(name => name !== key) as RepositoryKey[];
+}
+
+/**
+ * Every repository Rerail knows, with its recorded checkouts, ordered by name. `log`: where the line that names a
+ * repository whose stored aliases do not read goes (`listedRow`): `daemon.log` for the daemon, a command's own error
+ * output for a command that passes it.
+ */
+export function listRepositories(db: Reader & Pick<RerailDatabase, "$client">, log: StoredListLog = process.stderr): RepositoryListing[] {
   const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
   for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
-  return db.select().from(repositories).all()
+  return db.select(LISTED_COLUMNS).from(repositories).all()
+    .map(row => listedRow(row, db.$client.name, log))
     .map(repository => ({ ...recordOf(repository), checkouts: byRepository.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
+}
+
+/**
+ * Every `repositories` row in key order, its aliases read as `listRepositories` reads them (`listedRow`), with the text
+ * they are stored as, which a write extends (`aliasesAfter`).
+ */
+export function readableRepositoryRows(db: FileReader, log: StoredListLog = process.stderr): StoredRow[] {
+  return db.select(LISTED_COLUMNS).from(repositories).orderBy(repositories.repositoryKey).all().map(row => storedRow(row, db.$client.name, log));
 }
 
 /** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */

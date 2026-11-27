@@ -131,7 +131,7 @@
 //         if Book.objects.count() > 0:                  py_empty_cmp(<the comparison>, <the count() call>)
 #include "python/ast.rerail"
 #include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
-#include "python/django-shared.rerail"  // dj_model_base, dj_test_doc: the phase py_names reads them too
+#include "python/django-shared.rerail"  // dj_model_base, dj_test_doc: the phase dj_names reads them too
 
 // ---- models ------------------------------------------------------------------------------------------------------
 // dj_field_module(m): the modules model field classes are imported from (`models.CharField`, `JSONField`, ...).
@@ -237,7 +237,7 @@ dj_model_field_kw(e, x, k, v) :- dj_model_field(e, x, _), dj_model_named(e, mq),
 .decl dj_model_has_method(e: node, x: symbol)
 dj_model_has_method(e, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
     (py_names__member_method(m, mq, x) ; py_names__anc_method(m, mq, x)).
-// A model's Meta options and managers, by symbol (0677 fix 3c): the phase py_names' Django section reads each model's
+// A model's Meta options and managers, by symbol (0677 fix 3c): the phase dj_names reads each model's
 // Meta, its abstract and concrete bases' as Django inherits them, and the manager classes its attributes name, and
 // hands them on under the model's module. Read at a node e of the reading file that names the model (dj_model_ref).
 //   dj_model_group(e, g, x)       field x is in group g, kept unique together (unique_together, a UniqueConstraint's
@@ -248,38 +248,38 @@ dj_model_has_method(e, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
 //   dj_model_abstract(e)          its own Meta says `abstract = True`
 //   dj_model_manager_method(e, a, x)  its manager attribute a's class (or its get_queryset()'s class) of the run
 //                                 defines or inherits x, get_or_create or update_or_create
-.decl py_names__dj_group(m: symbol, q: symbol, g: symbol, x: symbol)
-.decl py_names__dj_cond_group(m: symbol, q: symbol, g: symbol, x: symbol)
-.decl py_names__dj_opaque(m: symbol, q: symbol)
-.decl py_names__dj_unmanaged(m: symbol, q: symbol)
-.decl py_names__dj_abstract(m: symbol, q: symbol)
-.decl py_names__dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol)
+.decl dj_names__model_group(m: symbol, q: symbol, g: symbol, x: symbol) keyed
+.decl dj_names__model_cond_group(m: symbol, q: symbol, g: symbol, x: symbol) keyed
+.decl dj_names__model_opaque(m: symbol, q: symbol) keyed
+.decl dj_names__model_unmanaged(m: symbol, q: symbol) keyed
+.decl dj_names__model_abstract(m: symbol, q: symbol) keyed
+.decl dj_names__manager_method(m: symbol, q: symbol, a: symbol, x: symbol) keyed
 .decl dj_model_group(e: node, g: symbol, x: symbol)
-dj_model_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_group(m, mq, g, x).
+dj_model_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_group(m, mq, g, x).
 .decl dj_model_cond_group(e: node, g: symbol, x: symbol)
-dj_model_cond_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_cond_group(m, mq, g, x).
+dj_model_cond_group(e, g, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_cond_group(m, mq, g, x).
 .decl dj_model_opaque(e: node)
-dj_model_opaque(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_opaque(m, mq).
+dj_model_opaque(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_opaque(m, mq).
 .decl dj_model_unmanaged(e: node)
-dj_model_unmanaged(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_unmanaged(m, mq).
+dj_model_unmanaged(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_unmanaged(m, mq).
 .decl dj_model_abstract(e: node)
-dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_abstract(m, mq).
+dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_abstract(m, mq).
 // A model's hooks, by symbol (0677 fix 3d), from the phase's Django section:
 //   dj_model_hook(e, k, h)        a hook of kind k ("save" or "delete") that a bulk write on the model e names skips,
 //                                 h its description: its save()/delete(), or an ancestor's of the run, doing more than
 //                                 call the base class's; a pre_save/post_save receiver for it in any file
 //   dj_receiver_def(f, mq)        def f of the reading file is connected, in any file, as a pre_save/post_save receiver
 //                                 for sender mq
-.decl py_names__dj_hook(m: symbol, q: symbol, k: symbol, h: symbol)
-.decl py_names__dj_receiver_fn(m: symbol, f: symbol, q: symbol)
+.decl dj_names__model_hook(m: symbol, q: symbol, k: symbol, h: symbol) keyed
+.decl dj_names__receiver_fn(m: symbol, f: symbol, q: symbol) keyed
 .decl dj_model_hook(e: node, k: symbol, h: symbol)
-dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_hook(m, mq, k, h).
+dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), dj_names__model_hook(m, mq, k, h).
 .decl dj_receiver_def(f: node, mq: symbol)
 dj_receiver_def(f, mq) :- kind(f, "function_definition"), qualname(f, fq), docof(f, d), doc(d, p, _),
-    py_names__reads_at(p, m), py_names__dj_receiver_fn(m, fq, mq).
+    py_names__reads_at(p, m), dj_names__receiver_fn(m, fq, mq).
 .decl dj_model_manager_method(e: node, a: symbol, x: symbol)
 dj_model_manager_method(e, a, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
-    py_names__dj_manager_method(m, mq, a, x).
+    dj_names__manager_method(m, mq, a, x).
 // dj_has_field(c, x, t): model c has field x of field class t, declared in its body (dj_field) or in a class of the
 // run among its ancestors: python/names' class_anc_call, the phase py_names' join of each ancestor's body to the class
 // by symbol (0677 fix 3b). Pairing c with the ancestor's class node in its own file took both into the cross-file part.
@@ -311,7 +311,7 @@ dj_model_method(c, f, x) :- dj_model(c), kind(f, "function_definition"), nearest
     within(f, b), def_name(f, x).
 
 // ---- querysets ---------------------------------------------------------------------------------------------------
-// dj_manager, dj_qs, dj_qs_root: python/django-shared (the phase py_names reads a view's queryset too).
+// dj_manager, dj_qs, dj_qs_root: python/django-shared (the phase dj_names reads a view's queryset too).
 .decl dj_qs_call(c: node, m: symbol)
 dj_qs_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs(o).
 // dj_qs_model(q, r): queryset chain q starts at `M.objects` with r, in q's own file, naming M, a model class of the
@@ -449,27 +449,27 @@ dj_plain_at(d, q) :- doc(d, p, _), py_names__reads_at(p, m), py_names__plain_def
 // a task class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit (pretix's
 // TransactionAwareTask); or the run's Celery app makes such a class every task's class (addons-server's AMOTask,
 // `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit. The task, its class and the app are in
-// any file: the phase py_names joins them by symbol (dj_deferred_task, dj_app_defers), read through the modules the
+// any file: the phase dj_names joins them by symbol (deferred_task, app_defers), read through the modules the
 // call's file reads (decision 0677).
-.decl py_names__dj_deferred_task(m: symbol, f: symbol)
-.decl py_names__dj_app_defers(m: symbol)
-// py_names__dj_view_model(m, q, s): class q of module m, or an ancestor of the run, says `model = S` or
+.decl dj_names__deferred_task(m: symbol, f: symbol) keyed
+.decl dj_names__app_defers(m: symbol) keyed
+// dj_names__view_model(m, q, s): class q of module m, or an ancestor of the run, says `model = S` or
 // `queryset = S.objects…` in its body (get-handler-writes' view over S).
-.decl py_names__dj_view_model(m: symbol, q: symbol, s: symbol)
-// py_names__dj_task_def(m, f): function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
+.decl dj_names__view_model(m: symbol, q: symbol, s: symbol) keyed
+// dj_names__task_def(m, f): function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
 // `@task`).
-.decl py_names__dj_task_def(m: symbol, f: symbol)
-// py_names__dj_anc_clean_call(m, q, x): a class of the run among class q's ancestors calls `self.x()`, x a clean_…
+.decl dj_names__task_def(m: symbol, f: symbol) keyed
+// dj_names__anc_clean_call(m, q, x): a class of the run among class q's ancestors calls `self.x()`, x a clean_…
 // method (django-practice-clean-field-returns-value).
-.decl py_names__dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
+.decl dj_names__anc_clean_call(m: symbol, q: symbol, x: symbol) keyed
 .decl dj_task_waits_for_commit(c: node)
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
     (m = "delay" ; m = "apply_async"), sym_of(o, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, mq),
-    py_names__dj_deferred_task(mq, q).
+    dj_names__deferred_task(mq, q).
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
     (m = "delay" ; m = "apply_async"), docof(c, d), dj_app_defers(d).
 .decl dj_app_defers(d: number)
-dj_app_defers(d) :- doc(d, p, _), py_names__reads_at(p, m), py_names__dj_app_defers(m).
+dj_app_defers(d) :- doc(d, p, _), py_names__reads_at(p, m), dj_names__app_defers(m).
 // dj_dispatch_in_failing_handler(c): side effect c sits in an except handler that always re-raises
 // (py_reraising_handler): the transaction rolls back, so an on_commit callback would never run (a failure mail or
 // error task belongs there).

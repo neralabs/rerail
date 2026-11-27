@@ -3838,10 +3838,10 @@ fn run_observed(
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
     // A digest under the rows of the phases' exports among `reads`, which are not in the program's text. Those read as
-    // settings (`file_local::setting_input`, `tsx_names`'s) key each file's entry by the rows it can read of them
+    // settings (`file_local::Setting`, `tsx_names`'s) key each file's entry by the rows it can read of them
     // instead (`memo::settings_scopes`), not every file's by all of them.
     let under_phased = |digest: [u8; 32], reads: &BTreeSet<&str>| -> [u8; 32] {
-        let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
+        let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(prog, r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
     let memo_local = memo::program_digest(&local_v);
@@ -3901,7 +3901,7 @@ fn run_observed(
             }
         };
         debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
-        strata.identities(options, &phased, &base_rows)
+        strata.identities(options, &phased, &base_rows, &|r| crate::code_rule_dsl::typing::file_local::setting_input(prog, r))
     };
     let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
@@ -4273,20 +4273,21 @@ fn run_observed(
             let measured = counts.statistics(&|_| true);
             repository.push((rel.clone(), source, measured));
         }
-        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
-        // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
-        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
-        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
-        for rel in unbound {
-            let own = projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str());
-            let Some(cols) = prog.decls.get(rel.as_str()).filter(|_| own) else { continue };
-            // Its columns by position (`c0`, …), as a phase's export's (`atoms_source`): the cross part reads a
-            // relation core does not shape by position.
-            let names: Vec<String> = (0..cols.len()).map(|c| format!("c{c}")).collect();
-            let names: Vec<&str> = names.iter().map(String::as_str).collect();
-            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(crate::code_rule_dsl::facts::vtab::Relation::new(&names));
-            let measured = syntax::statistics(source.as_ref());
-            repository.push((rel.clone(), source, measured));
+        // An input nothing gives rows (decision 0710): not core's, no registered reader's (`facts::repository`), no
+        // phase's export, no fact or `.input` setting. Bound empty, a rule reading it would read nothing where its
+        // producer is missing, so the run stops and names it. An `extensible` relation nothing states is stated empty
+        // (`extensible_stated`): an extension with no members, not a missing producer.
+        let unproduced: Vec<&str> = split
+            .base
+            .iter()
+            .filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel) && projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str()) && prog.decls.contains_key(rel.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !unproduced.is_empty() {
+            return Err(Error::Plan(format!(
+                "{}: read as an input, and nothing gives it rows: no core relation, no registered reader's (a language's adapter registers its project files' readers at load), no phase's export, no fact and no `.input` setting (decision 0710)",
+                unproduced.join(", ")
+            )));
         }
         repository
     };
@@ -4296,8 +4297,11 @@ fn run_observed(
     // digest of its own settings. The phases' exports read as settings (`tsx_names`'s) are bound by now, below.
     let settings_scopes = memo::settings_scopes(&local_placed, &memo_ids.keys().cloned().collect());
     let settings = {
-        let bound: Vec<(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
-            repository.iter().filter(|(name, ..)| crate::code_rule_dsl::typing::file_local::setting_input(name)).map(|(name, source, _)| (name.as_str(), source.as_ref())).collect();
+        let bound: Vec<(&str, crate::code_rule_dsl::typing::file_local::Setting, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
+            repository
+                .iter()
+                .filter_map(|(name, source, _)| crate::code_rule_dsl::typing::file_local::setting_of(prog, name).map(|setting| (name.as_str(), setting, source.as_ref())))
+                .collect();
         memo::SettingsDigests::of(&bound)
     };
     let all_ids = Arc::new(memo_ids.clone());

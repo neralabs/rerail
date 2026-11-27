@@ -198,3 +198,24 @@ fn json_rules_value_type_is_the_nodes_own() {
     let by_text = own.replace(&format!("value_type_of({node}, "), &format!("value_type({var}, "));
     assert_eq!(lines(&by_text), [1, 2], "{by_text}");
 }
+
+/// Review B2: in a family W reads no values of (JSON's: its strings are core_rr's literals), a value's type is
+/// core_rr's, and `value_type_of(n, t)`, which a translated `type` reads, has its rows: the key and the value
+/// strings, not the number.
+#[test]
+fn json_rules_value_type_holds_in_a_family_w_reads_no_values_of() {
+    let rule = r#"{"format":"rerail.policy/v1","id":"a-string","revision":1,"mode":"steer","description":"x","scope":{"include":["**/*"],"exclude":[]},
+"clauses":[{"id":"c","forbid":{"ast":{"language":"json","rule":{"any":[{"kind":"string"},{"kind":"number"}],"value":{"type":"string"}}}},"message":"a string"}]}"#;
+    let text = super::Translator::new().translate_text(rule, "a-string").expect("translates");
+    assert!(text.contains("value_type_of("), "{text}");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.json"), "{\n  \"a\":\n    2,\n  \"b\":\n    \"12\"\n}\n").unwrap();
+    let policy = dir.path().join("a-string.rerail");
+    std::fs::write(&policy, &text).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &dir.path().join("out"), &serde_json::Value::Null).unwrap();
+    let mut lines: Vec<i64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().unwrap()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, [2, 4, 5], "the keys and the string value, not the number:\n{text}");
+}

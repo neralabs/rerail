@@ -5201,12 +5201,8 @@ pub(crate) fn install_languages() {
     facts::core::install_core_names(logic::rr::core_shape);
     // What resolves a module specifier (`module_file`, the phase node_resolve's request).
     logic::plan::corpus::world::install_module_resolver(import_target::resolver);
-    // What npm publishes of a package (`npm_ignored`, a repository input).
-    facts::repository::install_npm_publication(|folder, bytes, npmignore, gitignore| {
-        let manifest = package_manifest::Manifest::parse(folder.to_owned(), bytes)
-            .with_ignore_files(npmignore, gitignore);
-        Box::new(move |path| manifest.publishes(path))
-    });
+    // ECMAScript's project files as rule inputs (`tsconfig*`, `npm_ignored`: decision 0710).
+    facts::repository::install_project_reader(import_target::project::READER);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget {
         scope: logic::native::forget_scope,

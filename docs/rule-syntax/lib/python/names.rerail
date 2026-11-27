@@ -2,7 +2,7 @@
 // by file), and what crosses files, read through the phase py_names (decision 0677): no node crosses into the
 // cross-file part.
 //
-// The phase (native/src/code_rule_dsl/typing/programs/py_names.rerail) runs first, over the same files, and hands on
+// The phase (docs/rule-syntax/lib/phases/py_names.rerail) runs first, over the same files, and hands on
 // symbols alone, read from the modules' definitions and import statements (never a name's use):
 //   py_names__reads_at(p, m)    the file at path p can name something of workspace module m
 //   py_names__exports(m, x, q)  module m exposes x, which denotes q, re-exports and star imports followed
@@ -20,21 +20,21 @@
 // memo entry is keyed by those rows alone (decision 0665): an edit misses the files whose modules' rows changed.
 #include "python/scopes.rerail"
 
-.decl py_names__reads_at(p: symbol, m: symbol)
-.decl py_names__exports(m: symbol, x: symbol, q: symbol)
-.decl py_names__class(m: symbol, c: symbol)
-.decl py_names__defined(m: symbol, q: symbol)
-.decl py_names__public(m: symbol, x: symbol)
-.decl py_names__ancestor(m: symbol, q: symbol, b: symbol)
-.decl py_names__library_ancestor(m: symbol, q: symbol, b: symbol)
-.decl py_names__anc_call(m: symbol, q: symbol, x: symbol, f: symbol)
-.decl py_names__anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
-.decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
-.decl py_names__anc_method(m: symbol, q: symbol, x: symbol)
-.decl py_names__plain_def(m: symbol, q: symbol)
-.decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol)
-.decl py_names__member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
-.decl py_names__member_method(m: symbol, q: symbol, x: symbol)
+.decl py_names__reads_at(p: symbol, m: symbol) by_path 1
+.decl py_names__exports(m: symbol, x: symbol, q: symbol) keyed
+.decl py_names__class(m: symbol, c: symbol) keyed
+.decl py_names__defined(m: symbol, q: symbol) keyed
+.decl py_names__public(m: symbol, x: symbol) keyed
+.decl py_names__ancestor(m: symbol, q: symbol, b: symbol) keyed
+.decl py_names__library_ancestor(m: symbol, q: symbol, b: symbol) keyed
+.decl py_names__anc_call(m: symbol, q: symbol, x: symbol, f: symbol) keyed
+.decl py_names__anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol) keyed
+.decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol) keyed
+.decl py_names__anc_method(m: symbol, q: symbol, x: symbol) keyed
+.decl py_names__plain_def(m: symbol, q: symbol) keyed
+.decl py_names__member_call(m: symbol, q: symbol, x: symbol, f: symbol) keyed
+.decl py_names__member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol) keyed
+.decl py_names__member_method(m: symbol, q: symbol, x: symbol) keyed
 
 // export_at(n, q0, q): in n's file, the qualified name q0 ("m.x") is q: module m's export x, followed through
 // re-exports to its definition. With `from pkg import App` where pkg/__init__.py has `from .core import App`,

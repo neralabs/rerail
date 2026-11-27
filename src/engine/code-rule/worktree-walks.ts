@@ -32,6 +32,17 @@ import { SharedTreeWatch, WorktreeNotices, type WorktreeRead } from "./worktree-
 export const WORKTREE_WALK_GAP_MS = 5_000;
 
 /**
+ * The clock the walks are paced by (`WORKTREE_WALK_GAP_MS`): the one the pause's own timer runs on, not the time of day,
+ * so a pause counts what its timer counts. On Linux it stands still while the system is suspended, so a suspend inside a
+ * walk adds nothing to the pause after it; on Windows and macOS it counts a sleep, as their timers do. On every system a
+ * change of the time of day (a person setting the clock, a time sync after a resume) neither stretches a pause nor cuts
+ * it short.
+ */
+function pacingNow(): number {
+  return performance.now();
+}
+
+/**
  * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
  * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
  * map, on Linux only one its program still holds, a file another program holds open on Windows, or one the system
@@ -251,7 +262,10 @@ export interface WorktreeWatch {
   request(): void;
   /** Whether a walk the session asked for has yet to be taken. */
   pending(): boolean;
-  /** Resolves once no walk the session asked for is timed, running, or still being taken. */
+  /**
+   * Starts at once a walk the session asked for that waits out its gap, and resolves once no walk it asked for is timed,
+   * running, or still being taken.
+   */
   settled(): Promise<void>;
   /**
    * Stops watching: no walk reads through the session or reaches it again. Once no session watches, it settles when
@@ -267,7 +281,7 @@ interface Watching {
   /** How many walks it asked for, and how many of those asks the walks it took answered. */
   asked: number;
   answered: number;
-  /** When a walk may next begin for its asks: the gap after the last walk that answered one (`WORKTREE_WALK_GAP_MS`). */
+  /** When a walk may next begin for its asks, on `pacingNow`: the gap after the last walk that answered one (`WORKTREE_WALK_GAP_MS`). */
   nextWalkAt: number;
   /** Taking walks, one after the other; the newest it has yet to take waits in `waiting`, replacing any older. */
   taking: Promise<void> | undefined;
@@ -683,7 +697,7 @@ export class WorktreeWalks {
   #schedule(): void {
     const due = this.#dueAt();
     if (this.#walk !== undefined) {
-      if (due !== undefined && due <= Date.now()) this.#wake?.();
+      if (due !== undefined && due <= pacingNow()) this.#wake?.();
       return;
     }
     if (due === undefined) return;
@@ -707,18 +721,18 @@ export class WorktreeWalks {
    */
   async #walkWhenDue(): Promise<void> {
     try {
-      for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
-        if (!(await this.#sleep(due - Date.now()))) break;
+      for (let due = this.#dueAt(); due !== undefined && due > pacingNow(); due = this.#dueAt()) {
+        if (!(await this.#sleep(due - pacingNow()))) break;
       }
       if (this.#dueAt() === undefined) return;
-      const startedAt = Date.now();
+      const startedAt = pacingNow();
       let askers: readonly Watching[] = [];
       this.#walking = true;
       try {
         askers = await this.#walkOnce();
       } finally {
         this.#walking = false;
-        const end = Date.now();
+        const end = pacingNow();
         for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
         this.#askNoticed();
       }
@@ -809,9 +823,20 @@ export class WorktreeWalks {
 
   async #settled(watching: Watching): Promise<void> {
     while (!watching.closed && (watching.answered < watching.asked || watching.taking !== undefined)) {
+      this.#walkNowFor(watching);
       await this.#walk?.catch(() => undefined);
       await watching.taking;
     }
+  }
+
+  /**
+   * Starts now the walk `watching` asks for and its gap still holds back: the gap is the only wait of a timed walk, and
+   * what settles a session waits for is what that walk finds, not the pacing. One running is not joined.
+   */
+  #walkNowFor(watching: Watching): void {
+    if (!watching.requested) return;
+    watching.nextWalkAt = Math.min(watching.nextWalkAt, pacingNow());
+    this.#schedule();
   }
 
   async #unwatch(watching: Watching): Promise<void> {

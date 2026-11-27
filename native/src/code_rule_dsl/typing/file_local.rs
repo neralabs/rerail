@@ -214,86 +214,16 @@ pub(crate) fn option_input(rel: &str) -> bool {
     matches!(rel, "option" | "option_item")
 }
 
-/// The project's settings (decision 0665): inputs the repository reads from its configuration files alone (each
-/// `package.json`'s name and string fields, its exports, each tsconfig's base and paths, the package and tsconfig a
-/// file is under) and the run's environment (`env`), the same beside every chunk. A source file's edit changes none of
-/// them. Placeless to the split, as the options are: a per-file rule joins them and stays per-file. Bound whole beside
-/// every chunk, a setting keyed by a file's path (`SETTINGS_BY_PATH`) holds every file's row, so its path places no
-/// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
-/// The module resolution the phase `tsx_names` hands on is read so too (decision 0665): each file's targets by its
-/// path, each target's exports and whether it is a workspace module by the target. A source file's edit can change
-/// them, but only the files whose own rows, or their targets' rows, changed read a change: a file's memo entry is
-/// keyed by those rows (`settings_scopes`), as one under a `package.json` is by its package's, and the phase, run
-/// again first, hands on the new rows (0083 §2.3's every-file miss is a read of every file's rows, which this is not).
-pub fn setting_input(rel: &str) -> bool {
-    matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env")
-        || SETTINGS_BY_PATH.iter().any(|(r, _)| *r == rel)
-        || SETTINGS_BY_FOLDER.contains(&rel)
+pub use crate::code_rule_dsl::logic::front::ast::{BY_PATH, KEYED, SETTING, Setting};
+
+/// The setting `rel`'s `.decl` declares in `prog` (decision 0710).
+pub fn setting_of(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> Option<Setting> {
+    Setting::of(prog.qualifiers.get(rel).into_iter().flatten().map(String::as_str))
 }
 
-/// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
-/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`), target (`tsx_names__target_at(path, spec, t)`) or
-/// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
-/// target or module, in column 0. The phase `points_to`'s answers name none (decision 0677, note t55): each row is
-/// about a node of the file at its path, by its term, and that file reads its own rows alone. `npm_ignored(path)` is
-/// keyed by its path alone: its column 0 is the path read, own or a target's; `py_unpackaged(path)` too. `node_resolve__file_at(path, spec,
-/// style, file)`, the phase node_resolve's: each file's resolved specifiers, naming the file resolved to.
-pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 14] = [
-    ("package_for", Some(1)),
-    ("tsconfig_for", Some(1)),
-    ("tsx_names__target_at", Some(2)),
-    ("py_names__reads_at", Some(1)),
-    ("npm_ignored", Some(0)),
-    ("py_unpackaged", Some(0)),
-    ("node_resolve__file_at", Some(3)),
-    ("points_to__call_target_at", None),
-    ("points_to__call_open_at", None),
-    ("points_to__type_of_at", None),
-    ("points_to__type_open_at", None),
-    ("points_to__proven_type_at", None),
-    ("points_to__possible_type_at", None),
-    ("points_to__possible_open_at", None),
-];
-pub const SETTINGS_BY_FOLDER: [&str; 33] = [
-    "package",
-    "package_field",
-    "tsconfig",
-    "tsconfig_path",
-    "tsx_names__exports",
-    "tsx_names__module",
-    "py_names__exports",
-    "py_names__class",
-    "py_names__defined",
-    "py_names__public",
-    "py_names__ancestor",
-    "py_names__library_ancestor",
-    "py_names__anc_call",
-    "py_names__anc_kw",
-    "py_names__anc_ref",
-    "py_names__anc_method",
-    "py_names__member_call",
-    "py_names__member_kw",
-    "py_names__member_method",
-    "py_names__plain_def",
-    "py_names__dj_group",
-    "py_names__dj_cond_group",
-    "py_names__dj_opaque",
-    "py_names__dj_unmanaged",
-    "py_names__dj_abstract",
-    "py_names__dj_manager_method",
-    "py_names__dj_hook",
-    "py_names__dj_receiver_fn",
-    "py_names__dj_deferred_task",
-    "py_names__dj_app_defers",
-    "py_names__dj_task_def",
-    "py_names__dj_view_model",
-    "py_names__dj_anc_clean_call",
-];
-
-/// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`): `None` when the
-/// relation is not one, `Some(None)` when it is and names none.
-pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
-    SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
+/// Whether `rel` is one of the project's settings in `prog` (`Setting`).
+pub fn setting_input(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
+    setting_of(prog, rel).is_some()
 }
 
 /// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
@@ -308,7 +238,7 @@ pub fn path_key_column(rel: &str) -> Option<usize> {
 /// An input with one value for the whole run, as a fact has: the run's options (`option_input`), its settings
 /// (`setting_input`, decision 0665), or an earlier phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
 pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
-    option_input(rel) || setting_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+    option_input(rel) || setting_input(prog, rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
 }
 
 /// Whether no rule of `prog` reads a document: every relation a rule reads is derived, a fact, or an input with one
@@ -2320,54 +2250,54 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
 
 /// `lowering_source`, each relation's readers' heads given by `readers` (an index made once, for many relations).
 fn lowering_source_in(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
-    // `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their hashed prefixes (`helper_name`):
-    // a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`, an export's `xd_`.
-    let hashed = |r: &str| ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())));
-    let made = |r: &str| {
-        let r = r.strip_prefix("xd_").unwrap_or(r);
-        r.starts_with("rr_")
-            || hashed(r)
-            || r.split_once('_').is_some_and(|(p, rest)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit()) && (rest.starts_with("rr_") || hashed(rest)))
-    };
     // A relation of the source names itself: no reader is read for it.
-    if !made(rel) {
+    if !lowering_made(rel) {
         return None;
     }
-    // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its rows
-    // over the guest's documents.
-    if let Some(rest) = rel.split_once("rr_in_").map(|(_, r)| r) {
-        let copied = rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !made(r));
-        if let Some(r) = copied {
-            return Some(r.to_owned());
-        }
-    }
-    // A pass's helper is named for the relation it was made for (`helper_name`: `fzk<hash>_<rel>`, `fl<hash>_<rel>`,
-    // under an export's `xd_`): that relation, where it is one of the source's.
+    copied_from(v, rel).or_else(|| helper_for(v, rel)).or_else(|| first_source_reader(rel, readers))
+}
+
+/// A helper by a pass's hashed prefix (`helper_name`): a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`.
+fn hashed_helper(r: &str) -> bool {
+    ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// Whether the lowering made `r`: `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their
+/// hashed prefixes, an export's (`xd_`) too.
+fn lowering_made(r: &str) -> bool {
+    let r = r.strip_prefix("xd_").unwrap_or(r);
+    let program_prefix = |p: &str| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit());
+    r.starts_with("rr_") || hashed_helper(r) || r.split_once('_').is_some_and(|(p, rest)| program_prefix(p) && (rest.starts_with("rr_") || hashed_helper(rest)))
+}
+
+/// A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its rows
+/// over the guest's documents.
+fn copied_from(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    let (_, rest) = rel.split_once("rr_in_")?;
+    rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !lowering_made(r)).map(str::to_owned)
+}
+
+/// A pass's helper is named for the relation it was made for (`helper_name`: `fzk<hash>_<rel>`, `fl<hash>_<rel>`,
+/// under an export's `xd_`): that relation, where it is one of the source's.
+fn helper_for(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
     let named = rel.strip_prefix("xd_").unwrap_or(rel);
-    if hashed(named) && let Some((_, r)) = named.split_once('_') && v.rel(r).is_some() && !made(r) {
-        return Some(r.to_owned());
-    }
-    // The first relation, reader by reader, that the lowering did not make (the least by name of the first round that
-    // has one, whichever order the readers are found in).
-    let mut source = None;
+    let (_, r) = named.split_once('_').filter(|_| hashed_helper(named))?;
+    (v.rel(r).is_some() && !lowering_made(r)).then(|| r.to_owned())
+}
+
+/// The first relation, reader by reader, that the lowering did not make (the least by name of the first round that
+/// has one, whichever order the readers are found in).
+fn first_source_reader(rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::from([rel.to_owned()]);
     let mut round = vec![rel.to_owned()];
-    while source.is_none() && !round.is_empty() {
-        let mut next = Vec::new();
-        for r in &round {
-            for h in readers(r) {
-                if !made(&h) {
-                    if source.as_ref().is_none_or(|s: &String| h < *s) {
-                        source = Some(h);
-                    }
-                } else if seen.insert(h.clone()) {
-                    next.push(h);
-                }
-            }
+    while !round.is_empty() {
+        let (source, made): (Vec<String>, Vec<String>) = round.iter().flat_map(|r| readers(r)).partition(|h| !lowering_made(h));
+        if let Some(s) = source.into_iter().min() {
+            return Some(s);
         }
-        round = next;
+        round = made.into_iter().filter(|h| seen.insert(h.clone())).collect();
     }
-    source
+    None
 }
 
 /// One round of `locate`: the relations located, and in the `Err` those left beside them.

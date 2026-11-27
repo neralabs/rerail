@@ -83,7 +83,7 @@ fn pushed_v(v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Versio
 #[test]
 fn a_join_by_a_files_own_path_stays_per_file() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl src_line(d: number, l: number, sp: span)\n.input src_line\n\
-                .decl package_for(path: symbol, dir: symbol)\n.input package_for\n\
+                .decl package_for(path: symbol, dir: symbol) by_path 1\n.input package_for\n\
                 .decl line_of(p: symbol, l: number)\nline_of(p, l) :- doc(d, p, _), src_line(d, l, _).\n\
                 .decl last(p: symbol, k: number)\nlast(p, k) :- line_of(p, _), k = max l : { line_of(p, l) }.\n\
                 .decl lead(p: symbol, l: number)\nlead(p, l) :- last(p, k), line_of(p, l), l < k.\n.output lead\n\
@@ -135,7 +135,7 @@ fn a_join_by_a_files_own_path_stays_per_file() {
 fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl docof(n: node, d: number)\n.input docof\n\
                 .decl import_ref(n: node, s: symbol)\n.input import_ref\n\
-                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)\n\
+                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol) by_path 2\n.decl tsx_names__exports(m: symbol, x: symbol, q: symbol) keyed\n\
                 .decl target(d: number, spec: symbol, t: symbol)\ntarget(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).\n\
                 .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, t), tsx_names__exports(t, \"default\", q).\n.output sym\n\
                 .decl near(d: number, s: symbol, t: symbol)\nnear(d, s, m) :- docof(n, d), import_ref(n, s), doc(_, s, m).\n.output near\n";
@@ -146,13 +146,12 @@ fn a_rule_resolving_through_a_phases_names_stays_per_file() {
     assert!(!split.local.contains("near"), "another file's path, joined in the run: {:?}", split.local);
 }
 
-/// A name built from a file's path names its document too (decision 0665): a module from the path (a named group of a
-/// whole-path pattern, its separators replaced), a symbol the module leads (`cat(m, ".", q)`). A relation keyed by
-/// such a symbol, and an aggregate over it (eager-resolve's `er_last_def`: the last def of each symbol), stay
-/// per-file; the symbol is a key, no location. A symbol the module does not lead is no file's name: the aggregate
-/// over it is cross-file.
+/// A name built from a file's path by a pattern or a replacement is no file's own (review F2): a module from the path (a
+/// named group of a whole-path pattern, its separators replaced) is `a.b` for `a/b.py` and `a.b.py` alike, so an
+/// aggregate over a symbol it leads (eager-resolve's last def of each symbol) is of every file building that symbol,
+/// and cross-file. A name the path itself leads (`cat(p, "::", q)`) is one file's: an aggregate over it stays per-file.
 #[test]
-fn a_symbol_built_from_a_files_module_stays_per_file() {
+fn a_symbol_built_from_a_files_module_is_every_files_that_builds_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
                 .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
                 .decl mod_of(d: number, m: symbol)\nmod_of(d, @replace_all(m, \"/\", \".\")) :- doc(d, p, _), match(\"(?<m>.*)\\\\.py\", p).\n\
@@ -161,12 +160,19 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
                 .decl tail(f: node, s: symbol)\ntail(f, cat(q, \".\", m)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
                 .decl last_tail(s: symbol, f: node)\nlast_tail(s, f) :- tail(f, s), line(f, l), l = max a : { tail(g, s), line(g, a) }.\n.output last_tail\n";
     let split = split_of(&read(text));
-    for rel in ["mod_of", "sym", "last_def"] {
+    for rel in ["mod_of", "sym"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
     }
-    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), Some(&[1][..]), "the symbol is a key: {:?}", split.path_keys);
-    assert_eq!(split.locations["sym"], vec![0], "and no location: {:?}", split.locations);
-    assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
+    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), None, "the symbol is no file's key: {:?}", split.path_keys);
+    assert!(!split.local.contains("last_def"), "two files can build one symbol: {:?}", split.local);
+    assert!(!split.local.contains("last_tail"), "nor one the module does not lead: {:?}", split.local);
+    // The path leading the name: one file's.
+    let led = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
+               .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
+               .decl sym(f: node, s: symbol)\nsym(f, cat(p, \"::\", q)) :- qual(f, q), docof(f, d), doc(d, p, _).\n\
+               .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), line(f, l), l = max a : { sym(g, s), line(g, a) }.\n.output last_def\n";
+    let split = split_of(&read(led));
+    assert!(split.local.contains("last_def"), "{:?} {:?}", split.local, split.causes);
 }
 
 /// A name built from a file's path (`cat(p, "::", q)`) places a row in that file, but `doc` holds no such name, so
@@ -175,7 +181,7 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
 /// row was looked up in `doc` and found in no document, and the cross-file part read none (data-layer's
 /// `plp_find_k`, 0677 fix 3f). One keyed by the built name alone is not relayed by it, and moves to the cross-file part;
 /// its rule then reads the relayed relation from there, in a later round, through the relay already made (it was
-/// blocked, and moved too: eager-resolve's `er_edge`).
+/// blocked, and moved too).
 #[test]
 fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl qual(f: node, q: symbol)\n.input qual\n\
@@ -210,14 +216,14 @@ fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
 
 /// The project's settings (decision 0665: a package's `package.json` fields, its tsconfig, the run's environment) are
 /// read like the run's options: a per-file rule that joins them stays per-file, and a relation derived from them alone
-/// is a constant, derived in both parts. A rule that reads another file's rows, or the tree's list of files (no
-/// configuration), is cross-file.
+/// is a constant, derived in both parts. The tree's list of files (`file`) is a setting too (decision 0710). A rule
+/// that reads another file's rows is cross-file. Each relation's placement is its declaration's qualifier.
 #[test]
 fn a_rule_reading_a_setting_stays_per_file_and_one_reading_another_files_rows_does_not() {
     let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl kind(n: node, k: symbol)\n.input kind\n\
-                .decl docof(n: node, d: number)\n.input docof\n.decl file(path: symbol)\n.input file\n\
-                .decl package_for(path: symbol, dir: symbol)\n.input package_for\n.decl package_field(dir: symbol, key: symbol, v: symbol)\n.input package_field\n\
-                .decl env(key: symbol, value: symbol)\n.input env\n\
+                .decl docof(n: node, d: number)\n.input docof\n.decl file(path: symbol) setting\n.input file\n\
+                .decl package_for(path: symbol, dir: symbol) by_path 1\n.input package_for\n.decl package_field(dir: symbol, key: symbol, v: symbol) keyed\n.input package_field\n\
+                .decl env(key: symbol, value: symbol) setting\n.input env\n\
                 .decl module_doc(d: number)\nmodule_doc(d) :- doc(d, p, _), package_for(p, dir), package_field(dir, \"type\", \"module\").\n.output module_doc\n\
                 .decl on_linux(n: node)\non_linux(n) :- kind(n, \"if_statement\"), env(\"python.platform\", \"linux\").\n.output on_linux\n\
                 .decl pkg_dep(dir: symbol, m: symbol)\npkg_dep(dir, m) :- package_field(dir, \"dependencies/react\", m).\n\
@@ -237,8 +243,9 @@ fn a_rule_reading_a_setting_stays_per_file_and_one_reading_another_files_rows_do
     }
     assert!(split.constants.contains("pkg_dep"), "derived from settings alone: {:?}", split.constants);
     assert!(!split.local.contains("elsewhere"), "{:?}", split.local);
-    assert!(!split.local.contains("listed"), "the tree's files are no setting: {:?}", split.local);
-    assert_eq!(split.causes["listed"], "reads file with no location");
+    // The tree's files are a setting (decision 0710): its rows change when a file is added or removed, never when one
+    // is edited.
+    assert!(split.local.contains("listed"), "the tree's files are a setting: {:?} {:?}", split.local, split.causes);
 }
 
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
@@ -1544,3 +1551,17 @@ pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
     assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
 }
 
+
+/// A root's row of the tape has parent -1 (`facts/vtab/syntax.rs`): -1 there is a value the tape holds, not the empty
+/// value no document's row holds (review F1). A rule joining a root with another document's node is cross-file; one
+/// joining a root with its own document's node stays per-file.
+#[test]
+fn a_roots_tape_row_holds_its_parent_minus_one() {
+    let text = ".decl tape(n: number, par: number, size: number, depth: number)\n.input tape\n\
+                .decl node(d: number, n: node, k: symbol, b: number, e: number)\n.input node\n.decl docof(n: node, d: number)\n.input docof\n\
+                .decl pair(r: number, m: node)\npair(r, m) :- tape(r, -1, _, _), node(_, m, \"call\", _, _).\n.output pair\n\
+                .decl own(r: number, m: node)\nown(r, m) :- tape(r, -1, _, _), node(d, m, \"call\", _, _), docof(r, d).\n.output own\n";
+    let split = split_of(&read(text));
+    assert!(!split.local.contains("pair"), "a root and any document's node: {:?} {:?}", split.local, split.causes);
+    assert!(split.local.contains("own"), "a root and its own document's node: {:?} {:?}", split.local, split.causes);
+}

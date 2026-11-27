@@ -448,10 +448,24 @@ impl Parser<'_> {
                     });
                     self.i += 1;
                 }
-                // `cross_file` (decision 0652), as `.rerail` writes it.
-                if self.is_id(ast::CROSS_FILE) {
-                    self.i += 1;
-                    prog.qualifiers.entry(name.to_string()).or_default().insert(ast::CROSS_FILE.to_owned());
+                // `cross_file` (decision 0652) and a setting's placement (decision 0710), as `.rerail` writes them.
+                loop {
+                    let word = if self.is_id(ast::CROSS_FILE) || self.is_id(ast::SETTING) || self.is_id(ast::KEYED) {
+                        self.id()?
+                    } else if self.is_id(ast::BY_PATH) {
+                        self.i += 1;
+                        match self.peek() {
+                            Tok::Int(c) if *c >= 0 => {
+                                let c = *c;
+                                self.i += 1;
+                                format!("{} {c}", ast::BY_PATH)
+                            }
+                            _ => ast::BY_PATH.to_owned(),
+                        }
+                    } else {
+                        break;
+                    };
+                    prog.qualifiers.entry(name.to_string()).or_default().insert(word);
                 }
                 // T: `.lattice` makes the last column the lattice; `.decl` with `;` (or `merge`) does here too.
                 if d == "lattice" || keys.is_some() || merge.is_some() {

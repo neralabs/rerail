@@ -9,11 +9,9 @@
 //!   `.git`, `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
-//! - `tsconfig(dir, base_url)`, `tsconfig_path(dir, pattern, target)`: each `tsconfig.json` or `jsconfig.json`'s
-//!   `compilerOptions`, its `extends` chain merged beneath it (a path, relative or from the root, `.json` added where
-//!   it names no file); `baseUrl` from the root (the configuration's folder where none is set), each `paths` target
-//!   as written. `tsconfig_for(path, dir)`: a document's nearest `tsconfig.json`, else `jsconfig.json`. The files
-//!   are JSONC: comments and trailing commas are dropped before they are read.
+//! - A language's project files (decision 0710): the relations of each `ProjectReader` a language registers at load
+//!   (`install_project_reader`), over the same walk (`Tree`). The core names none of them: ECMAScript's adapter reads
+//!   `tsconfig.json` and npm's publication (`import_target::project`).
 //!
 //! `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
 //! where the `.input` files are (`logic::plan::corpus::external_inputs`).
@@ -36,11 +34,50 @@ pub struct Rows {
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
     pub(crate) package_for: Vec<(String, String)>,
-    pub(crate) tsconfig: Vec<(String, String)>,
-    pub(crate) tsconfig_for: Vec<(String, String)>,
-    pub(crate) tsconfig_path: Vec<(String, String, String)>,
-    pub(crate) npm_ignored: Vec<String>,
-    pub(crate) py_unpackaged: Vec<String>,
+    /// Each registered reader's relations the program reads: (name, columns, rows).
+    pub(crate) project: Vec<ProjectRelation>,
+}
+
+/// A relation a project reader makes: its name, its columns and its rows.
+pub type ProjectRelation = (&'static str, &'static [&'static str], Vec<Vec<String>>);
+
+/// What a project reader reads (decision 0710): the scanned root, every file listed (from the root, sorted), the
+/// documents', and each `package.json` by its folder (`None` where it does not parse).
+pub struct Tree<'a> {
+    pub root: &'a Path,
+    pub files: &'a [String],
+    pub docs: &'a [String],
+    pub packages: &'a BTreeMap<String, Option<Value>>,
+}
+
+/// A language's project files read as relations (decision 0710), registered by its adapter at load: the relations it
+/// makes, each with its columns, and their rows over a `Tree`. Each relation is declared, with its placement, in the
+/// language's library.
+#[derive(Clone, Copy)]
+pub struct ProjectReader {
+    pub relations: &'static [(&'static str, &'static [&'static str])],
+    pub rows: fn(&Tree<'_>) -> Vec<(&'static str, Vec<Vec<String>>)>,
+}
+
+static READERS: std::sync::RwLock<Vec<ProjectReader>> = std::sync::RwLock::new(Vec::new());
+
+/// Registers a language's project reader (at load; again, it is kept once).
+pub fn install_project_reader(reader: ProjectReader) {
+    let mut readers = READERS.write().unwrap_or_else(|e| e.into_inner());
+    if !readers.iter().any(|r| std::ptr::eq(r.relations, reader.relations)) {
+        readers.push(reader);
+    }
+}
+
+/// The columns of a relation a registered reader makes (`core::input_columns`' fallback).
+pub fn project_columns(rel: &str) -> Option<&'static [&'static str]> {
+    let readers = READERS.read().unwrap_or_else(|e| e.into_inner());
+    readers.iter().flat_map(|r| r.relations.iter()).find(|(n, _)| *n == rel).map(|(_, c)| *c)
+}
+
+/// Whether a registered reader makes `rel`.
+pub fn project_relation(rel: &str) -> bool {
+    project_columns(rel).is_some()
 }
 
 fn scalar(v: &Value) -> String {
@@ -130,9 +167,9 @@ fn strings(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// `file`, `package`, `package_field`, `package_for` and the `tsconfig*` rows of the tree under `root`, for documents
-/// `docs` (paths relative to it).
-pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
+/// `file`, `package`, `package_field` and `package_for` rows of the tree under `root`, for documents `docs` (paths
+/// relative to it). A language's own project files are its registered reader's (`project_rows`, decision 0710).
+pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) -> BTreeMap<String, Option<Value>> {
     let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -143,213 +180,18 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     rows.file.sort();
     package_rows(&packages, rows);
     package_for_rows(docs, &packages, rows);
-    tsconfig_rows(root, docs, rows);
-    npm_ignored_rows(root, &packages, rows);
-    py_unpackaged_rows(rows);
+    packages
 }
 
-/// `py_unpackaged` of each Python file of the tree (`.py`, `.pyi`) that no regular package holds: a file of the root,
-/// or one whose folder has no `__init__.py` (or `.pyi`). Ruff names such a module by its file's stem alone (its
-/// `is_private_module`), where `doc`'s module is the file's dotted path. A file reads its own row (a setting by path,
-/// `file_local::SETTINGS_BY_PATH`): the folder's other files are not read in the cross-file part (decision 0677).
-fn py_unpackaged_rows(rows: &mut Rows) {
-    let files: std::collections::BTreeSet<&str> = rows.file.iter().map(String::as_str).collect();
-    let mut out = Vec::new();
-    for path in &rows.file {
-        if !(path.ends_with(".py") || path.ends_with(".pyi")) {
-            continue;
-        }
-        let packaged = path.rsplit_once('/').is_some_and(|(dir, _)| ["__init__.py", "__init__.pyi"].iter().any(|i| files.contains(format!("{dir}/{i}").as_str())));
-        if !packaged {
-            out.push(path.clone());
-        }
-    }
-    rows.py_unpackaged = out;
-}
-
-/// What npm publishes of a package: given its folder (workspace-relative), its package.json's bytes and its folder's
-/// `.npmignore` and `.gitignore`, whether npm publishes a file (workspace-relative; `None` outside the folder). The
-/// reader is `package_manifest`'s, a crate above this one; registered at load (`install_npm_publication`). Without
-/// it, `npm_ignored` has no rows.
-pub type NpmPublication = fn(folder: &str, package_json: &[u8], npmignore: Option<String>, gitignore: Option<String>) -> Box<dyn Fn(&str) -> Option<bool>>;
-
-static PUBLICATION: std::sync::OnceLock<NpmPublication> = std::sync::OnceLock::new();
-
-/// Registers what reads a package's publication (once, at load).
-pub fn install_npm_publication(publication: NpmPublication) {
-    let _ = PUBLICATION.set(publication);
-}
-
-/// `npm_ignored` of each file of the tree under a `package.json` (its nearest) that npm leaves out of that package:
-/// eslint-plugin-n's `getNpmignore(path).match`, as `package_manifest::Manifest::publishes` reads the package's
-/// `files` and `main`, else its folder's `.npmignore`, else its `.gitignore`. A file under no package has no row.
-fn npm_ignored_rows(root: &Path, packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
-    let Some(publication) = PUBLICATION.get() else { return };
-    let read = |dir: &str, name: &str| std::fs::read_to_string(root.join(dir).join(name)).ok();
-    let mut manifests: BTreeMap<&str, Box<dyn Fn(&str) -> Option<bool>>> = BTreeMap::new();
-    for (dir, json) in packages {
-        if !matches!(json, Some(Value::Object(_))) {
-            continue;
-        }
-        let bytes = std::fs::read(root.join(dir).join("package.json")).unwrap_or_default();
-        manifests.insert(dir.as_str(), publication(dir, &bytes, read(dir, ".npmignore"), read(dir, ".gitignore")));
-    }
-    if manifests.is_empty() {
-        return;
-    }
-    for path in &rows.file {
-        let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
-        let manifest = loop {
-            if let Some(m) = manifests.get(d) {
-                break Some(m);
-            }
-            if d.is_empty() {
-                break None;
-            }
-            d = d.rsplit_once('/').map_or("", |(p, _)| p);
-        };
-        if manifest.and_then(|publishes| publishes(path)) == Some(false) {
-            rows.npm_ignored.push(path.clone());
-        }
-    }
-}
-
-/// The names a project configuration has, the first found in a folder governing it.
-const TSCONFIG_NAMES: [&str; 2] = ["tsconfig.json", "jsconfig.json"];
-/// How many `extends` a configuration chain follows.
-const MAX_EXTENDS: usize = 8;
-
-/// `a/b/../c` as `a/c`: `.` and `..` segments resolved, never above the root.
-fn normalize(path: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    for seg in path.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                out.pop();
-            }
-            s => out.push(s),
-        }
-    }
-    out.join("/")
-}
-
-/// `dir` joined with `rel` (`rel` from the root where it starts with `/`), normalized.
-fn join(dir: &str, rel: &str) -> String {
-    if rel.starts_with('/') { normalize(rel) } else { normalize(&format!("{dir}/{rel}")) }
-}
-
-/// JSONC as JSON: `//` and `/* */` comments and a comma before `}` or `]` dropped, strings kept as they are.
-fn jsonc(text: &str) -> String {
-    let b = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    let mut start = 0;
-    let mut in_str = false;
-    while i < b.len() {
-        match b[i] {
-            b'\\' if in_str => i += 1,
-            b'"' => in_str = !in_str,
-            b'/' if !in_str && b.get(i + 1) == Some(&b'/') => {
-                out.push_str(&text[start..i]);
-                i = memchr::memchr(b'\n', &b[i..]).map_or(b.len(), |n| i + n);
-                start = i;
-                continue;
-            }
-            b'/' if !in_str && b.get(i + 1) == Some(&b'*') => {
-                out.push_str(&text[start..i]);
-                i = memchr::memmem::find(&b[i + 2..], b"*/").map_or(b.len(), |n| i + 2 + n + 2);
-                start = i;
-                continue;
-            }
-            b',' if !in_str => {
-                let next = b[i + 1..].iter().position(|c| !c.is_ascii_whitespace()).map(|n| b[i + 1 + n]);
-                if matches!(next, Some(b'}' | b']')) {
-                    out.push_str(&text[start..i]);
-                    start = i + 1;
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    out.push_str(&text[start.min(text.len())..]);
-    out
-}
-
-/// The `compilerOptions` of the configuration at `file` (from the root), the chain it `extends` merged beneath its
-/// own, with `baseUrl` resolved from the root where each configuration of the chain sets it. `None` where it cannot
-/// be read.
-fn compiler_options(root: &Path, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
-    let text = std::fs::read_to_string(root.join(file)).ok()?;
-    let json: Value = serde_json::from_str(&jsonc(&text)).ok()?;
-    let dir = file.rsplit_once('/').map_or("", |(d, _)| d);
-    let mut merged = serde_json::Map::new();
-    if depth < MAX_EXTENDS {
-        let extends = match json.get("extends") {
-            Some(Value::String(e)) => vec![e.clone()],
-            Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
-            _ => Vec::new(),
-        };
-        for e in extends.iter().filter(|e| e.starts_with('.') || e.starts_with('/')) {
-            let mut base = join(dir, e);
-            if !root.join(&base).is_file() {
-                base.push_str(".json");
-            }
-            if let Some(opts) = compiler_options(root, &base, depth + 1) {
-                merged.extend(opts);
-            }
-        }
-    }
-    if let Some(Value::Object(own)) = json.get("compilerOptions") {
-        for (k, v) in own {
-            let v = match (k.as_str(), v) {
-                ("baseUrl", Value::String(u)) => Value::String(join(dir, u)),
-                _ => v.clone(),
-            };
-            merged.insert(k.clone(), v);
-        }
-    }
-    Some(merged)
-}
-
-/// `tsconfig`, `tsconfig_path` of each project configuration in the tree, and `tsconfig_for` of each document.
-fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
-    let name = |f: &str| f.rsplit_once('/').map_or(f, |(_, n)| n).to_owned();
-    let mut configs: BTreeMap<String, String> = BTreeMap::new();
-    for f in &rows.file {
-        let n = name(f);
-        if let Some(rank) = TSCONFIG_NAMES.iter().position(|c| *c == n) {
-            let dir = f.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
-            let keep = configs.get(&dir).is_none_or(|have| TSCONFIG_NAMES.iter().position(|c| *c == name(have)) > Some(rank));
-            if keep {
-                configs.insert(dir, f.clone());
-            }
-        }
-    }
-    for (dir, file) in &configs {
-        let Some(opts) = compiler_options(root, file, 0) else { continue };
-        let base = opts.get("baseUrl").and_then(Value::as_str).map_or_else(|| dir.clone(), str::to_owned);
-        rows.tsconfig.push((dir.clone(), base));
-        if let Some(Value::Object(paths)) = opts.get("paths") {
-            for (pattern, targets) in paths {
-                for t in targets.as_array().into_iter().flatten().filter_map(Value::as_str) {
-                    rows.tsconfig_path.push((dir.clone(), pattern.clone(), t.to_owned()));
-                }
-            }
-        }
-    }
-    for path in docs {
-        let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
-        loop {
-            if configs.contains_key(d) {
-                rows.tsconfig_for.push((path.clone(), d.to_owned()));
-                break;
-            }
-            if d.is_empty() {
-                break;
-            }
-            d = d.rsplit_once('/').map_or("", |(p, _)| p);
+/// The rows of each registered reader that makes a relation the program reads (`reads`), over the walked tree.
+fn project_rows(tree: &Tree<'_>, reads: &dyn Fn(&str) -> bool, rows: &mut Rows) {
+    let readers: Vec<ProjectReader> = READERS.read().unwrap_or_else(|e| e.into_inner()).clone();
+    for reader in readers.iter().filter(|r| r.relations.iter().any(|(n, _)| reads(n))) {
+        let mut made = (reader.rows)(tree);
+        for (name, columns) in reader.relations {
+            let got = made.iter_mut().find(|(n, _)| n == name).map(|(_, r)| std::mem::take(r)).unwrap_or_default();
+            debug_assert!(got.iter().all(|row| row.len() == columns.len()), "{name}: a row of {} columns", columns.len());
+            rows.project.push((name, columns, got));
         }
     }
 }
@@ -418,8 +260,14 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
-    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path", "npm_ignored", "py_unpackaged"].iter().any(|r| reads(r)) {
-        tree(root, docs, &mut rows);
+    let projects = READERS.read().unwrap_or_else(|e| e.into_inner()).iter().flat_map(|r| r.relations.iter()).any(|(n, _)| reads(n));
+    if projects || ["file", "package", "package_field", "package_for"].iter().any(|r| reads(r)) {
+        let packages = tree(root, docs, &mut rows);
+        if projects {
+            let files = std::mem::take(&mut rows.file);
+            project_rows(&Tree { root, files: &files, docs, packages: &packages }, reads, &mut rows);
+            rows.file = files;
+        }
     }
     let mut texts: Vec<&str> = Vec::new();
     rows.option.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
@@ -428,10 +276,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     rows.package.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.package_field.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
-    rows.tsconfig.iter().chain(&rows.tsconfig_for).for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
-    rows.tsconfig_path.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
-    texts.extend(rows.npm_ignored.iter().map(String::as_str));
-    texts.extend(rows.py_unpackaged.iter().map(String::as_str));
+    rows.project.iter().flat_map(|(_, _, r)| r.iter().flatten()).for_each(|x| texts.push(x.as_str()));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -457,16 +302,10 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vec<i64>> = rows.package_for.iter().map(|_| vec![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
-    let tsconfig: Vec<Vec<i64>> = rows.tsconfig.iter().map(|_| vec![sym(), sym()]).collect();
-    make("tsconfig", &["dir", "base_url"], tsconfig);
-    let tfor: Vec<Vec<i64>> = rows.tsconfig_for.iter().map(|_| vec![sym(), sym()]).collect();
-    make("tsconfig_for", &["path", "dir"], tfor);
-    let tpath: Vec<Vec<i64>> = rows.tsconfig_path.iter().map(|_| vec![sym(), sym(), sym()]).collect();
-    make("tsconfig_path", &["dir", "pattern", "target"], tpath);
-    let ignored: Vec<Vec<i64>> = rows.npm_ignored.iter().map(|_| vec![sym()]).collect();
-    make("npm_ignored", &["path"], ignored);
-    let unpackaged: Vec<Vec<i64>> = rows.py_unpackaged.iter().map(|_| vec![sym()]).collect();
-    make("py_unpackaged", &["path"], unpackaged);
+    for (name, columns, made) in &rows.project {
+        let interned: Vec<Vec<i64>> = made.iter().map(|row| row.iter().map(|_| sym()).collect()).collect();
+        make(name, columns, interned);
+    }
     Ok(out)
 }
 
@@ -503,42 +342,32 @@ pub mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// `npm_ignored`: each file under a package.json is asked of its nearest package's publication (here a stand-in
-    /// that leaves out `test/`; the real reader, `package_manifest`'s, is the engine's, tested by its corpus test
-    /// `a_files_npm_leaves_out_are_npm_ignored`), and a file under no package has no row.
+    /// Decision 0710: a registered project reader's relations are made over the walked tree when the program reads
+    /// one of them, with the columns the reader states, and not otherwise.
     #[test]
-    fn the_tree_asks_each_files_package_what_npm_leaves_out() {
-        install_npm_publication(|folder, _, _, _| {
-            let folder = folder.to_owned();
-            Box::new(move |path| path.strip_prefix(&format!("{folder}/")).map(|rel| !rel.starts_with("test/")))
+    fn a_registered_project_reader_makes_its_relations_over_the_tree() {
+        const RELATIONS: &[(&str, &[&str])] = &[("test_reader_file", &["path", "folder"])];
+        install_project_reader(ProjectReader {
+            relations: RELATIONS,
+            rows: |tree| vec![("test_reader_file", tree.files.iter().map(|f| vec![f.clone(), f.rsplit_once('/').map_or("", |(d, _)| d).to_owned()]).collect())],
         });
-        let root = std::env::temp_dir().join(format!("rerail-npm-{}-{:?}", std::process::id(), std::thread::current().id()));
+        assert_eq!(project_columns("test_reader_file"), Some(&["path", "folder"][..]));
+        let root = std::env::temp_dir().join(format!("rerail-reader-{}-{:?}", std::process::id(), std::thread::current().id()));
         let _ = std::fs::remove_dir_all(&root);
-        for (p, t) in [("lib/package.json", "{}"), ("lib/test/a.js", ""), ("lib/a.js", ""), ("lib/sub/package.json", "{}"), ("lib/sub/test/b.js", ""), ("tools/test/x.js", "")] {
-            let p = root.join(p);
-            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-            std::fs::write(p, t).unwrap();
-        }
-        let mut rows = Rows::default();
-        tree(&root, &[], &mut rows);
-        assert_eq!(rows.npm_ignored, ["lib/sub/test/b.js", "lib/test/a.js"]);
-        let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// `py_unpackaged`: a Python file of the root, or of a folder with no `__init__.py`, is in no regular package; one
-    /// beside an `__init__.py` or `__init__.pyi` is, and so is the `__init__.py` itself.
-    #[test]
-    fn a_python_file_outside_every_regular_package_is_unpackaged() {
-        let root = std::env::temp_dir().join(format!("rerail-unpackaged-{}-{:?}", std::process::id(), std::thread::current().id()));
-        let _ = std::fs::remove_dir_all(&root);
-        for p in ["top.py", "pkg/__init__.py", "pkg/_m.py", "stubs/__init__.pyi", "stubs/s.pyi", "scripts/_run.py", "scripts/notes.txt"] {
+        for p in ["a/x.ts", "b.ts"] {
             let p = root.join(p);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "").unwrap();
         }
         let mut rows = Rows::default();
-        tree(&root, &[], &mut rows);
-        assert_eq!(rows.py_unpackaged, ["scripts/_run.py", "top.py"]);
+        let packages = tree(&root, &[], &mut rows);
+        let files = rows.file.clone();
+        project_rows(&Tree { root: &root, files: &files, docs: &[], packages: &packages }, &|r| r == "file", &mut rows);
+        assert!(rows.project.is_empty(), "not read, not made");
+        project_rows(&Tree { root: &root, files: &files, docs: &[], packages: &packages }, &|r| r == "test_reader_file", &mut rows);
+        let made: Vec<&ProjectRelation> = rows.project.iter().collect();
+        assert_eq!(made.len(), 1);
+        assert_eq!(made[0].2, [vec!["a/x.ts".to_owned(), "a".to_owned()], vec!["b.ts".to_owned(), String::new()]]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

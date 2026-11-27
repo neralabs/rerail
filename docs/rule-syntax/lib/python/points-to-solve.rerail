@@ -6,7 +6,7 @@
 // renumbers no row of theirs, and a workspace value is a symbol as a library value is: `pt_pv(t, k, s)` and
 // `pt_lv(t, k, s)` differ only in where s is defined.
 //
-// The phase `points_to` (typing/programs/points_to.rerail) runs them and hands on the interface by path and term;
+// The phase `points_to` (phases/points_to.rerail) runs them and hands on the interface by path and term;
 // `calls_p3` runs them as a program of its own, for the oracle tests. What follows is points-to's header from before
 // 0677, when one file held both parts and a workspace value was its definition's node.
 //
