@@ -388,6 +388,21 @@ them.
    A step is one `q = if … { class_end } else { q + 1 }`. Step 42 says the tests build `kotlin_aot` without
    `test-hooks`: they build it with them, and the check's second run set the values there. That no input read the fill
    stands: the tests passed with `fill_7` false.
+44. **A run's first byte is its row's start, as the lean lexer's `number` is called where its first byte is one**:
+   a row is chosen where its start holds, as the at-starts assumptions read it. So each row's start, read through its
+   kind's assumptions as its run is (`RowArm::start_read`), is a fact at its token's first byte (`Bytes::row_start`,
+   passed to the two-pass form, `bit_reads`). What a fact states is its factors at their offsets, held or not, and the
+   bytes there (`facts_of`). A test is decided from facts (`decide_at`, `given_at`). This is step 41's reading of a
+   term at the byte before, now with offsets: a `prev(Y, 2)` is decided through the term before it, and a fill's
+   byte before is its start's or one of its own. So the runs read no byte before their token:
+   - the integer run is `let mut now = 0b1u32;`;
+   - the real run, which starts at a `.`, is `0b100`;
+   - the hex and binary runs, which no term holds at the `0`, are `q += 1; let mut now = 0b1u32;`;
+   - a hex digit's term is `hexd(q) && last & 0b11 != 0` (after the `x` or a digit), and the `x`'s term no longer
+     follows a digit.
+
+   An `|`'s branches that differ in a term's bit alone are one test of their bits. The row's start is checked as the
+   rows' choice is: the run's end against the rule over the file, in a test build (`assert_eq!(run_last(&R, s), l)`).
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

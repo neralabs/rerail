@@ -468,7 +468,9 @@ fn test_only(text: &str, fields: &[(&str, &str)]) -> String {
 /// first (`Bytes`' windows, the one pass's). A mask that reads no region, each of whose reads in `lex` (not the test
 /// build's walk of the regions) has that form. Stage 1 then keeps none of it in the product build (`test_only`), and
 /// `lex` reads the bytes on `S`'s backend (`generic_lex`). `exprs`: each mask's expression.
-pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(String, ::bitlex::syntax::Expr)]) -> String {
+/// `row_starts` and `row_firsts`: each row's start as its run reads it and its first bytes, by its kind
+/// (`Bytes::row_start`).
+pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(String, ::bitlex::syntax::Expr)], row_starts: &HashMap<String, ::bitlex::syntax::Expr>, row_firsts: &HashMap<String, [bool; 256]>) -> String {
     let Some(lx) = text.find("\npub fn lex(src: &[u8]) -> Lexed {") else { return text.to_owned() };
     let Some(len) = text[lx..].find("\n}\n") else { return text.to_owned() };
     // The product's sections: `lex`, and tier 2's reads of the region tokens (`span_reads`), all of them product lines.
@@ -509,6 +511,8 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
         }
         let locals: HashMap<String, ::bitlex::syntax::Expr> = exprs.iter().filter(|e| cands.contains(e.0.as_str())).cloned().collect();
         let mut by = super::bytes::Bytes::new(stmts, locals, HashMap::new());
+        by.row_start = row_starts.clone();
+        by.row_firsts = row_firsts.clone();
         // Each line's place: in the token loop and a token of code's row (`// `kind`: rule`, not a region's `read …`),
         // where a read starts in the loop's block.
         let mut in_loop = false;
@@ -525,8 +529,9 @@ pub(super) fn bit_reads(text: &str, stmts: &[::bitlex::syntax::Stmt], exprs: &[(
                     in_loop = false;
                     code_row = false;
                 }
-                if let Some((_, rule)) = l.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
+                if let Some((kind, rule)) = l.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
                     code_row = in_loop && !rule.starts_with("read ");
+                    by.at_row(kind);
                 }
                 if p { by.partial_line(l, !(in_loop && code_row)) } else { (*l).to_owned() }
             })

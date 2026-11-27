@@ -4659,25 +4659,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let mut seen = 0u32;
         let mut fills = 0u32;
         fills |= 1 << 0;
-        // The terms at a byte that follows none.
-        let first = |q: usize| -> u32 {
-            let mut now = 0u32;
-            if matches!(src[q], b'0'..=b'9') && (q < 1 || matches!(src[q - 1], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 1 && src[q - 1] == b'.' && (q < 2 || src[q - 2] != b'.')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b')) {
-                now |= 1 << 0;
-            }
-            if src[q] == b'.' && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') && (q < 1 || matches!(src[q - 1], 0x00..=b'-' | b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) {
-                now |= 1 << 2;
-            }
-            now
-        };
-        let mut now = first(q);
-        // Where none holds at the first byte, the run is read from the byte after (`run_last`'s).
-        if now == 0 {
-            q += 1;
-            if q < n {
-                now = first(q);
-            }
-        }
+        // The first byte: the terms that follow none, as its row's start tells them.
+        let mut now = 0b1u32;
         while now != 0 {
             if q > s && matches!(src[q], b'+' | b'-') {
                 seen |= 1 << 0;
@@ -4710,7 +4693,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             }
             now = 0;
             // Term 0: a run of `decd`.
-            if (last >> 5 & 1 == 1 && matches!(src[q], b'0'..=b'9') && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b'))) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 0 & 1 == 1) {
+            if (matches!(src[q], b'0'..=b'9') && last >> 5 & 1 == 1 && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x'))) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 0 & 1 == 1) {
                 now |= 1 << 0;
             }
             // Term 1: a byte.
@@ -4718,11 +4701,11 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 now |= 1 << 1;
             }
             // Term 2: a byte.
-            if last >> 5 & 1 == 1 && src[q] == b'.' && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') {
+            if src[q] == b'.' && last >> 5 & 1 == 1 && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') {
                 now |= 1 << 2;
             }
             // Term 3: a run of `decd`.
-            if last >> 1 & 1 == 1 || last >> 2 & 1 == 1 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 3 & 1 == 1) {
+            if last & 0b110 != 0 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 3 & 1 == 1) {
                 now |= 1 << 3;
             }
             // Term 4: a byte.
@@ -4734,7 +4717,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 now |= 1 << 5;
             }
             // Term 6: a run of `decd`.
-            if (matches!(src[q], b'0'..=b'9') && last >> 4 & 1 == 1) || last >> 5 & 1 == 1 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 6 & 1 == 1) {
+            if (matches!(src[q], b'0'..=b'9') && last >> 4 & 1 == 1) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 6 & 1 == 1) || last >> 5 & 1 == 1 {
                 now |= 1 << 6;
             }
             // Term 7: a byte.
@@ -4808,25 +4791,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let mut last = 0u32;
         let mut seen = 0u32;
         let mut fills = 0u32;
-        // The terms at a byte that follows none.
-        let first = |q: usize| -> u32 {
-            let mut now = 0u32;
-            if matches!(src[q], b'0'..=b'9') && (q < 1 || matches!(src[q - 1], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 1 && src[q - 1] == b'.' && (q < 2 || src[q - 2] != b'.')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b')) {
-                now |= 1 << 0;
-            }
-            if src[q] == b'.' && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') && (q < 1 || matches!(src[q - 1], 0x00..=b'-' | b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) {
-                now |= 1 << 2;
-            }
-            now
-        };
-        let mut now = first(q);
-        // Where none holds at the first byte, the run is read from the byte after (`run_last`'s).
-        if now == 0 {
-            q += 1;
-            if q < n {
-                now = first(q);
-            }
-        }
+        // The first byte: the terms that follow none, as its row's start tells them.
+        let mut now = 0b100u32;
         while now != 0 {
             if q > s && matches!(src[q], b'+' | b'-') {
                 seen |= 1 << 0;
@@ -4859,7 +4825,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             }
             now = 0;
             // Term 0: a run of `decd`.
-            if (last >> 5 & 1 == 1 && matches!(src[q], b'0'..=b'9') && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b'))) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 0 & 1 == 1) {
+            if (matches!(src[q], b'0'..=b'9') && last >> 5 & 1 == 1 && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'B' | b'b')) && !(src[q] == b'0' && q + 1 < n && matches!(src[q + 1], b'X' | b'x'))) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 0 & 1 == 1) {
                 now |= 1 << 0;
             }
             // Term 1: a byte.
@@ -4867,11 +4833,11 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 now |= 1 << 1;
             }
             // Term 2: a byte.
-            if last >> 5 & 1 == 1 && src[q] == b'.' && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') {
+            if src[q] == b'.' && last >> 5 & 1 == 1 && q + 1 < n && matches!(src[q + 1], b'0'..=b'9') {
                 now |= 1 << 2;
             }
             // Term 3: a run of `decd`.
-            if last >> 1 & 1 == 1 || last >> 2 & 1 == 1 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 3 & 1 == 1) {
+            if last & 0b110 != 0 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 3 & 1 == 1) {
                 now |= 1 << 3;
             }
             // Term 4: a byte.
@@ -4883,7 +4849,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 now |= 1 << 5;
             }
             // Term 6: a run of `decd`.
-            if (matches!(src[q], b'0'..=b'9') && last >> 4 & 1 == 1) || last >> 5 & 1 == 1 || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 6 & 1 == 1) {
+            if (matches!(src[q], b'0'..=b'9') && last >> 4 & 1 == 1) || (matches!(src[q], b'0'..=b'9' | b'_') && last >> 6 & 1 == 1) || last >> 5 & 1 == 1 {
                 now |= 1 << 6;
             }
             // Term 7: a byte.
@@ -4954,25 +4920,10 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let mut last = 0u32;
         let mut seen = 0u32;
         let mut fills = 0u32;
-        // The terms at a byte that follows none.
-        let first = |q: usize| -> u32 {
-            let mut now = 0u32;
-            if matches!(src[q], b'X' | b'x') && q >= 1 && src[q - 1] == b'0' && (q < 2 || matches!(src[q - 2], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 2 && src[q - 2] == b'.' && (q < 3 || src[q - 3] != b'.')) {
-                now |= 1 << 0;
-            }
-            if matches!(src[q], b'0'..=b'9' | b'A'..=b'F' | b'_' | b'a'..=b'f') && q >= 1 && matches!(src[q - 1], b'X' | b'x') && q >= 2 && src[q - 2] == b'0' && (q < 3 || matches!(src[q - 3], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 3 && src[q - 3] == b'.' && (q < 4 || src[q - 4] != b'.')) {
-                now |= 1 << 1;
-            }
-            now
-        };
-        let mut now = first(q);
-        // Where none holds at the first byte, the run is read from the byte after (`run_last`'s).
-        if now == 0 {
-            q += 1;
-            if q < n {
-                now = first(q);
-            }
-        }
+        // The first byte: no term holds there, as its row's start tells it; the run is read from the byte after
+        // (`run_last`'s).
+        q += 1;
+        let mut now = 0b1u32;
         while now != 0 {
             last = now;
             // `hexd`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
@@ -4985,12 +4936,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 break;
             }
             now = 0;
-            // Term 0: a byte.
-            if last >> 1 & 1 == 1 && matches!(src[q], b'X' | b'x') && src[q - 1] == b'0' && (q < 2 || matches!(src[q - 2], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 2 && src[q - 2] == b'.' && (q < 3 || src[q - 3] != b'.')) {
-                now |= 1 << 0;
-            }
             // Term 1: a run of `hexd`.
-            if (matches!(src[q], b'0'..=b'9' | b'A'..=b'F' | b'_' | b'a'..=b'f') && matches!(src[q - 1], b'X' | b'x') && q >= 2 && src[q - 2] == b'0' && (q < 3 || matches!(src[q - 3], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 3 && src[q - 3] == b'.' && (q < 4 || src[q - 4] != b'.'))) || (matches!(src[q], b'0'..=b'9' | b'A'..=b'F' | b'_' | b'a'..=b'f') && last >> 1 & 1 == 1) {
+            if matches!(src[q], b'0'..=b'9' | b'A'..=b'F' | b'_' | b'a'..=b'f') && last & 0b11 != 0 {
                 now |= 1 << 1;
             }
         }
@@ -5052,25 +4999,10 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
         let mut last = 0u32;
         let mut seen = 0u32;
         let mut fills = 0u32;
-        // The terms at a byte that follows none.
-        let first = |q: usize| -> u32 {
-            let mut now = 0u32;
-            if matches!(src[q], b'B' | b'b') && q >= 1 && src[q - 1] == b'0' && (q < 2 || matches!(src[q - 2], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 2 && src[q - 2] == b'.' && (q < 3 || src[q - 3] != b'.')) {
-                now |= 1 << 0;
-            }
-            if matches!(src[q], b'0' | b'1' | b'_') && q >= 1 && matches!(src[q - 1], b'B' | b'b') && q >= 2 && src[q - 2] == b'0' && (q < 3 || matches!(src[q - 3], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 3 && src[q - 3] == b'.' && (q < 4 || src[q - 4] != b'.')) {
-                now |= 1 << 1;
-            }
-            now
-        };
-        let mut now = first(q);
-        // Where none holds at the first byte, the run is read from the byte after (`run_last`'s).
-        if now == 0 {
-            q += 1;
-            if q < n {
-                now = first(q);
-            }
-        }
+        // The first byte: no term holds there, as its row's start tells it; the run is read from the byte after
+        // (`run_last`'s).
+        q += 1;
+        let mut now = 0b1u32;
         while now != 0 {
             last = now;
             // `bind`'s run: term 1 alone holds over it (the lean lexer's `class_end`).
@@ -5083,12 +5015,8 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
                 break;
             }
             now = 0;
-            // Term 0: a byte.
-            if last >> 1 & 1 == 1 && matches!(src[q], b'B' | b'b') && src[q - 1] == b'0' && (q < 2 || matches!(src[q - 2], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 2 && src[q - 2] == b'.' && (q < 3 || src[q - 3] != b'.')) {
-                now |= 1 << 0;
-            }
             // Term 1: a run of `bind`.
-            if (matches!(src[q], b'0' | b'1' | b'_') && matches!(src[q - 1], b'B' | b'b') && q >= 2 && src[q - 2] == b'0' && (q < 3 || matches!(src[q - 3], 0x00..=b'/' | b':'..=b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f)) && !(q >= 3 && src[q - 3] == b'.' && (q < 4 || src[q - 4] != b'.'))) || (matches!(src[q], b'0' | b'1' | b'_') && last >> 1 & 1 == 1) {
+            if matches!(src[q], b'0' | b'1' | b'_') && last & 0b11 != 0 {
                 now |= 1 << 1;
             }
         }
