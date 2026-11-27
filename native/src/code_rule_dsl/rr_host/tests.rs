@@ -186,3 +186,25 @@ fn suppress_lines_drop_the_findings_the_linters_comments_silence() {
     assert_eq!(lines(&together, "nosec.py"), [1, 4], "{together:#}");
     assert_eq!(lines(&alone, "eslint.js"), [1, 5], "{alone:#}");
 }
+
+/// `over {c}`: Bandit reads its `# nosec` over the lines of the node a line names, not only `at`'s. A finding at a
+/// call's argument, on the call's second line, with `# nosec B201` on its third: dropped when the line reads over the
+/// call, kept when it reads over `at` alone.
+#[test]
+fn a_suppress_line_reads_its_linters_comments_over_the_column_it_names() {
+    let file = "debug_run(\n    1,\n)  # nosec B201\n";
+    let policy = |id: &str, over: &str| {
+        format!(
+            ".policy \"{id}\" revision 1\n.language python\n.mode log\n\
+             .violation Found(at: node, call: node) code \"B201\" \"debug_run() is called here\"\n    suppress nosec \"B201\"{over}\n\
+             Found(a, c) :- kind(c, \"call\"), field(c, \"function\", f), text(f, \"debug_run\"), kind(a, \"integer\"), within(a, c).\n"
+        )
+    };
+    let root = folder("rr-host-suppress-over", &[("over.py", file)]);
+    let rules = folder("rr-host-suppress-over-rules", &[("over.rerail", &policy("rr-host-over", " over {call}")), ("at.rerail", &policy("rr-host-at", ""))]);
+    let result = run_over(&root, &[rules.join("over.rerail"), rules.join("at.rerail")]);
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let lines = |policy: &str| -> Vec<i64> { result["findings"].as_array().unwrap().iter().filter(|f| f["policy"] == policy).map(|f| f["line"].as_i64().unwrap()).collect() };
+    assert_eq!(lines("rr-host-over"), Vec::<i64>::new(), "{result:#}");
+    assert_eq!(lines("rr-host-at"), [2], "{result:#}");
+}
