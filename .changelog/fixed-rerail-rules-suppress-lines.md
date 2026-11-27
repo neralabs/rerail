@@ -1,0 +1,1 @@
+A `.rerail` rule's `suppress` lines now drop the findings a linter's comment silences (`# noqa`, `# nosec`, `eslint-disable`, `#[allow]`, phpcs, PHPStan, Psalm and sqlfluff comments), as a JSON rule's `suppress` does; they were read and not applied. A `suppress` line naming no known linter, or an `over` column its violation lacks, is now an error.
