@@ -27,6 +27,9 @@ pub mod bitlex_csat_lanes;
 pub mod bitlex_grown;
 #[path = "../../compiler/src/bitlex_lex_rust.rs"]
 pub mod bitlex_lex_rust;
+/// A lexer's `check`s as Rust, for both tiers' writers.
+#[path = "../../compiler/src/bitlex_check_rust.rs"]
+pub mod bitlex_check_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
 pub mod bitlex_masks;
 #[path = "../../compiler/src/bitlex_pair_lookup.rs"]

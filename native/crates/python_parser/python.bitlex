@@ -5,12 +5,14 @@
 # (decision 0698).
 #
 # Layout (decision 0698): a line break outside brackets is a mark of no width (`newline`), which
-# ends a statement. Inside brackets a line break is a blank (`in_br`, from a bracket depth).
+# ends a statement. Inside brackets a line break is a blank (where the bracket depth is not 0).
 
 lexer python
 
 class blank     = ' ' '\t' 0x0c '\r'
 class lf        = '\n'
+# What the loop skips between tokens: blanks and line breaks (a line break's marks are below).
+class ws        = ' ' '\t' 0x0c '\r' '\n'
 class hash      = '#'
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
@@ -56,135 +58,79 @@ class zero      = '0'
 class x_any     = 'x' 'X'
 class o_any     = 'o' 'O'
 class b_any     = 'b' 'B'
-class not_oct   = '8' '9'
-class not_bin   = '2'..'9'
+class oct_d     = '0'..'7'
+class bin_d     = '0' '1'
 class exp_l     = 'e' 'E'
 class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
+# The bytes no token begins with, outside the regions: each its own `bad` token, as the lean lexer fails at a byte
+# its operators do not take. A backslash is an escape too (below). A byte past ASCII is an escape alone, and its
+# bytes are left free for the kinds a reader moves (decision 0509).
+class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
 
 # --- Regions -----------------------------------------------------------------------------------
 
-# A string's prefix: one or two prefix letters that start a word, then its quote. Three or more
-# are not read yet.
-mask pw         = pfx & ~prev(word)
-mask p1         = pw & next(quote)
-mask p2         = pw & next(pfx) & next(quote, 2)
-# A quote after a prefix with an `r`: a raw string's opener.
-mask raw_q      = quote & (prev(p1 & raw_l) | prev(p2 & raw_l, 2) | prev(raw_l & prev(p2)))
-mask sq3        = sq & next(sq) & next(sq, 2)
-mask dq3        = dq & next(dq) & next(dq, 2)
-# A closer: a quote no backslash escapes; a triple's, the last three of its run.
-mask sq_c       = sq & ~escaped(bslash)
-mask dq_c       = dq & ~escaped(bslash)
-mask sq3_c      = sq3 & ~next(sq, 3) & ~escaped(bslash)
-mask dq3_c      = dq3 & ~next(dq, 3) & ~escaped(bslash)
-# A quote after a prefix with an `f`: an f-string's opener.
-mask fq         = quote & (prev(p1 & f_l) | prev(p2 & f_l, 2) | prev(f_l & prev(p2)))
-# An interpolation's `{`: one alone (`{{` is text).
-# The last of a run of them the pairs from its start leave over (`{{{a` is `{{` and an
-# interpolation's `{`), as the lean lexer reads `{{` from the run's first.
-mask i_open     = lbrace & ~next(lbrace) & ~escaped(lbrace)
-# A raw string closes as any does (a quote no backslash escapes); only its escapes differ, so it
-# is a region of its quotes' kind, and `in_raw` says which strings are raw.
-# An f-string closes at its quote or at an interpolation's `{` (`or i_open`), as Kotlin's at a
-# template's `$`. After the interpolation's code, its tail (`t…`) opens at the `}`, and goes on
-# as the kind of f-string the interpolation is in (`resumes`): the string's text to its quote or
-# the next interpolation. A format spec is a region of its own, from its `:` to the byte before
-# the `}`, in an interpolation's code only (`after`), and there at its bracket level zero
-# (`level`): `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's. An f-string in
-# an interpolation's code opens a template of its own (`nest`, four deep), as the lean lexer's
-# stack of strings does; the outer one goes on after its string ends.
-regions hidden level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep {
+# A string, read as the lean lexer's `string` reads one (`read string`), each clause one of its decisions: its prefix's
+# letters, one or two starting a word (three or more are not read yet), say how it reads: raw (`raw_q`, at its quote),
+# bytes, format, template. Its quote, one or three; a triple's two more quotes are a piece of their own (`quote2`). A
+# backslash keeps a quote from closing it, raw or not: a raw string closes as any does, and reads no escape. A format
+# string closes at its quote or at an interpolation's `{` (an `{` alone: `{{` is text, the pairs read from a run's
+# first). After the interpolation's code, its `}` goes on as the kind of string the interpolation is in. A conversion
+# (`!r`) and a format spec (from its `:` to the `}`) are at the code's bracket level zero only: `{a[1:2]}` has no spec,
+# and `{ {k: v} }`'s first `}` is the dict's. An f-string in an interpolation's code opens one of its own, four deep, as
+# the lean lexer's stack of strings does; the outer one goes on after it ends. What it does not read is refused, each
+# where the lean lexer would read it (`refuse`). The reader makes the walk's kinds of each (`s1`, `d3`, `fs1`, its tails
+# `ts1`, `spec`) and their unions (`o_str`, `f_str`, `o_f`, `f_f`, `o_t`, `f_t`), its pieces' masks, and its tokens
+# (`token string_start`, below).
+# An interpolation's `=` before its end, but `==`, `!=`, `<=`, `>=` (`{x=}`: the lean parser keeps the `=` and the `}`).
+mask eq_end     = eq & ~prev(eq | bang | lt_gt)
+regions hidden {
   cmt = hash .. lf outside
-  s1  = sq & ~sq3 & ~fq .. sq_c
-  d1  = dq & ~dq3 & ~fq .. dq_c
-  s3  = sq3 & ~fq .. sq3_c bytes 3
-  d3  = dq3 & ~fq .. dq3_c bytes 3
-  fs1 = sq & ~sq3 & fq .. sq_c or i_open
-  fd1 = dq & ~dq3 & fq .. dq_c or i_open
-  fs3 = sq3 & fq .. sq3_c bytes 3 or i_open
-  fd3 = dq3 & fq .. dq3_c bytes 3 or i_open
-  ts1 = rbrace .. sq_c or i_open resumes fs1
-  td1 = rbrace .. dq_c or i_open resumes fd1
-  ts3 = rbrace .. sq3_c bytes 3 or i_open resumes fs3
-  td3 = rbrace .. dq3_c bytes 3 or i_open resumes fd3
-  spec = colon .. next(rbrace) after fs1 fd1 fs3 fd3
+  read string {
+    prefix pfx max 2 after word
+    flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l
+    quotes sq | dq triple
+    start quote2
+    text str_text
+    escape escape_sequence = bslash check else '\\' unless raw
+    braces escape_interpolation
+    close string_end
+    interpolation format interp_open = lbrace .. interp_end = rbrace level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep
+    conversion type_conversion = bang conv_l
+    spec spec_text = colon
+    refuse "a template string" at open if template
+    refuse "a string open at the end of the file" at fill ~next(~empty)
+    refuse "a line break in a one-line string that no backslash escapes" at fill unless triple lf & ~escaped(bslash)
+    refuse "a carriage return in a string" at fill cr
+    # A triple opened by four quotes or more (but the empty triple's six), or closed by four or more not after a
+    # backslash: the lean lexer closes at the first three.
+    refuse "a triple-quoted string opened by four quotes or more" at open if triple next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
+    refuse "a triple-quoted string closed by four quotes or more" at text if triple ~escaped(bslash) & Q & next(Q3_c)
+    refuse "a `\\N{…}` escape" at escape next(nn_l)
+    # In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
+    refuse "a `\\N`, `\\u` or `\\U` in a bytes string" at escape if bytes next(bytes_esc)
+    # A raw string whose bytes are only backslashes and what they step over: the lean lexer's string then ends at its
+    # first backslash. Not read yet.
+    refuse "a raw string of backslashes only" at raw backslashes quote | bslash | lf
+    refuse "an empty interpolation" at end empty
+    refuse "an empty format spec" at spec start next(rbrace)
+    refuse "a `}` alone in an f-string's text" at brace alone
+    refuse "a comment in an interpolation" at code hash
+    refuse "past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation" at deep
+    refuse "a `{` or a line break in a format spec" at spec lbrace | lf
+    refuse "an interpolation's `=`" at end prev(eq_end) | prev(blank) & prev(eq_end, 2)
+  }
 }
-mask o_f        = o_fs1 | o_fd1 | o_fs3 | o_fd3
-mask o_t        = o_ts1 | o_td1 | o_ts3 | o_td3
-mask f_f        = f_fs1 | f_fd1 | f_fs3 | f_fd3
-mask f_t        = f_ts1 | f_td1 | f_ts3 | f_td3
-mask o_str      = o_s1 | o_d1 | o_s3 | o_d3 | o_f
-mask f_str      = f_s1 | f_d1 | f_s3 | f_d3 | f_f | f_t
-# A raw f-string's tails too: from its opener to the next f-string's that is not raw.
-mask in_raw     = fill(raw_q & o_str, ~f_str) | f_t & fill(raw_q & o_f, o_f & ~raw_q)
 mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
 
 # --- Strings -----------------------------------------------------------------------------------
 
-# A string's bytes after its opener; a triple's two quotes after its first are its opener's too.
-mask t_open     = o_s3 | o_d3 | o_fs3 | o_fd3
-mask t_more     = prev(t_open) | prev(t_open, 2)
-mask s_body     = f_str & ~o_str & ~o_t & ~t_more
-mask body       = s_body & ~in_raw
-mask r_body     = s_body & in_raw
-escape "a template string" when o_str & (prev(p1 & t_l) | prev(p2 & t_l, 2) | prev(t_l & prev(p2)))
 escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
-escape "a string open at the end of the file" when f_str & ~next(~empty)
-escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1 | f_fs1 | f_fd1 | f_ts1 | f_td1) & lf & ~escaped(bslash)
-escape "a carriage return in a string" when f_str & cr
-# A triple opened by four quotes or more (but the empty triple's six), or closed by four or more
-# not after a backslash: the lean lexer closes at the first three.
-escape "a triple-quoted string opened by four quotes or more" when t_open & next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
-escape "a triple-quoted string closed by four quotes or more" when (body | r_body) & ~escaped(bslash) & (f_s3 & sq & next(sq3_c) | f_d3 & dq & next(dq3_c) | (f_fs3 | f_ts3) & sq & next(sq3_c) | (f_fd3 | f_td3) & dq & next(dq3_c))
-# An escape: a backslash no backslash escapes, and what it escapes (lean's `escape`).
-mask esc        = body & bslash & ~escaped(bslash)
-escape "a `\\N{…}` escape" when esc & next(nn_l)
-# In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
-mask b_open     = quote & (prev(p1 & bytes_l) | prev(p2 & bytes_l, 2) | prev(bytes_l & prev(p2)))
-escape "a `\\N`, `\\u` or `\\U` in a bytes string" when esc & next(bytes_esc) & fill(b_open, ~f_str)
-mask e2         = esc & next(esc_one)
-mask e_x        = esc & next(x_l) & next(hex, 2) & next(hex, 3)
-mask e_u        = esc & next(u_l) & next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5)
-mask e_uu       = esc & next(uu_l) & next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(hex, 6) & next(hex, 7) & next(hex, 8) & next(hex, 9)
-mask e_o3       = esc & next(digit) & next(digit, 2) & next(digit, 3)
-mask e_o2       = esc & next(digit) & next(digit, 2) & ~next(digit, 3)
-mask e_o1       = esc & next(digit) & ~next(digit, 2)
-# Any escape, and its last byte: escapes neither touch nor overlap, so the first last byte from
-# an escape's start is its own.
-mask e_any      = e2 | e_x | e_u | e_uu | e_o3 | e_o2 | e_o1
-mask e_last     = prev(e2 | e_o1) | prev(e_o2, 2) | prev(e_x | e_o3, 3) | prev(e_u, 5) | prev(e_uu, 9)
-# A raw string whose bytes are only backslashes and what they step over: the lean lexer's string
-# then ends at its first backslash. Not read yet.
-mask r_plain    = r_body & ~bslash & ~(escaped(bslash) & (quote | bslash | lf))
-# Its body's bytes from the first to the first plain one: where that reaches its last, none is.
-mask r_none     = fill(r_body & ~prev(r_body) & ~r_plain, r_plain | ~r_body)
-escape "a raw string of backslashes only" when r_none & r_body & ~next(r_body) & ~r_plain
+# An escape, read at its backslash as the lean lexer's `escape` reads it: by its grammar, each choice at the byte
+# after the backslash (`check`). Where it matches no escape the backslash is a `\` of its own (`else`).
+check escape_sequence = '\\' (u_l hex hex hex hex | uu_l hex hex hex hex hex hex hex hex | x_l hex hex
+                        | digit [digit [digit]] | esc_one)
 escape "a backslash" when code & bslash
-
-# --- F-strings ---------------------------------------------------------------------------------
-
-# An f-string's text (its own and its tails'); the `{` an f-string or a tail closes at, and the
-# interpolation's code after it, up to its tail.
-mask fb         = f_f & ~o_f & ~t_more | f_t & ~o_t
-mask i_at       = i_open & prev(f_f | f_t)
-mask icode      = fill(prev(i_at), o_t | o_spec)
-# `{{` and `}}` in the text: one brace each (lean's `escape_interpolation`), paired from the
-# first of each run of the text's braces (a tail's `}` opener is no text's).
-mask lb_t       = fb & lbrace
-mask rb_t       = fb & rbrace
-mask esc_ib     = lb_t & next(lb_t) & ~escaped(lb_t) | rb_t & next(rb_t) & ~escaped(rb_t)
-# `!r`, `!s`, `!a` before the interpolation's end or spec.
-mask conv_at    = code & bang & next(conv_l) & next(o_t | o_spec, 2)
-escape "an empty interpolation" when (o_t | o_spec) & prev(i_at)
-escape "an empty format spec" when o_spec & next(rbrace)
-escape "a `}` alone in an f-string's text" when fb & rbrace & ~esc_ib & ~prev(esc_ib)
-escape "a comment in an interpolation" when icode & hash
-escape "past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation" when i_deep
-escape "a `{` or a line break in a format spec" when f_spec & (lbrace | lf)
-# `{x=}`: the lean parser keeps the `=` and the `}`. Not read yet.
-mask eq_end     = icode & eq & ~prev(eq | bang | lt_gt)
-escape "an interpolation's `=`" when (o_t | o_spec | conv_at) & (prev(eq_end) | prev(blank) & prev(eq_end, 2))
 escape "a byte above 0x7f outside a comment" when code & high
 # A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
 # scanner counts it, not read yet.
@@ -195,93 +141,65 @@ escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
 
 mask w          = code & word
 
-# A number (tree-sitter-python's `integer` and `float`): the word from its first digit (a digit
-# after a `.` or an exponent's sign is no number's first), a `.` right after that word and the
-# word after it, or a `.` before a digit not after a word (`.5`); an exponent's sign and the
-# word after it. One token, an `integer`; a float has a `.` or an exponent (`real`, a test of
-# the token's bytes, as Kotlin's).
+# A number (tree-sitter-python's `integer` and `float`), read as the lean lexer's `number`: from its first
+# digit, or a `.` before a digit not after a word (`.5`), the run of its bytes (word bytes, `.`s, an
+# exponent's sign), which its grammar must match at the token (`check`). A digit after a `.` or an
+# exponent's sign is no number's first: the run before it takes it. A number with `0x`, `0o` or
+# `0b` is `based`, never a float; a decimal one with a `.` or an exponent is (`real`, below).
 mask num0       = w & digit & ~prev(w)
 mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
-mask int_start  = num0 & ~prev(dot) & ~prev(e_sign0)
-mask n_word     = fill(int_start, ~w)
-mask hex_n      = fill(int_start & zero & next(x_any), ~w)
-# An octal or a binary number (`0o7`, `0b1`): its letter after its `0`, then digits of its base.
-mask oct_n      = fill(int_start & zero & next(o_any), ~w)
-mask bin_n      = fill(int_start & zero & next(b_any), ~w)
-mask ob_n       = oct_n | bin_n
+mask num_first  = num0 & ~prev(dot) & ~prev(e_sign0)
+mask based_at   = num_first & zero & next(x_any | o_any | b_any)
+mask int_start  = num_first & ~based_at
 mask dot_start  = code & dot & next(digit) & ~prev(w)
-mask n_dot      = code & dot & prev(n_word & ~hex_n & ~ob_n) | dot_start
-mask f_word     = fill(prev(n_dot) & w, ~w)
-mask d_word     = n_word & ~hex_n & ~ob_n | f_word
-mask n_sign     = code & sign & prev(d_word & exp_l) & next(digit)
-mask e_word     = fill(prev(n_sign) & w, ~w)
-mask number     = n_word | n_dot | f_word | n_sign | e_word
-mask exp_at     = d_word & exp_l & (next(digit) | next(n_sign))
-# The letters a number takes: a hex number's `x` and digits, an octal's `o`, a binary's `b`,
-# an exponent's `e`, a last `j`. `L` and the rest are not read yet.
-mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | ob_n & (o_any | b_any) & prev(int_start) | exp_at | imag_l & (d_word | e_word) & ~next(number)
-escape "a number with a letter it does not take" when number & letter & ~n_letter
-escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n & ~ob_n | hex_n & prev(hex | x_any) & next(hex) | ob_n & prev(digit | o_any | b_any) & next(digit))
-escape "an octal or a binary number with a digit past its base" when oct_n & not_oct | bin_n & not_bin
-escape "an octal or a binary number with no digits" when ob_n & (o_any | b_any) & prev(int_start) & ~next(digit | us)
-escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
-escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
+mask num_run    = word | dot | sign & prev(exp_l) & next(digit)
+mask number     = fill(based_at | int_start | dot_start, ~num_run)
+mask based_n    = fill(based_at, ~word)
 
 mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
-mask name_more  = fill(word_start, ~w) & ~word_start
 
 # Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
+assume "a token starts in code: the regions open only at a token's start" at starts code = ~empty
+assume "a quote at a start opens a string: any quote outside the regions opens one" at starts o_str = quote
+assume "a `#` at a start opens a comment" at starts o_cmt = hash
 assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
-assume "a name runs over its word's bytes" in identifier name_more = word
-assume "a number's bytes are code" in integer code = ~empty
+assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
+assume "a number starts at `0x`, `0o` or `0b`: a start is never in a word or a number's run" at starts based_at = zero & next(x_any | o_any | b_any) & ~prev(dot)
+assume "a number starts at a `.` before a digit after no word" at starts dot_start = dot & next(digit) & ~prev(word)
+assume "a decimal number's bytes are a number's, and no based number's" in integer number = ~empty
+assume "a decimal number's bytes are no based number's" in integer based_n = empty
 
-token identifier = start word_start run name_more
-token integer   = start int_start | dot_start run number
+token identifier = start word_start run word
+token based     = start based_at run word
+token integer   = start int_start | dot_start run num_run
+check based     = zero (x_any [us] hex ([us] hex)* | o_any [us] oct_d ([us] oct_d)* | b_any [us] bin_d ([us] bin_d)*)
+check integer   = digit ([us] digit)* ['.' [digit ([us] digit)*]] [exp_l [sign] digit ([us] digit)*] [imag_l]
+                | '.' digit ([us] digit)* [exp_l [sign] digit ([us] digit)*] [imag_l]
 
 # --- Operators ---------------------------------------------------------------------------------
 
 pairs two_start = "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>="
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
-# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run; past it the
-# run's dots are operators, as the lean lexer reads `....`. Two dots are two operators.
+# `...`: three dots, a token of its own (`ellipsis`), from the first dot of a run: the run of dots, which must be
+# three (`check`). The lean lexer reads `....` as an ellipsis and a `.`; here it is refused, to the lean parser.
+# Two dots are two operators.
 mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
-mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
-mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
+mask p_start    = code & punct & ~second & ~number & ~conv_at & ~fill(ell_at, ~dot)
+assume "an ellipsis starts at the first of three dots" at starts ell_at = dot & next(dot) & next(dot, 2) & ~prev(dot)
 assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
 token punct     = start p_start pair two_start
-token ellipsis  = start ell_at run ell
+token ellipsis  = start ell_at run dot
+check ellipsis  = '.' '.' '.'
 
 token comment   = start hash & o_cmt read cmt
 
-# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer.
-token str_prefix = start (p1 | p2) & code run prev(p2)
-# One reader of every kind of string, as each starts at its quote; a raw string's body has no
-# escapes (`esc` is a plain string's). An f-string's regions are resumed by its tails; the
-# plain ones have no second closer.
-token string_start = start o_str read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts {
-                    quote2 = prev(t_open) bytes 2
-                    escape_sequence = e_any last e_last
-                    '\\' = esc & ~e_any bytes 1
-                    escape_interpolation = esc_ib bytes 2
-                  } else str_text closes {
-                    string_end = prev(f_s3 | f_d3 | f_fs3 | f_fd3) & quote bytes 3
-                    string_end = prev(f_s1 | f_d1 | f_fs1 | f_fd1) & quote bytes 1
-                    interp_open = i_at bytes 1
-                  }
-# An interpolation's tail: its `}` (or a spec's `:`, its text and its `}`), then the string's
-# text as above.
-token interp_end = start o_ts1 | o_td1 | o_ts3 | o_td3 read ts1 | td1 | ts3 | td3 parts {
-                    escape_sequence = e_any last e_last
-                    '\\' = esc & ~e_any bytes 1
-                    escape_interpolation = esc_ib bytes 2
-                  } else str_text closes {
-                    string_end = prev(f_ts3 | f_td3) & quote bytes 3
-                    string_end = prev(f_ts1 | f_td1) & quote bytes 1
-                    interp_open = i_at bytes 1
-                  }
-# A format spec: its `:` and its text, one token.
-token spec_text = start o_spec read spec
-token type_conversion = start conv_at run prev(conv_at)
+# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer. It starts at its
+# prefix's first letter, or at its quote where it has none, as the lean lexer's `token` reads a string's prefix
+# before a name; its first piece runs through its quote. Its reader writes its tokens (`read string`): the string's
+# in parts, an interpolation's tail (`interp_end`, its `}` and the string's text after it), the format spec's
+# (`spec_text`, its `:` and its text) and the conversion's (`type_conversion`).
+mask str_at     = (p1 | p2) & code | o_str & ~prev(p1) & ~prev(p2, 2)
+token string_start = start str_at read string
 
 keywords identifier {
   "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"
@@ -292,22 +210,23 @@ keywords identifier {
 }
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
-skip code & (blank | lf)
-error "a byte no token takes" by tokens when code & ~blank & ~lf & ~word & ~punct
+skip ws
+mask bad_first  = code & junk
+assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
+token bad       = start bad_first pair empty
 
 # --- Layout ------------------------------------------------------------------------------------
 
-# The bracket depth over code: a line break inside brackets is a blank.
+# The bracket depth over code, the lean lexer's count of its loop: a line break inside brackets is a blank.
 # An interpolation's `{` and its tail's `}` are brackets too: a line break in it is a blank.
 scan depth      = count(code & opens | i_at, code & closes | o_t) max 31
-mask in_br      = depth.frame(code & opens | i_at)
 # A line break of code outside brackets, and the file's end: a statement's end.
-mark newline    = lf & code & ~in_br, end, settles, ends
+mark newline    = lf & code & depth.eq(0), end, settles, ends
 # The next line deeper than the level's indent: a block's start, after its header's `:`. Less
 # deep: the end of each block it is less than (decision 0698), as tree-sitter's scanner gives
 # INDENT and DEDENT.
-mark indent     = lf & code & ~in_br, deeper
-mark dedent     = lf & code & ~in_br, end, shallower, settles, ends
+mark indent     = lf & code & depth.eq(0), deeper
+mark dedent     = lf & code & depth.eq(0), end, shallower, settles, ends
 # A list's trailing comma, before its closer (a target list's, before its `=`): the lean parser
 # keeps it and the closer.
 mark trail      = tokens "," ")" | "]" | "}" | "="
@@ -316,7 +235,7 @@ mark future     = tokens "from" "__future__"
 # A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
 mark generic    = tokens identifier "["
 # A number with a `.` or an exponent: a float.
-mark real       = empty, at integer when count(n_dot | exp_at) at least 1
+mark real       = empty, at integer when count(dot & number | exp_l & number & ~based_n) at least 1
 # `with (`: the clause's parentheses, not an expression's, where a comma at their depth has more
 # after it (the lean parser's `paren_is_clause`): `(a, b)`, not `(a,)` or `(a as b)`. The lean
 # parser asks for a `:` after them too; where none follows (`with (a, b) as c:`) the clause's
@@ -374,7 +293,7 @@ tree python {
   node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
   node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
   choice case_simple    = dotted_name [wrap class_pattern _ '(' (')' | case_item (',' case_item)* (trail_paren | ')'))]
-                        | '-' (real integer as float | integer) | real integer as float | integer
+                        | '-' (real integer as float | integer | based as integer) | real integer as float | integer | based as integer
                         | string [wrap concatenated_string _ string+]
                         | 'None' as none | 'True' as true | 'False' as false
                         | case_list | case_tuple | dict_pattern | splat_pattern
@@ -383,7 +302,7 @@ tree python {
   node case_tuple       = retag tuple_pattern '(' [case_item (',' case_item)*] ')'
   node dict_pattern     = '{' [dict_entry (',' dict_entry)*] '}'
   choice dict_entry     = key: case_key ':' value: case_item | splat_pattern
-  choice case_key       = string [wrap concatenated_string _ string+] | '-' integer | integer | 'None' as none | 'True' as true | 'False' as false
+  choice case_key       = string [wrap concatenated_string _ string+] | '-' (integer | based as integer) | integer | based as integer | 'None' as none | 'True' as true | 'False' as false
   # --- Definitions
   # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
   node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
@@ -529,7 +448,7 @@ tree python {
   node slice            = slice_rest
   choice slice_rest     = ':' [expression] [':' [expression]]
   # Strings side by side: a `concatenated_string` of them.
-  choice atom           = identifier | real integer as float | integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
+  choice atom           = identifier | real integer as float | integer | based as integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
                         | 'True' as true | 'False' as false | 'None' as none | ellipsis
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
   # target read as one: a name, its attributes and subscripts.
@@ -573,10 +492,9 @@ tree python {
   choice trail_paren    = trail ',' ')'
   choice trail_bracket  = trail ',' ']'
   choice trail_brace    = trail ',' '}'
-  # A string: its start (prefix, quote, a triple's two more quotes: one leaf), its content (its
+  # A string: its start (prefix and quote, one leaf; a triple's two more quotes merged in), its content (its
   # text and escapes), its end.
-  node string           = str_prefix merge string_start string_start string_rest
-                        | string_start string_rest
+  node string           = string_start string_rest
   choice string_rest    = [merge string_start quote2] [string_content] (interpolation [string_content])* string_end
   # `{`, its expression, a conversion (`!r`), and its `}` or its format spec (`:` and its text).
   node interpolation    = interp_open expression: expression [type_conversion: type_conversion] [format_specifier: format_specifier] interp_end
@@ -667,4 +585,6 @@ tree python {
   implied dict_item ':'
   implied set_more ',' '}'
   extra comment
+  # The lexer's errors: no rule takes them, as the lean lexer fails at a byte no token takes.
+  untaken bad
 }

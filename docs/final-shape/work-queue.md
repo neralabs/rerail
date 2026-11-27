@@ -12002,3 +12002,36 @@ Tests (Relax, CPU; no farm, no Metal):
 - tests-logic: plan 121/121, typing 34/34, the native, waves, stats, strings, profile, liveness and costs groups 90/90.
 - tests-rr: program_image, tape, json_rules and program_text 85/85. rr::tests 230/231, with the 110 not reached in the first run's 580 s cap run in name chunks. The red one is `rule_syntax_files_pass_check_rr`, red on the hub before this merge with the same 41 undeclared relations in lib/python/py-names-handed.rerail.
 - tests-corpus: base and phases 71/71, maintain 27/27, cross_views 12/12.
+
+### Q580. Roll-up 152 (Parser-generators-final-shape 7f4f5f7115 onto Pulling-it-all-together): what the merge chose
+
+Parser-generators-final-shape's thirteen new commits, to 7f4f5f7115 (decision 0698):
+- Python's lexer in Bitlex reads as the lean lexer's: numbers as a run over a class, names over their word, the ellipsis, the escape read by its check, and the line break at depth 0.
+- Its strings are a reader in the regions (`read R { … }`), which writes their pieces, tokens and refusals.
+- Tier 1 as Rust reads them in its one pass, with no stage 1: each block's masks are made where the loop reads them, and the source is read padded.
+
+This merges two lines of the Bitlex writers. The hub's has Kotlin's work: 0620's closer past its opener's bytes, 0621's nest, 0624/0625's nesting comments, 0662's byte sets as bits, the gaps' `rec`, and the prover's budget and shipped answers. Parser-generators' has Python's.
+- **tools/bitlex syntax.** Parser-generators' split of the regions' parse (`level_clause`, `region_rest`, `regions_checked`, the `read` readers) is kept, with the hub's clauses carried into it:
+  - `K = O bytes N .. C` (`opens`) is read in the loop and passed to `region_rest`;
+  - `nests D else E`, with its checks;
+  - the level's check that a kind which `resumes` orders the level too.
+  A reader's regions have a one-byte opener and no nest: the reader finds a triple quote's closer by its own masks.
+- **The Rust writer's union (bitlex_lex_rust.rs).**
+  - The state has both sides' fields: `walk_read`, and the readers' kinds, level and counts.
+  - `regions` forgets the cubes, then takes the readers.
+  - A token scan keeps the hub's bits (`bytes.bools()`) and records Parser-generators' regional scans.
+  - A gap keeps both `rec` and `count`, and its tested arms put the count's test (`grp`) around the hub's `rec` arm too.
+  - A region read to its closer takes the hub's search past its opener (`closer_from`, `opens`), Parser-generators' kept closer under a count's scan (`scan_close`), and its prefix.
+- **Python's reader keeps its templates; the loop's nest does not.** Parser-generators wrote no level code in the token loop when a grammar has a string reader, which keeps its templates' frames itself (`reader.rs`). The hub's 0621 had replaced that level code with the nest's step and declarations. Those are now written only for a grammar with no reader (`loop_nest`). The walk keeps the nest as Parser-generators kept the level.
+- **The reader's level bytes are read from the hub's `Bytes`** (`.bools()`).
+- **python_aot.** `parse` keeps the hub's `Finish` sink (decision 0434, as roll-up 145 chose), over Parser-generators' padded buffer: `parse(buf, n, finish)`, `padded`, `PADDING`, `UNRECORDED`. The tests and `compare_aot` read the format 16 tape through `Named` from a padded buffer.
+- **The generated files are the merged writers' output.**
+  - `RERAIL_BLESS=1` wrote kotlin_aot's and python_aot's tiers. Kotlin's changed only in names and in three carries of masks nothing reads.
+  - Python's shipped answers were Parser-generators' answers to its own prover's questions, which the hub's prover does not ask. Its first-bytes questions went unanswered within the budget, so every row began at every byte, and no byte was left for a reader's kind (`integer`: "no byte left that no token begins with"). `RERAIL_BLESS_ANSWERS=1` with the budget lifted wrote python.answers again, and the tiers from it.
+- Relax: in the hub's target, rerail-python-parser's stored code was stale once python.bitlex changed, and every run aborted in Relax's JIT before any test, `--list` too. A fresh copy of the same tree ran, so the blesses ran there and their files were copied back. After that the hub's own runs pass.
+
+Tests (Relax, CPU; no farm, no Metal):
+- rerail-python-parser 29/29 (with `rust_is_current` and `the_shipped_answers_answer_the_grammar`), rerail-kotlin-parser 89/89.
+- rerail-bitlex 26/26, rerail-compiler 46/46, rerail-cpu-stream 74/74, rerail-cpu-block 7/7, rerail-python-aot (no tests of its own) builds.
+- `relax check` of python_lean's `compare_aot` example passes.
+- Not run: tools/bitlex's own tests. Relax stops before any test, at tree-sitter-json's build script, on the hub's tree as here.

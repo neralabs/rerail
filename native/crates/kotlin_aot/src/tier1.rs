@@ -1937,8 +1937,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t205[q] = v_t205;
             }
-            // (((dot & prev(t84)) & next(digit)) | t91) | (f_letter & prev(t95))
-            let v_t217 = ((p_m_dot & (v_t84 << 1 | p_t84 >> 63) & lv & (p_m_digit >> 1 | v_m_digit << 63) | p_m_e_letter & (v_t92 << 1 | p_t92 >> 63) & lv & ((p_m_digit >> 1 | v_m_digit << 63) | (p_m_sign >> 1 | v_m_sign << 63) & (p_m_digit >> 2 | v_m_digit << 62))) | p_m_f_letter & (v_t95 << 1 | p_t95 >> 63) & lv);
+            // (((dot & prev(t206)) & next(digit)) | t212) | (f_letter & prev(t216))
+            let v_t217 = ((p_m_dot & (v_t206 << 1 | p_t206 >> 63) & lv & (p_m_digit >> 1 | v_m_digit << 63) | p_m_e_letter & (v_t211 << 1 | p_t211 >> 63) & lv & ((p_m_digit >> 1 | v_m_digit << 63) | (p_m_sign >> 1 | v_m_sign << 63) & (p_m_digit >> 2 | v_m_digit << 62))) | p_m_f_letter & (v_t216 << 1 | p_t216 >> 63) & lv);
             if q < nw {
                 t217[q] = v_t217;
             }
@@ -2861,7 +2861,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut m_lone = vec![0u64; nw];
     let mut m_d_run = vec![0u64; nw];
     {
-        let mut p_m_d_run = 0u64;
         for i in 0..nw {
             // mask id_last = s_word & ~next(s_word)
             let w_m_id_last = m_s_word[i] & (!next(&m_s_word, i, 1) & lv[i]);
@@ -2874,7 +2873,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             // mask d_run = (lone & ~next(lbrace)) & ~t_run
             let w_m_d_run = w_m_lone & (!next(&m_lbrace, i, 1) & lv[i]) & (!w_m_t_run & lv[i]);
             m_d_run[i] = w_m_d_run;
-            p_m_d_run = w_m_d_run;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_s2, m_id2l, m_d_run2).
@@ -2883,7 +2881,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut m_d_run2 = vec![0u64; nw];
     {
         let mut p_m_s2 = 0u64;
-        let mut p_m_d_run2 = 0u64;
         for i in 0..nw {
             // mask s2 = s_dollar & body2
             let w_m_s2 = m_s_dollar[i] & m_body2[i];
@@ -2899,7 +2896,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_d_run2 = w_m_s2 & (!w_m_extra2 & lv[i]) & (!w_m_id2 & lv[i]) & (!w_m_id2l & lv[i]) & (!m_t2_dollar[i] & lv[i]) & (!prev(&m_t2_dollar, i, 1) & lv[i]);
             m_d_run2[i] = w_m_d_run2;
             p_m_s2 = w_m_s2;
-            p_m_d_run2 = w_m_d_run2;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_id_name, m_w, t17, m_word_run, m_num_start, m_hex_at, m_bin_at, m_hx, m_bx, m_di, m_nb).
@@ -3059,7 +3055,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     {
         let mut p_m_int_last = 0u64;
         let mut c_m_name_tok = 0u64;
-        let mut p_m_r_x = 0u64;
         for i in 0..nw {
             // mask n_last = nb & ~next(nb)
             let w_m_n_last = m_nb[i] & (!next(&m_nb, i, 1) & lv[i]);
@@ -3093,7 +3088,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_r_x = m_rbody[i] & (!w_m_r_dol & lv[i]) & (!m_id_name[i] & lv[i]) & (!w_m_r_lead & lv[i]);
             m_r_x[i] = w_m_r_x;
             p_m_int_last = w_m_int_last;
-            p_m_r_x = w_m_r_x;
         }
     }
         // mask r_id = id_name

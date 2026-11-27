@@ -15,13 +15,23 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
 mod tier2;
 
-pub use tier1::{Lexed, lex};
+pub use tier1::{Lexed, PADDING, UNRECORDED, lex};
 /// The supertypes a key's class bits name (bit `rerail_tape_format::CLASS_SHIFT + j` is `SUPERS[j]`), ascending.
 pub use tier2::SUPERS;
 
-/// `src`'s tape, written to `finish`'s target and finished by it (decision 0434), or the byte the parser refused it at
-/// (0: tier 1 sends it to tree-sitter). Each code's key is the tape format's (`kf | flags << 16`), its supertypes' bits
-/// from `CLASS_SHIFT` (`SUPERS`), not the lean parser's own: `finish` numbers them.
-pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], finish: &mut F) -> Result<F::Out, u32> {
-    tier2::parse(src, &tier1::lex(src), finish)
+/// The tape of `buf[..n]`, written to `finish`'s target and finished by it (decision 0434), or the byte the parser
+/// refused it at (0: tier 1 sends it to tree-sitter). `buf` is the file padded, as simdjson's: `PADDING` spaces after
+/// it (`padded`), so that tier 1 loads each block where it is. Each code's key is the tape format's
+/// (`kf | flags << 16`), its supertypes' bits from `CLASS_SHIFT` (`SUPERS`), not the lean parser's own: `finish`
+/// numbers them.
+pub fn parse<F: rerail_tape_format::Finish>(buf: &[u8], n: usize, finish: &mut F) -> Result<F::Out, u32> {
+    tier2::parse(&buf[..n], &tier1::lex(buf, n), finish)
+}
+
+/// `src` padded for `parse`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer so).
+pub fn padded(src: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(src.len() + PADDING);
+    b.extend_from_slice(src);
+    b.resize(src.len() + PADDING, b' ');
+    b
 }

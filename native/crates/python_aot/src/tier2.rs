@@ -219,20 +219,20 @@ pub mod f {
 /// The records' kinds (a code's low byte), by their tokens' names.
 #[allow(dead_code)]
 pub mod t {
-    pub const PUNCT: u32 = 0;
+    pub const BAD: u32 = 0;
     pub const TYPE_CONVERSION: u32 = 1;
     pub const SPEC_TEXT: u32 = 2;
     pub const INTERP_END: u32 = 3;
-    pub const STRING_END: u32 = 4;
-    pub const INTERP_OPEN: u32 = 5;
-    pub const STR_TEXT: u32 = 6;
-    pub const ESCAPE_SEQUENCE: u32 = 7;
-    pub const ESCAPE_INTERPOLATION: u32 = 8;
-    pub const BACKSLASH: u32 = 9;
-    pub const QUOTE2: u32 = 10;
-    pub const INTERP_END_CLOSE: u32 = 11;
+    pub const INTERP_END_CLOSE: u32 = 4;
+    pub const QUOTE2: u32 = 5;
+    pub const STRING_END: u32 = 6;
+    pub const INTERP_OPEN: u32 = 7;
+    pub const STR_TEXT: u32 = 8;
+    pub const ESCAPE_SEQUENCE: u32 = 9;
+    pub const ESCAPE_INTERPOLATION: u32 = 10;
+    pub const BACKSLASH: u32 = 11;
     pub const ELLIPSIS: u32 = 12;
-    pub const STR_PREFIX: u32 = 13;
+    pub const BASED: u32 = 13;
     pub const STRING_START: u32 = 14;
     pub const INTEGER: u32 = 15;
     pub const IDENTIFIER: u32 = 16;
@@ -342,57 +342,6 @@ const AUG_OP: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
-        0 => match b {
-            b"\x28" => w::LPAREN_9,
-            b"\x29" => w::RPAREN_6,
-            b"\x5b" => w::LBRACK_64,
-            b"\x5d" => w::RBRACK_7,
-            b"\x7b" => w::LBRACE_77,
-            b"\x7d" => w::RBRACE_8,
-            b"\x2c" => w::COMMA_5,
-            b"\x3a" => w::COLON_12,
-            b"\x3b" => w::SEMI_11,
-            b"\x2e" => w::DOT_10,
-            b"\x3d" => w::EQ_13,
-            b"\x2b" => w::PLUS_18,
-            b"\x2d" => w::MINUS_17,
-            b"\x2a" => w::STAR_14,
-            b"\x2f" => w::SLASH_16,
-            b"\x25" => w::PERCENT_20,
-            b"\x26" => w::AMP_21,
-            b"\x7c" => w::BAR_22,
-            b"\x5e" => w::CARET_23,
-            b"\x7e" => w::TILDE_19,
-            b"\x3c" => w::LT_28,
-            b"\x3e" => w::GT_29,
-            b"\x40" => w::AT_27,
-            b"\x21" => w::BANG_90,
-            b"\x2a\x2a" => w::STAR_STAR_15,
-            b"\x2f\x2f" => w::SLASH_SLASH_26,
-            b"\x3d\x3d" => w::EQ_EQ_32,
-            b"\x21\x3d" => w::BANG_EQ_33,
-            b"\x3c\x3d" => w::LT_EQ_30,
-            b"\x3e\x3d" => w::GT_EQ_31,
-            b"\x3c\x3c" => w::LT_LT_24,
-            b"\x3e\x3e" => w::GT_GT_25,
-            b"\x2d\x3e" => w::MINUS_GT_78,
-            b"\x2b\x3d" => w::PLUS_EQ_40,
-            b"\x2d\x3d" => w::MINUS_EQ_41,
-            b"\x2a\x3d" => w::STAR_EQ_42,
-            b"\x2f\x3d" => w::SLASH_EQ_43,
-            b"\x25\x3d" => w::PERCENT_EQ_46,
-            b"\x26\x3d" => w::AMP_EQ_50,
-            b"\x7c\x3d" => w::BAR_EQ_52,
-            b"\x5e\x3d" => w::CARET_EQ_51,
-            b"\x40\x3d" => w::AT_EQ_44,
-            b"\x3a\x3d" => w::COLON_EQ_65,
-            b"\x3c\x3e" => w::LT_GT_34,
-            b"\x2a\x2a\x3d" => w::STAR_STAR_EQ_47,
-            b"\x2f\x2f\x3d" => w::SLASH_SLASH_EQ_45,
-            b"\x3c\x3c\x3d" => w::LT_LT_EQ_49,
-            b"\x3e\x3e\x3d" => w::GT_GT_EQ_48,
-            _ => 0,
-        },
         16 => match b {
             b"False" => w::FALSE_76,
             b"None" => w::NONE_74,
@@ -443,53 +392,14 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 14, 0, 0, 0, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 11, 5, 4, 6, 7, 8, 9, 1, 2, 3, 13, 12, 15];
-
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 4, 7, 6, 8, 9, 10, 11, 1, 2, 3, 14, 12, 15, 13];
 
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
     k::COMMENT
 }
 
-
 type R<X = ()> = Result<X, u32>;
-
-/// Mask `x`'s first bit at or after byte `from`, a word at a time.
-fn first_bit(x: &[u64], from: usize) -> Option<usize> {
-    let mut q = from / 64;
-    let mut w = x.get(q)? & (!0u64 << (from % 64));
-    while w == 0 {
-        q += 1;
-        w = *x.get(q)?;
-    }
-    Some(64 * q + w.trailing_zeros() as usize)
-}
-
-/// The first byte in `from..to` where one of the masks `xs` holds, a word of their union at a time: the words up to
-/// `to` read, and no more, as the lean lexer's string reader looks no further than its quote.
-#[inline(always)]
-fn first_of<const N: usize>(xs: [&[u64]; N], from: usize, to: usize) -> Option<usize> {
-    let len = xs.iter().map(|x| x.len()).max().unwrap_or(0);
-    if from >= to || from / 64 >= len {
-        return None;
-    }
-    let (mut q, last) = (from / 64, ((to - 1) / 64).min(len - 1));
-    let word = |q: usize| xs.iter().fold(0u64, |a, x| a | x.get(q).copied().unwrap_or(0));
-    let mut w = word(q) & (!0u64 << (from % 64));
-    while w == 0 {
-        if q == last {
-            return None;
-        }
-        q += 1;
-        w = word(q);
-    }
-    Some(64 * q + w.trailing_zeros() as usize).filter(|&p| p < to)
-}
-
-/// Whether mask `x` holds at byte `i`.
-fn bit(x: &[u64], i: usize) -> bool {
-    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
-}
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
@@ -510,16 +420,9 @@ pub struct P<'a, L: Layout> {
     recs: &'a [crate::tier1::Rec],
     /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
     xs: &'a [crate::tier1::Rec],
-    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
-    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record.
     i: usize,
-    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as
-    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;
-    /// the token is piece `k`.
-    sub: Vec<(u32, u32, u32)>,
-    k: usize,
     /// The comments: the first not yet written (`pend`), the first after the token's start (`xi`), and where that one
     /// starts (`next_x`, `u32::MAX` past the last), as the lean parser's `comment` and `next_comment`.
     pend: usize,
@@ -532,8 +435,6 @@ pub struct P<'a, L: Layout> {
     levels: Vec<(u32, u32)>,
     /// The last token's end.
     last_end: u32,
-    /// A `leaf`'s first token's record (`leaf_open`).
-    leaf_from: usize,
     /// The marks taken or passed at this token, by their order.
     taken: u64,
     /// The marks found at this token (`held`): which, and whether each holds.
@@ -559,36 +460,27 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L, target: rerail_tape_format::Target) -> R<Self> {
-        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
+        let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
     }
 
-    /// At record `i`: split it where tier 2 reads its region in parts.
+    /// At record `i`: its code read, no mark known there yet.
     #[inline(always)]
     fn arrive(&mut self) -> R {
         self.known = 0;
-        if self.i < self.n {
-            self.split(self.i)?;
-        }
         self.cur = if self.i < self.n { self.code_at(self.i) } else { END_CODE };
         Ok(())
     }
 
-    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.
-    fn piece(&mut self, s: usize, l: usize, kind: u32) {
-        let word = word_in(kind, &self.src[s..=l]);
-        self.sub.push((s as u32, l as u32, kind | word << 8));
-    }
-
-    /// Record `j`'s code, its first and its last byte: the piece's at the token.
+    /// Record `j`'s code.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
+        self.recs[j].code
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -619,42 +511,6 @@ impl<'a, L: Layout> P<'a, L> {
         if j == 0 { self.n } else { j - 1 }
     }
 
-
-    /// The `k`th record before the token (`here`, the token `i`), the comments among them by where they start: whether a
-    /// comment, and its index; none before the file's first.
-    fn back(&self, here: usize, k: usize) -> Option<(bool, usize)> {
-        debug_assert_eq!(here, self.i);
-        let (mut t, mut x) = (here, self.xi);
-        let mut got = None;
-        for _ in 0..k {
-            got = if x > 0 && (t == 0 || self.xs[x - 1].start > self.recs[t - 1].start) {
-                x -= 1;
-                Some((true, x))
-            } else if t > 0 {
-                t -= 1;
-                Some((false, t))
-            } else {
-                return None;
-            };
-        }
-        got
-    }
-
-
-    /// The first comment since the grammar token before the token (`here`, the token `i`): the comments between.
-    fn since_comments(&self, here: usize) -> usize {
-        debug_assert_eq!(here, self.i);
-        if here == 0 {
-            return 0;
-        }
-        let mut x = self.xi;
-        while x > 0 && self.xs[x - 1].start > self.recs[here - 1].start {
-            x -= 1;
-        }
-        x
-    }
-
-
     #[inline(always)]
     fn word(&self) -> u32 {
         self.cur >> 8 & 0xff
@@ -662,7 +518,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word_at(&self, j: usize) -> u32 {
-        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
+        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)
     }
 
     /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
@@ -673,7 +529,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn kind_at(&self, j: usize) -> u32 {
-        if j < self.n { self.code_at(j) & 0xff } else { NO_KIND }
+        self.recs.get(j).map_or(NO_KIND, |r| r.code & 0xff)
     }
 
     /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes;
@@ -691,18 +547,14 @@ impl<'a, L: Layout> P<'a, L> {
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
     }
 
-
     #[inline(always)]
     fn start(&self) -> u32 {
         if self.i >= self.n {
             self.src.len() as u32
-        } else if self.k < self.sub.len() {
-            self.sub[self.k].0
         } else {
             self.recs[self.i].start
         }
     }
-
 
     #[cold]
     fn refuse<X>(&self) -> R<X> {
@@ -754,21 +606,6 @@ impl<'a, L: Layout> P<'a, L> {
     fn take(&mut self) -> R<(u32, u32)> {
         self.taken = 0;
         self.marked = false;
-        if self.k < self.sub.len() {
-            let (s, l, _) = self.sub[self.k];
-            self.k += 1;
-            if self.k < self.sub.len() {
-                self.known = 0;
-                self.cur = self.sub[self.k].2;
-                self.last_end = l + 1;
-                return Ok((s, l + 1));
-            }
-            self.sub.clear();
-            self.k = 0;
-            self.advance(l as usize + 1)?;
-            self.last_end = l + 1;
-            return Ok((s, l + 1));
-        }
         let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
@@ -841,17 +678,6 @@ impl<'a, L: Layout> P<'a, L> {
         self.w.plain_truncate(at as usize);
         let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
-        Ok(())
-    }
-
-    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
-    /// the leaf's text (`leaf_close`).
-    #[inline(always)]
-    fn pass_as(&mut self, ok: bool) -> R {
-        if !ok {
-            return self.refuse();
-        }
-        self.take()?;
         Ok(())
     }
 
@@ -931,40 +757,6 @@ impl<'a, L: Layout> P<'a, L> {
         Ok(())
     }
 
-
-    /// The node made last at this level and the nodes inside it read again: `way` gives each
-    /// kind's (`Some(Some(K))` read as `K`, `Some(None)` gone and its children in its place,
-    /// `None` kept as it is with every node inside it; `u16::MAX - 1` refuses), `field` each
-    /// field's new one, and `root` the node's own way (`u16::MAX`: its kind's).
-    fn reread(&mut self, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>, field: fn(u16) -> u16) -> R {
-        let at = self.top.1;
-        if at == NONE {
-            return self.refuse();
-        }
-        let at = at as usize;
-        let n = self.w.plain_size(at) as usize;
-        if at + n != self.w.len() {
-            return self.refuse();
-        }
-        // A leaf gone (no extra, kept as it is; no dead node held in it): nothing to read again, the tape one node
-        // shorter (`drop`'s, at a list's separator).
-        if n == 1 && root == Some(None) && self.w.plain_key(at) >> 16 & 1 == 0 {
-            self.w.plain_truncate(at);
-            return Ok(());
-        }
-        // The nodes as they are, then written again in preorder.
-        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
-        self.w.plain_truncate(at);
-        let mut i = 0;
-        while i < nodes.len() {
-            i = self.reread_node(&nodes, i, root, way, field)?;
-        }
-        if self.w.len() == at + 1 || at < self.w.len() {
-            self.set_made(at as u32);
-        }
-        Ok(())
-    }
-
     /// `reread`'s node `i` and the nodes inside it: the node after them.
     fn reread_node(&mut self, nodes: &[(u32, u32, u32, usize)], i: usize, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>, field: fn(u16) -> u16) -> R<usize> {
         let (key, s, e, size) = nodes[i];
@@ -1017,7 +809,7 @@ impl<L: Layout> P<'_, L> {
     fn module(&mut self) -> R {
         self.open_root(k::MODULE);
         loop {
-            if self.m_m_stmt() || self.word() == w::TYPE_1 && self.kind_at(self.i + 1) == t::IDENTIFIER && !matches!(self.word_at(self.i + 1), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::YIELD_4 | w::STAR_14 | w::PASS_79 | w::RETURN_80 | w::RAISE_81 | w::DEL_82 | w::ASSERT_83 | w::GLOBAL_84 | w::NONLOCAL_85 | w::BREAK_86 | w::CONTINUE_87 | w::IMPORT_58 | w::FROM_59 | w::IF_63 | w::WHILE_68 | w::FOR_54 | w::TRY_69 | w::WITH_56 | w::ASYNC_55 | w::DEF_53 | w::CLASS_72 | w::AT_27) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            if self.m_m_stmt() || self.word() == w::TYPE_1 && self.kind_at(self.i + 1) == t::IDENTIFIER && !matches!(self.word_at(self.i + 1), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::YIELD_4 | w::STAR_14 | w::PASS_79 | w::RETURN_80 | w::RAISE_81 | w::DEL_82 | w::ASSERT_83 | w::GLOBAL_84 | w::NONLOCAL_85 | w::BREAK_86 | w::CONTINUE_87 | w::IMPORT_58 | w::FROM_59 | w::IF_63 | w::WHILE_68 | w::FOR_54 | w::TRY_69 | w::WITH_56 | w::ASYNC_55 | w::DEF_53 | w::CLASS_72 | w::AT_27) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.r_statement()?;
             } else {
                 break;
@@ -1040,7 +832,7 @@ impl<L: Layout> P<'_, L> {
                 w::IF_63 | w::WHILE_68 | w::FOR_54 | w::TRY_69 | w::WITH_56 | w::ASYNC_55 | w::DEF_53 | w::CLASS_72 | w::AT_27 => {
                     self.compound_statement()?;
                 }
-                _ if self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
+                _ if self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
                     self.simple_statements()?;
                 }
                 _ => {
@@ -1062,7 +854,7 @@ impl<L: Layout> P<'_, L> {
             }
             self.p_stored(w::SEMI_11, k::SEMI)?;
             if self.m_newline() {
-            } else if self.word() == w::TYPE_1 && self.kind_at(self.i + 1) == t::IDENTIFIER && !matches!(self.word_at(self.i + 1), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::YIELD_4 | w::STAR_14 | w::PASS_79 | w::RETURN_80 | w::RAISE_81 | w::DEL_82 | w::ASSERT_83 | w::GLOBAL_84 | w::NONLOCAL_85 | w::BREAK_86 | w::CONTINUE_87 | w::IMPORT_58 | w::FROM_59) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            } else if self.word() == w::TYPE_1 && self.kind_at(self.i + 1) == t::IDENTIFIER && !matches!(self.word_at(self.i + 1), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::YIELD_4 | w::STAR_14 | w::PASS_79 | w::RETURN_80 | w::RAISE_81 | w::DEL_82 | w::ASSERT_83 | w::GLOBAL_84 | w::NONLOCAL_85 | w::BREAK_86 | w::CONTINUE_87 | w::IMPORT_58 | w::FROM_59) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.simple_statement()?;
             } else {
             }
@@ -1287,7 +1079,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::WITH_CLAUSE);
         if self.i > 0 && self.word_at(self.i - 1) == w::WITH_56 && self.pat_w_paren_0_0(self.i, self.n) {
             self.list_0(Self::with_item)?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.list_4(Self::with_item)?;
         } else {
             return self.refuse();
@@ -1432,7 +1224,7 @@ impl<L: Layout> P<'_, L> {
             self.marked = false;
         } else if self.word() == w::X_61 {
             self.implied()?;
-        } else if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+        } else if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START {
             self.case_simple()?;
             if self.word() == w::BAR_22 {
                 self.wrap(k::UNION_PATTERN, 0)?;
@@ -1458,7 +1250,7 @@ impl<L: Layout> P<'_, L> {
                     self.bump_as(k::MINUS)?;
                     if self.bit_at(self.i, 6) {
                         self.tk_as(self.kind() == t::INTEGER, k::FLOAT, 0)?;
-                    } else if self.kind() == t::INTEGER {
+                    } else if self.kind() == t::INTEGER || self.kind() == t::BASED {
                         self.bump_as(k::INTEGER)?;
                     } else {
                         return self.refuse();
@@ -1477,7 +1269,7 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::LIST_PATTERN);
                     self.implied()?;
-                    if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                    if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START {
                         self.case_item()?;
                         self.case_items()?;
                     }
@@ -1489,7 +1281,7 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::TUPLE_PATTERN);
                     self.implied()?;
-                    if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                    if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START {
                         self.case_item()?;
                         self.case_items()?;
                     }
@@ -1500,7 +1292,7 @@ impl<L: Layout> P<'_, L> {
                 w::LBRACE_77 => {
                     self.open(k::DICT_PATTERN);
                     self.implied()?;
-                    if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER {
+                    if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::STRING_START || self.kind() == t::INTEGER || self.kind() == t::BASED {
                         self.list_4(Self::dict_entry)?;
                     }
                     self.p(w::RBRACE_8)?;
@@ -1512,7 +1304,7 @@ impl<L: Layout> P<'_, L> {
                     if self.word() == w::LPAREN_9 {
                         self.wrap(k::CLASS_PATTERN, 0)?;
                         self.implied()?;
-                        if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                        if self.kind_at(self.i) == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) && self.word_at(self.i + 1) == w::EQ_13 || matches!(self.word(), w::X_61 | w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START {
                             self.list_1(Self::case_item)?;
                         } else if self.word() == w::RPAREN_6 {
                             self.implied()?;
@@ -1522,12 +1314,12 @@ impl<L: Layout> P<'_, L> {
                         self.close()?;
                     }
                 }
-                _ if self.kind() == t::INTEGER => {
+                _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                     self.bump_as(k::INTEGER)?;
                 }
-                _ if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START => {
+                _ if self.kind() == t::STRING_START => {
                     self.string()?;
-                    if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                    if self.kind() == t::STRING_START {
                         self.wrap(k::CONCATENATED_STRING, 0)?;
                         self.string()?;
                         self.strings()?;
@@ -1575,7 +1367,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `dict_entry`.
     fn dict_entry(&mut self) -> R {
-        if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76) || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::INTEGER {
+        if matches!(self.word(), w::MINUS_17 | w::NONE_74 | w::TRUE_75 | w::FALSE_76) || self.kind() == t::STRING_START || self.kind() == t::INTEGER || self.kind() == t::BASED {
             self.case_key()?;
             self.field_made(f::KEY);
             self.p(w::COLON_12)?;
@@ -1593,7 +1385,11 @@ impl<L: Layout> P<'_, L> {
         match self.word() {
             w::MINUS_17 => {
                 self.bump_as(k::MINUS)?;
-                self.tk_as(self.kind() == t::INTEGER, k::INTEGER, 0)?;
+                if self.kind() == t::INTEGER || self.kind() == t::BASED {
+                    self.bump_as(k::INTEGER)?;
+                } else {
+                    return self.refuse();
+                }
             }
             w::NONE_74 => {
                 self.bump_as(k::NONE)?;
@@ -1604,15 +1400,15 @@ impl<L: Layout> P<'_, L> {
             w::FALSE_76 => {
                 self.bump_as(k::FALSE)?;
             }
-            _ if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START => {
+            _ if self.kind() == t::STRING_START => {
                 self.string()?;
-                if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+                if self.kind() == t::STRING_START {
                     self.wrap(k::CONCATENATED_STRING, 0)?;
                     self.string()?;
                     self.strings()?;
                 }
             }
-            _ if self.kind() == t::INTEGER => {
+            _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                 self.bump_as(k::INTEGER)?;
             }
             _ => {
@@ -1948,7 +1744,7 @@ impl<L: Layout> P<'_, L> {
                 w::RETURN_80 => {
                     self.open(k::RETURN_STATEMENT);
                     self.implied()?;
-                    if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
+                    if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
                         self.expressions()?;
                     } else {
                     }
@@ -2017,7 +1813,7 @@ impl<L: Layout> P<'_, L> {
                 w::FROM_59 => {
                     self.import_from_statement()?;
                 }
-                _ if self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
+                _ if self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS => {
                     self.expression_statement()?;
                 }
                 _ => {
@@ -2051,7 +1847,7 @@ impl<L: Layout> P<'_, L> {
             self.rhs()?;
             self.field_made(f::RIGHT);
             self.close()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -2118,7 +1914,7 @@ impl<L: Layout> P<'_, L> {
                 self.r_expression()?;
                 self.slot_made(1);
             }
-            _ if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) => {
+            _ if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) => {
                 self.expressions()?;
             }
             _ => {
@@ -2189,14 +1985,14 @@ impl<L: Layout> P<'_, L> {
             self.wrap(k::EXPRESSION_LIST, 0)?;
             self.slot_moved(1)?;
             self.p(w::COMMA_5)?;
-            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.list_part()?;
             } else {
             }
             self.list_parts()?;
         } else if self.word() == w::YIELD_4 {
             self.r_yield()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -2204,7 +2000,7 @@ impl<L: Layout> P<'_, L> {
                     self.wrap(k::EXPRESSION_LIST, 0)?;
                     self.slot_moved(1)?;
                     self.implied()?;
-                    if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                    if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                         self.list_part()?;
                     } else {
                     }
@@ -2284,7 +2080,7 @@ impl<L: Layout> P<'_, L> {
     fn raise_statement(&mut self) -> R {
         self.open(k::RAISE_STATEMENT);
         self.p(w::RAISE_81)?;
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline()) {
             self.expressions()?;
         } else {
         }
@@ -2308,19 +2104,19 @@ impl<L: Layout> P<'_, L> {
             self.wrap(k::EXPRESSION_LIST, 0)?;
             self.slot_moved(1)?;
             self.p(w::COMMA_5)?;
-            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.list_part()?;
             } else {
             }
             self.list_parts()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::COMMA_5 && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.wrap(k::EXPRESSION_LIST, 0)?;
                 self.slot_moved(1)?;
                 self.implied()?;
-                if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                     self.list_part()?;
                 } else {
                 }
@@ -2336,7 +2132,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `list_part`.
     fn list_part(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -2462,10 +2258,10 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::LAMBDA_2 {
             self.lambda()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             if self.word() == w::NOT_37 {
                 self.not_operator()?;
-            } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.primary_expression()?;
                 self.slot_made(2);
                 match self.word() {
@@ -2665,7 +2461,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_37 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::LT_28 | w::LT_EQ_30 | w::EQ_EQ_32 | w::BANG_EQ_33 | w::GT_EQ_31 | w::GT_29 | w::LT_GT_34 | w::IN_35 | w::NOT_37 | w::IS_36) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -2703,7 +2499,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_37 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::LT_28 | w::LT_EQ_30 | w::EQ_EQ_32 | w::BANG_EQ_33 | w::GT_EQ_31 | w::GT_29 | w::LT_GT_34 | w::IN_35 | w::NOT_37 | w::IS_36) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -3017,7 +2813,7 @@ impl<L: Layout> P<'_, L> {
             self.slot_made(2);
             self.close()?;
             self.marked = false;
-        } else if matches!(self.word(), w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.atom()?;
             self.postfixs()?;
         } else {
@@ -3072,7 +2868,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `sub_item`.
     fn sub_item(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::COLON_12 {
@@ -3094,13 +2890,13 @@ impl<L: Layout> P<'_, L> {
     /// `slice_rest`.
     fn slice_rest(&mut self) -> R {
         self.p_stored(w::COLON_12, k::COLON)?;
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         }
         if self.word() == w::COLON_12 {
             self.bump_as(k::COLON)?;
-            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+            if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
                 self.r_expression()?;
                 self.slot_made(1);
             }
@@ -3136,15 +2932,15 @@ impl<L: Layout> P<'_, L> {
                 _ if self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) => {
                     self.bump_as(k::IDENTIFIER)?;
                 }
-                _ if self.kind() == t::INTEGER => {
+                _ if self.kind() == t::INTEGER || self.kind() == t::BASED => {
                     self.bump_as(k::INTEGER)?;
                 }
-                _ if self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START => {
+                _ if self.kind() == t::STRING_START => {
                     self.string()?;
-                    if (self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                    if (self.kind() == t::STRING_START) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                         self.wrap(k::CONCATENATED_STRING, 0)?;
                         self.string()?;
-                        while (self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                        while (self.kind() == t::STRING_START) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                             self.string()?;
                         }
                         self.close()?;
@@ -3261,7 +3057,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::LPAREN_9)?;
         if self.word() == w::RPAREN_6 {
             self.implied()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14 | w::STAR_STAR_15) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.argument()?;
             match self.word() {
                 w::ASYNC_55 | w::FOR_54 => {
@@ -3307,7 +3103,7 @@ impl<L: Layout> P<'_, L> {
     fn argument(&mut self) -> R {
         if self.word() == w::STAR_14 {
             self.list_splat()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             if self.word() == w::EQ_13 {
@@ -3353,7 +3149,7 @@ impl<L: Layout> P<'_, L> {
         self.p(w::LBRACK_64)?;
         if self.word() == w::RBRACK_7 {
             self.implied()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -3389,7 +3185,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `list_item`.
     fn list_item(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -3453,7 +3249,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         if self.word() == w::NOT_37 {
             self.not_operator()?;
-        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.primary_expression()?;
             self.slot_made(2);
             if matches!(self.word(), w::LT_28 | w::LT_EQ_30 | w::EQ_EQ_32 | w::BANG_EQ_33 | w::GT_EQ_31 | w::GT_29 | w::LT_GT_34 | w::IN_35 | w::NOT_37 | w::IS_36) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
@@ -3542,7 +3338,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `dict_item`.
     fn dict_item(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             self.wrap(k::PAIR, f::KEY)?;
@@ -3568,7 +3364,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `set_item`.
     fn set_item(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -3589,7 +3385,7 @@ impl<L: Layout> P<'_, L> {
             self.retag(k::TUPLE);
             self.list_splat()?;
             self.paren_more()?;
-        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        } else if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
             match self.word() {
@@ -3639,7 +3435,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `paren_item`.
     fn paren_item(&mut self) -> R {
-        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
+        if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2) || self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS {
             self.r_expression()?;
             self.slot_made(1);
         } else {
@@ -3674,18 +3470,8 @@ impl<L: Layout> P<'_, L> {
     /// `string`.
     fn string(&mut self) -> R {
         self.open(k::STRING);
-        if self.kind() == t::STR_PREFIX {
-            self.leaf_open();
-            self.pass_as(true)?;
-            self.pass_as(self.kind() == t::STRING_START)?;
-            self.leaf_close(k::STRING_START)?;
-            self.string_rest()?;
-        } else if self.kind() == t::STRING_START {
-            self.bump_as(k::STRING_START)?;
-            self.string_rest()?;
-        } else {
-            return self.refuse();
-        }
+        self.tk_as(self.kind() == t::STRING_START, k::STRING_START, 0)?;
+        self.string_rest()?;
         self.close()?;
         self.marked = false;
         Ok(())
@@ -3770,7 +3556,7 @@ impl<L: Layout> P<'_, L> {
         loop {
             if self.word() == w::COMMA_5 && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                 self.implied()?;
-                if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
+                if matches!(self.word(), w::NOT_37 | w::PLUS_18 | w::MINUS_17 | w::TILDE_19 | w::LBRACK_64 | w::LPAREN_9 | w::LBRACE_77 | w::TRUE_75 | w::FALSE_76 | w::NONE_74 | w::AWAIT_3 | w::LAMBDA_2 | w::STAR_14) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) || (self.kind() == t::IDENTIFIER && !matches!(self.word(), w::FALSE_76 | w::NONE_74 | w::TRUE_75 | w::AND_38 | w::AS_70 | w::ASSERT_83 | w::BREAK_86 | w::CLASS_72 | w::CONTINUE_87 | w::DEF_53 | w::DEL_82 | w::ELIF_67 | w::ELSE_66 | w::EXCEPT_57 | w::FINALLY_71 | w::FOR_54 | w::FROM_59 | w::GLOBAL_84 | w::IF_63 | w::IMPORT_58 | w::IN_35 | w::IS_36 | w::LAMBDA_2 | w::NONLOCAL_85 | w::NOT_37 | w::OR_39 | w::PASS_79 | w::RAISE_81 | w::RETURN_80 | w::TRY_69 | w::WHILE_68 | w::WITH_56 | w::YIELD_4) || self.kind() == t::INTEGER || self.kind() == t::BASED || self.kind() == t::STRING_START || self.kind() == t::ELLIPSIS) && !(!self.marked && self.m_newline() || !self.marked && self.m_dedent()) {
                     self.list_part()?;
                 } else {
                 }
@@ -3911,7 +3697,7 @@ impl<L: Layout> P<'_, L> {
 
     /// The loop the parser reads in more than one place (decision 0685 step 4).
     fn strings(&mut self) -> R {
-        while self.kind() == t::STR_PREFIX || self.kind() == t::STRING_START {
+        while self.kind() == t::STRING_START {
             self.string()?;
         }
         self.close()?;
@@ -4272,239 +4058,19 @@ impl<L: Layout> P<'_, L> {
     }
 
 
-    /// `string_start`'s region (`read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn split_0(&mut self, j: usize) -> R {
-        let s = self.recs[j].start as usize;
-        self.sub.clear();
-        self.k = 0;
-        self.sub.push((s as u32, s as u32, self.recs[j].code));
-        let m = self.m;
-        let mut at = s + 1;
-        loop {
-            let Some(c) = first_bit(&m.rd0_close, at) else {
-                return self.refuse();
-            };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
-            // parts' starts, to the closer.
-            let first = first_of([&m.rd0_part0, &m.e_any, &m.rd0_part2, &m.esc_ib], at, c);
-            let mut part: Option<(usize, u8, usize)> = None;
-            // `quote2`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part0, e)) {
-                if part.is_none_or(|q| (e, 2, 0) < q) {
-                    part = Some((e, 2, 0));
-                }
-            }
-            // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.e_any, e)) {
-                if part.is_none_or(|q| (e, 0, 1) < q) {
-                    part = Some((e, 0, 1));
-                }
-            }
-            // `\`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part2, e)) {
-                if part.is_none_or(|q| (e, 1, 2) < q) {
-                    part = Some((e, 1, 2));
-                }
-            }
-            // `escape_interpolation`
-            if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 3) < q) {
-                    part = Some((e, 2, 3));
-                }
-            }
-            let to = part.map_or(c, |q| q.0);
-            if to > at {
-                self.piece(at, to - 1, 6);
-            }
-            match part {
-                Some((e, _, i)) => {
-                    let (l, kind) = match i {
-                        0 => (e + 1, 10),
-                        1 => (match first_bit(&m.e_last, e) {
-                            Some(l) => l,
-                            None => return self.refuse(),
-                        }, 7),
-                        2 => (e + 0, 9),
-                        3 => (e + 1, 8),
-                        _ => unreachable!(),
-                    };
-                    self.piece(e, l, kind);
-                    at = l + 1;
-                }
-                None => {
-                    let (l, kind) = if bit(&m.rd0_closes0, c) {
-                        (c + 2, 4)
-                    } else if bit(&m.rd0_closes1, c) {
-                        (c + 0, 4)
-                    } else if bit(&m.i_at, c) {
-                        (c + 0, 5)
-                    } else if bit(&m.o_s1, s) {
-                        // `s1`
-                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_d1, s) {
-                        // `d1`
-                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_s3, s) {
-                        // `s3`
-                        (c + 2, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_d3, s) {
-                        // `d3`
-                        (c + 2, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fs1, s) {
-                        // `fs1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fd1, s) {
-                        // `fd1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fs3, s) {
-                        // `fs3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else {
-                        // `fd3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    };
-                    self.piece(c, l, kind);
-                    if bit(&m.i_open, c) {
-                        self.strings += 1;
-                    }
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    /// `interp_end`'s region (`read ts1 | td1 | ts3 | td3 parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn resume_1(&mut self, s: usize) -> R {
-        self.sub.clear();
-        self.k = 0;
-        self.piece(s, s, 3);
-        let m = self.m;
-        let mut at = s + 1;
-        loop {
-            let Some(c) = first_bit(&m.rd1_close, at) else {
-                return self.refuse();
-            };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
-            // parts' starts, to the closer.
-            let first = first_of([&m.e_any, &m.rd0_part2, &m.esc_ib], at, c);
-            let mut part: Option<(usize, u8, usize)> = None;
-            // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.e_any, e)) {
-                if part.is_none_or(|q| (e, 0, 0) < q) {
-                    part = Some((e, 0, 0));
-                }
-            }
-            // `\`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part2, e)) {
-                if part.is_none_or(|q| (e, 1, 1) < q) {
-                    part = Some((e, 1, 1));
-                }
-            }
-            // `escape_interpolation`
-            if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 2) < q) {
-                    part = Some((e, 2, 2));
-                }
-            }
-            let to = part.map_or(c, |q| q.0);
-            if to > at {
-                self.piece(at, to - 1, 6);
-            }
-            match part {
-                Some((e, _, i)) => {
-                    let (l, kind) = match i {
-                        0 => (match first_bit(&m.e_last, e) {
-                            Some(l) => l,
-                            None => return self.refuse(),
-                        }, 7),
-                        1 => (e + 0, 9),
-                        2 => (e + 1, 8),
-                        _ => unreachable!(),
-                    };
-                    self.piece(e, l, kind);
-                    at = l + 1;
-                }
-                None => {
-                    let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 2, 4)
-                    } else if bit(&m.rd1_closes1, c) {
-                        (c + 0, 4)
-                    } else if bit(&m.i_at, c) {
-                        (c + 0, 5)
-                    } else if bit(&m.o_ts1, s) {
-                        // `ts1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, 11)
-                    } else if bit(&m.o_td1, s) {
-                        // `td1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, 11)
-                    } else if bit(&m.o_ts3, s) {
-                        // `ts3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, 11)
-                    } else {
-                        // `td3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, 11)
-                    };
-                    self.piece(c, l, kind);
-                    if !(bit(&m.i_open, c)) {
-                        self.strings = self.strings.saturating_sub(1);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
+    /// Past the token, to the next grammar token's record.
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_of([&self.m.rd1_open], from, if self.i + 1 < self.n { self.recs[self.i + 1].start as usize } else { usize::MAX }) {
-            while (self.next_x as usize) < p {
-                self.xi += 1;
-                self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
-            }
-            self.known = 0;
-            self.resume_1(p)?;
-            self.cur = self.code_at(self.i);
-            return Ok(());
-        }
         // The next token, the comments before it passed.
         self.i += 1;
         self.pass_comments();
         self.arrive()
     }
 
-    /// Record `j` split where its first byte opens a region tier 2 reads in parts.
-    #[inline(always)]
-    fn split(&mut self, j: usize) -> R {
-        let s = self.recs[j].start as usize;
-        if bit(&self.m.rd0_open, s) {
-            return self.split_0(j);
-        }
-        let _ = s;
-        Ok(())
-    }
-
 }
 
 #[allow(clippy::all, dead_code)]
 impl<L: Layout> P<'_, L> {
-    /// `leaf K R` starts: the comments before it written, its first token's record kept (`leaf_from`).
-    fn leaf_open(&mut self) {
-        self.flush();
-        self.leaf_from = self.i;
-    }
-
-    /// `leaf K R`'s leaf, after `R` read the tokens: one leaf of `kind` from the first token's start to the last's end,
-    /// the comments between them its text (as a merge's), those after it still pending.
-    fn leaf_close(&mut self, kind: u16) -> R {
-        while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
-            self.pend += 1;
-        }
-        let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
-        self.set_made(at as u32);
-        Ok(())
-    }
-
     /// A node of `kind`, open where the record before the token ends (a comment's included), as an
     /// `attached` node starts: the lean parser's match body, at its `:`'s end.
     fn open_attached(&mut self, kind: u16) {
@@ -4637,7 +4203,7 @@ fn classes(key: u32) -> u32 {
         (1, 114) => 0x3,
         (1, 117) => 0x3,
         (1, 16390) => 0x3,
-        (1, 16410) => 0x3,
+        (1, 16409) => 0x3,
         (2, 3) => 0x2,
         (2, 4) => 0x2,
         (2, 5) => 0x2,
@@ -4664,7 +4230,7 @@ fn classes(key: u32) -> u32 {
         (2, 114) => 0x2,
         (2, 117) => 0x2,
         (2, 16390) => 0x2,
-        (2, 16410) => 0x2,
+        (2, 16409) => 0x2,
         (3, 3) => 0x4,
         (3, 76) => 0x4,
         (3, 80) => 0x4,
@@ -4686,10 +4252,10 @@ fn classes(key: u32) -> u32 {
 
 /// Whether a node of `kind` stands in slot `no` (a row of `super_classes`).
 fn in_slot(no: u32, kind: u16) -> bool {
-    matches!((no, kind), (1, 3) | (1, 4) | (1, 5) | (1, 6) | (1, 7) | (1, 8) | (1, 9) | (1, 10) | (1, 20) | (1, 70) | (1, 90) | (1, 91) | (1, 92) | (1, 93) | (1, 94) | (1, 95) | (1, 96) | (1, 97) | (1, 98) | (1, 100) | (1, 102) | (1, 103) | (1, 105) | (1, 106) | (1, 107) | (1, 108) | (1, 109) | (1, 111) | (1, 112) | (1, 113) | (1, 114) | (1, 117) | (1, 16390) | (1, 16410) | (2, 3) | (2, 4) | (2, 5) | (2, 6) | (2, 7) | (2, 8) | (2, 9) | (2, 10) | (2, 20) | (2, 70) | (2, 92) | (2, 93) | (2, 100) | (2, 102) | (2, 103) | (2, 105) | (2, 106) | (2, 107) | (2, 108) | (2, 109) | (2, 111) | (2, 112) | (2, 113) | (2, 114) | (2, 117) | (2, 16390) | (2, 16410) | (3, 3) | (3, 76) | (3, 80) | (3, 81) | (3, 102) | (3, 103) | (4, 3) | (4, 73) | (4, 74) | (4, 75) | (4, 76) | (4, 77) | (4, 78) | (4, 79))
+    matches!((no, kind), (1, 3) | (1, 4) | (1, 5) | (1, 6) | (1, 7) | (1, 8) | (1, 9) | (1, 10) | (1, 20) | (1, 70) | (1, 90) | (1, 91) | (1, 92) | (1, 93) | (1, 94) | (1, 95) | (1, 96) | (1, 97) | (1, 98) | (1, 100) | (1, 102) | (1, 103) | (1, 105) | (1, 106) | (1, 107) | (1, 108) | (1, 109) | (1, 111) | (1, 112) | (1, 113) | (1, 114) | (1, 117) | (1, 16390) | (1, 16409) | (2, 3) | (2, 4) | (2, 5) | (2, 6) | (2, 7) | (2, 8) | (2, 9) | (2, 10) | (2, 20) | (2, 70) | (2, 92) | (2, 93) | (2, 100) | (2, 102) | (2, 103) | (2, 105) | (2, 106) | (2, 107) | (2, 108) | (2, 109) | (2, 111) | (2, 112) | (2, 113) | (2, 114) | (2, 117) | (2, 16390) | (2, 16409) | (3, 3) | (3, 76) | (3, 80) | (3, 81) | (3, 102) | (3, 103) | (4, 3) | (4, 73) | (4, 74) | (4, 75) | (4, 76) | (4, 77) | (4, 78) | (4, 79))
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), written to `finish`'s target and finished
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code), written to `finish`'s target and finished
 /// by it (decision 0434: format 16 as the parse goes), or the byte it was refused at.
 pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {
     // Where tier 1 sends the file to tree-sitter.
