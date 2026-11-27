@@ -26,7 +26,7 @@ fn described(path: &Path) -> Result<Value, String> {
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
         "violations": violations(&program, &header.id),
-        "options": options.names, "anyOption": options.any,
+        "options": options.names, "anyOption": options.any, "runSettings": super::run::RUN_SETTINGS,
         "files": read_files(path, &files)?,
     }))
 }
@@ -124,8 +124,12 @@ fn names_of(program: &Program, rule: &Rule, atom: &Atom) -> Option<Vec<String>> 
     match atom.args.first()? {
         Term::Str(name) => Some(vec![name.as_str().to_owned()]),
         Term::Var(variable) => {
-            let beside = rule.body.iter().filter_map(Literal::atom).filter(|other| !other.neg && !reads_option(other));
-            beside.into_iter().find_map(|other| fact_texts(program, other, variable.as_str()))
+            // The rule's own positive atoms alone: an aggregate's atom binds nothing outside it.
+            let mut beside = rule.body.iter().filter_map(|literal| match literal {
+                Literal::Atom(other) if !other.neg && !reads_option(other) => Some(other),
+                _ => None,
+            });
+            beside.find_map(|other| fact_texts(program, other, variable.as_str()))
         }
         _ => None,
     }

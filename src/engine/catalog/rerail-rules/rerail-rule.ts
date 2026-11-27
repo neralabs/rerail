@@ -64,6 +64,8 @@ export interface RerailRule {
   readonly options: readonly string[];
   /** Whether it reads an option by a name the engine cannot list (a variable no fact of its own gives): it takes any name. */
   readonly anyOption: boolean;
+  /** The names of a run's own settings (`inputFiles`, `dialect`, …), which no option takes, as the engine names them. */
+  readonly runSettings: readonly string[];
   /** The file's `.violation`s and those of the files it includes. */
   readonly violations: readonly RerailViolation[];
   /** The file's text. */
@@ -107,6 +109,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     codes: described.codes,
     options: described.options,
     anyOption: described.anyOption,
+    runSettings: described.runSettings,
     violations: described.violations,
     source,
     path: described.path,

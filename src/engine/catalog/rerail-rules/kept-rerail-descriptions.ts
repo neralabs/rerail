@@ -24,7 +24,7 @@ export const keptDescriptionSchema = z.object({
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()), text: z.array(z.string()).default([]), toolCalls: z.boolean() }),
   codes: z.array(z.string()),
   tests: z.number(),
-  // Neither is in a reading kept by a build before decision 0720; such a reading is never read by this build either.
+  // None of these is in a reading kept by a build before decision 0720; such a reading is never read by this build either.
   violations: z.array(z.object({
     name: z.string(),
     suppress: z.array(z.object({ tool: z.string(), rules: z.array(z.string()) })),
@@ -32,6 +32,7 @@ export const keptDescriptionSchema = z.object({
   })).default([]),
   options: z.array(z.string()).default([]),
   anyOption: z.boolean().default(false),
+  runSettings: z.array(z.string()).default([]),
   files: z.array(z.object({ path: z.string(), sha256: z.string() })).min(1),
 }) satisfies z.ZodType<RerailDescription>;
 

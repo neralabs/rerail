@@ -54,9 +54,9 @@ struct Outcome {
 }
 
 /// The request's policies grouped by their option values, in the order of `policies`: one run a group, each into its
-/// own `out/<k>`.
+/// own `out/<k>`. A policy given a value under a run setting's name does not run (`refused`).
 fn run_groups(request: &Request) -> Result<Outcome, String> {
-    let mut outcome = Outcome::default();
+    let mut outcome = Outcome { failures: request.policies.iter().filter_map(|policy| refused(request, policy)).collect(), ..Outcome::default() };
     for (k, (options, policies)) in groups(request).into_iter().enumerate() {
         let ran = run_each(&policies, &request.root, &request.out.join(k.to_string()), &run_options(request, options))?;
         outcome.findings.extend(findings::of(&request.root, &ran.out, &ran.report)?);
@@ -71,7 +71,7 @@ fn run_groups(request: &Request) -> Result<Outcome, String> {
 /// `policies`. Policies run together read one set of `option` facts, so only those given the same values share a run.
 fn groups(request: &Request) -> Vec<(Map<String, Value>, Vec<PathBuf>)> {
     let mut groups: Vec<(Map<String, Value>, Vec<PathBuf>)> = Vec::new();
-    for policy in &request.policies {
+    for policy in request.policies.iter().filter(|policy| refused(request, policy).is_none()) {
         let values = request.options.get(policy).cloned().unwrap_or_default();
         match groups.iter_mut().find(|(other, _)| *other == values) {
             Some((_, members)) => members.push(policy.clone()),
@@ -79,6 +79,13 @@ fn groups(request: &Request) -> Vec<(Map<String, Value>, Vec<PathBuf>)> {
         }
     }
     groups
+}
+
+/// The failure of a policy the request gives a value under the name of a run's own setting (`RUN_SETTINGS`): the
+/// value would change the run itself, so the policy does not run. `None` for any other policy.
+fn refused(request: &Request, policy: &Path) -> Option<Value> {
+    let name = request.options.get(policy)?.keys().find(|name| RUN_SETTINGS.contains(&name.as_str()))?;
+    Some(json!({"policy": policy, "message": format!("{}: it is given a value for {name}, a run's own setting, which no option takes", policy.display())}))
 }
 
 /// The options of a run of one group: the group's option values, and the request's files to read.

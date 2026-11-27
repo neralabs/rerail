@@ -260,7 +260,7 @@ describe("portsOf", () => {
       ["rerail-port", {
         kind: "rerail",
         rule: {
-          options: ["option"], anyOption: false,
+          options: ["option"], anyOption: false, runSettings: [],
           scope: { include: ["**/*.ts"], exclude: ["dist/**"], text: [] },
           violations: [
             { name: "A", suppress: [{ tool: "eslint", rules: ["curly"] }, { tool: "ruff", rules: ["E1"] }, { tool: "flake8", rules: ["E1", "E2"] }, { tool: "unknown", rules: ["x"] }], fixes: [] },
@@ -268,7 +268,7 @@ describe("portsOf", () => {
           ],
         },
       }],
-      ["rerail-anywhere", { kind: "rerail", rule: { options: [], anyOption: false, scope: { include: [], exclude: [], text: [] }, violations: [{ name: "C", suppress: [], fixes: [] }] } }],
+      ["rerail-anywhere", { kind: "rerail", rule: { options: [], anyOption: false, runSettings: [], scope: { include: [], exclude: [], text: [] }, violations: [{ name: "C", suppress: [], fixes: [] }] } }],
     ]),
   } as unknown as RuleCatalog;
 

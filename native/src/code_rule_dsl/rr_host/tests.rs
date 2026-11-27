@@ -258,18 +258,46 @@ limit(o, d) :- limit_rule(o, d), !option(o, _).
 ";
 
 /// Decision 0720: the options a policy takes are the names its rules read, a variable's being those the policy's own
-/// facts give it; a name no fact gives cannot be listed, and the policy then takes any; a policy that carries the
+/// facts give it (none, where it states no fact of the library's relation); a name no fact gives, or one only an
+/// aggregate's atom reads beside it, cannot be listed, and the policy then takes any; a policy that carries the
 /// converter's `.options` declaration is refused.
 #[test]
 fn describe_lists_the_options_a_rule_reads_by_text_or_by_its_facts() {
     let rule = |body: &str| format!(".policy \"rr-host-limits\" revision 1\n.language python\n.mode log\n{body}\n.violation Long(at: node) \"too long\"\n");
-    let by_facts = rule("#include \"lib/limits.rerail\"\nlimit_rule(\"max\", 3). limit_rule(\"maximum\", 3).\nLong(c) :- kind(c, \"call\"), limit(_, k), k < 1, !option(\"strict\", \"false\").");
+    let limited = "Long(c) :- kind(c, \"call\"), limit(_, k), k < 1";
+    let by_facts = rule(&format!("#include \"lib/limits.rerail\"\nlimit_rule(\"max\", 3). limit_rule(\"maximum\", 3).\n{limited}, !option(\"strict\", \"false\")."));
+    let no_facts = rule(&format!("#include \"lib/limits.rerail\"\n{limited}."));
     let by_a_rule = rule(".decl named(o: symbol)\nnamed(o) :- kind(c, \"identifier\"), text(c, o).\nLong(c) :- kind(c, \"call\"), named(o), option(o, \"true\").");
+    let in_a_count = rule(".decl limit_rule(o: symbol, d: number)\nlimit_rule(\"max\", 3).\n.decl counted(o: symbol, n: number)\ncounted(o, n) :- option(o, _), n = count : { limit_rule(o, _) }.\nLong(c) :- kind(c, \"call\"), counted(_, n), n > 0.");
     let declared = rule(".options {\"max\": {\"type\": \"integer\", \"default\": 3}}\nLong(c) :- kind(c, \"call\"), option(\"max\", \"3\").");
-    let root = folder("rr-host-describe-read", &[("lib/limits.rerail", LIMITS), ("facts.rerail", &by_facts), ("rule.rerail", &by_a_rule), ("declared.rerail", &declared)]);
-    let rows = describe::describe(&[root.join("facts.rerail"), root.join("rule.rerail"), root.join("declared.rerail")]);
+    let files = [("facts.rerail", &by_facts), ("none.rerail", &no_facts), ("rule.rerail", &by_a_rule), ("count.rerail", &in_a_count), ("declared.rerail", &declared)];
+    let mut written: Vec<(&str, &str)> = files.iter().map(|(name, text)| (*name, text.as_str())).collect();
+    written.push(("lib/limits.rerail", LIMITS));
+    let root = folder("rr-host-describe-read", &written);
+    let rows = describe::describe(&files.map(|(name, _)| root.join(name)));
     let _ = std::fs::remove_dir_all(&root);
-    assert_eq!([&rows[0]["options"], &rows[0]["anyOption"]], [&json!(["max", "maximum", "strict"]), &json!(false)], "{:#}", rows[0]);
-    assert_eq!([&rows[1]["options"], &rows[1]["anyOption"]], [&json!([]), &json!(true)], "{:#}", rows[1]);
-    assert!(rows[2]["error"].as_str().is_some_and(|error| error.contains("it carries an `.options {…}` declaration")), "{:#}", rows[2]);
+    let read = |k: usize| (rows[k]["options"].clone(), rows[k]["anyOption"].clone());
+    assert_eq!(read(0), (json!(["max", "maximum", "strict"]), json!(false)), "{:#}", rows[0]);
+    assert_eq!(read(1), (json!([]), json!(false)), "{:#}", rows[1]);
+    assert_eq!(read(2), (json!([]), json!(true)), "{:#}", rows[2]);
+    assert_eq!(read(3), (json!([]), json!(true)), "{:#}", rows[3]);
+    assert!(rows[4]["error"].as_str().is_some_and(|error| error.contains("it carries an `.options {…}` declaration")), "{:#}", rows[4]);
+    assert!(rows[0]["runSettings"].as_array().is_some_and(|names| names.contains(&json!("inputFiles")) && names.contains(&json!("phase_dir"))), "{:#}", rows[0]);
+}
+
+/// A policy given a value under a run setting's name does not run, and the others run without it: the value would be
+/// the run's own setting.
+#[test]
+fn a_policy_given_a_run_settings_name_as_an_option_does_not_run() {
+    let root = folder("rr-host-reserved", &[("a.py", "shout(1)\n")]);
+    let rules = folder("rr-host-reserved-rules", &[("lib/calls.rerail", CALLS), ("quieten.rerail", QUIETEN), ("shout.rerail", SHOUT)]);
+    let mut values = serde_json::Map::new();
+    values.insert(rules.join("quieten.rerail").display().to_string(), json!({"phase_dir": "elsewhere"}));
+    let result = run_with(&root, &[rules.join("quieten.rerail"), rules.join("shout.rerail")], Value::Object(values));
+    let _ = (std::fs::remove_dir_all(&root), std::fs::remove_dir_all(&rules));
+    let failures = result["failures"].as_array().unwrap();
+    assert_eq!(failures.len(), 1, "{result:#}");
+    assert!(failures[0]["policy"].as_str().unwrap().ends_with("quieten.rerail") && failures[0]["message"].as_str().unwrap().contains("a value for phase_dir, a run's own setting"), "{failures:?}");
+    let policies: Vec<&Value> = result["findings"].as_array().unwrap().iter().map(|finding| &finding["policy"]).collect();
+    assert_eq!(policies, [&json!("rr-host-shout")], "{result:#}");
 }

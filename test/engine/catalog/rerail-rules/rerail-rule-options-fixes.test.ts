@@ -78,6 +78,12 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
     expect(configureBundledCodeRule(catalog, RULE, { option: "multi", option2: "consistent" })).toMatchObject({ ok: true });
     expect(configureBundledCodeRule(catalog, RULE, { ceiling: 3 })).toEqual({ ok: false, reason: "config.ceiling: `ceiling` is not an option this rule reads" });
     expect(configureBundledCodeRule(catalog, RULE, { toString: true })).toEqual({ ok: false, reason: "config.toString: `toString` is not an option this rule reads" });
+    // A rule whose option names the engine cannot list takes any name but a run's own setting's.
+    const document = catalog.documents.get(RULE);
+    if (document?.kind !== "rerail") throw new Error("eslint-curly is no .rerail rule");
+    const anyNamed = { ...catalog, documents: new Map([[RULE, { kind: "rerail" as const, rule: { ...document.rule, anyOption: true } }]]) };
+    expect(configureBundledCodeRule(anyNamed, RULE, { ceiling: 3 })).toMatchObject({ ok: true });
+    expect(configureBundledCodeRule(anyNamed, RULE, { phase_dir: "x" })).toEqual({ ok: false, reason: "config.phase_dir: `phase_dir` is the name of a run's own setting, which no option takes" });
     // The rule states no allowed values, so a value it does not expect is accepted: the rule decides what it means.
     expect(configureBundledCodeRule(catalog, RULE, { option: "sometimes" })).toMatchObject({ ok: true });
     expect(configureBundledCodeRule(catalog, RULE, { option: ["a", 1, null, true] })).toMatchObject({ ok: true });

@@ -383,6 +383,8 @@ export type RrDescription =
       options: string[];
       /** Whether it reads an option by a name its own facts do not give, so `options` cannot list every name it takes. */
       anyOption: boolean;
+      /** The names of a run's own settings, which share the object a run's option values come in: no option takes one. */
+      runSettings: string[];
       /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
       files: { path: string; sha256: string }[];
     }

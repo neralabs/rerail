@@ -74,10 +74,11 @@ function isFactValue(value: unknown): boolean {
 }
 
 /**
- * Why `value` cannot be option `name` of `rule`, or undefined: the rule reads the option (any name, where the engine
- * cannot list those it reads), and the value is one fact or a list of them.
+ * Why `value` cannot be option `name` of `rule`, or undefined: the name is no run setting's, the rule reads the option
+ * (any name, where the engine cannot list those it reads), and the value is one fact or a list of them.
  */
 function rerailOptionProblem(rule: RerailRule, name: string, value: unknown): string | undefined {
+  if (rule.runSettings.includes(name)) return `config.${name}: \`${name}\` is the name of a run's own setting, which no option takes`;
   if (!rule.anyOption && !rule.options.includes(name)) return `config.${name}: \`${name}\` is not an option this rule reads`;
   const values = Array.isArray(value) ? value : [value];
   return values.every(isFactValue) ? undefined : `config.${name}: must be text, a number, true, false or null, or a list of them`;

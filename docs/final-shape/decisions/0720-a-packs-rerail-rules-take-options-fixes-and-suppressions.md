@@ -44,7 +44,9 @@ the one floor the release scripts knew for them.
    with its values beside the run's own settings, in the one options object the run reads; `facts::repository` makes
    the `option` and `option_item` rows from it as before. Policies given no value keep running as one pack; each other
    set of values adds a run. No option may take the name of a run setting (`RUN_SETTINGS`: `inputFiles`, `dialect`,
-   `toolCalls`, …): `describeRr` refuses the file, since the two share the object. The converter's generated files
+   `toolCalls`, …): `describeRr` refuses a file that reads one, since the two share the object; the product refuses
+   a `config` that names one (the description lists them, `runSettings`), and the host does not run a policy given a
+   value under one, so a rule that takes any name takes none of these. The converter's generated files
    still carry `.options {…}` defaults, which the engine's own tools read as before; `describeRr` refuses a rule that
    carries one, so no pack ships one and a run's groups need not tell their defaults apart.
 3. **A fix is lowered to rows of its edits, and composed into the JSON rule's fix.** For each `fix` line of a
