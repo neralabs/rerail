@@ -14,7 +14,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
  * While `on`: each look, by kind and path (`looks`), and each file opened (`opens`); the turn of the event loop, counted
- * by `turn`, of each full owner lookup (`lookups`, by session-relative path).
+ * by `turn`, of each full owner lookup (`lookups`, by session-relative path); each start and end of an `lstat` of
+ * `node:fs/promises`, in order (`lstats`). `asking` is called as each such `lstat` starts.
  */
 const disk = vi.hoisted(() => ({
   on: false,
@@ -22,6 +23,8 @@ const disk = vi.hoisted(() => ({
   looks: [] as Array<{ readonly kind: string; readonly path: string }>,
   opens: [] as string[],
   lookups: [] as Array<{ readonly path: string; readonly turn: number }>,
+  lstats: [] as Array<{ readonly path: string; readonly started: boolean }>,
+  asking: undefined as ((path: string) => void) | undefined,
 }));
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -67,7 +70,14 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
       look(args[0]);
-      return await actual.lstat(...args);
+      const path = String(args[0]);
+      if (disk.on) disk.lstats.push({ path, started: true });
+      disk.asking?.(path);
+      try {
+        return await actual.lstat(...args);
+      } finally {
+        if (disk.on) disk.lstats.push({ path, started: false });
+      }
     },
     realpath: async (...args: Parameters<typeof actual.realpath>) => {
       look(args[0]);
@@ -92,6 +102,7 @@ const temporaryDirectory = temporaryDirectories("rerail-seen-sources-");
 
 afterEach(() => {
   disk.on = false;
+  disk.asking = undefined;
   vi.restoreAllMocks();
 });
 
@@ -197,6 +208,7 @@ async function askedAbout(session: Session, paths: readonly string[], walk: () =
   disk.looks.length = 0;
   disk.opens.length = 0;
   disk.lookups.length = 0;
+  disk.lstats.length = 0;
   const named = paths.map(path => relative(session.main, path).split(sep).join("/"));
   // A full lookup of a path's owner: a walk's own view (`walkView`) looks each folder up once and is not counted here.
   const accepts = CheckoutCodeRuleRouter.prototype.acceptsPath;
@@ -225,6 +237,19 @@ async function askedAbout(session: Session, paths: readonly string[], walk: () =
 }
 
 const NOTHING: Asked = { existsSync: 0, realpath: 0, lstat: 0, promised: 0, opens: 0, run: 0 };
+
+/** Of the `lstat` calls of `node:fs/promises` the last `askedAbout` saw naming one of `paths`: how many, and the most out at once. */
+function lstatsOf(paths: readonly string[]): { readonly asked: number; readonly atOnce: number } {
+  let asked = 0;
+  let out = 0;
+  let atOnce = 0;
+  for (const { path, started } of disk.lstats.filter(look => about(paths, look.path))) {
+    asked += started ? 1 : 0;
+    out += started ? 1 : -1;
+    atOnce = Math.max(atOnce, out);
+  }
+  return { asked, atOnce };
+}
 
 /** `path` (absolute) as the session names it. */
 function named(session: Session, path: string): string {
@@ -263,6 +288,48 @@ describe("a walk of the other worktrees, about the files a session saw there", (
       });
       // While they were there, the session held what it saw of each.
       expect(held).toEqual(built.map(() => expect.any(String)));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  /** Twenty sources the session wrote in `w1/build`, a folder no walk enters, and the walk after their writes done. */
+  async function twentyBuilt(session: Session): Promise<string[]> {
+    const built = Array.from({ length: 20 }, (_, index) => join(session.w1, "build", `b${index}.py`));
+    for (const [index, path] of built.entries()) await write(session, path, `b = ${index}\n`);
+    await turn(session);
+    return built;
+  }
+
+  it("asks the lstats of the sources the session wrote in a folder no walk enters sixteen at a time", { timeout: 120_000 }, async () => {
+    const session = await sessionBesideWorktree();
+    try {
+      const built = await twentyBuilt(session);
+
+      await askedAbout(session, built, async () => await turn(session));
+
+      // As the walk's reads ask theirs (`OBSERVATION_CONCURRENCY`): the walk waits for two round trips of the thread
+      // pool, not one after another for each of the twenty.
+      expect(lstatsOf(built)).toEqual({ asked: 20, atOnce: 16 });
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("asks no lstat of such a source after the wave out when the session closes during the walk", { timeout: 120_000 }, async () => {
+    const session = await sessionBesideWorktree();
+    try {
+      const built = await twentyBuilt(session);
+      const closing: Array<Promise<void>> = [];
+      disk.asking = path => {
+        if (closing.length === 0 && about(built, path)) closing.push(session.bridge.close());
+      };
+
+      await askedAbout(session, built, async () => await turn(session));
+      await Promise.all(closing);
+
+      // The close abandons the walk as the first lstat of its first wave starts: the rest of that wave, then none.
+      expect(lstatsOf(built).asked).toBe(16);
     } finally {
       await session.runtime.dispose();
     }

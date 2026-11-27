@@ -4032,10 +4032,10 @@ export class CodeRuleBridge {
 
   /**
    * Asks one `lstat` through the thread pool of each source of `leftOut`, the sources the session saw that the read left
-   * out, and none while a shell command of the session runs through the walk, which leaves every source to the next
-   * walk (`#toolChanges`). A regular file there stays as the session saw it, out of the walk; one the `lstat` cannot
-   * judge (`entryAt`) goes into `previous`, for the read `#keepSeenStill` makes of each source the snapshot lacks.
-   * Returns those found gone.
+   * out, in waves as the walk reads files, until the walk is abandoned; none while a shell command of the session runs
+   * through the walk, which leaves every source to the next walk (`#toolChanges`). A regular file there stays as the
+   * session saw it, out of the walk; one the `lstat` cannot judge (`entryAt`) goes into `previous`, for the read
+   * `#keepSeenStill` makes of each source the snapshot lacks. Returns those found gone.
    */
   async #lookLeftOut(
     discovery: SourceDiscovery,
@@ -4045,9 +4045,13 @@ export class CodeRuleBridge {
   ): Promise<Map<string, ObservedSource>> {
     const gone = new Map<string, ObservedSource>();
     if (discovery.toolCalls.commandSince(start.callsEnded) !== undefined) return gone;
-    for (const [path, before] of leftOut) {
-      const entry = await entryAt(join(discovery.root, path));
-      if (entry !== "file") (entry === "gone" ? gone : previous).set(path, before);
+    const asked = [...leftOut];
+    while (asked.length > 0 && !this.#abandoned(discovery)) {
+      const wave = asked.splice(0, OBSERVATION_CONCURRENCY);
+      const entries = await Promise.all(wave.map(([path]) => entryAt(join(discovery.root, path))));
+      wave.forEach(([path, before], index) => {
+        if (entries[index] !== "file") (entries[index] === "gone" ? gone : previous).set(path, before);
+      });
     }
     return gone;
   }
