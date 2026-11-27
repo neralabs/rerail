@@ -27,13 +27,15 @@ async function scratchFolder(): Promise<string> {
  * Runs `script` in Windows PowerShell after windows-host.ps1. Started with no window and pipes for every stream, it
  * gets a console of its own, so a code page it sets reaches no other process. It runs by absolute path from a scratch
  * folder: the test's user profile does not exist, so PowerShell 5.1 would write its module cache relative to the
- * current folder, and Windows looks there for a bare program name before PATH.
+ * current folder, and Windows looks there for a bare program name before PATH. `-ExecutionPolicy Bypass` holds for
+ * this one process and sets nothing on the machine: without it the machine's policy decides whether the script file
+ * may load, and Windows 11's default where nobody set one, Restricted, refuses it.
  */
 async function hostPowerShell(script: string, env: NodeJS.ProcessEnv = {}): Promise<string> {
   const folder = await scratchFolder();
   const command = `$ErrorActionPreference = 'Stop'\n. $env:RERAIL_TEST_HOST_SCRIPT\n${script}`;
   const powershell = join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const { stdout } = await run(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(command, "utf16le").toString("base64")], {
+  const { stdout } = await run(powershell, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(command, "utf16le").toString("base64")], {
     cwd: folder,
     env: { ...process.env, ...env, RERAIL_TEST_HOST_SCRIPT: HOST_SCRIPT, PSModuleAnalysisCachePath: join(folder, "ModuleAnalysisCache") },
     windowsHide: true,
