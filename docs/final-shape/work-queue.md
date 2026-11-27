@@ -11980,3 +11980,25 @@ Tests (Relax, CPU; no farm, no Metal):
 - tests-logic: typing 34/34, plan 117/117, the native, waves, stats, strings, profile, liveness and costs groups 90/90.
 - logic 312/312.
 - tests-corpus: base and phases 71/71.
+
+### Q579. Roll-up 151 (Typing-support-final-shape 8df0859cd9 onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's nine new commits, to 8df0859cd9: the planner's join shapes for walks, extremes and chains, in setfix and `plan::keeps`:
+- an inner walk's climbed rows stay in the closure's scratch, and its start is joined in its climb;
+- a min or max joined back at its extreme is one step;
+- a max read only to be joined back is made in its reader;
+- a relation every reader reads by a key is a functional chain, made in its readers behind a switch;
+- a start beside one driver atom is made once a driver row;
+- a start forked in the climb's seed join is off by default, and measured slower.
+A rule's `.shape` goes with its rule wherever rules are left out, and the program image tests' parallel loops run on the cores.
+
+- **python/names.rerail → scopes.rerail.** Typing-support declared `.layout wstart key(n)` and `.layout look key(n)` in names.rerail. The hub's 0705 work moved both relations, with the same rules, into scopes.rerail, so the declarations go there with their comments. names.rerail is the hub's.
+- **setfix `step_counts`.** Both sides are kept: the hub's `access::observe(j, &c)`, and Typing-support's count of the join back at an extreme as the fused step's (`latest`), taken out of `generic`.
+- **setfix's extreme step (`back_at_extreme`).** The hub's probe state is boxed per step (`Vec<Option<Box<LastProbe>>>`), so the new step passes `cx.last[i].as_deref_mut()` as the hub's other probes do. Before this, the merged tree did not compile.
+- **program_image tests.** Typing-support's `on_cores` loop over the pack programs, in place of the hub's hand-rolled thread scope.
+
+Tests (Relax, CPU; no farm, no Metal):
+- setfix 145/145, planner 9/9.
+- tests-logic: plan 121/121, typing 34/34, the native, waves, stats, strings, profile, liveness and costs groups 90/90.
+- tests-rr: program_image, tape, json_rules and program_text 85/85. rr::tests 230/231, with the 110 not reached in the first run's 580 s cap run in name chunks. The red one is `rule_syntax_files_pass_check_rr`, red on the hub before this merge with the same 41 undeclared relations in lib/python/py-names-handed.rerail.
+- tests-corpus: base and phases 71/71, maintain 27/27, cross_views 12/12.

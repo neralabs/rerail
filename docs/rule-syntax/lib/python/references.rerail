@@ -144,6 +144,9 @@ rf_expr(n, n, t) :- rf_site(n), !kind(n, "call"), rf_owner(n, t).
 // ---- a name read: what it is bound to ----------------------------------------------------------------------------
 // rf_bind(i, x, s): name read i, of x, lands on scope s (python/names' lookup).
 .decl rf_bind(i: node, x: symbol, s: node)
+// One binding scope a read: its lookup's (`look`, keyed by its read) or, apart by `!rf_forward`, the module it
+// forwards to (its document's one module). Declared (decision 0361); the run checks it.
+.layout rf_bind key(i)
 rf_bind(i, x, s) :- rf_head(i), look(i, x, s), !rf_forward(i, _, _).
 rf_bind(i, x, m) :- rf_forward(i, x, m).
 // rf_forward(i, x, m): PEP 563. Under `from __future__ import annotations`, and in a stub, a name an annotation

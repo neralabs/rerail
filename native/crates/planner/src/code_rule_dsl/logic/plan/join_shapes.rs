@@ -32,7 +32,7 @@ pub(crate) trait Shape: Sync {
 }
 
 /// The shapes, in the order they are tried.
-pub(crate) const SHAPES: &[&dyn Shape] = &[&ClimbEnds];
+pub(crate) const SHAPES: &[&dyn Shape] = &[&ClimbEnds, &PerName];
 
 /// Tests: the shapes' names, in the order they are tried (the oracle cases' table checks each has its cases).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -41,7 +41,7 @@ pub fn shape_names() -> Vec<&'static str> {
 }
 
 /// Whether shape `name` is turned off for this run.
-fn off(name: &str) -> bool {
+pub(crate) fn off(name: &str) -> bool {
     let var = format!("RERAIL_SHAPE_{}", name.to_ascii_uppercase().replace(' ', "_"));
     std::env::var("RERAIL_SHAPES").is_ok_and(|v| v == "off") || std::env::var(var).is_ok_and(|v| v == "off")
 }
@@ -49,15 +49,19 @@ fn off(name: &str) -> bool {
 /// The strata with each shape's matches joined: a match's relations' strata become the stratum of its first relation,
 /// in that stratum's place. `None`: no shape matched; the strata as they are.
 pub(crate) fn regroup(p: &body::Placed, sccs: &super::super::front::Components, deps: &super::super::front::Edges) -> Option<super::super::front::Components> {
-    let mut claimed = BTreeSet::new();
+    // A match's first relation may be another's too (the walk of the climb's ends and of a fork): its stratum takes
+    // both. Any other relation is one match's.
+    let (mut claimed, mut anchors) = (BTreeSet::new(), BTreeSet::new());
     let mut matches = Vec::new();
     for s in SHAPES.iter().filter(|s| !off(s.name())) {
         let found = s.find(&ShapeView { rules: p, strata: sccs, deps, claimed: &claimed });
         for m in found {
-            if m.takes.iter().any(|r| claimed.contains(r)) {
+            let Some(first) = m.takes.first() else { continue };
+            if claimed.contains(first) || m.takes[1..].iter().any(|r| claimed.contains(r) || anchors.contains(r)) {
                 continue;
             }
-            claimed.extend(m.takes.iter().cloned());
+            anchors.insert(first.clone());
+            claimed.extend(m.takes[1..].iter().cloned());
             matches.push(m);
         }
     }
@@ -98,5 +102,27 @@ impl Shape for ClimbEnds {
             return Vec::new();
         }
         super::climb_end_matches(v.rules, v.strata, v.deps).into_iter().filter(|m| !m.iter().any(|r| v.claimed.contains(r))).map(|takes| Match { shape: "climb ends", takes }).collect()
+    }
+}
+
+/// A fork in the climb's seed join (the design's S1 as one pass a name, the page "S1 Per-Name Pass"): a relation `F`
+/// a keyed walk's seed reads, whose other readers' relations read it once in each rule and are read only by the walk's
+/// stratum and later ones, joins the walk's stratum with them; setfix's keyed walk form then runs `F`'s rows once and
+/// each reader's rest on each row before the climb (`closure::Fork`). Only with `RERAIL_SHAPE_PER_NAME_FORK=on` (the
+/// planner's rewrite, `keeps::fork`, is made either way; `RERAIL_SHAPE_PER_NAME=off` turns both off).
+struct PerName;
+
+impl Shape for PerName {
+    fn name(&self) -> &'static str {
+        "per name fork"
+    }
+    fn find(&self, v: &ShapeView<'_>) -> Vec<Match> {
+        // Off unless asked for: measured on idc_dbg (m3, one session, twice), the lookup chain took 5,174 / 5,117
+        // samples forked against 4,168 / 4,258 with the start stored by the planner's rewrite alone (and 5,050 /
+        // 5,096 with neither): the tails run a join a row, dearer in and out of joins than the strata's joins.
+        if std::env::var("RERAIL_SHAPE_PER_NAME").is_ok_and(|x| x == "off") || !std::env::var("RERAIL_SHAPE_PER_NAME_FORK").is_ok_and(|x| x == "on") {
+            return Vec::new();
+        }
+        super::per_name_matches(v.rules, v.strata, v.deps).into_iter().filter(|m| !m[1..].iter().any(|r| v.claimed.contains(r))).map(|takes| Match { shape: "per name fork", takes }).collect()
     }
 }

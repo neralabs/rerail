@@ -1095,6 +1095,8 @@ pub fn lower_module_seeded_written(statements: Statements, seeds: &Seeds) -> Res
                 if let [h] = st.heads().as_slice()
                     && firsts.dropped.contains(*h)
                 {
+                    // Its join shapes (`.shape` after it) are dropped with it.
+                    last_heads = Some(Vec::new());
                     continue;
                 }
                 l.start_clause(st.file().clone());

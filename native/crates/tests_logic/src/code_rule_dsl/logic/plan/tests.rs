@@ -1889,6 +1889,22 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
 }
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+/// The rows the fused min or max step (the design's S5) made, from the frames file `RERAIL_JOIN_FRAMES` names: its
+/// `rows latest …` lines (`forms::account`).
+fn latest_rows(frames: &std::path::Path) -> u64 {
+    std::fs::read_to_string(frames).unwrap_or_default().lines()
+        .filter_map(|l| l.strip_prefix("rows latest ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum()
+}
+
+/// Turns the frames file on for this test's process (`RERAIL_JOIN_FRAMES`), before the engine first reads it.
+fn frames_on(name: &str) -> std::path::PathBuf {
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension(format!("{name}.frames"));
+    let _ = std::fs::remove_file(&path);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_JOIN_FRAMES", &path) };
+    path
+}
+
 fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1948,6 +1964,168 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
     let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
     assert_eq!(got[0], [["f", "18", "assign"]]);
     assert_eq!(got[1], [["f", "0", "function"]]);
+}
+
+/// The design's S5: a max joined back at its maximum, bounded or not, is one step on the group (`back_at_extreme`):
+/// the rows at the maximum, ties included, the same as the max and its join back as two steps
+/// (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_joined_back_at_its_maximum_gives_the_rows_there() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl seen(r: number, k: symbol)
+seen(r, k) :- node(d, _, "identifier", r, _), u = max t : { def(d, "f", t, _), t < r }, def(d, "f", u, k).
+.decl latest(k: symbol)
+latest(k) :- node(d, _, "module", _, _), u = max t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.decl earliest(k: symbol)
+earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.output seen, latest, earliest
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-joined-back");
+    let got = corpus_outputs("latest-joined-back", &src, program, &["seen", "latest", "earliest"]);
+    assert!(latest_rows(&frames) > 0, "the max and its join back run as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    assert_eq!(got[1], [["assign"]]);
+    assert_eq!(got[2], [["function"], ["tie"]]);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let two_steps = corpus_outputs("latest-joined-back-off", &src, program, &["seen", "latest", "earliest"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, two_steps, "the max and its join back as two steps");
+}
+
+/// The design's S5 through the planner: a max relation read only to be joined back at it (`seen_at`, as
+/// `rf_fn_seen_at`) is made in its reader, with the same rows as the relation stored (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_relation_made_in_its_reader_gives_the_stored_relations_rows() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl rd(i: node, d: number, r: number)
+rd(i, d, r) :- node(d, i, "identifier", r, _).
+.decl seen_at(i: node, u: number)
+seen_at(i, u) :- rd(i, d, r), u = max t : { def(d, "f", t, _), t < r }.
+.decl seen(r: number, k: symbol)
+seen(r, k) :- rd(i, d, r), seen_at(i, u), def(d, "f", u, k).
+.output seen
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-in-reader");
+    let got = corpus_outputs("latest-in-reader", &src, program, &["seen"]);
+    assert!(latest_rows(&frames) > 0, "the max made in its reader runs with its join back as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let stored = corpus_outputs("latest-in-reader-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, stored, "the max relation stored");
+}
+
+/// The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a keyed start (`st`, as `wstart`) read by three
+/// rules beside the same driver atom (`nm(n, x)`, as `nameref`), one negating another's head, gives the rows it gives
+/// stored (`RERAIL_SHAPE_PER_NAME=off`).
+#[test]
+fn a_start_its_readers_read_beside_one_driver_gives_the_rows_it_gives_stored() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, s: node)
+.layout st key(n)
+st(n, s) :- nm(n, _), near(n, s).
+.decl a(n: node, x: number, s: node)
+a(n, x, s) :- nm(n, x), st(n, s).
+.decl b(n: node, x: number, s: node)
+b(n, x, s) :- st(n, s), node(_, s, "module", _, _), nm(n, x), x > 10.
+.decl c(n: node, x: number, s: node)
+c(n, x, s) :- st(n, s), nm(n, x), !b(n, x, s).
+.decl seen(x: number, w: symbol)
+seen(x, "a") :- a(_, x, _).
+seen(x, "b") :- b(_, x, _).
+seen(x, "c") :- c(_, x, _).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
+}
+
+/// The design's S1 in the climb's seed join (the page "S1 Per-Name Pass"): the lookup chain's shape, a keyed start
+/// (`pst`, as `wstart`) read beside one driver (`nm`, as `nameref`) by a keyed walk's seed and by two readers of the
+/// climb (`early`, and `late`, which negates `early`), runs in the walk's component as a fork: its tails' rows counted
+/// as the per-name executor's, the rows those of the strata apart (`RERAIL_SHAPE_PER_NAME=off`).
+#[test]
+fn a_start_forked_in_the_climbs_seed_join_gives_the_rows_it_gives_apart() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl text(n: node, s: symbol)
+.input text
+.decl nm(n: node, x: symbol)
+nm(n, x) :- node(_, n, "identifier", _, _), text(n, x).
+.decl sc(x: symbol, s: number)
+sc("f", 1). sc("g", 1). sc("print", 2).
+.decl up(s: number, p: number)
+up(1, 2). up(2, 3). up(3, 4).
+.decl cls(s: number)
+cls(1). cls(3).
+.decl bound(s: number, x: symbol)
+bound(1, "g"). bound(1, "f"). bound(3, "f"). bound(4, "print").
+.decl defn(s: number, x: symbol)
+defn(1, "g").
+.decl skip(x: symbol)
+skip("h").
+.decl pst(n: node, s: number)
+.layout pst key(n)
+pst(n, s) :- nm(n, x), sc(x, s).
+.decl early(n: node, x: symbol, s: number) no_magic
+early(n, x, s) :- pst(n, s), cls(s), nm(n, x), defn(s, x).
+.decl late(n: node, x: symbol, s: number) no_magic
+late(n, x, s) :- pst(n, s), cls(s), nm(n, x), bound(s, x), !early(n, x, s).
+.decl walk(n: node, x: symbol, s: number) no_magic
+walk(n, x, s) :- nm(n, x), pst(n, s), !skip(x).
+walk(n, x, p) :- walk(n, x, s), !bound(s, x), up(s, p).
+walk(n, x, p) :- walk(n, x, s), late(n, x, s), up(s, p).
+.decl look(x: symbol, s: number)
+look(x, s) :- walk(n, x, s), bound(s, x), !late(n, x, s).
+.output look
+"#;
+    let frames = frames_on("per-name-climb");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME_FORK", "on") };
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name-climb", &src, program, &["look"]);
+    let text = std::fs::read_to_string(&frames).unwrap_or_default();
+    let forked: u64 = text.lines().filter_map(|l| l.strip_prefix("rows per name ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum();
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let apart = corpus_outputs("per-name-climb-off", &src, program, &["look"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, apart, "the fork's rows are the strata's");
+    // `f` climbs past its class scope (late) to 3; `g` stops in it (early); `print` climbs from a scope not a class.
+    assert_eq!(got[0], [["f", "3"], ["g", "1"], ["print", "4"]], "{got:?}");
+    assert!(forked > 0, "the per-name executor made the tails' rows:\n{text}");
 }
 
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
