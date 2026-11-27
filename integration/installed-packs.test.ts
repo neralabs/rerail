@@ -169,14 +169,19 @@ function onNpm(name: string): boolean {
   }
 }
 
-/** The lines set-up prints under "Rule packs set-up could not use:", one per pack, in the order it fetched them. */
-function unusable(stdout: string): string[] {
+/**
+ * The packs set-up names under "Rule packs set-up could not use:", one line per pack in the order it fetched them, and
+ * how many more its closing "…and N more." line counts when there were more than it shows.
+ */
+function unusable(stdout: string): { shown: string[]; more: number } {
   const lines = stdout.split("\n");
   const heading = lines.indexOf("  Rule packs set-up could not use:");
-  if (heading < 0) return [];
+  if (heading < 0) return { shown: [], more: 0 };
   const block = lines.slice(heading + 1);
   const end = block.findIndex(line => !line.startsWith("    "));
-  return (end < 0 ? block : block.slice(0, end)).map(line => line.trim());
+  const shown = (end < 0 ? block : block.slice(0, end)).map(line => line.trim());
+  const more = /^…and (\d+) more\.$/u.exec(shown.at(-1) ?? "");
+  return more === null ? { shown, more: 0 } : { shown: shown.slice(0, -1), more: Number(more[1]) };
 }
 
 interface RepositoryRules {
@@ -214,7 +219,10 @@ describe.skipIf(!NPM)("rule packs installed from npm", { timeout: NPM_TIMEOUT_MS
     // source too, holding eslint-eqeqeq, which the pack starts off and the lint config turns on. Every published pack
     // loads; a listed pack never released yet (unreleasedPacks) is named as not published.
     for (const id of ["javascript", "typescript", "complexity"]) expect(confirm.stdout).toMatch(new RegExp(`--packs \\S*\\b${id}@\\d+\\.\\d+\\.\\d+`, "u"));
-    expect(unusable(confirm.stdout)).toEqual(unreleasedPacks().map(name => expect.stringContaining(`npm cannot read ${name}: it is not published`)));
+    const unreleased = unreleasedPacks();
+    const { shown, more } = unusable(confirm.stdout);
+    expect(shown).toEqual(unreleased.slice(0, shown.length).map(name => expect.stringContaining(`npm cannot read ${name}: it is not published`)));
+    expect(shown.length + more).toBe(unreleased.length);
     expect(confirm.stdout).toContain("eslint-eqeqeq starts on");
     expect(existsSync(join(home, "packs", "package.json"))).toBe(false);
 
