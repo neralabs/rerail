@@ -12290,3 +12290,9 @@ and engine-service-socket, and catalog/checkouts. Still red as before: engine-se
 Windows", since the built engine binding predates `namedPipeServer` (the tree's has it); and under this machine's load
 (averages 35 to 40) the placement files' 5-second cases time out on the hub's own tree as on this one. No Metal or
 farm runs.
+
+### Q593. Roll-up 165 (build-and-test-loop-time d781beafcc onto Pulling-it-all-together): what the merge chose
+
+build-and-test-loop-time's commit: a Mac farm host whose free space by df is short gets it back, its APFS local snapshots thinned (farm 62).
+
+No conflicts. Checked: farm.py and farm-agent parse. No farm or Metal runs.
