@@ -333,6 +333,30 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       if (activeSession?.sessionId === ctx.sessionManager.getSessionId()) remote?.markGapFinal();
     };
 
+    /** The event of `ingestEvent` whose wait for its session failed, with no newer attach queued behind that one. */
+    const ingestAfterFailedAttach = async (build: (sessionId: string) => AdapterEvent, outcome?: (delivered: boolean) => void): Promise<void> => {
+      if (attachRetry.failing() !== undefined) {
+        if (attachRetry.countDrop(build)) outcome?.(false);
+      } else if (remote !== undefined && activeSession !== undefined && activeSession.sessionId === liveSessionId) {
+        // The failure of the rebuild is the event's outcome; a delivery failure of its own does not replace it.
+        await ingestDelivered(build(activeSession.sessionId), outcome).catch(() => undefined);
+      }
+    };
+    /** The event of `ingestEvent` once its wait resolved to `session`. */
+    const ingestInto = async (
+      session: AdapterSession | undefined,
+      build: (sessionId: string) => AdapterEvent,
+      outcome?: (delivered: boolean) => void,
+    ): Promise<AdapterSession | undefined> => {
+      // A runtime that outlived a failed switch belongs to the session OMP left: what happens in the one it is in is not its.
+      if (session !== undefined && (attachRetry.failing() === undefined || session.sessionId === liveSessionId)) {
+        await ingestDelivered(build(session.sessionId), outcome);
+        return session;
+      }
+      if (attachRetry.countDrop(build)) outcome?.(false);
+      return undefined;
+    };
+
     /**
      * Hands the event `build` makes for its session to Rerail, and resolves to that session; `outcome` learns whether the
      * runtime carried the event to the daemon (an event its breaker, or the failing attach, counted as dropped never did).
@@ -357,23 +381,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           break;
         } catch (error) {
           if (attaching !== undefined) continue;
-          if (attachRetry.failing() !== undefined) {
-            if (attachRetry.countDrop(build)) outcome?.(false);
-          } else if (remote !== undefined && activeSession !== undefined && activeSession.sessionId === liveSessionId) {
-            // The failure of the rebuild is the event's outcome; a delivery failure of its own does not replace it.
-            await ingestDelivered(build(activeSession.sessionId), outcome).catch(() => undefined);
-          }
+          await ingestAfterFailedAttach(build, outcome);
           if (quietAttachFailure) return undefined;
           throw error;
         }
       }
-      // A runtime that outlived a failed switch belongs to the session OMP left: what happens in the one it is in is not its.
-      if (session !== undefined && (attachRetry.failing() === undefined || session.sessionId === liveSessionId)) {
-        await ingestDelivered(build(session.sessionId), outcome);
-        return session;
-      }
-      if (attachRetry.countDrop(build)) outcome?.(false);
-      return undefined;
+      return ingestInto(session, build, outcome);
     };
 
     const initializeNow = async (ctx: ExtensionContext, options_: InitializeOptions = {}): Promise<void> => {
