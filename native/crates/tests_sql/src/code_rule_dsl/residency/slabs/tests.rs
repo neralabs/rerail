@@ -135,6 +135,8 @@ fn a_batch_over_several_slabs_reads_each_document_where_it_lies() {
     }
     use crate::code_rule_dsl::tape::formats::Format;
     let _serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // A run bound to the device: a CPU run's tapes take no device room (t57 step 3), and are refused as held apart.
+    let _bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Metal);
     for format in Format::ALL {
         drop_all();
         // Each document's tape and source are placed in rooms as it is restored (`TapeImage::housed`,

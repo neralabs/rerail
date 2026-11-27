@@ -217,6 +217,16 @@ impl<'a> NodeIndex<'a> {
         }
     }
 
+    /// A bits' chunk made by `node_bits_chunk` (no rows), read in place.
+    ///
+    /// # Safety
+    /// `base` is such a chunk, 8-aligned, unchanged for `'a`.
+    #[inline]
+    pub unsafe fn in_chunk(base: *const u8) -> Self {
+        // SAFETY: the caller's.
+        unsafe { Self::at(base, None) }
+    }
+
     /// Whether it holds `v`. `hint` is the group of the last probe: tried first, then the one after it, then searched.
     #[inline]
     pub fn has(&self, v: i64, hint: &mut u32) -> bool {
@@ -235,6 +245,84 @@ impl<'a> NodeIndex<'a> {
         let x = (self.rank[w] + (word & ((1u64 << b) - 1)).count_ones()) as usize;
         &self.ids[self.offs[x] as usize..self.offs[x + 1] as usize]
     }
+}
+
+/// A node-keyed index's bits' chunk in `block` over values `at(0..n)` (`try_add_node_index`'s, and a view's set of
+/// nodes by a constant, `NodeIndex::in_chunk`): its head, groups and words written, and with `ranked` room for each
+/// word's rank (left for the caller). Read where they lie, with no copy and no sort of them: once for each group's span
+/// (a group's values mostly lie together; only those runs are sorted and merged), once for the bits. Refused
+/// (`None`) where a value is negative, the groups or words would be more than `max_words`, or `block` has no room.
+/// Returns the chunk's place, its kept size and its bytes.
+pub fn node_bits_chunk(block: &Block, n: u32, at: impl Fn(u32) -> i64, ranked: bool, max_words: usize) -> Option<(usize, usize, usize)> {
+    if n == 0 {
+        return None;
+    }
+    // A group's runs as one, by key: at most one entry a group after.
+    fn merge(spans: &mut Vec<(i64, u32, u32)>) {
+        spans.sort_unstable_by_key(|s| s.0);
+        spans.dedup_by(|b, a| {
+            let same = a.0 == b.0;
+            if same {
+                (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
+            }
+            same
+        });
+    }
+    // Each run of values of one group: its key, least and greatest low bits. Merged as they grow: more groups than
+    // the bound would take more words than it.
+    let mut spans: Vec<(i64, u32, u32)> = Vec::new();
+    let mut cap = 1024;
+    for r in 0..n {
+        let v = at(r);
+        if v < 0 {
+            return None;
+        }
+        let (key, l) = (v >> crate::packed::ID_SPLIT, node_low(v));
+        match spans.last_mut() {
+            Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
+            _ => spans.push((key, l, l)),
+        }
+        if spans.len() == cap {
+            merge(&mut spans);
+            if spans.len() > max_words {
+                return None;
+            }
+            cap = (2 * spans.len()).max(1024);
+        }
+    }
+    merge(&mut spans);
+    let words: usize = spans.iter().map(|&(_, least, most)| (most - least) as usize / 64 + 1).sum();
+    if words > max_words {
+        return None;
+    }
+    let groups = spans.len();
+    let bytes = NodeIndex::bits_bytes(groups, words, ranked);
+    let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+    let base = block.ptr::<u8>(b_at);
+    let (g_at, w_at) = NodeIndex::places(groups);
+    // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, the caller's alone until it is marked built;
+    // its head, groups and words lie apart.
+    let (group, w) = unsafe {
+        std::ptr::write_bytes(base, 0, bytes);
+        *base.cast::<NodeHead>() = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
+        let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
+        let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
+        (group, w)
+    };
+    let mut start = 0u32;
+    for (g, &(key, least, most)) in group.iter_mut().zip(&spans) {
+        *g = NodeGroup { key, base: least, start };
+        start += (most - least) / 64 + 1;
+    }
+    drop(spans);
+    let group = &*group;
+    // The group of the value before: the next value's most often.
+    let mut hint = 0u32;
+    for r in 0..n {
+        let (word, bit) = node_place(group, words, at(r), &mut hint).expect("every value has its place");
+        w[word] |= 1 << bit;
+    }
+    Some((b_at, b_kept, bytes))
 }
 
 /// Where value `v`'s bit lies among `groups` and their `words` words: its word and bit; `None` where no group holds
@@ -261,6 +349,14 @@ fn node_place(groups: &[NodeGroup], words: usize, v: i64, hint: &mut u32) -> Opt
     let end = groups.get(k + 1).map_or(words, |n| n.start as usize);
     (w < end).then_some((w, x % 64))
 }
+
+/// `Index::ordered`: a membership filter on `key` (`try_add_filter`, decision 0706 E2): `fences` its words, in
+/// `bloom`'s format (decision 0488, the reads written once in CLIF), `mask` the rows it holds. A key it answers "no" for is in no row; one it answers
+/// "maybe" for is probed. No hashed index's or order's finder finds it.
+pub const FILTER: u32 = 6;
+/// A membership filter's bits a row (`try_add_filter`): a power of two of `bloom`'s words at least this many bits a
+/// row, so about one absent key in 400 passes (`bloom::K` bits a key).
+pub const FILTER_BITS: usize = 16;
 
 /// A chunk of a relation's block an order is given (`Relation::try_add_order`): its offset, its items, and the bytes
 /// its chunk keeps (0: one it does not own, given back by its owner).
@@ -952,73 +1048,20 @@ impl Relation {
             return None;
         }
         let at = |r: u32| self.get(r, col as usize);
-        // A group's runs as one, by key: at most one entry a group after.
-        fn merge(spans: &mut Vec<(i64, u32, u32)>) {
-            spans.sort_unstable_by_key(|s| s.0);
-            spans.dedup_by(|b, a| {
-                let same = a.0 == b.0;
-                if same {
-                    (a.1, a.2) = (a.1.min(b.1), a.2.max(b.2));
-                }
-                same
-            });
-        }
-        // Each run of rows of one group: its key, least and greatest low bits. Merged as they grow: more groups than
-        // half the rows would take more words than the bound.
-        let mut spans: Vec<(i64, u32, u32)> = Vec::new();
-        let mut cap = 1024;
-        for r in 0..n {
-            let v = at(r);
-            if v < 0 {
-                return None;
-            }
-            let (key, l) = (v >> crate::packed::ID_SPLIT, node_low(v));
-            match spans.last_mut() {
-                Some(s) if s.0 == key => (s.1, s.2) = (s.1.min(l), s.2.max(l)),
-                _ => spans.push((key, l, l)),
-            }
-            if spans.len() == cap {
-                merge(&mut spans);
-                if 2 * spans.len() > n as usize {
-                    return None;
-                }
-                cap = (2 * spans.len()).max(1024);
-            }
-        }
-        merge(&mut spans);
-        let words: usize = spans.iter().map(|&(_, least, most)| (most - least) as usize / 64 + 1).sum();
-        if 2 * words > n as usize {
-            return None;
-        }
-        let groups = spans.len();
-        let bytes = NodeIndex::bits_bytes(groups, words, rows);
-        let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+        let (b_at, b_kept, bytes) = node_bits_chunk(block, n, at, rows, n as usize / 2)?;
         let base = block.ptr::<u8>(b_at);
-        let (g_at, w_at) = NodeIndex::places(groups);
-        // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, this index's alone until it is marked
-        // built; its head, groups, words and ranks lie apart.
+        // SAFETY: the chunk is this index's alone until it is marked built (`node_bits_chunk`'s).
         let (head, group, w, rank) = unsafe {
-            std::ptr::write_bytes(base, 0, bytes);
             let head = &mut *base.cast::<NodeHead>();
-            *head = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
-            let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
-            let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
+            let (groups, words) = (head.groups as usize, head.words as usize);
+            let (g_at, w_at) = NodeIndex::places(groups);
+            let group = std::slice::from_raw_parts(base.add(g_at).cast::<NodeGroup>(), groups);
+            let w = std::slice::from_raw_parts(base.add(w_at).cast::<u64>(), words);
             let rank = std::slice::from_raw_parts_mut(base.add(w_at + 8 * words).cast::<u32>(), if rows { words } else { 0 });
             (head, group, w, rank)
         };
-        let mut start = 0u32;
-        for (g, &(key, least, most)) in group.iter_mut().zip(&spans) {
-            *g = NodeGroup { key, base: least, start };
-            start += (most - least) / 64 + 1;
-        }
-        drop(spans);
-        let group = &*group;
-        // The group of the row before: the next row's most often.
+        let words = w.len();
         let mut hint = 0u32;
-        for r in 0..n {
-            let (word, bit) = node_place(group, words, at(r), &mut hint).expect("every row's value has its place");
-            w[word] |= 1 << bit;
-        }
         let mut more = (0, 0);
         if rows {
             // Each word's rank: the values before it.
@@ -1101,6 +1144,83 @@ impl Relation {
             std::ptr::write_volatile(&raw mut (*e).ncols, 1);
             Some(i)
         }
+    }
+
+    /// Gives this relation a membership filter on `cols` of its rows `0..n` (decision 0706 E2): a blocked Bloom filter
+    /// in `bloom`'s format, `FILTER_BITS` a row at least (its words a power of two), each row's key placed by
+    /// `bloom::key` of its `cols`, in order. A probe whose key it rejects reads no row. Its number; `None` when its
+    /// directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    pub unsafe fn try_add_filter(&self, block: &Block, cols: &[u16], n: u32) -> Option<usize> {
+        if n == 0 || cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c as usize >= self.rows.ncols as usize) {
+            return None;
+        }
+        let words = (n as usize * FILTER_BITS).div_ceil(64).next_power_of_two();
+        let (w_at, w_kept) = block.try_alloc_chunk_fit(8 * words, 8)?;
+        let w = block.ptr::<u64>(w_at);
+        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(w, 0, words);
+            let mut key = [0i64; MAX_KEY];
+            for id in 0..n {
+                for (k, &c) in key.iter_mut().zip(cols) {
+                    *k = self.get(id, c as usize);
+                }
+                let (i, mask) = crate::bloom::place(crate::bloom::key(&key[..cols.len()]), words);
+                *w.add(i) |= mask;
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).ordered = FILTER;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.off.store(0, Relaxed);
+            (*ix).offs.len.store(0, Relaxed);
+            (*ix).tags.off.store(0, Relaxed);
+            (*ix).tags.len.store(0, Relaxed);
+            (*ix).prints.off.store(0, Relaxed);
+            (*ix).prints.len.store(0, Relaxed);
+            Span::set(&raw mut (*ix).rows, w.cast::<u32>(), 0);
+            Span::set(&raw mut (*ix).fences, w.cast::<i64>(), words);
+            (*ix).held = [0, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
+    }
+
+    /// The membership filter on `cols` over its rows `0..rows` (`try_add_filter`), built: its number.
+    pub fn find_filter(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { std::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == FILTER && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].mask == u64::from(rows));
+        std::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether filter `i` (`find_filter`) may hold the key `bloom::key` places at `h`: `false` is certain (no row has
+    /// it), `true` is to be probed.
+    #[inline]
+    pub fn filter_may_hold(&self, i: usize, h: u64) -> bool {
+        let f = self.index_at(i).fences.as_slice();
+        let (w, mask) = crate::bloom::place(h, f.len());
+        f[w] as u64 & mask == mask
     }
 
     /// The node-keyed index of `kind` (`NODE_BITS`, `NODE_ROWS`) on `col` over its rows `0..rows`
@@ -1201,9 +1321,10 @@ impl Relation {
             let (offs_at, rows_at) = if let Some(d) = reused {
                 let d = &self.indexes.as_slice()[d];
                 let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
-                // Zeroed, as a new chunk is (the builders count into the buckets).
+                // Its buckets zeroed, as a new chunk's are. Its rows and marks not: each builder writes every one it
+                // holds before any reader reads it (`build_index_with`, the device's `ix_place`, `ix_mark`), and a
+                // live relation's room is for its bound's rows, most never written.
                 block.ptr::<u8>(o).write_bytes(0, ob);
-                block.ptr::<u8>(r).write_bytes(0, rb);
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
                 let o = block.try_alloc_chunk(ob, 8)?;
@@ -1214,7 +1335,8 @@ impl Relation {
                 (o, r)
             } else {
                 let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
-                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                // Its rows and marks unzeroed, as a reused room's (above).
+                let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
@@ -1376,8 +1498,9 @@ impl Relation {
                 }
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
-                // A sorted order's chunks, each as it was given (`try_add_order`).
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == FILTER {
+                // A sorted order's chunks, each as it was given (`try_add_order`), and a membership filter's words
+                // (`try_add_filter`, its `fences`).
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
                     if kept > 0 {

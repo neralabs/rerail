@@ -168,6 +168,7 @@ impl Fx<'_> {
     }
     fn run(&self, name: &str, waves: u32) -> Result<String> {
         let _span = super::profile::span(|| "engine run (joins)".into());
+        crate::code_rule_dsl::prof::count("walk callers: Fx::run calls", 1);
         Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
     }
     /// The declared keys a second row broke since the last call (decision 0361 step 6): each relation's place and the
@@ -194,6 +195,13 @@ impl Fx<'_> {
             return Ok(Vec::new());
         }
         Ok(super::native::component::step_cpu(self.db, name)?)
+    }
+    /// SPIKE (join shapes): per probe, its plan steps' shapes (`step_shapes`); none for T's extension engine.
+    fn step_shapes(&self, name: &str) -> Result<Vec<Vec<String>>> {
+        if !self.direct {
+            return Ok(Vec::new());
+        }
+        Ok(super::native::component::step_shapes(self.db, name)?)
     }
     /// Each relation's live statistics, in spec order.
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
@@ -1431,6 +1439,21 @@ impl<'a> Run<'a, '_> {
 /// Whether a text-test stratum's rules are its native's definition (`h(x…) :- input(x…), test`), so the native makes
 /// its rows: in a maintained form its relation's rules are its old rows and its new ones (`maintain`), made as rules,
 /// while its `h__ins` and a stratum derived again are the definition.
+/// Decision 0707: the indexes the strata about to run probe by (their seed joins, `specs`), built before any of them
+/// runs, in one batch of the device's, where the strata run on the device (or its join programs on the host): each
+/// stratum finds each built, none builds its own beside another's.
+fn indexes_first(db: &Connection, specs: &[PlanJoin]) -> Result<()> {
+    if !placement::device_on() && !placement::host_joins() {
+        return Ok(());
+    }
+    let _wave = super::profile::span(|| "device wave (indexes)".into());
+    let built = super::native::component::prefetch_device_indexes(db, specs, !placement::device_on())?;
+    if built > 0 {
+        super::profile::decision("indexes first (decision 0707)", || format!("{built} indexes built before the {} seed joins that probe them", specs.len()));
+    }
+    Ok(())
+}
+
 fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) -> bool {
     matches!(rules, [k] if { let (v, r) = vs.rule_at(*k); r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).eq([input]) })
 }
@@ -1948,6 +1971,8 @@ impl<'a> Strand<'a> {
     /// (`resume_parked`). With no `park`, the component flushes them as its own wave.
     fn run_members(&mut self, members: &[(super::front::CompAt, Vec<RuleKey>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved, park: Option<&mut Vec<(usize, Box<Driving>)>>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
         let t0 = std::time::Instant::now();
+        crate::code_rule_dsl::prof::count("walk callers: Strand::run_members calls", 1);
+        crate::code_rule_dsl::prof::count("walk callers: Strand::run_members members", members.len());
         times.clear();
         times.resize(members.len(), (t0, t0));
         // The atoms it makes are its own until it retires (decision 0114 §4): reserved, then published.
@@ -3076,6 +3101,7 @@ impl<'a> Run<'a, '_> {
     }
 
     fn native_stratum(&mut self, scc: &super::front::CompAt, rules: &[RuleKey]) -> Result<Native> {
+        crate::code_rule_dsl::prof::count("walk callers: native_stratum calls", 1);
         // `RERAIL_STRATA_LIVE`: each native stratum as it starts and ends, so a stalled run names its stratum (the
         // trace, `RERAIL_STRATA_TRACE`, is written when the loop ends).
         let t0 = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some()).then(|| {
@@ -3500,6 +3526,16 @@ impl<'a> Run<'a, '_> {
                 }
             }
         }
+        // The stratum's own relations' symbol columns held as atoms (integers in the types): a device stage reads a
+        // slot bound from one as a text where the atoms blocks hold it.
+        if self.model.inputs.atoms.is_some() {
+            for r in rels.iter().filter(|r| scc.contains(r)) {
+                let cols: Vector<usize> = f.types(r).iter().enumerate().filter(|(_, t)| **t == "sym").map(|(c, _)| c).collect();
+                if !cols.is_empty() {
+                    rel_lines.push(SpecLine::Atoms { rel: ri[*r], cols });
+                }
+            }
+        }
         // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
         // them where they lie does not keep the run's other relations' blocks.
         let kept_rows: Vector<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(**r)).map(|r| ri[*r]).collect();
@@ -3709,7 +3745,7 @@ impl<'a> Run<'a, '_> {
                     *l = SpecLine::Join { head: h, delta: d, join, whole: None, est: Default::default() };
                 }
             }
-            spec.lines.insert(0, SpecLine::Device);
+            spec.lines.insert(0, SpecLine::Device { host: placed.host });
             None
         };
         // The spec, encoded once now that its lines are final (decision 0628 §4): what the engine opens, the lab
@@ -4760,7 +4796,20 @@ impl<'a> Run<'a, '_> {
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|&r| format!("seed {}", vs.at(r).head_text())).chain(probes.iter().map(|&(r, ai, _)| format!("join {} (delta at {ai})", vs.at(r).head_text())));
+            // SPIKE (join shapes): each plan's steps' shapes, its rows in and out and CPU per step, a line each, to
+            // the file RERAIL_SPIKE_SHAPES names.
+            let shaped = if std::env::var_os("RERAIL_SPIKE_SHAPES").is_some() { self.fx().step_shapes(&name).unwrap_or_default() } else { Vec::new() };
             for ((k, o), kind) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate().zip(kinds) {
+                if let Some(sh) = shaped.get(k).filter(|s| !s.is_empty()) {
+                    spike_shapes_line(&format!(
+                        "{}\t{kind}: {}\t{}\t{}\t{}",
+                        name,
+                        shown(o).join(" , "),
+                        sh.join(" "),
+                        counted.get(k).map_or_else(String::new, |c| c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(",")),
+                        stepped.get(k).map_or_else(String::new, |c| c.iter().map(|t| format!("{t:.4}")).collect::<Vec<_>>().join(",")),
+                    ));
+                }
                 // Each earlier order with its own counts (its time is in the current order's).
                 for (was, c) in earlier.get(k).into_iter().flatten() {
                     super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0, &[]);
@@ -6996,6 +7045,13 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 .collect::<BTreeSet<(String, Vector<usize>)>>()
         })
         .collect();
+    // Decision 0706 step 1: each stratum's reads of relations computed before it, for its level's build ahead of the
+    // indexes its membership steps have needed so far in the run (`prefetch_indexes`).
+    let level_reads: Vec<BTreeSet<String>> = by_stratum
+        .iter()
+        .zip(sccs.iter())
+        .map(|(rules, scc)| rules.iter().flat_map(|&r| reads_of(&run_vs, r)).filter(|r| !scc.contains(*r)).map(str::to_owned).collect())
+        .collect();
     let mut waved = vec![false; sccs.len()];
     // Strata waiting on their device wave: position, key, driver's state.
     let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
@@ -7426,6 +7482,13 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         specs.extend(run.seed_specs(scc, &rules));
                     }
                 }
+                if native.contains("program") {
+                    let reads: BTreeSet<String> = (at..end).flat_map(|j| level_reads[j].iter().cloned()).collect();
+                    let (built, rels) = super::native::component::prefetch_indexes(db, &reads);
+                    if built > 0 {
+                        super::profile::decision("indexes built ahead (decision 0706)", || format!("a maintained level of {} strata: {built} indexes over {rels} relations", end - at));
+                    }
+                }
                 if !wants.is_empty() {
                     let _wave = super::profile::span(|| "device wave (count tables, a maintained level)".into());
                     let (launches, rels) = super::native::component::prefetch_tables(db, &wants)?;
@@ -7434,6 +7497,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     }
                 }
                 if !specs.is_empty() {
+                    indexes_first(db, &specs)?;
                     let _wave = super::profile::span(|| "level wave (joins, a maintained level)".into());
                     let sent = super::native::component::prefetch_joins(db, &specs)?;
                     if sent > 0 {
@@ -7856,6 +7920,11 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let level: Vector<usize> = (at..sccs.len()).filter(|&j| level_of[j] == level_of[at] && !waved[j]).collect();
             let wants: BTreeSet<(String, Vector<usize>)> = level.iter().flat_map(|&j| wants_of[j].iter().cloned()).collect();
             level.iter().for_each(|&j| waved[j] = true);
+            let reads: BTreeSet<String> = level.iter().flat_map(|&j| level_reads[j].iter().cloned()).collect();
+            let (built, rels) = super::native::component::prefetch_indexes(db, &reads);
+            if built > 0 {
+                super::profile::decision("indexes built ahead (decision 0706)", || format!("a level of {} strata: {built} indexes over {rels} relations", level.len()));
+            }
             if !wants.is_empty() {
                 let _wave = super::profile::span(|| "device wave (count tables)".into());
                 let (launches, rels) = super::native::component::prefetch_tables(db, &wants)?;
@@ -7891,6 +7960,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let own = specs.len();
             specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             if !specs.is_empty() {
+                indexes_first(db, &specs)?;
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
                 if sent > 0 {
@@ -7918,14 +7988,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         Ok(())
                     };
                     b.collect(&mut run, stream)?;
-                    b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)?;
+                    b.issue(at, &mut run, &sccs, &rules_of, &wants_of, &level_reads, &mut waved, &mut load_early, stream, &ambient)?;
                     b.retire_at(at, &mut run, stream, &ambient, &mut |b, run| {
                         // What the jobs that ended while the loop waits finished reading goes now (decision 0592).
                         if let Some(rl) = reads_left.as_mut() {
                             let gone = rl.finished(b.take_finished());
                             release_unread(db, run, gone, &pinned, &held, &input_set, &last, at, &mut early);
                         }
-                        b.issue(at, run, &sccs, &rules_of, &wants_of, &mut waved, &mut load_early, stream, &ambient)
+                        b.issue(at, run, &sccs, &rules_of, &wants_of, &level_reads, &mut waved, &mut load_early, stream, &ambient)
                     })?
                 }
                 None => issue::Got::Not,
@@ -9859,5 +9929,17 @@ mod climb_tests {
         let walk = sccs.iter().find(|s| s.contains("walk")).expect("walk's stratum");
         assert!(walk.contains("look"), "a reader of the row alone is answered in the climb: {sccs:?}");
         assert!(!walk.contains("chained"), "a reader that joins out from the row is a stratum of its own: {sccs:?}");
+    }
+}
+
+/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names.
+fn spike_shapes_line(line: &str) {
+    use std::io::Write;
+    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+        let p = std::env::var_os("RERAIL_SPIKE_SHAPES")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
+    });
+    if let Some(f) = FILE.as_ref() {
+        let _ = writeln!(f.lock().unwrap(), "{line}");
     }
 }

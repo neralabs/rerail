@@ -142,9 +142,104 @@ pub(super) fn mix(v: i64) -> u64 {
     crate::code_rule_dsl::logic::bloom::hash(v)
 }
 
+/// A column's values, read in turn where they lie (`Sketch::add_batch`'s).
+pub(super) trait Values {
+    fn each(&self, f: impl FnMut(i64));
+}
+
 impl Sketch {
     pub(super) fn add(&mut self, v: i64) {
         let h = mix(v);
+        if self.keys.is_some() {
+            self.add_key(h);
+        }
+        self.add_counted(v, h);
+    }
+
+    /// Key `h` into its filter (its own copy first, where it shares one), and into its sample where it is new there.
+    #[inline]
+    fn add_key(&mut self, h: u64) {
+        let Some(keys) = &mut self.keys else { return };
+        if !self.own_keys {
+            *keys = Arc::new(Kept::clone(keys));
+            self.own_keys = true;
+        }
+        if keys.add_hashed(h) {
+            self.sample.offer(h);
+        }
+    }
+
+    /// Values `batch` (its column's rows past those it has) added, as `add` each then `grow`: their counts first,
+    /// then their keys, and a filter they would outgrow (its distinct values, as the sketch counts them now, past its
+    /// bits) made once at twice them from `all` (every value, theirs too), not written a key at a time first.
+    pub(super) fn add_batch(&mut self, batch: &impl Values, all: &impl Values) {
+        if Arc::strong_count(&self.sharing) > 1 {
+            self.counts = Arc::new(Counts::clone(&self.counts));
+            self.sharing = Arc::new(());
+        }
+        // The batch's first value its filter takes: none it had before its filter was made (they are in it).
+        let mut from = if self.keys.is_some() { 0 } else { usize::MAX };
+        // Past its few values, with neither page of counts, a value is its register and its counter alone.
+        let mut plain = self.plain();
+        let mut i = 0usize;
+        batch.each(|v| {
+            let h = mix(v);
+            i += 1;
+            if plain {
+                let r = (h >> 56) as usize;
+                let rho = ((h << 8) | 0x80).leading_zeros() as u8 + 1;
+                let reg = &mut self.registers[r];
+                *reg = (*reg).max(rho);
+                self.counts.count(h);
+                self.rows += 1;
+                return;
+            }
+            let had = self.keys.is_some();
+            self.add_counted(v, h);
+            if !had && self.keys.is_some() {
+                from = i;
+            }
+            plain = self.plain();
+        });
+        let Some(keys) = &self.keys else { return };
+        let words = Words::len(&**keys);
+        if words < bloom::MAX_KEPT_WORDS && self.ndv().saturating_mul(bloom::KEPT_BITS_PER_KEY) > words * 64 {
+            let made = Kept::new(bloom::kept_words_for(2 * self.ndv()));
+            all.each(|v| {
+                let h = mix(v);
+                if made.add_hashed(h) {
+                    self.sample.offer(h);
+                }
+            });
+            self.keys = Some(Arc::new(made));
+            self.own_keys = true;
+            return;
+        }
+        let mut i = 0usize;
+        batch.each(|v| {
+            if i >= from {
+                self.add_key(mix(v));
+            }
+            i += 1;
+        });
+        let Some(keys) = &self.keys else { return };
+        if keys.outgrown() {
+            let made = Kept::new(bloom::kept_words_for(2 * self.ndv().max(Words::keys(&**keys) as usize)));
+            all.each(|v| {
+                made.add_hashed(mix(v));
+            });
+            self.keys = Some(Arc::new(made));
+            self.own_keys = true;
+        }
+    }
+
+    /// Whether its values are counted by their register and counter alone: past its few, neither page of counts.
+    fn plain(&self) -> bool {
+        self.sparse.is_none() && self.dense.is_none() && self.counts.few_len().is_none()
+    }
+
+    /// Value `v` (of hash `h`) counted: everything `add` does but its filter's key.
+    fn add_counted(&mut self, v: i64, h: u64) {
         let r = (h >> 56) as usize;
         let rho = ((h << 8) | 0x80).leading_zeros() as u8 + 1;
         if rho > self.registers[r] {
@@ -156,15 +251,6 @@ impl Sketch {
         }
         self.counts.count(h);
         self.rows += 1;
-        if let Some(keys) = &mut self.keys {
-            if !self.own_keys {
-                *keys = Arc::new(Kept::clone(keys));
-                self.own_keys = true;
-            }
-            if keys.add_hashed(h) {
-                self.sample.offer(h);
-            }
-        }
         if let Some(sparse)=&mut self.sparse {
             if !sparse.add(v) {self.sparse=None;}
         } else if let Some(dense) = &mut self.dense {

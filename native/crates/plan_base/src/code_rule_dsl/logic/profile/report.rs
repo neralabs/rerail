@@ -57,6 +57,7 @@ pub fn placed(key: &str, p: &crate::code_rule_dsl::logic::plan::placement::Place
         }
     }
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
+    t.placed_device += u64::from(p.gpu);
     t.device |= p.device;
     t.forms = shape.forms.iter().map(|f| f.name()).collect();
     t.missing = p.missing.iter().map(|f| f.name()).collect();
@@ -710,6 +711,10 @@ fn metal_summary(r: &mut String, state: &State) {
             "no device form for one of its steps (== Executor hazards, GPU support missing)"
         } else if t.refused.is_some() {
             "placed on the GPU, refused there at run time (== Placement, refused)"
+        } else if t.placed_device > t.on_gpu {
+            // Placed on the device (bound to the CPU: its join program, whatever the price), run on the CPU with no
+            // refusal from it.
+            "placed on the device, run on the CPU with no device report (== Placement)"
         } else {
             "priced cheaper on the CPU (== Placement; grain: CPU ms a run)"
         };

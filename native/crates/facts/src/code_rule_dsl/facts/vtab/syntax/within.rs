@@ -562,6 +562,69 @@ impl Within {
         &self.solved().rows
     }
 
+    /// Its solve and those of `more` on the host, in one relation as the device writes it (`solved_with`): its rows,
+    /// then each one's of `more`, each batch's written as `solved_from` writes it (its documents' key runs, per node
+    /// row its nearest member ancestor, or for `inside` the chain of them).
+    fn solved_on_host_with(&self, more: &[&Within]) -> crate::code_rule_dsl::facts::rows::Part {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        use crate::code_rule_dsl::facts::rows::{Life, Part};
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let all: Vec<&Within> = std::iter::once(self).chain(more.iter().copied()).collect();
+        let found: Vec<Vector<u32>> = all.iter().map(|w| w.found()).collect();
+        let chain = |found: &[u32], v: usize, each: &mut dyn FnMut(u32)| {
+            let mut a = found[v];
+            while a != file_local::NONE {
+                each(a);
+                a = if inside { found[a as usize] } else { file_local::NONE };
+            }
+        };
+        // Per batch, per node row its first row in the relation (past the batches' before), and the runs: one a
+        // document that has rows.
+        let (mut starts, mut len, mut runs) = (Vec::with_capacity(all.len()), 0u32, 0usize);
+        for (w, f) in all.iter().zip(&found) {
+            let mut start = Vec::with_capacity(f.len() + 1);
+            for v in 0..f.len() {
+                start.push(len);
+                chain(f, v, &mut |_| len += 1);
+            }
+            start.push(len);
+            let offsets = w.batch.nodes();
+            runs += (0..w.batch.docs.len()).filter(|&d| start[offsets.at(d + 1)] > start[offsets.at(d)]).count();
+            starts.push(start);
+        }
+        let (rows, keys) = Part::over_key_runs(Life::Run, 2, len as usize, runs);
+        let mut k = 0;
+        for (w, start) in all.iter().zip(&starts) {
+            let offsets = w.batch.nodes();
+            for (doc, key) in w.batch.docs.keys().enumerate() {
+                let first = start[offsets.at(doc)];
+                if start[offsets.at(doc + 1)] > first {
+                    keys.put(k, first, key);
+                    k += 1;
+                }
+            }
+        }
+        let mut at = 0u32;
+        for (w, f) in all.iter().zip(&found) {
+            for v in 0..f.len() {
+                let id = w.batch.id(v, &mut memo);
+                chain(f, v, &mut |a| {
+                    // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
+                    unsafe {
+                        rows.put(at, 0, id);
+                        rows.put(at, 1, w.batch.id(a as usize, &mut memo));
+                    }
+                    at += 1;
+                });
+            }
+        }
+        // SAFETY: rows `0..len` are written.
+        unsafe { rows.written(len) };
+        rows
+    }
+
     /// The solve made on the device off the batch's tapes (decision 0353 step 4), when the binding is the device's
     /// and one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -583,6 +646,12 @@ impl Within {
     pub(super) fn solved_with(&self, more: &[&Within], views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
+        }
+        // Solved on the host where the device does not solve it (the join programs run on the host): the rows are
+        // the same relation's, in its block, so its readers read it there and keep its indexes, not each a copy of
+        // its rows (1 GB of uploads a run over 50 files, each stratum's copy indexed again; decision 0707).
+        if !self.on_device() {
+            return Some(self.solved_on_host_with(more));
         }
         self.solved_over(views, keep).map(|c| c.rows)
     }
@@ -831,6 +900,11 @@ impl Within {
         })
     }
 
+    /// What column `column` holds: both the batch's nodes, in every mode.
+    pub(super) fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
+        (column < 2).then_some(super::made::ColKind::Node)
+    }
+
     fn names(&self) -> [&'static str; 2] {
         match self.mode {
             Mode::Tree | Mode::Axis(_) => ["n", "a"],
@@ -999,6 +1073,9 @@ impl Source for Within {
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
     /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
     /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
@@ -1046,13 +1123,13 @@ impl Source for Within {
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        use super::device_chunk::{VIEW_NODE, views_in_place};
         if self.mode != Mode::Axis(Axis::Has) {
             return None;
         }
         let v = views_in_place(&self.batch)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-        view.failed = view.cache_failed();
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
@@ -1165,6 +1242,39 @@ impl Source for Within {
             }
         }
         Some(())
+    }
+    /// `holds` of a batch of pairs (decision 0706 E5, `within`'s interval walk): the pairs taken in their outer
+    /// node's order, each outer node found once with its preorder interval (`below`'s), and each inner node found
+    /// from the last one's document (one memo for the batch); a pair holds where the inner node lies in the interval.
+    fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
+        if self.mode != Mode::Tree {
+            return false;
+        }
+        let (inner, outer) = match cols {
+            [0, 1] => (0, 1),
+            [1, 0] => (1, 0),
+            _ => return false,
+        };
+        let n = pairs.len() / 2;
+        let mut order: Vec<(i64, i64, u32)> = (0..n).map(|r| (pairs[2 * r + outer], pairs[2 * r + inner], r as u32)).collect();
+        order.sort_unstable();
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let mut last: Option<(i64, Option<(usize, u32, u32)>)> = None;
+        for (a, v, r) in order {
+            let held = match last {
+                Some((x, h)) if x == a => h,
+                _ => {
+                    let h = self.batch.node(a, &mut memo).map(|(d, l)| (d, l, self.batch.docs[d].size(l as usize) as u32));
+                    last = Some((a, h));
+                    h
+                }
+            };
+            out[r as usize] = match (held, held.and_then(|_| self.batch.node(v, &mut memo))) {
+                (Some((da, la, size)), Some((dn, ln))) => u8::from(dn == da && la < ln && ln <= la + size),
+                _ => 0,
+            };
+        }
+        true
     }
     /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
     /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved

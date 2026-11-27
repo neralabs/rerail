@@ -17,7 +17,7 @@
 // The JIT by one name on every target: Cranelift's, or the tree's stand-in on WASM (`Cargo.toml`).
 #[cfg(all(feature = "ir", target_family = "wasm"))]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub mod ids;
+pub use rerail_reads::ids;
 #[cfg(feature = "ir")]
 pub mod id_reads;
 #[cfg(feature = "ir")]
@@ -38,7 +38,8 @@ pub mod reads;
 pub mod relation;
 #[cfg(feature = "ir")]
 pub mod ukl;
-pub mod view;
+// The view and the numbering, with their host reads, in the crate below every reader of them (`rerail_reads`).
+pub use rerail_reads::view;
 /// The tape's writer in CLIF (decision 0434 §6): its state's layout, and (with `ir`) its ops.
 pub mod writer;
 /// The views' entries' layout always (the facts write them); their reads in CLIF with `ir`.

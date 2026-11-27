@@ -1062,6 +1062,51 @@ fn spec(k: usize) -> Spec {
     Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
+/// A view's relation of no columns, which its probes' indexes go in (decision 0478 step 3), kept by the view's source
+/// so every stratum finds the indexes any stratum before it built there. A probe by a key past its room makes it again
+/// with room for twice as many (`grow`), at most a relation's `ADDED_INDEXES`, and its source keeps that one: before,
+/// each such probe built its index in a home of its own that no later stratum found (16.6 M of the 168 M rows the data
+/// layer's 50 files indexed, `kind` by its fifth key built 80 times). Its room is the indexes' address space, whose
+/// pages are taken as each is written.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct IndexHome {
+    part: parking_lot::Mutex<Part>,
+    rows: usize,
+    keys: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl IndexHome {
+    /// A home of `rows` rows with room for `keys` indexes.
+    pub fn new(rows: usize, keys: usize) -> Option<Arc<IndexHome>> {
+        let part = Part::for_device_indexed(0, rows, keys).ok()?;
+        Some(Arc::new(IndexHome { part: parking_lot::Mutex::new(part), rows, keys: std::sync::atomic::AtomicUsize::new(keys) }))
+    }
+
+    /// Its relation now.
+    pub fn part(&self) -> Part {
+        self.part.lock().clone()
+    }
+
+    /// The home that replaces `had`, which a probe found no room in: one with room for twice its indexes, kept in its
+    /// place; the one that replaced it already where another probe grew it first. `None` at the most indexes a
+    /// relation takes.
+    pub fn grow(&self, had: &Part) -> Option<Part> {
+        let mut part = self.part.lock();
+        if !Arc::ptr_eq(&part.held, &had.held) {
+            return Some(part.clone());
+        }
+        let keys = self.keys.load(std::sync::atomic::Ordering::Relaxed);
+        if keys >= rerail_blocks::relation::ADDED_INDEXES {
+            return None;
+        }
+        let keys = (2 * keys).min(rerail_blocks::relation::ADDED_INDEXES);
+        *part = Part::for_device_indexed(0, self.rows, keys).ok()?;
+        self.keys.store(keys, std::sync::atomic::Ordering::Relaxed);
+        Some(part.clone())
+    }
+}
+
 /// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
 /// list when the last lets go (decision 0342). A reader in place holds it too (`InBlock::part`).
 #[derive(Clone)]
@@ -2325,6 +2370,27 @@ impl InBlock {
         unsafe { r.try_add_node_index(&self.facts.block, col, self.rows, false) }
     }
 
+    /// The relation's membership filter on `cols` over its rows (decision 0706 E2): found, or built now into its
+    /// block when `build`. `None` as `own_node_bits`, or when not built and not `build`.
+    pub fn own_filter(&self, cols: &[u16], build: bool) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        if let Some(i) = r.find_filter(cols, self.rows) {
+            return Some(i);
+        }
+        if !build {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_filter(cols, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_filter(&self.facts.block, cols, self.rows) }
+    }
+
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
         // A chain reaching another block (`far`) is indexed by the device, which binds both; the host reads it by part.
@@ -2882,6 +2948,13 @@ impl Rows {
             f(p, i, i + n, id);
             id += n;
         }
+    }
+
+    /// Rows `lo..hi`' values of column `c`, in id order: each part found once, each chunk of it read where it lies
+    /// (`ColRead::each`), not each row's (`get`).
+    #[inline]
+    pub fn each_value(&self, lo: u32, hi: u32, c: usize, mut f: impl FnMut(i64)) {
+        self.each_run(lo, hi, |p, from, to, _| p.cols[c].each(from, to, &mut f));
     }
 
     /// Values a row.

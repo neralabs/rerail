@@ -1,6 +1,7 @@
 //! A step's candidates (moved out of `run_join_in_each`, the spike on a test asked as the probe alone): where an
 //! atom's rows are, and the rows a key finds there.
 
+use std::sync::Arc;
 use super::*;
 
 /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
@@ -162,6 +163,93 @@ pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
         return None;
     }
     ix.node_bits_has(rel, v, hint)
+}
+
+/// Whether the prepare of a filter by a view's constant is read (`access::Kind::ValueBits`): `RERAIL_VALUE_BITS=off`
+/// reads the views' rows by node as before (a measurement aid).
+pub(super) fn value_bits_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_VALUE_BITS").map_or(true, |v| v != "off"))
+}
+
+/// A view's test of a bound node against a constant (`kind(n, K)`): the source's columns of the bound node and of the
+/// constant, and the constant, where the view is unfiltered. The source says whether it keeps bits for them
+/// (`Source::value_bits`: the node column its own).
+pub(super) fn value_bits_need(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<(usize, usize, i64)> {
+    let Src::In(rel, ix) = src else { return None };
+    if keys.len() != 2 || !tests.is_empty() {
+        return None;
+    }
+    let (rel, _) = j.src_in(rel, ix);
+    let v = rel.view.as_ref()?;
+    if v.ids.is_some() || !v.eqs.is_empty() {
+        return None;
+    }
+    let (node, (col, k)) = match (keys[0], keys[1]) {
+        ((a, Key::Slot(_)), (b, Key::Const(k))) | ((b, Key::Const(k)), (a, Key::Slot(_))) => (a, (b, k)),
+        _ => return None,
+    };
+    Some((v.cols[node], v.cols[col], k))
+}
+
+/// The apply of a filter by a view's constant (prepare and apply): the bit of the step's bound node in the bits the
+/// view's source built ahead for the constant (`Source::build_value_bits`), no row of the view read. `seen` is the
+/// walk's for the step: the bits' chunk found at its first test (`Some(None)`: none, the row is read as before).
+/// `None` where the step has no bits.
+#[inline]
+pub(super) fn value_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], slots: &[i64], seen: &mut Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>, hint: &mut u32) -> Option<bool> {
+    if seen.is_none() {
+        let b = value_bits_on().then(|| value_bits_of(j, src, keys, tests)).flatten();
+        if crate::code_rule_dsl::prof::on() && value_bits_need(j, src, keys, tests).is_some() {
+            crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: a walk's step {}", match &b { Some(b) if b.others.is_empty() => "found", Some(_) => "found, beside parts", None => "found none" }), 1);
+        }
+        *seen = Some(b);
+    }
+    let bits = seen.as_ref()?.as_ref()?;
+    let n = keys.iter().find_map(|&(_, k)| match k { Key::Slot(s) => Some(slots[s]), Key::Const(_) => None })?;
+    // A node of a document a part holds rows of: read as without the bits.
+    if !bits.others.is_empty() && bits.others.binary_search(&((n >> 32) as u32)).is_ok() {
+        return None;
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    VALUE_BIT_TESTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: tests"), 1);
+    }
+    // SAFETY: a chunk the source built and keeps in its block while it lives (`Source::value_bits`), which the walk's
+    // join holds.
+    Some(unsafe { rerail_blocks::relation::NodeIndex::in_chunk(bits.bits) }.has(n, hint))
+}
+
+/// The bits of `value_bits_need`'s constant, where the source has built them.
+fn value_bits_of(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)]) -> Option<crate::code_rule_dsl::facts::vtab::ValueBits> {
+    let (node, col, k) = value_bits_need(j, src, keys, tests)?;
+    let Src::In(rel, ix) = src else { return None };
+    let v = j.src_in(rel, ix).0.view.as_ref()?;
+    if v.src.value_bits_gen() == 0 {
+        return None;
+    }
+    v.src.value_bits(node, col, k)
+}
+
+/// Tests: the view tests answered by a bit (`value_bits_test`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) static VALUE_BIT_TESTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Tests: the view tests a bit has answered in this process.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn value_bit_tests_for_tests() -> u64 {
+    VALUE_BIT_TESTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A membership test of a derived input by several bound columns (decision 0706 E2): whether the filter the level's
+/// build ahead made rejects `key` (the step's keys' values): then no row holds it, and the step reads none.
+pub(super) fn filter_rejects(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64]) -> bool {
+    let Src::In(rel, ix) = src else { return false };
+    if keys.len() < 2 || !tests.is_empty() {
+        return false;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    ix.cols.len() == keys.len() && ix.cols.iter().zip(keys).all(|(&c, &(k, _))| c == k) && ix.filter_rejects(rel, key)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -335,6 +423,8 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
 #[derive(Default)]
 pub(super) struct Asked {
     key: rerail_blocks::vector::Vector<i64>,
+    /// The test's view bits by its constant, found at its first test (`value_bits_test`).
+    bits: Option<Option<crate::code_rule_dsl::facts::vtab::ValueBits>>,
     hints: [u32; runs::HINTS],
     last: LastProbe,
     /// A chunk's rows read at once (`ask_view_chunk`): their columns, one after another.
@@ -352,10 +442,16 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
         Key::Slot(s) => slots[s],
         Key::Const(c) => c,
     };
+    if let Some(found) = value_bits_test(j, src, keys, tests, slots, &mut asked.bits, &mut asked.hints[0]) {
+        return found;
+    }
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
     if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
         return found;
+    }
+    if filter_rejects(j, src, keys, tests, &asked.key) {
+        return false;
     }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
@@ -748,6 +844,10 @@ pub(super) fn chunk_refusal(j: &JoinRule, step: &Step, test: &rowcode::Test) -> 
 pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
     let _kind = rerail_prof::work::doing(rerail_prof::work::TEST);
     let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    // A lookup that binds nothing is a test: a bit, where the view's bits by its constant are built.
+    if binds.is_empty() && let Some(found) = value_bits_test(j, src, keys, tests, slots, &mut asked.bits, &mut asked.hints[0]) {
+        return found;
+    }
     let val = |k: Key| match k {
         Key::Slot(s) => slots[s],
         Key::Const(c) => c,

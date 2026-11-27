@@ -13,9 +13,7 @@ rerail-device = { path = "device" }
 rerail-ukl = { path = "../native/crates/ukl" }
 # The CPU's kernels interpreted from their kernel tape, with `RERAIL_CPU_EXEC=vec` (decision 0567).
 rerail-ukl-vec = { path = "../native/crates/ukl_vec" }
-# The reads written once in CLIF, compiled for the CPU: what a kernel's Rust calls (decision 0567 step 3).
-rerail-clif = { path = "../native/crates/clif" }
-# The kernels as Rust, and the compiled reads' table they call (`rerail_ukl_rust::Reads`).
+# The kernels as Rust (decision 0567 step 3).
 rerail-ukl-rust = { path = "../native/crates/ukl_rust" }
 
 [dev-dependencies]

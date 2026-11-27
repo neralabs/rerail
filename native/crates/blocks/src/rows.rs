@@ -224,6 +224,35 @@ impl ColRead {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
         unsafe { (*self.dir).get(self.min_log, i) }
     }
+
+    /// Rows `lo..hi`' values in turn, as `get` reads each: a chunk's place found once, then its values where they
+    /// lie, one after another (a column with runs reads each row's high bits, as `get` does).
+    #[inline(always)]
+    pub fn each(&self, lo: u32, hi: u32, mut f: impl FnMut(i64)) {
+        // SAFETY: as `get`'s: rows `lo..hi` were claimed and reserved, and a chunk's rows lie in it one after another
+        // at the column's width (`ColDir::at`).
+        let d = unsafe { &*self.dir };
+        if d.has_runs() {
+            for i in lo..hi {
+                f(self.get(i));
+            }
+            return;
+        }
+        let mut i = lo;
+        while i < hi {
+            let (chunk, place) = chunk_of(i, self.min_log);
+            let n = ((chunk_rows(chunk, self.min_log) - place as u64).min(u64::from(hi - i))) as usize;
+            let p = d.at(self.min_log, i);
+            unsafe {
+                if self.width == 4 {
+                    std::slice::from_raw_parts(p.cast::<u32>(), n).iter().for_each(|&v| f(i64::from(v)));
+                } else {
+                    std::slice::from_raw_parts(p.cast::<i64>(), n).iter().for_each(|&v| f(v));
+                }
+            }
+            i += n as u32;
+        }
+    }
 }
 
 impl Rows {

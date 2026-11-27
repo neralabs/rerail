@@ -210,6 +210,12 @@ fn in_user_code(os: u64) -> bool {
     }
 }
 
+/// No platform but macOS asks (its CPU clock is exact, `thread_cpu_ns` gives no running state).
+#[cfg(not(target_vendor = "apple"))]
+fn in_user_code(_os: u64) -> bool {
+    true
+}
+
 #[cfg(target_os = "linux")]
 fn this_thread() -> Option<u64> {
     let mut id: libc::clockid_t = 0;

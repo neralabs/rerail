@@ -333,6 +333,7 @@ impl<'a> Board<'a> {
         sccs: &std::sync::Arc<crate::code_rule_dsl::logic::front::Components>,
         rules_of: &dyn Fn(usize) -> Vec<RuleKey>,
         wants_of: &[BTreeSet<(String, Vector<usize>)>],
+        reads_of: &[BTreeSet<String>],
         waved: &mut [bool],
         load: &mut dyn FnMut(usize) -> Result<()>,
         stream: &Stream<'s, '_>,
@@ -438,9 +439,11 @@ impl<'a> Board<'a> {
         // The issued components' count tables and seed joins, as one device batch (§3, step 6).
         let mut wants: BTreeSet<(String, Vector<usize>)> = BTreeSet::new();
         let mut specs = Vec::new();
+        let mut reads: BTreeSet<String> = BTreeSet::new();
         for &c in &issued {
             for k in 0..self.comps[c].members.len() {
                 let m = self.comps[c].members[k];
+                reads.extend(reads_of[m].iter().cloned());
                 if !std::mem::replace(&mut waved[m], true) {
                     wants.extend(wants_of[m].iter().cloned());
                     specs.extend(run.seed_specs(&sccs[m], &rules_of(m)));
@@ -448,11 +451,13 @@ impl<'a> Board<'a> {
             }
         }
         let db: &Connection = &run.db;
+        super::super::native::component::prefetch_indexes(db, &reads);
         if !wants.is_empty() {
             let _wave = super::super::profile::span(|| "device wave (count tables, issued components)".into());
             super::super::native::component::prefetch_tables(db, &wants)?;
         }
         if !specs.is_empty() {
+            super::indexes_first(db, &specs)?;
             let _wave = super::super::profile::span(|| "device wave (joins, issued components)".into());
             super::super::native::component::prefetch_joins(db, &specs)?;
         }

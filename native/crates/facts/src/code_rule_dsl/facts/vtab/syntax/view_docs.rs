@@ -33,8 +33,9 @@ pub struct Codes {
 impl ViewEntry {
     /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them, and
     /// its codes' names interned in `names` where the batch reads `op`: written whole on the first ask, the same entry
-    /// after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
+    /// after. No `dialect`: a document with no grammar (a text read as text only), which has no nodes: no kind is
+    /// read, and each reads 0.
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
         let (desc, codes) = p.entry();
         codes.get_or_init(|| Self::fill(block, p, dialect, desc, names));
@@ -43,13 +44,13 @@ impl ViewEntry {
 
     /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
     /// table.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Codes {
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Codes {
         let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
         let kinds = Cells::build(block, n.max(1), |out| {
             for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = dialect.kind_of_atom(f.code_entry(c as u32).0);
+                *k = dialect.map_or(0, |d| d.kind_of_atom(f.code_entry(c as u32).0));
             }
             n
         })
@@ -63,7 +64,8 @@ impl ViewEntry {
         .expect("a batch's block holds its entries");
         // Each code's name atom: an interned text, the `op` view's `s` of an anonymous child of that code (decision
         // 0353 row 7), which the host and the kernels read here alone.
-        let names = names.map(|atoms| {
+        // A document with no grammar has no nodes, so no names.
+        let names = names.zip(dialect).map(|(atoms, dialect)| {
             let named: Vec<&str> = (0..n).map(|c| dialect.atom_name(f.code_entry(c as u32).0)).collect();
             let interned = atoms.intern_all(&named).expect("the store's atoms intern the kinds' names");
             Cells::build(block, n.max(1), |out| {
@@ -87,6 +89,27 @@ impl ViewEntry {
             })
             .expect("a batch's block holds its entries")
         });
+        // SPIKE (shared strata work, A): each numbered node's tape node and id's low bits, by local id, one walk.
+        let node_table = (std::env::var("RERAIL_SPIKE_NODE_TABLE").as_deref() != Ok("off") && p.len() > 0).then(|| {
+            let n = p.len() as usize;
+            // copy: derived (each node's tape node and id low, computed once from the numbering)
+            Cells::build(block, n, |out: &mut [[u32; 2]]| {
+                for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
+                    out[l as usize] = [x, if p.defs.is_none() { l } else { low }];
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
+        // SPIKE (local fixes, 1): the nodes' locals by their place among the granules' own nodes (`local_of`).
+        let node_by_id = node_table.as_ref().filter(|_| p.defs.is_some()).map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let places = unsafe { num.own_places() };
+            // copy: derived (each node's number by its id's place, computed once from the numbering)
+            Cells::build(block, places.max(1), |out: &mut [u32]| unsafe { num.own_numbers(out) })
+                .expect("a batch's block holds its entries")
+        });
         // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
         // in the batch's block beside the entry)
         let segments = Self::locs(p).and_then(|x| match &x.host {
@@ -107,6 +130,14 @@ impl ViewEntry {
         unsafe {
             (*d).preorder = if p.tape_ids() { rerail_clif::view_reads::IDS_TAPE } else { u32::from(p.defs.is_none()) };
             (*d).nodes = p.len();
+            // Every numbered node's tape parent numbered (its root's too): the root's children walked as any parent's.
+            (*d).parented = u32::from(p.parented() == p.len());
+            if let Some(t) = &node_table {
+                Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
+            }
+            if let Some(t) = &node_by_id {
+                Run::set(&raw mut (*d).node_by_id, t.as_ptr(), t.len());
+            }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());

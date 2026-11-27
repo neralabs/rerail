@@ -228,8 +228,9 @@ pub struct EdgeSpec {
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
-    /// The placement put the stratum on the device (decision 0095 §7).
-    Device,
+    /// The placement put the stratum on the device (decision 0095 §7); `host`: the device's program on the host
+    /// (a run bound to the CPU, `placement::host_joins`: `device host`).
+    Device { host: bool },
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed
     /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
@@ -254,6 +255,10 @@ pub enum Line {
     /// Relation `rel`'s layout says columns `cols` are a key (decision 0361 step 6): its rows are checked as they are
     /// written, and a second row of a key is reported (`key_breaks`).
     Key { rel: usize, cols: Vector<usize> },
+    /// Relation `rel`'s columns `cols` are declared symbols the run holds as atoms (integers, its types `i`): a slot
+    /// a device stage binds from one holds an atom, read as a text where the atoms blocks hold it (`atoms <rel>
+    /// <cols>`).
+    Atoms { rel: usize, cols: Vector<usize> },
     Request(usize),
     Produced(usize),
     /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
@@ -595,13 +600,14 @@ fn line_text(spec: &Spec, l: &ArchivedLine) -> String {
             format!("rel {name} {types}{start}")
         }
         ArchivedLine::NoWrite => "nowrite".to_owned(),
-        ArchivedLine::Device => "device".to_owned(),
+        ArchivedLine::Device { host } => if *host { "device host" } else { "device" }.to_owned(),
         ArchivedLine::Leveled(rels) => format!("leveled {}", comma(rels)),
         ArchivedLine::Measured { desc, key, keyed, cols, ranks } => format!("measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
         ArchivedLine::KeptOld => "keptold".to_owned(),
         ArchivedLine::KeptRows(rels) => format!("keptrows {}", comma(rels)),
         ArchivedLine::Lattice { rel, keys, name, widen } => format!("lattice {rel} {keys} {} {}", hex(name), widen.get().map_or_else(|| "-".to_owned(), |w| w.to_string())),
         ArchivedLine::Key { rel, cols } => format!("key {rel} {}", cols.iter().map(u64::to_string).collect::<Vec<_>>().join(",")),
+        ArchivedLine::Atoms { rel, cols } => format!("atoms {rel} {}", cols.iter().map(u64::to_string).collect::<Vec<_>>().join(",")),
         ArchivedLine::Request(r) => format!("request {r}"),
         ArchivedLine::Produced(r) => format!("produced {r}"),
         ArchivedLine::Stats(r) => format!("stats {r}"),
@@ -690,7 +696,7 @@ impl ComponentSpec {
                     Line::Rel { name: at(1)?.to_owned(), types: at(2)?.to_owned(), start }
                 }
                 "nowrite" => Line::NoWrite,
-                "device" => Line::Device,
+                "device" => Line::Device { host: t.get(1) == Some(&"host") },
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "measured" => Line::Measured {
                     desc: at(1)? == "d",
@@ -708,6 +714,7 @@ impl ComponentSpec {
                     widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
                 },
                 "key" => Line::Key { rel: num(at(1)?)?, cols: list(at(2)?)? },
+                "atoms" => Line::Atoms { rel: num(at(1)?)?, cols: list(at(2)?)? },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "stats" => Line::Stats(num(at(1)?)?),

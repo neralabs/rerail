@@ -138,6 +138,9 @@ pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 /// store's hash in the atoms directory's tables (decision 0666), and no row where no atom is. A symbol, not an arena
 /// text: an atom keyed by it is probed by value.
 pub(in crate::code_rule_dsl) const ROW_FIND: u32 = 1 << 10;
+/// With `ROW_FIND`: a text no atom is keeps its row, its value -1, so a negated atom keyed by it finds no row and
+/// passes, as the CPU's probe by its interned value finds none.
+pub(in crate::code_rule_dsl) const ROW_FIND_NONE: u32 = 1 << 11;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -171,6 +174,28 @@ pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;
 /// An operand that is an arena text (a text function's value).
 pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
+/// An operand that is a node's text (`@rr_node_text_any`): its span of its document's source, read where it lies
+/// through the batch's node view (`Batch::node_texts`, bound as the stage's `v_dir`), never made.
+pub(in crate::code_rule_dsl) const OPND_NODE: u32 = 4;
+/// Whether stage `stage` reads nodes through the batch's node view (`Batch::node_texts`, its `v_dir`): a text stage
+/// (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`), or a filter whose bind is a
+/// node's preorder key (`ARITH_NODE_ORDER`).
+pub(in crate::code_rule_dsl) fn reads_node_texts(stage: &Stage) -> bool {
+    let k = stage.agg[1];
+    // A string join's `agg[1]` is no operands' kinds (it reads its relation, by `v_dir` where that is a view).
+    let strjoin = stage.mode == ROWTEXT && stage.agg[0] & 15 == ROW_STRJOIN;
+    let text = matches!(stage.mode, TEXTOP | STRCMP | ROWTEXT) && !strjoin && [k & 15, (k >> 4) & 15, (k >> 8) & 15].contains(&OPND_NODE);
+    text || reads_node_orders(stage)
+}
+
+/// Whether filter `stage` binds a node's preorder key (`ARITH_NODE_ORDER`), read through its `v_dir`.
+pub(in crate::code_rule_dsl) fn reads_node_orders(stage: &Stage) -> bool {
+    stage.mode == FILTER
+        && (0..(stage.nbinds as usize).min(stage.bind_kind.len())).any(|b| stage.bind_kind[b] == BIND_ARITH && stage.arith.get(stage.bind_idx[b] as usize).is_some_and(|a| a[0] == ARITH_NODE_ORDER))
+}
+
+/// A held text's form (`setfix::device`'s `deferred`, beside `CAT_DOT` and `CAT_PLAIN`): a node's text (`OPND_NODE`).
+pub(in crate::code_rule_dsl) const NODE_TEXT: u32 = 2;
 /// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
 pub(in crate::code_rule_dsl) const ARENA_TEXT: i64 = i64::MIN;
 
@@ -195,6 +220,10 @@ pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
 pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
 pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
 pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
+/// A node's preorder key (`@rr_node_order`, `node_order`'s `k`) of its id, the first operand: its document by key in
+/// the stage's node view (`v_dir`), its numbered node's order there. A node the view does not number has none, as the
+/// host's read (`LongTexts::order_any`, through the same chunk and values) has none.
+pub(in crate::code_rule_dsl) const ARITH_NODE_ORDER: u32 = 7;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;
@@ -400,10 +429,19 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0641). Inlined, the phase runs indirectly, as on every backend.
 fn program_pipes(format: u32) -> Result<[Arc<rerail_accel_gpu::gpu::join::Pipe>; 3], String> {
-    let inline = if rerail_device::device::is_metal() { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
-    let source = || format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format));
+    // Metal's text where its kernels are made for Metal: on the host (`on_host`, the CPU device's on a Mac), the one
+    // `join_program` was written from, as `pipeline` makes the host's kernels apart (its key's "host").
+    let metal = rerail_device::device::is_metal() && !rerail_accel::gpu::shared::is_on_host();
+    let source = || program_source(metal, format);
     let name = format!("joinprog{format}");
     Ok([pipeline(&name, "join_grid", source)?, pipeline(&name, "join_phase", source)?, pipeline(&name, "join_chain", source)?])
+}
+
+/// The program's text for views of `format`, on Metal (`metal`: call-free, decision 0641) or another device: what
+/// `program_pipes` compiles, and on the CPU what `rerail_ukl_rust::join_program` must be written from (its digest).
+fn program_source(metal: bool, format: u32) -> String {
+    let inline = if metal { "#define UKL_COLD static inline\n#define UKL_ONCE static inline\n" } else { "" };
+    format!("{inline}#define JOIN_PROGRAM 1\n{}", view_source(format))
 }
 
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
@@ -1079,8 +1117,14 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
-        stage.v_parent = u32::from(ix.walk == 1);
-        stage.v_has = ix.walk.saturating_sub(1);
+        // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
+        // row by its id (4).
+        stage.v_parent = match ix.walk {
+            1 => 1,
+            4 => 2,
+            _ => 0,
+        };
+        stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
     }
 }
 
@@ -1762,6 +1806,8 @@ pub(in crate::code_rule_dsl) struct Batch {
     atoms: Option<std::rc::Rc<DevAtoms>>,
     /// The store's one rolling cache, for the verdicts and texts its text kernels keep (decision 0478 step 2e).
     kept: Option<std::rc::Rc<DevKept>>,
+    /// The node view its text stages read nodes' texts through (`OPND_NODE`): the node reads' batch's (`node_texts`).
+    node_texts: Option<DevRel>,
     /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0463): a row
     /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
     written: Vec<Written>,
@@ -1813,6 +1859,32 @@ impl Batch {
         Ok(())
     }
 
+    /// The node view (`Source::node_texts_in_place`) its text stages read nodes' texts through (`OPND_NODE`): the one
+    /// it has where that is the same directory.
+    pub(in crate::code_rule_dsl) fn node_texts(&mut self, view: crate::code_rule_dsl::facts::vtab::ViewInPlace) -> Result<(), Error> {
+        if self.node_texts.as_ref().and_then(|v| v.view.as_ref()).is_some_and(|v| v.dir == view.dir) {
+            return Ok(());
+        }
+        self.node_texts = Some(DevRel::view(0, 0, view)?);
+        Ok(())
+    }
+
+    /// A text stage (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`): the
+    /// batch's node view bound as its `v_dir`, its buffers resident. A stage of no such operand is as it was.
+    fn bind_node_texts(&mut self, stage: &mut Stage) -> Result<(), Error> {
+        if !reads_node_texts(stage) {
+            return Ok(());
+        }
+        let Some(dir) = self.node_texts.as_ref().and_then(|v| v.view.as_ref()).map(|v| v.dir) else { return Err(Error::BackendCapacity) };
+        stage.v_dir = dir;
+        stage.r_view = 0;
+        self.open()?;
+        if let (Some(pass), Some(nodes)) = (self.pass.as_ref(), self.node_texts.as_ref()) {
+            nodes.resident_in(pass);
+        }
+        Ok(())
+    }
+
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel_gpu::gpu::join::device()?;
         Batch::with_arena(ARENA_START)
@@ -1841,6 +1913,7 @@ impl Batch {
             borrowed: Vec::new(),
             atoms: None,
             kept: None,
+            node_texts: None,
             written: Vec::new(),
             places: 0,
             floor: 0,
@@ -2197,6 +2270,19 @@ impl Batch {
         Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
+    /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
+    /// built, as a stage finds the id's document and node (`view_number`) and its one row there, the others checked on
+    /// it, as the host's probe by a node's own id (`Batch::node_hint`). `None` for any other relation or key.
+    pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_NODE};
+        let Some(v) = &rel.view else { return Ok(None) };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD) || !cols.contains(&1) || rel.is_has() {
+            return Ok(None);
+        }
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
+    }
+
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
     /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
     /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
@@ -2242,9 +2328,9 @@ impl Batch {
         Ok(std::rc::Rc::new(self.index(rel, &ix.cols)?))
     }
 
-    /// `may_move`: an index of a relation whose block has no room may go in a fresh home (a view's, or a far link's
-    /// block); one of that fresh relation may not (a home made for its index that still has no room is a sizing's
-    /// error, not a reason to make another).
+    /// `may_move`: an index of a relation whose block has no room may go elsewhere: a view's in its source's home made
+    /// again with more (`IndexHome::grow`), else a fresh home, and a far link's in a block of its own. That home may
+    /// not (one made for its index that still has no room is a sizing's error, not a reason to grow it again).
     fn index_of(&mut self, rel: &DevRel, cols: &[usize], may_move: bool) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
@@ -2355,11 +2441,20 @@ impl Batch {
             // Either is kept by the batch until its work, which builds the index into it, completes (Q265: a fresh
             // relation dropped with its stage's handle gave back its index while the GPU built it).
             if let Some(view) = &rel.view {
-                crate::code_rule_dsl::prof::count_named_args(format_args!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
                 if !may_move {
                     return Err(Error::BackendCapacity);
                 }
-                let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
+                // Its source's home, made again with room for more (`rows::IndexHome::grow`), which every later stratum
+                // takes: its index built there is found again. A home no source keeps, or one at the most indexes,
+                // gives a home of the batch's own.
+                let grown = view.grows.as_ref().zip(rel.part.as_ref()).and_then(|(home, had)| home.grow(had));
+                if grown.is_none() {
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("device.index of a view in a fresh home (its home's room taken): {} rows keyed by {cols:?}", rel.rows), 1);
+                }
+                let fresh = std::rc::Rc::new(match grown {
+                    Some(home) => DevRel::view_in(home, rel.cols, rel.rows, view.clone())?,
+                    None => DevRel::view(rel.cols, rel.rows, view.clone())?,
+                });
                 let mut ix = self.index_of(&fresh, cols, false)?;
                 ix.cols = cols.to_vec();
                 return Ok(DevIndex { fresh: Some(fresh), ..ix });
@@ -2456,6 +2551,9 @@ impl Batch {
         if n == 0 {
             return Ok(());
         }
+        // Its rows, by whether it is built again each round (a live relation's: a recursive stratum's own, decision
+        // 0707's 13.9 M rows) or once.
+        crate::code_rule_dsl::prof::count_named(if rel.live { "device.index rows built: a live relation's, again each round" } else { "device.index rows built: once" }.into(), n);
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
         let mut ix = IxParams { n: m as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {
@@ -2504,6 +2602,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
         let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some();
@@ -2656,6 +2755,7 @@ impl Batch {
             }
             None => self.dummy.buffer.clone(),
         };
+        self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
         stage.cap_in = left.room() as u32;
         stage.cap_out = out.room() as u32;
@@ -2706,6 +2806,16 @@ impl Batch {
         self.queue(job)
     }
 
+    /// `dedup_less`, its rows made distinct and written in `key`'s order (t58 increment A): sorted by their keys in
+    /// the level's wide sort, each kept where its key is not the one before it's. The order is the head's first, so
+    /// the host takes the rows as they lie and sorts nothing.
+    #[allow(clippy::too_many_arguments)]
+    /// Less `held`'s rows where given: a row kept where its bit is clear, and its bit set (`HeldBits`).
+    pub(in crate::code_rule_dsl) fn dedup_sorted(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
+                                                 held: Option<HeldBits<'_>>, key: &SortKey) -> Result<(), Error> {
+        self.dedup_with(table, cols, in_slot, out_slot, totals, out, None, Some((key, held)))
+    }
+
     /// `table`'s distinct rows over slots `cols` (at most 16) into `out` (a column per slot of `cols`, in that order,
     /// the same capacity), their count into `totals[out_slot]`; the first of equal rows is kept, and the order kept.
     /// Queued in the batch's level, as a stage is: a stratum's heads' dedups launch together.
@@ -2719,6 +2829,13 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn dedup_less(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
                                                held: Option<(&DevRel, LatMap<'_>)>) -> Result<(), Error> {
+        self.dedup_with(table, cols, in_slot, out_slot, totals, out, held, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dedup_with(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
+                  held: Option<(&DevRel, LatMap<'_>)>, sorted: Option<(&SortKey, Option<HeldBits<'_>>)>) -> Result<(), Error> {
+        let (key, bits) = (sorted.map(|s| s.0), sorted.and_then(|s| s.1));
         assert!(cols.len() <= 16 && out.room() == table.room());
         let places = (2 * table.room()).next_power_of_two().max(16);
         let mut d = [0u32; 32];
@@ -2735,7 +2852,8 @@ impl Batch {
         let hb = match held {
             Some((r, map)) => {
                 assert!(map.places.is_power_of_two() && cols.len() == r.cols && cols.len() <= 8);
-                (d[23], d[24]) = (1, (map.places - 1) as u32);
+                // A map that grows at a park: read only, its rows placed after the gate (`set_place`).
+                (d[23], d[24]) = (if map.grows.is_some() { 2 } else { 1 }, (map.places - 1) as u32);
                 for (w, v) in [(26, r.at), (28, r.rows_at()), (30, map.at as u64)] {
                     (d[w], d[w + 1]) = (v as u32, (v >> 32) as u32);
                 }
@@ -2743,18 +2861,42 @@ impl Batch {
             }
             None => None,
         };
+        // Sorted (t58 increment A): its keys in the level's wide sort, no places.
+        if let Some(k) = key {
+            d[25] = 1;
+            // Its rows decoded from their keys (`head_row`): every column a part, and none held (no row to probe).
+            assert!(k.parts.len() <= 16 && k.bits <= 64 && k.parts.iter().all(|&(c, _, _)| (c as usize) < cols.len()));
+            assert!((0..cols.len() as u32).all(|c| k.parts.iter().any(|p| p.0 == c)), "a sorted dedup's every column in its key");
+            assert!(held.is_none(), "a sorted dedup less a map's rows");
+        }
+        // Less a bitmap's rows (`HeldBits`): its index bits in the map's mask word, its place in its block.
+        let bb = match bits {
+            Some(hb) => {
+                let k = key.expect("a bitmap's dedup sorted");
+                assert!(k.index_bits() == hb.bits && hb.bits <= HELD_BITS_MAX);
+                (d[23], d[24]) = (1, hb.bits);
+                (d[30], d[31]) = (hb.at as u32, (hb.at as u64 >> 32) as u32);
+                Some(bound(hb.home)?)
+            }
+            None => None,
+        };
         // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
-        // again past them, each row's place (`dedup_claim_one`'s, its mark's).
-        let p = Held::new(if table.placed() { 16 } else { 2 * 4 * places })?;
+        // again past them, each row's place (`dedup_claim_one`'s, its mark's). A sorted one has none.
+        let p = Held::new(if table.placed() || key.is_some() { 16 } else { 2 * 4 * places })?;
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
+        job.dedup_map = held.and_then(|(_, m)| m.grows);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
-        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
+        job.h_place = (table.placed() && key.is_none()).then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
         job.desc.l = table.reach_by(&mut job, false)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;
+        if let Some(k) = key {
+            job.p = Some(k.words().iter().flat_map(|x| x.to_ne_bytes()).collect());
+            (job.wide, job.key_bits, job.presorted) = (table.room(), k.bits, k.presorted);
+        }
         job.desc.o = out.reach_by(&mut job, true)?;
         let (mut reads, mut writes) = (vec![table.key(job.desc.l), job.desc.totals], vec![out.key(job.desc.o), job.desc.totals]);
         if let Some((r, hb)) = hb {
@@ -2764,8 +2906,13 @@ impl Batch {
             writes.push(job.desc.vc);
             job.own.push(hb);
         }
-        // Its clear a thread for 4 places (`dedup_clear_one`).
-        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places / 4, table.room());
+        if let Some(bb) = bb {
+            job.desc.vc = job.reach(&bb.buffer, 0, true)?;
+            writes.push(job.desc.vc);
+            job.own.push(bb);
+        }
+        // Its clear a thread for 4 places (`dedup_clear_one`); a sorted one's keys instead (`dedup_key_one`).
+        (job.n, job.count, job.scatter, job.clear, job.claim) = if key.is_some() { (n, n, n, 0, 0) } else { (n, n, n, places / 4, table.room()) };
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), table.room());
         job.own.push(p);
         job.order(&reads, &writes);
@@ -3006,6 +3153,7 @@ impl Batch {
             }
             job.p = Some(lat_bytes(&p).to_vec());
             job.lat = Some((h, true));
+            job.lat_tail = true;
             (job.count, job.clear, job.lattice) = (0, 0, [most, most / 2]);
             job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
             job.own.push(hb);
@@ -3124,6 +3272,58 @@ impl Batch {
         self.queue(job)
     }
 
+    /// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`): `r`'s rows past its
+    /// rows as the device holds them, as many as slot `count.0` of `count.1` holds (its items those rows', `cap` its
+    /// threads as guessed), once
+    /// `append_live` wrote them there. Its dedup read the map only (`Dedup::seen` 2), so a park before it grew the map
+    /// with every row it held; a map that grows is re-pointed here too (`LatMap::grows`, `Rooms::folds`).
+    pub(in crate::code_rule_dsl) fn set_place(&mut self, r: &DevRel, cap: usize, count: (usize, &Words), map: LatMap<'_>) -> Result<(), Error> {
+        assert!(map.places.is_power_of_two() && r.cols <= 8);
+        let p = LatParams { top: 0, n: u32::MAX, had: 0, nkeys: r.cols as u32, code: 7, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 4 * count.0 as u64 };
+        let hb = bound(map.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        // Its relation as `append_live` writes it (its block's wrap), so it runs after that copy.
+        job.desc.s = job.reach(&r.wrap()?, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        job.desc.g = job.reach(&count.1.buffer.buffer, 0, false)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
+            *d = job.desc.s;
+        }
+        job.p = Some(lat_bytes(&p).to_vec());
+        job.lat = map.grows.map(|h| (h, false));
+        // Its items as many as the round's rows (its count's word on the device), `cap` its threads as guessed.
+        job.rows = Some((job.desc.g + 4 * count.0 as u64, 0));
+        (job.count, job.clear, job.lattice, job.set_place) = (0, 0, [0, 0], cap);
+        job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
+    /// A set head's held bitmap (`HeldBits`) emptied and every row of `r`'s first `n` set in it, its bit at its index
+    /// under `key` (code 6 of `lat_hclear_one` and `lat_rehash_one`): a program's first work, as `set_map`'s.
+    pub(in crate::code_rule_dsl) fn set_bits(&mut self, r: &DevRel, n: usize, bits: HeldBits<'_>, key: &SortKey) -> Result<(), Error> {
+        let words = HeldBits::words_for(bits.bits);
+        assert!(key.index_bits() == bits.bits && bits.bits <= HELD_BITS_MAX && r.cols <= 8 && key.parts.iter().all(|p| (p.0 as usize) < r.cols));
+        let p = LatParams { top: 0, n: n as u32, had: 0, nkeys: r.cols as u32, code: 6, after: NONE, pmask: 0, hmask: (words - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: bits.at as u64, h0_at: 0 };
+        let hb = bound(bits.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v, &mut job.desc.g] {
+            *d = job.desc.s;
+        }
+        // Its key's `HeadKeyP` past its `LatP`, for its rows' indexes.
+        let mut bytes = lat_bytes(&p).to_vec();
+        bytes.extend(key.words().iter().flat_map(|x| x.to_ne_bytes()));
+        job.p = Some(bytes);
+        (job.count, job.clear, job.lattice) = (0, 0, [words, n]);
+        job.order(&[job.desc.s], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
     pub(in crate::code_rule_dsl) fn lattice_grow(&mut self, r: &DevRel, nkeys: usize, map: LatMap<'_>, old: Option<LatMap<'_>>) -> Result<(), Error> {
         assert!(map.places.is_power_of_two() && old.is_none_or(|o| o.places.is_power_of_two() && o.places <= map.places));
         let (omask, h0_at) = old.map_or((0, 0), |o| ((o.places - 1) as u32, o.at as u64));
@@ -3173,8 +3373,15 @@ impl Batch {
     ///
     /// A level launches its copies first, then its indexes, then the rest (`JobKind::phase`): a job of a later phase
     /// than a queued one sees its writes in the same level, and copies into one table's rows apart are one launch.
+    ///
+    /// A sorted dedup whose key, ranked with those of the level's queued ones, passes 64 bits (`flush`'s wide sort)
+    /// ends the level too: each group's keys sort apart, every one's under its rank.
     fn queue(&mut self, job: Job) -> Result<(), Error> {
-        let after = self.queued.iter().any(|q| {
+        let wider = job.wide > 0 && {
+            let (n, bits) = self.queued.iter().filter(|q| q.wide > 0).fold((1, job.key_bits), |(n, b), q| (n + 1, b.max(q.key_bits)));
+            bits + rank_bits(n) > 64
+        };
+        let after = wider || self.queued.iter().any(|q| {
             if q.kind.phase() < job.kind.phase() {
                 return false;
             }
@@ -3253,6 +3460,23 @@ impl Batch {
             return Ok(());
         }
         let mut jobs = std::mem::take(&mut self.queued);
+        // The level's sorted dedups (t58 increment A): one wide sort of all their keys, each one's under its rank in
+        // the level, above the widest key's bits (`HeadKeyP::rank_shift`, `rank`).
+        let wide_jobs: Vec<usize> = (0..jobs.len()).filter(|&i| jobs[i].wide > 0).collect();
+        let wide_bits = wide_jobs.iter().map(|&i| jobs[i].key_bits).max().unwrap_or(0);
+        let rank_bits = rank_bits(wide_jobs.len());
+        // `queue` ends a level before it would.
+        assert!(wide_bits + rank_bits <= 64, "a level's wide sort past 64 bits: {wide_bits} and {rank_bits} of rank");
+        // None where every one's rows come sorted (`SortKey::presorted`): their keys lie in their order already.
+        let wide_passes = if wide_jobs.iter().all(|&i| jobs[i].presorted) { 0 } else { (wide_bits + rank_bits).div_ceil(8).max(1) as usize };
+        for (rank, &i) in wide_jobs.iter().enumerate() {
+            let shift = if rank_bits == 0 { 64 } else { wide_bits };
+            let p = jobs[i].p.as_mut().expect("a sorted dedup's key");
+            p[8..12].copy_from_slice(&shift.to_ne_bytes());
+            p[12..16].copy_from_slice(&(rank as u32).to_ne_bytes());
+            // Its sorted keys in the region's second pair after an odd number of passes (`HeadKeyP::odd`).
+            p[HK_ODD.0 as usize..HK_ODD.0 as usize + 4].copy_from_slice(&((wide_passes % 2) as u32).to_ne_bytes());
+        }
         // The parameter blocks, each at 16 bytes, in one buffer.
         let mut params: Vec<u8> = Vec::new();
         let mut put = |b: &[u8]| -> u64 {
@@ -3311,6 +3535,9 @@ impl Batch {
                 // Check `t`'s cap: after the gate's two words, three words a check, its third.
                 prog.rooms.gates.push(GateRoom { params: params.buffer.clone(), at: pat + 16 + 24 * t as u64 + 16, grow });
             }
+            if let (Some(h), Some(dat)) = (j.dedup_map.take(), at[3]) {
+                prog.rooms.dedups.push((h, params.buffer.clone(), dat));
+            }
             match j.lat.take() {
                 Some((h, false)) => prog.rooms.folds.push((h, params.buffer.clone(), pat)),
                 Some((h, true)) => prog.rooms.tail.as_mut().expect("the tail begun").grows.push((h, params.buffer.clone(), pat)),
@@ -3332,7 +3559,7 @@ impl Batch {
         let fixed = ix_rows - level_live.iter().map(|l| l.1).sum::<usize>();
         let rows_now = fixed + level_live.iter().map(|l| prog.rooms.live_ix[l.0].rows.get() as usize).sum::<usize>();
         let mut sort_room = (!level_live.is_empty()).then(|| SortRoom { reserved: Vec::new(), hist: None, fixed, live: level_live.iter().map(|l| l.0).collect() });
-        let sort = if ix_rows > 0 {
+        let (sort, ix_tags) = if ix_rows > 0 {
             let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
@@ -3354,15 +3581,23 @@ impl Batch {
             };
             let (a, b) = ([one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?], [one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?]);
             let hist = one(4 * (256 * tiles + 1), sort_hist_bytes(rows_now), true)?;
-            Some((a, b, hist, tiles))
+            // Each row's key's tag (decision 0671's marks), by row from its index's first (`eb`): its key pass writes it
+            // from the hash it takes, and its marks read it there, no row read again for its hash.
+            let tags = one(4 * ix_rows, 4 * rows_now, false)?;
+            (Some((a, b, hist, tiles)), Some(tags))
         } else {
-            None
+            (None, None)
         };
         // Every index's buckets in one span; whole bytes, as the sort's passes are a byte each.
         let bits = (usize::BITS - buckets.saturating_sub(1).leading_zeros()).max(8).div_ceil(8) * 8;
         let passes = bits / 8;
         // Where the sorted keys and places end: in the first pair after an even number of passes.
         let sorted = sort.as_ref().map(|(a, b, ..)| if passes % 2 == 0 { a } else { b });
+        // The wide sort's (t58 increment A): its sorted dedups' keys end to end, 64 bits each (a key its row), in a
+        // region of the arena its level's size script claims from the rows counted (`WideAt`); as many passes as its
+        // keys' and ranks' bits take, a byte each. Its rows as guessed: its items and its arena's bytes.
+        let wide_rows: usize = wide_jobs.iter().map(|&i| jobs[i].wide).sum();
+        let wide = (!wide_jobs.is_empty()).then(|| wide_rows.div_ceil(SORT_TILE).max(1));
         let (mut kb, mut eb, mut total) = (0usize, 0usize, 0usize);
         let first_job = prog.descs.len();
         for (j, at) in jobs.iter().zip(&placed) {
@@ -3381,6 +3616,7 @@ impl Batch {
                 (d.at.kb, d.at.eb) = (kb as u32, eb as u32);
                 (d.h, d.s) = (address(&a[0].buffer)?, address(&a[1].buffer)?);
                 (d.v, d.vc) = (address(&f[0].buffer)?, address(&f[1].buffer)?);
+                d.o = address(&ix_tags.as_ref().expect("an index's tags beside its sort").buffer)?;
                 kb += j.buckets;
                 eb += j.count;
             }
@@ -3402,23 +3638,32 @@ impl Batch {
                 None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
             }),
         }).collect();
+        // A tail's growth of a lattice head's map: its items as its params' `n` needs (the places of the map a park grew
+        // it to, 0 where it did not grow), not every place its map could have. A park growing one head's map ran
+        // every head's two phases at its most places, each thread finding nothing to do (`omask` all ones).
+        let tails: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.lat_tail.then(|| (pa + at[4].unwrap_or(0) + std::mem::offset_of!(LatParams, n) as u64, 0))).collect();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
             let mut segs = Vec::new();
             for (i, j) in jobs.iter().enumerate() {
                 for &(k, what, threads) in kinds {
                     // A fold's map left as it is has no pass to empty or grow it.
-                    if j.kind == k && !(k == JobKind::Lattice && threads(j) == 0) {
+                    // A sorted dedup has no places to clear or claim, and an unsorted one no keys (t58 increment A).
+                    if j.kind == k && !(matches!(k, JobKind::Lattice | JobKind::Dedup) && threads(j) == 0) {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
                         // else all of them (`per` 0).
-                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE)));
+                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE))).or_else(|| tails[i].filter(|_| matches!(what, PK_LAT_HCLEAR | PK_LAT_REHASH)));
                         let (count, per, plus) = match word {
                             Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
                         };
-                        segs.push(SegAt { first: items.len() as u32, items: n as u32, count, per, plus });
-                        items.extend((0..n).map(|g| (what, (first_job + i) as u32, g as u32)));
+                        // A segment of a count runs its first item as each group its count needs (`phase_group`): its
+                        // one item. Its groups at most were each an item before, written out: the tail's growths alone
+                        // 3.3 M a program of the points-to component, its item lists grown and copied as they were.
+                        let listed = if per == 0 { n } else { 1 };
+                        segs.push(SegAt { first: items.len() as u32, items: listed as u32, count, per, plus });
+                        items.extend((0..listed).map(|g| (what, (first_job + i) as u32, g as u32)));
                     }
                 }
             }
@@ -3438,7 +3683,10 @@ impl Batch {
             None => None,
         };
         let sizes = hist_scan.map(|h| SortSizes { first: sort_first, passes: passes as usize, hist: h, tiles: sort.as_ref().map_or(1, |s| s.3) });
-        let sized = level_sizes(prog, &jobs, first_job, total, pa, &placed, sizes)?;
+        // The wide sort's passes after the index sort's.
+        let wide_first = sort_first + if sort.is_some() { passes as usize } else { 0 };
+        let wide_sizes = wide.map(|tiles| SortSizes { first: wide_first, passes: wide_passes, hist: prog.scan_levels_sized(ScanData::Script, 256 * tiles), tiles });
+        let sized = level_sizes(prog, &jobs, first_job, total, pa, &placed, sizes, wide_sizes)?;
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
             job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
@@ -3453,7 +3701,7 @@ impl Batch {
                     hist: ha,
                     out_keys: address(&to[0].buffer)?,
                     out_values: address(&to[1].buffer)?,
-                    w: SortWords { n: ix_rows as u32, shift: 8 * pass, tiles: *tiles as u32, pad: 0 },
+                    w: SortWords { n: ix_rows as u32, shift: 8 * pass, tiles: *tiles as u32, wide: 0 },
                     pad2: 0,
                 });
                 // Its tiles as many as its keys as claimed need (its level's size script's).
@@ -3473,8 +3721,26 @@ impl Batch {
             // Its marks (decision 0671), of its rows and buckets placed.
             job_phase(prog, &[(JobKind::Index, PK_IX_MARK, |j| j.count)]);
         }
-        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Dedup, PK_DEDUP_KEY, |j| j.wide), (JobKind::Map, PK_MAP, |j| j.count)]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
+        // The wide sort's passes (t58 increment A), as the index sort's: each pass's tiles' histograms, their scan,
+        // its tiles' keys and places at their places.
+        // Its region and its keys are its size script's (`SortWords::wide`, `n`): its pointers none.
+        if let (Some(tiles), Some(ws)) = (wide, wide_sizes) {
+            for pass in 0..wide_passes {
+                debug_assert_eq!(prog.sorts.len(), wide_first + pass, "the wide sort's passes where its size script set them");
+                let x = prog.sorts.len() as u32;
+                prog.sorts.push(SortPass { keys: 0, values: 0, hist: 0, out_keys: 0, out_values: 0, w: SortWords { n: 0, shift: 8 * pass as u32, tiles: tiles as u32, wide: 0 }, pad2: 0 });
+                for kind in [PK_RADIX_HIST, PK_RADIX_SCATTER] {
+                    if kind == PK_RADIX_SCATTER {
+                        prog.scan_sized_phases(ws.hist, 256 * tiles);
+                    }
+                    prog.phase_of((0..tiles).map(|g| (kind, x, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: tiles as u32, per: 1, plus: 0 }]);
+                    prog.seg_late.push((prog.segs.len() - 1, Late::Sort(x as usize, word_at!(SortPass, w.tiles))));
+                }
+            }
+            prog.arena += units(16 * wide_rows.max(1) + 4 * (256 * tiles + 1));
+        }
         job_phase(prog, &[
             (JobKind::Stage, PK_STAGE_COUNT, |j| j.count),
             (JobKind::Scan, PK_SCAN_COUNT, |j| j.count),
@@ -3505,6 +3771,7 @@ impl Batch {
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_CLAIM, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_BEST, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_MERGE, |j| j.clear)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_SET_PLACE, |j| j.set_place)]);
         // The view format its worker is compiled for: the jobs' one, else several (0).
         for j in &jobs {
             if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) {
@@ -3524,6 +3791,7 @@ impl Batch {
         if let Some((a, b, hist, _)) = sort {
             prog.hold.extend(a.into_iter().chain(b).chain([hist]));
         }
+        prog.hold.extend(ix_tags);
         Ok(())
     }
 
@@ -3559,7 +3827,10 @@ impl Batch {
                 // as they reach it (a park, then a remap). A test's first arena is its own, so its claims map pages as
                 // a larger one's would.
                 let floor = if self.reserve_arena && rerail_device::device::map_commits(device) { 0 } else { self.floor };
-                let room = sizes.arena.unwrap_or((2 * prog.arena).max(floor)).max(16).next_multiple_of(16);
+                // The guess at most the arena's whole: it is its first pages, and its claims map the rest as they reach
+                // it; a guess past it (a recursive component of many heads, each its bound's rows) refused the program
+                // before a claim was made. A floor or a size asked past it is a claim's, refused.
+                let room = sizes.arena.unwrap_or((2 * prog.arena).min(ARENA_MAX).max(floor)).max(16).next_multiple_of(16);
                 if room > ARENA_MAX {
                     return Err(Error::BackendCapacity);
                 }
@@ -3984,8 +4255,10 @@ fn units(bytes: usize) -> usize {
 /// row's values and a dedup's places placed by it; then the level's counts claimed (each job's its input's room and
 /// one), each job's first word, and the scan's three levels' values, sums and counts. None for a level of neither.
 /// `pa`: the level's parameter blocks' address; `placed`: each job's blocks in it.
-fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize, pa: u64, placed: &[[Option<u64>; 5]], sort: Option<SortSizes>) -> Result<Option<usize>, Error> {
-    if total == 0 && sort.is_none() && jobs.iter().all(|j| j.l_place.is_none() && j.d_place.is_none() && j.o_rows.is_none()) {
+#[allow(clippy::too_many_arguments)]
+fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize, pa: u64, placed: &[[Option<u64>; 5]], sort: Option<SortSizes>, wide: Option<SortSizes>)
+               -> Result<Option<usize>, Error> {
+    if total == 0 && sort.is_none() && wide.is_none() && jobs.iter().all(|j| j.l_place.is_none() && j.d_place.is_none() && j.o_rows.is_none()) {
         return Ok(None);
     }
     let first = prog.script.len();
@@ -4078,16 +4351,61 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
         prog.op(OpAt::of(SZ_MUL, r, r, 0).c(Late::Abs(256)));
         size_scan(prog, top, r, 256 * ss.tiles, |level, f| Late::Scan(ss.hist + level, f));
     }
+    if let Some(ws) = wide {
+        // The level's sorted dedups' keys end to end (t58 increment A): each one's first (`eb`), its rows as its
+        // input's count says (the device's: its input's room is too); then its region claimed for them (`WideAt`:
+        // 16 bytes a key, and its tiles' histograms), its first word and its keys into each pass and each dedup, and
+        // its histograms' scan, from their place in it.
+        let (sum, r, rg, b) = (12u32, 13u32, 11u32, 4u32);
+        prog.op(OpAt::of(SZ_CONST, sum, 0, 0).c(Late::Abs(0)));
+        for (i, j) in jobs.iter().enumerate().filter(|(_, j)| j.wide > 0) {
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(desc(i, word_at!(JobDesc, at.eb))));
+            let (word, _) = j.rows_word().expect("a dedup's rows' word");
+            prog.op(OpAt::of(SZ_LOAD, r, 0, 0).w(Late::Abs(word)));
+            prog.op(OpAt::of(SZ_ADD, sum, sum, r));
+        }
+        prog.op(OpAt::of(SZ_DIVUP, r, sum, 0).c(Late::Abs(SORT_TILE as u64)));
+        prog.op(OpAt::of(SZ_MAX, r, r, 0).c(Late::Abs(1)));
+        prog.op(OpAt::of(SZ_MUL, b, r, 0).c(Late::Abs(4 * 256)));
+        prog.op(OpAt::of(SZ_ADD, b, b, ZERO).c(Late::Abs(4)));
+        prog.op(OpAt::of(SZ_MUL, rg, sum, 0).c(Late::Abs(16)));
+        prog.op(OpAt::of(SZ_ADD, b, b, rg));
+        claim(prog, top, rg, b, 4, true);
+        for x in ws.first..ws.first + ws.passes {
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.n))));
+            prog.op(OpAt::of(SZ_PUT32, r, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.tiles))));
+            prog.op(OpAt::of(SZ_PUT32, rg, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.wide))));
+        }
+        for (i, _) in jobs.iter().enumerate().filter(|(_, j)| j.wide > 0) {
+            prog.op(OpAt::of(SZ_PUT32, rg, 0, 0).w(desc(i, word_at!(JobDesc, at.h_at))));
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(site(i, 4, HK_TOTAL)));
+        }
+        // Its histograms past its keys: its first word less one, and four words a key.
+        prog.op(OpAt::of(SZ_MUL, b, sum, 0).c(Late::Abs(4)));
+        prog.op(OpAt::of(SZ_ADD, b, b, rg));
+        prog.op(OpAt::of(SZ_SUB, b, b, R_ONE));
+        prog.op(OpAt::of(SZ_PUT32, b, 0, 0).w(Late::Scan(ws.hist, word_at!(ScanLevel, w.at))));
+        prog.op(OpAt::of(SZ_MUL, r, r, 0).c(Late::Abs(256)));
+        size_scan(prog, top, r, 256 * ws.tiles, |level, f| Late::Scan(ws.hist + level, f));
+    }
     if total > 0 {
-        // Each job's counts: its placed input's room and one, else as encoded; the level's total word after them.
+        // Each job's counts: its rows' and one, where its rows are a word's (its count phase's items: the rows its
+        // level's earlier levels made, final when its size script runs); at most its placed input's room and one, else
+        // as encoded. So the level's scan is of its rows, not of its tables' rooms. The level's total word after them.
         let n_of = |prog: &mut Program, j: &Job, into: u32| -> Result<(), Error> {
             match (&j.l_place, j.n) {
                 (Some(p), n) if n > 0 => {
                     prog.op(OpAt::of(SZ_LOAD, u, 0, 0).w(Late::Abs(address(&p.rec.buffer.buffer)? + 4)));
-                    prog.op(OpAt::of(SZ_ADD, into, into, u).c(Late::Abs(1)));
+                    prog.op(OpAt::of(SZ_ADD, u, u, ZERO).c(Late::Abs(1)));
                 }
-                (_, n) => prog.op(OpAt::of(SZ_ADD, into, into, ZERO).c(Late::Abs(n as u64))),
+                (_, n) => prog.op(OpAt::of(SZ_CONST, u, 0, 0).c(Late::Abs(n as u64))),
             }
+            if let Some((word, _)) = j.rows_word() {
+                prog.op(OpAt::of(SZ_LOAD, x, 0, 0).w(Late::Abs(word)));
+                prog.op(OpAt::of(SZ_ADD, x, x, ZERO).c(Late::Abs(1)));
+                prog.op(OpAt::of(SZ_MIN, u, u, x));
+            }
+            prog.op(OpAt::of(SZ_ADD, into, into, u));
             Ok(())
         };
         prog.op(OpAt::of(SZ_CONST, 1, 0, 0).c(Late::Abs(1)));
@@ -4415,6 +4733,9 @@ struct Rooms {
     sorts: Vec<SortRoom>,
     /// Each live fold's map (its head, `LatMap::grows`), its parameters (`LatParams`) at byte `.2` of `.1`.
     folds: Vec<(usize, Buffer, u64)>,
+    /// Each dedup less a set head's map that grows (its head, `LatMap::grows`), its words (`Dedup`) at byte `.2` of
+    /// `.1`: re-pointed at the map grown.
+    dedups: Vec<(usize, Buffer, u64)>,
     /// The program's tail (`Batch::lattice_tail`): its first phase and each head's map growth's parameters.
     tail: Option<Tail>,
     /// A parameters buffer and a word's byte offset in it.
@@ -4527,7 +4848,7 @@ impl Kit {
             }
         }
         for f in &blocks {
-            let old = f.block.kept_device_buffer();
+            let old = f.block.kept_device_buffer(device);
             let new = f.block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
             if let Some((ob, len)) = old {
                 self.rebind(address(&ob)?, len as u64, &new)?;
@@ -4559,21 +4880,39 @@ impl Kit {
         self.maps_grown = !maps.is_empty();
         if self.maps_grown {
             let tail = self.rooms.tail.as_ref().expect("a program whose maps grow has a tail");
-            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow.
+            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow. Two
+            // gates of a park may each grow it: its last map the new one, its keys those of the map it had (the
+            // first growth's old: the maps between them hold none until this tail runs).
             for (key, params, at) in &tail.grows {
-                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places);
+                let first = maps.iter().filter(|m| m.key == *key).min_by_key(|m| m.old_places).map(|m| (m.old_at, m.old_places));
+                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places).map(|m| MapGrown { key: m.key, at: m.at, places: m.places, old_at: first.expect("its first growth").0, old_places: first.expect("its first growth").1 });
                 // SAFETY: the growth's `LatParams`, within its parameters buffer; no work of the program runs.
                 unsafe {
                     let b = params.contents().cast::<u8>().add(*at as usize);
                     match g {
                         Some(g) => {
+                            // Its two phases' threads (`lat_tail`): the new map's places.
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(g.places as u32);
                             b.add(std::mem::offset_of!(LatParams, hmask)).cast::<u32>().write_unaligned((g.places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned((g.old_places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, h_at)).cast::<u64>().write_unaligned(g.at);
                             b.add(std::mem::offset_of!(LatParams, h0_at)).cast::<u64>().write_unaligned(g.old_at);
                         }
-                        None => b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX),
+                        None => {
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(0);
+                            b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX);
+                        }
                     }
+                }
+            }
+            // Each dedup less a set head's map grown: its map's mask (word 24) and place (words 30, 31) the new one's.
+            for (key, params, at) in &self.rooms.dedups {
+                let Some(g) = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places) else { continue };
+                // SAFETY: the dedup's words (`Dedup`, 32 `u32`s), within its parameters buffer; no work of the program runs.
+                unsafe {
+                    let b = params.contents().cast::<u8>().add(*at as usize);
+                    b.add(4 * 24).cast::<u32>().write_unaligned((g.places - 1) as u32);
+                    b.add(4 * 30).cast::<u64>().write_unaligned(g.at);
                 }
             }
             // Each fold of a head grown: its map the new one.
@@ -4591,10 +4930,12 @@ impl Kit {
     }
 
     /// A park's release once its rooms grew (`grow_rooms`), the gate's phase `p` parked: the phase its walk takes
-    /// after it, or where a lattice head's map grew, the program's tail first, whose jump goes on to that phase.
+    /// after it, or where a head's map grew at this park, the program's tail first, whose jump goes on to that phase.
+    /// Its growth is this park's alone: a later park (an arena's remap) runs no tail, which would empty the map and
+    /// place again the keys of the one this growth replaced.
     fn release(&mut self, p: u32) -> Option<u32> {
         let after = walk_next(&self.jumps, self.last, self.phase_items.len() as u32, p);
-        match (&self.rooms.tail, self.maps_grown) {
+        match (&self.rooms.tail, std::mem::take(&mut self.maps_grown)) {
             (Some(t), true) => {
                 let first = t.first;
                 let jump = self.jumps.last_mut().expect("the tail's jump");
@@ -4699,6 +5040,71 @@ const PK_COPY: u32 = 1;
 const PK_IX_KEY: u32 = 2;
 const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
+/// A sorted dedup's keys (t58 increment A, `dedup_key_one`).
+const PK_DEDUP_KEY: u32 = 32;
+const PK_SET_PLACE: u32 = 33;
+
+/// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
+const HK_TOTAL: WordAt = WordAt::word(68);
+const HK_ODD: WordAt = WordAt::word(69);
+
+/// The bits that rank `n` sorted dedups in one wide sort (`Batch::flush`): none for one.
+fn rank_bits(n: usize) -> u32 {
+    usize::BITS - n.saturating_sub(1).leading_zeros()
+}
+
+/// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): the order's leading column's 16-bit
+/// tag where `tagged`, then each part, most significant first: (column of the dedup's `cols`, bits, least).
+/// `presorted`: its rows come in its order already (one rule's, sorted by its run's dedup), so its level sorts no
+/// keys where every sorted dedup of it says so.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) struct SortKey {
+    pub tagged: bool,
+    pub parts: Vec<(u32, u32, i64)>,
+    pub bits: u32,
+    pub presorted: bool,
+}
+
+impl SortKey {
+    /// Its parts' bits, less its tag: a row's index among every row its bounds allow (`HeldBits`).
+    pub(in crate::code_rule_dsl) fn index_bits(&self) -> u32 {
+        self.bits - if self.tagged { 16 } else { 0 }
+    }
+
+    /// `HeadKeyP`'s words: tagged, its parts, its rank's shift and its rank (its level's, `flush`); each part its
+    /// column, bits, least's words.
+    fn words(&self) -> [u32; 72] {
+        let mut w = [0u32; 72];
+        w[0] = u32::from(self.tagged);
+        w[1] = self.parts.len() as u32;
+        for (i, &(c, bits, lo)) in self.parts.iter().enumerate() {
+            w[4 + 4 * i..8 + 4 * i].copy_from_slice(&[c, bits, lo as u64 as u32, (lo as u64 >> 32) as u32]);
+        }
+        w
+    }
+}
+
+/// The largest held bitmap's index bits (`HeldBits`): 2^24 rows, 2 MB.
+pub(in crate::code_rule_dsl) const HELD_BITS_MAX: u32 = 24;
+
+/// A recursive set head's rows as a bitmap of every row its key's bounds allow (t58 increment A), in its relation's
+/// block: a row's bit at its key's index bits (`SortKey::index_bits`, its parts less their least, end to end). Made
+/// from its relation's rows at a program's start (`Batch::set_bits`); a sorted dedup less it (`dedup_sorted`) keeps a
+/// row whose bit is clear and sets it.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) struct HeldBits<'a> {
+    pub(in crate::code_rule_dsl) home: &'a std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    /// Its first word's byte offset in its block, and its words (`2^bits / 32`, at least one).
+    pub(in crate::code_rule_dsl) at: usize,
+    pub(in crate::code_rule_dsl) bits: u32,
+}
+
+impl HeldBits<'_> {
+    /// The words of a bitmap of `bits` index bits.
+    pub(in crate::code_rule_dsl) fn words_for(bits: u32) -> usize {
+        ((1usize << bits) / 32).max(1)
+    }
+}
 const PK_IX_PLACE: u32 = 5;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
@@ -4729,7 +5135,7 @@ const PK_IX_MARK: u32 = 31;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
-const ROWS_ITEMS: [u32; 16] = [PK_COPY, PK_MAP, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+const ROWS_ITEMS: [u32; 18] = [PK_SET_PLACE, PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
                                PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE, PK_IX_MARK];
 
 /// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
@@ -5055,7 +5461,8 @@ struct SortWords {
     n: u32,
     shift: u32,
     tiles: u32,
-    pad: u32,
+    /// Its keys are 64 bits (the level's wide sort, a sorted dedup's: t58 increment A), else 32.
+    wide: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
@@ -5099,6 +5506,9 @@ const STACK_ROUNDS_MOST: u32 = 32;
 /// indirect dispatch's bound, which a CUDA or OpenCL launch starts, those past its grid's count returning (Metal's
 /// starts its grid's groups alone).
 const PHASE_GROUPS: usize = 1 << 12;
+
+/// A chain's dispatches past its start at most: its encoding's host time and its GPU time bounded.
+const PROGRAM_DISPATCHES: u32 = 1024;
 
 /// Whether a recursive component's rooms are mapped as its rounds reach them (decision 0603's fewer reruns, its gate's
 /// rooms: `Batch::gate_rooms`): where a mapped page is real memory (`rerail_device::device::map_commits`), its rows
@@ -5296,8 +5706,17 @@ struct Job {
     claim: usize,
     /// An index's buckets, its keys' span in the level's sort.
     buckets: usize,
+    /// A sorted dedup's (t58 increment A): its rows at most, its keys' span in the level's wide sort; and its key's
+    /// bits, below its rank's. 0: not one.
+    wide: usize,
+    key_bits: u32,
+    /// Its rows come in its key's order (`SortKey::presorted`).
+    presorted: bool,
     /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
     lattice: [usize; 2],
+    /// A program's tail's growth of a lattice head's map (`Batch::lattice_tail`): its items as many as its params'
+    /// `n` needs, the places of the map a park grew it to, else 0.
+    lat_tail: bool,
     /// A copy's rows written: its destination's address, and its rows from and to.
     span: Option<(u64, usize, usize)>,
     /// A copy's or a fold's rows' count on the device, and the threads past it its grids take (`Job::rows_word`).
@@ -5332,6 +5751,10 @@ struct Job {
     live_ix: Option<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, usize, u32)>,
     /// A live fold of head `.0`'s map, or (`.1`) the tail's growth of it (`Rooms::folds`, `Tail::grows`).
     lat: Option<(usize, bool)>,
+    /// A dedup less head `.0`'s set map, which grows (`Rooms::dedups`).
+    dedup_map: Option<usize>,
+    /// A set head's round's rows placed in its map (`Batch::set_place`): its threads at most, its items its rows'.
+    set_place: usize,
     /// The tail's jump (`Tail::jump`).
     jump: bool,
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
@@ -5398,7 +5821,11 @@ impl Job {
             clear: 0,
             claim: 0,
             buckets: 0,
+            wide: 0,
+            key_bits: 0,
+            presorted: false,
             lattice: [0; 2],
+            lat_tail: false,
             span: None,
             rows: None,
             rows_from: 0,
@@ -5423,6 +5850,8 @@ impl Job {
             rooms: Vec::new(),
             live_ix: None,
             lat: None,
+            dedup_map: None,
+            set_place: 0,
             jump: false,
         }
     }
@@ -6487,13 +6916,13 @@ fn lat_bytes(p: &LatParams) -> &[u8] {
 #[cfg(test)]
 mod join_rust {
     /// The join program's Rust (`rerail_ukl_rust::join_program`, decision 0567) was written from this source: each view
-    /// format's program text, as `program_pipes` assembles it off Metal, has a digest it runs for. A change to the
-    /// source is a change to that Rust too.
+    /// format's program text, as the CPU device loads it (`program_source`, the very text `program_pipes`
+    /// compiles), has a digest it runs for. A change to the source is a change to that Rust too.
     #[test]
     fn the_join_programs_rust_is_of_this_source() {
         let digests: Vec<u64> = [0, 16, rerail_clif::view::F16Z_FORMAT]
             .iter()
-            .map(|&f| rerail_ukl_rust::digest(&format!("#define JOIN_PROGRAM 1\n{}", super::view_source(f)), &[]))
+            .map(|&f| rerail_ukl_rust::digest(&super::program_source(false, f), &[]))
             .collect();
         assert_eq!(digests, rerail_ukl_rust::JOIN_PROGRAM, "join_stages.uglykl changed: bring rerail_ukl_rust::join_program to it, then its digests ({digests:#018x?})");
     }

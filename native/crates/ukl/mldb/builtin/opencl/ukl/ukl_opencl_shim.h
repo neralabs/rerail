@@ -258,7 +258,8 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 #define PASS_INNER_ARG_LITERAL(Type, Name) Name
 #define PASS_INNER_ARG_RWLOCAL(Type, Name) Name
 #define PASS_INNER_ARG_TUNEABLE(Type, Name) Name
-#define PASS_INNER_ARG_GID0(Type, Name) ((Type)get_global_id(0))
+// A group's place along x is its virtual group's (`__ukl_bx`, the re-dispatcher's below: decision 0674).
+#define PASS_INNER_ARG_GID0(Type, Name) ((Type)(__ukl_bx * get_local_size(0) + get_local_id(0)))
 #define PASS_INNER_ARG_GID1(Type, Name) ((Type)get_global_id(1))
 #define PASS_INNER_ARG_GID2(Type, Name) ((Type)get_global_id(2))
 // The grid's size: the launch's, or under an indirect launch the groups its counts give (`__ukl_groups`).
@@ -273,7 +274,7 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 #define PASS_INNER_ARG_LSZ2(Type, Name) ((Type)get_local_size(2))
 #define PASS_INNER_ARG_ARGS(Type, Name) Name
 #define PASS_INNER_ARG_CONSTBUFFER(Type, Name) Name
-#define PASS_INNER_ARG_TGID0(Type, Name) ((Type)get_group_id(0))
+#define PASS_INNER_ARG_TGID0(Type, Name) ((Type)__ukl_bx)
 #define PASS_INNER_ARG_TGID1(Type, Name) ((Type)get_group_id(1))
 #define PASS_INNER_ARG_TGID2(Type, Name) ((Type)get_group_id(2))
 #define PASS_INNER_ARG_LANE(Type, Name) ((Type)__UKL_CL_LANE)
@@ -402,11 +403,16 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \
     __kernel __UKL_SG_ATTR void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint, __ukl_groups, ) ) \
     { \
-        if (__ukl_groups && (get_group_id(0) >= __ukl_groups[__ukl_groups_at] || get_group_id(1) >= __ukl_groups[__ukl_groups_at + 1u] \
-                             || get_group_id(2) >= __ukl_groups[__ukl_groups_at + 2u])) \
+        /* The re-dispatcher (decision 0674): OpenCL 1.2 has no indirect launch; a launched group runs the virtual */ \
+        /* groups along x below the counts', its barrier between two. */ \
+        if (__ukl_groups && (get_group_id(1) >= __ukl_groups[__ukl_groups_at + 1u] || get_group_id(2) >= __ukl_groups[__ukl_groups_at + 2u])) \
             return; \
         __UKL_SG_DECL \
         __UKL_FOREACH_QUAD_NOSEP(GEN_SHARED_DECL2, __VA_ARGS__) \
-        Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__) __UKL_ARGS ); \
+        const uint __ukl_nx = __ukl_groups ? __ukl_groups[__ukl_groups_at] : (uint)get_num_groups(0); \
+        for (uint __ukl_bx = (uint)get_group_id(0); __ukl_bx < __ukl_nx; __ukl_bx += (uint)get_num_groups(0)) { \
+            if (__ukl_bx != (uint)get_group_id(0)) barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); \
+            Name ## _inner ( __UKL_FOREACH_QUAD(PASS_INNER_ARG2, __VA_ARGS__) __UKL_ARGS ); \
+        } \
     } \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS )
