@@ -6,10 +6,11 @@
 
 // Ruff PYI053 (flake8-pyi), stubs only: a str or bytes literal whose value is longer than 50 characters
 // (adjacent literals joined; an f-string counts its written contents). Not reported in a type context
-// (annotations, `Literal[…]` included), for a string that is a whole statement (a docstring, or any bare
-// string), as an argument of `@warnings.deprecated(…)` / `typing_extensions.deprecated`, or in a module-level
-// `__all__` assignment (0.16.9; 0.15.7 reports those).
+// (annotations, `Literal[…]` included, and the field types of a functional NamedTuple or TypedDict), for a string
+// that is a whole statement (a docstring, or any bare string), as an argument of `@warnings.deprecated(…)` /
+// `typing_extensions.deprecated`, or in a module-level `__all__` assignment (0.16.9; 0.15.7 reports those).
 //   x = "aaaa…a"       (51 a's)   ← PYI053
+//   T = TypedDict("T", {"a": "aaaa…a"}, total="aaaa…a")   ← PYI053 at `total`'s value only: the field is a type
 #include "python/typing.rerail"
 
 .violation PYI053(at: node) code "PYI053" "Replace this literal with `...`: it is longer than 50 characters, and a stub only needs the type, so the full value is an implementation detail."
@@ -29,6 +30,22 @@ inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
 .decl in_annotation(s: node)
 in_annotation(s) :- type_ctx(s).
 in_annotation(s) :- type_ctx(l), (typing_subscript(l, "Literal") ; typing_subscript(l, "Annotated")), within(s, l).
+in_annotation(s) :- field_type(r), (s = r ; within(s, r)).
+// field_type(r): Ruff reads r as a type: in `NamedTuple("N", [("a", r)], b=r)` the second item of each pair and
+// every keyword's value; in `TypedDict("T", {"a": r}, b=r)` each value and every keyword's value but `total`'s and
+// `closed`'s (Ruff 0.17.6: `extra_items=` is a type).
+.decl field_type(r: node)
+field_type(r) :- typed_call(c, "NamedTuple"), later_arg(c, a), (kind(a, "list") ; kind(a, "tuple")), child(a, p0, _),
+    unparen(p0, p), (kind(p, "list") ; kind(p, "tuple")), child(p, r, 1), !child(p, _, 2).
+field_type(r) :- typed_call(c, "TypedDict"), later_arg(c, a), kind(a, "dictionary"), child(a, pr, _), kind(pr, "pair"),
+    field(pr, "value", r).
+field_type(r) :- typed_call(c, x), field(c, "arguments", al), child(al, k, _), kind(k, "keyword_argument"),
+    field(k, "name", n), field(k, "value", r), (x = "NamedTuple" ; x = "TypedDict", !text(n, "total"), !text(n, "closed")).
+.decl typed_call(c: node, x: symbol)
+typed_call(c, x) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), typing_sym(f, x).
+// later_arg(c, a): a is a positional argument of call c after its first, unparenthesised.
+.decl later_arg(c: node, a: node)
+later_arg(c, a) :- field(c, "arguments", al), child(al, a0, i), i > 0, !kind(a0, "keyword_argument"), unparen(a0, a).
 .decl stmt_string(s: node)
 stmt_string(s) :- doc_stmt(_, s).
 // deprecated_message(s): s is an argument, positional or keyword, of `warnings.deprecated(…)` or

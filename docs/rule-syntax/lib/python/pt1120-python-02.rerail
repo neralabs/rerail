@@ -1,0 +1,40 @@
+// python/pt1120-python-02: where Ruff places the nodes it parses from a string type definition, and what a name
+// there is (PYI054, PYI055).
+//
+// Interface
+//   str_tree(s, n)      n is in the tree parsed from string type definition s (core's string_annotation), or from a
+//                       string nested in that tree (`"list['int']"`); s is the string n's own tree came from
+//   simple_string(s)    s is one literal without escapes: Ruff gives its parsed nodes their own positions
+//   unplaced(n)         n is in the tree of a string that is not simple, or of a string nested in one
+//   fwd_builtin(n, x)   name n in such a tree is the builtin x
+//
+// Ruff background
+//   - Ruff parses a string type definition and visits the tree like any other expression. When the string is one
+//     plain literal, each node keeps its own position. When it has escapes or adjacent pieces (`"Literal[1]" ""`,
+//     `"\x74ype[int]"`), the source no longer maps to the value, and every node of the tree, nested strings
+//     included, gets the whole string's range. A rule then measures that range (PYI054: the string's length, not the
+//     number's), and Ruff's resolution of a name by its range finds no binding there: `Union[…]` is no union in such
+//     a string, while builtins (`type[int]`) still match (PYI055).
+//   - The engine stands a decoded string's nodes at the string already (core, "guests"). A guest tree is reached only
+//     through `parsed`: a relation over its nodes binds them through str_tree (python-03's note on type strings).
+//   - python/scopes' builtin_ref asks for the module of the name's document, which a guest document has not:
+//     fwd_builtin asks the outermost string's. A name resolves from where that string stands (python/names'
+//     parsed_in, which python-03 extends to the strings outside annotations: `cast("type[int]", x)`).
+//
+//   x: "list[Literal[12345678901]]"          str_tree(<the string>, <12345678901>); placed: PYI054 at the number
+//   y: "Literal[12345678901]" ""             unplaced(<12345678901>): PYI054 at the string
+//   z: "Union[type[int], type[str]]" ""      unplaced: Ruff sees no union here
+#include "python/typing.rerail"   // python/names: ann_str, parsed_in, miss, builtin, star
+#include "python/python-03.rerail"   // parsed_in for every string type definition
+
+.decl str_tree(s: node, n: node)
+str_tree(s, n) :- string_annotation(s), parsed(s, "annotation", r), (n = r ; within(n, r)).
+str_tree(s2, n) :- str_tree(_, s2), ann_str(s2), parsed(s2, "annotation", r), (n = r ; within(n, r)).
+.decl simple_string(s: node)
+simple_string(s) :- kind(s, "string"), !child(s, _, 3), !has(s, _, "escape_sequence").
+// unplaced(n): nested strings in an unplaced tree are unplaced too, and so is their own tree.
+.decl unplaced(n: node)
+unplaced(n) :- str_tree(s, n), str_node(s), !simple_string(s).
+unplaced(n) :- unplaced(s), str_tree(s, n).
+.decl fwd_builtin(n: node, x: symbol)
+fwd_builtin(n, x) :- str_tree(_, n), miss(n, x), builtin(x), parsed_in(n, h), docof(h, d), modnode(d, m), !star(m).
