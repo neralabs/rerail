@@ -403,6 +403,14 @@ impl Docs {
         let at = unsafe { (row < rerail_clif::view_reads::ViewDir::span_of(self.dir())).then(|| rerail_clif::view_reads::ViewDir::at_of(self.dir(), row)) }?;
         (at != rerail_clif::view_reads::NO_DOC).then_some(at as usize)
     }
+    /// The document and local id of value `value` in the chunk's numbering (plan "Chunk node numbers"): its page's
+    /// number's row, that row's document, and its page's local id; `None` for a value that is no id of a document of
+    /// the batch.
+    pub fn of_id(&self, value: i64) -> Option<(usize, u32)> {
+        // SAFETY: the directory `new` made in the batch's block, which the context holds.
+        let (row, local) = unsafe { rerail_clif::view_reads::ViewDir::of_value(self.dir(), value) }?;
+        Some((self.of_row(row)?, local))
+    }
     /// Every document's key, in order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
         (0..self.slots.len()).map(|i| self.key(i))
@@ -551,24 +559,14 @@ impl Docs {
     /// in the growth; `None` where its role's region has no room (the batch fails).
     pub fn base(&self, i: usize) -> Option<u32> {
         let d = &self.numbered[i];
-        let base = self.context.ids.base(d, || {
-            let p = &self.made_alone(i).p;
-            p.locs() + p.f().lines.count() as u32 + 1
-        });
-        if base.is_none() {
-            self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
+        let base = self.context.ids.base(d, || self.made_alone(i).p.base_count());
+        match base {
+            None => self.fail(format!("{}: its ids pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path())),
+            // Its projection in this batch, newly numbered: where its ids leave the chunk from now (`located`).
+            Some(_) if self.made_alone(i).p.numbered_as(Arc::clone(d)) => d.made_in(&self.slots[i]),
+            Some(_) => {}
         }
         base
-    }
-    /// Document `i`'s later spans (its comments no node is, then its matches: `ids` of them, made with its rows):
-    /// their first id and first local id, taken once in the growth.
-    pub fn later_ids(&self, i: usize, ids: u32) -> Option<(u32, u32)> {
-        self.base(i)?;
-        let later = self.context.ids.later(&self.numbered[i], ids);
-        if later.is_none() {
-            self.fail(format!("{}: its spans pass its role's region of the chunk's ids (plan \"Chunk node numbers\")", self.slots[i].input.path()));
-        }
-        later
     }
     /// Document `i`'s nodes as its projection would number them, by their codes as the `node` view reads them
     /// (`Dialect::code`): `(nodes, each code's nodes)`, read off its index (decision 0656 step 4) with none made.
@@ -1206,10 +1204,11 @@ impl ByDocument {
         }
     }
     /// The key of the document `value` (of `column`) names, if it names one: the row's own, or its host's.
-    fn document(self, value: i64) -> Option<u32> {
+    fn document(self, docs: &Docs, value: i64) -> Option<u32> {
         match self {
             Self::Key(_) => u32::try_from(value).ok(),
-            Self::Id(_) | Self::Host(_) => rerail_blocks::located::Located::key_of(value),
+            // A node's (its own, or its host's: another document of the chunk), by its page (plan "Chunk node numbers").
+            Self::Id(_) | Self::Host(_) => docs.ids().key_of_value(value),
             Self::No => None,
         }
     }
@@ -1376,8 +1375,11 @@ impl Rows {
 pub(super) enum ColKind {
     /// A document's key.
     Key,
-    /// A node's or a span's id, `key << 32 | slot`.
+    /// A node's, a token's or a span's id in its chunk: its document's base plus its local id (plan "Chunk node
+    /// numbers"), 32 bits.
     Node,
+    /// A key in located form (`rerail_blocks::located::Located`): a document's key and 32 low bits, `node_order`'s.
+    Located,
     /// A text: an atom (`content_store::atoms::Sym`, 32 bits), one interned after it is asked too.
     Atom,
     /// A value the engine makes as a `u32`: a kind, a field, a position, a line, a depth, a child's place.
@@ -1387,8 +1389,8 @@ pub(super) enum ColKind {
 impl Batch {
     /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
     /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
-    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every slot of the
-    /// least's to the greatest's, so one document's are 32 bits. `[MAX, MIN]` with no documents.
+    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every id of the chunk's
+    /// numbering, 32 bits. `[MAX, MIN]` with no documents.
     pub(super) fn bounds_of(&self, kind: ColKind) -> [i64; 2] {
         let keys = (0..self.docs.len()).fold([i64::MAX, i64::MIN], |[lo, hi], i| {
             let (key, file) = (self.docs.key(i), self.docs.file(i));
@@ -1397,7 +1399,10 @@ impl Batch {
         match kind {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
-            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
+            // Every id a chunk hands out (plan "Chunk node numbers"): 32 bits, its documents made or not.
+            ColKind::Node => [0, i64::from(u32::MAX)],
+            ColKind::Located if keys[0] > keys[1] => keys,
+            ColKind::Located => rerail_blocks::located::Located::range(keys[0], keys[1]),
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
@@ -1601,7 +1606,7 @@ impl Batch {
                 _ => by.column().map(|c| (c, &keys, by)),
             };
             for (c, within, by) in checked.into_iter().chain(also.iter().map(|&c| (c, &keys, ByDocument::Id(c)))) {
-                if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(Source::value(r, row, c)).is_some_and(|k| within.contains(&k))) {
+                if let Some(row) = (0..Source::len(r)).find(|&row| !by.document(&self.docs, Source::value(r, row, c)).is_some_and(|k| within.contains(&k))) {
                     return Err(StoreError::Invalid(format!(
                         "{name}: a row's column {c} ({}) names a document outside its group {keys:?} (hosts {hosts:?}), which a probe of it would not make (decision 0494)",
                         Source::value(r, row, c)
@@ -1736,7 +1741,8 @@ impl Batch {
         paths.sort_unstable();
         let (path_ndv, path_sq) = squares(&mut paths.chunk_by(|a, b| a == b).map(|run| run.len() as i64));
         let (module_ndv, module_sq) = squares(&mut by.values().map(|k| k.len() as i64));
-        Some(vec![("d".into(), rows, rows, rows, rows), ("path".into(), rows, path_ndv, path_sq, path_sq), ("module".into(), rows, module_ndv, module_sq, module_sq)])
+        // A row is its own document's (`documents_of`: its key), so within a document each value is once: sqd is the rows'.
+        Some(vec![("d".into(), rows, rows, rows, rows), ("path".into(), rows, path_ndv, path_sq, rows), ("module".into(), rows, module_ndv, module_sq, rows)])
     }
 
     /// Each host's guests, by key (decision 0055), from the documents' places, none made: what a probe of a guest's
@@ -1937,8 +1943,11 @@ impl MadeRows {
                     .enumerate()
                     .map(|(c, name)| {
                         pairs.resize(0, [0, 0]);
+                        let docs = &self.batch.docs;
                         for &row in &rows {
-                            pairs.push([Source::value(r.as_ref(), row, c), rerail_blocks::located::Located::key_wide(Source::value(r.as_ref(), row, 0))]);
+                            // The row's document: its first column's, by its page (a key column's, its value).
+                            let first = Source::value(r.as_ref(), row, 0);
+                            pairs.push([Source::value(r.as_ref(), row, c), docs.ids().key_of_value(first).map_or(first, i64::from)]);
                         }
                         pairs.sort_unstable();
                         let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);
@@ -2022,7 +2031,7 @@ impl MadeRows {
         if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) {
             return None;
         }
-        let key = by.document(value)?;
+        let key = by.document(&self.batch.docs, value)?;
         let docs = &self.batch.docs;
         let last = hint[0].wrapping_sub(1) as usize;
         if last < docs.len() && docs.key(last) == key {
@@ -2057,13 +2066,13 @@ impl MadeRows {
         Some(if by.column() == Some(column) && matches!(by, ByDocument::Host(_)) {
             // A host's node: the guests of the documents named, which make the rows.
             let guests = self.batch.guests_of()?;
-            values.iter().filter_map(|&v| by.document(v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
+            values.iter().filter_map(|&v| by.document(&self.batch.docs, v)).flat_map(|h| guests.get(&h).into_iter().flatten().copied()).collect()
         } else if by.column() == Some(column) {
-            values.iter().filter_map(|&v| by.document(v)).collect()
+            values.iter().filter_map(|&v| by.document(&self.batch.docs, v)).collect()
         } else if self.batch.rows.also[self.rel].contains(&column) {
             // A node of the row's own document: every value must name one of the batch's, or the read is not routed
             // (a row of a document left unmade could hold it).
-            values.iter().map(|&v| ByDocument::Id(column).document(v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
+            values.iter().map(|&v| ByDocument::Id(column).document(&self.batch.docs, v).filter(|&k| self.batch.docs.position(k).is_some())).collect::<Option<_>>()?
         } else if self.batch.rows.key_column[self.rel] == Some(column) {
             self.batch.keys_of_documents(values)
         } else if self.batch.rows.path_column[self.rel] == Some(column) {
@@ -2258,7 +2267,7 @@ impl Source for MadeRows {
             return false;
         }
         // Its documents' groups, made if they are not: their ranges hold every row a key names.
-        let docs: BTreeSet<u32> = keys.iter().filter_map(|&v| by.document(v)).collect();
+        let docs: BTreeSet<u32> = keys.iter().filter_map(|&v| by.document(&self.batch.docs, v)).collect();
         let groups = self.batch.groups_of(docs);
         let r = self.batch.made_so_far(self.rel);
         let (rel, mut row) = (r.as_ref(), vec![0i64; columns.len()]);
@@ -2356,7 +2365,7 @@ impl Source for MadeRows {
                 rows.extend(range);
             } else {
                 let c = by.own_column()?;
-                rows.extend(range.filter(|&row| by.document(Source::value(r.as_ref(), row, c)).is_some_and(|k| docs.contains(&k))));
+                rows.extend(range.filter(|&row| by.document(&self.batch.docs, Source::value(r.as_ref(), row, c)).is_some_and(|k| docs.contains(&k))));
             }
         }
         rows.sort_unstable();
@@ -2379,7 +2388,7 @@ impl Source for MadeRows {
         let mut rows = rerail_blocks::vector::Vector::new();
         for g in groups {
             rows.extend(g.ranges[self.rel].clone().filter(|&row| {
-                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.own_column().is_none_or(|c| by.document(Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
+                _values.contains(&Source::value(r.as_ref(), row, _column)) && by.own_column().is_none_or(|c| by.document(&self.batch.docs, Source::value(r.as_ref(), row, c)) == u32::try_from(_doc).ok())
             }));
         }
         Some(rows)
@@ -2468,13 +2477,22 @@ impl Source for MadeRows {
         if let Some(t) = self.done() {
             return t.range_lookup(_column, _lower, _upper);
         }
-        // A range of the column that names a document, within known bounds: its documents' keys, each made.
-        if let (Some((lo, _)), Some((hi, _))) = (_lower, _upper)
-            && self.by().own_column() == Some(_column)
-            && let (Some(first), Some(last)) = (self.by().document(lo), self.by().document(hi))
-        {
-            let keys = self.batch.docs.keys().filter(|k| (first..=last).contains(k));
-            let groups = self.batch.groups_of(keys.collect::<Vec<_>>());
+        // A range of the column that names a document, within known bounds: its documents, each made. A key column's
+        // are the keys between its ends; a node column's, the documents whose ids it meets (their ids are their bases'
+        // runs, in making order: plan "Chunk node numbers").
+        let docs = &self.batch.docs;
+        let met: Option<Vec<u32>> = match ((_lower, _upper), self.by()) {
+            ((Some((lo, _)), Some((hi, _))), by) if by.own_column() == Some(_column) => match by {
+                ByDocument::Key(_) => match (u32::try_from(lo), u32::try_from(hi)) {
+                    (Ok(first), Ok(last)) => Some(docs.keys().filter(|k| (first..=last).contains(k)).collect()),
+                    _ => None,
+                },
+                _ => Some(docs.keys().filter(|&k| docs.ids().numbered_if(k).and_then(|n| n.ids_of()).is_some_and(|(a, b)| i64::from(a) <= hi && i64::from(b) > lo)).collect()),
+            },
+            _ => None,
+        };
+        if let Some(keys) = met {
+            let groups = self.batch.groups_of(keys);
             let r = self.batch.made_so_far(self.rel);
             let within = |v: i64| _lower.is_none_or(|(lo, inc)| if inc { v >= lo } else { v > lo }) && _upper.is_none_or(|(hi, inc)| if inc { v <= hi } else { v < hi });
             let mut rows = rerail_blocks::vector::Vector::new();

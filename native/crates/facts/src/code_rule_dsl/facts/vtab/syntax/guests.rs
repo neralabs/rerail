@@ -48,6 +48,14 @@ pub(super) const HOST_ROUTED: &[&str] = &["parsed", "sub_tape"];
 /// The guests' relations' other columns of a node of the guest itself (`made::Rows::also`): `parsed`'s root.
 pub(super) const OWN_NODES: &[(&str, &[usize])] = &[("parsed", &[2])];
 
+/// Host place `at` (`Guest::at`, `TapePlace::at`: a located id, `host`'s key and its low bits, as it is kept across
+/// rounds and chunks) as the chunk's id of that node or span, which its rows hold (plan "Chunk node numbers"): its
+/// local id in the host, plus the host's base. As it is where the host is no document the chunk has made.
+fn at_id(docs: &dyn Hosts, host: u32, at: i64) -> i64 {
+    let low = rerail_blocks::located::Located(at).low();
+    docs.host(host).filter(|h| h.is_numbered()).and_then(|h| h.local_of(low).map(|l| h.global(l))).unwrap_or(at)
+}
+
 pub(super) trait Hosts {
     /// The projection of the document of key `key`.
     fn host(&self, key: u32) -> Option<&Projected>;
@@ -113,11 +121,12 @@ impl GuestRows {
             }
         }
         self.program.push([key, i64::from(g.file), grammar]);
-        self.sub_tape.push([g.at, grammar, tape]);
+        let at_n = at_id(docs, g.host, g.at);
+        self.sub_tape.push([at_n, grammar, tape]);
         let Some(r) = root else { return };
-        self.parsed.push([g.at, grammar, r]);
+        self.parsed.push([at_n, grammar, r]);
         if guest_of {
-            self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, g.at]));
+            self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at_n]));
         }
         // A program's nodes stand at its host's bytes through its place (a Vue template's piece, decision 0597): a
         // finding at one stands there, its own line and column in the file, as a tape value's does at its string.
@@ -144,11 +153,12 @@ impl GuestRows {
     #[allow(clippy::too_many_arguments)]
     fn tape_places(&mut self, p: &Projected, places: &[TapePlace], grammar: i64, tape: i64, root: Option<i64>, docs: &dyn Hosts, [host_nodes, guest_of, guest_place]: [bool; 3]) {
         for at in places {
-            self.sub_tape.push([at.at, grammar, tape]);
+            let at_n = at_id(docs, at.host, at.at);
+            self.sub_tape.push([at_n, grammar, tape]);
             if let Some(r) = root {
-                self.parsed.push([at.at, grammar, r]);
+                self.parsed.push([at_n, grammar, r]);
                 if guest_of {
-                    self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at.at]));
+                    self.guest_of.extend(p.node_ids().map(|(_, _, n)| [n, at_n]));
                 }
                 if guest_place {
                     self.guest_places(p, docs, at.host, at.at, &at.place);
@@ -165,6 +175,7 @@ impl GuestRows {
     /// text, which is no file's.
     fn guest_places(&mut self, p: &Projected, docs: &dyn Hosts, host: u32, at: i64, place: &Placement) {
         let Some(lines) = docs.host(host).and_then(|h| h.extra.as_deref()) else { return };
+        let at = at_id(docs, host, at);
         for ((_, span), (_, _, n)) in p.spans().zip(p.node_ids()) {
             let (line, _, col) = lines.place(place.host(span));
             self.guest_place.push([n, at, i64::from(line), i64::from(col)]);
@@ -175,7 +186,7 @@ impl GuestRows {
     fn host_nodes(&mut self, p: &Projected, docs: &dyn Hosts, host: u32, at: i64, place: &Placement) {
         let Some(host) = docs.host(host) else { return };
         // A node id's low bits are its local id only under preorder ids.
-        let Some(at) = host.local_of((at & 0xffff_ffff) as u32) else { return };
+        let Some(at) = host.local_of(rerail_blocks::located::Located(at).low()) else { return };
         if at >= host.len() {
             return;
         }

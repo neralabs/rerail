@@ -20,8 +20,8 @@ pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)>
     let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
     let local = p.nodes().find(|&(_, id)| matches!(dialect.name(p.f(), id), "string" | "concatenated_string")).unwrap().0;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
-        // `at` is a node id: its low bits are a local id only under preorder ids.
-        let at = p.local_of(at as u32).expect("a node of the document");
+        // `at` is a node id: a projection alone is numbered by its local ids (`Projected::global`).
+        let at = u32::try_from(at).expect("a node of the document");
         let start = p.f().start(p.node(at as u32));
         let node = positions.iter().find(|&&(s, _)| s == start).unwrap().1;
         (v, node, spec, offset)

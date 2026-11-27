@@ -5758,7 +5758,15 @@ fn run_observed_within(
             let mut given_rows: BTreeMap<String, Vec<Vector<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
             // Every row's value asked, answered (`made.admit`), then all of them admitted at once (`admit_values`).
             let mut admitted: Vec<(u32, Option<u32>, bool)> = Vec::new();
+            // A request's node leaves the chunk here (plan "Chunk node numbers", step 3): the guest it asks for is
+            // placed at it as its document's key and its low bits there (`Numbering::located`), as it is kept.
+            let numbering = grower.numbering();
+            let located = |v: i64| numbering.as_ref().map_or(v, |n| n.located(v));
             for row in rows.iter() {
+                let mut row: Vector<i64> = row.iter().copied().collect();
+                if let Some(at) = row.first_mut() {
+                    *at = located(*at);
+                }
                 // The value asked, the keys of the nodes its rows hold (its own, and its place's or its node's
                 // document's, `Values::add`), and whether it was made here.
                 let entry = match (req, &row[..]) {

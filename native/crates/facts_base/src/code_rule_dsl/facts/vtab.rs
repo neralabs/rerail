@@ -278,6 +278,9 @@ pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
+    /// The numbering of the chunk whose nodes it holds (plan "Chunk node numbers"): a chunk's views name it, and a
+    /// connection that binds one reads its ids by it (`numbering::of`).
+    fn numbering(&self) -> Option<Arc<dyn super::numbering::Numbering>> { None }
     /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), its further arguments `more`
     /// (`op_at`'s place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source
     /// or function.
@@ -787,6 +790,9 @@ impl Modules {
         Ok(())
     }
     fn bind_inner(&self, db:&Connection, name:&str, source:Arc<dyn Source>, restored:bool)->Result<()> {
+        if let Some(n) = source.numbering() {
+            super::numbering::set(db, n);
+        }
         let mut bindings = self.bindings.borrow_mut();
         if let Some(binding) = bindings.get(name) {
             return binding.set(source);

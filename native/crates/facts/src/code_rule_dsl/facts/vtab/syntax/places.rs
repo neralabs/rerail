@@ -8,7 +8,7 @@
 //! the heap that staged them. [`Places`] binds the view and the span rows as one relation: the view's rows first,
 //! then the spans'.
 //!
-//! A lookup by id goes to the side that holds the id (`granules::is_extra`). A node's id never reaches the spans, so a
+//! A lookup by id goes to the side that holds the id (`Places::is_span`). A node's id never reaches the spans, so a
 //! probe of a node's place makes no document (the made rows' probes made a node's document and every relation of its
 //! group).
 //!
@@ -29,15 +29,13 @@ pub(super) const NAMES: [&str; 5] = ["line", "end_line", "col", "docof", "text"]
 pub struct Places {
     view: Arc<dyn Source>,
     spans: Arc<dyn Source>,
+    /// The view's batch: an id's document and local id, by its page (plan "Chunk node numbers").
+    batch: Option<Arc<super::Batch>>,
     /// Where the device reads it, made on the first ask (`device_view`); `None` where it cannot.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     device: std::sync::OnceLock<Option<OnDevice>>,
 }
 
-/// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position.
-fn is_span(id: i64) -> bool {
-    granules::is_extra(id as u32)
-}
 
 /// The kernels' `PlacedDir`: the view's directory, the spans' relation where it lies (its block's address and its
 /// descriptor's offset), and the view's rows, which the spans' follow.
@@ -71,14 +69,25 @@ struct OnDevice {
 impl Places {
     pub fn new(view: Arc<dyn Source>, spans: Arc<dyn Source>) -> Self {
         debug_assert_eq!(view.columns().len(), spans.columns().len());
+        let batch = view.syntax_batch().and_then(|b| b.downcast::<super::Batch>().ok());
         Places {
             view,
             spans,
+            batch,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             device: std::sync::OnceLock::new(),
         }
     }
 
+    /// Whether id `id` is one of `Extra`'s spans (`granules::ExtraSpan`), not a node, token or position: a local id
+    /// past its document's nodes' and positions' (`Projected::locs`).
+    fn is_span(&self, id: i64) -> bool {
+        self.batch.as_ref().is_some_and(|b| b.is_span(id))
+    }
+    /// The key of id `id`'s document; its value where it is no id of the batch.
+    fn key_of(&self, id: i64) -> i64 {
+        self.batch.as_ref().and_then(|b| b.docs.of_id(id).map(|(d, _)| i64::from(b.docs.key(d)))).unwrap_or(id)
+    }
     /// The view's rows: the first span row's number.
     fn first(&self) -> usize {
         self.view.len()
@@ -87,7 +96,7 @@ impl Places {
     /// The rows of the ids `values` on `column`, each id from the side that holds it on column 0 (a node's from the
     /// view, a span's from the spans), from both on another column: `None` when a part asked cannot answer.
     fn by_side(&self, column: usize, values: &[i64], of: impl Fn(&dyn Source, &[i64]) -> Option<Vector<usize>>) -> Option<Vector<usize>> {
-        let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| is_span(v)) } else { (values.to_vec(), values.to_vec()) };
+        let (spans, nodes): (Vec<i64>, Vec<i64>) = if column == 0 { values.iter().partition(|&&v| self.is_span(v)) } else { (values.to_vec(), values.to_vec()) };
         let mut rows = if nodes.is_empty() { Vector::new() } else { of(&*self.view, &nodes)? };
         if !spans.is_empty() {
             let first = self.first();
@@ -187,7 +196,7 @@ impl Source for Places {
         }
     }
     /// The view's walk of the keyed rows, then the spans': only at the keys that are `Extra` spans' ids (no node's is:
-    /// `granules::is_extra`), their own keyed walk, else the rows of those keys' documents, else every span row with a
+    /// `Places::is_span`), their own keyed walk, else the rows of those keys' documents, else every span row with a
     /// key. A walk of every span row made the whole batch, every relation of every group: the cross part's count of
     /// `docof` at the exports' nodes, 85 MB of the 300-file batch at the M3's peak (ab200), though no node it was asked
     /// for is a span.
@@ -203,7 +212,7 @@ impl Source for Places {
             return true;
         }
         let first = self.first();
-        let spans: rustc_hash::FxHashSet<i64> = keys.iter().copied().filter(|&k| super::granules::is_extra(k as u32)).collect();
+        let spans: rustc_hash::FxHashSet<i64> = keys.iter().copied().filter(|&k| self.is_span(k)).collect();
         if spans.is_empty() {
             return true;
         }
@@ -213,7 +222,7 @@ impl Source for Places {
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        let docs: BTreeSet<u32> = spans.iter().map(|&s| rerail_blocks::located::Located(s).key()).collect();
+        let docs: BTreeSet<u32> = spans.iter().filter_map(|&s| u32::try_from(self.key_of(s)).ok()).collect();
         if let Some(rows) = self.spans.rows_of_documents(&docs) {
             let mut row = vec![0; all.len()];
             for r in rows {
@@ -270,7 +279,7 @@ impl Source for Places {
         column == 0 && self.view.keys_rows(0)
     }
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
-        if is_span(value) {
+        if self.is_span(value) {
             let first = self.first();
             return self.spans.lookup(column, &[value])?.first().map(|r| first + r);
         }
@@ -289,7 +298,7 @@ impl Source for Places {
         }
         let mut row = [0i64; 8];
         let routed = column == 0;
-        if !(routed && is_span(value)) {
+        if !(routed && self.is_span(value)) {
             if !self.view.lookup_read_at(column, value, columns, cursor, each) {
                 let Some(rows) = self.view.lookup(column, &[value]) else { return false };
                 for r in rows {
@@ -361,9 +370,9 @@ impl Pairs {
     fn new() -> Pairs {
         Pairs(crate::code_rule_dsl::facts::rows::vector_in(None, 0))
     }
-    /// A row of `id` (the first column: its document is the high half) and `value`.
-    fn add(&mut self, id: i64, value: i64) {
-        self.0.push([value, rerail_blocks::located::Located::key_wide(id)]);
+    /// A row of document `doc` (its first column's) and `value`.
+    fn add(&mut self, doc: i64, value: i64) {
+        self.0.push([value, doc]);
     }
     /// `(rows, distinct values, the sum of their postings' squares, that sum within each document)`.
     fn measure(mut self) -> (i64, i64, i64, i64) {
@@ -396,9 +405,9 @@ fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     let mut view = Pairs::new();
     let unmade = p.spans.as_any().and_then(|a| a.downcast_ref::<super::made::MadeRows>()).is_some_and(|s| !s.is_done());
     let sampled = if unmade { p.spans.statistics() } else { None };
-    p.view.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
+    p.view.for_rows(&[0, 1], &mut |_, row| view.add(p.key_of(row[0]), row[1]));
     if sampled.is_none() {
-        p.spans.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
+        p.spans.for_rows(&[0, 1], &mut |_, row| view.add(p.key_of(row[0]), row[1]));
     }
     let (rows, ndv, sq, sqd) = view.measure();
     let (r, ndv, sq, sqd) = match sampled.as_ref().and_then(|s| s.get(1)) {

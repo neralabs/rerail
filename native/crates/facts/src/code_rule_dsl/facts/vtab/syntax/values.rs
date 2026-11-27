@@ -273,6 +273,8 @@ struct Parts {
     total: usize,
     /// The parts by the document keys of the node ids their rows hold (`Keys`).
     by_key: Keys,
+    /// The chunk's numbering (`Values::ids`): a node's document's key is its page's.
+    ids: Option<Arc<super::made::Ids>>,
     /// The parts by the keys of their documents and those documents' files: a lookup by a document key (`Parts::of`).
     by_doc: Keys,
     /// The parts that hold each node of a document not theirs (a host's node their rows name: `guest_of`'s string,
@@ -287,6 +289,10 @@ struct Parts {
 
 impl Parts {
     /// The part holding row `row` of the parts.
+    /// The key of node `v`'s document, by its page in the chunk's numbering; `None` for a value that is no node.
+    fn key_of(&self, v: i64) -> Option<u32> {
+        self.ids.as_ref()?.key_of_value(v)
+    }
     fn at(&self, row: usize) -> Option<(&Part, usize)> {
         let i = self.list.partition_point(|p| p.start <= row).checked_sub(1)?;
         let p = &self.list[i];
@@ -297,7 +303,7 @@ impl Parts {
     /// of the document `v` (a part is found by its documents' keys and their files', `Values::add`): no part is read
     /// for a key it does not hold. Every part for a value no key names (an atom, a number).
     fn of(&self, v: i64, docs: bool, each: &mut dyn FnMut(&Part)) {
-        let key = if docs { u32::try_from(v).ok() } else { rerail_blocks::located::is_located(v).then_some(rerail_blocks::located::Located(v).key()) };
+        let key = if docs { u32::try_from(v).ok() } else { self.key_of(v) };
         let Some(key) = key else {
             if !docs {
                 self.list.iter().for_each(each);
@@ -327,6 +333,9 @@ pub struct Values {
     admitted: AtomicUsize,
     /// Each admitted value's batch, in the order admitted: the documents a view's parts are rows of.
     batches: RwLock<Vec<Arc<super::Batch>>>,
+    /// The chunk's numbering (its growth's ids, which every value's batch shares: plan "Chunk node numbers"): a node's
+    /// document's key is its page's. Set by the first value admitted.
+    ids: std::sync::OnceLock<Arc<super::made::Ids>>,
     /// The views' directory over the chunk's batch and the values' (`device_chunk::views_over`), and the values it
     /// was made with.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -373,6 +382,7 @@ impl Values {
             }
             own_docs.sort_unstable();
             own_docs.dedup();
+            let _ = self.ids.set(Arc::clone(b.docs.ids()));
             self.batches.write().push(b);
         }
         docs.sort_unstable();
@@ -402,6 +412,9 @@ impl Values {
                 parts.insert(Arc::from(name.as_str()), Arc::default());
             }
             let p = Arc::make_mut(parts.get_mut(name.as_str()).expect("inserted"));
+            if p.ids.is_none() {
+                p.ids = self.ids.get().cloned();
+            }
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
             let slice = src.as_any().and_then(|a| a.downcast_ref::<Slice>());
@@ -429,8 +442,11 @@ impl Values {
                 // row at a time.
                 let columns: Vec<usize> = (0..src.columns().len()).collect();
                 let mut named: rustc_hash::FxHashSet<i64> = rustc_hash::FxHashSet::default();
+                // A value is a node where the chunk's numbering handed it out (its page taken); a column of atoms or
+                // numbers may name some too, which adds a part to their lookups, never takes one away.
+                let ids = self.ids.get().cloned();
                 src.for_rows(&columns, &mut |_, row| {
-                    named.extend(row.iter().copied().filter(|&v| rerail_blocks::located::is_located(v) && !own.contains(&rerail_blocks::located::Located(v).key())));
+                    named.extend(row.iter().copied().filter(|&v| ids.as_ref().and_then(|i| i.key_of_value(v)).is_some_and(|k| !own.contains(&k))));
                 });
                 for v in named {
                     p.hosted.add(v, i);
@@ -450,7 +466,7 @@ impl Values {
     pub fn source_of(&self, name: &str, n: i64) -> Option<Arc<dyn Source>> {
         let parts = self.parts.load();
         let p = parts.get(name)?;
-        let i = p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).next()?;
+        let i = p.by_key.parts(p.key_of(n)?, p.list.len()).next()?;
         Some(Arc::clone(&p.list[i].src))
     }
     fn total(&self, name: &str) -> usize {
@@ -784,7 +800,7 @@ impl Source for Layered {
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more))
+        p.by_key.parts(p.key_of(n)?, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more))
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<super::super::NodeRead<'_>> {
@@ -793,7 +809,7 @@ impl Source for Layered {
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
+        p.by_key.parts(p.key_of(n)?, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -820,7 +836,9 @@ impl Source for Layered {
         let keys = [1, (1i64 << 31) - 1];
         let [alo, ahi] = match kind {
             ColKind::Key => keys,
-            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
+            // Every id a chunk hands out (plan "Chunk node numbers").
+            ColKind::Node => [0, i64::from(u32::MAX)],
+            ColKind::Located => rerail_blocks::located::Located::range(keys[0], keys[1]),
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         };
         Some([lo.min(alo), hi.max(ahi)])
@@ -1265,7 +1283,8 @@ impl Source for Layered {
             self.scanned(|s| {
                 s.each(at, self.width.max(1), &mut |i, r| {
                     let id = r[column];
-                    each(i, rerail_blocks::located::document_of(id));
+                    // Its page's key (plan "Chunk node numbers"); a value no id is, its value (a document's key).
+                    each(i, self.values.ids.get().and_then(|ids| ids.key_of_value(id)).map_or(id, i64::from));
                     true
                 });
             });

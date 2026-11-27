@@ -9,7 +9,7 @@
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
 use crate::reads::{NONE, f16, f16z::Z};
-use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
+use rerail_clif::ids::Numbering;
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
 use rerail_clif::view_reads::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
@@ -244,16 +244,10 @@ impl<'a> Doc<'a> {
         // SAFETY: as `tape_node`.
         unsafe { self.numbering().is(item, x) }
     }
-    /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
+    /// Numbered node `l`'s id in its chunk: its document's base plus its local id `l` (plan "Chunk node numbers").
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
-        let low = if self.entry.preorder != 0 {
-            l
-        } else {
-            // SAFETY: as `tape_node`.
-            unsafe { self.numbering().low_of(0, l) }
-        };
-        (i64::from(self.entry.key) << 32) | i64::from(low)
+        i64::from(self.entry.base + l)
     }
     /// Numbered node `l`'s parent's id: its tape parent's, or the root's where that is not numbered (a narrowed
     /// projection's anchor); -1 for the root.
@@ -445,29 +439,11 @@ impl<'a> Doc<'a> {
         }
     }
 
-    /// `Loc` position `l`'s id: a node's or token's by its numbering, a span's in the top slots; `l` itself where
-    /// ids are local ids.
+    /// `Loc` position `l`'s id in its chunk: its document's base plus its local id `l`, a node's, a token's or a
+    /// span's alike (plan "Chunk node numbers").
     #[inline]
     pub fn loc_id(&self, l: u32) -> i64 {
-        let e = self.entry;
-        let low = if e.preorder != 0 {
-            l
-        } else if l < e.nodes {
-            // SAFETY: as `tape_node`.
-            unsafe { self.numbering().low_of(0, l) }
-        } else {
-            let i = l - e.nodes;
-            if i < e.tokens {
-                // SAFETY: as `tape_node`.
-                unsafe { self.numbering().low_of(1, i) }
-            } else {
-                let j = i - e.tokens;
-                let hi = (j >> INDEX_BITS).min(SPAN_SLOTS - 1);
-                let slot = ((1u32 << SLOT_BITS) - 1) - hi;
-                slot << INDEX_BITS | j & ((1 << INDEX_BITS) - 1)
-            }
-        };
-        (i64::from(e.key) << 32) | i64::from(low)
+        i64::from(self.entry.base + l)
     }
     /// The document's lines (`lines_count`), read off its line index: the one definition of a line and a place
     /// (decision 0612); a guest's are its host's.
@@ -647,19 +623,22 @@ impl<'a> Doc<'a> {
         let end = self.tape.end_of(p);
         self.numbered_from(self.tape.next_in(x, end), end)
     }
-    /// `view_number(low)`: the numbered node whose id's low 32 bits are `low`, or `NO_ROW`.
+    /// `view_number(local)`: the numbered node of local id `local` (a node's local id is its number, plan "Chunk node
+    /// numbers"), or `NO_ROW` for a token's, a position's or a span's.
     #[inline]
-    pub fn number(&self, low: u32) -> u32 {
-        let l = if self.entry.preorder != 0 {
-            low
-        } else {
-            // SAFETY: as `tape_node`.
-            match unsafe { self.numbering().number_of(low) } {
-                Some((0, number)) => number,
-                _ => NO_ROW,
-            }
-        };
-        if l < self.entry.nodes { l } else { NO_ROW }
+    pub fn number(&self, local: u32) -> u32 {
+        if local < self.entry.nodes { local } else { NO_ROW }
+    }
+    /// Its nodes' and positions' local ids (`Projected::locs`): its tokens, where its text is its own the whole text
+    /// and each line, then its end points, past its nodes. Its `Extra` spans' local ids follow.
+    pub fn locs(&self) -> u32 {
+        let text = if self.entry.own_text != 0 { 1 + self.loc_count() } else { 0 };
+        self.entry.nodes + self.entry.tokens + text + self.entry.ends
+    }
+    /// The line of `Extra` span `local`: 0 its source's, `l` from 1 its line `l`'s; `None` for another local id.
+    fn line_of_local(&self, local: u32) -> Option<u32> {
+        let l = local.checked_sub(self.locs())?;
+        (l <= self.loc_count()).then_some(l)
     }
     /// `view_text_span(l)`: numbered node `l`'s bytes' range in its document's own source, `start << 32 | end`.
     #[inline]
@@ -667,17 +646,14 @@ impl<'a> Doc<'a> {
         let x = self.tape_node(l);
         u64::from(self.tape.start(x)) << 32 | u64::from(self.tape.end(x))
     }
-    /// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: line `l`
-    /// from 1, 0 the whole source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
+    /// `view_line_span(local)`: the line whose span is local id `local` (`locs + l`: line `l` from 1, `locs` the whole
+    /// source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
     /// its terminator's last byte, or the source's end on its last line and on line 0; `NO_SPAN` for another id, a
     /// guest's (its lines are its host's) or a line past its last.
     #[inline]
-    pub fn line_span(&self, low: u32) -> u64 {
-        let l = low & ((1 << INDEX_BITS) - 1);
+    pub fn line_span(&self, local: u32) -> u64 {
         let count = self.loc_count();
-        if low >> INDEX_BITS != rerail_clif::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
-            return NO_SPAN;
-        }
+        let Some(l) = self.line_of_local(local).filter(|_| self.entry.own_text != 0) else { return NO_SPAN };
         let len = self.entry.source_len;
         if l == 0 {
             return u64::from(len);
@@ -685,22 +661,21 @@ impl<'a> Doc<'a> {
         let stop = if l >= count { len } else { self.loc_start(l) };
         u64::from(self.loc_start(l - 1)) << 32 | u64::from(stop)
     }
-    /// `view_line_terminated(low)`: whether that line ends with a terminator (from 1, before the last).
+    /// `view_line_terminated(local)`: whether that line ends with a terminator (from 1, before the last).
     #[inline]
-    pub fn line_terminated(&self, low: u32) -> bool {
-        let l = low & ((1 << INDEX_BITS) - 1);
-        low >> INDEX_BITS == rerail_clif::ids::LINE_SLOT && l != 0 && l < self.loc_count()
+    pub fn line_terminated(&self, local: u32) -> bool {
+        self.line_of_local(local).is_some_and(|l| l != 0 && l < self.loc_count())
     }
-    /// The text of the line whose span's id has low bits `low` (`line_span`), read where the source lies, its
+    /// The text of the line whose span is local id `local` (`line_span`), read where the source lies, its
     /// terminator's length off the source's bytes where it has one (`lines_terminator_length`), as
     /// `LineTable::text_of` gives it.
-    pub fn line_text(&self, low: u32) -> Option<&'a str> {
-        let span = self.line_span(low);
+    pub fn line_text(&self, local: u32) -> Option<&'a str> {
+        let span = self.line_span(local);
         if span == NO_SPAN {
             return None;
         }
         let (start, mut stop) = ((span >> 32) as usize, span as u32 as usize);
-        if self.line_terminated(low) {
+        if self.line_terminated(local) {
             stop -= crate::newlines::length_ending_at(self.source, stop - 1);
         }
         std::str::from_utf8(self.source.get(start..stop)?).ok()
