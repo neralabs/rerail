@@ -62,7 +62,7 @@ struct B {
     lbu: u64,
     /// The bytes the run reads a token at by a step: a digit, a quote, a byte past ASCII, and a byte an operator
     /// of two or three bytes may start at (the next byte is `=` or `>`, or the byte is one of `*/<>.` and the next
-    /// the same). A name that ends at one is read by a step too.
+    /// the same; a space before `=` or `>` is not). A name that ends at one is read by a step too.
     slow: u64,
     /// Stratum 2: not in a comment or a string (an f-string's interiors are in its string).
     code: u64,
@@ -197,7 +197,7 @@ fn block(v: V, vn: V) -> B {
     };
     let (lbm, rbm) = if is(k2, nib::BRACE).any() { (eq(b'{').to_bitmask(), eq(b'}').to_bitmask()) } else { (0, 0) };
     // The next byte `=` or `>`: one subtraction and compare.
-    let next_eq_gt = (vn - s(b'=')).simd_lt(s(2));
+    let next_eq_gt = (vn - s(b'=')).simd_lt(s(2)) & v.simd_ne(s(b' '));
     B {
         word: is(k1, nib::WORD).to_bitmask(),
         space,
@@ -1259,7 +1259,11 @@ fn keyword_at(src: &[u8], i: usize, len: usize) -> (T, u8) {
     let mask = if len >= 8 { !0u64 } else { (1u64 << (8 * len)) - 1 };
     let lo = rerail_simd8::swar::load8(src, i) & mask;
     let k = KWS[(lo.wrapping_mul(KW_MULT) >> (64 - KW_BITS)) as usize];
-    core::hint::select_unpredictable(k.lo == lo && usize::from(k.len) == len, (k.kind, k.soft), (T::Name, 0))
+    // The slot's word or a name, by a mask of the comparison: no branch.
+    let hit = 0u8.wrapping_sub(u8::from(k.lo == lo) & u8::from(usize::from(k.len) == len));
+    let kind = (k.kind as u8 & hit) | (T::Name as u8 & !hit);
+    // SAFETY: `kind` is the discriminant of `k.kind` or of `T::Name` (`T` is `repr(u8)`).
+    (unsafe { core::mem::transmute::<u8, T>(kind) }, k.soft & hit)
 }
 
 /// The operator at bytes `a`, `b`, `c` and its length, by the tables (the lean lexer's `operator_at`, the longest).
@@ -1552,6 +1556,8 @@ impl<'s> Walk<'s> {
             let stop = (!b.code | b.eol | ff | b.bs | !valid) & (!0u64 << q0);
             let before_stop = if stop == 0 { !0u64 } else { stop.isolate_lowest_one() - 1 };
             let mut starts = ((!b.skip & !(b.word & (b.word << 1)) & (!0u64 << q0)) | (u64::from(at == k) << q0)) & before_stop;
+            // The next block: the rest of a name that reaches this one's end.
+            let nb = self.t.blk((base >> 6) + 1);
             // Each token's start is its bit of `starts`, and no token waits on the one before: a name ends at its run
             // of word bits, an operator after its one byte (one of more bytes is at a `slow` bit). Which of the two it
             // is, and a name's keyword, are selections, not branches.
@@ -1560,11 +1566,18 @@ impl<'s> Walk<'s> {
                 starts &= starts - 1;
                 let pos = base + q as usize;
                 let c = src[pos];
-                let words = (!(b.word >> q)).trailing_zeros() as usize;
-                // The rare tokens, one branch: a number (a digit, or a `.` before one), a quote, a byte past ASCII, an
-                // operator of more than one byte, and a name past the block or to a `slow` byte.
+                // A name's run of word bits (none for an operator's byte), on into the next block's where it reaches
+                // this one's end.
+                let w0 = (!(b.word >> q)).trailing_zeros() as usize;
+                let cross = q as usize + w0 == 64;
+                let w1 = (!nb.word).trailing_zeros() as usize * usize::from(cross);
+                let words = w0 + w1;
+                // The byte after the name: its `slow` bit, in this block or the next.
                 let r = b.slow >> q;
-                let rare = r | (u64::from(c == b'.') & (r >> 1)) | u64::from(q as usize + words == 64) | (r >> words.min(63));
+                let after = core::hint::select_unpredictable(cross, nb.slow >> w1.min(63), r >> w0.min(63));
+                // The rare tokens, one branch: a number (a digit, or a `.` before one), a quote, a byte past ASCII, an
+                // operator of more than one byte, a name to a `slow` byte, and one past the next block too.
+                let rare = r | (u64::from(c == b'.') & (r >> 1)) | after | u64::from(w1 == 64);
                 if rare & 1 != 0 {
                     let end = match CLASS[usize::from(c)] {
                         C_NAME => {
@@ -1605,7 +1618,9 @@ impl<'s> Walk<'s> {
                 let (wk, ws) = keyword_at(src, pos, words);
                 let (ok, ol) = OP1L[usize::from(c)];
                 let name = (b.word >> q) & 1 != 0;
-                if !name && ol == 0 {
+                // An operator's byte with no operator: one test of both, so that it is not a branch on which of the
+                // two the token is.
+                if u8::from(!name) & u8::from(ol == 0) != 0 {
                     return Err(refuse(pos));
                 }
                 let (kind, soft, end) = core::hint::select_unpredictable(name, (wk, ws, pos + words), (ok, 0, pos + 1));
