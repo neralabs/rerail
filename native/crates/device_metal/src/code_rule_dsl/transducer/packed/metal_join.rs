@@ -6216,9 +6216,16 @@ pub mod tests {
     /// keys. Built once: the next request, in the same batch or a later one, finds it the relation's own.
     #[test]
     fn the_devices_index_of_a_relation_is_the_hosts() {
-        if rerail_accel_gpu::gpu::join::device().is_err() {
-            return;
+        // The process's device's builder, where it has one, and the join program's Rust on the host (`on_host`, a
+        // run bound to the CPU), wherever it runs.
+        if rerail_accel_gpu::gpu::join::device().is_ok() {
+            devices_index_is_the_hosts();
         }
+        let _host = rerail_accel::gpu::shared::on_host();
+        devices_index_is_the_hosts();
+    }
+
+    fn devices_index_is_the_hosts() {
         // Its index (some 1.8 MB) past the megabyte a host block's wrap rounds its used extent up to.
         let n = 200_000;
         let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
@@ -6256,7 +6263,8 @@ pub mod tests {
                 room.index
             };
             let (d, w) = (r.index_at(ix.index as usize), h.index_at(hosts));
-            if std::ptr::eq(dev, &placed) {
+            // The case is a device buffer's binding: the host's reads its block where it lies.
+            if std::ptr::eq(dev, &placed) && !rerail_accel::gpu::shared::is_on_host() {
                 let end = dev.home.as_ref().unwrap().block.offset_of(d.rows.as_slice().as_ptr()) + 4 * n;
                 assert!(end as u64 > placed.buffer.buffer.length(), "the case: the index past the buffer its relation was bound by");
             }

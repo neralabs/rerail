@@ -2258,14 +2258,15 @@ UKL_INLINE void ix_offs_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys
 // it, holds its key. Its marks lie after its rows' room, `n` of them.
 #define MARK_REACH 8u
 // Each row's tag is its key pass's (`ix_key_one`, `tags` by row from `eb`): no row is read again for its hash, only a
-// pair's whose tags agree, for their keys.
+// pair's whose tags agree, for their keys. A view's keys are not compared, as the host's `build_index_hashed`: no
+// place of it is `MARK_SAME`, and a probe compares its keys.
 UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
                             JSPACE const uint32_t* tags, JSPACE const IxP* p, JSPACE const uint8_t* B_far, uint32_t kb, uint32_t eb, uint32_t t)
 {
     if (t >= ix_rows(B, p)) return;
     uint32_t lo = offs[keys[eb + t] - kb], rt = rows[t] - p->from, tag = tags[eb + rt];
     uint32_t same = 0u;
-    for (uint32_t u = t; u > lo && t - u < MARK_REACH;) {
+    for (uint32_t u = t; p->kind == 0ul && u > lo && t - u < MARK_REACH;) {
         u--;
         uint32_t ru = rows[u] - p->from;
         if (tags[eb + ru] != tag) continue;

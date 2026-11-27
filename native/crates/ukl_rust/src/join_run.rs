@@ -1955,31 +1955,49 @@ unsafe fn ix_key_tag(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32
 /// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
 const MARK_REACH: u32 = 8;
 
+/// Places a tile of `ix_mark_range`'s takes at once: their tags gathered in place order first.
+const MARK_TILE: u32 = 256;
+
 /// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag (`tags`, by row from `eb`, its key pass's),
-/// and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before it, holds its key. Its
-/// marks after its rows' room (`n`).
+/// and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before it, holds its key; a
+/// view's none (its keys are not compared, as the host's `build_index_hashed`: a probe compares them). Its marks after
+/// its rows' room (`n`).
+///
+/// As the host's `fill_marks`: a tile's places' tags gathered once, in place order (each place's row's, at the
+/// level's `eb` + its row), with the `MARK_REACH` places before the tile, and each place's look back read there, not
+/// gathered again row by row.
 unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, tags: *const u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     let row = |u: u32| (*rows.add(u as usize)).wrapping_sub(p.from);
-    // Place `u`'s tag, its row's as its key's pass wrote it (`ix_key_tag`, at the level's `eb` + its row): no row is
-    // read again for its hash, only a pair's whose tags agree, for their keys.
     let tag = |u: u32| *tags.add((eb + row(u)) as usize);
-    for t in t0..t1 {
-        let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
-        let rt = row(t);
-        let tg = tag(t);
-        let mut same = false;
-        for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
-            let ru = row(u);
-            if tag(u) != tg {
-                continue;
-            }
-            let (mut mu, mut mt) = (NONE, NONE);
-            let (a, b) = (ix_row(bb, bf, p, ru, &mut mu), ix_row(bb, bf, p, rt, &mut mt));
-            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i]) == b.get(p.cols[i]));
-            break;
+    let view = p.kind != 0;
+    let mut tg = [core::mem::MaybeUninit::<u32>::uninit(); (MARK_TILE + MARK_REACH) as usize];
+    let mut a = t0;
+    while a < t1 {
+        let z = a.saturating_add(MARK_TILE).min(t1);
+        let base = if view { a } else { a.saturating_sub(MARK_REACH) };
+        for u in base..z {
+            tg[(u - base) as usize].write(tag(u));
         }
-        *rows.add((p.n + t) as usize) = tg | u32::from(same);
+        let at = |u: u32| tg[(u - base) as usize].assume_init();
+        for t in a..z {
+            let me = at(t);
+            let mut same = false;
+            if !view {
+                let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
+                for u in (lo.max(t.saturating_sub(MARK_REACH))..t).rev() {
+                    if at(u) != me {
+                        continue;
+                    }
+                    let (mut mu, mut mt) = (NONE, NONE);
+                    let (x, y) = (ix_row(bb, bf, p, row(u), &mut mu), ix_row(bb, bf, p, row(t), &mut mt));
+                    same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| x.get(p.cols[i]) == y.get(p.cols[i]));
+                    break;
+                }
+            }
+            *rows.add((p.n + t) as usize) = me | u32::from(same);
+        }
+        a = z;
     }
 }
 
