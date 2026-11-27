@@ -1,1 +1,1 @@
-While a hook or an agent waits for an answer, the daemon's walk of the repository's other worktrees pauses after its current batch of file checks and goes on once the answer is written, so the answer's own reads no longer wait behind that walk.
+While a hook or an agent waits for an answer, the daemon's read of each of the repository's other worktrees pauses after its current batch of file checks and goes on once the answer is written, so the answer's reads no longer wait behind it; checks of files sessions saw outside that read do not pause once begun.
