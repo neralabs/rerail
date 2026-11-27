@@ -1146,6 +1146,10 @@ struct Building {
 #[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Built {
     ctl: std::sync::Arc<Words>,
+    /// Its program's last phase, its phases, and that phase's items (`Ran`'s): whether it ran to its end.
+    last: usize,
+    phases: usize,
+    items: u32,
 }
 
 impl Built {
@@ -1153,6 +1157,19 @@ impl Built {
     pub(in crate::code_rule_dsl) fn whole(&self) -> bool {
         let flags = self.ctl.get(6);
         flags & (1 | 32) == 0 && self.ctl.get(3) == 0
+    }
+
+    /// Whether the program ran to its end, its indexes built whole: `whole`, and its last phase's items all done
+    /// (`programs_done`'s reading). A chain that spent its dispatches with a phase left stops with no flag set and
+    /// launches again where it went on, its builds' later phases (the rows, after their buckets' starts) not yet run:
+    /// a batch that took one then read its buckets' starts over rows never written (2026-11-27: a walk on the CPU
+    /// device read row ids of 4e9 out of an index of 1,532,744 rows reserved 61 ms before, never marked built).
+    pub(in crate::code_rule_dsl) fn complete(&self) -> bool {
+        let want = match self.ctl.get(10 + self.phases + self.last) {
+            0 => self.items,
+            w => w,
+        };
+        self.whole() && self.ctl.get(10 + self.last) == want
     }
 }
 
@@ -1191,7 +1208,7 @@ impl Building {
             let at = self.at();
             held.retain(|f| {
                 let this = f.at == at && f.room.index == self.room.index;
-                lent |= this && f.lent;
+                lent |= this && f.lent > 0;
                 !this
             });
         }
@@ -2005,7 +2022,7 @@ impl Batch {
             let Some(whole) = b.whole.clone() else { continue };
             let view = b.view.clone();
             let mut held = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
-            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: false, whole: std::sync::Arc::new(move || whole.whole() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
+            held.push(crate::code_rule_dsl::facts::rows::InFlight { at: b.at(), room: b.room, done: s.flushed(), lent: 0, whole: std::sync::Arc::new(move || whole.complete() && view.as_ref().is_none_or(|v| v.cache_failed() <= v.failed)) });
             b.queued = true;
         }
         self.committed.push(s);
@@ -2279,7 +2296,19 @@ impl Batch {
         let key: Vector<u16> = cols.iter().map(|&c| c as u16).collect();
         // Another batch's build of it, taken: its index and its builder's submission, waited for below.
         let mut taken = None;
-        let room = 'room: {
+        // Room for its own build, reserved under the block's index lock (`home.ix`).
+        let reserve = || {
+            // SAFETY: the caller holds the block's index lock; the relation's rows are written (or are by this
+            // batch's work before the build, which its passes order).
+            unsafe {
+                match rel.mapped {
+                    // A live relation mapped as reached: room for its rows mapped, its buckets its bound's keys'.
+                    Some((rows, buckets)) => r.try_reserve_index_live(&home.block, &key, rel.from, rows as u32, buckets),
+                    None => r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32),
+                }
+            }
+        };
+        let mut room = 'room: {
             let mut held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
@@ -2328,40 +2357,42 @@ impl Batch {
             // live relation's is this batch's own, each round's.
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
-                f.lent = true;
+                f.lent += 1;
                 taken = Some((f.room, f.done.clone(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
-            // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
-            // before the build, which its passes order).
-            unsafe {
-                match rel.mapped {
-                    // A live relation mapped as reached: room for its rows mapped, its buckets its bound's keys'.
-                    Some((rows, buckets)) => r.try_reserve_index_live(&home.block, &key, rel.from, rows as u32, buckets),
-                    None => r.try_reserve_index_from(&home.block, &key, rel.from, rel.rows as u32),
-                }
-            }
+            reserve()
         };
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
-        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
-        // One whose builder's program parked before the build (flag 128: a room or an arena's pages short, the rest of
-        // the program a later submission's) is unbuilt still, its last bucket offset `UNBUILT` (decision 0664): this
-        // batch's work is ordered after none of that submission's.
-        if let Some((room, done, whole)) = taken {
-            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 || !whole() {
+        // One whose program has not run to its end (`InFlight::whole`: stopped before it, or a chain that spent its
+        // dispatches before the build's rows, launched again later) is half written, as is one whose builder's program
+        // parked before the build (flag 128: a room or an arena's pages short, the rest of the program a later
+        // submission's), its last bucket offset `UNBUILT` (decision 0664): this batch's work is ordered after none of
+        // what is left of it. Not taken: this batch builds its own, its claim given back.
+        if let Some((t, done, whole)) = taken {
+            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 {
                 return Err(Error::BackendFailure);
             }
             // SAFETY: the builder's work is done; the room stays reserved while another batch took it (`lent`).
-            if rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&room)).cast::<u32>().read_volatile() } == UNBUILT {
-                crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder parked before the build (its batch on the CPU)".into(), 1);
-                return Err(Error::BackendFailure);
+            let unbuilt = rel.index_rows() > 0 && unsafe { home.block.base_ptr().add(last_offset(&t)).cast::<u32>().read_volatile() } == UNBUILT;
+            if whole() && !unbuilt {
+                // Read again at this batch's finish (`borrowed`).
+                self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
+                return Ok(DevIndex { index: t.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
-            // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
-            // later chain, a park), as its control words then say.
-            self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
-            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            crate::code_rule_dsl::prof::count_named("device.index taken in flight, its builder's program not at its end: built again here".into(), 4 * rel.rows);
+            let at = home.block.offset_of(std::ptr::from_ref(r));
+            let mut held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.index == t.index) {
+                f.lent -= 1;
+            }
+            // Its builder's batch may have marked it built meanwhile.
+            if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32) {
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            }
+            room = reserve();
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -3808,7 +3839,7 @@ impl Batch {
             // them; and told to no other batch until it launches (`Building::held`), as no submission committed before
             // then holds their work.
             for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-                b.whole = Some(Built { ctl: r.ctl.clone() });
+                b.whole = Some(r.built());
                 b.held = true;
             }
             self.held.push(r);
@@ -3893,7 +3924,7 @@ impl Batch {
         // committed: that submission tells only the builders it holds, not this program's, whose work is the chain's
         // (a batch that took one waited for the submission before the chain, and read its index unbuilt).
         for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
-            b.whole = Some(Built { ctl: r.ctl.clone() });
+            b.whole = Some(r.built());
         }
         let kit = &r.kit;
         let pass = self.open()?;
@@ -5285,6 +5316,11 @@ struct Ran {
 }
 
 impl Ran {
+    /// What tells whether it built its builders' indexes (`Built`).
+    fn built(&self) -> Built {
+        Built { ctl: self.ctl.clone(), last: self.last, phases: self.phases, items: self.items }
+    }
+
     /// Its parked item (a size script's, `ctl[9]`) put back (`ctl[2]`: the next chain's start runs it alone), and its
     /// park flag cleared.
     fn put_back(&self) {
@@ -5803,6 +5839,30 @@ pub mod tests {
         b.finish().unwrap();
     }
 
+
+    /// 2026-11-27: a chain that spent its dispatches with a phase left stops with no flag set, and launches again where
+    /// it went on: its builds' later phases not yet run, its indexes are not complete (a taker builds its own), though
+    /// nothing stopped it (`whole`).
+    #[test]
+    fn a_program_with_a_phase_left_has_not_built_its_indexes() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
+            return;
+        }
+        let (phases, last, items) = (3, 2, 40);
+        let ctl = std::sync::Arc::new(Words::zeroed(10 + 2 * phases + 8).unwrap());
+        let built = Built { ctl: ctl.clone(), last, phases, items };
+        ctl.set(10 + last, 17);
+        assert!(built.whole() && !built.complete(), "17 of its last phase's 40 items: not at its end");
+        ctl.set(10 + last, items);
+        assert!(built.complete(), "every item of its last phase done");
+        // Its last phase's items as reset (its segments' groups) are what it wants.
+        ctl.set(10 + phases + last, 50);
+        assert!(!built.complete(), "40 of the 50 its last phase was reset to");
+        ctl.set(10 + last, 50);
+        assert!(built.complete());
+        ctl.set(6, 32);
+        assert!(!built.complete(), "parked");
+    }
 
     /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
     /// the kernel's declared access: a copy into a relation moves its block's version once the batch's work is done,

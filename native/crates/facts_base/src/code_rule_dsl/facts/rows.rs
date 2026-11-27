@@ -90,10 +90,13 @@ pub struct InFlight {
     pub room: rerail_blocks::relation::IndexRoom,
     /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
     pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
-    /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
-    pub lent: bool,
+    /// The batches' probes that took it, whose work reads it after its builder's: while any has, its room is never
+    /// given back. A taker that finds it not built once `done` completed (`whole`) gives its claim back and builds its
+    /// own.
+    pub lent: u32,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
-    /// arena passed, decision 0603 step 5) left it unwritten. Nor is one whose builder read its keys through a view whose
+    /// arena passed, decision 0603 step 5), or one whose chain spent its dispatches before its build's last phase (it
+    /// launches again, its build's rows still unwritten), left it unwritten. Nor is one whose builder read its keys through a view whose
     /// reads found no room in their batch's cache (`Building::misread`): its buckets hold the dead entry's keys.
     pub whole: Whole,
 }
