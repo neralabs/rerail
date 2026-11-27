@@ -136,7 +136,8 @@ export class DaemonUnreachableError extends Error {
 /** Socket errors that mean no daemon listens there, as against a daemon that answered with a failure. */
 const NO_LISTENER = new Set(["ENOENT", "ECONNREFUSED"]);
 
-function unreachable(error: unknown): unknown {
+/** A send's failure as `DaemonUnreachableError` where nothing listens at the socket, a hook's or the event stream's. */
+export function unreachable(error: unknown): unknown {
   const code = error instanceof Error && "code" in error ? error.code : undefined;
   return typeof code === "string" && NO_LISTENER.has(code)
     ? new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error })

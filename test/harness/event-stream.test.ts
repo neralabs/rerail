@@ -326,6 +326,77 @@ describe("rerail events in a main build", () => {
     expect(existsSync(join(root, "home", HOOK_FAILURES_FILE))).toBe(false);
   });
 
+  // A daemon can stop between the lookup and the send (a crash, `rerail daemon stop`): as a hook reads it, nothing
+  // listens at its socket, so its event is one no daemon took. An event the daemon answers with a refusal stays invalid.
+  it("answers an event whose daemon is gone at the send as one no daemon took, and one the daemon refuses as invalid", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-gone-"));
+    cleanups.push(async () => await removeFolder(root));
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.daemonEngineEndpoint.mockResolvedValue({ socketPath: testEngineEndpoint(home), accessToken: "daemon-capability" });
+    const refusing = testEngineEndpoint(root);
+    const server = createServer((request, response) => {
+      request.resume().on("end", () => response.writeHead(400).end(JSON.stringify({ error: "refused" })));
+    });
+    await new Promise<void>(resolve => server.listen(refusing, resolve));
+    cleanups.push(async () => await new Promise<void>(resolve => server.close(() => resolve())));
+    routing.runningDaemonEngineEndpoint.mockResolvedValueOnce({ status: "running", endpoint: { socketPath: refusing, accessToken: "daemon-capability" } });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const [start, prompt] = sessionOfTen(root);
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, JSON.stringify({ event: start }), JSON.stringify({ event: prompt })].map(line => `${line}\n`)),
+      output,
+    });
+
+    expect.soft(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
+      { eventId: "s:start", error: { code: "internal-error", message: expect.stringContaining("ENOENT") } },
+      { eventId: "s:prompt:1", error: { code: "invalid-event", message: 'Kernel request failed (400): {"error":"refused"}' } },
+    ]);
+    expect.soft(readHookFailures(home, 0).failures.map(({ event }) => event)).toEqual(["session-start", "user-prompt"]);
+    // A start for the next event, as when the lookup finds no daemon; none for the daemon that answered.
+    expect(routing.launchAutostart).toHaveBeenCalledOnce();
+  });
+
+  // A start brings up the home's daemon, not the engine a socket named outright stands for: as at its lookup, none starts.
+  it("launches no start when nothing listens at the socket RERAIL_ENGINE_SOCKET names", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-named-gone-"));
+    cleanups.push(async () => await removeFolder(root));
+    const named = testEngineEndpoint(join(root, "gone"));
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", named);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.engineEndpointAt.mockResolvedValueOnce({ socketPath: named });
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const [start] = sessionOfTen(root);
+    const output = new PassThrough();
+    let written = "";
+    output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, JSON.stringify({ event: start })].map(line => `${line}\n`)),
+      output,
+    });
+
+    expect.soft(JSON.parse(written) as unknown).toEqual({ eventId: "s:start", error: { code: "internal-error", message: expect.stringContaining("ENOENT") } });
+    expect(routing.launchAutostart).not.toHaveBeenCalled();
+  });
+
   // No event starts a daemon under RERAIL_AUTOSTART=0, so none waits for a start: each asks as on a session's start, and
   // finding no daemon is what the person asked for, which `rerail status` says itself.
   it("asks for the daemon at each event under RERAIL_AUTOSTART=0, starts none and records nothing", async () => {

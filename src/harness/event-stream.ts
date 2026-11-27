@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { answeredFacts, type AdapterEvent, type EventAnswerFacts, type RerailEventLoop, type RerailHost } from "../engine/adapter-contract.js";
-import { autostartTurnedOff, DaemonUnreachableError, hookRerailStarted, lostEventReason } from "./hook-host.js";
+import { autostartTurnedOff, DaemonUnreachableError, hookRerailStarted, lostEventReason, unreachable } from "./hook-host.js";
 import { recordHookFailure } from "./hook-failures.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
@@ -63,8 +63,8 @@ function isInactiveSession(error: unknown): boolean {
 }
 
 /**
- * An event no daemon took (`eventEndpoint` throws `DaemonUnreachableError`, as a hook's lookup does) may be sound, so
- * its frame says `internal-error`, not `invalid-event`.
+ * An event no daemon took (`eventEndpoint` or its send throws `DaemonUnreachableError`, as a hook's do) may be sound,
+ * so its frame says `internal-error`, not `invalid-event`.
  */
 function errorCode(error: unknown): RerailEventErrorFrame["error"]["code"] {
   if (isInactiveSession(error)) return INACTIVE_SESSION;
@@ -126,9 +126,10 @@ export interface RunRerailEventStreamOptions {
 /**
  * A main build's event loop: each event goes to the daemon, as a hook's does. Only a session's start waits for a daemon
  * to start; any other event goes to the daemon that runs, or is answered at once with why none took it, and a daemon
- * starts in the background for the next one (`eventEndpoint`). Each event that fails is written to the hook failure log
- * that `rerail status` reads, as a hook's is (`runHostHook`), but one RERAIL_AUTOSTART=0 kept from a daemon: that is
- * what the person asked for, and `rerail status` says the daemon is not running and why.
+ * starts in the background for the next one (`eventEndpoint`), as when the daemon is gone at the send (`sendFailure`).
+ * Each event that fails is written to the hook failure log that `rerail status` reads, as a hook's is (`runHostHook`),
+ * but one RERAIL_AUTOSTART=0 kept from a daemon: that is what the person asked for, and `rerail status` says the daemon
+ * is not running and why.
  */
 function daemonEventLoop(configuration: EngineRuntimeConfiguration & { workspaceRoot: string }, explicitDatabase: string | undefined): RerailEventLoop {
   // The first event may replace a daemon from another package, as hooks do; later ones keep whichever daemon
@@ -151,7 +152,9 @@ function daemonEventLoop(configuration: EngineRuntimeConfiguration & { workspace
       try {
         const endpoint = await eventEndpoint(event, replaceOtherPackage, deadline);
         replaceOtherPackage = false;
-        const { eventId: _eventId, deliveries, ...facts } = await ingestEngineEventAnswer(endpoint, event, configuration);
+        const { eventId: _eventId, deliveries, ...facts } = await ingestEngineEventAnswer(endpoint, event, configuration).catch((error: unknown) => {
+          throw sendFailure(error);
+        });
         answered = facts;
         return deliveries;
       } catch (error) {
@@ -160,6 +163,17 @@ function daemonEventLoop(configuration: EngineRuntimeConfiguration & { workspace
       }
     },
   };
+}
+
+/**
+ * The send's failure as a hook reads it (`unreachable`): a daemon gone since the lookup (it crashed, or was stopped)
+ * took no event, and a start is launched in the background for the next one, as when the lookup finds none. A socket
+ * RERAIL_ENGINE_SOCKET names is not the daemon a start brings up, so none is launched for it, as at its lookup.
+ */
+function sendFailure(error: unknown): unknown {
+  const failure = unreachable(error);
+  if (failure instanceof DaemonUnreachableError && process.env.RERAIL_ENGINE_SOCKET === undefined) launchAutostart();
+  return failure;
 }
 
 /** The engine `event` goes to (`endpointOrWhyNot`); any failure to find one throws `DaemonUnreachableError`, as a hook's lookup does. */
