@@ -183,3 +183,15 @@ The import graph, read from the sources, as a router (a key to the importers of 
 8,234 of the 8,452, sending to 50,335 files for 18,275 answers; 218 keys missed (re-exports, guests). The
 probes' relations peaked the run at 2.34 GB (1.61 GB without; 54.4 s user CPU).
 
+**Every keyed ask names its file.** The probes above read only the split's relays (`R_at(d, ..)`): 13 keyed asks of
+PostHog's and 3 of the data layer's had none, as their relations reach the cross part with a location column of their
+own: a document (`asks_at`'s, `star_of`'s, the pair caches' `sym_at` and `spelled_at`), or a node (`violation`, the
+`rr_diagnostic_` relations, `pt_def`, `class_def`). `RERAIL_ASKS` now reads that column (a node's document by
+`docof`), makes its index relations in the cross part (`cross_file`), and writes `asks-located.tsv`: how each probe
+names its file (`relay`, `document column C` or `node column C`, with `, key J` where the asked key holds it). On both
+corpora no keyed ask is left without its files (PostHog 193 of 193, the data layer 20 of 20); no relation asked by key
+lacks a location column. Of PostHog's 358,006 keys found, 1.19% hold their document or node themselves and 96.45% are
+at home, 97.64% in all; 1.90% are answered by files elsewhere, 0.42% name no file of the run. The data layer: 21.30%
+and 73.03% of 21,386 (94.33%), 2.67% elsewhere, 2.92% none. The pair caches are asked by their document alone (`fb`, the
+document bound): a whole file's rows. The findings are the same (PostHog's 5); 52.0 s real, 2.32 GB.
+

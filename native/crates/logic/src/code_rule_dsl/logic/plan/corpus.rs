@@ -2766,7 +2766,19 @@ fn run_observed_within(
             // `RERAIL_ASKS` (a measurement aid): each exported relation's asks recorded, reader by reader.
             let version = if preparation::asks::on() {
                 let pre = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
-                preparation::asks::recorded(&version, &pre.file_local).map_err(Error::Plan)?.unwrap_or(version)
+                let got = preparation::asks::recorded(&version, &pre.file_local, &pre.locations).map_err(Error::Plan)?;
+                if !got.unlocated.is_empty() {
+                    eprintln!("RERAIL_ASKS: asked by key, naming no file: {}", got.unlocated.iter().cloned().collect::<Vec<_>>().join(", "));
+                }
+                // How each probe names its file (`asks-located.tsv` beside the profile): a row a probe's tag.
+                if let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+                    use std::io::Write as _;
+                    let rows: String = got.located.iter().map(|(tag, how)| format!("{tag}\t{how}\n")).collect();
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-located.tsv")) {
+                        let _ = f.write_all(rows.as_bytes());
+                    }
+                }
+                got.version.unwrap_or(version)
             } else {
                 version
             };
