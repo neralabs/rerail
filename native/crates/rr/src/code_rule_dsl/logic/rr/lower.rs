@@ -2726,7 +2726,7 @@ impl Lowerer {
         args.iter().for_each(|t| tm_vars(&self.prog, t, &mut vars));
         if !neg {
             let cols = self.prog.columns_of(rel);
-            let axis = crate::code_rule_dsl::logic::front::is_axis(rel);
+            let axis = crate::code_rule_dsl::logic::front::is_axis(rel) || crate::code_rule_dsl::logic::front::near_child(rel).is_some();
             for (i, t) in args.iter().enumerate() {
                 if let Some(v) = tm_var(&self.prog, t) {
                     if axis {
@@ -4966,6 +4966,13 @@ impl Lowerer {
             ("nearest", [n, _, set]) => {
                 let set = self.set_name(rel, set)?;
                 return Ok((format!("{AXIS}{set}"), vec![self.term_tm(n)?, Tm::Wild]));
+            }
+            // `nearest(n, a, set, c)`: a is n's nearest ancestor in the set and c the child of a that holds n strictly
+            // below it, `(n, a, c)` rows the transducer makes (one sweep of each tape, `nearest_child_all`).
+            ("nearest", [n, a, set, c]) => {
+                let set = self.set_name(rel, set)?;
+                let terms = terms(self, &[n, a, c])?;
+                return Ok((format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST_CHILD), terms));
             }
             // `inside(n, a, set)`: a is an ancestor of n in the set; `has(a, n, set)`: n is a descendant of a in the
             // set. Both are `(n, a)` rows the transducer makes.

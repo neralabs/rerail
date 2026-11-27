@@ -783,6 +783,8 @@ pub(super) fn located<'b>(rel: &str, base: &'b HashMap<String, rerail_blocks::ve
         // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
         // over a guest's root r makes c the guest's node.
         r if front::is_axis(r) => (PAIR, None),
+        // A `nearest` with the child, `rr_near_child_<set>(n, a, c)`: all three nodes.
+        r if front::near_child(r).is_some() => (&[0, 1, 2], None),
         r => (base.get(r).map_or(&[], |v| v.as_slice()), front::document_column(r)),
     }
 }

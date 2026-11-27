@@ -106,7 +106,7 @@ impl ProgramPass for RetypeHelpers {
                                         if t.var() != Some(x) {
                                             continue;
                                         }
-                                        let ty = if crate::code_rule_dsl::logic::front::is_axis(name) {
+                                        let ty = if crate::code_rule_dsl::logic::front::is_axis(name) || crate::code_rule_dsl::logic::front::near_child(name).is_some() {
                                             Some("node".to_owned())
                                         } else {
                                             decls.get(name).and_then(|c| c.get(j)).map(|(_, t)| t.clone())

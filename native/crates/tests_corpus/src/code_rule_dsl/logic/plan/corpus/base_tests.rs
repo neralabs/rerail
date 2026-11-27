@@ -2057,3 +2057,53 @@ held_out(n) :- cand(n, f), !within(n, f), line(n, l), line(f, l).
     assert!(inside.iter().all(|&(l, k)| l == k || l == k + 1), "no identifier is inside another function");
     assert!(on[1].is_empty(), "the identifiers on a function's own line are its own ({:?})", &on[1][..on[1].len().min(4)]);
 }
+
+/// `nearest(n, a, set, c)` (`rr_near_child_<set>`, the tape's one sweep) gives the rows of the chain it stands for,
+/// `nearest(n, a, set), field(a, F, p), within(n, p)`: `rf_in`'s shape (a function's nearest definition, `n` in its
+/// body) and `def_outside`'s (a function's or a lambda's parameters or return type), over functions, lambdas and
+/// classes nested in one another, with defaults and annotations that name things outside their body.
+#[test]
+fn nearest_with_the_child_gives_the_chains_rows() {
+    let source = "\
+def outer(a, b=g(c), *rest) -> T:
+    x = lambda y, z=w: y + z + a
+    def inner(p: P = q) -> R:
+        return lambda k: k + p + x
+    class K:
+        def m(self, s=t):
+            return [u for u in s if v(u)]
+    return inner(a)
+
+def solo():
+    pass
+
+f = lambda m, n=o: (lambda r=s: r)(m)
+";
+    let dir = corpus("nearest-child", &[("a.py", source)]);
+    let program = r#"
+.decl fdef(kind: symbol)
+fdef("function_definition").
+.decl scope(kind: symbol)
+scope("function_definition").
+scope("lambda").
+scope("class_definition").
+.decl in_body(n: node, g: node)
+in_body(n, g) :- kind(n, "identifier"), nearest(n, g, fdef), field(g, "body", b), within(n, b).
+.decl in_body2(n: node, g: node)
+in_body2(n, g) :- kind(n, "identifier"), nearest(n, g, fdef, b), field(g, "body", b).
+.decl outside(n: node, f: node)
+outside(n, f) :- kind(n, "identifier"), nearest(n, f, scope), (kind(f, "function_definition") ; kind(f, "lambda")), (field(f, "parameters", p) ; field(f, "return_type", p)), within(n, p).
+.decl outside2(n: node, f: node)
+outside2(n, f) :- kind(n, "identifier"), nearest(n, f, scope, p), (kind(f, "function_definition") ; kind(f, "lambda")), (field(f, "parameters", p) ; field(f, "return_type", p)).
+.decl children(n: node, a: node, c: node)
+children(n, a, c) :- nearest(n, a, scope, c).
+.output in_body, in_body2, outside, outside2, children
+"#;
+    let got = run(&dir, program, &["in_body", "in_body2", "outside", "outside2", "children"]);
+    let set = |rows: &Vec<Vec<String>>| rows.iter().cloned().collect::<BTreeSet<_>>();
+    assert!(got[0].len() > 10 && got[2].len() > 5, "the chains hold rows: {} in bodies, {} outside", got[0].len(), got[2].len());
+    assert_eq!(set(&got[1]), set(&got[0]), "a function's body");
+    assert_eq!(set(&got[3]), set(&got[2]), "a function's or lambda's parameters and return type");
+    // Each node below a member's child has a row, and the child's parent is the member.
+    assert!(got[4].len() > got[0].len(), "every scope's children: {}", got[4].len());
+}
