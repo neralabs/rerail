@@ -19,6 +19,35 @@ vi.mock("node:fs", async importOriginal => {
   };
 });
 
+/** Git locations placed, remotes read and processes started while `counting` is on. */
+const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0 }));
+vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
+  const original = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
+  return {
+    ...original,
+    repositoryIdentityLocation: (...parameters: Parameters<typeof original.repositoryIdentityLocation>) => {
+      if (reads.counting) reads.placements += 1;
+      return original.repositoryIdentityLocation(...parameters);
+    },
+    readRemoteAddress: (...parameters: Parameters<typeof original.readRemoteAddress>) => {
+      if (reads.counting) reads.remotes += 1;
+      return original.readRemoteAddress(...parameters);
+    },
+  };
+});
+vi.mock("../../src/engine/child-process.js", async () => {
+  const original = await vi.importActual<typeof import("../../src/engine/child-process.js")>("../../src/engine/child-process.js");
+  const spawn = ((...parameters: Parameters<typeof original.spawn>) => {
+    if (reads.counting) reads.starts += 1;
+    return original.spawn(...parameters);
+  }) as typeof original.spawn;
+  const spawnSync = ((...parameters: Parameters<typeof original.spawnSync>) => {
+    if (reads.counting) reads.starts += 1;
+    return original.spawnSync(...parameters);
+  }) as typeof original.spawnSync;
+  return { ...original, spawn, spawnSync };
+});
+
 import Database from "better-sqlite3";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
@@ -101,10 +130,10 @@ function cloneAt(path: string, remote: string): string {
  * repository page and rules list read it; null where a read names none.
  */
 async function namedRepositories(app: ReturnType<typeof createRerailApi>, checkout: string) {
-  const read = async (path: string, query: Record<string, string>) => await (await app.request(`${path}?${new URLSearchParams(query)}`)).json() as {
-    scope?: { repositoryKey: string } | null;
-    repository?: { repositoryKey: string };
-    repositoryKey?: string;
+  const read = async (path: string, query: Record<string, string>) => {
+    const response = await app.request(`${path}?${new URLSearchParams(query)}`);
+    expect(response.status, path).toBe(200);
+    return await response.json() as { scope?: { repositoryKey: string } | null; repository?: { repositoryKey: string }; repositoryKey?: string };
   };
   const presentation = await read("/api/presentation", { repository: checkout, host: "claude-code" });
   const page = await read("/api/repository", { checkout });
@@ -234,10 +263,10 @@ describe("a repository's context", () => {
 describe("a checkout replaced at its path while the daemon runs", () => {
   /** Two known repositories, each recorded at a clone of its own: `app` (acme/app) and `other` (acme/other). */
   async function twoRepositories() {
-    const { root, db, app } = await daemonStores();
+    const { root, stores, db, app } = await daemonStores();
     const first = recordCheckout(db, cloneAt(join(root, "app"), "git@github.com:acme/app.git"));
     const second = recordCheckout(db, cloneAt(join(root, "other"), "git@github.com:acme/other.git"));
-    return { root, db, api: app, first, second };
+    return { root, stores, db, api: app, first, second };
   }
   const worktreeAdd = (clone: string, path: string, branch: string) => execFileSync("git", ["worktree", "add", "-q", "-b", branch, path], { cwd: clone, stdio: "ignore" });
 
@@ -288,5 +317,51 @@ describe("a checkout replaced at its path while the daemon runs", () => {
 
     expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
     expect(lookupCheckout(db, replaced)?.repositoryKey).toBe(second.repositoryKey);
+  });
+
+  /** Checkouts whose Git folder, which holds the clone id, is not their own `.git` and outlives them, made in `root`. */
+  const keptApart: Record<string, (root: string, source: string) => string> = {
+    "a submodule, whose Git folder is in its parent's": (root, source) => {
+      const parent = cloneAt(join(root, "parent"), "git@github.com:acme/parent.git");
+      execFileSync("git", ["-c", "protocol.file.allow=always", "submodule", "add", "-q", source, "lib"], { cwd: parent, stdio: "ignore" });
+      return join(parent, "lib");
+    },
+    "a clone made with --separate-git-dir": root => {
+      const path = join(root, "separate");
+      execFileSync("git", ["init", "-q", "-b", "main", `--separate-git-dir=${join(root, "separate.git")}`, path], { cwd: root, stdio: "ignore" });
+      return path;
+    },
+  };
+  for (const [layout, make] of Object.entries(keptApart)) {
+    it(`names the new clone's repository at once when a clone replaces ${layout}`, async () => {
+      const { root, db, api, first, second } = await twoRepositories();
+      const replaced = make(root, first.checkoutPath);
+      const recorded = recordCheckout(db, replaced).repositoryKey;
+      expect(await namedRepositories(api, replaced)).toEqual(allNaming(recorded));
+
+      await removeFolder(replaced);
+      cloneAt(replaced, "git@github.com:acme/other.git");
+
+      expect(await namedRepositories(api, replaced)).toEqual(allNaming(second.repositoryKey));
+    });
+  }
+
+  it("keeps an unchanged checkout's location and remote: its second read starts no process, places nothing, reads no remote", async () => {
+    const { root, stores, db, first } = await twoRepositories();
+    const worktree = join(root, "feature");
+    worktreeAdd(first.checkoutPath, worktree, "feature");
+    recordCheckout(db, worktree);
+    // Not recorded: the resolver names its repository by its remote.
+    const unrecorded = cloneAt(join(root, "fresh"), "git@github.com:acme/app.git");
+    // The daemon's own resolver, which its reads of a folder go through.
+    const resolveCheckout = stores.checkouts();
+    for (const checkout of [first.checkoutPath, worktree, unrecorded]) {
+      expect(resolveCheckout(checkout)?.repositoryKey, checkout).toBe(first.repositoryKey);
+      Object.assign(reads, { placements: 0, remotes: 0, starts: 0, counting: true });
+      const again = resolveCheckout(checkout)?.repositoryKey;
+      reads.counting = false;
+      expect({ again, placements: reads.placements, remotes: reads.remotes, starts: reads.starts }, checkout)
+        .toEqual({ again: first.repositoryKey, placements: 0, remotes: 0, starts: 0 });
+    }
   });
 });
