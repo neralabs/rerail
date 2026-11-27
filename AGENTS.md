@@ -85,24 +85,33 @@ Never run a full `cargo clean`. Under 200 GB of free disk on this Mac, the farm 
 worktrees' build outputs on its own (`scripts/build/farm/free-local`; the farm's README, "This Mac's disk floor"): a
 build of an idle worktree may then start from incremental state lost, or from nothing.
 
-### Test tiers (cargo-nextest)
+### Test runs: one test at a time
 
-A single test, or a few, runs under Relax (below): here, or a Metal one on a farm Mac with
-`scripts/dev/live-test-remote PACKAGE --lib -- FILTER`. Never through nextest: its setup script
-(`[scripts.setup.kernels]`) builds the engine and compiles every kernel first, about 3 minutes
-before a test of device_metal, logic, the engine or accel that runs in seconds.
+**Full test runs are almost never required.** 99% of the runs in the edit/test loop are single-test
+cargo runs: the one test, or two or three, named for the code the edit touched, each a run of
+seconds:
 
-`.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2),
-for the tier and gate runs. From `native/`:
+```
+nice -n 19 cargo test -p CRATE --lib --features test-hooks -- --exact path::to::the_test
+scripts/dev/test-remote --os macos -- cargo test -p CRATE --lib --features test-hooks -- --exact path::to::the_test   # a Metal test
+```
+
+Relax (below) runs the same single tests live, patching each saved body in (2-9 s a verdict):
+here, or a Metal one on a farm Mac with `scripts/dev/live-test-remote PACKAGE --lib -- FILTER`.
+
+**nextest only, and extremely sparingly, when a full test run is required** (a phase gate, a
+merge's validation), never for one test or a few: its setup script (`[scripts.setup.kernels]`)
+builds the engine and compiles every kernel first, about 3 minutes before a test of device_metal,
+logic, the engine or accel that runs in seconds. `.config/nextest.toml` splits the library's tests
+in two tiers (docs/final-shape/notes/t37, §2). From `native/`:
 
 ```
 nice -n 19 cargo nextest run --lib                             # the quick tier: all but the slow tests
 nice -n 19 cargo nextest run --lib --profile gate              # everything: a phase gate only
-nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
 ```
 
-On a machine with the build farm (below), run these through `scripts/dev/test-remote -- cargo nextest
-run …` by default: the hosts take several test commands each at once, in a warm target directory per
+On a machine with the build farm (below), run test commands through `scripts/dev/test-remote --`
+by default: the hosts take several test commands each at once, in a warm target directory per
 checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
 test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 A command that does not need macOS may go to a Linux host, as a Linux build and run (as CI's):
