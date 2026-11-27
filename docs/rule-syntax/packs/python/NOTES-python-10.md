@@ -65,6 +65,15 @@ New library: `lib/python/python-10.rerail` (UP006, UP007): typing names inside s
   With no module binding, the function's own import is used (`def h(): from typing import List; x: "List[int]"`
   is UP006). The rule this follows is not clear enough from these cases to write it; one corpus line.
 
+  Fixed since (rule fixes on #1120's line). The rule is PEP 563's, in Ruff's semantic model: `resolve_load` and
+  `lookup_symbol_in_scope` ask the module scope first when `in_forward_reference()` (a string type definition, or a
+  deferred annotation that is typing-only), and take its binding unless that is unbound (`is_unbound`: a deletion,
+  an `except … as` target after its handler; a bare annotation never replaces a binding). python/upgrade's
+  `up_global` and python-10's `str_global` do the same through `global_site`, the module's last binding; a
+  singledispatch implementation's runtime-required annotations (`@fun.register`, its non-variadic parameters and
+  return) read their scopes as before. Checked against Ruff on the rule's `.test`s; the 83 rules that include
+  python/upgrade keep their counts on fixtures and samples-python but UP006, which gains PYI036.pyi:82.
+
 ## UP007 non-pep604-annotation-union: follows Ruff
 
 - String annotations, and strings that are types elsewhere (`TypeAliasType("Json", "Union[…]")`, F401_34.py;

@@ -62,6 +62,8 @@ typing_only(n) :- annotation(n).
 //     `from __future__ import annotations`, and from Python 3.14 (PEP 649) everywhere.
 // The first scope that offers a binding wins; with none, the name is the builtin of that name (a star import does
 // not change that). python/names' sym_of instead reads every binding of the first scope that binds the name.
+// A forward reference reads the module first (PEP 563; Ruff's resolve_load and lookup_symbol_in_scope): when the
+// module binds the name after the walk, that binding wins over every scope around the read (up_global below).
 //   from functools import lru_cache
 //   @lru_cache()          sym_at(<lru_cache>, "functools.lru_cache")
 //   def f(): ...
@@ -104,12 +106,55 @@ up_offer(h, s, site, i) :- up_chain(h, s, _), head_ref(_, h, x), binding(s, x, s
     (up_done(h, s) ; earlier(site, h), !within(h, site)).
 // up_site(h, site): the binding h reads. up_unbound(h): none: h reads the builtin.
 .decl up_site(h: node, site: node)
-up_site(h, site) :- up_once(h, site).
-up_site(h, site) :- up_walk(h), d = min d2 : { up_chain(h, s2, d2), up_offer(h, s2, _, _) }, up_chain(h, s, d),
+up_site(h, site) :- up_global(h, site).
+up_site(h, site) :- up_once(h, site), !up_global(h, _).
+up_site(h, site) :- up_walk(h), !up_global(h, _),
+    d = min d2 : { up_chain(h, s2, d2), up_offer(h, s2, _, _) }, up_chain(h, s, d),
     k = max i : { up_offer(h, s, _, i) }, up_offer(h, s, site, k).
 .decl up_unbound(h: node)
 up_unbound(h) :- head_ref(_, h, x), miss(h, x).
-up_unbound(h) :- up_walk(h), count : { up_offer(h, _, _, _) } = 0.
+up_unbound(h) :- up_walk(h), count : { up_offer(h, _, _, _) } = 0, !up_global(h, _).
+
+// ---- forward references ------------------------------------------------------------------------------------------
+// Ruff's in_forward_reference: a string type definition (python/python-10 reads those), or a deferred annotation
+// (late_annotation) that is typing-only. In one, a name the module binds is the module's binding, whatever the
+// scopes around the read bind (PEP 563): Ruff asks the module scope first, after the whole walk, so its last
+// binding, unless that binding is unbound (Ruff's is_unbound): an unconditional `del` after it, or an `except … as`
+// target (unbound again after its handler). Then the lookup is the usual one.
+//   from typing import Type                    (a stub)
+//   def f():
+//       from builtins import type as Type
+//       class C:
+//           def __exit__(self, t: Type[BaseException]): ...    sym_at(<Type>, "typing.Type")
+// A typing-only annotation is one Ruff visits with visit_annotation. A deferred annotation of a function registered
+// on a singledispatch function (`@fun.register`) is runtime-required instead: its non-variadic parameters' and its
+// return's annotations read the usual way.
+.decl up_fwd(h: node)
+up_fwd(h) :- head_ref(_, h, _), late_annotation(h), !sd_runtime(h).
+.decl up_global(h: node, site: node)
+up_global(h, site) :- up_fwd(h), head_ref(_, h, x), docof(h, d), modnode(d, m), global_site(m, x, site).
+// global_site(m, x, site): module m's binding of x after the walk is site, a bound one.
+.decl global_site(m: node, x: symbol, site: node)
+global_site(m, x, site) :- kind(m, "module"), binding(m, x, _, _), k = max i : { binding(m, x, s2, _), visit_index(s2, i) },
+    binding(m, x, site, form), visit_index(site, k), form != "except", !global_deleted(m, x, k).
+.decl global_deleted(m: node, x: symbol, k: number)  // an unconditional `del x` in m after the binding at k
+global_deleted(m, x, k) :- binding(m, x, s, _), kind(m, "module"), visit_index(s, k), del_site(m, n, st), text(n, x),
+    visit_index(st, j), j > k.
+// sd_runtime(h): h is in a runtime-required annotation of a singledispatch implementation (Ruff's
+// is_singledispatch_implementation: a decorator `fun.register`, fun a def decorated by functools.singledispatch or
+// functools.singledispatchmethod).
+.decl sd_runtime(h: node)
+sd_runtime(h) :- sd_impl(f), sd_ann(f, r), (h = r ; within(h, r)).
+.decl sd_impl(f: node)
+sd_impl(f) :- decorator(f, e), kind(e, "attribute"), field(e, "attribute", a), text(a, "register"),
+    field(e, "object", o), kind(o, "identifier"), text(o, x), look(o, x, s), defn(s, x, g),
+    kind(g, "function_definition"), decorator(g, e2), qn(e2, q),
+    (q = "functools.singledispatch" ; q = "functools.singledispatchmethod").
+.decl sd_ann(f: node, r: node)  // r is the annotation of a non-variadic parameter of f, or f's return annotation
+sd_ann(f, r) :- field(f, "parameters", ps), child(ps, p, _), (kind(p, "typed_parameter") ;
+    kind(p, "typed_default_parameter")), child(p, i, 0), kind(i, "identifier"), field(p, "type", r).
+sd_ann(f, r) :- kind(f, "function_definition"), field(f, "return_type", r).
+
 // site_root(site, r, how): the qualified name a binding site gives its name: an import's target, a def's qualname.
 // Other bindings (`List = list`) give none.
 .decl site_root(site: node, r: symbol, how: symbol)

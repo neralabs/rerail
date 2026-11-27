@@ -73,8 +73,26 @@ head_name(e, h) :- attr_of(e, o, _), (kind(o, "identifier"), h = o ; head_name(o
 str_typing_ref(e, x) :- str_type(e, _), (ast_name(e, _) ; kind(e, "attribute")), str_sym(e, q), split_dot(q, m, x),
     typing_mod(m).
 .decl str_sym(e: node, q: symbol)  // e's qualified name: names' for an annotation's tree, xsym for the others
-str_sym(e, q) :- parsed_in(e, _), pyi_sym(e, q).
-str_sym(e, q) :- xhost(e, _), xsym(e, q).
+str_sym(e, q) :- parsed_in(e, _), pyi_sym(e, q), !str_global(e, _, _).
+str_sym(e, q) :- xhost(e, _), xsym(e, q), !str_global(e, _, _).
+// A string type is a forward reference to Ruff (in_string_type_definition): a name the module binds reads the
+// module's binding after the walk, whatever the scopes around the string bind (python/upgrade's global_site). Only
+// a name the module leaves unbound is looked up from the string's own scope, as above.
+//   from typing import List
+//   def h(List):
+//       z: "List[int]" = []        str_sym(<List>, "typing.List"), as Ruff's UP006 reads it
+str_sym(e, q) :- str_gname(e, q0, "import"), str_gexport(e, q0, q).
+str_sym(e, q0) :- str_gname(e, q0, "import"), !str_gexport(e, q0, _).
+str_sym(e, q) :- str_gname(e, q, "def").
+.decl str_global(e: node, site: node, x: symbol)  // e's head x reads the module's binding at site
+str_global(e, site, x) :- str_type(e, s0), (ast_name(e, x) ; kind(e, "attribute"), head_name(e, h), ast_name(h, x)),
+    docof(s0, d), modnode(d, m), global_site(m, x, site).
+.decl str_gname(e: node, q: symbol, how: symbol)  // the qualified name e spells through that binding
+str_gname(e, cat(r, @slice(de, strlen(x), strlen(de))), how) :- str_global(e, site, x), site_root(site, r, how),
+    dotted_expr(e, de).
+.decl str_gexport(e: node, q0: symbol, q: symbol)  // q0 ("m.x") is module m's export x, q (as upgrade's up_export)
+str_gexport(e, q0, q) :- str_gname(e, q0, "import"), split_dot(q0, m, x), str_type(e, s0), docof(s0, d),
+    doc(d, p, _), py_names__reads_at(p, m), py_names__exports(m, x, q).
 .decl str_typing_sub(s: node, x: symbol)
 str_typing_sub(s, x) :- str_type(s, _), tsub(s, h, 0, _), str_typing_ref(h, x).
 .decl str_rewritable(e: node, m: number)
