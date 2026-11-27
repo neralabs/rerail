@@ -11,14 +11,21 @@ use crate::code_rule_dsl::language::{label, label_of_path, CodeRuleLanguage};
 use std::cell::RefCell;
 
 /// A run under way on this thread: its dialect, and how many of the other dialects' files it read as text.
+#[derive(Clone)]
 struct Run {
     dialect: Option<String>,
     read_as_text: usize,
 }
 
 thread_local! {
-    /// The runs under way on this thread, innermost last (`RunDialect`).
+    /// The runs under way on this thread, innermost last (`RunDialect`): the run's context, which a job on another
+    /// thread carries (`carried`).
     static RUNS: RefCell<Vec<Run>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The runs under way, for a job on another thread (`run_state::Carry`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["RUNS"], &RUNS);
 }
 
 /// The dialect a run was given (its `dialect` option), for as long as the run lasts. A run inside it (a phase's) is
