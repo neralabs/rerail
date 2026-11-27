@@ -5449,8 +5449,14 @@ impl Viewed {
                     View::Field => d.knowing(local, x, i as u32),
                     _ => d.knowing(local, x, u32::MAX),
                 };
-                for (o, &c) in vals[..len].iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
+                // The probe's key where it is the column (a probe by parent: each match's parent; by id: the match's
+                // id), not read again: a parent's id was a tape parent search, a rank and a granule's bisection.
+                for ((o, &c), &op) in vals[..len].iter_mut().zip(columns).zip(&plan.ops) {
+                    *o = match (op, up, id) {
+                        (UP, Some(u), _) => u,
+                        (ID, _, Some(n)) => n,
+                        _ => self.read_value(&d, i, c),
+                    };
                 }
                 // A match by its own id: the tape node its read selected, kept in the read's memo (`node_hint`), so
                 // the next probe of that id selects none.
