@@ -174,7 +174,7 @@ impl Docs {
             let cache_gpu = cache.buffer.as_ref().and_then(|b| b.device_address()).unwrap_or(0);
             if cache_gpu != 0 && tape_gpu != 0 {
                 let rel = cache_gpu.wrapping_sub(tape_gpu + tape_home.at) as i64;
-                (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
+                (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32); // bits: an offset's halves
             }
         }
         let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());

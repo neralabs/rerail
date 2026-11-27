@@ -3846,7 +3846,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
                 keys.iter().zip(&key).all(|(&(c, _), &v)| row.at(c) == v) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
             }).collect();
             let gathered: Vec<(usize, Vector<i64>)> = f.gather.iter().map(|&(_, c)| (c, keep.iter().map(|&id| rel.at(id as usize).read().at(c)).collect())).collect();
-            let params: Vector<i64> = f.params.iter().map(|p| { let Key::Const(v) = p.key else { unreachable!("constants") }; if p.doc { v >> 32 } else { v } }).collect();
+            let params: Vector<i64> = f.params.iter().map(|p| { let Key::Const(v) = p.key else { unreachable!("constants") }; if p.doc { rerail_blocks::located::Located::key_wide(v) } else { v } }).collect();
             // The CPU: the chunks as the run takes them.
             let c0 = thread_cpu();
             let mut s = rowcode::Scratch { columns: vec![rerail_blocks::vector::Vector::new(); f.columns.len()], params: params.clone(), ..Default::default() };
@@ -4171,7 +4171,7 @@ fn histogram_key(values: impl Iterator<Item = Option<i64>>) -> Option<u64> {
         h = if n == 0 { v } else { (h.rotate_left(5) ^ v).wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (h >> 29) };
         n += 1;
     }
-    Some(if n > 1 { h ^ (h >> 32).wrapping_mul(0xbf58_476d_1ce4_e5b9) } else { h })
+    Some(if n > 1 { h ^ (h >> 32).wrapping_mul(0xbf58_476d_1ce4_e5b9) } else { h }) // bits: a hash's mix
 }
 
 /// Decision 0203 §3: per wanted (step, key columns) of probe `line`'s join, the rows of the step's relation (every
@@ -7402,7 +7402,7 @@ impl InRel {
         }
         let k = self.k;
         let data = &self.rows;
-        let doc = |id: u32| data.value(id, k, 0) >> 32;
+        let doc = |id: u32| rerail_blocks::located::Located::key_wide(data.value(id, k, 0));
         let live = (self.n - self.ndead) as i64;
         let mut out = rerail_blocks::vector::Vector::with_capacity(k);
         let mut docs: Vector<i64> = rerail_blocks::vector::Vector::new();
@@ -9195,7 +9195,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut s = std::mem::take(&mut cx.scratch[i]);
                     s.columns.resize_with(f.columns.len(), rerail_blocks::vector::Vector::new);
                     s.params.clear();
-                    s.params.extend(f.params.iter().map(|p| { let v = val(slots, p.key); if p.doc { v >> 32 } else { v } }));
+                    s.params.extend(f.params.iter().map(|p| { let v = val(slots, p.key); if p.doc { rerail_blocks::located::Located::key_wide(v) } else { v } }));
                     // Past the tail (`cut_from`), the first row made ends the step's loop, as the row-by-row path
                     // ends it: a chunk's rows after it, and the candidates not yet gathered, would make the same head
                     // row again. Without it a fused step read every candidate past the head's last binding, and a
@@ -9606,9 +9606,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 go(cx, i + 1, slots);
                 cx.texts.truncate(mark);
             }
-            Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
+            Step::Doc { a, b, eq } => if (rerail_blocks::located::Located::key_wide(val(slots, *a)) == rerail_blocks::located::Located::key_wide(val(slots, *b))) == *eq { go(cx, i + 1, slots) },
             Step::DocOf { out, n, bind } => {
-                let d = val(slots, *n) >> 32;
+                let d = rerail_blocks::located::Located::key_wide(val(slots, *n));
                 if *bind { slots[*out] = d } else if slots[*out] != d { return }
                 go(cx, i + 1, slots);
             }
@@ -10034,7 +10034,7 @@ impl Ranged {
         let val = |k: Key| match k { Key::Slot(s) => slots[s], Key::Const(c) => c };
         if self.doc {
             let d = self.lo.map(|(k, _)| val(k))?;
-            return Some((self.col, Some((d << 32, true)), Some(((d + 1) << 32, false))));
+            return Some((self.col, Some((rerail_blocks::located::Located::of(d, 0).0, true)), Some((rerail_blocks::located::Located::of(d + 1, 0).0, false))));
         }
         Some((self.col, self.lo.map(|(k, eq)| (val(k), eq)), self.hi.map(|(k, eq)| (val(k), eq))))
     }

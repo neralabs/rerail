@@ -291,7 +291,7 @@ impl Keeper {
                             let Trace { docs, rows, counting, .. } = &mut self.trace;
                             let by = docs.entry(key.clone()).or_default();
                             for row in values.chunks_exact((*width).max(1)) {
-                                *by.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += sign;
+                                *by.entry(at.map_or(-1, |c| rerail_blocks::located::Located::key_wide(row[c]))).or_default() += sign;
                                 rows.push((key.clone(), counting.clone(), sign, row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
                             }
                         }
@@ -623,7 +623,7 @@ impl Keeper {
     pub fn compare_documents(&self, key: &str, held: &super::exports::Exports, width: usize) -> Vec<String> {
         let at = self.doc_at.get(key).copied().flatten();
         let mut have: HashMap<i64, i64> = HashMap::new();
-        held.each_row(key, width, |row| *have.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += 1);
+        held.each_row(key, width, |row| *have.entry(at.map_or(-1, |c| rerail_blocks::located::Located::key_wide(row[c]))).or_default() += 1);
         let counted = self.trace.docs.get(key).cloned().unwrap_or_default();
         let mut docs: Vector<i64> = have.keys().chain(counted.keys()).copied().collect();
         docs.sort_unstable();
@@ -635,12 +635,12 @@ impl Keeper {
                 (c != h).then(|| {
                     let mut out = format!("document {d} {}: {c} counted, {h} held", path(d));
                     for (k, p, sign, row) in &self.trace.rows {
-                        if k == key && at.is_some_and(|c| row[c] >> 32 == d) {
+                        if k == key && at.is_some_and(|c| rerail_blocks::located::Located::key_wide(row[c]) == d) {
                             out.push_str(&format!("\n  counted {sign:+} from {p}: {row:?}"));
                         }
                     }
                     held.each_row(key, width, |row| {
-                        if at.is_some_and(|c| row[c] >> 32 == d) {
+                        if at.is_some_and(|c| rerail_blocks::located::Located::key_wide(row[c]) == d) {
                             out.push_str(&format!("\n  held: {row:?}"));
                         }
                     });
@@ -1107,10 +1107,10 @@ impl SemijoinCounts {
     /// A row, its columns in `input_columns` order: counted once for each time it is given (its node's document
     /// counted). A node has one row in the relations walked so; a caller that may give one twice says so.
     pub fn row(&mut self, row: &[i64]) {
-        let d = row[self.node] >> 32;
+        let d = rerail_blocks::located::Located::key_wide(row[self.node]);
         let e = self.docs.entry(d).or_insert([0, d, 0]);
         e[0] += 1;
-        e[1] = row[0] >> 32;
+        e[1] = rerail_blocks::located::Located::key_wide(row[0]);
         for (c, &v) in row.iter().enumerate().take(self.width).filter(|&(c, _)| c != self.node) {
             *self.by_doc[c].entry((v, d)).or_default() += 1;
         }

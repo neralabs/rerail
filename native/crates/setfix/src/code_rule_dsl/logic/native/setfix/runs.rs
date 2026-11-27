@@ -500,7 +500,7 @@ impl Run {
         // SAFETY: the caller's: each span is written in `owner`'s block, which its relation keeps.
         unsafe {
             let ids = if ix.ordered == ORDER_ROWS {
-                Ids::Rows((ix.mask >> 32) as u32, (ix.mask & 0xffff_ffff) as u32)
+                Ids::Rows((ix.mask >> 32) as u32, (ix.mask & 0xffff_ffff) as u32) // bits: a mask's two row numbers
             } else {
                 Ids::List(crate::code_rule_dsl::facts::rows::shared(owner, at(ix.rows.as_ptr().cast()), ix.rows.len()))
             };

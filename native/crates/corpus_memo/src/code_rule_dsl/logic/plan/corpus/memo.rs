@@ -1600,7 +1600,7 @@ impl Memo<'_> {
 
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
 pub fn document_of(value: i64) -> i64 {
-    if value >= 1 << 32 { value >> 32 } else { value }
+    rerail_blocks::located::document_of(value)
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

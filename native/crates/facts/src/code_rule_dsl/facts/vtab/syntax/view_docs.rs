@@ -81,7 +81,7 @@ impl ViewEntry {
             Cells::build(block, n.max(1), |out| {
                 for (l, o) in out.iter_mut().enumerate().take(n) {
                     let [s, e] = place.host(p.span(l as u32));
-                    *o = u64::from(s) << 32 | u64::from(e);
+                    *o = u64::from(s) << 32 | u64::from(e); // bits: a span's start and end
                 }
                 n
             })

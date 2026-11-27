@@ -432,7 +432,7 @@ pub fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore
     }
     for r in rows("SELECT d, lo, hi FROM stat_docrange")? {
         let d = int(&r[0]);
-        let id = |n: i64| SqlValue::Integer((d << 32) + n - first[&d]);
+        let id = |n: i64| SqlValue::Integer(rerail_blocks::located::Located::of(d, 0).0 + n - first[&d]);
         insert("stat_docrange", vec![r[0].clone(), id(int(&r[1])), id(int(&r[2]))])?;
     }
     for (statement, rows) in pending.into_inner() {
@@ -541,7 +541,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
     let mut out = BTreeMap::new();
     for (d, path) in docs {
         let mut rows = by_doc.remove(d).unwrap_or_default();
-        let nodes: BTreeSet<i64> = rows.iter().flat_map(|(_, r)| r.iter().copied()).filter(|v| *v >= 1 << 32 && v >> 32 == *d).collect();
+        let nodes: BTreeSet<i64> = rows.iter().flat_map(|(_, r)| r.iter().copied()).filter(|v| rerail_blocks::located::is_located(*v) && rerail_blocks::located::Located::key_wide(*v) == *d).collect();
         let rank: HashMap<i64, i64> = nodes.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect();
         for (_, r) in &mut rows {
             for v in r.iter_mut() {
@@ -1060,7 +1060,7 @@ fn kept_rows(db: &Connection, v: &crate::code_rule_dsl::logic::program_image::Ve
         let Some(rows) = derived(&kept_roots.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS)) else { continue };
         for i in 0..rows.len() {
             let root = rows.value(i, 0);
-            let key = root >> 32;
+            let key = rerail_blocks::located::Located::key_wide(root);
             if made.tape_text(key).is_none() {
                 continue;
             }
@@ -5723,11 +5723,11 @@ fn run_observed_within(
                         guests::Got::New(d) => {
                             values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             tape_text_made(&tape_texts, grammar, &d);
-                            (d.key, Some((at >> 32) as u32), true)
+                            (d.key, Some(rerail_blocks::located::Located(*at).key()), true)
                         }
                         guests::Got::Placed(key, _) => {
                             tape_texts.lock().entry(grammar.clone()).or_default().1 += 1;
-                            (key, Some((at >> 32) as u32), false)
+                            (key, Some(rerail_blocks::located::Located(*at).key()), false)
                         }
                         guests::Got::Not => continue,
                     },
@@ -5736,7 +5736,7 @@ fn run_observed_within(
                         values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         let owner = match request {
                             guests::Request::Parse { .. } => None,
-                            guests::Request::Splice { node, .. } => Some((node >> 32) as u32),
+                            guests::Request::Splice { node, .. } => Some(rerail_blocks::located::Located(*node).key()),
                         };
                         (d.key, owner, false)
                     }
@@ -5777,7 +5777,7 @@ fn run_observed_within(
                             guests::Got::Not => continue,
                         };
                         answered.push(memo::Answered::Embed { at, grammar, source: made.value_source(key) });
-                        (key, Some((at >> 32) as u32), fresh)
+                        (key, Some(rerail_blocks::located::Located(at).key()), fresh)
                     }
                     (guests::PARSE, &[at, g, x]) => {
                         let (Some(grammar), Some(text)) = (text(g)?, text(x)?) else { continue };
@@ -5793,7 +5793,7 @@ fn run_observed_within(
                         let Some(d) = made.admit_value(docs, request.clone(), &guest_parses).map_err(Error::Plan)? else { continue };
                         values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         answered.push(memo::Answered::Value(request));
-                        (d.key, Some((node >> 32) as u32), false)
+                        (d.key, Some(rerail_blocks::located::Located(node).key()), false)
                     }
                     _ => continue,
                 };
@@ -5910,7 +5910,7 @@ fn run_observed_within(
                 for (_, rows) in &export_rows {
                     held_values(rows.as_ref(), &mut held);
                 }
-                held.retain(|v| counting.contains(&(v >> 32)));
+                held.retain(|v| counting.contains(&rerail_blocks::located::Located::key_wide(*v)));
                 held
             } else {
                 Default::default()
@@ -7763,7 +7763,7 @@ fn run_observed_within(
                 for rows in h.values.iter() {
                     for i in 0..rows.len() {
                         if let output::Cell::Int(at) = rows.cell(i, 0) {
-                            hosts.insert((at >> 32) as u32);
+                            hosts.insert(rerail_blocks::located::Located(at).key());
                         }
                     }
                 }
@@ -8723,7 +8723,7 @@ fn run_observed_within(
                 let mut held = rustc_hash::FxHashSet::default();
                 let exports = exports.borrow();
                 for rel in &split.exports {
-                    exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied().filter(|v| *v >= 1 << 32 && (every || docs.contains(&(v >> 32))))));
+                    exports.visit(rel, pf.width(rel), |row| held.extend(row.iter().copied().filter(|v| rerail_blocks::located::is_located(*v) && (every || docs.contains(&(rerail_blocks::located::Located::key_wide(*v)))))));
                 }
                 held
             }
@@ -8768,10 +8768,10 @@ fn run_observed_within(
                     };
                     let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{}'s rows at the held nodes, counted", c.rel));
                     let walking = |d: i64| walk.as_ref().map_or_else(|| !counts.counts(d), |w| w.contains(&d));
-                    let nodes: rustc_hash::FxHashSet<i64> = held_nodes.iter().copied().filter(|v| walking(v >> 32)).collect();
+                    let nodes: rustc_hash::FxHashSet<i64> = held_nodes.iter().copied().filter(|v| walking(rerail_blocks::located::Located::key_wide(*v))).collect();
                     let walked_docs: Vec<i64> = match &walk {
                         Some(w) => w.iter().copied().collect(),
-                        None => nodes.iter().map(|v| v >> 32).collect::<BTreeSet<i64>>().into_iter().collect(),
+                        None => nodes.iter().map(|v| rerail_blocks::located::Located::key_wide(*v)).collect::<BTreeSet<i64>>().into_iter().collect(),
                     };
                     if !nodes.is_empty() {
                         let mut seen: rustc_hash::FxHashSet<i64> = Default::default();
@@ -10008,9 +10008,9 @@ fn run_observed_within(
             for &c in node_columns[rel].iter().filter(|&&c| c < part.width()) {
                 for v in node_values(part, c) {
                     if v < -1 && !places.contains_key(&v) {
-                        let n = -2 - v;
-                        let path: String = db.query_row("SELECT sym_text(?1)", [n >> 32], |r| r.get(0))?;
-                        places.insert(v, (path, n & 0xffff_ffff));
+                        let (p, line) = rerail_blocks::located::place_parts(v).expect("a place");
+                        let path: String = db.query_row("SELECT sym_text(?1)", [p], |r| r.get(0))?;
+                        places.insert(v, (path, line));
                     }
                 }
             }
@@ -10033,7 +10033,7 @@ fn run_observed_within(
             let filtered: Vec<Arc<output::Rows>>;
             let parts: &[Arc<output::Rows>] = match node_columns.first() {
                 Some(&c) if !loaded_keys.is_empty() => {
-                    let loaded = |v: i64| v >= 0 && loaded_keys.contains(&(v >> 32));
+                    let loaded = |v: i64| v >= 0 && loaded_keys.contains(&rerail_blocks::located::Located::key_wide(v));
                     filtered = parts
                         .iter()
                         .map(|p| {
@@ -10070,7 +10070,7 @@ fn run_observed_within(
                                 image.place(v, path, *line);
                             }
                         } else if v >= 0 {
-                            let d = v >> 32;
+                            let d = rerail_blocks::located::Located::key_wide(v);
                             if paths.contains_key(&d) || first.contains_key(&d) {
                                 image.doc(d, &output::Doc { path: paths.get(&d).cloned(), first: first.get(&d).copied() });
                             }
@@ -10928,7 +10928,7 @@ impl Totals {
         let n = rows.len();
         // A row's document: its first node column's (`d << 32 | index`), or one document for a relation without one.
         let doc_col = types.iter().position(|t| *t == "node");
-        let doc = |r: usize| doc_col.map_or(-1, |c| rows.value(r, c) >> 32);
+        let doc = |r: usize| doc_col.map_or(-1, |c| rerail_blocks::located::Located::key_wide(rows.value(r, c)));
         let r = self.name(rel);
         for (c, name) in rows.columns().iter().enumerate() {
             let col = self.name(name);
@@ -11252,7 +11252,7 @@ fn chunk_base_count(source: &dyn crate::code_rule_dsl::facts::vtab::Source, held
 fn held_values(rows: &dyn crate::code_rule_dsl::facts::vtab::Source, held: &mut rustc_hash::FxHashSet<i64>) {
     let width = rows.columns().len();
     rows.for_rows(&(0..width).collect::<Vec<_>>(), &mut |_, row| {
-        held.extend(row.iter().copied().filter(|v| *v >= 1 << 32));
+        held.extend(row.iter().copied().filter(|v| rerail_blocks::located::is_located(*v)));
     });
 }
 

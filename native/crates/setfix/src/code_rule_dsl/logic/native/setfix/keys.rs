@@ -217,7 +217,7 @@ impl RowSet {
     #[inline]
     fn tag(h: u64) -> u32 {
         // Never `EMPTY`'s value: a tag is any but one.
-        (h >> 32) as u32 & !1
+        (h >> 32) as u32 & !1 // bits: a hash's high half
     }
 
     /// A held row equal to `row` and not `skip`'s (rows of `data`, `k` columns a row).

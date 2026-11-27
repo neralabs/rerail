@@ -1209,7 +1209,7 @@ impl ByDocument {
     fn document(self, value: i64) -> Option<u32> {
         match self {
             Self::Key(_) => u32::try_from(value).ok(),
-            Self::Id(_) | Self::Host(_) => u32::try_from(value >> 32).ok().filter(|_| value >= 0),
+            Self::Id(_) | Self::Host(_) => rerail_blocks::located::Located::key_of(value),
             Self::No => None,
         }
     }
@@ -1397,7 +1397,7 @@ impl Batch {
         match kind {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
-            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Node => rerail_blocks::located::Located::range(keys[0], keys[1]),
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
@@ -1938,7 +1938,7 @@ impl MadeRows {
                     .map(|(c, name)| {
                         pairs.resize(0, [0, 0]);
                         for &row in &rows {
-                            pairs.push([Source::value(r.as_ref(), row, c), Source::value(r.as_ref(), row, 0) >> 32]);
+                            pairs.push([Source::value(r.as_ref(), row, c), rerail_blocks::located::Located::key_wide(Source::value(r.as_ref(), row, 0))]);
                         }
                         pairs.sort_unstable();
                         let (mut ndv, mut sq, mut sqd) = (0i64, 0i64, 0i64);

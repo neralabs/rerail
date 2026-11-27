@@ -329,12 +329,12 @@ fn window_end(source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize,
 
 /// The document a row's first column names: as `syntax::measured` reads it.
 pub fn doc32(first: i64) -> i64 {
-    first >> 32
+    rerail_blocks::located::Located::key_wide(first)
 }
 
 /// The document a location value names: a node (`key << 32 | index`) or a document key (as `memo::document_of`).
 pub fn document_of(v: i64) -> i64 {
-    if v >= 1 << 32 { v >> 32 } else { v }
+    rerail_blocks::located::document_of(v)
 }
 
 /// The key a (document, value) pair is counted under in a column's `pairs` sketch: the sketch hashes it again.
@@ -351,7 +351,7 @@ fn group(first: i64) -> i64 {
 /// Whether value `v` names document `d` (its first column's value `first`): a node of it, or its key.
 pub fn names_doc(v: i64, first: i64) -> bool {
     let d = doc32(first);
-    (d != 0 && v >> 32 == d) || v == document_of(first)
+    (d != 0 && rerail_blocks::located::Located::key_wide(v) == d) || v == document_of(first)
 }
 
 /// `pairs` sorted by value, each value's counts summed into one pair.
@@ -604,13 +604,13 @@ impl RelStats {
         let of = |r: usize| match at {
             None => (doc32(key[r]), document_of(key[r])),
             Some(at) => {
-                let d = at.map_or(-1, |_| key[r] >> 32);
+                let d = at.map_or(-1, |_| rerail_blocks::located::Located::key_wide(key[r]));
                 (d, d)
             }
         };
         let names = |v: i64, r: usize| match at {
             None => names_doc(v, key[r]),
-            Some(at) => at.is_some_and(|_| v >> 32 == key[r] >> 32),
+            Some(at) => at.is_some_and(|_| rerail_blocks::located::Located::key_wide(v) == rerail_blocks::located::Located::key_wide(key[r])),
         };
         self.rows += sign * n as i64;
         // One pass a column: each row's (document, value, whether its `doc32` is 0) is listed; in order (node

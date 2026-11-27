@@ -107,7 +107,7 @@ impl Pairs {
 /// The run of `row`'s rows made on a side, if it is: its slot holds `(start + 1) << 32 | len`, 0 where none is made.
 fn made_run(slots: &Pairs, row: u32) -> Option<(u32, u32)> {
     let slot = slots.at(row as usize).load(Ordering::Acquire);
-    (slot != 0).then(|| (((slot >> 32) - 1) as u32, slot as u32))
+    (slot != 0).then(|| (((slot >> 32) - 1) as u32, slot as u32)) // bits: a run's start and length
 }
 
 pub struct Within {
@@ -817,7 +817,7 @@ impl Within {
                 let (inner, outer) = if side == 0 { (row, base + other) } else { (base + other, row) };
                 let (k, at) = slot(start + i);
                 let chunk = self.chunks[side][k].get_or_init(|| Pairs::new(BASE << k));
-                chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed);
+                chunk.at(at).store(u64::from(inner) << 32 | u64::from(outer), Ordering::Relaxed); // bits: two node rows
             }
             made[side] += others.len();
             if side == 0 {
@@ -825,7 +825,7 @@ impl Within {
             }
             let run = ((start + if side == 0 { self.looked_up() } else { OUTER }) as u32, others.len() as u32);
             // After its rows: a reader that finds the run reads them.
-            runs.at(row as usize).store((u64::from(run.0) + 1) << 32 | u64::from(run.1), Ordering::Release);
+            runs.at(row as usize).store((u64::from(run.0) + 1) << 32 | u64::from(run.1), Ordering::Release); // bits: a run's start and length
             run
         })
     }
@@ -1200,7 +1200,7 @@ impl Source for Within {
         }
         for r in 0..self.len() {
             let pair = self.pair(r);
-            let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize };
+            let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize }; // bits: two node rows
             let p = self.batch.locate(View::Node, node, &mut memo).0;
             // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`).
             each(r, if p.key() == 0 { self.value(r, column) } else { i64::from(p.key()) });
@@ -1213,7 +1213,7 @@ impl Source for Within {
             return self.solved_rows().get(row as u32, column.min(1));
         }
         let pair = self.pair(row);
-        self.batch.id(if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize }, &mut memo)
+        self.batch.id(if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize }, &mut memo) // bits: two node rows
     }
     /// From the tree (`shape`): for containment, as many rows as nodes have containers (their depth + 1), per
     /// inner node its depth + 1, per outer node its subtree. Values never cross documents.

@@ -1159,7 +1159,7 @@ impl Retained {
     /// `(copy, rows, rows with a guest document's value, rows also in the original, the original's rows)`: a value is
     /// a guest's when its document key (`>> 32`) is in the guests' range (`hiding`). `RERAIL_COPIES` prints it.
     pub(in crate::code_rule_dsl) fn copies(&self) -> Vec<(String, usize, usize, usize, usize)> {
-        let guest = |v: i64| (v >> 32) >= (1 << 30) && (v >> 32) < (1i64 << 31);
+        let guest = |v: i64| (rerail_blocks::located::Located::key_wide(v)) >= (1 << 30) && (rerail_blocks::located::Located::key_wide(v)) < (1i64 << 31);
         let mut out = Vec::new();
         for (rel, k) in &self.rels {
             let Some(rest) = rel.strip_prefix("rr_in_") else { continue };
