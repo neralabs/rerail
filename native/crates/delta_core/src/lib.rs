@@ -11,6 +11,7 @@
 //!   allocator.
 //! - `hash`: the hash every index and kernel uses for a key.
 //! - `col`: a frozen integer column's format (`IntCol`) and its reads (`Dec`).
+//! - `rows`: a relation's rows, its columns in chunks that grow by quarter steps (`Rows`, `ColDir`), and their reads.
 
 #![no_std]
 
@@ -20,6 +21,7 @@ pub mod hash;
 pub mod kernel;
 pub mod pod;
 pub mod refs;
+pub mod rows;
 pub mod runs;
 
 pub use pod::{Pod, set_word, word, words, words_mut};

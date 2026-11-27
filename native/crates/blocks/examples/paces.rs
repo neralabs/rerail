@@ -34,6 +34,7 @@ use rerail_blocks::facts::{Facts, FrozenFacts, RelDef, Schema};
 use rerail_blocks::journal::{self, Journal};
 use rerail_blocks::program::{ModuleIn, Program};
 use rerail_blocks::relation::{Spec, View};
+use rerail_blocks::rows::RowsW;
 use rerail_blocks::{col, packed};
 use rerail_blocks::{footprint, retired};
 use std::collections::{BTreeMap, HashMap};

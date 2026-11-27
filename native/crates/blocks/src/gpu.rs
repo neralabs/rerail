@@ -135,6 +135,7 @@ mod tests {
     use super::*;
     use crate::block::{Block, kind};
     use crate::relation::{RelW, Spec, freeze};
+    use crate::rows::RowsW;
     use std::sync::Mutex;
 
     /// The kernels read a relation as the host does, through the reads written once (decision 0325): every row's

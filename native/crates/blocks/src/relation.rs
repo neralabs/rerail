@@ -22,7 +22,7 @@
 
 use crate::block::Block;
 use crate::refs::Span;
-use crate::rows::Rows;
+use crate::rows::{Rows, RowsW};
 use crate::{key_hash, structure};
 use std::cmp::Ordering;
 use std::sync::Mutex;

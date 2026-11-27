@@ -1,6 +1,6 @@
 //! Random reads of one column per frozen encoding (decision 0622), against the raw column: nanoseconds a read.
 use rerail_blocks::block::{Block, kind};
-use rerail_blocks::rows::Rows;
+use rerail_blocks::rows::{Rows, RowsW};
 use std::sync::Mutex;
 
 fn main() {
