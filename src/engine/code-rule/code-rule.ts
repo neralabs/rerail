@@ -1633,10 +1633,11 @@ export interface CodeRuleAuditor {
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
    * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
-   * never of a link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per
-   * folder where the auditor would make one per file. Absent: the walk asks the auditor itself.
+   * never of a link, reaching each through folders from `root` (absolute), where it starts. It may keep what it learns
+   * of a folder for the rest of the walk, so a walk costs a lookup per folder where the auditor would make one per
+   * file. Absent: the walk asks the auditor itself.
    */
-  walkView?(): WalkView;
+  walkView?(root?: string): WalkView;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
@@ -1653,6 +1654,11 @@ export interface CodeRuleAuditor {
    * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
    */
   worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * `worktreeRoots`, with turns of the event loop while it reads checkouts it has not read before; `worktreeRoots` when
+   * absent. Undefined when the auditor was interrupted between two turns: no list of the worktrees, only part of it.
+   */
+  worktreeRootsInTurns?(registry?: WorktreeRegistry): Promise<readonly string[] | undefined>;
   /**
    * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
    * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list

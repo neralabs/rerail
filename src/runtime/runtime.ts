@@ -45,8 +45,9 @@ import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked } from "../engine/storage/database.js";
-import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { makeLedgerFolder, openLedgerFile, readLedgerFile, readLedgerLines, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepFolderPrivate } from "../engine/storage/private-files.js";
+import { openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
@@ -274,16 +275,73 @@ function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "t
 /** A ledger line that says it is an `owed` entry, whether or not this build can read the rest of it. */
 const OwedTypeSchema = z.object({ type: z.literal("owed") });
 
-function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
-  return values.flatMap((value): LedgerEntry[] => {
-    const parsed = LedgerEntrySchema.safeParse(value);
-    if (parsed.success) return [compactValidated<LedgerEntry>(parsed.data)];
-    if (!OwedTypeSchema.safeParse(value).success) return [];
-    // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
-    // session owes nothing from either, rather than give it out again.
-    process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
-    return [{ type: "owed", steers: [], findings: [] }];
+/** A value of a ledger line as this build reads it: its entry, or undefined for a line it does not know. */
+function ledgerEntryOf(value: unknown): LedgerEntry | undefined {
+  const parsed = LedgerEntrySchema.safeParse(value);
+  if (parsed.success) return compactValidated<LedgerEntry>(parsed.data);
+  if (!OwedTypeSchema.safeParse(value).success) return undefined;
+  // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
+  // session owes nothing from either, rather than give it out again.
+  process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
+  return { type: "owed", steers: [], findings: [] };
+}
+
+/** A session's ledger as it was read back, and where its next line goes. */
+export interface ReadLedger {
+  readonly entries: readonly LedgerEntry[];
+  /** How many lines held a value, entries or not. */
+  readonly lines: number;
+  readonly appendState: JsonlAppendState;
+}
+
+/**
+ * Reads a session's ledger back a line at a time (`readLines`), each value taken to its entry as it is read
+ * (`ledgerEntryOf`), keeping only what an open reads of it (`KeptLedger`). A session open for weeks has written a line
+ * for every prompt, tool call and result, and a file's whole text for most edits.
+ */
+export async function readSessionLedger(path: string, keep: { readonly sampleText: boolean }): Promise<ReadLedger> {
+  const kept = new KeptLedger(keep.sampleText);
+  let lines = 0;
+  const appendState = await readLines(path, value => {
+    lines += 1;
+    const entry = ledgerEntryOf(value);
+    if (entry !== undefined) kept.add(entry);
   });
+  return { entries: kept.entries, lines, appendState };
+}
+
+/**
+ * A session's ledger entries as an open keeps them. A code-rule call's preimages, the text each file it edits held
+ * before the edit, are let go once its result is read, or once a later call takes its id: only a call still open is
+ * begun again with them (`unresolvedCodeRuleCalls`). Without `sampleText`, a sample keeps no text: a session whose
+ * content source keeps none (`keepsSamples`) counts its samples and reads nothing of them.
+ */
+class KeptLedger {
+  readonly entries: LedgerEntry[] = [];
+  /** Where among `entries` each call whose result has not been read is, by its id. */
+  readonly #openCalls = new Map<string, number>();
+  readonly #sampleText: boolean;
+
+  constructor(sampleText: boolean) {
+    this.#sampleText = sampleText;
+  }
+
+  add(entry: LedgerEntry): void {
+    if (entry.type === "policy-call" || entry.type === "policy-result") this.#close(entry.toolCallId);
+    if (entry.type === "policy-call") this.#openCalls.set(entry.toolCallId, this.entries.length);
+    this.entries.push(entry.type === "sample" && !this.#sampleText ? { ...entry, item: { ...entry.item, text: "" } } : entry);
+  }
+
+  /** Replaces the entry of the open call `toolCallId` with one without its preimages; nothing when none is open. */
+  #close(toolCallId: string): void {
+    const index = this.#openCalls.get(toolCallId);
+    if (index === undefined) return;
+    this.#openCalls.delete(toolCallId);
+    const call = this.entries[index];
+    if (call?.type !== "policy-call" || call.preimages === undefined) return;
+    const { preimages: _preimages, ...closed } = call;
+    this.entries[index] = closed;
+  }
 }
 
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
@@ -616,10 +674,11 @@ interface JsonlAppendState {
   truncateTo: number | null;
 }
 
-interface JsonlReadResult {
-  values: unknown[];
-  appendState: JsonlAppendState;
-}
+/** A line of `watermarks.jsonl`: every assignment as of one revision. */
+const WatermarkSnapshotSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  assignments: z.array(z.object({ id: z.string(), target: ContentRefSchema, watermark: WatermarkSchema })),
+});
 
 class JsonlWatermarkStore implements WatermarkStore {
   readonly #path: string;
@@ -633,26 +692,14 @@ class JsonlWatermarkStore implements WatermarkStore {
   }
 
   static async open(path: string): Promise<JsonlWatermarkStore> {
-    const { values: lines, appendState } = await readLines(path);
-    const store = new JsonlWatermarkStore(path, appendState);
-    const snapshots = lines.flatMap((line) => {
-      const parsed = z
-        .object({
-          revision: z.number().int().nonnegative(),
-          assignments: z.array(
-            z.object({
-              id: z.string(),
-              target: ContentRefSchema,
-              watermark: WatermarkSchema,
-            }),
-          ),
-        })
-        .safeParse(line);
-      return parsed.success
-        ? [compactValidated<{ revision: number; assignments: WatermarkAssignment[] }>(parsed.data)]
-        : [];
+    // Each line holds every assignment as of its revision, so only the last one that parses is kept.
+    const read: { latest?: { revision: number; assignments: WatermarkAssignment[] } } = {};
+    const appendState = await readLines(path, value => {
+      const parsed = WatermarkSnapshotSchema.safeParse(value);
+      if (parsed.success) read.latest = compactValidated<{ revision: number; assignments: WatermarkAssignment[] }>(parsed.data);
     });
-    const latest = snapshots.at(-1);
+    const store = new JsonlWatermarkStore(path, appendState);
+    const { latest } = read;
     if (latest !== undefined) {
       store.#revision = latest.revision;
       for (const assignment of latest.assignments) store.#assignments.set(assignment.id, assignment);
@@ -950,11 +997,22 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 }
 
 /**
+ * Interrupts the session's queued and running scans and releases its owner while `claim` still holds it, in one record
+ * write that reads the owner row as it is made (`endOwnership`): never on this thread while another process holds the
+ * write lock, and after the claim when that still waits for it. A claim kept for the lock and not made is told only to
+ * the open session of the runtime that asked for it (`#claimNotMade`): a suspension, or a runtime made again that took
+ * it from one, still holds it, and the write then finds another runtime's row and leaves that runtime's scans.
+ */
+function endHeldOwnership(controls: SqliteAuditControlStore, sessionId: string, claim: PolicyOwnerClaim | undefined): void {
+  if (claim !== undefined) controls.endOwnership(sessionId, claim);
+}
+
+/**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one: their queued scans are
- * interrupted, their owner released and their record ended at `endedAt`, the time their end came. Without one, as when
- * the daemon stops, each record ends when its session was suspended (`suspendedAt`): nothing was heard from it after. One
- * that fails is reported and the rest are still ended, as a runtime's close ends each of its sessions whatever another's
- * does.
+ * interrupted and their owner released while their claim holds it (`endHeldOwnership`), and their record ended at
+ * `endedAt`, the time their end came. Without one, as when the daemon stops, each record ends when its session was
+ * suspended (`suspendedAt`): nothing was heard from it after. One that fails is reported and the rest are still ended,
+ * as a runtime's close ends each of its sessions whatever another's does.
  */
 export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[], endedAt?: number): void {
   const sessions = new SqliteSessionStore(databasePath);
@@ -962,10 +1020,7 @@ export function endSuspendedSessions(databasePath: string, suspensions: readonly
   try {
     for (const { descriptor, ownerClaim, suspendedAt } of suspensions) {
       try {
-        if (ownerClaim !== undefined) {
-          controls.interrupt(descriptor.sessionId);
-          controls.releaseOwner(descriptor.sessionId, ownerClaim);
-        }
+        endHeldOwnership(controls, descriptor.sessionId, ownerClaim);
         sessions.closeSession(descriptor.sessionId, endedAt ?? suspendedAt);
       } catch (error) {
         process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1028,43 +1083,56 @@ interface SessionStart {
   readonly steerStrategy: SteerStrategy;
 }
 
-async function readLines(path: string): Promise<JsonlReadResult> {
-  let content = await readLedgerFile(path, dirname(path));
-  if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
-
+/**
+ * Hands `take` the value of each line of a JSON-lines record file, read a line at a time (`readLedgerLines`), and says
+ * where its next line goes. A line that is no JSON fails the read, except the last when no newline ends it: a write cut
+ * short, which the next append cuts off (`truncateTo`, its first byte); a last line that is whole gets its newline first
+ * (`prefix`).
+ */
+async function readLines(path: string, take: (value: unknown) => void): Promise<JsonlAppendState> {
+  const last = await readLedgerLines(path, dirname(path), line => {
+    if (line !== "") take(JSON.parse(line));
+  });
   const appendState: JsonlAppendState = { prefix: "", truncateTo: null };
-  if (content.length > 0 && !content.endsWith("\n")) {
-    const tailStart = content.lastIndexOf("\n") + 1;
-    try {
-      JSON.parse(content.slice(tailStart));
-      appendState.prefix = "\n";
-    } catch {
-      const validPrefix = content.slice(0, tailStart);
-      appendState.truncateTo = Buffer.byteLength(validPrefix);
-      content = validPrefix;
-    }
+  if (last === undefined || last.text === "") return appendState;
+  let value: unknown;
+  try {
+    value = JSON.parse(last.text);
+  } catch {
+    appendState.truncateTo = last.start;
+    return appendState;
   }
-  return {
-    values: content
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as unknown),
-    appendState,
-  };
+  appendState.prefix = "\n";
+  take(value);
+  return appendState;
 }
 
-/** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */
+/**
+ * Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it,
+ * first cutting off a last line a write left unfinished (`truncateTo`) through a descriptor of its own: on Windows one
+ * opened to append may only append, and its truncate fails with EPERM.
+ */
 async function appendJsonLine(path: string, value: unknown, state: JsonlAppendState): Promise<void> {
   await makeLedgerFolder(dirname(path));
+  if (state.truncateTo !== null) await truncateLedgerFile(path, state.truncateTo);
   const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
   try {
-    if (state.truncateTo !== null) await handle.truncate(state.truncateTo);
     await handle.appendFile(`${state.prefix}${JSON.stringify(value)}\n`, "utf8");
   } finally {
     await handle.close();
   }
   state.prefix = "";
   state.truncateTo = null;
+}
+
+/** Cuts the session record file at `path` to its first `bytes` bytes, through a descriptor that follows no symlink. */
+async function truncateLedgerFile(path: string, bytes: number): Promise<void> {
+  const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_CREAT);
+  try {
+    await handle.truncate(bytes);
+  } finally {
+    await handle.close();
+  }
 }
 
 /**
@@ -1342,6 +1410,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #modelPath: string | undefined;
   readonly #sessionStore: SqliteSessionStore;
   readonly #audits: SqliteAuditStore;
+  /** The database's record writer, for the seen time of the checkout a session starts in (`#startingCheckout`). */
+  readonly #checkoutRecords: RecordWriter;
   readonly #steersInFlight = new Set<Promise<AdapterDelivery | undefined>>();
   /** The steer each answer's delivery came from, and its session, until the answer reaches its asker or comes back (`returnUndelivered`). */
   readonly #handedOut = new WeakMap<AdapterDelivery, HandedOut>();
@@ -1349,6 +1419,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
+  /** Every session's owner look-ups, which find a watched worktree's place on disk in the daemon's places. */
   readonly #owners: CheckoutOwners;
   /**
    * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
@@ -1423,6 +1494,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       sessionRoot: auditorOptions.workspaceRoot,
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
+      places: this.#worktreeWalks.places,
       catalogs: this.#catalogs,
       gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));
@@ -1436,19 +1508,24 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let audits: SqliteAuditStore | undefined;
     let controls: SqliteAuditControlStore | undefined;
     let startWatch: RepositoryStartWatch | undefined;
+    let checkoutRecords: RecordWriter | undefined;
     try {
       catalogs = new CheckoutCatalogs(databasePath);
       startWatch = options.startGate === true ? new RepositoryStartWatch(databasePath, workspaceRoot) : undefined;
       sessionStore = new SqliteSessionStore(databasePath, { onRowPutBack: sessionId => this.#claimAgain(sessionId) });
+      checkoutRecords = openRecordWriter(databasePath);
       audits = new SqliteAuditStore(databasePath);
       controls = new SqliteAuditControlStore(databasePath);
       this.#catalogs = catalogs;
-      this.#owners = new CheckoutOwners(catalogs.database);
+      // The recorded checkouts' owners, their places on disk the daemon's (`RepositoryWorktreeWalks.places`).
+      this.#owners = new CheckoutOwners(catalogs.database, undefined, this.#worktreeWalks.places);
+      this.#checkoutRecords = checkoutRecords;
       this.#sessionStore = sessionStore;
       this.#audits = audits;
       this.#controls = controls;
       this.#startWatch = startWatch;
     } catch (error) {
+      checkoutRecords?.close();
       sessionStore?.close();
       audits?.close();
       controls?.close();
@@ -1543,8 +1620,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #dropLedgerOwed(sessionId: string): Promise<void> {
     const path = join(sessionDirectory(this.#storageRoot, sessionId), "events.jsonl");
     try {
-      const { values, appendState } = await readLines(path);
-      if (restoredOwed(validatedLedger(values)).recorded === 0) return;
+      const { entries, appendState } = await readSessionLedger(path, { sampleText: false });
+      if (restoredOwed(entries).recorded === 0) return;
       await appendJsonLine(path, { type: "owed", steers: [], findings: [] } satisfies OwedEntry, appendState);
     } catch (error) {
       process.stderr.write(`rerail: could not drop what session ${sessionId} owed its agent: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1615,8 +1692,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk. The read makes none of
    * this process's waiting record writes first, which would hold this thread, and so every session's hooks, for the lock
-   * until the oldest of them is 5 s old. A session this process opened has its row on disk already: its open ends with
-   * the owner claim, which this process's waiting writes are made before (`requireRecordWritesMade`), or fails.
+   * until the oldest of them is 5 s old. A session this process opened while another process held the lock can have its
+   * row still waiting: it reads as unrecorded, and its next open takes its start from its ledger's first dated event;
+   * the waiting row, made first, keeps the start it was written with (`SqliteSessionStore.openSession` leaves it).
    */
   #recordedStart(sessionId: string): number | undefined {
     return this.#sessionStore.storedSession(sessionId)?.startedAt;
@@ -2460,6 +2538,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
     this.#audits.close();
+    this.#checkoutRecords.close();
     this.#sessionStore.close();
     this.#sessionStoreClosed = true;
     this.#catalogs.close();
@@ -2679,15 +2758,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
    * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
    * meanwhile registers as before, and is refused while this one owns it. It is taken only once the claim is made: an
-   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record.
+   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record. A claim kept
+   * for the write lock and not made is let go (`#claimNotMade`).
    */
   #registerOwner(sessionId: string): PolicyOwnerClaim {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId, claim => { this.#claimNotMade(sessionId, claim); });
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /**
+   * The session's claim, kept for the write lock, was not made: refused once the lock was given back, as when another
+   * runtime claimed the session first, or dropped. The session is no longer this runtime's to scan, release or
+   * interrupt, which would act on a claim the database does not hold.
+   */
+  #claimNotMade(sessionId: string, claim: PolicyOwnerClaim): void {
+    const state = this.#sessions.get(sessionId);
+    if (state?.ownerClaim?.token === claim.token) state.ownerClaim = undefined;
   }
 
   /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
@@ -2761,11 +2851,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
     keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
-    const { values, appendState } = await readLines(path);
-    const entries = validatedLedger(values);
+    const { entries, lines, appendState } = await readSessionLedger(path, { sampleText: keepsSamples(session.host) });
     // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
     // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
-    const completeTracking = unrecorded && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
+    const completeTracking = unrecorded && lines === 0 && (this.#nativeSession?.turn ?? 0) === 0;
     if (!entries.some(entry => entry.type === "hud-tracking-start")) {
       await appendJsonLine(path, { type: "hud-tracking-start" }, appendState);
     }
@@ -2910,9 +2999,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#sessions.delete(sessionId);
     this.#pollControlsWhileSessionsOpen();
     if (opened.ownerClaim !== undefined) {
-      this.#controls.interrupt(sessionId);
       this.#controls.interruptRepositoryAudit(sessionId);
-      this.#controls.releaseOwner(sessionId, opened.ownerClaim);
+      this.#controls.endOwnership(sessionId, opened.ownerClaim);
       this.#sessionStore.closeSession(sessionId);
     }
     try {
@@ -3098,15 +3186,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Interrupts the session's queued and running scans and releases its owner, unless it is being suspended, which keeps
-   * both for its next open. Its checkout audit is interrupted either way: the evaluator running it closes.
+   * Interrupts the session's queued and running scans and releases its owner while its claim holds it
+   * (`endHeldOwnership`), unless it is being suspended, which keeps both for its next open. Its checkout audit is
+   * interrupted either way: the evaluator running it closes.
    */
   #endOwnership(sessionId: string, state: RuntimeSessionState): void {
     if (state.ownerClaim === undefined) return;
     this.#controls.interruptRepositoryAudit(sessionId);
-    if (state.suspending) return;
-    this.#controls.interrupt(sessionId);
-    this.#controls.releaseOwner(sessionId, state.ownerClaim);
+    if (!state.suspending) endHeldOwnership(this.#controls, sessionId, state.ownerClaim);
   }
 
   /**
@@ -3693,7 +3780,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = checkoutRealpath(session.cwd);
-    recordCheckout(this.#catalogs.database, cwd);
+    // A checkout recorded already is only seen again, a record write that never waits here for another process's lock,
+    // but for the first adoption of a remote its clone-keyed repository gained (`recordCheckout`).
+    const known = recordCheckout(this.#catalogs.database, cwd, Date.now(), this.#checkoutRecords);
+    if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
     // The session's rule coverage reads the checkout's catalog before its evaluator opens. Other sessions' lanes in the
     // checkout share that catalog and read it again only at their own use, so its rules are read here. A catalog not

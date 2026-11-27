@@ -12178,3 +12178,53 @@ Conflicts, resolved by invariant:
 
 Checked under Relax: rerail-kotlin-parser (92), rerail-compiler (46); rr-parser rust_is_current, parser-tests
 json_rust_is_current and python-parser rust_is_current current without a bless. No Metal or farm runs.
+
+### Q589. Roll-up 161 (main 2cdda9d01c onto Pulling-it-all-together): what the merge chose
+
+main's commits since the hub last took it: the tray programs in the release, a scoped discovery's status under its root, the
+hook tests of a file rewritten with its committed bytes, checkouts recorded with their known plain roots
+(`addPlainRoot`), a remote kept per lookup holder, the router's listed worktree roots, folder places kept while the
+tree watch shows no move (`FolderPlaces`), and toml_datetime/toml_parser bumps.
+
+Conflicts, resolved by invariant:
+- Cargo.toml: the hub's members plus `tray`; `native/crates/w` stays removed, as the hub removed it. Cargo.lock: both
+  sides' packages, one version per semver-compatible range, the higher kept; no version neither side had.
+- docs/release.md: the hub's GPU kernel step 3, then main's step 4 with its tray programs.
+- observe git_workspace.rs, store git_workspace_tests.rs: main's tests, in the crates the hub moved the code to. main's
+  `initialize_repository` helper is added beside the hub's `initialize_repository_with`, which it now writes through.
+- native code_rule_dsl/mod.rs and workspace rule_api.rs: the hub's `rule_api::compile_rule` delegation; main's fields
+  as the hub's shared forms (`canonical.into()`, `clauses.into()`, `Arc::new(capabilities)`).
+- git.ts: the hub's `runGitSyncBytes` with main's signal line.
+- checkout-owner.ts: the hub's points (`lookAgain`), kept answers and submodule stamps; main's `addPlainRoot`, whose
+  in-memory root stands beside the catalog's recorded one. The constructor takes the hub's
+  `(database, recordedVersion, places)`; the runtime builds the owners once its catalogs and walks' places exist.
+- repository-identity.ts / repository-registry.ts: the hub's refused clone ids and strict legacy reads; main's
+  holder-kept remotes and `recordedRepositoryAt`. A kept location keeps its checkout identity.
+- rule-configuration.ts: main's refactor, with the hub's `#decide` by id and pack.
+- checkout-code-rule-router.ts: main's `#listedWorktreeRoots`, each list a point for the roots it names (the hub's
+  `lookAgain(roots)`).
+
+Fixes the merge needed:
+- `remoteRepository` keeps a holder's remote only while the facts it was read from read the same (`remoteSource`): a
+  changed or removed origin URL is read again, and so is one whose facts cannot be read (an included config file).
+  main's per-holder keep had made a long-lived resolver miss the hub's URL changes.
+- git-locate: a clone whose config holds no id takes its common Git folder's id (`git:fs-<sha256>`), as the hub names
+  clones, or a random one.
+- seen-sources-walk-cost: a walked folder's checkout is the answer kept at the turn before until the next point, so
+  the walk lstats no `.git` entry (4 lstats, not main's 8).
+- Tests build the owners by the hub's constructor.
+
+Fixed on the way (red on its own side before the merge):
+- folder-places: main's first case ran on the host's platform, which on macOS keeps nothing; it names a watched
+  platform, as its macOS case names darwin.
+- declared-submodules: a `.gitmodules` path is a pathspec to `ls-files`, so `vendor` listed the gitlink `vendor/sub`
+  as declared; only a gitlink at a configured path is. Its facts read the Git folder too, so a split index's shared
+  index moved away is a change (as the owners' `submoduleStamp` reads it). The hub's router case of a submodule during
+  a watch passes again.
+
+Checked: tsc --noEmit; vitest on catalog/checkouts, the registry, identity, rule configuration, the router, the
+many-worktrees walks and every submodule test file. Under Relax: rerail-observe (50), rerail-store (git_workspace 23,
+the rest one test at a time 215), rerail-tree-watch (23), rerail-rules-base (29), rerail-workspace (43),
+rerail-engine built. Still red on the hub alone, as before: headless-scan, git-guard and first-events-git, against a
+built engine older than the tree. The engine's git_access tests fail here only because this machine's guard refuses
+their fixtures' `git add .`. Relax has no clippy: none run. No Metal or farm runs.

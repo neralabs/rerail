@@ -27,7 +27,7 @@ export function createSuggestions(recommendations, attachedPacks, packs) {
 function placesToStart(suggestions) {
   if (suggestions.length === 0) return null;
   return h("section.psec.places", null, h("h3", null, "Places to start"),
-    h("p.pintro", null, "Rule packs are ready-made rules, mostly the same ones linters use (ESLint, Ruff, Clippy…). These are suggested for what this repo is built with; Rerail has not checked your code against them."),
+    h("p.pintro", null, "Rule packs are best practices, mostly the same ones linters use (ESLint, Ruff, Clippy…). These are suggested for what this repo is built with; Rerail has not checked your code against them."),
     suggestions.map(s => h("div.place", null,
       h("p.pintro", null, `Suggested: the ${s.name} rule pack (${s.reason}). Not added here yet.`),
       h("div.acts", null,

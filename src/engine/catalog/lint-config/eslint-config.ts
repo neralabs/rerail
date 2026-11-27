@@ -234,7 +234,7 @@ function partialMix(read: PortRead, key: string, entry: ScopedRule, every: Every
 /** A rule the config does not set for every file: off, as ESLint leaves it, unless something not read may set it. */
 function unsetDecision(eslint: EslintRules): PortDecision {
   return eslint.unread === undefined
-    ? { on: false, explicit: false, because: `${eslint.file} does not turn it on` }
+    ? { on: false, explicit: false, because: `not turned on in ${eslint.file}` }
     : { on: "unknown", because: `${eslint.file}: ${eslint.unread} is not read and may set it` };
 }
 

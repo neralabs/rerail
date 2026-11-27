@@ -447,6 +447,23 @@ Rerail is not installed on this computer. Install it with npx @neralabs/rerail s
 
 There is no installation in `~/.rerail` (or `RERAIL_HOME`, when set). Run set-up.
 
+### `Git could not say where the repository of … is`
+
+```text
+Git could not say where the repository of C:\code\app is: exit status 3221225794 (0xC0000142), signal none, stderr: nothing
+```
+
+Rerail asked Git where the folder's repository is, and that Git gave no answer: Windows could not start it
+(0xC0000142, often while the machine runs out of resources for new processes), it ran past its time limit of 10 seconds
+(`no exit status`, with the time limit named), something ended it (a signal, or on Windows exit status 1 with no
+output), or it failed with the message after `stderr:`. For that one ask the folder reads as a folder outside Git, as
+it did before, and Rerail keeps nothing from the answer, so the next command or hook asks Git again. Where Rerail would
+record the checkout from it, the record fails with the line instead and nothing is written: no `.rerail/repository-id`
+in the checkout, no move to another repository. The same line ending `which clone id the config of the repository of …
+holds` comes from the read of a clone id kept in Git's config (`rerail.repository-id`): that record fails too, and no
+new id is made in its place. The daemon writes each line to `daemon.log` once for each folder and reason. When it keeps
+coming, run `git -C <folder> rev-parse --show-toplevel` in a terminal: Git's own error says what to mend.
+
 ### Node was upgraded or removed after set-up
 
 If the Node that ran set-up is gone and the next `node` on `PATH` is older than 24, `rerail` stops with
@@ -610,7 +627,8 @@ Agents load hooks and commands when a session starts. Open a new session after s
 
 ### `rerail status` says `Hooks run but nothing was recorded`
 
-A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
+A coding agent ran Rerail's hooks, and Rerail could not record their events (or the `rerail events` stream's, under
+its own names for them, such as `user-prompt`). The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
 (it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an

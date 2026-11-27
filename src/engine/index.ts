@@ -53,6 +53,7 @@ export {
   addAttachment,
   listRepositoryRules,
   removeAttachment,
+  repositoryRulesVersionReader,
   ruleConfigurationSignature,
   setRuleSetting,
   setUpRepository,
@@ -118,6 +119,7 @@ export {
   type NativeCompiledCodeRuleDsl,
   nativeEnginePackageName,
   nativePlatformSuffix,
+  nativeTrayFileName,
   resolveNativeBindingPath,
 } from "./native/native.js";
 export { LOCKS_DIR } from "./native/file-lock.js";

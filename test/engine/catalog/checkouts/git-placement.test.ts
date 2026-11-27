@@ -2330,7 +2330,7 @@ describe("a repository start", () => {
     const main = repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
     git(main, "config", "rerail.repository-id", "legacy-id");
-    const configReads = () => vi.mocked(gitText).mock.calls.filter(([, args]) => args[0] === "config").length;
+    const configReads = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args.includes("rerail.repository-id")).length;
     const before = configReads();
 
     expect(resolveCloneId(main).cloneId).toBe("legacy-id");

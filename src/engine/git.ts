@@ -782,6 +782,11 @@ export class ProcessGit {
     this.#livesOn = true;
   }
 
+  /** Whether this process lives on past each call ({@link livesOn}): the daemon. */
+  get living(): boolean {
+    return this.#livesOn;
+  }
+
   /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
   path(): string {
     this.#kept ??= this.#keep(keptBy(this.#decide(), this.#disks.now));
@@ -886,6 +891,11 @@ export function gitLivesOn(): void {
   processGit.livesOn();
 }
 
+/** Whether this process's Git works as one that lives on ({@link gitLivesOn}): the daemon's, whose error output is `daemon.log`. */
+export function gitLivesOnHere(): boolean {
+  return processGit.living;
+}
+
 /**
  * Has this process's Git run as the daemon's, which serves the checkout in `folder` and lives on: looked for from that
  * folder ({@link searchGitFrom}), and working as a process that lives on does ({@link gitLivesOn}). The daemon calls it
@@ -959,6 +969,8 @@ export function gitBash(exists: (path: string) => boolean = existsSync): string 
 export interface GitResult {
   /** Null when Git could not be started or was killed. */
   status: number | null;
+  /** The signal that ended Git, when one did and the start says which. */
+  signal?: NodeJS.Signals;
   stdout: string;
   /**
    * The bytes Git wrote to stdout, where the call asked to keep them (`keepBytes`, {@link runGitWithoutBlockingBytes}):
@@ -1198,7 +1210,9 @@ function startGitBytes(cwd: string, args: readonly string[], options: RunGitOpti
 function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const { env, ...limits } = options;
   const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
-  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  // `spawnSync` gives "" for a signal Node has no name for (`GitRunResult`): no name to say.
+  const signal = result.signal === null || result.signal === "" ? undefined : result.signal;
+  return { status: result.status, ...(signal === undefined ? {} : { signal }), stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
@@ -1265,7 +1279,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
       const why = signal?.aborted === true ? "the read was stopped" : `it ran past its time limit of ${timeout} ms`;
       settle({ status: null, ...output, error: new Error(`Git was ended: ${why}`) });
     } else if (failure !== undefined || child.exitCode === null) {
-      settle({ status: null, ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
+      settle({ status: null, ...(child.signalCode === null ? {} : { signal: child.signalCode }), ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
     } else settle({ status: child.exitCode, ...output });
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
