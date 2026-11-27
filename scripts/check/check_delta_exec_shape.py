@@ -559,6 +559,13 @@ def b6(failures: list) -> None:
     hits(l1, delta, r"\bBTree\w*|\bHash(Map|Set)\b|\bVec\b|vec!|collect::<|\.collect\(\)|want_rows\(", "a set or list of L1's delta's own (read the want in place; write the parts and docs blocks as found)", failures)
     if "Parts::write(cx.dir" not in delta or "docs_written(cx" not in delta:
         failures.append("l1.rs: L1's delta does not write its parts and docs blocks as it finds them")
+    # Step 5 (0686): demand is the want trace; a want is named (`WantRows`: each row, and whether it holds one), its
+    # change written into the trace's runs as found. The boot's run holds no set: its productions are every relation
+    # at l0's key (`AtKey`), and the one document it names answered once (a flag).
+    ccode = strip_rust((CRATE / "src/contract.rs").read_text())
+    if not re.search(r"pub fn set_want\(&mut self, cx: &mut Cx<'_>, rows: &dyn WantRows\)", ccode):
+        failures.append("contract.rs: set_want does not take a named want (WantRows)")
+    hits(CRATE / "src/boot.rs", boot_code, r"\bBTree\w*|\bHash(Map|Set)\b", "a set of the boot run's own (productions as AtKey; demand is the want trace)", failures)
     boot = (CRATE / "src/boot.rs").read_text()
     if "inst.asks_of(" not in boot or "docs.forget(" not in boot or "inst.set_want(" not in boot:
         failures.append("boot.rs: the run's demand does not reach the world as reads (P§7.1)")

@@ -53,7 +53,6 @@ use crate::trace::{RollUp, Row, Trace};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::BODY_AT;
-use std::collections::BTreeSet;
 
 /// The document set as the world and its answerers give it (B§7's first answerer, `load`, then `parse` and
 /// `intern`): L1's tape port, P§11.4's document set.
@@ -308,11 +307,12 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
         bench.blobs.forget_dead(&bench.reg, &mut bench.dir)?;
         // The run's productions: the want on L1's outputs. A request is answered by the spelling the run names it by.
         let d = docs.key(&bench.dir, globals, l0)?;
-        let productions: BTreeSet<(usize, i64)> = (0..RELATIONS.len()).map(|k| (k, d)).collect();
+        let productions = crate::contract::AtKey { ports: RELATIONS.len(), key: d };
         let (wb, wa) = inst.set_want(&mut bench.cx(), &productions)?;
         let mut want = (wb, wa);
         let mut from = (last.and_then(|p| p.tape), last.map(|p| p.atoms.count));
-        let (mut work, mut doc, mut answered) = (Work::default(), None, BTreeSet::new());
+        // Whether l0, the one document the run names, was answered in an earlier round.
+        let (mut work, mut doc, mut answered) = (Work::default(), None, false);
         for round in 0.. {
             if round == MAX_ROUNDS {
                 return Err(format!("a run past {MAX_ROUNDS} rounds: each asked what the last answered"));
@@ -348,14 +348,14 @@ pub fn run(l1: &L1, inst: &mut Instance, l0: &str, module: &str, globals: Atoms,
                 }
             }
             for k in sa.iter().flat_map(|s| s.live_ids().map(move |id| key(s, id))) {
-                if round > 0 && answered.contains(&k) {
-                    continue;
-                }
                 if k != d {
                     return Err(format!("a request for document {k}, which the run names no path for"));
                 }
+                if round > 0 && answered {
+                    continue;
+                }
                 doc = Some(docs.read(bench, &mut leaves, globals, l0, module)?);
-                answered.insert(k);
+                answered = true;
             }
             if docs.tape.head() == from.0 && u64::from(globals.count(&bench.dir)) == count {
                 break;

@@ -41,6 +41,7 @@ use rerail_blocks::layer::{ColType, Runs, RunsW, Shape};
 use rerail_blocks::region::{BlockPin, pin_block};
 use rerail_blocks::relation::View;
 use rerail_delta_twins::cache as cache_twin;
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::BTreeSet;
 
 /// P1's counters: the rows an operator's run read, the probes it made and the rows it wrote, and each excess, named
@@ -291,6 +292,42 @@ pub fn want_shape() -> Shape {
     Shape::run(vec![ColType::I32, ColType::I32], vec![1, 0], Some(1))
 }
 
+/// A want as its maker names it (P§7.1's demand in: `(port, key)` rows), without gathering it: each of its rows, once,
+/// and whether it holds a row. `Instance::set_want` writes its change against the want trace into a runs block.
+pub trait WantRows {
+    fn each(&self, f: &mut dyn FnMut(usize, i64));
+    fn holds(&self, port: usize, key: i64) -> bool;
+}
+
+/// Every one of `ports` output ports wanted at `key` (a run's productions: every relation of one document).
+#[derive(Clone, Copy, Debug)]
+pub struct AtKey {
+    pub ports: usize,
+    pub key: i64,
+}
+
+impl WantRows for AtKey {
+    fn each(&self, f: &mut dyn FnMut(usize, i64)) {
+        (0..self.ports).for_each(|p| f(p, self.key));
+    }
+
+    fn holds(&self, port: usize, key: i64) -> bool {
+        port < self.ports && key == self.key
+    }
+}
+
+/// A test's want, a set of its rows.
+#[cfg(any(test, feature = "test-hooks"))]
+impl WantRows for BTreeSet<(usize, i64)> {
+    fn each(&self, f: &mut dyn FnMut(usize, i64)) {
+        self.iter().for_each(|&(p, k)| f(p, k));
+    }
+
+    fn holds(&self, port: usize, key: i64) -> bool {
+        self.contains(&(port, key))
+    }
+}
+
 /// An ask's rows on an input port (P§7.1's demand out): `(key)`, the port's partition key it needs.
 pub fn asks_shape() -> Shape {
     Shape::run(vec![ColType::I32], vec![0], Some(0))
@@ -510,28 +547,40 @@ impl Instance {
         self.asks.get(p).and_then(Option::as_ref)
     }
 
-    /// Its want moved to `rows` (`(port, key)`), a layer of their change on its want trace: the heads the run's want is
-    /// between (the identity when they are the same rows).
-    pub fn set_want(&mut self, cx: &mut Cx<'_>, rows: &BTreeSet<(usize, i64)>) -> Result<(Option<BlockId>, Option<BlockId>), String> {
+    /// Its want moved to `rows` (`(port, key)`), a layer of their change on its want trace, written into its runs as
+    /// it is found: the heads the run's want is between (the identity when they are the same rows).
+    pub fn set_want(&mut self, cx: &mut Cx<'_>, rows: &dyn WantRows) -> Result<(Option<BlockId>, Option<BlockId>), String> {
         let before = self.want.head();
         // The want's change, read where its state lies: its rows `rows` lacks, gone; those of `rows` it lacks, added
         // (by its canonical order, key first).
         let row = |s: &View<'_>, id| (Read::get(s, id, ColumnIndex::new(0)) as usize, Read::get(s, id, ColumnIndex::new(1)));
-        let held = |s: &View<'_>, w: &(usize, i64)| Read::matching(s, &[ColumnIndex::new(1), ColumnIndex::new(0)], &[w.1, w.0 as i64]).next().is_some();
-        let n = self.want.reading(cx.dir, before, |s| s.live_ids().filter(|&id| !rows.contains(&row(s, id))).count() + rows.iter().filter(|w| !held(s, w)).count())?;
+        let held = |s: &View<'_>, p: usize, k: i64| Read::matching(s, &[ColumnIndex::new(1), ColumnIndex::new(0)], &[k, p as i64]).next().is_some();
+        let change = |s: &View<'_>, f: &mut dyn FnMut(usize, i64, i32)| {
+            for id in s.live_ids() {
+                let (p, k) = row(s, id);
+                if !rows.holds(p, k) {
+                    f(p, k, -1);
+                }
+            }
+            rows.each(&mut |p, k| {
+                if !held(s, p, k) {
+                    f(p, k, 1);
+                }
+            });
+        };
+        let n = self.want.reading(cx.dir, before, |s| {
+            let mut n = 0;
+            change(s, &mut |_, _, _| n += 1);
+            n
+        })?;
         if n == 0 {
             return Ok((before, before));
         }
         let after = push_with(cx.reg, cx.traces, cx.dir, &mut self.want, n, |dir, t, w| {
             t.reading(dir, before, |s| {
-                for id in s.live_ids().filter(|&id| !rows.contains(&row(s, id))) {
-                    let (p, k) = row(s, id);
-                    w.push(&[p as i64, k], -1).ok_or("room for the want's change")?;
-                }
-                for x in rows.iter().filter(|w| !held(s, w)) {
-                    w.push(&[x.0 as i64, x.1], 1).ok_or("room for the want's change")?;
-                }
-                Ok(())
+                let mut room = true;
+                change(s, &mut |p, k, diff| room &= w.push(&[p as i64, k], diff).is_some());
+                if room { Ok(()) } else { Err("room for the want's change".to_string()) }
             })?
         })?;
         Ok((before, Some(after)))
