@@ -6701,7 +6701,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 // A statement's start (decision 0650): its mark (`Ctx::mark`), where the stream goes on and the levels open are at most
                 // `MARK_LEVELS`; then a token a refusing mark held (`MARK_HELD`) refuses it.
                 Op::Statement if recovers => {
-                    let p = pinned(&mut f);
                     let (save, unmark, marked) = (f.create_block(), f.create_block(), f.create_block());
                     let next = mget(&mut f, Mem::Next);
                     let ended = ended_now(&mut f, next);

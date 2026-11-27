@@ -94,6 +94,11 @@ pub struct Writer {
     /// The tape `finish` gave out: its buffer's address and the bytes of it written (its length before it was cut to
     /// the tape's), which `recycle` takes back as they are.
     given: (usize, usize),
+    /// Where its tapes go (decision 0353 step 4a, row 17): rooms every reader reads, the device too. With them the OUT
+    /// part is `region`'s free bytes, and `finish` gives the tape out where it lies; without them, or where none is
+    /// given, it is `parts[OUT]`, a vector of the writer's own.
+    rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>,
+    region: Option<Box<dyn crate::home::Region>>,
     /// Each node as the ops were given it, its edits included (`retag`, `set_start`): what its auxiliary index is laid
     /// from (`Finished::nodes`), so the tape is not read back for it. A producer that writes its nodes through the
     /// state itself (`state_address`) leaves it short, and its index is read off its tape.
@@ -102,11 +107,6 @@ pub struct Writer {
     opened: Vec<u32>,
     /// The source's SHA-256, taken at `begin`, where the newline index reads the source.
     digest: Option<super::SourceDigest>,
-    /// Where its tapes go (decision 0353 step 4a, row 17): rooms every reader reads, the device too. With them the OUT
-    /// part is `region`'s free bytes, and `finish` gives the tape out where it lies; without them, or where none is
-    /// given, it is `parts[OUT]`, a vector of the writer's own.
-    rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>,
-    region: Option<Box<dyn crate::home::Region>>,
     /// A part held at its capacity (a test's: the device's region, which the host does not grow).
     #[cfg(test)]
     fixed: Option<(u32, u64)>,
@@ -122,7 +122,7 @@ impl Writer {
     pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
         // (`Writers::take_for` takes the machine's writer between documents instead.)
         let mut w = Writer::empty();
-        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w.begin(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, terminators);
         w
     }
 
@@ -164,8 +164,8 @@ impl Writer {
     /// the next. A buffer's bytes are the last document's: the ops write each byte before they read it (in tests every
     /// part kept is filled with `FRESH`, so a byte read before it is written shows).
     /// The line index is of the source's lines as its language's `terminators` end them (decision 0612).
-    pub fn begin(&mut self, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) {
-        self.begin_with(&Document { lang, source, tag, z, blocks, nodes, sha256: None }, |out| crate::newlines::index_into(out, source, terminators));
+    pub fn begin(&mut self, doc: &Document<'_>, terminators: crate::newlines::Terminators) {
+        self.begin_with(doc, |out| crate::newlines::index_into(out, doc.source, terminators));
     }
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a

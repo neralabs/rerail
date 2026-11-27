@@ -439,6 +439,42 @@ fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     }
 }
 
+/// Step `i`'s range into stage `d`, where the CPU's read takes only its rows (`JoinRule::range_read`): a candidate
+/// outside it is none, as the CPU never reads it, so each step's rows are the CPU's. Its ends are values of the binding
+/// past its keys (`key_kind[nkeys..]`); its column the probed relation's, as a key's is.
+fn range_of(j: &JoinRule, i: usize, d: &mut mj::Stage) -> Result<(), String> {
+    let Some(r) = j.range_read(i) else { return Ok(()) };
+    let mut at = d.nkeys as usize;
+    let mut end = |d: &mut mj::Stage, k: Key| -> Result<(), String> {
+        if at >= mj::MAX_KEYS {
+            return Err("a range past a stage's keys".into());
+        }
+        match k {
+            Key::Slot(s) => { d.key_kind[at] = mj::SLOT; d.key_slot[at] = s as u32; }
+            Key::Const(v) => { d.key_kind[at] = mj::CONST; d.key_const[at] = v; }
+        }
+        at += 1;
+        Ok(())
+    };
+    d.rng_col = r.col as u32;
+    if r.doc {
+        end(d, r.lo.ok_or("a document's range of no document")?.0)?;
+        d.rng = mj::RNG_DOC;
+        return Ok(());
+    }
+    let mut g = 0;
+    if let Some((k, eq)) = r.lo {
+        end(d, k)?;
+        g |= mj::RNG_LO | if eq { mj::RNG_LO_IN } else { 0 };
+    }
+    if let Some((k, eq)) = r.hi {
+        end(d, k)?;
+        g |= mj::RNG_HI | if eq { mj::RNG_HI_IN } else { 0 };
+    }
+    d.rng = g;
+    Ok(())
+}
+
 /// The witness form of `j`'s steps from `i` (decision 0277), where every slot the head reads is bound before `i`
 /// (`setfix::tail`): an atom over an input relation that binds slots, then at most `mj::WITNESS_PROBES` atoms (or
 /// negated atoms) over input relations keyed by slots bound before `i`, constants or the first atom's columns, none
@@ -475,6 +511,7 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
     }
     d.nkeys = keys.len() as u32;
     tests_of(&mut d, tests);
+    range_of(j, i, &mut d).ok()?;
     let mut probes = Vec::new();
     for (m, st) in rest.iter().enumerate() {
         let Step::Atom { src: Src::In(r, _), neg, keys: bk, tests: bt, .. } = st else { return None };
@@ -626,6 +663,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     d.test_b[k] = b as u32;
                 }
                 d.ntests = tests.len() as u32;
+                range_of(j, i, &mut d)?;
                 let mut span = 1;
                 let mut npassed = 0;
                 match j.fused_at(i) {
@@ -1234,7 +1272,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: j.steps.len(), span: 0, kind, desc: d, npassed: 0 });
                 head.push(None);
                 head_slots.push(nslots);
-                // A made text: unbounded (`head_bounds`).
+                // A made text's: a value computed, unbounded.
                 head_from.push(None);
                 arena.push(true);
                 nslots += 1;
@@ -1384,7 +1422,8 @@ fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Opt
 /// Column `c` of `rel` among its owner's columns: a whole view's, its source's.
 fn owner_col(rel: &InRel, c: usize) -> usize {
     match &rel.view {
-        Some(v) if v.whole() && rel.ndead == 0 => v.column(c),
+        // A column the view reads none of (`SELECT 1`'s): no place (`mj::NONE`), as no stage reads it.
+        Some(v) if v.whole() && rel.ndead == 0 => v.column_read(c).unwrap_or(mj::NONE as usize),
         _ => c,
     }
 }
@@ -1470,11 +1509,12 @@ fn one_launch(rep: &Report) {
         // A stratum is one program; a wave's first stratum's report holds the wave's, one a stratum.
         let one = rep.waved != 0 || rep.programs == 1;
         let launches = rep.programs + rep.relaunches + rep.remaps;
-        let ok = one && rep.dispatches == launches && rep.reruns == 0 && rep.relaunches <= rep.rounds + rep.programs;
+        let budget = rep.launch_items.max(1);
+        let ok = one && rep.dispatches == launches && rep.reruns == 0 && u64::from(rep.relaunches) <= rep.taken / budget + rep.programs as u64;
         if crate::code_rule_dsl::logic::profile::var("RERAIL_ONE_LAUNCH_CHECK").is_ok_and(|v| v == "log") {
-            eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds);
+            eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {} gpu_seconds {:.6}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds, rep.gpu_seconds);
         } else {
-            assert!(ok, "a stratum past one program's stacks (decisions 0603, 0648): {rep:?}");
+            assert!(ok, "a stratum past one launch and its budget's relaunches (decisions 0603, 0674): {rep:?}");
         }
     }
     let _ = rep;
@@ -1595,8 +1635,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let dev = Rc::new(mj::DevRel::view_in(d.home, ncols, d.rows, d.in_place).map_err(|e| format!("{e:?}: a filtered view read in place"))?);
         rep.in_place += 1;
         crate::code_rule_dsl::prof::count(["device.view_read.filtered.node", "device.view_read.filtered.child", "device.view_read.filtered.field", "device.view_read.filtered.core", "device.view_read.filtered.axis", "device.view_read.filtered.line", "device.view_read.filtered.end_line", "device.view_read.filtered.col", "device.view_read.filtered.docof", "device.view_read.filtered.tline", "device.view_read.filtered.tape", "device.view_read.filtered.depth", "device.view_read.filtered.order"].get(d.view as usize).copied().unwrap_or("device.view_read.filtered.other"), d.rows);
-        // Each column at its source's place (`owner_col` maps a whole view's alone).
-        let place: Vector<u32> = (0..rel.k).map(|c| view.column(c) as u32).collect();
+        // Each column at its source's place (`owner_col` maps a whole view's alone); one it reads none of (`SELECT 1`'s,
+        // whether rows are there) at none.
+        let place: Vector<u32> = (0..rel.k).map(|c| view.column_read(c).map_or(mj::NONE, |s| s as u32)).collect();
         let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
         // `child` probed by its parent: its children off the tape, the constants checked on each (decision 0353 step 4c).
@@ -1618,7 +1659,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a filtered relation in its block"))?);
         rep.in_place += 1;
         crate::code_rule_dsl::prof::count("device.view_read.filtered.in_block", b.rows as usize);
-        let place: Vector<u32> = (0..rel.k).map(|c| view.column(c) as u32).collect();
+        // A column it reads none of (`SELECT 1`'s, whether rows are there) at no place.
+        let place: Vector<u32> = (0..rel.k).map(|c| view.column_read(c).map_or(mj::NONE, |s| s as u32)).collect();
         let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
         let keyed: Vec<usize> = cols.iter().map(|&c| place[c] as usize).chain(consts.iter().map(|&(c, _)| c as usize)).collect();
         let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered relation's {} rows", dev.rows))?);
@@ -2113,6 +2155,44 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
         }
         r
     })
+}
+
+/// Decision 0707: the indexes the stages of `plans` probe their relations by, built before the strata that run them,
+/// in one batch of their own, done before it returns: each stratum then finds each built (`find_index_from`), and
+/// none builds its own. Concurrent strata each built the index no committed batch had, one given back when both
+/// were done (12.2 M of the 44 M rows indexed over the data layer's 50 files). A relation not read where it lies (its
+/// stratum's upload, a copy of its own) is left to its stratum. How many indexes it built.
+pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, String> {
+    on_lane("index builds", plans.len(), || {
+        let _in = in_device();
+        let mut batch = direct_batch(None)?;
+        let mut rep = Report::default();
+        let mut held = Vec::new();
+        for s in plans.iter().flat_map(|p| &p.stages) {
+            let Kind::Atom { rel, cols } = &s.kind else { continue };
+            if cols.is_empty() || !read_in_place(rel) {
+                continue;
+            }
+            // One its stratum cannot read either is refused there, with why.
+            if let Ok(r) = resident(rel, &right_cols(&s.desc), cols, s.desc.mode, &mut batch, &mut rep) {
+                held.push(r);
+            }
+        }
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        drop(held);
+        Ok(rep.sorts as usize)
+    })
+}
+
+/// Whether a stage reads `rel` where it lies (`resident`): in its block, or a whole view its directory reads.
+fn read_in_place(rel: &Arc<InRel>) -> bool {
+    if placed(rel).is_some() {
+        return true;
+    }
+    match &rel.view {
+        Some(v) if rel.ndead == 0 && v.whole() => v.src.device_view().is_some_and(|d| d.rows == rel.len()),
+        _ => false,
+    }
 }
 
 /// The rules that can make rows (none of them reads an empty input, `reads_empty_input`), by their places.
@@ -3329,7 +3409,11 @@ fn tally(rep: &mut Report, done: &mj::Done) {
     rep.remaps += done.remaps;
     rep.room_remaps += done.room_remaps;
     rep.maps_grown += done.maps_grown;
+    rep.taken += done.taken;
     rep.programs += done.programs;
+    if done.launch_items != 0 {
+        rep.launch_items = if rep.launch_items == 0 { done.launch_items } else { rep.launch_items.min(done.launch_items) };
+    }
     rep.gpu_seconds += done.gpu_seconds;
     rep.levels += done.levels;
     rep.screened += done.screened;

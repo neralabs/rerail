@@ -23,7 +23,7 @@
         assert!(got.is_ok(), "{got:?}");
     }
 
-    /// `BuiltinsOut` on a version: the built-ins' and the rewritten relations' declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
+    /// `BuiltinsOut` then `WithinRead` on a version: the built-ins' and the rewritten relations' declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
     /// the unseeding hides this, since the library declares every built-in: so it is checked here, on its own.)
     #[test]
     fn builtins_out_on_a_version_takes_the_builtins_out() {
@@ -42,7 +42,7 @@
         let (v, _) = b.finish().unwrap();
         let rewritten = vec!["precedes".to_owned()];
         let mut p = Pipeline::new("test", v);
-        p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() }).program(&mut super::WithinRead);
         let (out, _) = p.finish().unwrap();
         let inputs = out.input_names();
         for gone in ["nearest", "earlier", "precedes"] {

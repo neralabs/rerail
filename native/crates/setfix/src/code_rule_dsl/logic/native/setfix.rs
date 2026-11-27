@@ -1150,11 +1150,12 @@ impl Rel {
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, f: Fresh, pend: bool) -> bool {
-        let (from, placed) = (self.n, !f.placed.is_empty());
+        let (from, placed, host_placed) = (self.n, !f.placed.is_empty(), f.host_placed);
         let new = self.push_fresh_rows(f, pend);
-        // A declared key's check over the rows written (decision 0361 step 6). Rows the device placed are not read on
-        // the host (decision 0384: no host work on the Metal path): their key's check is the device's, left open.
-        if new && !self.keyed.is_empty() && !placed {
+        // A declared key's check over the rows written (decision 0361 step 6). Rows a GPU placed are not read on the
+        // host (decision 0384: no host work on the Metal path): their key's check is the device's, left open. Rows the
+        // host's run of the program placed are this CPU's, checked here.
+        if new && !self.keyed.is_empty() && (!placed || host_placed) {
             self.check_keys(from);
         }
         new
@@ -1165,8 +1166,8 @@ impl Rel {
         // (decision 0384 step 3), or their relation made its tail. Beside rows derived here, those a rule here
         // repeats are dropped; into a lattice (which folds each), they are read where they lie.
         let placed = std::mem::take(&mut f.placed);
-        let in_order = std::mem::take(&mut f.in_order);
         let k = self.k;
+        let in_order = std::mem::take(&mut f.in_order);
         // A lattice relation's rows the device folded, with its key map (decision 0384 step 5): taken as they lie,
         // the map its own, into a relation with none yet (a device fixpoint's heads start empty).
         if let Some(map) = f.map.take()
@@ -1235,6 +1236,12 @@ impl Rel {
         let cpu = keep.len();
         // The wave room's slots each new row comes from: the CPU's kept rows, then the device's lots in it; and
         // each row's round (`u32::MAX`: this wave's).
+        // Each lot's rows where they land, after the CPU's: the wave room's lots first, in their order, then the rest.
+        let landed: Vec<(usize, u32)> = {
+            let wave = |p: &Placed| matches!(p, Placed::Wave { .. });
+            let lots = || placed.iter().enumerate();
+            lots().filter(|(_, (p, _))| wave(p)).chain(lots().filter(|(_, (p, _))| !wave(p))).map(|(l, (p, _))| (l, p.len())).collect()
+        };
         let mut src: Vec<u32> = Vec::new();
         let mut rounds: Vec<u32> = Vec::new();
         let room = self.room.take();
@@ -1295,6 +1302,23 @@ impl Rel {
         // The CPU's rows come sorted by the first order (`Fresh::settle`): known so, their runs take them in place.
         if cpu > 0 {
             self.sorted.note(&self.data, k, &self.idx[0].cols, from as u32, (from + cpu) as u32);
+        }
+        // The device's lots written in the first order (t58 increment A): known sorted, their orders take them in place;
+        // a run of one at a time where it is runs (a fixpoint's rounds' rows, each round's in the order).
+        let mut at = (from + cpu) as u32;
+        for (lot, m) in landed {
+            if let Some((_, runs)) = in_order.iter().find(|(l, _)| *l == lot) {
+                if runs.is_empty() {
+                    self.sorted.note(&self.data, k, &self.idx[0].cols, at, at + m);
+                }
+                let mut r0 = at;
+                for &n in runs {
+                    self.sorted.note(&self.data, k, &self.idx[0].cols, r0, r0 + n);
+                    r0 += n;
+                }
+                debug_assert!(runs.is_empty() || r0 == at + m, "a lot's runs its rows");
+            }
+            at += m;
         }
         for round in rounds {
             if self.leveled && self.level.len() == self.n {
@@ -1635,7 +1659,10 @@ pub struct Fresh { room: Option<Arc<rows::WaveRoom>>, spans: Vec<(u8, u32)>, end
                    in_order: Vec<(usize, Vec<u32>)>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
-                   map: Option<keys::KeyMap> }
+                   map: Option<keys::KeyMap>,
+                   /// `placed` was written by the host's run of the device's program (`device host`): its rows are this
+                   /// CPU's to read, so its declared keys are checked as rows written here are (decision 0361 step 6).
+                   host_placed: bool }
 
 /// Only an empty one is cloned (a vector of them made): a clone of rows would be a second writer of their slots.
 impl Clone for Fresh {
@@ -2147,6 +2174,8 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
                    waiting: Option<(closure::Closure, closure::Prepared, Vector<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
+                   /// Its device plans run on the host (`device host`: `rerail_accel::gpu::shared::on_host`).
+                   device_host: bool,
                    /// Device joins waiting in this thread's wave (`submit`): their ticket.
                    device_wait: Option<u64>,
                    seed_specs: Vec<(usize, Join)>,
@@ -2771,6 +2800,8 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
+    // `device host`: the device's program on the host (`rerail_accel::gpu::shared::on_host`), the run bound to the CPU.
+    let mut device_host = false;
     // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
     let mut delta_specs: Vec<(usize, String)> = Vec::new();
     let mut leveled = false;
@@ -2840,7 +2871,10 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head as usize, delta: *delta as usize, body: Body::Sql(sql.to_string()), whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
             Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head as usize, delta: *delta as usize, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
-            Line::Device => device_wanted = solver().is_some(),
+            Line::Device { host } => {
+                device_wanted = solver().is_some();
+                device_host = *host;
+            }
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().map(|&r| r as usize)); }
             Line::Measured { desc, key, keyed, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.as_ref().map(|k| k.to_string()), keyed: *keyed, cols: us(cols), ranks: us(ranks) }),
             Line::KeptOld => kept_old = true,
@@ -2939,6 +2973,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     }
     // The device's plans of the seeds, or why it takes none of them: then they are parsed again with the CPU's indexes.
     let device_plans = if let Some(dev) = solver().filter(|_| device_wanted) {
+        let _host = device_host.then(rerail_accel::gpu::shared::on_host);
         let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
         let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
@@ -3113,19 +3148,32 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let mut reg = on.components.lock();
     let key = name.clone();
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
+                               device: device_plans, device_host, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
         (Some(dev), Some(d)) => d.iter().any(|(_, p)| dev.reads_own(p)),
         _ => false,
     };
-    // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
-    if !on_device_rounds && comp.maint.drivers.is_empty() {
+    // The maintain mode's component neither: its first wave's delta is the rows its removals put back. On the host
+    // (`device host`, the run bound to the CPU) a closure is the closure form's still (decision 0098 §1, the user's
+    // choice 2026-11-25): its rounds are not the program's, and its seeds run as they did before the host's program.
+    if (!on_device_rounds || comp.device_host) && comp.maint.drivers.is_empty() {
         comp.closure = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             closure::recognize(&comp)
         };
+        if comp.closure.is_some() && comp.device_host {
+            // Its seeds were parsed for the device, without the CPU's indexes: parsed again with them, as a run the
+            // device refuses has them (`run`).
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = Interner::for_loading(&symbols);
+            for (pi, js) in std::mem::take(&mut comp.seed_specs) {
+                comp.probes[pi].body = Body::Join(Box::new(join_rule(conn, &js, &mut syms)?));
+            }
+            syms.check()?;
+            comp.device = None;
+        }
     }
     reg.insert(key, Arc::new(Mutex::new(comp)));
     Ok(name)
@@ -3334,8 +3382,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     // Decision 0113 §3 for the device joins: when the caller can wait for its level's wave, a stratum placed on the
     // device encodes its seed joins into the wave's one command buffer and returns `3`; the run after the wave
     // finishes them (`SolverDevice::resume`). A level's small strata so share one commit and one wait. A recursive one
-    // runs its rounds here.
-    if !seeded && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
+    // runs its rounds here. Not on the host (`device host`): its work runs as it is flushed, on this thread, so a wave
+    // shares no commit and no wait there.
+    if !seeded && !comp.device_host && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
         && let Some(dev) = solver()
         && let Some(plans) = comp.device.as_ref()
         && !plans.iter().any(|(_, p)| dev.reads_own(p))
@@ -3345,6 +3394,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             Body::Join(j) => (plan, &**j, comp.probes[*pi].head),
             Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
+        let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
         let submitted = { let syms = symbols.read().unwrap(); let s = comp.store.read().unwrap(); dev.submit(&rules, &s, &syms) };
         if let Ok(Some(t)) = submitted {
             comp.device_wait = Some(t);
@@ -3422,6 +3472,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // wave's, and the CPU's waves go on from them.
         let mut handed_back = false;
         let on_device = resumed_on_device || tried && {
+            let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
+            let host_rows = comp.device_host;
             let dev = dev.expect("a device");
             let plans = comp.device.as_ref().expect("device plans");
             let tp = Instant::now();
@@ -3448,6 +3500,19 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             } else {
                 dev.run_joins(&rules, store, syms, &mut dev_fresh)
             };
+            // Decision 0462: a head the device's rows would take to the width cap is the scalar joins', which stop the
+            // run there or cut it, as the rule says (the device's run has no cap of its own).
+            let got = match got {
+                Ok(made) if {
+                    // Each head's rows: what it held, and what the device's rules made of it (staged, or in place).
+                    let mut to = vec![0usize; nrels];
+                    for ((pi, _), n) in plans.iter().zip(made.iter().copied()) {
+                        to[comp.probes[*pi].head] += n as usize;
+                    }
+                    to.iter().enumerate().any(|(r, n)| *n > 0 && store.rels[r].n + n >= limits.cap)
+                } => Err(format!("a head at the width cap ({} rows, decision 0462)", limits.cap)),
+                got => got,
+            };
             match got {
                 Ok(made) => {
                     let cpu = cpu_now() - c0;
@@ -3466,6 +3531,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         // Its lots in the first order with them, at their places past `f`'s own.
                         let at = f.placed.len();
                         f.in_order.extend(d.in_order.drain(..).map(|(l, r)| (at + l, r)));
+                        f.host_placed |= host_rows && !d.placed.is_empty();
                         f.placed.append(&mut d.placed);
                         if d.map.is_some() {
                             debug_assert!(f.map.is_none(), "two folds' maps for one relation");
@@ -4800,7 +4866,7 @@ unsafe impl VTabCursor for RelCursor {
 
 /// `@dot(a, b)` (`core.rerail`): `a.b`, and `b` when `a` is "".
 /// `cat(a, b)` as a rule's head computes it, with `conn`'s symbols (the recursive-maintenance spike's evaluator).
-pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
+pub fn cat_symbols(conn: impl Scoped, a: i64, b: i64) -> i64 {
     let syms = symbols(conn).expect("the connection's symbols");
     let mut syms = syms.write().unwrap();
     cat(&mut syms, a, b)
@@ -5057,6 +5123,11 @@ impl View {
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]
     }
+    /// The source's column that view column `c` reads, if any: `SELECT 1`'s (an atom of constants alone, whether rows
+    /// are there) reads none, its relation's one column the constant no step reads.
+    pub fn column_read(&self, c: usize) -> Option<usize> {
+        self.cols.get(c).copied()
+    }
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     /// The candidates of a probe of key columns `cols` (view columns) with values `key`, found through column
     /// `cols[lead]`. Where the key binds the source's document column and a key column whose lookup can be kept to
@@ -5204,7 +5275,7 @@ impl View {
                 let mut found: Vec<(u32, [i64; READ])> = rows
                     .into_iter()
                     .map(|row| {
-                        self.src.row_at(row, &all, &mut got);
+                        self.src.row_at(row, all, &mut got);
                         let mut vals = [0i64; READ];
                         for c in 0..all.len() {
                             if need >> c & 1 != 0 {
@@ -5793,6 +5864,43 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vector<i64>>, types:
     rows.dedup();
     let mut rel = InRel::flat(&rows, types);
     Arc::get_mut(&mut rel).unwrap().stored = 0;
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(conn).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
+/// SPIKE (`spike_strata`): `retain` of rows held flat, `types.len()` values a row: sorted and deduplicated by their
+/// places, then copied once into the relation's rows, with no vector a row.
+pub fn retain_flat(conn: impl Scoped, table: &str, flat: &[i64], types: Vec<u8>) -> Result<()> {
+    let conn = conn.db();
+    let k = types.len();
+    if k == 0 || !flat.len().is_multiple_of(k) {
+        return Err(err(format!("{table}: native result width differs from its declaration")));
+    }
+    let row = |i: u32| &flat[i as usize * k..(i as usize + 1) * k];
+    let mut order: Vec<u32> = (0..(flat.len() / k) as u32).collect();
+    order.sort_unstable_by(|&a, &b| row(a).cmp(row(b)));
+    order.dedup_by(|a, b| row(*a) == row(*b));
+    let n = order.len();
+    let rows: Vector<i64> = order.iter().flat_map(|&i| row(i).iter().copied()).collect();
+    let rel = InRel::from_flat(rows, n, types);
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(conn).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
+/// SPIKE (`spike_eval`): `retain` of rows held flat that are distinct already (`types.len()` values a row), kept in
+/// their order: copied once into the relation's rows, with no sort.
+pub fn retain_distinct(conn: impl Scoped, table: &str, flat: &[i64], types: Vec<u8>) -> Result<()> {
+    let conn = conn.db();
+    let k = types.len();
+    if k == 0 || !flat.len().is_multiple_of(k) {
+        return Err(err(format!("{table}: native result width differs from its declaration")));
+    }
+    let rows: Vector<i64> = flat.iter().copied().collect();
+    let rel = InRel::from_flat(rows, flat.len() / k, types);
     forgotten_on_close();
     crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
     on(conn).derived.lock().insert(table.to_owned(), rel);
@@ -6969,14 +7077,10 @@ impl InRel {
                 let rows = v.src.sorted_rows(c, k).unwrap_or(&[]);
                 run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
             }
-        } else if !ix.composite && !ix.source || self.view.is_none() {
-            let ids = ix.get(self, ikey);
-            run(ids.len(), &|i| live(ids[i]))
-        } else {
+        } else if let Some(v) = self.view.as_ref().filter(|_| ix.composite || ix.source) {
             // A source's lookup: its candidates, as `probe_each` finds them, drawn by position where the source holds
             // them (`View::find_seq`) as an index's are. Read whole, each match read and kept by the walk, one search at
             // a run's end took 36 s and 14 GB (t50 step 9).
-            let v = self.view.as_ref().expect("a relation with no view is answered above");
             let seq = if ix.composite {
                 let eq: Vec<(usize, i64)> = icols.iter().zip(ikey).map(|(&c, &k)| (v.cols[c], k)).collect();
                 crate::code_rule_dsl::facts::vtab::Seq::rows(v.src.lookup_all(&eq).unwrap_or_default())
@@ -6984,6 +7088,9 @@ impl InRel {
                 v.find_seq(icols, ikey, ix.lead)
             };
             run(seq.len(), &|i| Some(RowRef::Source(v, seq.nth(i)).read()))
+        } else {
+            let ids = ix.get(self, ikey);
+            run(ids.len(), &|i| live(ids[i]))
         }
     }
 
@@ -8192,6 +8299,16 @@ impl JoinRule {
         self.plan.fused.get(i)?.as_ref().map(|h| &**self.plan.bound(h))
     }
 
+    /// Step `i`'s range (`Ranged`) where its read takes only the rows in it, every run: an input's whose index is an
+    /// order on the range's column after its keys (`index_then`, read by `cands::candidates`). Another step's range
+    /// narrows its candidates only as its relation's orders stand when it runs (a component's own: rows pushed since
+    /// stay candidates), or not at all. The device takes the same rows (`mj::Stage::rng`).
+    pub fn range_read(&self, i: usize) -> Option<Ranged> {
+        let r = (*self.plan.ranges.get(i)?)?;
+        let Step::Atom { src: Src::In(rel, ix), neg: false, .. } = self.plan.steps.get(i)? else { return None };
+        (self.src_in(rel, ix).1.then == Some(r.col)).then_some(r)
+    }
+
     /// The derived relation and index an `In` source reads.
     pub fn src_in(&self, rel: &Handle<InRel>, ix: &Handle<Csr>) -> (&Arc<InRel>, &Arc<Csr>) {
         (self.plan.bound(rel), self.plan.bound(ix))
@@ -8934,6 +9051,25 @@ fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 /// Sends a level's seed joins as one batch (decision 0100 §5): the launches sent.
 pub fn prefetch_joins(conn: &Connection, specs: &[Join]) -> Result<usize> {
     level::prefetch(conn, specs)
+}
+
+/// Decision 0707: the indexes the joins `specs` probe their relations by, built on the device before the strata that
+/// run them (`SolverDevice::build_indexes`), as the device would compile them (`host`: its join programs the host's).
+/// How many it built; none with no device.
+pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) -> Result<usize> {
+    let Some(dev) = solver().filter(|d| d.join_available()) else { return Ok(0) };
+    let _host = host.then(rerail_accel::gpu::shared::on_host);
+    let symbols = symbols(conn)?;
+    let mut syms = Interner::for_loading(&symbols);
+    let plans: Vec<JoinPlan> = specs.iter().filter_map(|spec| {
+        let j = join_rule(conn, spec, &mut syms).ok()?;
+        // No component's own texts: its head names none of them.
+        dev.compile_join(&j, &spec.to_text(), &[], usize::MAX).ok()
+    }).collect();
+    if plans.is_empty() {
+        return Ok(0);
+    }
+    dev.build_indexes(&plans.iter().collect::<Vec<_>>()).map_err(err)
 }
 
 /// Drops a chunk's pending pairs and what the lanes keep for it.

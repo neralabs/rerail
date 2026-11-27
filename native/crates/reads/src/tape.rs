@@ -7,8 +7,8 @@
 //! slice's: a load past the bytes is a corrupt tape, and panics. Every value read is held where a reader's next
 //! step needs it held (decision 0463): a size is at least 1, a span lies in the source, a parent's step moves back.
 
-/// The view every read takes: where the tape's parts lie in its bytes (`rerail_clif::view`, decision 0310).
-pub use rerail_clif::view::TapeView;
+/// The view every read takes: where the tape's parts lie in its bytes (`crate::view`, decision 0310).
+pub use crate::view::TapeView;
 
 /// No node.
 pub const NONE: u32 = u32::MAX;
@@ -65,7 +65,7 @@ fn width(v: &TapeView, k: u32) -> u32 {
 /// The reads of a format 16 tape.
 pub mod f16 {
     use super::{NONE, TapeView, mask, u8_at, u16_at, u32_at, width, word_at};
-    use rerail_clif::view::{F16_BLOCK as BLOCK, F16_K as K, F16_PART as PART, F16_SUB as SUB};
+    use crate::view::{F16_BLOCK as BLOCK, F16_K as K, F16_PART as PART, F16_SUB as SUB};
 
     /// Column `r` (0 codes, 1 slots, 2 gaps, 3 lengths, 4 checkpoints) of block `b`: blocks are `PART` nodes at the
     /// view's stride, each its columns end to end at its rows (the last block's are fewer), column `r` at `rows *
@@ -387,7 +387,7 @@ pub mod f16 {
 /// the device's where the device reads it, and the host's reads find the cache at its host address.
 pub mod f16z {
     use super::{NONE, TapeView, f16, lz4, u8_at, u32_at, width};
-    use rerail_clif::view::{F16_K as K, F16Z_BLOCK as Z_BLOCK, F16Z_PIECES as PIECES, cache, z};
+    use crate::view::{F16_K as K, F16Z_BLOCK as Z_BLOCK, F16Z_PIECES as PIECES, cache, z};
 
     /// A 16z tape as its reads take it: the bytes its view's offsets count from, its view, and the cache its blocks
     /// are decoded into (a live `cache::Spec` of at least the view's entry size, `columns[3]`).
@@ -474,19 +474,19 @@ pub mod f16z {
         }
 
         pub fn slot(&self, i: u32) -> u64 {
-            self.read(i, |t, v, j| f16::slot(t, v, j))
+            self.read(i, f16::slot)
         }
         pub fn size(&self, i: u32) -> u32 {
-            self.read(i, |t, v, j| f16::size(t, v, j))
+            self.read(i, f16::size)
         }
         pub fn number(&self, i: u32) -> u32 {
-            self.read(i, |t, v, j| f16::number(t, v, j))
+            self.read(i, f16::number)
         }
         pub fn start(&self, i: u32) -> u32 {
-            self.read(i, |t, v, j| f16::start(t, v, j))
+            self.read(i, f16::start)
         }
         pub fn end(&self, i: u32) -> u32 {
-            self.read(i, |t, v, j| f16::end(t, v, j))
+            self.read(i, f16::end)
         }
         /// As format 16's (`parent16` with `tape_slot`), each slot read in its block: the walk steps back over
         /// blocks' starts.
@@ -609,6 +609,20 @@ pub mod f16z {
             }
         }
         true
+    }
+}
+
+/// A tape's presence in its home (decision 0434 §4, step 6), as its reads find it: its header's bytes, and where the
+/// home's auxiliary index lies after it. The layout and its writer are `rerail_tape_format::f16::presence`'s.
+pub mod presence {
+    /// The header's bytes: four u32s (its kinds' words, its fields' words, its presences, its faults).
+    pub const HEAD: usize = 16;
+
+    /// Where a home's auxiliary index lies after the presence at `at` that ends at `end` (decision 0656): its bytes
+    /// rounded up to 16, counted from the presence (a view's presence counts from its batch's block, not its home), as
+    /// `<ukl/reads/aux_index_tape.h>`'s `ukl_aux_in_home` finds it.
+    pub fn aux_at(at: usize, end: usize) -> usize {
+        at + (end - at).next_multiple_of(16)
     }
 }
 

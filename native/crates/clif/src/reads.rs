@@ -191,7 +191,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
     Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
     // A code's kind atom and field atom in its language's run of the codes' directory (decision 0697), by tape tag and
-    // code: the `node` view's kind, the `field` view's field. Last, so no other read's number moves.
+    // code: the `node` view's kind, the `field` view's field. After the reads above, so no earlier read's number moves.
     Read { family: Family::Codes, name: "codes_kind", params: &[I32, I32], ret: I32, hot: true, body: codes_kind },
     Read { family: Family::Codes, name: "codes_field", params: &[I32, I32], ret: I32, hot: true, body: codes_field },
 ];

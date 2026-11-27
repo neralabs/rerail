@@ -35,22 +35,24 @@ struct Part {
     src: Arc<dyn Source>,
 }
 
-/// The first segment's length of an `AppendLog`; segment `s` holds `SEG0 << s`.
-const SEG0: usize = 64;
-/// Segments of an `AppendLog`: room for `SEG0 * (2^40 - 1)` entries.
-const SEGS: usize = 40;
+/// The first segment's length of an `AppendLog`; segment `s` holds `SEG0 << s`. Small: most relations' parts in a
+/// chunk are a few.
+const SEG0: usize = 8;
+/// Segments of an `AppendLog`: room for `SEG0 * (2^32 - 1)` entries.
+const SEGS: usize = 32;
 
 /// Entries appended by one writer and read by any thread with no lock, each where it was written: segments that
 /// double, made once, never moved. Shared by every snapshot (R7's, 0494 step 5), each reading below its own count,
 /// none copied: a snapshot made from the last copied its last block of parts and its keys' shards (0.88 M on cold
 /// PostHog).
+/// Its segments' directory is made with its first entry: an empty log is a word.
 struct AppendLog<T> {
-    segs: [std::sync::OnceLock<Box<[T]>>; SEGS],
+    segs: std::sync::OnceLock<Box<[std::sync::OnceLock<Box<[T]>>; SEGS]>>,
 }
 
 impl<T: Default> Default for AppendLog<T> {
     fn default() -> Self {
-        AppendLog { segs: [const { std::sync::OnceLock::new() }; SEGS] }
+        AppendLog { segs: std::sync::OnceLock::new() }
     }
 }
 
@@ -63,12 +65,13 @@ impl<T: Default> AppendLog<T> {
     /// Entry `i`, its segment made if it is not (by the writer).
     fn slot(&self, i: usize) -> &T {
         let (s, at) = Self::place(i);
-        &self.segs[s].get_or_init(|| (0..SEG0 << s).map(|_| T::default()).collect())[at]
+        let segs = self.segs.get_or_init(|| Box::new([const { std::sync::OnceLock::new() }; SEGS]));
+        &segs[s].get_or_init(|| (0..SEG0 << s).map(|_| T::default()).collect())[at]
     }
     /// Entry `i`, where its segment is made (an entry a reader was given was written after it).
     fn get(&self, i: usize) -> Option<&T> {
         let (s, at) = Self::place(i);
-        self.segs[s].get().map(|seg| &seg[at])
+        self.segs.get()?[s].get().map(|seg| &seg[at])
     }
 }
 
@@ -125,10 +128,17 @@ impl std::ops::Index<usize> for Blocks {
 /// a part and the next link (0 at the last), in an append-only log. One writer (`Values::add`, under its lock)
 /// appends; a reader walks a chain with no lock, the parts below its snapshot's count alone: a part admitted after
 /// its snapshot is past its count, and a chain's parts rise. Shared by every snapshot, never copied.
-#[derive(Clone, Default)]
+/// Its log is made with its first key: a relation's parts found by no key of a kind (most have no `hosted`) hold none.
+#[derive(Clone)]
 struct Keys<K: ShardKey = u32> {
-    log: Arc<KeyLog>,
+    log: Option<Arc<KeyLog>>,
     _k: std::marker::PhantomData<K>,
+}
+
+impl<K: ShardKey> Default for Keys<K> {
+    fn default() -> Self {
+        Keys { log: None, _k: std::marker::PhantomData }
+    }
 }
 
 #[derive(Default)]
@@ -200,12 +210,12 @@ impl<K: ShardKey> Keys<K> {
     fn parts(&self, k: K, bound: usize) -> impl Iterator<Item = usize> + '_ {
         // The table borrowed for the first link alone (`load`: no count of its holders written, as a probe of each
         // join would).
-        let first = self.log.table.load().find(k.bits()).map_or(EMPTY, |s| s.first.load(Ordering::Acquire));
+        let first = self.log.as_ref().and_then(|log| log.table.load().find(k.bits()).map(|s| s.first.load(Ordering::Acquire))).unwrap_or(EMPTY);
         // A link's number is one past its place (`EMPTY` is no link).
         let mut at = first;
         std::iter::from_fn(move || {
             let link = at.checked_sub(1)?;
-            let word = self.log.links.get(link as usize)?.load(Ordering::Acquire);
+            let word = self.log.as_ref()?.links.get(link as usize)?.load(Ordering::Acquire);
             let part = (word >> 32) as usize;
             if part >= bound {
                 return None;
@@ -215,28 +225,29 @@ impl<K: ShardKey> Keys<K> {
         })
     }
     /// Part `i` holds rows of key `k` (the one writer).
-    fn add(&self, k: K, i: usize) {
+    fn add(&mut self, k: K, i: usize) {
         let key = k.bits();
-        let mut counts = self.log.counts.lock();
-        let table = self.log.table.load_full();
+        let log = Arc::clone(self.log.get_or_insert_with(Arc::default));
+        let mut counts = log.counts.lock();
+        let table = log.table.load_full();
         if let Some(slot) = table.find(key)
             && slot.first.load(Ordering::Relaxed) != EMPTY
         {
             let last = slot.last.load(Ordering::Relaxed);
-            let word = self.log.links.slot(last as usize - 1);
+            let word = log.links.slot(last as usize - 1);
             let held = word.load(Ordering::Relaxed);
             if (held >> 32) as usize == i {
                 return;
             }
-            let link = Self::link(&self.log, &mut counts.0, i);
+            let link = Self::link(&log, &mut counts.0, i);
             word.store((held & !0xffff_ffff) | u64::from(link), Ordering::Release);
             slot.last.store(link, Ordering::Relaxed);
             return;
         }
-        let link = Self::link(&self.log, &mut counts.0, i);
+        let link = Self::link(&log, &mut counts.0, i);
         // Room for the key at half full, else a table twice the size, its keys moved (they are the table's alone).
         let table = if (counts.1 + 1) * 2 > table.slots.len() {
-            let grown = KeyTable::with_room((table.slots.len() * 2).max(16));
+            let grown = KeyTable::with_room((table.slots.len() * 2).max(8));
             for slot in table.slots.iter().filter(|s| s.first.load(Ordering::Relaxed) != EMPTY) {
                 let to = grown.find(slot.key.load(Ordering::Relaxed)).expect("room");
                 to.key.store(slot.key.load(Ordering::Relaxed), Ordering::Relaxed);
@@ -244,7 +255,7 @@ impl<K: ShardKey> Keys<K> {
                 to.first.store(slot.first.load(Ordering::Relaxed), Ordering::Release);
             }
             let grown = Arc::new(grown);
-            self.log.table.store(Arc::clone(&grown));
+            log.table.store(Arc::clone(&grown));
             grown
         } else {
             table
@@ -341,6 +352,13 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
+    /// Each view's relation of no columns over the chunk's rows and the values' (by its device code,
+    /// `device_chunk::VIEW_*`), its indexes' block (decision 0478 step 3): made the first time a stratum reads the
+    /// layered view, then found by every stratum after it until values are admitted again (a new directory). The base's
+    /// home is of the batch's rows alone: an index of the layered rows was never found there, and with its room taken
+    /// by the base's indexes, each stratum built its own into a fresh home (the data-layer rules over 50 files: about
+    /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
+    homes: [std::sync::OnceLock<Option<(usize, crate::code_rule_dsl::facts::rows::Part)>>; 16],
     batches: Vec<Arc<super::Batch>>,
 }
 
@@ -470,7 +488,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -604,13 +622,27 @@ pub struct Layered {
     width: usize,
     /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
     seen: AtomicU64,
+    /// A placed base's relation over the values' directory (`view_over`), by its rows: made again when values are
+    /// admitted, else kept, so its indexes are found again by every stratum that reads it.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    over: parking_lot::Mutex<Option<(usize, Arc<super::places::Over>)>>,
 }
 
 impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(Made::default);
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0) }
+        Layered {
+            name: name.to_owned(),
+            base,
+            base_len: std::sync::OnceLock::new(),
+            values,
+            made,
+            width,
+            seen: AtomicU64::new(0),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            over: parking_lot::Mutex::new(None),
+        }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -624,6 +656,10 @@ impl Layered {
     /// The source that holds node `n`'s document's rows: an admitted value's, else the batch's.
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
+    }
+    /// SPIKE (`spike_strata`): each admitted value's batch, in the order admitted.
+    pub fn value_batches(&self) -> Vec<Arc<super::Batch>> {
+        self.values.batches.read().clone()
     }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
@@ -731,18 +767,57 @@ impl Layered {
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
         let v = &mut dv_ref.in_place;
+        // A placed base (`places::Places`: the view's rows, then its spans') is read as a placed relation of the
+        // values' directory: its view's rows every document's there, then the base's spans. A value's own spans
+        // would be rows of no one relation: none read so.
+        let placed = v.kind & super::places::VIEW_PLACED != 0;
+        let places = match placed {
+            true => {
+                let p = self.base.as_any()?.downcast_ref::<super::places::Places>()?;
+                let spanless = |s: &Arc<dyn Source>| s.as_any().and_then(|a| a.downcast_ref::<super::places::Places>()).is_none_or(|p| p.spans_len() == 0);
+                if !self.parts(|ps| ps.list.iter().all(|x| spanless(&x.src))).unwrap_or(true) {
+                    return None;
+                }
+                Some(p)
+            }
+            false => None,
+        };
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
-        if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
+        let (lines, locs) = views.holds();
+        if (dv_ref.view == super::device_chunk::VIEW_LINE && !lines) || (loc && !locs) {
             return None;
         }
-        v.dir = views.dir?;
-        v.buffers = views.buffers.clone();
-        v.caches = views.caches.clone();
-        v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
-        v.failed = v.cache_failed();
-        dv_ref.rows = self.len();
+        // The base's kind, the directory of every document as the join programs here read it (the host's, where
+        // they run on the host).
+        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind & !super::places::VIEW_PLACED, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
+        let rows = self.len();
+        dv_ref.rows = rows;
+        if let Some(p) = places {
+            let over = {
+                let mut held = self.over.lock();
+                match held.as_ref() {
+                    Some((n, over)) if *n == rows => Arc::clone(over),
+                    _ => {
+                        let over = Arc::new(p.over(v.dir, rows - p.spans_len())?);
+                        *held = Some((rows, Arc::clone(&over)));
+                        over
+                    }
+                }
+            };
+            over.apply(v)?;
+            v.keep = Arc::new((Arc::clone(&dir), Arc::clone(&over)));
+            dv_ref.home = over.home();
+            return dv;
+        }
+        // Its own home, of its own rows (`Dir::homes`), not the base's.
+        let make = || crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok();
+        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| make().map(|part| (rows, part))) {
+            Some((n, part)) if *n == rows => part.clone(),
+            // Rows of another count than the first reader's: a home of its own, as each was before.
+            _ => make()?,
+        };
         dv
     }
 
@@ -821,6 +896,7 @@ impl Source for Layered {
         let [alo, ahi] = match kind {
             ColKind::Key => keys,
             ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::NodeOrNone => [-1, (keys[1] << 32) | i64::from(u32::MAX)],
             ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         };
         Some([lo.min(alo), hi.max(ahi)])
@@ -836,6 +912,9 @@ impl Source for Layered {
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        self.base.known_len()
+    }
     fn may_hold_rows(&self) -> bool {
         self.base.may_hold_rows() || self.values.total(&self.name) > 0
     }
@@ -850,6 +929,9 @@ impl Source for Layered {
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
+    }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.base.estimated_statistics()
     }
     /// The base's counts: the values admitted past its rows are a few (a chunk's tape values), and a count read
     /// across the rows made the base's batch whole.
@@ -1404,7 +1486,9 @@ mod tests {
         values.add(&[201], &[], part());
         let after = values.parts.load().get("r").cloned().expect("r's parts");
         assert!(Arc::ptr_eq(&before.list.log, &after.list.log), "the parts shared");
-        assert!(Arc::ptr_eq(&before.by_key.log, &after.by_key.log) && Arc::ptr_eq(&before.by_doc.log, &after.by_doc.log), "the keys shared");
+        let same = |a: &Option<Arc<KeyLog>>, b: &Option<Arc<KeyLog>>| matches!((a, b), (Some(a), Some(b)) if Arc::ptr_eq(a, b));
+        assert!(same(&before.by_key.log, &after.by_key.log) && same(&before.by_doc.log, &after.by_doc.log), "the keys shared");
+        assert!(before.hosted.log.is_none(), "no log of keys never added");
         // The snapshot before reads the parts it held, and none past them.
         assert_eq!(before.list.len(), 200);
         assert!(before.by_key.parts(201, before.list.len()).next().is_none(), "a part past its snapshot");
@@ -1587,17 +1671,19 @@ mod log_tests {
             log.slot(i as usize).store(i * 3, Ordering::Relaxed);
         }
         assert!((0..10_000u64).all(|i| log.get(i as usize).is_some_and(|v| v.load(Ordering::Relaxed) == i * 3)));
-        assert_eq!(AppendLog::<AtomicU64>::place(63), (0, 63));
-        assert_eq!(AppendLog::<AtomicU64>::place(64), (1, 0));
-        assert_eq!(AppendLog::<AtomicU64>::place(191), (1, 127));
-        assert_eq!(AppendLog::<AtomicU64>::place(192), (2, 0));
+        // Segments of 8, 16, 32, …: each entry in one, placed in order.
+        assert_eq!(AppendLog::<AtomicU64>::place(7), (0, 7));
+        assert_eq!(AppendLog::<AtomicU64>::place(8), (1, 0));
+        assert_eq!(AppendLog::<AtomicU64>::place(23), (1, 15));
+        assert_eq!(AppendLog::<AtomicU64>::place(24), (2, 0));
+        assert!(AppendLog::<AtomicU64>::default().get(0).is_none(), "an empty log holds no segment");
     }
 
     /// A key's chain holds its parts in order, each once however often added, through the table's growth; a bound
     /// cuts it; a key never added has none. Readers on other threads walk it while it is written.
     #[test]
     fn keys_chain_their_parts_through_growth_and_concurrent_reads() {
-        let keys = Keys::<i64>::default();
+        let mut keys = Keys::<i64>::default();
         for part in 0..300usize {
             for k in 0..(part as i64 % 40 + 1) {
                 keys.add(k * 1_000_003, part);
@@ -1611,7 +1697,10 @@ mod log_tests {
         }
         assert!(keys.parts(7, 300).next().is_none());
         // One writer, readers bounded by what it has written.
-        let keys = Arc::new(Keys::<u32>::default());
+        // Made by its first key, as an add makes it, then shared by the readers.
+        let mut first = Keys::<u32>::default();
+        first.add(0, 0);
+        let keys = Arc::new(first.clone());
         let done = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         std::thread::scope(|s| {
             for _ in 0..3 {
@@ -1632,7 +1721,7 @@ mod log_tests {
             }
             for part in 0..2_000usize {
                 for k in 0..=(part % 64) as u32 {
-                    keys.add(k, part);
+                    first.add(k, part);
                 }
                 done.store(part + 1, Ordering::Release);
             }

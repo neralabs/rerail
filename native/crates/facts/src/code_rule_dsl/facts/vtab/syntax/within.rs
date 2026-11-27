@@ -158,6 +158,9 @@ pub struct Within {
 struct Solved {
     start: Vector<u32>,
     rows: crate::code_rule_dsl::facts::rows::Part,
+    /// Its rows by their outer node (`a`): per node row, its rows as the outer, `by_outer.1[by_outer.0[row] as usize..
+    /// by_outer.0[row + 1] as usize]`, ascending. Made once, at the first lookup by `a` (`Within::by_outer`).
+    by_outer: OnceLock<(Vector<u32>, Vector<u32>)>,
     /// The starts' offset in the batch's block, when the device made them.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     start_in_block: Option<usize>,
@@ -511,6 +514,7 @@ impl Within {
         Solved {
             start,
             rows,
+            by_outer: OnceLock::new(),
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             start_in_block: None,
         }
@@ -556,9 +560,107 @@ impl Within {
         self.binding == Binding::Metal && crate::code_rule_dsl::facts::nearest::axis_solve().is_some()
     }
 
+    /// The solve's rows by their outer node (`Solved::by_outer`): each row's outer id found as a node row once, then
+    /// counted and placed. A lookup by `a` walked `a`'s subtree and searched each node's run for `a` (`nearest` by its
+    /// definition in `rf_qn`: 885 k rows in 9.7 s on all, where a scan's rows by `a` take one read each).
+    fn by_outer(&self) -> (&[u32], &[u32]) {
+        let s = self.solved();
+        let (starts, rows) = s.by_outer.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis: its rows by the outer node".into());
+            let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+            let solved = &s.rows;
+            let n = self.batch.nodes().total();
+            let outer: Vector<u32> = (0..solved.len())
+                .map(|r| match self.batch.node(solved.get(r, 1), &mut memo) {
+                    Some((doc, local)) => (self.batch.nodes().at(doc) + local as usize) as u32,
+                    None => u32::MAX,
+                })
+                .collect();
+            let mut starts: Vector<u32> = (0..n + 1).map(|_| 0).collect();
+            for &o in outer.iter().filter(|&&o| o != u32::MAX) {
+                starts[o as usize + 1] += 1;
+            }
+            for i in 0..n {
+                starts[i + 1] += starts[i];
+            }
+            let mut at: Vector<u32> = starts.iter().copied().collect();
+            let mut rows: Vector<u32> = (0..starts[n]).map(|_| 0).collect();
+            for (r, &o) in outer.iter().enumerate().filter(|(_, o)| **o != u32::MAX) {
+                rows[at[o as usize] as usize] = r as u32;
+                at[o as usize] += 1;
+            }
+            (starts, rows)
+        });
+        (starts, rows)
+    }
+
     /// The solve's rows: the axis's relation.
     fn solved_rows(&self) -> &crate::code_rule_dsl::facts::rows::Part {
         &self.solved().rows
+    }
+
+    /// Its solve and those of `more` on the host, in one relation as the device writes it (`solved_with`): its rows,
+    /// then each one's of `more`, each batch's written as `solved_from` writes it (its documents' key runs, per node
+    /// row its nearest member ancestor, or for `inside` the chain of them).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn solved_on_host_with(&self, more: &[&Within]) -> crate::code_rule_dsl::facts::rows::Part {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        use crate::code_rule_dsl::facts::rows::{Life, Part};
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let all: Vec<&Within> = std::iter::once(self).chain(more.iter().copied()).collect();
+        let found: Vec<Vector<u32>> = all.iter().map(|w| w.found()).collect();
+        let chain = |found: &[u32], v: usize, each: &mut dyn FnMut(u32)| {
+            let mut a = found[v];
+            while a != file_local::NONE {
+                each(a);
+                a = if inside { found[a as usize] } else { file_local::NONE };
+            }
+        };
+        // Per batch, per node row its first row in the relation (past the batches' before), and the runs: one a
+        // document that has rows.
+        let (mut starts, mut len, mut runs) = (Vec::with_capacity(all.len()), 0u32, 0usize);
+        for (w, f) in all.iter().zip(&found) {
+            let mut start = Vector::with_capacity(f.len() + 1);
+            for v in 0..f.len() {
+                start.push(len);
+                chain(f, v, &mut |_| len += 1);
+            }
+            start.push(len);
+            let offsets = w.batch.nodes();
+            runs += (0..w.batch.docs.len()).filter(|&d| start[offsets.at(d + 1)] > start[offsets.at(d)]).count();
+            starts.push(start);
+        }
+        let (rows, keys) = Part::over_key_runs(Life::Run, 2, len as usize, runs);
+        let mut k = 0;
+        for (w, start) in all.iter().zip(&starts) {
+            let offsets = w.batch.nodes();
+            for (doc, key) in w.batch.docs.keys().enumerate() {
+                let first = start[offsets.at(doc)];
+                if start[offsets.at(doc + 1)] > first {
+                    keys.put(k, first, key);
+                    k += 1;
+                }
+            }
+        }
+        let mut at = 0u32;
+        for (w, f) in all.iter().zip(&found) {
+            // The directory's searches' memo, this batch's.
+            let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+            for v in 0..f.len() {
+                let id = w.batch.id(v, &mut memo);
+                chain(f, v, &mut |a| {
+                    // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
+                    unsafe {
+                        rows.put(at, 0, id);
+                        rows.put(at, 1, w.batch.id(a as usize, &mut memo));
+                    }
+                    at += 1;
+                });
+            }
+        }
+        // SAFETY: rows `0..len` are written.
+        unsafe { rows.written(len) };
+        rows
     }
 
     /// The solve made on the device off the batch's tapes (decision 0353 step 4), when the binding is the device's
@@ -572,7 +674,7 @@ impl Within {
         }
         let views = super::device_chunk::views_in_place(&self.batch)?;
         let keep = Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>;
-        self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) })
+        self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, by_outer: OnceLock::new(), start_in_block: Some(c.start) })
     }
 
     /// Its solve and those of the tape values `more` (decision 0431 §8), made on the device in one relation over
@@ -582,6 +684,12 @@ impl Within {
     pub(super) fn solved_with(&self, more: &[&Within], views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
+        }
+        // Solved on the host where the device does not solve it: the rows are the same relation's, in its block, so
+        // its readers read it there and keep its indexes, not each a copy of its rows (1 GB of uploads a run over
+        // 50 files, each stratum's copy indexed again: decision 0707).
+        if !self.on_device() {
+            return Some(self.solved_on_host_with(more));
         }
         self.solved_over(views, keep).map(|c| c.rows)
     }
@@ -600,7 +708,7 @@ impl Within {
         // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then_some(&self.members[..]).filter(|b| b.len() == 256 * KIND_STRIDE as usize / 32);
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-        match solve(&node, nodes, &self.batch.block, views.at, bits.as_deref(), inside) {
+        match solve(&node, nodes, &self.batch.block, views.at, bits, inside) {
             Ok(c) => Some(c),
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
@@ -640,7 +748,7 @@ impl Within {
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
         let slot = p.f().kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
-        self.has_slot(p.tag(), slot as u32)
+        self.has_slot(p.tag(), slot)
     }
 
     /// Whether kind slot `slot` of tag `tag` is in the axis's set (its bit in `members`).
@@ -1053,13 +1161,13 @@ impl Source for Within {
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
+        use super::device_chunk::{VIEW_NODE, views_in_place};
         if self.mode != Mode::Axis(Axis::Has) {
             return None;
         }
         let v = views_in_place(&self.batch)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-        view.failed = view.cache_failed();
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
@@ -1159,22 +1267,21 @@ impl Source for Within {
             // By `a`, where the rows a scan reads are made (the batch's solve, or every node's containers), its
             // rows are those: in each contained node's run, the pair whose outer node is `a`. A lookup's rows are
             // then the scan's, as a reader of both (a relation's version, `Before`) takes them.
-            if column == 1 && (self.solved.get().is_some() || self.all.get().is_some()) {
+            // Solved: its rows by `a` (`by_outer`), each a read.
+            if column == 1 && self.solved.get().is_some() {
+                let (starts, rows) = self.by_outer();
+                rows[starts[row] as usize..starts[row + 1] as usize].iter().for_each(|&r| each(r as usize));
+                continue;
+            }
+            // Every node's containers made (a scan): in each contained node's run, the pair whose outer node is `a`.
+            if column == 1 && self.all.get().is_some() {
                 let base = self.batch.nodes().at(doc);
-                let solved = self.solved.get().is_some();
                 rerail_blocks::frame::op(|f| {
                     let mut held = f.vec::<u32>();
                     self.contained(doc, local, &mut held);
                     for &c in held.iter() {
-                        let inner = (base + c as usize) as u32;
-                        if solved {
-                            // The solve's relation holds ids (decision 0353 step 5): the row whose outer id is `a`'s.
-                            let (start, rows) = (self.starts(), self.solved_rows());
-                            (start[inner as usize]..start[inner as usize + 1]).filter(|&r| rows.get(r, 1) == v).for_each(|r| each(r as usize));
-                        } else {
-                            let (from, n) = self.rows(0, inner);
-                            (from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64).for_each(&mut *each);
-                        }
+                        let (from, n) = self.rows(0, (base + c as usize) as u32);
+                        (from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64).for_each(&mut *each);
                     }
                 });
                 continue;

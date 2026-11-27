@@ -11,10 +11,12 @@ pub mod f16;
 pub mod home;
 pub mod newlines;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
-pub mod reads;
-/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a
-/// document's views' rows, through its entry in its batch's views' directory.
-pub mod view_reads;
+// The reads (decision 0534), in the crate below every reader of a tape (`rerail_reads::tape`), where they were.
+pub use rerail_reads::tape as reads;
+/// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the reads of a document's views' rows,
+/// through its entry in its batch's views' directory; the host executor's and the CPU's join program's
+/// (`rerail_reads::view_reads`).
+pub use rerail_reads::view_reads;
 /// The tape's writer in Rust, written directly (decision 0532): the host's, and a generated tier 2's `ops` module.
 pub mod writer16;
 /// A tape's auxiliary index (decision 0656): the names stream, the vocabulary, sibling places, code counts and rare
@@ -33,33 +35,31 @@ const _: () = assert!(KIND_LIMIT == codes::KIND_STRIDE as usize, "a kind atom's 
 /// The codes' directory (decision 0697): each shipped language's codes' kind atoms and field atoms, written by the
 /// build script from `tables/` (`codes::image`) and read where it lies in the binary: by the host's view reads
 /// (`codes_dir::kinds`), and as a home of the views' directory by the JIT's and the kernels' (`rerail_clif::view_reads::
-/// CodesDir`). Page-aligned and a whole number of pages, as a device's wrap of it in place takes it.
+/// CodesDir`). Page-aligned and a whole number of pages, as a device's wrap of it in place takes it, and in the
+/// binary's writable data, not its read-only text: Metal's wrap of a read-only mapping's pages left them unreadable to
+/// the host while the wrap was held (the JIT's view reads faulted on its first word). Never written.
 pub mod codes_dir {
     const LEN: usize = include!(concat!(env!("OUT_DIR"), "/codes_len.rs"));
+    /// Its bytes in a cell, so the static is placed with the binary's writable data (interior mutability).
     #[repr(C, align(16384))]
-    struct Aligned<T>(T);
-    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN % super::codes::ALIGN == 0);
+    struct Aligned<T>(core::cell::UnsafeCell<T>);
+    // SAFETY: never written; every reader only loads from it.
+    unsafe impl<T> Sync for Aligned<T> {}
+    const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN.is_multiple_of(super::codes::ALIGN));
     const _: () = assert!(cfg!(target_endian = "little"), "the directory's image is little-endian");
     const _: () = assert!(size_of::<rerail_clif::view_reads::CodesLang>() == super::codes::LANG_BYTES, "a language's place, as the reads read it");
-    static DIR: Aligned<[u8; LEN]> = Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin")));
+    static DIR: Aligned<[u8; LEN]> = Aligned(core::cell::UnsafeCell::new(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin"))));
 
     /// The directory's bytes.
     pub fn bytes() -> &'static [u8] {
-        &DIR.0
+        // SAFETY: never written (`Aligned`).
+        unsafe { &*DIR.0.get() }
     }
 
     /// Run `k` (0 kinds, 1 fields) of language `tag`: empty for a tag with no table.
     fn run(tag: u8, k: usize) -> &'static [u32] {
-        let at = |i: usize| u32::from_le_bytes(DIR.0[i..i + 4].try_into().expect("a u32")) as usize;
-        let place = usize::from(tag) * super::codes::LANG_BYTES;
-        let (kinds, fields) = (at(place), at(place + 4));
-        if kinds == 0 {
-            return &[];
-        }
-        let n = (fields - kinds) / 4;
-        let start = if k == 0 { kinds } else { fields };
-        // SAFETY: `n` u32s at a multiple of 4 from the page-aligned directory, inside it (`codes::image`).
-        unsafe { std::slice::from_raw_parts(DIR.0.as_ptr().add(start).cast::<u32>(), n) }
+        // SAFETY: the binary's directory, static.
+        unsafe { rerail_reads::views::code_atoms(bytes().as_ptr(), tag, k) }
     }
 
     /// Language `tag`'s codes' kind atoms, by number: the `kind` column's value of a node of each.

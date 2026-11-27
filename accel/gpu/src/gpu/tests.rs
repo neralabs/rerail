@@ -515,3 +515,11 @@ fn a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation() {
         });
     });
 }
+
+/// Decision 0382: a kernel the host's vector path does not compile stops the run, naming it, as one a device does not
+/// compile does. It was an error a device stratum answered by running its seeds on the scalar joins.
+#[test]
+#[should_panic(expected = "the kernel not_ukl on the host")]
+fn a_host_kernel_that_does_not_compile_stops_the_run() {
+    drop(super::kernels::host_function("#include <ukl/backend.h>\nDEFINE_KERNEL1(not_ukl, RWBUFFER, uint32_t, o, \"[n]\", ) { o[0] = ; }\n", "not_ukl"));
+}

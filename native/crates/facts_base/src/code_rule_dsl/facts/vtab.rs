@@ -76,6 +76,9 @@ pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
+    /// The binary's own memory its reads reach (the codes' directory, decision 0697): resident with `buffers`, held
+    /// by nothing, as it outlives every launch (`Pass::use_read_fixed`).
+    pub fixed: Vec<rerail_device::device::Buffer>,
     pub caches: Vec<ZCache>,
     pub failed: u32,
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
@@ -422,6 +425,13 @@ pub trait Source: Send + Sync {
     fn estimated_len(&self) -> usize {
         self.len()
     }
+    /// `estimated_len` where it makes no row; `None` where only a make would tell (a batch's relation that no count
+    /// gives, before its rows or sample are made: its `estimated_len` makes the sample, decision 0494). A chunk that
+    /// reuses a kept measure scales it by this, else by its documents: asking `estimated_len` there made every chunk's
+    /// sample, a matcher wave of its own before the wave that makes the rest (the `all` run: 25 more waves, 6.9 s).
+    fn known_len(&self) -> Option<usize> {
+        Some(self.estimated_len())
+    }
     /// Whether it may hold a row: `false` only where it holds none. A test for an empty input (a rule over one is
     /// not run) asks this, not `len`, so a source whose rows are made when read (a batch's, decision 0494) answers
     /// without making them, and is taken as holding rows.
@@ -565,10 +575,18 @@ pub trait Source: Send + Sync {
     fn col_bounds(&self, _column: usize) -> Option<[i64; 2]> {
         None
     }
-    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
-    /// reading every row: a source whose rows are made on lookup.
+    /// The relation's statistics (`syntax::statistics`'s rows) where the source knows them exactly without reading
+    /// every row: a source whose rows are made on lookup (`within`'s, from the tree), or one counted where it lies. A
+    /// run counts and keeps them as the relation's: an estimate is `estimated_statistics`'.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
+    }
+    /// The planner's statistics: `statistics`, or before them an estimate made with no row of the whole made (a
+    /// sample of its documents, `made::MadeRows::sampled`). Only a plan reads them: the chunks' counts and the kept
+    /// statistics read `statistics`, and took a sample's for a count (a text test's passing strings went unioned by
+    /// no chunk, and the cross part's scan of one made every document: 27 s of `all`'s CPU, 2026-11-24).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.statistics()
     }
     /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
     /// (its rows do not change): `None` when the caller counts them.

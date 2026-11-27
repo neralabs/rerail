@@ -30,8 +30,9 @@ typedef struct ViewDir {
     uint32_t nhomes;
     uint64_t rows;
     uint64_t homes;
-    uint64_t cache;
-    uint64_t by_key;
+    uint32_t cache;
+    uint32_t nbatch;
+    uint64_t keys;
     uint32_t ends[27];
     uint32_t counted;
     uint32_t codes;
@@ -44,7 +45,8 @@ UKL_STATIC_ASSERT(sizeof(ViewHome) == 16, "ViewHome: size");
 UKL_STATIC_ASSERT(sizeof(ViewDir) == 168, "ViewDir: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == 32, "ViewDir.cache");
-UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == 40, "ViewDir.by_key");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, nbatch) == 36, "ViewDir.nbatch");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, keys) == 40, "ViewDir.keys");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, codes) == 160, "ViewDir.codes");
 UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }
 UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }

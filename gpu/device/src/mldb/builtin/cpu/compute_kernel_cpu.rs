@@ -108,6 +108,12 @@ impl CpuDevice {
         compiler().ok().map(|_| CpuDevice { _private: () })
     }
 
+    /// The CPU device whatever compiler the host has: its kernels their Rust where they have it, the rest by the
+    /// vector path's interpreter (`rerail_gpu::vec`), which reads every kernel's rows from its source.
+    pub fn host() -> CpuDevice {
+        CpuDevice { _private: () }
+    }
+
     pub fn new_shared_event(&self) -> CpuSharedEvent {
         CpuSharedEvent(Arc::new((Mutex::new(0), Condvar::new())))
     }
@@ -232,8 +238,6 @@ pub struct CpuComputeFunctionLibrary {
     code: Code,
     name: String,
     host: Vec<(&'static str, rerail_ukl_rust::Kernel)>,
-    /// The compiled reads `host`'s kernels call (`rerail_ukl_rust::Launch::reads`), where one does.
-    reads: Option<Arc<rerail_ukl_rust::Reads>>,
 }
 
 enum Code {
@@ -298,7 +302,7 @@ impl CpuComputeFunctionLibrary {
             && let Ok(opened) = open_library(&shipped)
         {
             crate::store::count(true);
-            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
+            return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() });
         }
         let lib = match crate::store::path("cpu", &k, LIB_EXTENSION) {
             Some(p) => p,
@@ -315,7 +319,7 @@ impl CpuComputeFunctionLibrary {
                 Ok(opened) => {
                     crate::store::count(true);
                     crate::store::used(&lib);
-                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None });
+                    return Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() });
                 }
                 // Damaged, or another build's: compiled again, and replaced.
                 Err(_) => _ = std::fs::remove_file(&lib),
@@ -366,21 +370,18 @@ impl CpuComputeFunctionLibrary {
             }
         }
         let opened = open_library(&lib)?;
-        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new(), reads: None })
+        Ok(CpuComputeFunctionLibrary { code: Code::Compiled(opened), name: file_name_to_appear_in_error_messages.to_string(), host: Vec::new() })
     }
 
     /// The kernels `interpreter` runs, named `name` in errors.
     pub fn interpreted(interpreter: Arc<dyn CpuInterpreter>, name: &str) -> Self {
-        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new(), reads: None }
+        CpuComputeFunctionLibrary { code: Code::Interpreted(interpreter), name: name.to_string(), host: Vec::new() }
     }
 
     /// This library, its kernels `host` names run as their Rust (`rerail_ukl_rust::kernels` of its source and
-    /// defines): a compiled library's alone, whose rows give their arguments. `reads`: the compiled reads they call.
-    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>, reads: Option<Arc<rerail_ukl_rust::Reads>>) -> Self {
-        if matches!(self.code, Code::Compiled(_)) {
-            self.host = host;
-            self.reads = reads;
-        }
+    /// defines), their arguments its rows (a compiled library's, or the interpreter's).
+    pub fn with_host(mut self, host: Vec<(&'static str, rerail_ukl_rust::Kernel)>) -> Self {
+        self.host = host;
         self
     }
 
@@ -423,7 +424,12 @@ impl CpuComputeFunctionLibrary {
         if let Code::Interpreted(i) = &self.code {
             let (text, rows) = i.rows(function_name)?;
             let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
-            return Ok(CpuComputeFunction { entry: Run::Interpreted(i.clone()), name: function_name.to_string(), arguments, param_sizes });
+            // Its Rust where it has it (`host`), its rows the interpreter's: no compiler's build at all.
+            let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
+                Some(&(_, k)) => Run::Host(k),
+                None => Run::Interpreted(i.clone()),
+            };
+            return Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes });
         }
         let entry = self.symbol(function_name)?;
         let text = self.string(&format!("{function_name}__ukl_params"))?;
@@ -435,7 +441,7 @@ impl CpuComputeFunctionLibrary {
         // SAFETY: the shim's entry has this signature.
         let entry: Entry = unsafe { std::mem::transmute(entry) };
         let entry = match self.host.iter().find(|(n, _)| *n == function_name) {
-            Some(&(_, k)) => Run::Host(k, self.reads.clone()),
+            Some(&(_, k)) => Run::Host(k),
             None => Run::Compiled(entry),
         };
         Ok(CpuComputeFunction { entry, name: function_name.to_string(), arguments, param_sizes })
@@ -513,7 +519,7 @@ enum Run {
     Compiled(Entry),
     Interpreted(Arc<dyn CpuInterpreter>),
     /// Its source's Rust (`rerail_ukl_rust`): a group at a time, each its threads in lanes.
-    Host(rerail_ukl_rust::Kernel, Option<Arc<rerail_ukl_rust::Reads>>),
+    Host(rerail_ukl_rust::Kernel),
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -553,6 +559,8 @@ struct Worker {
     stacks: Option<crate::os::Stacks>,
     page: usize,
     sched: Vec<u64>,
+    /// Its work runs in its flush (`CpuQueueRoot::inline`): a host signal it waits for must have come.
+    inline: bool,
 }
 
 impl Worker {
@@ -568,32 +576,59 @@ impl Worker {
     }
 }
 
-/// What a queue's work goes to (`metal::CommandQueue`): a thread that runs the work its queues flush, in order.
+/// What a queue's work goes to (`metal::CommandQueue`): a thread that runs the work its queues flush, in order; or
+/// (`inline`) the flushing thread itself, its work done when the flush returns.
 #[derive(Clone)]
-pub struct CpuQueueRoot(Arc<Mutex<mpsc::Sender<Batch>>>);
+pub struct CpuQueueRoot(Root);
+
+#[derive(Clone)]
+enum Root {
+    Thread(Arc<Mutex<mpsc::Sender<Batch>>>),
+    /// The workers between flushes (a flush takes one, or makes one, and gives it back): each flush's on its own
+    /// thread, so the flushing threads' work runs side by side, as each one's caller's.
+    Inline(Arc<Mutex<Vec<Worker>>>),
+}
+
+impl Worker {
+    fn new() -> Worker {
+        Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8], inline: false }
+    }
+
+    /// The ops of a batch in order, the first error stopping them, and the seconds they took.
+    fn run(&mut self, ops: Vec<Op>) -> (Result<(), String>, f64) {
+        let t = std::time::Instant::now();
+        let mut r = Ok(());
+        for op in ops {
+            if r.is_ok() {
+                r = op(self);
+            }
+        }
+        (r, t.elapsed().as_secs_f64())
+    }
+}
 
 impl CpuQueueRoot {
+    /// A root whose work runs on the thread that flushes it, in the flush (the engine's CPU joins': each job's
+    /// launches on its own thread, beside the others' as the machine's pool runs them). Its work cannot wait for a
+    /// host signal that comes after its flush: such a wait fails.
+    pub fn inline(_device: CpuDevice) -> CpuQueueRoot {
+        CpuQueueRoot(Root::Inline(Arc::default()))
+    }
+
     pub fn new(_device: CpuDevice) -> CpuQueueRoot {
         let (tx, rx) = mpsc::channel::<Batch>();
         std::thread::Builder::new()
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let mut w = Worker { stacks: None, page: crate::os::page_bytes(), sched: vec![0; SCHED_BYTES / 8] };
+                let mut w = Worker::new();
                 for b in rx {
-                    let t = std::time::Instant::now();
-                    let mut r = Ok(());
-                    for op in b.ops {
-                        if r.is_ok() {
-                            r = op(&mut w);
-                        }
-                    }
-                    *b.done.result.lock().unwrap() = Some((r, t.elapsed().as_secs_f64()));
+                    *b.done.result.lock().unwrap() = Some(w.run(b.ops));
                     b.done.cv.notify_all();
                 }
             })
             .expect("the CPU queue's thread");
-        CpuQueueRoot(Arc::new(Mutex::new(tx)))
+        CpuQueueRoot(Root::Thread(Arc::new(Mutex::new(tx))))
     }
 }
 
@@ -649,17 +684,32 @@ impl CpuComputeQueue {
     /// Holds the root's later work until the host signals `event` with `value` or more (Metal's `encodeWaitForEvent`).
     pub fn wait_for_event(&self, event: &CpuSharedEvent, value: u64) {
         let event = event.clone();
-        self.push(move |_| {
+        self.push(move |w| {
+            if w.inline && event.signaled_value() < value {
+                return Err(format!("a wait for a host signal ({value}) in work that runs as it is flushed, before it"));
+            }
             event.wait_for(value);
             Ok(())
         });
     }
 
     /// The work so far, handed to the root's thread; its event.
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order, each done before the next.
+    pub fn memory_barrier(&self) {}
+
     pub fn flush(&mut self) -> CpuComputeEvent {
         let done = Arc::new(Done::default());
         let ops = std::mem::take(&mut *self.ops.borrow_mut());
-        self.root.0.lock().unwrap().send(Batch { ops, done: done.clone() }).expect("the CPU queue's thread is gone");
+        match &self.root.0 {
+            Root::Thread(tx) => tx.lock().unwrap().send(Batch { ops, done: done.clone() }).expect("the CPU queue's thread is gone"),
+            Root::Inline(workers) => {
+                let mut w = workers.lock().unwrap().pop().unwrap_or_else(Worker::new);
+                w.inline = true;
+                *done.result.lock().unwrap() = Some(w.run(ops));
+                workers.lock().unwrap().push(w);
+            }
+        }
         CpuComputeEvent { done }
     }
 
@@ -786,7 +836,7 @@ impl CpuBindContext<'_> {
             let entry = match entry {
                 Run::Compiled(e) => e,
                 Run::Interpreted(i) => return i.launch(&name, &params, grid, block, shared).map_err(|e| format!("{name} on the CPU: {e}")),
-                Run::Host(k, reads) => {
+                Run::Host(k) => {
                     // Its threadgroup memory is its own (`tg`, its `SHARED` rows'): a row of the launch's has no place.
                     if shared != 0 {
                         return Err(format!("{name} on the CPU: its Rust takes no threadgroup row of the launch's"));
@@ -801,7 +851,7 @@ impl CpuBindContext<'_> {
                         for z in 0..grid[2] {
                             for y in 0..grid[1] {
                                 for x in 0..grid[0] {
-                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid, reads: reads.as_ref().map_or(std::ptr::null(), |r| r.table()) };
+                                    let l = rerail_ukl_rust::Launch { group: [x, y, z], block, groups: grid };
                                     // SAFETY: `argv` holds the kernel's arguments as its rows bound them (each buffer's
                                     // address, each value's bytes), and the shim's two.
                                     unsafe { k(argv.as_ptr(), &l) };
@@ -945,7 +995,7 @@ DEFINE_KERNEL2(t, t_divergent,
             }
         }
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
-        let lib = lib.with_host(vec![("t_ends_after", host)], None);
+        let lib = lib.with_host(vec![("t_ends_after", host)]);
         let f = lib.get_function(&device, "t_ends_after").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
         run(&device, &f, &out, None, 2, 32).unwrap();
@@ -960,7 +1010,7 @@ DEFINE_KERNEL2(t, t_divergent,
     fn a_kernel_with_rust_takes_no_threadgroup_row() {
         unsafe fn host(_: *const *const u8, _: &rerail_ukl_rust::Launch) {}
         let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
-        let lib = lib.with_host(vec![("t_group", host)], None);
+        let lib = lib.with_host(vec![("t_group", host)]);
         let f = lib.get_function(&device, "t_group").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 64);
         let e = run(&device, &f, &out, Some(64), 1, 64).unwrap_err();

@@ -28,7 +28,11 @@ fn json_rules_pack_is_current() {
             // RERAIL_BLESS=1 writes the translator's output as the pack (what `site/regen_main_pack.sh` writes, without
             // an engine build); the diff is then read, not taken on trust.
             Ok(got) if std::env::var_os("RERAIL_BLESS").is_some() => std::fs::write(&golden, got).unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
-            Ok(_) => differ.push(format!("{id}: differs from {}", golden.display())),
+            Ok(got) => {
+                let (g, w): (Vec<&str>, Vec<&str>) = (got.lines().collect(), want.lines().collect());
+                let at = g.iter().zip(&w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
+                differ.push(format!("{id}: differs from {} at line {} ({} lines and {}):\n  translated: {:?}\n  the pack's: {:?}", golden.display(), at + 1, g.len(), w.len(), g.get(at), w.get(at)));
+            }
             Err(e) => differ.push(format!("{id}: {e}")),
         }
     }

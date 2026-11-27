@@ -1579,6 +1579,16 @@ fn moved_past(v: &crate::code_rule_dsl::logic::program_image::Version, merged: &
     modal.into_iter().map(|(i, s)| (i - dropped.partition_point(|&d| d < i), s)).collect()
 }
 
+/// The names of the named groups (`(?<name>…)`) in `text`.
+fn regex_groups(text: &str) -> BTreeSet<String> {
+    text.match_indices("(?<").filter_map(|(at, _)| {
+        let rest = &text[at + 3..];
+        let end = rest.find('>')?;
+        let name = &rest[..end];
+        (!name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')).then(|| name.to_owned())
+    }).collect()
+}
+
 /// A module's program, from version `v`, as `Lowerer::link` leaves it: each relation renamed by `rename`, then the
 /// first `k` rules of each helper `merged` into another (`(name, made, k)`, in order) and its declaration dropped and
 /// the helper read as that one; its header renamed the same (`renamed_fields`). No rule is decoded.
@@ -1625,11 +1635,18 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename:
             b.copy(v, r);
             continue;
         }
-        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it.
+        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it. A helper named by
+        // its content names its rules' other variables by their places: helpers of one content name are one, and so
+        // one text, whichever module's spelling the link keeps (decision 0639 §4). A variable a regex's named group
+        // binds (`(?<c>…)`) keeps its name, the group's, which its content holds: `match` binds it by that name.
+        let content = to(head).is_some_and(|h| h.starts_with("rr_h_"));
+        let groups: BTreeSet<String> = if content { regex_groups(&String::from_utf8_lossy(&template_bytes(v, r))) } else { BTreeSet::new() };
         let mut vars = BTreeMap::new();
         for (i, a) in r.vars().enumerate() {
             if let Some(new) = to(v.text(a)) {
                 vars.insert(Slot(i as u32), b.atom(&new));
+            } else if content && !groups.contains(v.text(a)) {
+                vars.insert(Slot(i as u32), b.atom(&format!("rr_v{i}")));
             }
         }
         let mut rw = Renamed { v, to: &to, vars };
@@ -1664,6 +1681,9 @@ pub struct LinkedVersions {
 pub struct LinkedLibrary {
     header: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     state: LinkState,
+    /// The library's union alone, made at its first link: a program's link is a union on it (`Version::union_on`),
+    /// so what is kept of the library (its analyses) is found from every program linked from it.
+    union: std::sync::OnceLock<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 /// What a link knows as it adds modules: the lowerer (the first module's, the rest linked into it), the parts, the
@@ -1722,28 +1742,44 @@ pub fn link_library(modules: Vec<Module>) -> Result<LinkedLibrary, Error> {
     for m in modules {
         state.add(&mut header, m)?;
     }
-    Ok(LinkedLibrary { header: header.base_version().map_err(Error::Syntax)?, state })
+    Ok(LinkedLibrary { header: header.base_version().map_err(Error::Syntax)?, state, union: std::sync::OnceLock::new() })
 }
 
 impl LinkedLibrary {
     /// The library's union, and `own` linked after its modules (a program's own module): its header an overlay of the
     /// library's with the module's names and fields, so only its own are interned and stated, and no rule is copied.
+    /// With a module, the union is one on the library's own (`Version::union_on`).
     pub fn with(&self, own: Option<Module>) -> Result<LinkedVersions, Error> {
+        use crate::code_rule_dsl::logic::program_image::Version;
         let mut state = self.state.clone();
-        let header = match own {
-            Some(m) => {
-                let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&self.header);
-                state.add(&mut b, m)?;
-                b.finish_overlay().map_err(Error::Syntax)?
-            }
-            None => std::sync::Arc::clone(&self.header),
+        let Some(m) = own else {
+            let lowered = whole_front(state.l)?;
+            return Ok(LinkedVersions { version: self.union()?, lowered });
+        };
+        let header = {
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&self.header);
+            state.add(&mut b, m)?;
+            b.finish_overlay().map_err(Error::Syntax)?
         };
         let lowered = whole_front(state.l)?;
-        if state.parts.is_empty() {
-            return Ok(LinkedVersions { version: empty_version()?, lowered });
+        let version = match self.state.parts.is_empty() {
+            true => Version::union(header, state.parts),
+            false => Version::union_on(&self.union()?, header, state.parts),
         }
-        let version = crate::code_rule_dsl::logic::program_image::Version::union(header, state.parts).map_err(Error::Syntax)?;
+        .map_err(Error::Syntax)?;
         Ok(LinkedVersions { version, lowered })
+    }
+
+    /// The library's union alone (an empty version for a library of no module), made once.
+    fn union(&self) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+        if let Some(u) = self.union.get() {
+            return Ok(std::sync::Arc::clone(u));
+        }
+        let made = match self.state.parts.is_empty() {
+            true => empty_version()?,
+            false => crate::code_rule_dsl::logic::program_image::Version::union(std::sync::Arc::clone(&self.header), self.state.parts.clone()).map_err(Error::Syntax)?,
+        };
+        Ok(std::sync::Arc::clone(self.union.get_or_init(|| made)))
     }
 }
 
@@ -1976,19 +2012,10 @@ fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_
         if into.contains_key(rename.get(&rel).map_or(rel.as_str(), String::as_str)) {
             continue;
         }
-        // A helper named by its content (`content_names`) has its columns named by their places where the walk made
-        // their variables (`rr_any4`): its content names it whatever the walk's count, so two lowerings that make one
-        // helper (a module's and the library's together, decision 0639 §3) declare it alike.
-        let renamed = rename.contains_key(&rel);
-        let cols: Vec<(String, String)> = F::columns_of(v, &rel)
-            .unwrap_or_default()
-            .into_iter()
-            .enumerate()
-            .map(|(i, (c, t))| {
-                let named = to(&c);
-                if renamed && named == c && c.starts_with("rr_") { (format!("rr_c{i}"), t) } else { (named, t) }
-            })
-            .collect();
+        // A helper named by its content names its columns by their places, so it is declared alike wherever it was
+        // lowered (decision 0639 §4: its key holds its columns' types alone, and two modules name them their ways).
+        let content = to(&rel).starts_with("rr_h_");
+        let cols: Vec<(String, String)> = F::columns_of(v, &rel).unwrap_or_default().into_iter().enumerate().map(|(i, (c, t))| (if content { format!("rr_c{i}") } else { to(&c) }, t)).collect();
         let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
         FieldsMut::declare(&mut b.fields(), &to(&rel), &pairs);
     }
@@ -2436,7 +2463,7 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
 /// nodes): rules, which the planner reads from `node` in place, not inputs, where a rule reads them (the prelude
 /// declares both for every program). `core.rerail`'s `docof(x: loc, d)` stays an input, for spans have a document
 /// too. (`precedes` is core.rerail's tree arithmetic, `core::rewrite`.)
-/// The rules to add go first, each where `projection_at` puts it; `read` is what the rules read (`reads`), `derives_node`
+/// Returns the projections to write (`write_projection`); `read` is what the rules read (`reads`), `derives_node`
 /// whether a rule derives `node`. `prog` may be a header alone (a version's).
 pub fn projections(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), read: &BTreeSet<(String, usize)>, docof_of_locs: bool, derives_node: bool) -> Vec<&'static str> {
     let mut made = Vec::new();
@@ -2463,12 +2490,6 @@ pub fn write_projection(b: &mut crate::code_rule_dsl::logic::program_image::Buil
         other => unreachable!("no projection {other}"),
     };
     b.rule().head(rel, &head).atom("node", &node).finish()
-}
-
-/// Where `projections` puts its rule of `rel`, given the program's first rule's head: first, kind before docof (where
-/// T's programs wrote them).
-pub fn projection_at(rel: &str, first_head: Option<&str>) -> usize {
-    usize::from(rel == "docof" && first_head == Some("kind"))
 }
 
 /// The three-valued relations: those declared so, and every relation a rule of which reads one (`rules`: each rule's
@@ -6397,9 +6418,11 @@ pub const FILE_SYSTEM: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_
 
 /// The engine's other answers and their requests: a module's lowering, a Git view's revisions, objects, payloads and
 /// inventory, and the analysis history's scans. Each request is of several columns, made by rules (`git.rerail`, `analysis.rerail`).
-pub const ENGINE_ANSWERS: [(&str, &str); 7] = [
+pub const ENGINE_ANSWERS: [(&str, &str); 8] = [
     // A module's lowering (decision 0639 §3), asked by phase 0.
     ("p0_module_lowered", "p0_lower_req"),
+    // A module's tail (decision 0639 §6a), asked by phase 0.
+    ("p0_module_tailed", "p0_tail_req"),
     ("git_view_revision_of", "git_view_revision_request"),
     ("git_revision_of", "git_revision_request"),
     ("git_object_of", "git_object_request"),

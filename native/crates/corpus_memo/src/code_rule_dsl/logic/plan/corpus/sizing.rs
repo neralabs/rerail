@@ -19,11 +19,12 @@
 //! **The same cut on every run** (Q314). Chunk `n`'s size is decided from chunks filed before it, in their order,
 //! never from what is filed when the builder reaches it: the builder cut the documents by the size last stored while
 //! it worked ahead, so two runs cut different chunks, and the plans made from them (Q88) differed (1 relation inlined
-//! in one hogql run, 11 in the next; 83-92 B). Chunk `n + window` is sized by chunk `n`, growth included, and the
-//! first window's chunks are the first's size: the builder cuts and projects up to a window ahead of the chunks filed,
-//! never held by the chunk before it (it was held for the whole of each growing chunk's evaluation, the workers idle).
-//! No more evaluate at once than the plans' window (`plan::PLAN_WINDOW`), so the chunk a size waits for is filed
-//! before the builder reaches it; while chunks grow, one evaluates at a time.
+//! in one hogql run, 11 in the next; 83-92 B). While chunks grow, chunk `n + window` (the plans' window,
+//! `plan::PLAN_WINDOW`) is sized by chunk `n`, growth included, and the first window's chunks are the first's size: the
+//! builder cuts and projects up to a window ahead, never held by the chunk before it (it was held for the whole of each
+//! growing chunk's evaluation, the workers idle). Once the size holds, chunk `n + horizon` (`HORIZON` windows) is sized
+//! by chunk `n`, and the chunks from growth's stop to the first so sized are the size it stopped at: the builder cuts
+//! that far ahead of the filing, each chunk built, evaluated, then filed in order.
 //!
 //! The measure is the chunk's own blocks' bytes, not the process's count, which other chunks' and threads' timing
 //! moves. The run's start is the count when the chunks begin, in steps of `BASE_STEP`.
@@ -87,11 +88,20 @@ pub struct Decided {
     pub spread: Option<usize>,
 }
 
+/// Windows a filed chunk's measure sizes past it (`Schedule::horizon`): built, evaluating, and evaluated.
+const HORIZON: usize = 3;
+
 /// The run's chunk sizes, by the chunks' order.
 #[derive(Debug)]
 pub struct Schedule {
     first: usize,
     most: usize,
+    /// How far past the chunk filed its measure sizes (`HORIZON` windows): as far as the builder may cut ahead of the
+    /// filing, each chunk cut, built, evaluated, then filed in order. One window (the plans') held the builder to
+    /// 8 chunks past the last filed, shared by those built, evaluating and evaluated: cold PostHog's chunks ran 2-4
+    /// at once of 8, the main thread waiting 16 s for the next chunk's size.
+    horizon: usize,
+    /// The plans' window: while chunks grow, chunk `n` sizes chunk `n + window`, growth included.
     window: usize,
     at_most: usize,
     /// Three quarters of the limit, less the run's start.
@@ -119,11 +129,13 @@ impl Schedule {
     #[allow(clippy::too_many_arguments)]
     pub fn new(first: usize, most: usize, window: usize, at_most: usize, limit: usize, start: usize, files: usize, fixed: Option<usize>) -> Schedule {
         let first = first.min(most).max(1);
+        let window = window.max(at_most).max(1);
         let base = start.div_ceil(BASE_STEP) * BASE_STEP;
         Schedule {
             first,
             most,
-            window: window.max(at_most).max(1),
+            horizon: HORIZON * window,
+            window,
             at_most: at_most.max(1),
             room: (limit / 4 * 3).saturating_sub(base),
             // The first window's chunks are the first's size: each later one is sized by the chunk a window before it.
@@ -150,7 +162,12 @@ impl Schedule {
         if let Some(f) = self.fixed.filter(|_| n > 0) {
             return Some(f);
         }
-        self.sizes.get(n).copied().flatten().map(|(nodes, _)| nodes)
+        if let Some(&Some((nodes, _))) = self.sizes.get(n) {
+            return Some(nodes);
+        }
+        // From the chunk growth stopped at to the first a chunk filed since sizes, the size it stopped at.
+        let s = self.stopped?;
+        (n >= s && n < s + 1 + self.horizon - self.window).then(|| self.sizes[s].expect("the size growth stopped at").0)
     }
 
     /// The next chunk is cut: its number.
@@ -192,12 +209,11 @@ impl Schedule {
             }
             if grown < least.0 { (grown, By::Grown) } else { least }
         };
-        // The chunk a window on: growing, `GROWTH` times this one; growth stopped, the least of the most, what the room
-        // holds and the spread.
-        let chunk = n + self.window;
-        let (nodes, by) = match self.stopped {
-            None => bound(m.nodes.max(target).saturating_mul(GROWTH)),
-            Some(_) => bound(usize::MAX),
+        // Growing, the chunk a window on, `GROWTH` times this one; growth stopped, the chunk a horizon on, the least of
+        // the most, what the room holds and the spread.
+        let (chunk, (nodes, by)) = match self.stopped {
+            None => (n + self.window, bound(m.nodes.max(target).saturating_mul(GROWTH))),
+            Some(_) => (n + self.horizon, bound(usize::MAX)),
         };
         let nodes = nodes.clamp(self.first, self.most);
         if self.sizes.len() <= chunk {
@@ -243,7 +259,7 @@ mod tests {
     }
 
     /// Growth stops at the caller's most, and then as many chunks evaluate at once as the room holds, each sized by
-    /// the chunk a window before it.
+    /// the chunk `HORIZON` windows before it.
     #[test]
     fn growth_stops_at_the_most_and_then_chunks_run_beside_each_other() {
         let mut s = schedule(300);
@@ -252,9 +268,13 @@ mod tests {
         let d = s.file(1, wrote(131_072, 30));
         assert_eq!((d.chunk, d.nodes, d.by), (9, MOST, By::Most));
         assert!(d.at_once > 1 && d.at_once <= 8, "{d:?}");
-        assert_eq!(s.size(10), None, "chunk 10 is sized by chunk 2");
+        // Chunks 9 to 25 the size growth stopped at, to the first chunk 2 sizes (2 + 3 windows).
+        for n in 9..26 {
+            assert_eq!(s.size(n), Some(MOST), "chunk {n} is sized by growth's stop");
+        }
+        assert_eq!(s.size(26), None, "chunk 26 is sized by chunk 2");
         let d = s.file(2, wrote(MOST, 60));
-        assert_eq!((d.chunk, d.nodes), (10, MOST), "growth stopped: the most");
+        assert_eq!((d.chunk, d.nodes), (26, MOST), "growth stopped: the most, a horizon on");
     }
 
     /// A chunk whose growth a node would not fit `GROWTH` times its size is held to what the room holds, alone.

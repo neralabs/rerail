@@ -228,8 +228,9 @@ pub struct EdgeSpec {
 pub enum Line {
     Rel { name: String, types: String, start: Start },
     NoWrite,
-    /// The placement put the stratum on the device (decision 0095 §7).
-    Device,
+    /// The placement put the stratum on the device (decision 0095 §7); `host`: the device's program on the host
+    /// (a run bound to the CPU, `placement::host_joins`: `device host`).
+    Device { host: bool },
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed
     /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
@@ -595,7 +596,7 @@ fn line_text(spec: &Spec, l: &ArchivedLine) -> String {
             format!("rel {name} {types}{start}")
         }
         ArchivedLine::NoWrite => "nowrite".to_owned(),
-        ArchivedLine::Device => "device".to_owned(),
+        ArchivedLine::Device { host } => if *host { "device host" } else { "device" }.to_owned(),
         ArchivedLine::Leveled(rels) => format!("leveled {}", comma(rels)),
         ArchivedLine::Measured { desc, key, keyed, cols, ranks } => format!("measured {} {} {} {} {}", if *desc { "d" } else { "a" }, key.as_ref().map_or_else(|| "-".to_owned(), |k| hex(k)), if *keyed { "k" } else { "u" }, comma(cols), comma(ranks)),
         ArchivedLine::KeptOld => "keptold".to_owned(),
@@ -690,7 +691,7 @@ impl ComponentSpec {
                     Line::Rel { name: at(1)?.to_owned(), types: at(2)?.to_owned(), start }
                 }
                 "nowrite" => Line::NoWrite,
-                "device" => Line::Device,
+                "device" => Line::Device { host: t.get(1) == Some(&"host") },
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "measured" => Line::Measured {
                     desc: at(1)? == "d",

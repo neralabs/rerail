@@ -607,6 +607,20 @@ fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     format!("{types}/{size}")
 }
 
+/// How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
+/// files them), at most 8. One is the main thread alone, on its own connection, as before.
+pub fn chunks_at_once() -> usize {
+    std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1)
+}
+
+/// Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window()` were, whether the chunks
+/// evaluate at once or one by one: the same plans either way, and whatever the threads' timing. Two sets of the
+/// chunks at once: those evaluating, and as many evaluated waiting for a slower one before them to be filed. One set
+/// held them to 8 begun and unfiled: cold PostHog's chunks ran 2-4 at once in most of the phase.
+pub fn plan_window() -> usize {
+    2 * crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once())
+}
+
 pub fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
@@ -1344,41 +1358,70 @@ impl Drop for ObservedBatch {
 
 /// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock. Until
-/// it is done the file stays open: a run that replaces its files waits for it first (`closes_done`).
+/// it is done its file stays open: a run that replaces that file waits for it first (`closes_done`). A connection of
+/// no file (in memory) is closed beside and counted nowhere: no run replaces it.
 fn close_beside(db: Connection) {
+    let Some(file) = db.path().filter(|p| !p.is_empty()).map(|p| closing_key(Path::new(p))) else {
+        rerail_accel::exec::drop_beside(db);
+        return;
+    };
     let closing = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
-    *closing.0.0.lock().expect("the closes beside") += 1;
-    rerail_accel::exec::drop_beside(Closing(Some(db), closing));
+    *closing.0.0.lock().expect("the closes beside").entry(file.clone()).or_default() += 1;
+    rerail_accel::exec::drop_beside(Closing(Some(db), closing, file));
 }
 
-/// The connections closing beside the machine's runs (`close_beside`), and their end (decision 0442: the machine's,
-/// as the files they hold open are).
-#[derive(Default)]
-struct ClosingBeside((std::sync::Mutex<usize>, std::sync::Condvar));
+/// A database file as the closes beside count it: its directory's real path and its name (SQLite names a
+/// connection's file by its full path, a run by the path it was given).
+fn closing_key(file: &Path) -> std::path::PathBuf {
+    match (file.parent().and_then(|d| std::fs::canonicalize(d).ok()), file.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => file.to_path_buf(),
+    }
+}
 
-/// A connection closing beside the run: counted until its close is done, in the count it was added to.
-struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>);
+/// The connections closing beside the machine's runs (`close_beside`), by their file, and their end (decision 0442:
+/// the machine's, as the files they hold open are).
+#[derive(Default)]
+struct ClosingBeside((std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, usize>>, std::sync::Condvar));
+
+/// A connection closing beside the run: counted under its file until its close is done.
+struct Closing(Option<Connection>, std::sync::Arc<ClosingBeside>, std::path::PathBuf);
 
 impl Drop for Closing {
     fn drop(&mut self) {
         drop(self.0.take());
         let (n, done) = &self.1.0;
-        *n.lock().expect("the closes beside") -= 1;
+        let mut n = n.lock().expect("the closes beside");
+        if let Some(k) = n.get_mut(&self.2) {
+            *k -= 1;
+            if *k == 0 {
+                n.remove(&self.2);
+            }
+        }
+        drop(n);
         done.notify_all();
     }
 }
 
-/// Waits until every connection closing beside a run is closed: then no file of a run that ended is open. A file
-/// replaced under a connection still closing would be its, and the connection's close deletes its write-ahead log by
-/// name: the new store's. On a thread of the pool it runs the pool's jobs meanwhile (a close may be one of them).
-pub fn closes_done() {
+/// Waits until no connection closing beside a run holds one of `files`: then none of them is open. A file replaced
+/// under a connection still closing would be its, and the connection's close deletes its write-ahead log by name: the
+/// new store's. Only the files to be replaced are waited for: a wait on every close of the machine ran, on a pool's
+/// thread, the other jobs meanwhile, which waited in turn, one stack frame upon another for every run (237 parses of
+/// a parallel loop over pack programs overflowed a pool thread's stack). On a thread of the pool it runs the pool's
+/// jobs meanwhile (a close may be one of them).
+pub fn closes_done(files: &[&Path]) {
+    let keys: Vec<std::path::PathBuf> = files.iter().map(|f| closing_key(f)).collect();
+    if keys.is_empty() {
+        return;
+    }
     let held_ = crate::code_rule_dsl::logic::profile::machine::<ClosingBeside>();
     let (n, done) = &held_.0;
     let mut left = n.lock().expect("the closes beside");
-    while *left > 0 {
+    while keys.iter().any(|k| left.contains_key(k)) {
         if rayon::current_thread_index().is_some() {
             drop(left);
-            if !matches!(rayon::yield_now(), Some(rayon::Yield::Executed)) {
+            // The pool's help, within the thread's stack (`help_once`): a job run here may wait and help in turn.
+            if !rerail_accel::exec::help_once() {
                 std::thread::yield_now();
             }
             left = n.lock().expect("the closes beside");
@@ -2243,10 +2286,10 @@ fn run_observed_within(
         if in_memory { (":memory:".into(), ":memory:".into()) } else { (out.join("store.sqlite"), out.join("cross.sqlite")) };
     // The run's scratch, made again by every run. A failed run leaves its write-ahead log beside it; reopening a new
     // one over it reads stale pages.
-    let scratch = [&path, &cross_path].into_iter();
+    let scratch: Vec<&std::path::PathBuf> = [&path, &cross_path].into_iter().filter(|p| p.as_os_str() != ":memory:").collect();
     // An earlier run's connections may be closing still (`close_beside`): not on the files replaced here.
-    closes_done();
-    for p in scratch.filter(|p| !in_memory && p.as_os_str() != ":memory:").flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
+    closes_done(&scratch.iter().map(|p| p.as_path()).collect::<Vec<_>>());
+    for p in scratch.into_iter().flat_map(|p| ["", "-wal", "-shm"].map(|s| std::path::PathBuf::from(format!("{}{s}", p.display())))) {
         if p.exists() {
             std::fs::remove_file(&p).map_err(|e| Error::Plan(e.to_string()))?;
         }
@@ -2833,7 +2876,7 @@ fn run_observed_within(
     // Which groups they are is a function of the tests, kept with the program.
     let group_keys = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' groups of automata".into());
-        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())].into()).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
+        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())]).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
     };
     let groups = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the groups' images, read".into()); Arc::new(crate::code_rule_dsl::logic::rr::HeldDfas::read(crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store()), &group_keys)) };
     let dense = groups.stored() || docs.len() >= DENSE_TEXT_DOCS;
@@ -3240,7 +3283,9 @@ fn run_observed_within(
     // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
-    let measured_once: HashMap<(String, String), Once<Vec<(String, i64, i64, i64, i64)>>> = HashMap::new();
+    // Each measure with its chunk's documents, a later chunk's scale where its source knows no count, and its scan's
+    // cost (`Source::scan_cost`: a text test's strings a passing row, read off the same sample).
+    let measured_once: HashMap<(String, String), Once<(usize, Vec<(String, i64, i64, i64, i64)>, f64)>> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
@@ -3409,7 +3454,7 @@ fn run_observed_within(
                     Order::Back => "node_order",
                     Order::Climbs | Order::Falls | Order::Same => continue,
                 };
-                if comp.iter().all(|r| derived_here(r)) {
+                if comp.iter().all(&derived_here) {
                     keys.insert(key.to_owned());
                 }
             }
@@ -4942,8 +4987,10 @@ fn run_observed_within(
         }
 
         /// The main thread's next message: a chunk, a batch's end (`None`) or an error; `Err` once the builder has
-        /// ended. [`Builder::main_wait`] lets nested callers advance queued document work.
-        fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>) -> std::result::Result<Result<Option<Chunk>>, ()>
+        /// ended. `None` when `file` holds first (the chunk at the front is evaluated): the main thread files it, as
+        /// the builder may wait for the size its filing decides. [`Builder::main_wait`] lets nested callers advance
+        /// queued document work.
+        fn next<'s>(&'s self, jobs: &crate::threads::Jobs<'s, '_>, file: &dyn Fn() -> bool) -> Option<std::result::Result<Result<Option<Chunk>>, ()>>
         where
             'a: 's,
         {
@@ -4952,16 +4999,20 @@ fn run_observed_within(
                 // has ended. A load asked after a load's chunk failed waited here for ever, the pool idle (Q224: the
                 // cone posts its requests ahead of their answers, and the next was answered before the error was read).
                 if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
-                    return Some(Err(()));
+                    return Some(Some(Err(())));
                 }
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
                     drop(c);
                     self.advance(jobs);
-                    return Some(Ok(r));
+                    return Some(Some(Ok(r)));
                 }
-                (c.ended && c.out.is_empty()).then_some(Err(()))
+                if c.ended && c.out.is_empty() {
+                    return Some(Some(Err(())));
+                }
+                drop(c);
+                file().then_some(None)
             })
         }
 
@@ -5231,12 +5282,7 @@ fn run_observed_within(
             self.0.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
-    // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
-    // files them), at most 8. One is the main thread alone, on its own connection, as before.
-    let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
-    // Q88: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
-    // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
-    let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    let (chunks_at_once, plan_window) = (chunks_at_once(), plan_window());
     // The chunks' sizes (decision 0435 §4, Q314): the first `probe_nodes()`, each next decided from the chunks
     // filed before it in their order, by what their blocks wrote, against the limit less the run's count now; the
     // builder holds a cut until its size is decided, so every run cuts the same chunks. `RERAIL_RUN_MB` (a
@@ -5468,13 +5514,30 @@ fn run_observed_within(
             }
             let key = (mix.clone(), rel.clone());
             let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
-            let measured = match once {
-                Some((first, measured)) if first > 0 => syntax::scaled_statistics(&measured, first, source.estimated_len()),
-                _ => {
+            // This chunk's rows of it: a kept measure's are its source's where known with no row made (`known_len`),
+            // else the measured chunk's per document. Its `estimated_len` made a sample of each chunk's batch, a
+            // matcher wave of its own before the wave that made the rest; and a measure of no rows was made again in
+            // each chunk, its sample's wave too. One of no rows scales to none, unless its source knows of rows. Its
+            // scan's cost is the kept measure's: a text test's, asked here, made the sample too.
+            let kept = once.and_then(|(first, (docs, measured, scan))| {
+                let known = source.known_len();
+                let rows = known.unwrap_or_else(|| (first as u128 * chunk_docs_n as u128 / docs.max(1) as u128) as usize);
+                let scaled = match (first, rows) {
+                    (0, 0) => measured,
+                    (0, _) => return None,
+                    _ => syntax::scaled_statistics(&measured, first, rows),
+                };
+                crate::code_rule_dsl::logic::profile::decision("a kept measure scaled to a chunk (Q88)", || format!("{rel}: {}", if known.is_some() { "by its rows, known with none made" } else { "by its documents" }));
+                Some((scaled, rows, scan))
+            });
+            let (measured, rows, scan) = match kept {
+                Some(kept) => kept,
+                None => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
-                    once_keep(&mut measured_once.lock(), key, Once(seq, source.estimated_len(), measured.clone()));
-                    measured
+                    let (rows, scan) = (source.estimated_len(), source.scan_cost());
+                    once_keep(&mut measured_once.lock(), key, Once(seq, rows, (chunk_docs_n, measured.clone(), scan)));
+                    (measured, rows, scan)
                 }
             };
             // The relations the batches make (T has no statistics of them): the transducer's and the tree axes',
@@ -5489,10 +5552,10 @@ fn run_observed_within(
             };
             // A memoised run measures the base relations the cross-file part reads once, over every file's rows (below).
             if split.base.contains(&rel) && !(memoised && stored.iter().any(|(r, _)| *r == rel)) && (own || !t_stats.knows(&rel) || made_here(&rel)) {
-                totals_add.push((rel.clone(), source.estimated_len(), measured.clone()));
+                totals_add.push((rel.clone(), rows, measured.clone()));
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
-            stats.lookup_costs(&rel, source.as_ref());
+            stats.lookup_costs(&rel, source.as_ref(), scan);
             modules.bind(db, &rel, source)?;
             bound.insert(rel);
         }
@@ -6490,7 +6553,11 @@ fn run_observed_within(
                 file_front(&mut flight, &mut ordered, process)?;
             }
             main_doing.set("wait");
-            let next = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs));
+            // Woken to file the chunk at the front once it is evaluated: chunks are cut at the sizes filing decides.
+            let front_evaluated = || flight.front().is_some_and(|(_, s)| s.lock().is_some());
+            let Some(next) = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs, &front_evaluated)) else {
+                continue;
+            };
             let chunk = match next {
                 Err(()) | Ok(Ok(None)) => {
                     while !flight.is_empty() {
@@ -6540,9 +6607,26 @@ fn run_observed_within(
                 bell.ring();
             });
             flight.push_back((ctx, slot));
-            // As many in flight as the run's headroom holds (Q74), at most `k`.
-            while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
-                file_front(&mut flight, &mut ordered, process)?;
+            // As many evaluating at once as the run's headroom holds (Q74), at most `k`: the chunks still evaluating,
+            // not those evaluated and waiting to be filed in order. Counted by the unfiled, a slow chunk at the front
+            // held its window while the others ended, and none began: cold PostHog's chunks ran 2-4 at once of 8 in
+            // most of the phase, the main thread waiting 25 s on the front. An evaluated chunk holds its rows alone
+            // (its scopes' memory is given back, about 2 MB of 40 MB at its most), so the unfiled are bounded apart:
+            // by the plans' window, as chunk `n` plans with what was filed `plan_window` before it (Q88).
+            let evaluating = |flight: &std::collections::VecDeque<(Ctx, Slot)>| flight.iter().filter(|(_, s)| s.lock().is_none()).count();
+            loop {
+                while flight.front().is_some_and(|(_, s)| s.lock().is_some()) {
+                    file_front(&mut flight, &mut ordered, process)?;
+                }
+                let allowed = at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k);
+                if flight.len() >= plan_window {
+                    file_front(&mut flight, &mut ordered, process)?;
+                } else if evaluating(&flight) >= allowed {
+                    main_doing.set("wait for a chunk evaluated");
+                    builder.main_wait("the main thread: a chunk evaluated", || (evaluating(&flight) < at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k)).then_some(()));
+                } else {
+                    break;
+                }
             }
         })();
         if got.is_err() {
@@ -7004,6 +7088,30 @@ fn run_observed_within(
                     }
                 }
                 return Ok(vec![(crate::code_rule_dsl::logic::rr::INTERFACE.to_owned(), out)]);
+            }
+            if rel == crate::code_rule_dsl::logic::rr::TAIL_REQUEST {
+                // Each module's tail asked, in rank order: its scope's tails, which rank below it, are made first
+                // (decision 0639 §6a).
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}: modules tailed"));
+                let mut asked: Vec<_> = rows.iter().collect();
+                asked.sort_by_key(|r| r.get(1).copied().unwrap_or_default());
+                let mut out = Vec::new();
+                for row in asked {
+                    let [tail, _, key, files, scope, reached, scope_tails, linked] = &row[..] else { return Err(Error::Plan(format!("{rel} takes a tail key, a rank, a key, files, a scope, its files, its tails and its scope in link order"))); };
+                    let tail_text = text(*tail)?;
+                    // A module that does not tail is not answered: a program that reads it tails it where it reads
+                    // it, and meets the error there.
+                    let image = match crate::code_rule_dsl::logic::rr::tail_planned_module(&tail_text, &text(*key)?, &text(*files)?, &text(*scope)?, &text(*reached)?, &text(*scope_tails)?, &text(*linked)?) {
+                        Ok(image) => image,
+                        Err(e) => {
+                            crate::code_rule_dsl::logic::profile::decision("a module phase 0 could not tail (decision 0639 §6a)", || e.to_string());
+                            continue;
+                        }
+                    };
+                    world.consulted_lookup(rel, &tail_text, "", "held".to_owned());
+                    out.push(rerail_blocks::vector![*tail, atoms(&[image.as_str()])?[0]]);
+                }
+                return Ok(vec![(crate::code_rule_dsl::logic::rr::TAILED.to_owned(), out)]);
             }
             if rel == crate::code_rule_dsl::logic::rr::LOWER_REQUEST {
                 // Each module asked, in rank order: its scope's images, which rank below it, are made first
@@ -7796,6 +7904,7 @@ fn run_observed_within(
     {
         for (rel, (n, set)) in &chunk_counts.unions {
             if let (true, Some(set), Some(k)) = (*n == docs.len(), set, cross_vocabulary.tests.iter().position(|(t, _)| t == rel)) {
+                crate::code_rule_dsl::logic::profile::decision("a text test's passing strings given (decision 0494)", || format!("{rel}: {} strings, the chunks' over the {n} files", set.len()));
                 batch.give_passed(k, set.iter().copied().collect());
             }
         }
@@ -11230,7 +11339,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
 
 #[doc(hidden)]
 pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() { return known; }
+    if let Some(known) = source.estimated_statistics() { return known; }
     // Sampling must not force a lookup-driven producer to enumerate its domain.
     if source.made_on_lookup() { return Vec::new(); }
     let rows = source.len();
@@ -11257,7 +11366,7 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
 /// of its rows.
 #[doc(hidden)]
 pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, shapes: &super::shapes::Shapes, counts: super::shapes::Counts) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() { return known; }
+    if let Some(known) = source.estimated_statistics() { return known; }
     if source.made_on_lookup() { return Vec::new(); }
     let rows = source.len();
     let names = source.columns();

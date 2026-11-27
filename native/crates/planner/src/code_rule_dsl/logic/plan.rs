@@ -53,6 +53,9 @@ pub mod issue;
 /// A source's rows where they lie, digested and lent to a keep (`SourceRows`), the component's and the corpus's.
 pub mod source_rows;
 pub mod sql_kernel;
+/// SPIKE (throw-away): W's algorithms as the executors of the reference library's strata.
+pub mod spike_strata;
+pub mod spike_eval;
 
 /// Plans kept across chunks on this thread while held (a corpus run), none kept at the start: a run's plans from
 /// earlier runs are the store's (`compiled_plans`' kept facts), a session's runs' as a new process's (t33 step 3).
@@ -333,6 +336,9 @@ pub struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// SPIKE: the session's tree where it holds no syntax batch (`spike_strata::Tree::bare`): the relations
+    /// `spike_eval` holds for its strata, its strands' too.
+    spike_bare: Arc<std::sync::OnceLock<Arc<spike_strata::Tree>>>,
     /// The inputs this run's strata placed on the device read (decision 0325 step 6): the views the device made of
     /// them stay resident on this thread for the run's later strata, which placement then prices as found, not made.
     /// A strand's run is on another thread, with residency of its own: it starts with none.
@@ -1342,6 +1348,257 @@ impl<'a> Run<'a, '_> {
         Ok((texts, k))
     }
 
+    /// SPIKE: the rows of a stratum of the reference library by W's algorithm (`spike_strata`), from its inputs and
+    /// the batch's tree; none where the chunk holds no batch.
+    fn spike_rows(&self, scc: &super::front::CompAt) -> Option<Vec<(String, spike_strata::Flat)>> {
+        let _span = super::profile::span(|| "spike executor".into());
+        let (batch, tree) = self.spike_tree()?;
+        let chunk = spike_strata::Chunk::new(&tree, Some(&batch));
+        Some(spike_strata::run(&scc.iter().collect::<Vec<_>>(), &chunk, self))
+    }
+
+    /// SPIKE: the chunk's batch (the `child` view's) and its tree (`spike_strata::Tree`), made at its first spiked
+    /// stratum and held in the batch's slot (`Batch::spike`).
+    fn spike_tree(&self) -> Option<(Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>, Arc<spike_strata::Tree>)> {
+        use crate::code_rule_dsl::facts::vtab::syntax::Batch;
+        let batch = ["child", "node", "kind"].iter().find_map(|rel| self.spike_source(rel)?.syntax_batch())?.downcast::<Batch>().ok()?;
+        let slot = Arc::clone(batch.spike.get_or_init(|| -> Arc<dyn std::any::Any + Send + Sync> {
+            if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
+                let rels: Vec<String> = ["node", "kind", "child", "field", "text", "within"]
+                    .iter()
+                    .map(|rel| match self.spike_source(rel) {
+                        None => format!("{rel}: none"),
+                        Some(src) => {
+                            let same = src.syntax_batch().and_then(|b| b.downcast::<Batch>().ok()).map(|b| Arc::ptr_eq(&b, &batch));
+                            let derived = super::native::component::derived(self.db, rel).is_some();
+                            format!("{rel}: {} rows, batch {same:?}, derived {derived}", src.len())
+                        }
+                    })
+                    .collect();
+                eprintln!("SPIKE BATCH {} rows; {}", batch.nodes().total(), rels.join("; "));
+            }
+            Arc::new(spike_strata::Slot::default())
+        }))
+        .downcast::<spike_strata::Slot>()
+        .ok()?;
+        // The tape values admitted into the chunk so far (decision 0431 §8): their nodes are the `node` view's too.
+        let values = self
+            .spike_source("node")
+            .and_then(|src| src.as_any().and_then(|a| a.downcast_ref::<crate::code_rule_dsl::facts::vtab::syntax::values::Layered>()).map(|l| l.value_batches()))
+            .unwrap_or_default();
+        let tree = slot.tree(&batch, values);
+        Some((batch, tree))
+    }
+
+    /// SPIKE: the texts of symbol atoms, by the connection's scope (a stratum may run off the run's thread).
+    fn spike_texts(&self, atoms: &[i64]) -> Option<Vec<String>> {
+        let symbols = super::native::setfix::symbols(self.db).ok()?;
+        let s = symbols.read().ok()?;
+        Some(atoms.iter().map(|&a| s.name(a)).collect())
+    }
+
+    /// SPIKE: a relation the chunk holds: its bound view, or a derived relation.
+    fn spike_source(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).or_else(|| super::native::component::derived(self.db, rel))
+    }
+
+    /// SPIKE: stratum `scc` evaluated over the chunk's tree and held relations (`spike_eval`): its relations' rows,
+    /// held by the chunk for the strata after it; `None` where it is declined (logged with `RERAIL_SPIKE_WHY`).
+    fn spike_eval(&mut self, scc: &super::front::CompAt, rules: &[RuleKey]) -> Result<Option<Vec<(String, spike_eval::HRel)>>> {
+        let names: Vec<&str> = scc.iter().collect();
+        let vs = Arc::clone(&self.versions);
+        let f = vs.whole(self.version);
+        if names.iter().any(|r| f.lattice_decl(r).is_some() || f.gate(r) || f.request(r) || f.native(r).is_some()) {
+            spike_eval::declined(&names, "a lattice, gate, request or native relation");
+            return Ok(None);
+        }
+        let (batch, tree) = match self.spike_tree() {
+            Some((b, t)) => (Some(b), t),
+            None => (None, self.spike_holder()),
+        };
+        let pairs: Vec<(&Version, super::program_image::RuleRef<'_>)> = rules.iter().map(|&k| vs.rule_at(k)).collect();
+        let inputs = Arc::clone(&self.inputs);
+        let key = self.spike_key();
+        let run_names = SpikeNames { db: self.db, f, tree: &tree, inputs: &inputs, key };
+        let compiled = {
+            let _span = super::profile::span(|| "spike compile".to_string());
+            spike_eval::compile(&names, &pairs, &|r| f.width(r), &run_names)
+        };
+        let prog = match compiled {
+            Ok(p) => p,
+            Err(why) => {
+                spike_eval::declined(&names, &why);
+                return Ok(None);
+            }
+        };
+        // A projection of one tree atom (`kind(n, k) :- node(_, n, k, _, _)`) is read off the tree by the strata here
+        // after it; its rows, which those the engine runs read, are the engine's to make (no join, a view's rows).
+        if batch.is_none() && spike_eval::reads_tree(&prog) {
+            spike_eval::declined(&names, "reads the tree, no syntax batch");
+            return Ok(None);
+        }
+        if let Some(al) = prog.alias() {
+            tree.aliases.lock().unwrap().insert((key, prog.rels[0].clone()), al);
+            spike_eval::declined(&names, "a projection of the tree, read off it here");
+            return Ok(None);
+        }
+        // A relation a request fills (its answers') is whole once its stratum has run: answers fill the produced
+        // relations of the stratum that asks or of one after it, never one that has run.
+        let mut read: Vec<Option<Arc<spike_eval::HRel>>> = vec![None; prog.rels.len()];
+        for (i, rel) in spike_eval::reads(&prog) {
+            let held = tree.held.lock().unwrap().get(&(key, rel.to_owned())).cloned();
+            let h = match held {
+                Some(h) => h,
+                None => {
+                    let _span = super::profile::span(|| format!("spike eval: read {rel}"));
+                    let Some(src) = super::native::component::derived(self.db, rel).or_else(|| crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel)) else {
+                        spike_eval::declined(&names, &format!("{rel} not held"));
+                        return Ok(None);
+                    };
+                    let width = f.width(rel);
+                    // The engine's relation read where it lies; a view copied flat (a probe of the copy's index is a
+                    // load or two; the view's own lookup finds a row's document and place each time).
+                    let n = src.len();
+                    let h = Arc::new(spike_eval::HRel::of_engine(&src, width, n).unwrap_or_else(|| {
+                        let flat = spike_strata::rows(&*src);
+                        spike_eval::HRel::of_rows(flat.k, flat.v, n)
+                    }));
+                    tree.held.lock().unwrap().insert((key, rel.to_owned()), Arc::clone(&h));
+                    h
+                }
+            };
+            if h.k != prog.widths[i] {
+                spike_eval::declined(&names, &format!("{rel} held with {} columns, declared {}", h.k, prog.widths[i]));
+                return Ok(None);
+            }
+            read[i] = Some(h);
+        }
+        let chunk = spike_strata::Chunk::new(&tree, batch.as_deref());
+        let atoms = Arc::clone(super::native::setfix::symbols(self.db)?.atoms());
+        let calls = SpikeCalls { db: self.db, atoms, long: std::sync::OnceLock::new() };
+        let own = match spike_eval::run(&prog, &chunk, read, &calls) {
+            Ok(own) => own,
+            Err(why) => {
+                spike_eval::declined(&names, &why);
+                return Ok(None);
+            }
+        };
+        Ok(Some(prog.rels.iter().cloned().zip(own).collect()))
+    }
+
+    /// SPIKE: a relation `spike_eval` made (its rows distinct), held as the engine's relation `rel`: copied once, in
+    /// its order, with no sort.
+    fn spike_retain_distinct(&mut self, rel: &str, h: &spike_eval::HRel) -> Result<()> {
+        use super::native::component;
+        let _span = super::profile::span(|| format!("spike: retain {rel}"));
+        component::retain_distinct(self.db, rel, h.own(), vec![b'i'; h.k])?;
+        self.native_rels.insert(rel.to_owned());
+        // Its statistics counted when a plan first reads them (`SourceView`): most are read only by strata the
+        // evaluator runs, which plan with none.
+        let made = component::derived(self.db, rel).expect("just retained");
+        self.model.stats.lazily(rel, h.n.max(1), Arc::new(SourceView { rel: rel.to_owned(), src: made, cols: (0..h.k).collect(), rows: h.n as i64 }));
+        Ok(())
+    }
+
+    /// SPIKE: a relation `spike_eval` made, held by the chunk for the strata after it.
+    fn spike_hold(&self, rel: &str, h: spike_eval::HRel) -> Option<Arc<spike_eval::HRel>> {
+        let tree = self.spike_holder();
+        let h = Arc::new(h);
+        tree.held.lock().unwrap().insert((self.spike_key(), rel.to_owned()), Arc::clone(&h));
+        Some(h)
+    }
+
+    /// SPIKE: the chunk's held copies of `rels` (`spike_strata::Tree::held`) let go, as the engine releases them once
+    /// no stratum after reads them.
+    fn spike_release(&self, rels: &[String]) {
+        if !spike_eval::enabled() || rels.is_empty() {
+            return;
+        }
+        let tree = self.spike_holder();
+        let key = self.spike_key();
+        let mut held = tree.held.lock().unwrap();
+        for r in rels {
+            held.remove(&(key, r.clone()));
+        }
+    }
+
+    /// SPIKE: the tree that holds the session's relations for `spike_eval`: its batch's, else its own bare one.
+    fn spike_holder(&self) -> Arc<spike_strata::Tree> {
+        match self.spike_tree() {
+            Some((_, t)) => t,
+            None => Arc::clone(self.spike_bare.get_or_init(|| {
+                if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
+                    use crate::code_rule_dsl::facts::vtab::syntax::{Batch, values::Layered};
+                    let rels: Vec<String> = ["node", "kind", "child"]
+                        .iter()
+                        .map(|rel| match self.spike_source(rel) {
+                            None => format!("{rel}: none"),
+                            Some(src) => {
+                                let any = src.as_any();
+                                let layered = any.and_then(|a| a.downcast_ref::<Layered>()).is_some();
+                                let batch = src.syntax_batch().map(|b| b.downcast::<Batch>().is_ok());
+                                format!("{rel}: {} rows, any {}, layered {layered}, syntax_batch {batch:?}, derived {}", src.len(), any.is_some(), super::native::component::derived(self.db, rel).is_some())
+                            }
+                        })
+                        .collect();
+                    eprintln!("SPIKE BARE {}", rels.join("; "));
+                }
+                Arc::new(spike_strata::Tree::bare())
+            })),
+        }
+    }
+
+    /// SPIKE: the run's key of the chunk's held relations (its versions and version).
+    fn spike_key(&self) -> usize {
+        Arc::as_ptr(&self.versions) as *const () as usize ^ self.version.rotate_left(48)
+    }
+
+    /// SPIKE: flat `rows` held as the engine's relation `rel`, as a stratum's.
+    fn spike_retain(&mut self, rel: &str, rows: &spike_strata::Flat) -> Result<()> {
+        self.spike_retain_flat(rel, &rows.v)
+    }
+
+    /// SPIKE (check mode): which `node` and `kind` the engine holds now (their lengths, whether their batch is the
+    /// tree's) and their rows of node `n`.
+    fn spike_whence(&self, n: i64) -> String {
+        use crate::code_rule_dsl::facts::vtab::syntax::Batch;
+        let batch = self.spike_tree().map(|(b, _)| b);
+        ["node", "kind"]
+            .iter()
+            .map(|&rel| {
+                let Some(src) = self.spike_source(rel) else { return format!("{rel}: none") };
+                let same = src.syntax_batch().and_then(|b| b.downcast::<Batch>().ok()).map(|b| batch.as_ref().is_some_and(|t| Arc::ptr_eq(&b, t)));
+                let col = usize::from(rel == "node");
+                let flat = spike_strata::rows(&*src);
+                let hit: Vec<&[i64]> = flat.v.chunks_exact(flat.k.max(1)).filter(|r| r.get(col) == Some(&n)).take(2).collect();
+                let derived = super::native::component::derived(self.db, rel).is_some();
+                format!("{rel}: {} rows, batch {same:?}, derived {derived}, rows of it {hit:?}", src.len())
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
+    /// SPIKE: rows held as the engine's relation `rel`, flat, as a stratum's.
+    fn spike_retain_flat(&mut self, rel: &str, rows: &[i64]) -> Result<()> {
+        use super::native::component;
+        let _span = super::profile::span(|| format!("spike: retain {rel}"));
+        let width = self.fields().width(rel);
+        component::retain_flat(self.db, rel, rows, vec![b'i'; width])?;
+        self.native_rels.insert(rel.to_owned());
+        let made = component::derived(self.db, rel).expect("just retained");
+        let stats = made.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: made.len() as i64,
+            delta: made.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+            keys: Vec::new(),
+            counts: Vec::new(),
+        });
+        Ok(())
+    }
+
     /// A text test over strings the run answered (`front::Native::TextTest`) over a relation the engine holds: the
     /// rows of `input` whose `column` passes `op` of `patterns`, its distinct strings tested by the run's vocabulary
     /// with its other tests at once, each once a run; held as the engine's relation. `None`: the input is not held.
@@ -1428,9 +1685,130 @@ impl<'a> Run<'a, '_> {
     }
 }
 
+/// SPIKE: what `spike_eval` compiles a stratum by: the run's symbols, kind sets and inputs, the chunk's tree.
+struct SpikeNames<'a> {
+    db: crate::code_rule_dsl::facts::vtab::Db<'a>,
+    f: Fields<'a>,
+    tree: &'a spike_strata::Tree,
+    inputs: &'a RunInputs<'a>,
+    /// The run's key in the chunk's held relations.
+    key: usize,
+}
+
+impl spike_eval::Names for SpikeNames<'_> {
+    fn intern(&self, text: &str) -> i64 {
+        let syms = super::native::setfix::symbols(self.db).expect("the run's symbols");
+        let mut s = syms.write().unwrap();
+        s.id(text)
+    }
+
+    fn kindset(&self, set: &str) -> Option<Vec<i64>> {
+        let kinds = self.f.kindset(set)?;
+        // A set's kinds are their atoms (`#k` constants, as text), or their names; `-1` is a kind no dialect has.
+        let mut out: Vec<i64> = kinds
+            .iter()
+            .filter_map(|&k| {
+                let t = self.f.text(k);
+                match t.parse::<i64>() {
+                    Ok(a) => (a >= 0).then_some(a),
+                    Err(_) => self.tree.atoms.get(t).copied(),
+                }
+            })
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        if std::env::var_os("RERAIL_SPIKE_WHY").is_some() {
+            eprintln!("SPIKE KINDSET {set}: {:?} -> {out:?}", kinds.iter().map(|&k| self.f.text(k)).collect::<Vec<_>>());
+        }
+        Some(out)
+    }
+
+    fn tree_relation(&self, rel: &str) -> bool {
+        let tree = matches!(rel, "kind" | "node" | "child" | "field" | "text" | "within") || ["rr_nearest_", "rr_inside_", "rr_has_"].iter().any(|p| rel.starts_with(p));
+        tree && (self.inputs.contains(rel) || self.f.is_input(rel))
+    }
+
+    fn alias(&self, rel: &str) -> Option<spike_eval::Alias> {
+        self.tree.aliases.lock().unwrap().get(&(self.key, rel.to_owned())).cloned()
+    }
+}
+
+/// SPIKE: what `spike_eval`'s calls read of the run: its symbols, and its long-text nodes for node reads.
+struct SpikeCalls<'a> {
+    db: crate::code_rule_dsl::facts::vtab::Db<'a>,
+    /// The run's atoms, read and interned in place (no lock of the run's interner).
+    atoms: Arc<crate::content_store::atoms::Atoms>,
+    long: std::sync::OnceLock<Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>>,
+}
+
+impl spike_eval::Calls for SpikeCalls<'_> {
+    fn name(&self, sym: i64) -> Option<String> {
+        let atom = crate::content_store::atoms::Sym::try_from(sym).ok()?;
+        self.atoms.with_str(atom, str::to_owned).or_else(|| self.atoms.value(atom).ok().flatten())
+    }
+
+    fn intern(&self, text: &str) -> i64 {
+        self.atoms.intern(text).map_or(-1, i64::from)
+    }
+
+    fn atom(&self, text: &str) -> i64 {
+        self.atoms.existing(text).map_or_else(|| self.intern(text), i64::from)
+    }
+
+    fn existing(&self, text: &str) -> Option<i64> {
+        self.atoms.existing(text).map(i64::from)
+    }
+
+    fn is_match(&self, sym: i64, m: &crate::code_rule_dsl::logic::strings::Matcher) -> Option<bool> {
+        let atom = crate::content_store::atoms::Sym::try_from(sym).ok()?;
+        self.atoms.with_str(atom, |s| m.is_match(s)).or_else(|| self.name(sym).map(|s| m.is_match(&s)))
+    }
+
+    /// `a.b`; `"" . b` is `b`.
+    fn cat(&self, a: i64, b: i64) -> i64 {
+        match (self.name(a), self.name(b)) {
+            (Some(x), _) if x.is_empty() => b,
+            (Some(x), Some(y)) => self.intern(&format!("{x}.{y}")),
+            _ => super::native::component::cat_symbols(self.db, a, b),
+        }
+    }
+
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
+        let long = self.long.get_or_init(|| crate::code_rule_dsl::facts::vtab::bound_source(self.db, crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES));
+        crate::code_rule_dsl::logic::strings::functions::node_read(name, long.as_deref(), n, &[])
+    }
+}
+
+/// SPIKE: a stratum's inputs as the chunk holds them.
+impl spike_strata::Inputs for Run<'_, '_> {
+    fn read(&self, rel: &str) -> spike_strata::Flat {
+        let _span = super::profile::span(|| "spike: read an input".into());
+        super::native::component::derived(self.db, rel).or_else(|| crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel)).map(|s| spike_strata::rows(&*s)).unwrap_or_default()
+    }
+
+    fn texts(&self, atoms: &[i64]) -> Vec<String> {
+        self.spike_texts(atoms).unwrap_or_default()
+    }
+}
+
 /// Whether a text-test stratum's rules are its native's definition (`h(x…) :- input(x…), test`), so the native makes
 /// its rows: in a maintained form its relation's rules are its old rows and its new ones (`maintain`), made as rules,
 /// while its `h__ins` and a stratum derived again are the definition.
+/// Decision 0707: the indexes the strata about to run probe by (their seed joins, `specs`), built before any of them
+/// runs, in one batch of the device's, where the strata run on the device (or its join programs on the host): each
+/// stratum finds each built, none builds its own beside another's.
+fn indexes_first(db: &Connection, specs: &[PlanJoin]) -> Result<()> {
+    if !placement::device_on() && !placement::host_joins() {
+        return Ok(());
+    }
+    let _wave = super::profile::span(|| "device wave (indexes)".into());
+    let built = super::native::component::prefetch_device_indexes(db, specs, !placement::device_on())?;
+    if built > 0 {
+        super::profile::decision("indexes first (decision 0707)", || format!("{built} indexes built before the {} seed joins that probe them", specs.len()));
+    }
+    Ok(())
+}
+
 fn text_test_defined(vs: &body::Versions, rules: &[body::RuleKey], input: &str) -> bool {
     matches!(rules, [k] if { let (v, r) = vs.rule_at(*k); r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).eq([input]) })
 }
@@ -1994,6 +2372,7 @@ impl<'a> Run<'a, '_> {
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
+            spike_bare: Arc::clone(&self.spike_bare),
             demands: Default::default(),
             pending: HashMap::new(),
             why_not: None,
@@ -3241,9 +3620,66 @@ impl<'a> Run<'a, '_> {
             eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
             std::time::Instant::now()
         });
+        // SPIKE: a stratum evaluated over the chunk's tree and held relations (`spike_eval`).
+        let evaluated = if spike_eval::enabled() { self.spike_eval(scc, rules)? } else { None };
+        if evaluated.is_some() && !spike_strata::check() {
+            for (rel, mut h) in evaluated.into_iter().flatten() {
+                // The engine's copy made, the chunk reads it where it lies: one copy of its rows.
+                self.spike_retain_distinct(&rel, &h)?;
+                if let Some(src) = super::native::component::derived(self.db, &rel)
+                    && !h.lend_to(&src)
+                    && std::env::var_os("RERAIL_SPIKE_WHY").is_some()
+                {
+                    let held = super::native::component::held_rows(&*src).map(|(rows, n, dead, _)| (n, dead.len(), (0..h.k).map(|c| rows.range_reader(0, n as u32, c).is_some()).collect::<Vec<_>>()));
+                    eprintln!("SPIKE LEND {rel}: {} rows not lent: engine's {held:?}", h.n);
+                }
+                self.spike_hold(&rel, h);
+            }
+            return Ok(Native::Ran);
+        }
+        // SPIKE: a stratum of the reference library run by W's algorithm (`spike_strata`).
+        let spiked = if spike_strata::enabled() && spike_strata::handles(&scc.iter().collect::<Vec<_>>()) { self.spike_rows(scc) } else { None };
+        if spiked.is_some() && !spike_strata::check() {
+            for (rel, rows) in spiked.iter().flatten() {
+                self.spike_retain(rel, rows)?;
+            }
+            return Ok(Native::Ran);
+        }
         let solving = solving_of(&self.versions, scc, rules);
         let sources = if solving.is_some() { column_sources(&self.versions, scc, rules) } else { Sources::new() };
         let out = self.lent(solving, sources, |this, native_rels| this.native_stratum_(scc, rules, native_rels));
+        if let (Some(made), Ok(Native::Ran)) = (&evaluated, &out) {
+            let tree = self.spike_tree();
+            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, Some(b)));
+            for (rel, h) in made {
+                let generic = super::native::component::derived(self.db, rel).map(|s| spike_strata::rows(&*s)).unwrap_or_default();
+                spike_strata::compare(rel, &spike_strata::Flat { k: h.k, v: h.own().to_vec() }, &generic, chunk.as_ref());
+                // Where the engine found a node the spike's tree does not hold: the `node` or `kind` it read.
+                if generic.k > 0 && h.k == generic.k {
+                    let ours: HashSet<&[i64]> = h.own().chunks_exact(h.k).collect();
+                    let missing = generic.v.chunks_exact(generic.k).filter(|r| !ours.contains(r)).take(2);
+                    for row in missing {
+                        for &v in row.iter().filter(|&&v| v > 1 << 32) {
+                            eprintln!("SPIKE WHENCE {rel} {v}: {}", self.spike_whence(v));
+                        }
+                    }
+                }
+            }
+        }
+        // Check mode: the spike's rows held for the strata after it, as they are.
+        if matches!(out, Ok(Native::Ran)) {
+            for (rel, h) in evaluated.into_iter().flatten() {
+                self.spike_hold(&rel, h);
+            }
+        }
+        if let (Some(made), Ok(Native::Ran)) = (&spiked, &out) {
+            let tree = self.spike_tree();
+            let chunk = tree.as_ref().map(|(b, t)| spike_strata::Chunk::new(t, Some(b)));
+            for (rel, rows) in made {
+                let generic = super::native::component::derived(self.db, rel).map(|s| spike_strata::rows(&*s)).unwrap_or_default();
+                spike_strata::compare(rel, rows, &generic, chunk.as_ref());
+            }
+        }
         if let Some(t0) = t0 {
             eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
         }
@@ -3868,7 +4304,7 @@ impl<'a> Run<'a, '_> {
                     *l = SpecLine::Join { head: h, delta: d, join, whole: None, est: Default::default() };
                 }
             }
-            spec.lines.insert(0, SpecLine::Device);
+            spec.lines.insert(0, SpecLine::Device { host: placed.host });
             None
         };
         // The spec, encoded once now that its lines are final (decision 0628 §4): what the engine opens, the lab
@@ -6951,7 +7387,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, spike_bare: Default::default(), device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }
@@ -7204,7 +7640,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut evaluated: Vector<usize> = rerail_blocks::vector::Vector::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
-    let mut board = (issue::on() && native.contains("program") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    // Not in a run in mode `here`: a nested run whose caller is already one of the pool's jobs (a rules pass, decision
+    // 0701 §5.1) runs its strata on its own thread, paying no job, ambient or board a stratum.
+    let mut board = (issue::on() && native.contains("program") && !native.contains("here") && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
     // Decision 0592: with strata issued ahead, a relation goes when its last reader to finish does.
     let mut reads_left = board.as_ref().filter(|_| release_finished()).map(|_| ReadsLeft::new(f0, &run_vs, &sccs, &by_stratum, &run.views));
     let mut early = Early::default();
@@ -7305,6 +7743,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             now
         };
         let done: Vec<String> = candidates.iter().filter(|r| !stays.contains(*r) && last.get(*r).is_none_or(|&l| l < at)).cloned().collect();
+        // SPIKE: the chunk's held copies of those no later stratum reads, kept for the caller or not.
+        run.spike_release(&candidates.iter().filter(|r| last.get(*r).is_none_or(|&l| l < at)).cloned().collect::<Vec<_>>());
         if !done.is_empty() {
             super::native::component::release(db, &done);
             done.iter().for_each(|r| { run.native_rels.remove(r); });
@@ -7620,6 +8060,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     }
                 }
                 if !specs.is_empty() {
+                    indexes_first(db, &specs)?;
                     let _wave = super::profile::span(|| "level wave (joins, a maintained level)".into());
                     let sent = super::native::component::prefetch_joins(db, &specs)?;
                     if sent > 0 {
@@ -8100,6 +8541,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             let own = specs.len();
             specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             if !specs.is_empty() {
+                indexes_first(db, &specs)?;
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
                 if sent > 0 {
@@ -8897,6 +9339,7 @@ fn release_unread(db: &Connection, run: &mut Run<'_, '_>, gone: Vec<String>, pin
         return;
     }
     super::native::component::release(db, &done);
+    run.spike_release(&done);
     for r in &done {
         run.native_rels.remove(r);
         run.demands.forget(r);

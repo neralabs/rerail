@@ -316,7 +316,7 @@ fn simdjson_form_against_simdjson() {
         // kept by `structurals`), each tape given back as the next one's room.
         let mut w = rerail_tape_format::f16::Writer::empty();
         let mut ours = || {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -340,7 +340,7 @@ fn simdjson_form_against_simdjson() {
         });
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let (t2i, t2n) = measure(&mut || {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -398,7 +398,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let (mut wj, mut wa) = (Writer::empty(), Writer::empty());
         for z in [false, true] {
             let want = jit.parser.image16_in(&mut wj, f, rerail_tape_format::newlines::Terminators::Newlines, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e}"));
-            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
+            wa.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), &mut wa).unwrap_or_else(|e| panic!("{name}: the Rust refuses it at byte {e}"));
             let got = wa.finish().expect("finishes").tape;
             assert!(got.extent() == want.extent(), "{name}: the Rust's tape is the JIT's (z {z})");
@@ -417,7 +417,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
             std::hint::black_box(&batch);
         });
         let aot_whole = |w: &mut Writer, z: bool| {
-            w.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, z, true, nodes);
+            w.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse(&fp, f.len(), w).expect("parses");
             let t = w.finish().expect("finishes").tape;
             w.recycle(std::hint::black_box(t));
@@ -427,7 +427,7 @@ fn simdjson_form_jit_and_aot_phase_by_phase() {
         let a1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
         let lexed = rerail_json_aot::lex(&fp, f.len());
         let a2 = least(&mut || {
-            wa.begin(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, tag, false, true, nodes);
+            wa.begin(&rerail_tape_format::f16::Document { lang: &lang, source: f, tag, z: false, blocks: true, nodes, sha256: None }, rerail_tape_format::newlines::Terminators::Newlines);
             rerail_json_aot::parse_lexed(&fp, &lexed, &mut wa).expect("parses");
             let t = wa.finish().expect("finishes").tape;
             wa.recycle(std::hint::black_box(t));

@@ -225,24 +225,6 @@ impl ColRead {
         unsafe { (*self.dir).get(self.min_log, i) }
     }
 
-    /// Where row `i`'s value lies and the rows of its chunk from it on, each next value 8 bytes on: a reader of a
-    /// stretch of rows resolves it once, and reads and writes each value with one access. `None` for a column whose
-    /// values are not each 8 bytes where they lie (4 bytes wide, or the chunk sealed, decision 0622).
-    ///
-    /// # Safety
-    /// Row `i` is reserved: its chunk is made.
-    #[inline]
-    pub unsafe fn run(&self, i: u32) -> Option<(*mut i64, u32)> {
-        let (chunk, place) = chunk_of(i, self.min_log);
-        // SAFETY: the caller's; the directory is its relation's, which outlives the reader.
-        let d = unsafe { &*self.dir };
-        if self.width != 8 || d.sealed(chunk).is_some() {
-            return None;
-        }
-        let left = chunk_rows(chunk, self.min_log) - place as u64;
-        Some((d.at(self.min_log, i).cast::<i64>(), left.min(u64::from(u32::MAX)) as u32))
-    }
-
     /// Rows `lo..hi`' values in turn, as `get` reads each: a chunk's place found once, then its values where they
     /// lie, one after another (a column with runs reads each row's high bits, as `get` does).
     #[inline(always)]
@@ -270,6 +252,24 @@ impl ColRead {
             }
             i += n as u32;
         }
+    }
+
+    /// Where row `i`'s value lies and the rows of its chunk from it on, each next value 8 bytes on: a reader of a
+    /// stretch of rows resolves it once, and reads and writes each value with one access. `None` for a column whose
+    /// values are not each 8 bytes where they lie (4 bytes wide, or the chunk sealed, decision 0622).
+    ///
+    /// # Safety
+    /// Row `i` is reserved: its chunk is made.
+    #[inline]
+    pub unsafe fn run(&self, i: u32) -> Option<(*mut i64, u32)> {
+        let (chunk, place) = chunk_of(i, self.min_log);
+        // SAFETY: the caller's; the directory is its relation's, which outlives the reader.
+        let d = unsafe { &*self.dir };
+        if self.width != 8 || d.sealed(chunk).is_some() {
+            return None;
+        }
+        let left = chunk_rows(chunk, self.min_log) - place as u64;
+        Some((d.at(self.min_log, i).cast::<i64>(), left.min(u64::from(u32::MAX)) as u32))
     }
 }
 
@@ -689,7 +689,11 @@ impl Rows {
         if lo >= hi {
             return lo;
         }
-        if self.col(c).has_runs() && (0..1 << 63).contains(&key) {
+        // A column under key runs is ordered as its rows lie: by run (the high bits, unsigned), then by low bits, a
+        // value's `u64` order. A document's key past 2^31 makes its ids negative as `i64`, so a signed search of
+        // those rows answers out of that order. (This was `0..1 << 63`, which on an `i64` is `0..i64::MIN`, empty:
+        // the runs were never searched.)
+        if self.col(c).has_runs() {
             return self.lower_bound_in_runs(c, lo, hi, key);
         }
         let ml = self.min_log;
@@ -711,14 +715,6 @@ impl Rows {
         let a = (lo as u64).saturating_sub(start) as usize;
         let at = if let Some(sealed) = self.col(c).sealed(k) {
             sealed.lower_bound(a, len, key)
-        } else if self.col(c).has_runs() {
-            // A value's high bits are its run's: the search reads each row's value.
-            let (mut l, mut h) = (a, len);
-            while l < h {
-                let m = l + (h - l) / 2;
-                if r.get(start as u32 + m as u32) < key { l = m + 1 } else { h = m }
-            }
-            l
         } else if r.width == 4 {
             let s = unsafe { std::slice::from_raw_parts(p as *const u32, len) };
             a + s[a..].partition_point(|&v| (v as i64) < key)
@@ -795,10 +791,14 @@ impl Rows {
     /// `key`: galloping forward from `lo`, for a key whose rows are few.
     pub fn upper_from(&self, c: usize, lo: u32, hi: u32, key: i64) -> u32 {
         let r = self.reader(c);
+        // A column under key runs in its rows' order, a value's `u64` (`lower_bound`): another document's negative
+        // ids after `key`'s rows are past it, not at most it.
+        let runs = self.col(c).has_runs();
+        let at_most = |v: i64| if runs { (v as u64) <= (key as u64) } else { v <= key };
         // Rows lo..lo + step are at most key; find a step past which a row is greater.
         let mut step = 1u32;
         let mut a = lo;
-        while a < hi && r.get(a) <= key {
+        while a < hi && at_most(r.get(a)) {
             a = lo + step;
             step *= 2;
         }
@@ -806,7 +806,7 @@ impl Rows {
         let (mut l, mut h) = (lo + (step / 4).min(hi - lo), a.min(hi));
         while l < h {
             let m = l + (h - l) / 2;
-            if r.get(m) <= key { l = m + 1 } else { h = m }
+            if at_most(r.get(m)) { l = m + 1 } else { h = m }
         }
         l
     }
@@ -1011,14 +1011,16 @@ mod tests {
         assert_eq!(back, vals);
         // The searches, the runs searched once and then a run's low bits (`lower_bound_in_runs`), raw and then sealed
         // (a sealed chunk holds whole values, searched by the whole key). Keys between runs, inside a run, past its
-        // last low bits, and below and past every row.
-        let keys = [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_900] - 1, vals[2_901], vals[12_345], vals[12_345] + 1, vals[19_998] + 2, vals[19_999], 5 << 32, i64::MAX];
+        // last low bits, and below and past every row. The rows are in their values' `u64` order: the last document's
+        // key, `u32::MAX`, makes its ids negative as `i64` (keys `i64::MIN` and -1 fall before and past them).
+        assert!(vals.windows(2).all(|w| (w[0] as u64) <= (w[1] as u64)), "the rows in their values' u64 order");
+        let keys = [vals[0] - 1, vals[0], vals[1], vals[2_899] + 1, vals[2_900] - 1, vals[2_901], vals[12_345], vals[12_345] + 1, vals[19_998] + 2, vals[19_999], 5 << 32, i64::MAX, i64::MIN, -1];
         let search = |what: &str| {
             for key in keys {
-                for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100), (2_899, 2_902), (2_901, 2_901)] {
-                    let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| v < key) as u32;
+                for (lo, hi) in [(0, n), (17, n - 5), (4_000, 4_100), (2_899, 2_902), (2_901, 2_901), (19_990, n)] {
+                    let want_lo = lo + vals[lo as usize..hi as usize].partition_point(|&v| (v as u64) < (key as u64)) as u32;
                     assert_eq!(rows.lower_bound(0, lo, hi, key), want_lo, "{what}: lower {key:#x} in {lo}..{hi}");
-                    let want_hi = lo.max(want_lo) + vals[want_lo as usize..hi as usize].partition_point(|&v| v <= key) as u32;
+                    let want_hi = lo.max(want_lo) + vals[want_lo as usize..hi as usize].partition_point(|&v| (v as u64) <= (key as u64)) as u32;
                     assert_eq!(rows.upper_from(0, want_lo, hi, key), want_hi, "{what}: upper {key:#x} in {lo}..{hi}");
                 }
             }

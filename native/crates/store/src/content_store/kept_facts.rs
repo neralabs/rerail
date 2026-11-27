@@ -696,6 +696,15 @@ pub fn sweep_committed(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreR
     Ok(rows)
 }
 
+/// The rows of `space`'s chain as the store's last commit holds them, read on a connection of their own (a write's
+/// transaction reads its own changes); none where the store does not open so.
+fn committed_rows(store: &Path, space: &[u8; 32]) -> ChainRows {
+    Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .ok()
+        .and_then(|c| chain_rows(&c, space).ok())
+        .unwrap_or_default()
+}
+
 /// `write_space`, or with `keep`, `rewrite_space`.
 fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>, keep: Option<&dyn Fn(&FactKey<'_>) -> bool>) -> StoreResult<Option<ChainRows>> {
     if puts.is_empty() && keep.is_none() {

@@ -453,6 +453,7 @@ impl<'a> Board<'a> {
             super::super::native::component::prefetch_tables(db, &wants)?;
         }
         if !specs.is_empty() {
+            super::indexes_first(db, &specs)?;
             let _wave = super::super::profile::span(|| "device wave (joins, issued components)".into());
             super::super::native::component::prefetch_joins(db, &specs)?;
         }

@@ -621,32 +621,31 @@ use rerail_blocks::vector::Vector;
         }
     }
 
-    /// Decisions 0603 and 0648's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
-    /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
-    /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past
-    /// it) and its arena's pages are mapped as its size scripts reach them (a park each, then its phase's rest), and
-    /// nothing else launches; its rows are the CPU's. Its stacks' rounds doubling (the default), its launches are
-    /// fewer than its rounds.
+    /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
+    /// closure's seed round and its rounds are one program, a chain of dispatches (decision 0674); with a chain of 8
+    /// dispatches and a first arena of 16 bytes, its launches go again (each where its chain's dispatches ended with
+    /// phases left, or where a size script parked past the arena's pages, mapped then), and nothing else launches; its
+    /// rows are the CPU's. On every backend alike.
     #[test]
-    fn a_stratum_is_one_programs_stacks() {
+    fn a_stratum_is_one_launch_and_its_budgets_relaunches() {
+        use crate::code_rule_dsl::transducer::packed::metal_join::PROGRAM_BUDGET;
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        for (rounds, arena) in [(None, None), (Some(1), Some(16))] {
-            let (rs, as_) = (rounds.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
+        for (budget, arena) in [(None, None), (Some(8), Some(16))] {
+            let (bs, as_) = (budget.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
             let mut sizes = Vec::new();
-            sizes.extend(rs.as_deref().map(|b| ("RERAIL_STACK_ROUNDS", b)));
+            sizes.extend(bs.as_deref().map(|b| ("RERAIL_PROGRAM_BUDGET", b)));
             sizes.extend(as_.as_deref().map(|a| ("RERAIL_PROGRAM_ARENA", a)));
             let r = closure(&sizes);
-            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "rounds {rounds:?}: one program's stacks and remaps: {r:?}");
-            assert_eq!(r.reruns, 0, "rounds {rounds:?}: no round runs again: {r:?}");
+            let b = u64::from(budget.unwrap_or(PROGRAM_BUDGET));
+            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "budget {b}: one launch, and its relaunches: {r:?}");
+            assert_eq!(r.reruns, 0, "budget {b}: no round runs again: {r:?}");
             assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
-            match rounds {
-                // A round a stack: a stack each round's end, its seed round's the first's.
-                Some(1) => assert!(r.relaunches + 2 >= r.rounds && r.relaunches <= r.rounds + 1, "a round a stack: {r:?}"),
-                // Doubling from two: its stacks the rounds' logarithm.
-                _ => assert!(r.relaunches < r.rounds / 2, "rounds doubling a stack: {r:?}"),
-            }
+            // A launch that leaves phases ran its chain's dispatches, so its relaunches are its phases run over a chain's
+            // dispatches: none of them a phase's or a round's.
+            assert!(r.launch_items >= b, "budget {b}: a launch's budget is its chain's dispatches: {r:?}");
+            assert!(u64::from(r.relaunches) <= r.taken / r.launch_items + 1, "budget {b}: its relaunches its budget's: {r:?}");
             if arena.is_none() {
                 // Its first arena is what a round's tables can reach where mapping commits nothing (the CPU backend):
                 // its claims map no more pages. On Metal a mapped page is real memory: its first arena is its claims'
@@ -2674,7 +2673,7 @@ use rerail_blocks::vector::Vector;
             }
             let [wall, gpu, encode, wait] = m.map(median);
             eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
-            eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
+            eprintln!("MEASURE {name:<20} rounds {}, relaunches {}, remaps {}", rounds.0, rounds.1, rounds.2);
         }
     }
 
@@ -2753,6 +2752,7 @@ use rerail_blocks::vector::Vector;
                 let mut best = (f64::MAX, f64::MAX);
                 // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
                 let mut prog = (f64::MAX, f64::MAX);
+                let mut held = 0i64;
                 let mut faulted = i64::MAX;
                 for k in 0..repeat {
                     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2761,6 +2761,9 @@ use rerail_blocks::vector::Vector;
                         spec.push("device".into());
                     }
                     spec.push("rel h0 ii empty".into());
+                    // As the planner opens a stratum (`nowrite`): its rows stay the engine's, held (`derived`) once
+                    // it closes, not inserted into a table, so the time is the run's, not a table's.
+                    spec.push("nowrite".into());
                     spec.extend(rules.iter().cloned());
                     super::super::open(&db, &spec.join("\n")).unwrap();
                     let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
@@ -2777,12 +2780,16 @@ use rerail_blocks::vector::Vector;
                         }
                     }
                     super::super::close(&db, "timed").unwrap();
+                    // Its rows where the engine holds them: those not dead.
+                    let src = super::super::derived(&db, "h0").expect("h0 held");
+                    let (_, n, dead, _) = super::super::held_rows(&*src).expect("its rows");
+                    held = (n - (0..n).filter(|&i| dead.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0)).count()) as i64;
                     // The first run warms (compiles, sizes); the best of the others.
                     if k > 0 {
                         best = (best.0.min(wall), best.1.min(cpu));
                     }
                 }
-                let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                let n = held;
                 rows.push(n);
                 eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
                 if device {

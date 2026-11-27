@@ -46,7 +46,7 @@ pub fn device_codes_of(table: &rerail_tape_format::tape::CodeTable, grammar: &Gr
         let kind = if error { ERROR_SYMBOL } else { e.kind };
         let named = e.alias.as_ref().map_or_else(|| grammar.kind_is_named(kind), |alias| alias.1);
         let mut classes = [0_u16; MAX_NODE_SUPERTYPES];
-        classes[..e.classes.len()].copy_from_slice(&e.classes);
+        classes[..e.classes.len()].copy_from_slice(e.classes);
         codes.push(DeviceCode {
             kind,
             field: e.field,

@@ -995,8 +995,8 @@ pub type LayAux<'a> = &'a dyn Fn(&Written, &crate::aux_index::Nodes, Option<&Sou
 pub mod presence {
     use super::{Presence, u32_at};
 
-    /// The header's bytes.
-    pub const HEAD: usize = 16;
+    /// The header's bytes, and where a home's auxiliary index lies after a presence: the reads'.
+    pub use rerail_reads::tape::presence::{HEAD, aux_at};
 
     /// A code's word in the table the writers read (their `KINDS` part): its kind, `FAULT` where it is MISSING,
     /// and its field above. An ERROR code's kind is `ERROR_CODE`, so a node of either sets the presence's bit
@@ -1047,7 +1047,7 @@ pub mod presence {
 
     /// The faults the presence `bytes` (`find`'s) lists: each ERROR or MISSING node's index, in preorder.
     pub fn faults(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
-        fault_bytes(bytes).chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().expect("4 bytes")))
+        fault_bytes(bytes).as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c))
     }
 
     /// `faults`, read where they lie: u32s at a multiple of 8 bytes into the home (`at`, `HEAD` and the words are),
@@ -1065,13 +1065,6 @@ pub mod presence {
     fn len_at(buf: &[u8], at: usize) -> u64 {
         let w = |k: usize| u64::from(u32_at(buf, at + 4 * k));
         HEAD as u64 + 8 * (w(0) + w(1)) * w(2) + 4 * w(3)
-    }
-
-    /// Where a home's auxiliary index lies after the presence at `at` that ends at `end` (decision 0656): its bytes
-    /// rounded up to 16, counted from the presence (a view's presence counts from its batch's block, not its home), as
-    /// `<ukl/reads/aux_index_tape.h>`'s `ukl_aux_in_home` finds it.
-    pub fn aux_at(at: usize, end: usize) -> usize {
-        at + (end - at).next_multiple_of(16)
     }
 
     /// Where the presence and the auxiliary index in the home `buf` of a tape `end` bytes long and of `blocks` blocks
@@ -2696,6 +2689,71 @@ mod tests {
         assert!(cache::Spec::check(own_cache).is_ok(), "the cache as its reads leave it");
     }
 
+    /// Rust and JIT readers of a 16z tape on 8 threads share one cache, as a batch's readers do, each in an order of
+    /// its own (decision 0353 step 4b): the Rust reads (`reads::f16z::Z`) find it at its address, the JIT's at its
+    /// offset in the view, and every value read that is not the node's comes with a failure the cache counted
+    /// (decision 0463).
+    #[test]
+    fn the_rust_and_jit_16z_reads_share_one_cache() {
+        use crate::reads::f16z::Z;
+        use rerail_clif::view::cache;
+        let jit = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
+        let mut view = z.view(&lang).unwrap();
+        assert!(z.p.block_count() > 2, "more blocks than a cache's generation holds");
+        let n = view.nodes;
+        // The values to read, by the Rust reads through a cache of their own, read on this thread alone.
+        let spec = cache::Spec::new(3, 2, view.columns[3] as usize);
+        let mut own = vec![0u64; (spec.bytes() + 64).div_ceil(8)];
+        let own_at = (64 - (own.as_ptr() as usize) % 64) % 64;
+        // SAFETY: the buffer's bytes past the alignment.
+        let own_cache = unsafe { std::slice::from_raw_parts_mut(own.as_mut_ptr().cast::<u8>().add(own_at), spec.bytes()) };
+        spec.init(own_cache).unwrap();
+        let alone = Z { t: z.as_bytes(), v: &view, cache: own_cache.as_ptr() };
+        let expect: Vec<[u32; 3]> = (0..n).map(|i| [alone.size(i), alone.start(i), alone.parent(i)]).collect();
+        // One cache after the tape, the view naming it by its offset (the JIT's) and the Rust reads by its address.
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes() + 64, 0);
+        let cache_at = at + (64 - (bytes.as_ptr() as usize + at) % 64) % 64;
+        spec.init(&mut bytes[cache_at..cache_at + spec.bytes()]).unwrap();
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (cache_at as u32, 0, spec.entry_bytes() as u32, 1);
+        let wrong = std::sync::atomic::AtomicU32::new(0);
+        type Read = extern "C" fn(*const u8, *const TapeView, u32) -> u32;
+        // SAFETY: each read's signature: the tape's base, its view, a node.
+        let jits: [Read; 3] = ["tape_size", "tape_start", "tape_parent"].map(|name| unsafe { std::mem::transmute::<*const u8, Read>(jit.function(name)) });
+        let (t, view) = (&bytes[..z.as_bytes().len()], &view);
+        let (base, cache) = (bytes.as_ptr() as usize, bytes[cache_at..].as_ptr() as usize);
+        std::thread::scope(|s| {
+            for w in 0..8u32 {
+                let (expect, wrong) = (&expect, &wrong);
+                s.spawn(move || {
+                    let rust = Z { t, v: view, cache: cache as *const u8 };
+                    let mut x = w.wrapping_mul(0x9E37_79B9) | 1;
+                    for _ in 0..4 * n {
+                        x ^= x << 13;
+                        x ^= x >> 17;
+                        x ^= x << 5;
+                        let i = x % n;
+                        let got = if w % 2 == 0 { [rust.size(i), rust.start(i), rust.parent(i)] } else { jits.map(|f| f(base as *const u8, view, i)) };
+                        if got != expect[i as usize] {
+                            wrong.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+        let counts = cache::Counts::checked(&bytes[cache_at..cache_at + spec.bytes()]);
+        let wrong = wrong.into_inner();
+        assert!(wrong <= 3 * counts.failed, "{wrong} reads wrong with {} failures counted: {counts:?}", counts.failed);
+        assert!(counts.rotated > 0, "the shared cache turned: {counts:?}");
+    }
+
     /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
     /// view whose count is short of its tape's, a byte past the source and a line past the last ask each walking read
     /// (sizes' hops, a parent's descent, the newline index's selects) to step past what the tape holds: each step must
@@ -3337,20 +3395,20 @@ mod tests {
         let host_misses = counts(&c).misses;
         assert_eq!(host_misses as usize, z.block_count(), "the host decoded each block once: {:?}", counts(&c));
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT reading the host's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT reading the host's entries");
         }
         assert_eq!(counts(&c).misses, host_misses, "the JIT found every block the host decoded: {:?}", counts(&c));
         // JIT first: every block decoded by the JIT, then read by the host with no miss.
         let c = ZCache::host(z.block_count(), z.entry_size());
         let view = jit_view(&c);
-        for i in 0..n {
-            assert_eq!(jit(&view, i as u32), want[i], "node {i}, the JIT");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(jit(&view, i as u32), *want, "node {i}, the JIT");
         }
         let jit_misses = counts(&c).misses;
         let t = z.reader(&lang, Some(&c)).unwrap();
-        for i in 0..n {
-            assert_eq!(answers(&t, i), want[i], "node {i}, the host reading the JIT's entries");
+        for (i, want) in want.iter().enumerate() {
+            assert_eq!(answers(&t, i), *want, "node {i}, the host reading the JIT's entries");
         }
         assert_eq!(counts(&c).misses, jit_misses, "the host found every block the JIT decoded: {:?}", counts(&c));
     }
@@ -3477,7 +3535,7 @@ mod tests {
             for b in 0..nodes.len().div_ceil(Z) {
                 let mut want = vec![0u64; p.kind_words + p.field_words];
                 for &(code, ..) in &nodes[b * Z..nodes.len().min((b + 1) * Z)] {
-                    let e = table.entry(code as u32);
+                    let e = table.entry(code);
                     want[usize::from(e.kind) / 64] |= 1 << (e.kind % 64);
                     want[p.kind_words + usize::from(e.field) / 64] |= 1 << (e.field % 64);
                 }
@@ -3759,7 +3817,7 @@ mod tests {
             let w = match home.borrow_mut().take() {
                 Some(mut w) => {
                     used.set(used.get() + 1);
-                    w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                    w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
                     w
                 }
                 None => Writer::new(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3),
@@ -3784,7 +3842,7 @@ mod tests {
         let want = first.extent().to_vec();
         let at = first.extent().as_ptr();
         w.recycle(first);
-        w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+        w.begin(&Document { lang: &lang, source: &source, tag: 0, z: false, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
         by_ops(&mut w, &nodes, 1);
         let again = Writer::finish(&mut w).expect("the second tape").tape;
         assert_eq!(again.extent(), &want[..], "the tape written in the room given back");
@@ -3814,7 +3872,7 @@ mod tests {
     impl crate::home::Rooms for TestRooms {
         fn region(&self, len: usize) -> Option<Box<dyn crate::home::Region>> {
             let k = self.asked.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if self.refuse != 0 && k % self.refuse == 0 {
+            if self.refuse != 0 && k.is_multiple_of(self.refuse) {
                 return None;
             }
             Some(Box::new(TestRegion(Box::leak(vec![0x5au8; len].into_boxed_slice()))))
@@ -3844,7 +3902,7 @@ mod tests {
         for refuse in [0, 2, 3] {
             writes_the_references_tape(|lang, source, z, blocks, nodes| {
                 let mut w = Writer::placing(test_rooms(refuse));
-                w.begin(lang, source, crate::newlines::Terminators::Lf, 3, z, blocks, nodes / 3);
+                w.begin(&Document { lang, source, tag: 3, z, blocks, nodes: nodes / 3, sha256: None }, crate::newlines::Terminators::Lf);
                 w
             });
         }
@@ -3867,7 +3925,7 @@ mod tests {
             let mut w = Writer::placing(test_rooms(0));
             let mut tapes = Vec::new();
             for _ in 0..2 {
-                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
                 by_ops(&mut w, &nodes, 1);
                 tapes.push(Writer::finish(&mut w).expect("the tape").tape);
             }
@@ -3923,7 +3981,7 @@ mod tests {
             assert!(want.aux_bytes().is_some(), "z {z}: a writer without rooms lays the index in its own bytes");
             for refuse in [0, 1, 2] {
                 let mut w = Writer::placing(test_rooms(refuse));
-                w.begin(&lang, &source, crate::newlines::Terminators::Lf, 0, z, true, nodes.len());
+                w.begin(&Document { lang: &lang, source: &source, tag: 0, z, blocks: true, nodes: nodes.len(), sha256: None }, crate::newlines::Terminators::Lf);
                 by_ops(&mut w, &nodes, 1);
                 let got = Writer::finish_laid(&mut w, Some(&lay)).expect("the tape").tape;
                 if refuse == 0 {

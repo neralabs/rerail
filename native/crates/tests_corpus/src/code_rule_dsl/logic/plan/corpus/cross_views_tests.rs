@@ -49,6 +49,8 @@ struct Corpus {
     program: String,
     outputs: &'static [&'static str],
     runs: usize,
+    /// The nodes a chunk holds (`corpus::run`'s `chunk_nodes`): the files one chunk, unless a test splits them.
+    chunk_nodes: usize,
 }
 
 impl Corpus {
@@ -65,7 +67,7 @@ impl Corpus {
         let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
-        let c = Corpus { dir, marker, program, outputs, runs: 0 };
+        let c = Corpus { dir, marker, program, outputs, runs: 0, chunk_nodes: 1 << 18 };
         for (file, body) in FILES {
             c.write(file, body);
         }
@@ -87,7 +89,7 @@ impl Corpus {
         self.runs += 1;
         let out = self.dir.join(format!("out{}", self.runs));
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, self.chunk_nodes).unwrap();
         let rows = self.outputs.iter().map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap_or_default().into_iter().collect()).collect();
         (report, rows)
     }
@@ -560,6 +562,134 @@ fn cold_counted(made: &BTreeSet<String>) -> bool {
     // Counted by the chunks where their rows lay (decision 0458's statistics), or off the batch.
     let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
     !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
+}
+
+/// A text test the cross part reads is unioned by the chunks (decision 0494): each counts its files' passing strings,
+/// the run's statistics of it are theirs, and they are given to the corpus batch, whose whole read of it takes them and
+/// makes no document. A
+/// test estimated on a sample (`Source::estimated_statistics`) is not one whose statistics its structure gives: taken
+/// for one, no chunk unioned it, and the cross part's scan of a path test made every document of `all` (27 s of its
+/// CPU, 2026-11-24).
+#[test]
+fn a_text_test_the_cross_part_reads_is_unioned_by_the_chunks() {
+    use crate::code_rule_dsl::logic::profile;
+    const TESTED: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node) cross_file
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used_in(d: number, x: symbol) cross_file
+used_in(d, x) :- uses(n, f), def(f, x), docof(n, d).
+// The relations that span files are declared so (decision 0652).
+// A document's path, read across files whole (`packages`): an input of the cross part. `home` joins it and a test of
+// it to a cross-file relation by a document's number alone, so no node keys a file-local helper of them and the cross
+// part reads the test: `export_names`' second rule's shape.
+.decl dpath(d: number, p: symbol) cross_file
+dpath(d, p) :- doc(d, p, _).
+.decl packages(p: symbol) cross_file
+packages(p) :- dpath(_, p), @rx_matches(p, "[.]py$") = 1.
+.decl home(d: number, p: symbol, x: symbol) cross_file
+home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
+.output home
+.output packages
+"#;
+    let mut c = Corpus::with("text-test-unioned", TESTED, &["home", "packages"]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let tests: Vec<&String> = made.keys().filter(|(t, x)| t == "the base relations' statistics (decision 0458)" && x.starts_with("strtest_")).map(|(_, x)| x).collect();
+    assert!(!tests.is_empty(), "the cross part reads a text test: {:?}", made.keys().filter(|(t, x)| t.contains("0458") || t.contains("text") || x.contains("strtest")).collect::<Vec<_>>());
+    for x in &tests {
+        assert!(x.ends_with(": counted by the chunks, where their rows lay"), "a text test's statistics are the chunks' union: {x}");
+    }
+    // The union is the corpus batch's: a whole read of the test there takes it, and makes no document.
+    let given: BTreeSet<&str> = made.keys().filter(|(t, _)| t == "a text test's passing strings given (decision 0494)").filter_map(|(_, x)| x.split(':').next()).collect();
+    for x in &tests {
+        let rel = x.split(':').next().unwrap_or_default();
+        assert!(given.contains(rel), "{rel}: the chunks' passing strings are given to the corpus batch: {given:?}");
+    }
+}
+
+/// A relation a batch makes, that no count gives, is measured on a sample of its documents once a mix, by the chunks
+/// of its plan window (Q88): a later chunk of the mix scales that measure, its rows' count its source's where one is
+/// known with no row made (`Source::known_len`), else the measured chunk's per document. Asked its `estimated_len`
+/// there, each chunk made its sample, a matcher wave of its own before the wave that made the rest (the `all` run: 25
+/// more waves, 6.9 s of CPU, 2026-11-24).
+#[test]
+fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
+    use crate::code_rule_dsl::logic::profile;
+    // The run's window (two sets of the chunks at once, at least the plans' window).
+    let window = crate::code_rule_dsl::logic::plan::corpus::plan_window() as u64;
+    // `PROGRAM`, and a file-local test of a document's path (a node's text is read in place, no text test): a text
+    // test each chunk reads, its scan priced by its sample.
+    const PROGRAM_TESTED: &str = concat!(
+        "\n.decl qnamed(f: node, p: symbol)\n",
+        "qnamed(f, p) :- kind(f, \"function_definition\"), docof(f, d), doc(d, p, _), @rx_matches(p, \"m1[0-9][.]py$\") = 1.\n",
+        ".output qnamed\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_TESTED}");
+    let mut c = Corpus::with("kept-measure-scaled", &program, &["shape", "named", "span", "home", "qnamed"]);
+    // More chunks than the run's window (about 2.4 files a chunk), every file Python: one mix.
+    for i in 0..(3 * window as usize).max(24) {
+        c.write(&format!("m{i}.py"), &format!("from a import f\n\ndef q{i}(v):\n    return f(v)\n"));
+    }
+    c.chunk_nodes = 48;
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let by_rel = |title: &str| {
+        let mut by: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for ((t, x), n) in &made {
+            if t == title {
+                *by.entry(x.split(':').next().unwrap_or_default().to_owned()).or_default() += n;
+            }
+        }
+        by
+    };
+    let mut sampled = by_rel("a relation measured on a sample of its batch's documents (decision 0494)");
+    let tests = by_rel("a text test measured on a sample of its batch's documents (decision 0494)");
+    assert!(!tests.is_empty(), "a chunk measures a text test on a sample: {:?}", made.keys().filter(|(t, x)| t.contains("text test") || x.contains("strtest")).collect::<Vec<_>>());
+    sampled.extend(tests);
+    let scaled = by_rel("a kept measure scaled to a chunk (Q88)");
+    assert!(!sampled.is_empty(), "a chunk measures a relation on a sample: {:?}", made.keys().filter(|(t, _)| t.contains("0494")).collect::<Vec<_>>());
+    for (rel, n) in &sampled {
+        let reused = scaled.get(rel).copied().unwrap_or(0);
+        assert!(reused > 0, "{rel}: the chunks past the plan window scale its kept measure ({n} sampled; sampled {sampled:?}, scaled {scaled:?})");
+        assert!(*n <= window, "{rel}: measured on a sample by the plan window's chunks alone, not by each of {}: {n}", n + reused);
+    }
+}
+
+/// An `ast` atom of two captures, one of many nodes (`$$$R`): at each root W's matcher matched, a row for each node of
+/// the product of its captures' nodes, the root's first (`captured_rows`, its rows laid flat a tape at a time).
+#[test]
+fn an_ast_atoms_captures_give_the_product_of_their_nodes() {
+    const PROGRAM_AST: &str = concat!(
+        "\n.decl argrest(a: symbol, r: symbol)\n",
+        "argrest(a, r) :- ast(d, f, {\"language\": \"python\", \"syntax\": \"valid\", \"rule\": {\"pattern\": \"f($A, $$$R)\"}}, A: x, R: y), text(x, a), text(y, r).\n",
+        ".output argrest\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_AST}");
+    let mut c = Corpus::with("ast-product", &program, &["shape", "named", "span", "home", "argrest"]);
+    c.write("e.py", "f(b, c, d)\nf(e)\nf(g, h)\n");
+    let (_, rows) = c.run();
+    let want: BTreeSet<Vec<String>> = [["b", "c"], ["b", "d"], ["g", "h"]].iter().map(|r| r.iter().map(|s| s.to_string()).collect()).collect();
+    assert_eq!(rows[4], want, "the product of A's node and each of R's, at each call matched");
 }
 
 /// Decision 0689: `text` read by node alone in the cross part, of a node only a cross-file relation binds (`said`:

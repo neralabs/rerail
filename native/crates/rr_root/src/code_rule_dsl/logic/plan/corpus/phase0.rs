@@ -66,6 +66,16 @@ fn candidate_path(dir: &str, name: &str) -> PathBuf {
     PathBuf::from(host_spelling(&format!("{}/{name}", bootstrap_spelling(dir))))
 }
 
+/// The directory of the file a text's `#include` names from library `lib` (canonical), where that file is outside
+/// the library: a pack's own library, named by its path from the library (`settings::module_text`).
+fn outside_library(lib: &Path, name: &str) -> Option<PathBuf> {
+    if !name.starts_with("..") {
+        return None;
+    }
+    let file = dunce::canonicalize(candidate_path(&lib.to_string_lossy(), name)).ok()?;
+    (!file.starts_with(lib)).then(|| file.parent().map(Path::to_path_buf)).flatten()
+}
+
 /// The include graph phase 0 derived.
 #[derive(Clone, Debug, Default)]
 pub struct Graph {
@@ -96,6 +106,9 @@ pub struct Graph {
     /// Each planned module's image, by its key (`p0_module_lowered`, decision 0639 §3): the digest of the image the
     /// image store keeps under the key. A graph holds only while its modules' images are there (`Looks::holds`).
     pub lowered: BTreeMap<String, String>,
+    /// Each planned module's tail, by its tail key (`p0_module_tailed`, decision 0639 §6a): the digest of the image the
+    /// image store keeps under the tail key. A graph holds only while those images are there too.
+    pub tailed: BTreeMap<String, String>,
 }
 
 /// A module of the plan (`Graph::plan`).
@@ -107,6 +120,8 @@ pub struct PlanModule {
     pub key: String,
     /// The modules it is lowered against (`p0_scope`).
     pub scope: std::collections::BTreeSet<String>,
+    /// Its tail key (`p0_tail_key`), hex: its key and its scope's files' digests.
+    pub tail: String,
 }
 
 impl PlanModule {
@@ -205,7 +220,8 @@ impl Graph {
             diff("rules", self.rules.iter().map(|(p, d)| (p.clone(), *d)), other.rules.iter().map(|(p, d)| (p.clone(), *d))),
             diff("phases", self.phases.iter().map(|(k, v)| (k.clone(), v.clone())), other.phases.iter().map(|(k, v)| (k.clone(), v.clone()))),
             diff("lowered", self.lowered.clone(), other.lowered.clone()),
-            diff("plan", self.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone())), other.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone()))),
+            diff("tailed", self.tailed.clone(), other.tailed.clone()),
+            diff("plan", self.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone(), v.tail.clone())), other.plan.iter().map(|(k, v)| (k.clone(), v.rank, v.key.clone(), v.scope.clone(), v.tail.clone()))),
         ]
         .concat()
     }
@@ -236,13 +252,18 @@ impl Looks {
             && self.images_held(g)
     }
 
-    /// Whether the store the run reads holds each module image `g` lowers: those not looked at yet asked together.
+    /// Whether the store the run reads holds each module image `g` lowers and each tail it makes: those not looked at
+    /// yet asked together.
     fn images_held(&mut self, g: &Graph) -> bool {
         let new: Vec<&str> = g.lowered.keys().filter(|k| !self.images.contains_key(*k)).map(String::as_str).collect();
         for (k, held) in new.iter().zip(crate::code_rule_dsl::logic::rr::planned_modules_held(&new)) {
             self.images.insert((*k).to_owned(), held);
         }
-        g.lowered.keys().all(|k| self.images[k])
+        let tails: Vec<&str> = g.tailed.keys().filter(|t| !self.images.contains_key(&format!("tail {t}"))).map(String::as_str).collect();
+        for (t, held) in tails.iter().zip(crate::code_rule_dsl::logic::rr::planned_tails_held(&tails)) {
+            self.images.insert(format!("tail {t}"), held);
+        }
+        g.lowered.keys().all(|k| self.images[k]) && g.tailed.keys().all(|t| self.images[&format!("tail {t}")])
     }
 }
 
@@ -578,6 +599,10 @@ fn composition(seed: &Seed, dirs: &Dirs) -> Option<Composition> {
     let mut files: Vec<Seed> = Vec::new();
     let mut absent: Vec<PathBuf> = Vec::new();
     for (at, name) in names {
+        // A name outside the library (a pack's own library) is a file of no library graph: the run's to resolve.
+        if outside_library(&dirs.lib, &name).is_some() {
+            return None;
+        }
         let path = candidate_path(&lib, &name);
         if super::observe(|o| o.kind(&path)) != Kind::File {
             return None;
@@ -585,7 +610,7 @@ fn composition(seed: &Seed, dirs: &Dirs) -> Option<Composition> {
         // Each name a file has (its own `core.rerail` too) has its candidate beside the file, held absent
         // (`p0_absent`: every candidate not there); one there is the run's to resolve.
         if let Some((own_path, _)) = &own {
-            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return None };
+            let (dir, _) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned()))?;
             let beside = candidate_path(&dir, &name);
             if super::observe(|o| o.kind(&beside)) != Kind::Missing {
                 return None;
@@ -630,6 +655,7 @@ impl Composition {
             whole.plans.extend(g.plans.iter().copied());
             whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
             whole.lowered.extend(g.lowered.iter().map(|(k, d)| (k.clone(), d.clone())));
+            whole.tailed.extend(g.tailed.iter().map(|(k, d)| (k.clone(), d.clone())));
         }
         whole.absent.extend(absent);
         whole.includes.insert(start.clone(), asks);
@@ -694,7 +720,7 @@ pub fn same_graph(a: &Graph, b: &Graph) -> bool {
         v.dedup();
         v
     };
-    a.digest() == b.digest() && a.rules == b.rules && sorted(&a.absent) == sorted(&b.absent) && a.phases == b.phases && a.plan == b.plan && a.lowered == b.lowered
+    a.digest() == b.digest() && a.rules == b.rules && sorted(&a.absent) == sorted(&b.absent) && a.phases == b.phases && a.plan == b.plan && a.lowered == b.lowered && a.tailed == b.tailed
 }
 
 /// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
@@ -791,7 +817,7 @@ impl Images {
             }
             Seed::File(p) => format!("file\0{}", self.rel(&p.to_string_lossy())),
         };
-        crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 3\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
+        crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 4\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
     }
 
     /// The graphs kept for `seeds`, in their order, whether they hold or not: the engine's shipped graphs first
@@ -816,14 +842,14 @@ impl Images {
     /// The key a store keeps seed key `key`'s graph under, as kept facts (`rr::graph_facts`): the image's key is the
     /// shipped bundle's.
     fn store_key(&self, key: &crate::content_store::HashKey) -> crate::content_store::HashKey {
-        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 2\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
+        crate::content_store::HashKey::sha256(&[b"rerail phase 0 graph facts 3 (the module plan and its tails)\0".as_slice(), &key.sha256_bytes().unwrap_or_default()].concat())
     }
 
     /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
     /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
     /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, and the module plan (decision 0639):
-    /// `p0g_module(name, rank, key, scope)` (its scope's names, comma-separated) and `p0g_lowered(key, image)`; each
-    /// relation's rows in the graph's order.
+    /// `p0g_module(name, rank, key, scope, tail)` (its scope's names, comma-separated), `p0g_lowered(key, image)` and
+    /// `p0g_tailed(tail, image)`; each relation's rows in the graph's order.
     fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());
@@ -856,13 +882,17 @@ impl Images {
         for d in &g.plans {
             put("p0g_plan", vec![hex(d)]);
         }
-        // The module plan and its images (decision 0639 §1, §3), as the image writes them (`encode`): a graph read back
-        // without them planned no module, and every text composed of it failed ("in no module of phase 0's plan").
+        // The module plan, its images and its tails' (decision 0639 §1, §3, §6a), as the image writes them (`encode`): a
+        // graph read back without them planned no module, and every text composed of it failed ("in no module of phase
+        // 0's plan").
         for (m, r) in &g.plan {
-            put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(","))]);
+            put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(",")), s(r.tail.clone())]);
         }
         for (k, d) in &g.lowered {
             put("p0g_lowered", vec![s(k.clone()), s(d.clone())]);
+        }
+        for (t, d) in &g.tailed {
+            put("p0g_tailed", vec![s(t.clone()), s(d.clone())]);
         }
         // A graph holds a row at least: every seed's graph names the modules it reached (`p0g_digest`).
         f
@@ -910,13 +940,17 @@ impl Images {
             g.plans.push(read.digest(a)?);
         }
         for r in rows("p0g_module") {
-            let [m, rank, key, scope] = &r[..] else { return None };
+            let [m, rank, key, scope, tail] = &r[..] else { return None };
             let scope = text(scope)?.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
-            g.plan.insert(text(m)?, PlanModule { rank: int(rank)?, key: text(key)?, scope });
+            g.plan.insert(text(m)?, PlanModule { rank: int(rank)?, key: text(key)?, scope, tail: text(tail)? });
         }
         for r in rows("p0g_lowered") {
             let [k, d] = &r[..] else { return None };
             g.lowered.insert(text(k)?, text(d)?);
+        }
+        for r in rows("p0g_tailed") {
+            let [t, d] = &r[..] else { return None };
+            g.tailed.insert(text(t)?, text(d)?);
         }
         Some(g)
     }
@@ -931,13 +965,14 @@ impl Images {
         let phases: Vec<String> = g.phases.iter().flat_map(|(from, to)| to.iter().flat_map(move |(ph, path)| [self.rel(from), ph.clone(), p(path)])).collect();
         let rules: Vec<String> = g.rules.iter().flat_map(|(path, d)| [p(path), hex(d)]).collect();
         let plans: Vec<String> = g.plans.iter().map(hex).collect();
-        let plan: Vec<String> = g.plan.iter().flat_map(|(m, r)| [m.clone(), r.rank.to_string(), r.key.clone(), r.scope.iter().cloned().collect::<Vec<_>>().join(",")]).collect();
+        let plan: Vec<String> = g.plan.iter().flat_map(|(m, r)| [m.clone(), r.rank.to_string(), r.key.clone(), r.scope.iter().cloned().collect::<Vec<_>>().join(","), r.tail.clone()]).collect();
         let lowered: Vec<String> = g.lowered.iter().flat_map(|(k, d)| [k.clone(), d.clone()]).collect();
-        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..], &plans[..], &plan[..], &lowered[..]])
+        let tailed: Vec<String> = g.tailed.iter().flat_map(|(k, d)| [k.clone(), d.clone()]).collect();
+        crate::content_store::observe::encode_lists(&[&includes[..], &missing[..], &absent[..], &digests[..], &phases[..], &rules[..], &plans[..], &plan[..], &lowered[..], &tailed[..]])
     }
 
     fn decode(&self, bytes: &[u8]) -> Option<Graph> {
-        let [includes, missing, absent, digests, phases, rules, plans, plan, lowered]: [Vec<String>; 9] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
+        let [includes, missing, absent, digests, phases, rules, plans, plan, lowered, tailed]: [Vec<String>; 10] = crate::content_store::observe::decode_lists(bytes)?.try_into().ok()?;
         let unhex = |s: &str| -> Option<[u8; 32]> {
             let mut out = [0u8; 32];
             for (i, b) in out.iter_mut().enumerate() {
@@ -970,14 +1005,18 @@ impl Images {
             g.rules.insert(PathBuf::from(self.abs(path)?), unhex(d)?);
         }
         g.plans = plans.iter().map(|d| unhex(d)).collect::<Option<_>>()?;
-        for r in plan.chunks(4) {
-            let [m, rank, key, scope] = r else { return None };
+        for r in plan.chunks(5) {
+            let [m, rank, key, scope, tail] = r else { return None };
             let scope = scope.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
-            g.plan.insert(m.clone(), PlanModule { rank: rank.parse().ok()?, key: key.clone(), scope });
+            g.plan.insert(m.clone(), PlanModule { rank: rank.parse().ok()?, key: key.clone(), scope, tail: tail.clone() });
         }
         for r in lowered.chunks(2) {
             let [k, d] = r else { return None };
             g.lowered.insert(k.clone(), d.clone());
+        }
+        for r in tailed.chunks(2) {
+            let [k, d] = r else { return None };
+            g.tailed.insert(k.clone(), d.clone());
         }
         Some(g)
     }
@@ -1162,6 +1201,7 @@ impl Graph {
         // (`p0_seed_reaches(f, f)`): its graph holds its own module, which a text including it is composed with.
         g.plan = self.plan.iter().filter(|(m, _)| m.starts_with(variant) && PlanModule::members(m).all(|d| reached.contains(d))).map(|(m, r)| (m.clone(), r.clone())).collect();
         g.lowered = g.plan.values().filter_map(|r| self.lowered.get(&r.key).map(|d| (r.key.clone(), d.clone()))).collect();
+        g.tailed = g.plan.values().filter_map(|r| self.tailed.get(&r.tail).map(|d| (r.tail.clone(), d.clone()))).collect();
         g
     }
 }
@@ -1224,6 +1264,11 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
                 }
                 for (at, name) in includes {
                     text.push_str(&format!("p0_ask({t}, {at}, {}).\n", quote(name)));
+                    // A name that leaves the library (a pack's own library, named from it: `settings::module_text`):
+                    // its file's directory is a root the loader may read, as a program file's own is.
+                    if let Some(dir) = outside_library(&lib, name) {
+                        dirs.insert(dir);
+                    }
                 }
             }
             Seed::File(path) => {
@@ -1308,6 +1353,16 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         for r in outputs.rows(crate::code_rule_dsl::logic::rr::LOWERED) {
             if let (V::Text(k), V::Text(d)) = (r.get(0), r.get(1)) {
                 g.lowered.insert(k.to_owned(), d.to_owned());
+            }
+        }
+        for r in outputs.rows("p0_tail_key") {
+            if let (V::Text(m), V::Text(t)) = (r.get(0), r.get(1)) {
+                g.plan.entry(m.to_owned()).or_default().tail = t.to_owned();
+            }
+        }
+        for r in outputs.rows(crate::code_rule_dsl::logic::rr::TAILED) {
+            if let (V::Text(t), V::Text(d)) = (r.get(0), r.get(1)) {
+                g.tailed.insert(t.to_owned(), d.to_owned());
             }
         }
         for r in outputs.rows("p0_scope") {

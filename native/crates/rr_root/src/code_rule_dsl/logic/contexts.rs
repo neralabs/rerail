@@ -479,6 +479,12 @@ impl Renaming<'_> {
         // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
         held_instance(self.v, self.d, self.pass, rel)
     }
+
+    /// Whether the renaming writes rule `r` other than it is: a relation it names renamed, or a literal left out.
+    fn changes(&mut self, r: RuleRef<'_>) -> bool {
+        let renamed = |s: &Self, a: AtomRef<'_>| s.rename(s.v.rel_name(a.rel())).is_some_and(|n| n != s.v.rel_name(a.rel()));
+        renamed(self, r.head()) || r.body().any(|l| l.atom().is_some_and(|a| renamed(self, a)) || !self.keep(l))
+    }
 }
 
 impl Rewrite for Renaming<'_> {
@@ -601,23 +607,35 @@ fn write_nodes(v: &Version, d: &Declared, c: &Context, b: &mut Builder<'_>) -> R
     Ok(())
 }
 
-/// The passes of `v` made or completed into `b`, a derivation of `v` (`plan`): the host's rules with its `.from`
-/// names read from their passes; each pass's instance, made, or completed with what it reaches; the relations only a
-/// pass holds taken from the host; and each pass a `.pass` setting, none to make again.
-fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<(), Error> {
+/// The passes of `v` made or completed into `b`, a derivation of `v` (`plan`), or an edit of it (`edit`, a rule the
+/// renaming leaves as it is left in place): the host's rules with its `.from` names read from their passes; each
+/// pass's instance, made, or completed with what it reaches; the relations only a pass holds taken from the host; and
+/// each pass a `.pass` setting, none to make again.
+fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>, edit: bool) -> Result<(), Error> {
     let finish = |r: Result<super::program_image::RuleId, String>| r.map(|_| ()).map_err(Error::Syntax);
     for r in v.rules() {
         let head = v.rel_name(r.head().rel());
-        if plan.host.contains(head) {
-            if !reads_unseen(v, d, &d.language, r) {
-                finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
-            }
+        let mut renaming = if plan.host.contains(head) {
+            Renaming { v, d, pass: &d.language, own: None }
         } else if of_a_context(head) {
             // A made pass's instance, completed: its reads of what it makes its own now read that.
             let pass = d.pass_of(head);
-            if !reads_unseen(v, d, pass, r) {
-                finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
+            Renaming { v, d, pass, own: plan.new.get(pass) }
+        } else {
+            if edit {
+                b.remove(r.id());
             }
+            continue;
+        };
+        if reads_unseen(v, d, renaming.pass, r) {
+            if edit {
+                b.remove(r.id());
+            }
+        } else if !edit {
+            finish(b.rewrite(v, r, &mut renaming).finish())?;
+        } else if renaming.changes(r) {
+            b.remove(r.id());
+            finish(b.rewrite(v, r, &mut renaming).finish())?;
         }
     }
     for c in d.contexts.values().filter(|c| !c.made) {
@@ -673,10 +691,138 @@ pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
         return Ok(Arc::clone(v));
     }
     let mut b = Builder::derive(v);
-    write(v, &d, &plan, &mut b)?;
+    write(v, &d, &plan, &mut b, false)?;
     let out = b.finish().map_err(Error::Syntax)?.0;
     refuse_crossing_cycles(&out, &declared(&out)?)?;
     Ok(out)
+}
+
+/// A made pass stated once (decision 0639 §6a): the `.pass` rows of one context, host, roots and holes, which
+/// `declared` reads as one pass, written as one row, where the first stood: its exports and its reads all the rows',
+/// each in name order. `declared` reads both as sets, so a program linked module by module states the pass as its
+/// whole lowering does, whatever order its modules came in. Each module's tail states the pass as its scope made it,
+/// and its readers' tails add what they make of it; the whole program's tail states it once.
+pub struct PassesOnce;
+
+impl super::program_image::manager::ProgramPass for PassesOnce {
+    const NAME: &'static str = "a pass stated once";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        type Key = (String, String, String, Option<String>);
+        let settings = ProgramFields::settings(&**cx.v());
+        // Each row's pass and lists, as `declared` reads them; a row it would refuse is left as it is, for it to.
+        let row = |text: &str| -> Option<(Key, Vec<String>, Vec<String>)> {
+            let w = words(text);
+            let [name, of, host, roots, rel, tail @ ..] = w.as_slice() else { return None };
+            let (holes, tail) = match tail {
+                [h, hrel, tail @ ..] if h == "holes" => (Some(hrel.clone()), tail),
+                _ => (None, tail),
+            };
+            let [exports, rest @ ..] = tail else { return None };
+            if of != "of" || roots != "roots" || exports != "exports" {
+                return None;
+            }
+            let (rels, left) = names(rest, "reads").ok()?;
+            let reads = match left.split_first() {
+                None => Vec::new(),
+                Some((r, list)) if r == "reads" => names(list, "").ok()?.0.into_iter().map(|(r, _)| r).collect(),
+                _ => return None,
+            };
+            Some(((name.clone(), host.clone(), rel.clone(), holes), rels.into_iter().map(|(r, _)| r).collect(), reads))
+        };
+        let mut rows: BTreeMap<Key, (usize, BTreeSet<String>, BTreeSet<String>, usize)> = BTreeMap::new();
+        let mut gone: BTreeSet<usize> = BTreeSet::new();
+        for (i, (key, text)) in settings.iter().enumerate() {
+            let Some((k, exports, reads)) = (key == "pass").then(|| row(text)).flatten() else { continue };
+            match rows.get_mut(&k) {
+                None => {
+                    rows.insert(k, (i, exports.into_iter().collect(), reads.into_iter().collect(), 1));
+                }
+                Some((_, e, r, n)) => {
+                    gone.insert(i);
+                    *n += 1;
+                    e.extend(exports);
+                    r.extend(reads);
+                }
+            }
+        }
+        if gone.is_empty() {
+            return Ok(());
+        }
+        let combined: BTreeMap<usize, String> = rows
+            .into_iter()
+            .filter(|(_, (_, _, _, n))| *n > 1)
+            .map(|((name, host, roots, holes), (at, exports, reads, _))| {
+                let holes = holes.map_or(String::new(), |h| format!(" holes {h}"));
+                let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.into_iter().collect::<Vec<_>>().join(", ")) };
+                (at, format!("{name} of {host} roots {roots}{holes} exports {}{reads}", exports.into_iter().collect::<Vec<_>>().join(", ")))
+            })
+            .collect();
+        let out: Vec<(String, String)> = settings
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !gone.contains(i))
+            .map(|(i, (key, text))| match combined.get(&i) {
+                Some(row) => (key, row.clone()),
+                None => (key, text),
+            })
+            .collect();
+        w.on()?.fields().set_field(super::program_facts::Field::Settings(&out));
+        Ok(())
+    }
+}
+
+/// A host's copies taken out once a pass holds them (decision 0639 §6a), as `write` takes out the relations only a
+/// pass holds: a relation the host derives, of which a made pass's instance is derived, that no other rule reads and
+/// that is no input or output, its rules and declaration gone, to a fixed point (a copy read only by another such
+/// copy goes with it). A module's tail keeps the copy its scope derives where the context's instance of it is made by
+/// a reader's tail, in another module; the whole program's tail never makes it.
+pub struct HostCopiesOut;
+
+impl super::program_image::manager::ProgramPass for HostCopiesOut {
+    const NAME: &'static str = "a host's copies out";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let made: Vec<String> = ProgramFields::settings(&**v).into_iter().filter(|(k, _)| k == "pass").filter_map(|(_, text)| words(&text).into_iter().next()).collect();
+        if made.is_empty() {
+            return Ok(());
+        }
+        let derived = |x: &str| v.rel(x).is_some_and(|r| v.heads(r).next().is_some());
+        let (inputs, outputs) = (ProgramFields::input_names(&**v), ProgramFields::output_names(&**v));
+        // Each relation's readers, by head, its own rules aside.
+        let mut readers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            for a in r.reads() {
+                let x = v.rel_name(a.rel());
+                if x != head {
+                    readers.entry(x).or_default().insert(head);
+                }
+            }
+        }
+        let copy = |x: &str| !of_a_context(x) && derived(x) && !inputs.iter().any(|i| i == x) && !outputs.iter().any(|o| o == x) && made.iter().any(|c| derived(&instance(c, x)));
+        let mut gone: BTreeSet<&str> = BTreeSet::new();
+        loop {
+            let more: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| !gone.contains(h) && copy(h) && readers.get(h).is_none_or(|by| by.iter().all(|b| gone.contains(b)))).collect();
+            if more.is_empty() {
+                break;
+            }
+            gone.extend(more);
+        }
+        if gone.is_empty() {
+            return Ok(());
+        }
+        // An edit of the input: the copies' rules removed (a derivation copied the program to leave them out).
+        let b = w.on()?;
+        for r in v.rules().filter(|r| gone.contains(v.rel_name(r.head().rel()))) {
+            b.remove(r.id());
+        }
+        for rel in &gone {
+            if ProgramFields::declares(&**v, rel) {
+                b.fields().undeclare(rel);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The passes made in a program's lowering (`rr::lowering_tail_on`), before its declarations are checked: a `.from`
@@ -699,7 +845,7 @@ impl super::program_image::manager::ProgramPass for Passes {
             return Ok(());
         }
         let _s = crate::code_rule_dsl::logic::profile::span(|| "0597's passes: the instances written (write)".to_owned());
-        write(v, &d, &plan, w.derive()?).map_err(|e| e.to_string())
+        write(v, &d, &plan, w.on()?, true).map_err(|e| e.to_string())
     }
 }
 

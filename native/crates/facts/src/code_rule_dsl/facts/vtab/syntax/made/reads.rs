@@ -108,7 +108,7 @@ impl Docs {
                 // which no reader reads before a 16z row (written after this) names it.
                 unsafe {
                     ViewDir::homes_mut(dir).add(n).write(ViewHome { host, gpu });
-                    (&raw mut (*dir).cache).write(n as u64 + 1);
+                    (&raw mut (*dir).cache).write(n as u32 + 1);
                 }
                 Some(cache)
             })
@@ -210,7 +210,13 @@ impl Docs {
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()], self.names());
+        // A text read as text only has no dialect, and no nodes (`ViewEntry::new` reads no kind of it); a document
+        // with nodes and none is refused.
+        let dialect = self.context.dialects.get(p.tag());
+        if dialect.is_none() && nodes {
+            return Err("views.refused.no_dialect");
+        }
+        let entry = ViewEntry::new(b, p, dialect, self.names());
         let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `3i` to `3i + 2`, in the batch's block: the reads layer's fields, which only
         // this write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.
@@ -267,7 +273,14 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes(), codes(entry)))
         }
     }
+}
+
+/// A document's language's codes' kind atoms and field atoms (decision 0697), the binary's, as its views' reads take
+/// them (`view_reads::Doc::new`).
+fn codes(entry: &ViewDoc) -> (&'static [u32], &'static [u32]) {
+    let tag = entry.tag as u8;
+    (rerail_tape_format::codes_dir::kinds(tag), rerail_tape_format::codes_dir::fields(tag))
 }

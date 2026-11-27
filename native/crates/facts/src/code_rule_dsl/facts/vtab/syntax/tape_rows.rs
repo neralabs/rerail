@@ -15,7 +15,7 @@
 //! `doc`'s rows are a batch's documents themselves, one each, of what the documents are given.
 
 use super::cells::Cells;
-use super::made::ViewCounts;
+use super::made::{ColKind, ViewCounts};
 use super::ranks::Item;
 use super::tokens::TokRel;
 use super::{Batch, Projected, Shape};
@@ -125,9 +125,9 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
-    /// What bounds column `column`'s values before any row is read (`Source::col_bounds`, `Batch::bounds_of`): none
-    /// where nothing does.
-    fn col_kind(&self, _column: usize) -> Option<super::made::ColKind> {
+    /// What column `column` holds where the batch alone bounds it (`Batch::bounds_of`, `Source::col_bounds`): none
+    /// said.
+    fn col_kind(&self, _column: usize) -> Option<ColKind> {
         None
     }
     /// Whether a lookup on `column` finds its items (`find`).
@@ -219,9 +219,6 @@ impl<R: TapeRows> RowsView<R> {
 }
 
 impl<R: TapeRows> Source for RowsView<R> {
-    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
-        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
-    }
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
     }
@@ -248,6 +245,10 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.rows.statistics(&self.batch)
+    }
+    /// By what the column holds (`TapeRows::col_kind`), from the batch's documents: no row made.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
     }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
@@ -504,7 +505,7 @@ impl Gap {
     /// Each row's gap, `(tape node, from, to)` in bytes of the source, in the tape's order of their parents.
     fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
         let f = p.f();
-        if f.len() > 0 && p.local_of_node(0) != NONE {
+        if !f.is_empty() && p.local_of_node(0) != NONE {
             match self.0 {
                 Side::Before => each(0, 0, f.start(0)),
                 Side::After => each(0, f.end(0), p.facts.source.len() as u32),
@@ -721,10 +722,6 @@ impl TapeRows for DocRow {
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
     }
-    /// A document's key, and two atoms.
-    fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
-        Some(if column == 0 { super::made::ColKind::Key } else { super::made::ColKind::Atom })
-    }
     fn own(&self) -> usize {
         0
     }
@@ -745,6 +742,10 @@ impl TapeRows for DocRow {
         out[0] = i64::from(at.batch.docs.key(at.doc));
         out[1] = d[0];
         out[2] = d[1];
+    }
+    /// Its document's key; its path's and module's atoms.
+    fn col_kind(&self, column: usize) -> Option<ColKind> {
+        Some(if column == 0 { ColKind::Key } else { ColKind::Atom })
     }
     fn keyed(&self, column: usize) -> bool {
         column < 3
@@ -861,7 +862,7 @@ impl TreeDigest {
             // Every node's 64 digits in one buffer, each a slice of it.
             let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
             Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
-            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
+            let texts: Vec<&str> = digits.as_chunks::<64>().0.iter().map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
             interned(at, &texts, "a document's digests")
         })
     }

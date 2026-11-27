@@ -11590,3 +11590,26 @@ asks for the new check), c-directives eval::tests 50.
   (`RERAIL_W_JOINS`). A clean merge.
 - Relax: check 0 errors (facts, plan-search, logic, adapters, ukl, run); tests-lang facts::vtab 103, tests-rr
   json_rules 9, prof 32, tests-logic all (two 64-test chunks passed the 12 GB cap at 4 threads; at 2 they pass).
+
+### Q560. Roll-up 132 (final-rerail-shape-phased-facts 621ed2cb27 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape-phased-facts (9 commits, 621ed2cb27): 0697 a language's codes' atoms constants in the binary
+  (`codes_dir`, read by `codes_kind`/`codes_field`; a view read's fifth pointer is the codes' directory); 0700 the
+  node view's rows by kind made per kind at first lookup; 0703 the parse writes its tape's auxiliary index from the
+  nodes its writer recorded and takes the reader's digest; files statted by their directories' listings; a matcher
+  wave's roots found a (clause, tape) pair at a time; the codes' directory wrapped once as long as the device.
+- With the hub's view reads: the entry keeps its codes' name atoms (`op`) and drops its kind and field cells (0697);
+  the directory's homes are three a row (tape, lines, source), then the 16z cache's and the codes' (`3n + 1`); the
+  hub's `view_text_span`, `view_line_span`, `view_line_terminated` and `view_op` take the codes' pointer like every
+  view read (the Metal join stages, ukl_rust's `walk64`, the tests); the reads' headers written again from the reads.
+- The writer: one reuse, the hub's thread writer (`Writer::reused_in`, t60 step 5), which also places its tapes in
+  the run's rooms (0353 row 17); phased-facts' machine pool of writers (`Writers`) is not taken, a second mechanism
+  for the same job. `Writer::reused_for` is the thread's writer for rooms, begun by its caller with the reader's digest.
+  `Finished` carries the recorded nodes and digest from both of the writer's paths (a room's and its own vector's),
+  and the index maker (`AuxMaker`, `AuxFor`) lays the index from those nodes where the tape is written in a room:
+  never read back (0703).
+- Relax: check 0 errors (tape-format, clif, lang, facts, lang-json, rr-syntax, c-pp, ukl-rust, tests-lang, lean-tapes,
+  json-aot, tests-tape, tests-sql, device-metal, store, compiler, workspace, lang-php, lang-python, corpus-memo,
+  observe, boot, tests-conformance); clif 19 (the reads' headers), tape-format 53, tests-tape 115, tests-lang
+  facts::vtab 104, ukl-rust 5, tests-rr json_rules 9, store content_store::tests 69 (one, multiple processes, passed
+  on its second run: its children aborted under Relax the first). Not run here: the Metal device tests (slabs).
