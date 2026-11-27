@@ -54,6 +54,20 @@ describe("Claude Code hook scripts that are gone", () => {
     expect(missingClaudeHookScripts(home)).toContain(script);
   });
 
+  // A relative path ends as an install's script would, and resolves against whatever folder Claude Code runs in.
+  it.each([
+    ["an absolute path outside any Rerail package", (home: string) => join(home, "bin", "claude-status.sh")],
+    ["a relative path", () => join(".rerail", "current", "dist", "hosts", "claude", "claude-status.sh")],
+  ])("names no missing status line script of the person's own, sourced by %s", async (_, scriptIn) => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-registered-"));
+    homes.push(home);
+    mkdirSync(join(home, ".claude"));
+    // Quoted for the shell as registration quotes a word (`hookWord`), so the command has the shape registration writes.
+    const command = `. "${scriptIn(home).replace(/(["\\$`])/gu, "\\$1")}"`;
+    writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ statusLine: { type: "command", command } }));
+    expect(missingClaudeHookScripts(home)).toEqual([]);
+  });
+
   it("names nothing when the settings are missing or unreadable", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-registered-"));
     homes.push(home);
