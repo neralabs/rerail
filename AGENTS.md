@@ -87,11 +87,15 @@ build of an idle worktree may then start from incremental state lost, or from no
 
 ### Test tiers (cargo-nextest)
 
-`.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2).
-From `native/`:
+A single test, or a few, runs under Relax (below): here, or a Metal one on a farm Mac with
+`scripts/dev/live-test-remote PACKAGE --lib -- FILTER`. Never through nextest: its setup script
+(`[scripts.setup.kernels]`) builds the engine and compiles every kernel first, about 3 minutes
+before a test of device_metal, logic, the engine or accel that runs in seconds.
+
+`.config/nextest.toml` splits the library's tests in two tiers (docs/final-shape/notes/t37, §2),
+for the tier and gate runs. From `native/`:
 
 ```
-nice -n 19 cargo nextest run --lib -E 'test(/some::filter/)'   # targeted: the usual run
 nice -n 19 cargo nextest run --lib                             # the quick tier: all but the slow tests
 nice -n 19 cargo nextest run --lib --profile gate              # everything: a phase gate only
 nice -n 19 cargo nextest run --lib --ignore-default-filter NAME  # one slow test by name
@@ -131,7 +135,6 @@ scripts/build/farm/bench --table                   # every host's saved figures,
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
-scripts/dev/test-remote -- cargo nextest run --lib -E 'test(/some::filter/)'
 scripts/dev/live-test-remote PACKAGE --lib -- FILTER   # Relax's live loop on a host
 ```
 
