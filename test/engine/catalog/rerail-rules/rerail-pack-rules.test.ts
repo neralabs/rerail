@@ -180,7 +180,7 @@ describe("the engine's readings kept between processes", () => {
   /** A reading of `path` as the engine gives one, with the rule file and the library file it includes. */
   const reading = (directory: string, path: string): RerailDescription => ({
     path, ok: true, id: "rr-sample-print-call", revision: 1, description: null, mode: "steer", language: "python",
-    scope: { include: ["**/*.py"], exclude: [], text: [], toolCalls: false }, codes: ["P001"], tests: 1, violations: [{ name: "P001", suppress: [], fixes: [] }], options: [],
+    scope: { include: ["**/*.py"], exclude: [], text: [], toolCalls: false }, codes: ["P001"], tests: 1, violations: [{ name: "P001", suppress: [], fixes: [] }], options: [], anyOption: false,
     files: [path, join(directory, LIBRARY)].map(file => ({ path: file, sha256: sha256(file) })),
   });
 

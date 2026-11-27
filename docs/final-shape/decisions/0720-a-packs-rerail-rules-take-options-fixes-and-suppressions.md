@@ -23,7 +23,11 @@ the one floor the release scripts knew for them.
 ## Decision
 
 1. **A rule's options are the names it reads; nothing declares them.** `describeRr` lists the names the rule's
-   `option("name", …)` and `option_item("name", …)` atoms read, its includes' among them. The 123 hand translations
+   `option("name", …)` and `option_item("name", …)` atoms read, its includes' among them. A name read through a
+   variable is each text the rule's own facts give the variable (`limit_rule("max", 3).` beside the library's
+   `limit(o, k) :- limit_rule(o, d), option(o, v)`); where no fact gives it, the names cannot be listed, and the rule
+   takes any name from a setting (`anyOption`), while a pack's `config` and a linter's mapping reach only the listed
+   ones. The 123 hand translations
    that read options are written so: none declares one, and each says what an option left unset means
    (`!option("option", _)`). A value comes from where a JSON rule's does: a rule setting's `config`, a pack's `config`
    in `.rerail/packs.json`, a port's options mapped from the repository's linter config. `configureBundledCodeRule`
@@ -41,8 +45,8 @@ the one floor the release scripts knew for them.
    the `option` and `option_item` rows from it as before. Policies given no value keep running as one pack; each other
    set of values adds a run. No option may take the name of a run setting (`RUN_SETTINGS`: `inputFiles`, `dialect`,
    `toolCalls`, …): `describeRr` refuses the file, since the two share the object. The converter's generated files
-   still carry `.options {…}` defaults, which the engine reads as before; no rule a pack ships has one, and the
-   product reads none.
+   still carry `.options {…}` defaults, which the engine's own tools read as before; `describeRr` refuses a rule that
+   carries one, so no pack ships one and a run's groups need not tell their defaults apart.
 3. **A fix is lowered to rows of its edits, and composed into the JSON rule's fix.** For each `fix` line of a
    `.violation` V and each rule of its relation F in the same file, each ``replace(target, `text`)`` edit becomes an
    output relation (`lower::fixes`, `rr_fixedit_<digest>`), joined with V's rows through F's head: per finding, the

@@ -62,6 +62,8 @@ export interface RerailRule {
    * `option_item` by. Nothing declares them; the rule says what an option left unset means.
    */
   readonly options: readonly string[];
+  /** Whether it reads an option by a name the engine cannot list (a variable no fact of its own gives): it takes any name. */
+  readonly anyOption: boolean;
   /** The file's `.violation`s and those of the files it includes. */
   readonly violations: readonly RerailViolation[];
   /** The file's text. */
@@ -104,6 +106,7 @@ export function rerailRuleOf(described: RerailDescription, source: string): Rera
     scope: { include: described.scope.include, exclude: described.scope.exclude, text: described.scope.text },
     codes: described.codes,
     options: described.options,
+    anyOption: described.anyOption,
     violations: described.violations,
     source,
     path: described.path,

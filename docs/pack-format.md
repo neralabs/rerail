@@ -304,7 +304,10 @@ every rule.
 - **When it runs.** After a session's writes, once the checkout is quiet or the turn ends, and in every scan: see
   [Rules written in .rerail](reference.md#rules-written-in-rerail) in the reference.
 - **Options.** A rule takes the options its rules read: `option("max", v)`, and for a list `option_item("allow", i,
-  v)`. It declares nothing, and says itself what an option left unset means (`!option("max", _)`). A setting's
+  v)`. It declares nothing, and says itself what an option left unset means (`!option("max", _)`). A name read
+  through a variable is one the rule's own facts give it (`limit_rule("max", 3).` beside a library's
+  `limit_rule(o, d), option(o, v)`); a rule that reads a name no fact gives takes any name from a setting. The engine
+  refuses a rule that carries the converter's `.options {…}` declaration. A setting's
   `config`, a pack's `config` in `.rerail/packs.json` and a port's options in the repository's linter config give them
   values, and the run hands the rule its values as those facts: a boolean is `"true"` or `"false"`, a number is written
   as in JSON, and null is `"null"`. A name the rule does not read is refused, as an option a JSON rule does not declare

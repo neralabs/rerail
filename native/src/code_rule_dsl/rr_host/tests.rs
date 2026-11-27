@@ -248,3 +248,28 @@ fn describe_refuses_an_option_named_as_a_run_setting() {
     let _ = std::fs::remove_dir_all(&root);
     assert!(rows[0]["error"].as_str().is_some_and(|error| error.contains("it reads an option named dialect, the name of a run's own setting")), "{:#}", rows[0]);
 }
+
+/// A library's rule that reads an option by a variable, as the translations' `limit` does: the names are those the
+/// policy's facts give the variable.
+const LIMITS: &str = ".decl limit_rule(o: symbol, d: number)
+.decl limit(o: symbol, k: number)
+limit(o, k) :- limit_rule(o, d), option(o, v), k = to_number(v).
+limit(o, d) :- limit_rule(o, d), !option(o, _).
+";
+
+/// Decision 0720: the options a policy takes are the names its rules read, a variable's being those the policy's own
+/// facts give it; a name no fact gives cannot be listed, and the policy then takes any; a policy that carries the
+/// converter's `.options` declaration is refused.
+#[test]
+fn describe_lists_the_options_a_rule_reads_by_text_or_by_its_facts() {
+    let rule = |body: &str| format!(".policy \"rr-host-limits\" revision 1\n.language python\n.mode log\n{body}\n.violation Long(at: node) \"too long\"\n");
+    let by_facts = rule("#include \"lib/limits.rerail\"\nlimit_rule(\"max\", 3). limit_rule(\"maximum\", 3).\nLong(c) :- kind(c, \"call\"), limit(_, k), k < 1, !option(\"strict\", \"false\").");
+    let by_a_rule = rule(".decl named(o: symbol)\nnamed(o) :- kind(c, \"identifier\"), text(c, o).\nLong(c) :- kind(c, \"call\"), named(o), option(o, \"true\").");
+    let declared = rule(".options {\"max\": {\"type\": \"integer\", \"default\": 3}}\nLong(c) :- kind(c, \"call\"), option(\"max\", \"3\").");
+    let root = folder("rr-host-describe-read", &[("lib/limits.rerail", LIMITS), ("facts.rerail", &by_facts), ("rule.rerail", &by_a_rule), ("declared.rerail", &declared)]);
+    let rows = describe::describe(&[root.join("facts.rerail"), root.join("rule.rerail"), root.join("declared.rerail")]);
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!([&rows[0]["options"], &rows[0]["anyOption"]], [&json!(["max", "maximum", "strict"]), &json!(false)], "{:#}", rows[0]);
+    assert_eq!([&rows[1]["options"], &rows[1]["anyOption"]], [&json!([]), &json!(true)], "{:#}", rows[1]);
+    assert!(rows[2]["error"].as_str().is_some_and(|error| error.contains("it carries an `.options {…}` declaration")), "{:#}", rows[2]);
+}

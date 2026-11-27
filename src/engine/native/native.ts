@@ -381,6 +381,8 @@ export type RrDescription =
       violations: { name: string; suppress: { tool: string; rules: string[] }[]; fixes: string[] }[];
       /** The options it takes: the names its rules read `option` and `option_item` by, sorted. Nothing declares them. */
       options: string[];
+      /** Whether it reads an option by a name its own facts do not give, so `options` cannot list every name it takes. */
+      anyOption: boolean;
       /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
       files: { path: string; sha256: string }[];
     }

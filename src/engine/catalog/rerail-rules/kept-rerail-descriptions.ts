@@ -31,6 +31,7 @@ export const keptDescriptionSchema = z.object({
     fixes: z.array(z.string()),
   })).default([]),
   options: z.array(z.string()).default([]),
+  anyOption: z.boolean().default(false),
   files: z.array(z.object({ path: z.string(), sha256: z.string() })).min(1),
 }) satisfies z.ZodType<RerailDescription>;
 

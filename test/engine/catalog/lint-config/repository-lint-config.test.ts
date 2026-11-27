@@ -457,7 +457,7 @@ describe("readRepositoryLintConfig", () => {
 
     const unknownOption = await repository({ ".eslintrc.json": "{ \"rules\": { \"no-console\": [\"error\", { \"bogus\": true }] } }" });
     expect(readRepositoryLintConfig(unknownOption, ruleCatalog, JS).notes).toEqual([
-      "on-eslint-no-console: option not mapped (bogus is not an option the port declares); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"bogus\":true}].",
+      "on-eslint-no-console: option not mapped (bogus is not an option the port takes); it keeps its default options. From .eslintrc.json: \"no-console\": [\"error\",{\"bogus\":true}].",
     ]);
   });
 

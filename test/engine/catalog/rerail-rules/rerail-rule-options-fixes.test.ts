@@ -80,7 +80,10 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
     expect(configureBundledCodeRule(catalog, RULE, { toString: true })).toEqual({ ok: false, reason: "config.toString: `toString` is not an option this rule reads" });
     // The rule states no allowed values, so a value it does not expect is accepted: the rule decides what it means.
     expect(configureBundledCodeRule(catalog, RULE, { option: "sometimes" })).toMatchObject({ ok: true });
-    expect(configureBundledCodeRule(catalog, RULE, { option: Number.MAX_SAFE_INTEGER + 2 })).toEqual({ ok: false, reason: "config.option: must be text, a number, true, false or null, or a list of them" });
+    expect(configureBundledCodeRule(catalog, RULE, { option: ["a", 1, null, true] })).toMatchObject({ ok: true });
+    const noFact = { ok: false, reason: "config.option: must be text, a number, true, false or null, or a list of them" };
+    const noFacts: unknown[] = [Number.MAX_SAFE_INTEGER + 2, { a: 1 }, [["x"]]];
+    for (const value of noFacts) expect(configureBundledCodeRule(catalog, RULE, { option: value } as RuleConfig)).toEqual(noFact);
     const declared = { kind: "repository", path: "packs/rr-curly", config: { option: "multi" } } as const;
     expect(declaredPackRuleConfigs(catalog, declared, "rr-curly", ".rerail/packs.json")).toEqual([{ ruleId: RULE, config: { option: "multi" } }]);
     // ESLint's options for curly map onto the port's, through the names its `suppress eslint "curly"` line honours.

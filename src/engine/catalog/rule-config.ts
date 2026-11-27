@@ -73,9 +73,12 @@ function isFactValue(value: unknown): boolean {
   return value === null || typeof value === "string" || typeof value === "boolean";
 }
 
-/** Why `value` cannot be option `name` of `rule`, or undefined: the rule reads the option, and the value is one fact or a list of them. */
+/**
+ * Why `value` cannot be option `name` of `rule`, or undefined: the rule reads the option (any name, where the engine
+ * cannot list those it reads), and the value is one fact or a list of them.
+ */
 function rerailOptionProblem(rule: RerailRule, name: string, value: unknown): string | undefined {
-  if (!rule.options.includes(name)) return `config.${name}: \`${name}\` is not an option this rule reads`;
+  if (!rule.anyOption && !rule.options.includes(name)) return `config.${name}: \`${name}\` is not an option this rule reads`;
   const values = Array.isArray(value) ? value : [value];
   return values.every(isFactValue) ? undefined : `config.${name}: must be text, a number, true, false or null, or a list of them`;
 }

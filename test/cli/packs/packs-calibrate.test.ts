@@ -300,7 +300,7 @@ describe("rerail packs calibrate", () => {
     expect(calibration.changes).toEqual([]);
     expect(calibration.notes).toEqual([
       EXTENDS_NOTE,
-      `${NO_EXPLICIT_ANY}: option not mapped (noSuchOption is not an option the port declares); it keeps its default options. From ${because("no-explicit-any", ["error", { noSuchOption: true }])}.`,
+      `${NO_EXPLICIT_ANY}: option not mapped (noSuchOption is not an option the port takes); it keeps its default options. From ${because("no-explicit-any", ["error", { noSuchOption: true }])}.`,
     ]);
     expect(calibrate(where, [])).toBe([
       "● acme-api's rule settings already follow its lint config (read as data, never run).",
