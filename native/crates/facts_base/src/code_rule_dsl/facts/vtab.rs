@@ -284,6 +284,10 @@ pub trait Source: Send + Sync {
     /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), for a binding of
     /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
     fn node_read(&self, _name: &str, _n: i64) -> Option<rusqlite::types::Value> { None }
+    /// Node `n`'s text as `name` reads it, as the atom it already has (`existing`: a lookup that makes none), read where
+    /// the text lies, no text made; `None` where the source has no such read or the text has no atom yet (a reader then
+    /// reads it by `node_read`).
+    fn node_atom(&self, _name: &str, _n: i64, _existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }

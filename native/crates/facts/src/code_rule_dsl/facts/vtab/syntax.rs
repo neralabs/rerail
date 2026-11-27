@@ -457,6 +457,34 @@ impl LongTexts {
         Some(f.text(core).to_owned())
     }
 
+    /// `text_any`'s text as the atom it already has, read where it lies (no text made): from the document's atoms of
+    /// its tape terms (`Projected::text_atom`'s memo) where the node is a term, else `existing`, which makes none. `None`
+    /// for a comment's id, a node not in the batch, or a text with no atom yet. 7.6 M reads of an idc run took 282 ns
+    /// each, a text made and then looked up among the atoms.
+    pub fn text_atom_any(&self, n: i64, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        if granules::comment_of(low).is_some() {
+            return None;
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let f = p.f();
+        let index = f.index();
+        let Some(term) = index.term(x) else { return existing(f.text(x)) };
+        let table = p.term_atoms.get_or_init(|| (0..index.terms()).map(|_| AtomicU32::new(u32::MAX)).collect());
+        let at = &table[term as usize];
+        let a = at.load(Relaxed);
+        if a != u32::MAX {
+            return Some(i64::from(a));
+        }
+        let a = existing(f.text(x))?;
+        if let Ok(a32) = u32::try_from(a) {
+            at.store(a32, Relaxed);
+        }
+        Some(a)
+    }
+
     /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
     /// document's values are read at its first request, and only those asked for are interned. None for a node with no
     /// value, a document of a language W reads no values of (its literals are `rr_value_lit`'s), or one not in the
@@ -525,6 +553,9 @@ impl Source for LongTexts {
             "rr_node_order" => self.order_any(n).map(Value::Integer),
             _ => None,
         }
+    }
+    fn node_atom(&self, name: &str, n: i64, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        (name == "rr_node_text_any").then(|| self.text_atom_any(n, existing)).flatten()
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)

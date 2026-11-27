@@ -2,7 +2,7 @@
 use super::*;
 use super::fixtures::documents;
 use crate::code_rule_dsl::facts::vtab::ProbeCursor;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 fn temp(what: &str) -> PathBuf {
@@ -84,4 +84,37 @@ fn document(key: u32, path: &str, label: &str, source: &str) -> Document {
     let (core::Built::Facts(facts), Some(tape)) = core::build_with_tape(&file, true).unwrap() else { panic!("{path} did not parse") };
     let facts = Arc::new(facts);
     Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path: path.to_owned(), facts, tape: Some((tape, Arc::new(file))), guest: None, module: None, unpackaged: false }
+}
+
+/// A node's text read as the atom it has (`Source::node_atom`, `rr_node_text_any`) is the atom of the text `node_read`
+/// reads, for every node of the documents, and none where the text has no atom; the terms' memo answers a node only
+/// with its own text's atom (each text's atom here its place among the distinct texts, every third one held).
+#[test]
+fn a_nodes_text_read_as_its_atom_is_the_atom_of_its_text() {
+    use crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES;
+    let store = ContentStore::open(&temp("text-atoms")).unwrap();
+    let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y):\n    z = x + y + f{k}(x)\n    return \"s{k}\" if z else x.y\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "rr_long_text_node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
+    let ids: Vec<i64> = (0..batch.docs.len()).flat_map(|d| { let p = &batch.docs[d]; (0..p.len()).map(|l| p.global(l)).collect::<Vec<_>>() }).collect();
+    let text_of = |n: i64| match texts.node_read("rr_node_text_any", n) {
+        Some(rusqlite::types::Value::Text(t)) => Some(t),
+        _ => None,
+    };
+    let distinct: BTreeSet<String> = ids.iter().filter_map(|&n| text_of(n)).collect();
+    let atom: BTreeMap<String, i64> = distinct.iter().enumerate().filter(|(i, _)| i % 3 == 0).map(|(i, t)| (t.clone(), i as i64)).collect();
+    let existing = |s: &str| atom.get(s).copied();
+    let mut held = 0;
+    // Twice: the second read answered from the memo.
+    for _ in 0..2 {
+        for &n in &ids {
+            let want = text_of(n).and_then(|t| atom.get(&t).copied());
+            assert_eq!(texts.node_atom("rr_node_text_any", n, &existing), want, "node {n:#x} ({:?})", text_of(n));
+            held += usize::from(want.is_some());
+        }
+    }
+    assert!(held > 10 && ids.len() > 50, "{held} held of {}", ids.len());
+    assert_eq!(texts.node_atom("rr_node_text", ids[1], &existing), None, "another read: none");
 }
