@@ -2917,6 +2917,7 @@ pub fn close(conn: impl Scoped, name: &str) -> Result<()> {
 /// `stats`. A bounded run also returns when a multi-relation delta join outgrows the statistics available at
 /// entry. This prevents a later wave's first substantial demand from running several times before replanning.
 pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
+    crate::code_rule_dsl::prof::count("walk callers: setfix::run calls", 1);
     let conn = conn.db();
     let t0 = Instant::now();
     // The run's limits (decision 0462): its cap, whether it cuts, its memory stop, and its record.
@@ -8642,6 +8643,7 @@ fn run_join(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
 
 /// `run_join` under a limit (decision 0206), what it did handed back in `limited`.
 fn run_join_limited(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], limited: Option<&mut Limited>) -> Result<u64> {
+    walk_entry("probe");
     run_join_in_each(j, head, store, syms, fresh, &[], None, None, None, limited)
 }
 
@@ -8651,9 +8653,13 @@ fn run_seed(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh
         Ok(Some(p)) => {
             level::run_counts().used.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // From a level's pairs: unlimited.
+            walk_entry("seed pairs");
             run_join_in(j, head, store, syms, fresh, &[], None, Some(&p))
         }
-        Ok(None) => run_join_limited(j, head, store, syms, fresh, limited),
+        Ok(None) => {
+            WALK_SEED.with(|c| c.set(true));
+            run_join_limited(j, head, store, syms, fresh, limited)
+        }
         // The level's batch failed (a submission the device failed: its pairs partly written, none read): the
         // seed's own walk, as when no batch made them.
         Err(_) => {
@@ -8680,6 +8686,7 @@ pub fn level_counts() -> (u64, u64) {
 
 /// Runs `j` with `preset` slots bound, and its head rows appended to `out` (not added to any relation).
 fn run_join_collect(j: &JoinRule, store: &Store, syms: &mut Interner, preset: &[(usize, i64)], out: &mut Vector<i64>) -> Result<u64> {
+    walk_entry("collect");
     run_join_in(j, 0, store, syms, &mut [], preset, Some(out), None)
 }
 
@@ -8696,6 +8703,7 @@ fn run_join_each(j: &JoinRule, store: &Store, syms: &mut Interner, y: usize, nex
 /// context for every binding (a keyed closure's steps, row after row: decision 0570).
 fn run_join_each_row(j: &JoinRule, store: &Store, syms: &mut Interner, ys: &[usize], next: &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool) -> Result<u64> {
     let mut out = rerail_blocks::vector::Vector::new();
+    walk_entry("each binding");
     run_join_in_each(j, 0, store, syms, &mut [], &[], Some(&mut out), None, Some((ys, next)), None)
 }
 
@@ -8711,11 +8719,66 @@ pub fn reads_empty_input(j: &JoinRule) -> bool {
     j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if { let r = j.bound(r); r.view.as_ref().map_or(r.n == 0, View::known_empty) }))
 }
 
+/// `RERAIL_PROF`: per plan (its head and steps, each named by its source), its calls and each step's rows in and out,
+/// summed over the run (`walk_report`).
+static WALK_PLANS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, Vec<[u64; 2]>)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// The plans whose walks entered the most steps, with their loops' rows (`RERAIL_PROF`), printed to stderr.
+pub fn walk_report(top: usize) {
+    if !crate::code_rule_dsl::prof::on() {
+        return;
+    }
+    let plans = std::mem::take(&mut *WALK_PLANS.lock().unwrap());
+    let total: u64 = plans.values().map(|(_, c)| c.iter().map(|x| x[0]).sum::<u64>()).sum();
+    // By shape: the steps' kinds alone, the entry and the relations' names left out.
+    let mut shapes: std::collections::BTreeMap<String, (u64, u64)> = std::collections::BTreeMap::new();
+    for (k, (_, c)) in &plans {
+        let shape: Vec<&str> = k.lines().skip(1).map(|l| l.split(' ').next().unwrap_or("")).collect();
+        let e = shapes.entry(shape.join(" > ")).or_default();
+        e.0 += 1;
+        e.1 += c.iter().map(|x| x[0]).sum::<u64>();
+    }
+    let mut sh: Vec<_> = shapes.into_iter().collect();
+    sh.sort_by_key(|(_, (_, e))| std::cmp::Reverse(*e));
+    let mut acc = 0u64;
+    eprintln!("walk shapes: {} shapes of {} plans", sh.len(), plans.len());
+    for (n, (k, (np, e))) in sh.iter().enumerate() {
+        acc += e;
+        if n < 40 || [50, 100, 200, 400].contains(&n) {
+            eprintln!("  shape {n:4}: {e:>11} steps ({:5.1}%, cumulative {:5.1}%), {np} plans: {k}", 100.0 * *e as f64 / total.max(1) as f64, 100.0 * acc as f64 / total.max(1) as f64);
+        }
+    }
+    let mut by: Vec<_> = plans.into_iter().collect();
+    by.sort_by_key(|(_, (_, c))| std::cmp::Reverse(c.iter().map(|x| x[0]).sum::<u64>()));
+    eprintln!("walk plans: {} plans, {total} steps entered", by.len());
+    for (k, (calls, c)) in by.iter().take(top) {
+        let e: u64 = c.iter().map(|x| x[0]).sum();
+        eprintln!("== {e} steps entered ({:.1}%), {calls} calls: {}", 100.0 * e as f64 / total.max(1) as f64, k.lines().next().unwrap_or(""));
+        for (i, (line, x)) in k.lines().skip(1).zip(c).enumerate() {
+            eprintln!("   {i:2} {:>12} in {:>12} out  {line}", x[0], x[1]);
+        }
+    }
+}
+
+thread_local! {
+    /// The walk's entry, for its tallies (`RERAIL_PROF`): set by the caller, taken by the walk.
+    static WALK_ENTRY: std::cell::Cell<&'static str> = const { std::cell::Cell::new("other") };
+    static WALK_SEED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+fn walk_entry(e: &'static str) {
+    WALK_ENTRY.with(|c| c.set(e));
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vector<i64>>,
                     paired: Option<&level::Paired>, each: Option<(&[usize], &mut dyn FnMut(&mut Vector<i64>, &mut [i64]) -> bool)>, mut limited: Option<&mut Limited>) -> Result<u64> {
     // The limit `run` handed this walk (decision 0206). A walk for each value, or from a level's pairs, runs
     // unlimited.
+    let t_call = crate::code_rule_dsl::prof::on().then(Instant::now);
+    let entry = {
+        let e = WALK_ENTRY.with(|c| c.replace("other"));
+        if WALK_SEED.with(|c| c.replace(false)) && e == "probe" { "seed walk" } else { e }
+    };
     let limit = limited.as_mut().and_then(|l| l.limit.take()).filter(|_| each.is_none() && paired.is_none());
     // An empty required relation makes the entire conjunction empty. Check once per
     // invocation, before expanding another input; the next wave can grow this relation.
@@ -8767,6 +8830,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      batch: Vec<Option<(kinds::Batched<'a>, Vec<i64>)>>,
                      /// This walk's (morsel's) tests of `screen`, added to its counts as it ends.
                      screening: join_filter::Screening,
+                     /// The walk's tallies (`RERAIL_PROF`): probes (`candidates`), candidate rows visited, rows an
+                     /// atom passed on, scalar probes.
+                     tally: [u64; 10],
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
                      deep: usize,
                      /// Per such step, in its current probe, the values of those slots the rest of the body failed for,
@@ -9057,13 +9123,16 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         slots.copy_from_slice(&rows[r * w..(r + 1) * w]);
                         cx.key.clear();
                         cx.key.extend(keys.iter().map(|&(_, k)| val(&slots, k)));
+                        cx.tally[0] += 1;
                         let (held, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, None, true);
                         held.each(cands, need, &mut last, |id, row| {
+                            cx.tally[1] += 1;
                             if cx.stop { return true; }
                             if held.dead(id) { return false; }
                             if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(&slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
                             for &(c, s) in binds { slots[s] = row.at(c); }
                             let made = cx.n;
+                            cx.tally[2] += 1;
                             go(cx, i + 1, &mut slots);
                             i >= cx.cut_from && cx.n > made
                         });
@@ -9185,6 +9254,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 // The step's probe state, held apart from `cx` while the step runs: its probe is read into the join as
                 // found (`Cands::Stream`), inside which the steps after it use `cx`. Put back at the step's end.
                 let mut last = cx.last[i].take().expect("the step's probe state, put back after each entry");
+                // By source: a syntax view [4, visits 5], a held relation [6, 7], a component's relation [8, 9].
+                let class = match src { Src::In(r, _) if j.bound(r).view.is_some() => 4, Src::In(..) => 6, _ => 8 };
+                if !handed { cx.tally[0] += 1; cx.tally[class] += 1; }
                 let (rows, mut cands) = given.unwrap_or_else(|| candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut last, need, within, true));
                 // A scan's rows in the next step's key order: its probes are then one sorted batch (decision 0112).
                 // A morsel's rows are in that order already (`morsels`).
@@ -9315,6 +9387,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let factor = if exists { None } else { cx.factor[i] };
                 if factor.is_some() { cx.failed[i].begin_probe(); }
                 let found = rows.each(cands, need, &mut last, |id, row| {
+                    cx.tally[1] += 1;
+                    cx.tally[class + 1] += 1;
                     if cx.stop { return true; }
                     if rows.dead(id) || only.as_ref().is_some_and(|o| !o.has(id)) { return false; }
                     if !keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(slots, k)) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) { return false; }
@@ -9344,6 +9418,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         return i >= cx.cut_from && cx.n > made;
                     }
                     let made = cx.n;
+                    cx.tally[2] += 1;
                     go(cx, i + 1, slots);
                     // The head's row is made, and nothing from here on binds what it reads: every other row of this
                     // step makes the same one again (`tail`).
@@ -9360,6 +9435,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let (limit, max) = (val(slots, *limit), *kind == ScalarKind::Max);
                 let Some(c) = *col else { return };
+                cx.tally[3] += 1;
                 let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], cx.last[i].as_deref_mut().expect("the step's probe state"), 0, None, false);
                 let mut best: Option<i64> = None;
                 let mut inspected = 0;
@@ -9775,7 +9851,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             None => Cands::Range(lo + cut(p) as u32, lo + cut(p + 1) as u32),
         }).collect();
         struct Out { n: u64, fresh: Fresh, rows: Vector<i64>, counts: Vector<[u64; 2]>, skipped: u64, work: u64, failed: Option<String>, error: Option<Error>,
-                     left: Option<Vector<u32>>, texts: Vec<String> }
+                     left: Option<Vector<u32>>, texts: Vec<String>, tally: [u64; 10] }
         let (head, collecting, cut_from, cap) = (cx.head, cx.collect.is_some(), cx.cut_from, cx.cap);
         let screen = cx.screen;
         let atoms = Arc::clone(&cx.syms.atoms);
@@ -9792,14 +9868,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let mut w = Ctx { j, head, store, syms: &mut syms, fresh: &mut fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap, pending: Vec::new(),
                                       scratch: j.steps.iter().map(|_| rowcode::Scratch::default()).collect(), texts: Vec::new(),
                                       collect: if collecting { Some(&mut rows) } else { None }, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
-                                      factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, [screen.map(|f| f.step), None]), screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
+                                      factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, [screen.map(|f| f.step), None]), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
                                       left0: None, clock: StepClock::start(j.steps.len()) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
                     flush_batches(&mut w);
-                    let (n, skipped, work, error) = (w.n, w.skipped, w.work, w.error.take());
+                    let (n, skipped, work, error, tally) = (w.n, w.skipped, w.work, w.error.take(), w.tally);
                     // Cut at its share: its rows from the one it stopped in (that row included), as one walk's cut.
                     let left = w.stop.then(|| w.list0.as_ref().map_or_else(Vector::new, |(_, list)| {
                         let at = if w.seen0 { list.iter().rposition(|&x| x == w.at0).unwrap_or(0) } else { 0 };
@@ -9814,7 +9890,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     let texts = syms.deferred.take().map_or_else(Vec::new, |d| d.texts);
                     // Rows holding a deferred text are settled once they hold its atom (`settle_deferred`).
                     if !collecting && texts.is_empty() { mine.settle(&store.rels[head]); }
-                    *out = Some(Out { n, fresh: mine, rows, counts, skipped, work, failed: syms.failed.take(), error, left, texts });
+                    *out = Some(Out { n, fresh: mine, rows, counts, skipped, work, failed: syms.failed.take(), error, left, texts, tally });
                 });
             }
         });
@@ -9829,6 +9905,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             // Each morsel entered the first step once, the walk once (as its counts, below); one that stopped also
             // counted the step it was refused, a walk that stops once.
             cx.work += out.work.saturating_sub(1 + u64::from(out.left.is_some()));
+            for (a, b) in cx.tally.iter_mut().zip(out.tally) { *a += b; }
             if let Some(l) = out.left {
                 cx.stop = true;
                 cx.left0.get_or_insert_with(rerail_blocks::vector::Vector::new).extend(l);
@@ -9994,14 +10071,16 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     } else { None };
     let no_collect = collect.is_none();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new(), error: None, cap: super::width::Limits::here().cap, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, seen0: false, hints: vec![[0; runs::HINTS]; j.steps.len()], last: LastProbe::for_steps(j.steps.len()),
-                       factor, screen: screen.as_ref(), batch: kinds::batches(j, limit.is_none() || no_collect, [screen.as_ref().map(|f| f.step), limit.as_ref().and_then(|l| l.only.as_ref()).map(|o| o.0)]), screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
+                       factor, screen: screen.as_ref(), batch: kinds::batches(j, limit.is_none() || no_collect, [screen.as_ref().map(|f| f.step), limit.as_ref().and_then(|l| l.only.as_ref()).map(|o| o.0)]), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
                        clock: StepClock::start(j.steps.len()) };
     if cx.collect.is_none() { cx.cut_from = tail(j); }
+    let t_setup = t_call.map(|t| t.elapsed());
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
+    let mut bindings = 0u64;
     match (each, paired, j.steps.first(), j.steps.get(1)) {
         (Some((ys, next)), ..) => {
             let mut vals = vec![0i64; ys.len()];
@@ -10010,6 +10089,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if !next(out, &mut vals) { break }
                 out.clear();
                 for (&y, &v) in ys.iter().zip(&vals) { slots[y] = v; }
+                bindings += 1;
                 go(&mut cx, 0, &mut slots);
                 flush_batches(&mut cx);
                 if cx.error.is_some() || cx.stop { break; }
@@ -10067,6 +10147,43 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let done = match &left { Some(Some(l)) => total - l.n.min(total), Some(None) => 0, None => total };
         if let Some(l) = limited {
             l.spent = Some(Spent { work: cx.work, left, done, led });
+        }
+    }
+    if let (Some(t), Some(su)) = (t_call, t_setup) {
+        use crate::code_rule_dsl::prof::count_named_args as c;
+        let size = match cx.work { 0..=10 => "<=10", 11..=100 => "<=100", 101..=1000 => "<=1k", 1001..=10000 => "<=10k", 10001..=100000 => "<=100k", _ => ">100k" };
+        let us = t.elapsed().as_micros() as usize;
+        c(format_args!("walk {entry}: calls"), 1);
+        c(format_args!("walk {entry}: calls entering {size} steps"), 1);
+        c(format_args!("walk {entry}: us in calls entering {size} steps"), us);
+        c(format_args!("walk {entry}: us"), us);
+        c(format_args!("walk {entry}: us setting up"), su.as_micros() as usize);
+        c(format_args!("walk {entry}: steps entered"), cx.work as usize);
+        c(format_args!("walk {entry}: bindings given"), bindings as usize);
+        c(format_args!("walk {entry}: probes (candidates)"), cx.tally[0] as usize);
+        c(format_args!("walk {entry}: candidate rows visited"), cx.tally[1] as usize);
+        c(format_args!("walk {entry}: rows an atom passed on"), cx.tally[2] as usize);
+        c(format_args!("walk {entry}: scalar probes"), cx.tally[3] as usize);
+        c(format_args!("walk {entry}: head rows"), cx.n as usize);
+        let name_of = |src: &Src| match src {
+            Src::In(r, _) => j.bound(r).name.get().cloned().unwrap_or_else(|| "?".into()).to_string(),
+            Src::Full(r) | Src::FullMulti(r, _) => format!("{} (full)", store.rels[*r].table),
+            Src::Delta(r) => format!("{} (delta)", store.rels[*r].table),
+        };
+        let mut key = format!("{entry}: {}", store.rels.get(head).map_or("-", |r| r.table.as_str()));
+        for st in &j.steps {
+            let what = match st { Step::Atom { src, .. } | Step::Scalar { src, .. } | Step::StrJoin { src, .. } => name_of(src), _ => String::new() };
+            key.push_str(&format!("\n{} {what}", shape_token(st)));
+        }
+        {
+            let mut plans = WALK_PLANS.lock().unwrap();
+            let e = plans.entry(key).or_insert_with(|| (0, vec![[0, 0]; j.steps.len()]));
+            e.0 += 1;
+            for (a, l) in e.1.iter_mut().zip(&cx.counts) { a[0] += l[0].get(); a[1] += l[1].get(); }
+        }
+        for (k, name) in [(4, "a syntax view"), (6, "a held relation"), (8, "a component relation")] {
+            c(format_args!("walk {entry}: probes of {name}"), cx.tally[k] as usize);
+            c(format_args!("walk {entry}: rows visited of {name}"), cx.tally[k + 1] as usize);
         }
     }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}

@@ -168,6 +168,7 @@ impl Fx<'_> {
     }
     fn run(&self, name: &str, waves: u32) -> Result<String> {
         let _span = super::profile::span(|| "engine run (joins)".into());
+        crate::code_rule_dsl::prof::count("walk callers: Fx::run calls", 1);
         Ok(if self.direct { super::native::component::run(self.db, name, waves)? } else { self.db.query_row("SELECT set_fixpoint_run(?1, ?2)", rusqlite::params![name, waves], |r| r.get(0))? })
     }
     /// The declared keys a second row broke since the last call (decision 0361 step 6): each relation's place and the
@@ -1955,6 +1956,8 @@ impl<'a> Strand<'a> {
     /// (`resume_parked`). With no `park`, the component flushes them as its own wave.
     fn run_members(&mut self, members: &[(super::front::CompAt, Vec<RuleKey>)], times: &mut Vec<(std::time::Instant, std::time::Instant)>, reserved: &mut crate::content_store::atoms::Reserved, park: Option<&mut Vec<(usize, Box<Driving>)>>) -> (usize, Option<Result<(Option<String>, Option<String>)>>) {
         let t0 = std::time::Instant::now();
+        crate::code_rule_dsl::prof::count("walk callers: Strand::run_members calls", 1);
+        crate::code_rule_dsl::prof::count("walk callers: Strand::run_members members", members.len());
         times.clear();
         times.resize(members.len(), (t0, t0));
         // The atoms it makes are its own until it retires (decision 0114 §4): reserved, then published.
@@ -3083,6 +3086,7 @@ impl<'a> Run<'a, '_> {
     }
 
     fn native_stratum(&mut self, scc: &super::front::CompAt, rules: &[RuleKey]) -> Result<Native> {
+        crate::code_rule_dsl::prof::count("walk callers: native_stratum calls", 1);
         // `RERAIL_STRATA_LIVE`: each native stratum as it starts and ends, so a stalled run names its stratum (the
         // trace, `RERAIL_STRATA_TRACE`, is written when the loop ends).
         let t0 = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some()).then(|| {
