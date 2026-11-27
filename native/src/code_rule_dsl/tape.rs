@@ -651,6 +651,11 @@ impl DerivedImage {
         self.tape.language
     }
 
+    /// Where its text stands in its parent's (`embed::segments`).
+    pub fn segments(&self) -> &Arc<SegmentMap> {
+        &self.source_map
+    }
+
     /// Its source map's persisted form (`SegmentMap::write`).
     /// The program ranges its tape leaves out (`SegmentMap::omissions`), as little-endian `u32`
     /// pairs: with its text, all its tape depends on.
