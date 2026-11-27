@@ -991,6 +991,18 @@ fn computed(rules: &[&Rule]) -> bool {
     // Its domain: positive atoms of other relations. Its function: comparisons over what they bind, and a call in the
     // head (`cc_trim(raw, @replace_all(raw, …))`) or a head variable a comparison defines (`ca_split(r, h, t) :-
     // ca_dotted(_, r), @rx(r, p) = 1, h = @rx_group(r, p, 1), …`; decision 0649).
+    let Some(from_domain) = domain_bound(rule) else { return false };
+    let bound = defined_from(rule, from_domain.clone());
+    let cmps_bound = rule.body.iter().all(|l| !matches!(l, Literal::Cmp { .. }) || l.vars().is_subset(&bound));
+    let mut head = BTreeSet::new();
+    rule.head.args.iter().for_each(|t| t.vars(&mut head));
+    let computes = rule.head.args.iter().any(|t| matches!(t, Term::Call(..))) || !head.is_subset(&from_domain);
+    computes && cmps_bound && head.is_subset(&bound)
+}
+
+/// What a computed view's domain binds: its body's positive atoms of other relations, with comparisons beside them and
+/// nothing else, one atom at least. Any other body: `None`.
+fn domain_bound(rule: &Rule) -> Option<BTreeSet<String>> {
     let mut bound = BTreeSet::new();
     let mut atoms = 0;
     for l in &rule.body {
@@ -1000,38 +1012,29 @@ fn computed(rules: &[&Rule]) -> bool {
                 atoms += 1;
             }
             Literal::Cmp { .. } => {}
-            _ => return false,
+            _ => return None,
         }
     }
-    if atoms == 0 {
-        return false;
-    }
-    let from_domain = bound.clone();
-    // Each `$x = term` of bound variables binds `$x`, in any order.
-    loop {
-        let before = bound.len();
-        for l in &rule.body {
-            if let Literal::Cmp { l: lt, op: "=", r: rt } = l {
-                for (x, e) in [(lt, rt), (rt, lt)] {
-                    let mut of = BTreeSet::new();
-                    e.vars(&mut of);
-                    if let Term::Var(v) = x
-                        && of.is_subset(&bound)
-                    {
-                        bound.insert(v.to_string());
-                    }
-                }
+    (atoms > 0).then_some(bound)
+}
+
+/// `bound` and what each `$x = term` of bound variables binds, in any order, to the fixed point.
+fn defined_from(rule: &Rule, mut bound: BTreeSet<String>) -> BTreeSet<String> {
+    let eqs: Vec<(&Term, &Term)> = rule.body.iter().filter_map(|l| if let Literal::Cmp { l, op: "=", r } = l { Some((l, r)) } else { None }).flat_map(|(l, r)| [(l, r), (r, l)]).collect();
+    let mut before = usize::MAX;
+    while bound.len() != before {
+        before = bound.len();
+        for (x, e) in &eqs {
+            let mut of = BTreeSet::new();
+            e.vars(&mut of);
+            if let Term::Var(v) = x
+                && of.is_subset(&bound)
+            {
+                bound.insert(v.to_string());
             }
         }
-        if bound.len() == before {
-            break;
-        }
     }
-    let cmps_bound = rule.body.iter().all(|l| !matches!(l, Literal::Cmp { .. }) || l.vars().is_subset(&bound));
-    let mut head = BTreeSet::new();
-    rule.head.args.iter().for_each(|t| t.vars(&mut head));
-    let computes = rule.head.args.iter().any(|t| matches!(t, Term::Call(..))) || !head.is_subset(&from_domain);
-    computes && cmps_bound && head.is_subset(&bound)
+    bound
 }
 
 /// Whether `reader` (a rule body reading `read`, a computed view's row) reads every atom of the view's rule `def`:

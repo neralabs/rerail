@@ -2250,54 +2250,54 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
 
 /// `lowering_source`, each relation's readers' heads given by `readers` (an index made once, for many relations).
 fn lowering_source_in(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
-    // `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their hashed prefixes (`helper_name`):
-    // a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`, an export's `xd_`.
-    let hashed = |r: &str| ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())));
-    let made = |r: &str| {
-        let r = r.strip_prefix("xd_").unwrap_or(r);
-        r.starts_with("rr_")
-            || hashed(r)
-            || r.split_once('_').is_some_and(|(p, rest)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit()) && (rest.starts_with("rr_") || hashed(rest)))
-    };
     // A relation of the source names itself: no reader is read for it.
-    if !made(rel) {
+    if !lowering_made(rel) {
         return None;
     }
-    // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its rows
-    // over the guest's documents.
-    if let Some(rest) = rel.split_once("rr_in_").map(|(_, r)| r) {
-        let copied = rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !made(r));
-        if let Some(r) = copied {
-            return Some(r.to_owned());
-        }
-    }
-    // A pass's helper is named for the relation it was made for (`helper_name`: `fzk<hash>_<rel>`, `fl<hash>_<rel>`,
-    // under an export's `xd_`): that relation, where it is one of the source's.
+    copied_from(v, rel).or_else(|| helper_for(v, rel)).or_else(|| first_source_reader(rel, readers))
+}
+
+/// A helper by a pass's hashed prefix (`helper_name`): a factor `fz…_`, its key `fzk…_`, a pushed join's `fl…_`.
+fn hashed_helper(r: &str) -> bool {
+    ["fzk", "fz", "fl"].iter().any(|p| r.strip_prefix(p).and_then(|x| x.split_once('_')).is_some_and(|(h, _)| !h.is_empty() && h.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// Whether the lowering made `r`: `rr_…` under a program's prefix (`p3_rr_…`), and the passes' helpers by their
+/// hashed prefixes, an export's (`xd_`) too.
+fn lowering_made(r: &str) -> bool {
+    let r = r.strip_prefix("xd_").unwrap_or(r);
+    let program_prefix = |p: &str| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit());
+    r.starts_with("rr_") || hashed_helper(r) || r.split_once('_').is_some_and(|(p, rest)| program_prefix(p) && (rest.starts_with("rr_") || hashed_helper(rest)))
+}
+
+/// A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its rows
+/// over the guest's documents.
+fn copied_from(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
+    let (_, rest) = rel.split_once("rr_in_")?;
+    rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !lowering_made(r)).map(str::to_owned)
+}
+
+/// A pass's helper is named for the relation it was made for (`helper_name`: `fzk<hash>_<rel>`, `fl<hash>_<rel>`,
+/// under an export's `xd_`): that relation, where it is one of the source's.
+fn helper_for(v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str) -> Option<String> {
     let named = rel.strip_prefix("xd_").unwrap_or(rel);
-    if hashed(named) && let Some((_, r)) = named.split_once('_') && v.rel(r).is_some() && !made(r) {
-        return Some(r.to_owned());
-    }
-    // The first relation, reader by reader, that the lowering did not make (the least by name of the first round that
-    // has one, whichever order the readers are found in).
-    let mut source = None;
+    let (_, r) = named.split_once('_').filter(|_| hashed_helper(named))?;
+    (v.rel(r).is_some() && !lowering_made(r)).then(|| r.to_owned())
+}
+
+/// The first relation, reader by reader, that the lowering did not make (the least by name of the first round that
+/// has one, whichever order the readers are found in).
+fn first_source_reader(rel: &str, readers: &dyn Fn(&str) -> Vec<String>) -> Option<String> {
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::from([rel.to_owned()]);
     let mut round = vec![rel.to_owned()];
-    while source.is_none() && !round.is_empty() {
-        let mut next = Vec::new();
-        for r in &round {
-            for h in readers(r) {
-                if !made(&h) {
-                    if source.as_ref().is_none_or(|s: &String| h < *s) {
-                        source = Some(h);
-                    }
-                } else if seen.insert(h.clone()) {
-                    next.push(h);
-                }
-            }
+    while !round.is_empty() {
+        let (source, made): (Vec<String>, Vec<String>) = round.iter().flat_map(|r| readers(r)).partition(|h| !lowering_made(h));
+        if let Some(s) = source.into_iter().min() {
+            return Some(s);
         }
-        round = next;
+        round = made.into_iter().filter(|h| seen.insert(h.clone())).collect();
     }
-    source
+    None
 }
 
 /// One round of `locate`: the relations located, and in the `Err` those left beside them.

@@ -232,33 +232,39 @@ pub(super) fn wanted(prog: &Program, dir: Option<&Path>) -> Result<BTreeMap<Stri
     let read: BTreeSet<&str> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
     let declared_here = declared(prog);
     let roots: Vec<&str> = if prog.outputs.is_empty() { declared_here.iter().flat_map(|d| d.exports.iter().map(String::as_str)).collect() } else { prog.outputs.iter().map(String::as_str).collect() };
-    let reached: Option<BTreeSet<&str>> = (!roots.is_empty()).then(|| {
-        let mut reads_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for r in &prog.rules {
-            reads_of.entry(r.head.rel.as_str()).or_default().extend(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()));
-        }
-        let (mut seen, mut todo) = (BTreeSet::new(), roots);
-        while let Some(r) = todo.pop() {
-            if seen.insert(r)
-                && let Some(reads) = reads_of.get(r)
-            {
-                todo.extend(reads.iter().copied());
-            }
-        }
-        seen
-    });
-    let own = declared_here.as_ref().map(|d| d.name.clone());
+    let reached = (!roots.is_empty()).then(|| reached_from(prog, roots));
+    let own = declared_here.as_ref().map(|d| d.name.as_str());
     let mut out: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
-    for rel in read.into_iter().filter(|r| !made.contains(r) && prog.decls.contains_key(*r) && reached.as_ref().is_none_or(|s| s.contains(r))) {
-        let Some((phase, export)) = rel.split_once(SEP) else { continue };
-        if phase.is_empty() || export.is_empty() || own.as_deref() == Some(phase) || phase.starts_with("rr_") {
-            continue;
-        }
+    let candidates = read.into_iter().filter(|r| !made.contains(r) && prog.decls.contains_key(*r) && reached.as_ref().is_none_or(|s| s.contains(r)));
+    for (rel, (phase, export)) in candidates.filter_map(|rel| Some((rel, other_phases_export(rel, own)?))) {
         if source(phase, dir)?.is_some() {
             out.entry(phase.to_owned()).or_default().push((rel.to_owned(), export.to_owned()));
         }
     }
     Ok(out)
+}
+
+/// The relations `prog`'s rules from `roots` read, `roots` with them.
+fn reached_from<'p>(prog: &'p Program, roots: Vec<&'p str>) -> BTreeSet<&'p str> {
+    let mut reads_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for r in &prog.rules {
+        reads_of.entry(r.head.rel.as_str()).or_default().extend(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()));
+    }
+    let (mut seen, mut todo) = (BTreeSet::new(), roots);
+    while let Some(r) = todo.pop() {
+        if seen.insert(r) {
+            todo.extend(reads_of.get(r).into_iter().flatten().copied());
+        }
+    }
+    seen
+}
+
+/// `rel` as `(phase, export)` where it names another phase's export: `<phase>__<export>`, both named, the phase not
+/// the program's own (`own`) nor the engine's (`rr_`).
+fn other_phases_export<'r>(rel: &'r str, own: Option<&str>) -> Option<(&'r str, &'r str)> {
+    let (phase, export) = rel.split_once(SEP)?;
+    let named = !phase.is_empty() && !export.is_empty();
+    (named && own != Some(phase) && !phase.starts_with("rr_")).then_some((phase, export))
 }
 
 /// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run

@@ -489,40 +489,36 @@ fn drop_other_documents(key: &BTreeSet<String>, pre: &[(Literal, bool)], needed:
     if from.is_empty() {
         return;
     }
-    // The places the key reaches through the place sets `with` keeps.
-    let reach = |sets: &[BTreeSet<String>], with: &dyn Fn(usize) -> bool| {
-        let mut reach = from.clone();
-        loop {
-            let mut grew = false;
-            for (i, p) in sets.iter().enumerate() {
-                if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
-                    reach.extend(p.iter().cloned());
-                    grew = true;
-                }
-            }
-            if !grew {
-                return reach;
-            }
-        }
-    };
-    let (every, kept) = (reach(whole, &|_| true), reach(&placed, &|i| ks[i]));
+    let (every, kept) = (reach(&from, whole, &|_| true), reach(&from, &placed, &|i| ks[i]));
     let before = ks.to_vec();
     for (i, p) in placed.iter().enumerate() {
         let reads_key = !pre[i].0.vars().is_disjoint(key);
-        if ks[i] && (!needed[i] || !reads_key) && !p.is_empty() && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+        let other_document = !p.is_empty() && !p.is_disjoint(&every) && p.is_disjoint(&kept);
+        if ks[i] && (!needed[i] || !reads_key) && other_document {
             ks[i] = false;
         }
     }
     // The positive literals kept must still bind the key; otherwise the demand stays as it was.
-    let mut bound = BTreeSet::new();
-    for (i, (l, _)) in pre.iter().enumerate() {
-        if ks[i] && let Some(a) = positive(l) {
-            bound.extend(a.vars());
-        }
-    }
+    let bound: BTreeSet<String> = pre.iter().zip(ks.iter()).filter(|(_, k)| **k).filter_map(|((l, _), _)| positive(l)).flat_map(|a| a.vars()).collect();
     if !key.is_subset(&bound) {
         ks.copy_from_slice(&before);
     }
+}
+
+/// The places `from` reaches through the place sets `with` keeps: a set meeting the reach joins it whole.
+fn reach(from: &BTreeSet<String>, sets: &[BTreeSet<String>], with: &dyn Fn(usize) -> bool) -> BTreeSet<String> {
+    let mut reach = from.clone();
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for (i, p) in sets.iter().enumerate() {
+            if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
+                reach.extend(p.iter().cloned());
+                grew = true;
+            }
+        }
+    }
+    reach
 }
 
 fn bset(ad: &str) -> BTreeSet<usize> {

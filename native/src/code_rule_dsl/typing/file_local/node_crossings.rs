@@ -79,61 +79,73 @@ impl<'v> NodeColumns<'v> {
         let n = r.var_count();
         let mut flows = Flows { slots: vec![false; n], cause: None, inherited: vec![false; n], entered: vec![None; n] };
         for l in r.body() {
-            match l.view() {
-                Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
-                    let rel = v.rel_name(a.rel());
-                    for (i, t) in a.args().enumerate() {
-                        if let TermRef::Var(s) = t
-                            && self.holds(rel, i)
-                        {
-                            if inherited(rel) {
-                                flows.mark(s, || format!("reads {rel}'s column {i}, a node"));
-                                flows.inherited[s.index()] = true;
-                            } else {
-                                flows.enter(s, || format!("reads {rel}'s column {i}, a node"));
-                            }
-                        }
-                    }
-                }
-                Lit::Nearest { n, a, .. } => {
-                    flows.enter(n, || "asks for the nearest of a node".to_owned());
-                    flows.enter(a, || "asks for the nearest of a node".to_owned());
-                }
-                Lit::Ast { node, captures, .. } => {
-                    flows.enter(node, || "matches an AST pattern".to_owned());
-                    for (_, s) in captures {
-                        flows.enter(s, || "matches an AST pattern".to_owned());
-                    }
-                }
-                Lit::Cmp { .. } => {}
-            }
+            self.enter(v, l.view(), inherited, &mut flows);
         }
         // Equalities and aggregates carry a node to the variables they bind, to a fixpoint within the rule.
         let mut changed = true;
         while changed {
             changed = false;
             for l in r.body() {
-                match l.view() {
-                    Lit::Cmp { l, op: CmpOp::Eq, r } => {
-                        for (from, to) in [(l, r), (r, l)] {
-                            if let TermRef::Var(s) = to
-                                && !flows.slots[s.index()]
-                                && term_flows(v, from, &flows.slots)
-                            {
-                                flows.mark(s, || "computes a value from a node".to_owned());
-                                changed = true;
-                            }
-                        }
-                    }
-                    Lit::Agg { var, op, over, .. } if !matches!(op, AggRef::Count) && !flows.slots[var.index()] && over.is_some_and(|o| flows.slots[o.index()]) => {
-                        flows.mark(var, || "aggregates a node".to_owned());
-                        changed = true;
-                    }
-                    _ => {}
-                }
+                changed |= carry(v, l.view(), &mut flows);
             }
         }
         flows
+    }
+
+    /// The nodes literal `l` binds: a node column's variables (another cross-file relation's carried, `inherited`),
+    /// a nearest's, a pattern's.
+    fn enter(&self, v: &Version, l: Lit<'_>, inherited: &dyn Fn(&str) -> bool, flows: &mut Flows) {
+        match l {
+            Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
+                let rel = v.rel_name(a.rel());
+                let vars = a.args().enumerate().filter_map(|(i, t)| if let TermRef::Var(s) = t { Some((i, s)) } else { None });
+                for (i, s) in vars.filter(|&(i, _)| self.holds(rel, i)) {
+                    let why = || format!("reads {rel}'s column {i}, a node");
+                    if inherited(rel) {
+                        flows.mark(s, why);
+                        flows.inherited[s.index()] = true;
+                    } else {
+                        flows.enter(s, why);
+                    }
+                }
+            }
+            Lit::Nearest { n, a, .. } => {
+                flows.enter(n, || "asks for the nearest of a node".to_owned());
+                flows.enter(a, || "asks for the nearest of a node".to_owned());
+            }
+            Lit::Ast { node, captures, .. } => {
+                flows.enter(node, || "matches an AST pattern".to_owned());
+                for (_, s) in captures {
+                    flows.enter(s, || "matches an AST pattern".to_owned());
+                }
+            }
+            Lit::Cmp { .. } => {}
+        }
+    }
+}
+
+/// One round's carrying of literal `l`: an equality's node to the variable it defines, an aggregate's (but a count's)
+/// to its result. Whether it marked one.
+fn carry(v: &Version, l: Lit<'_>, flows: &mut Flows) -> bool {
+    match l {
+        Lit::Cmp { l, op: CmpOp::Eq, r } => {
+            let mut changed = false;
+            for (from, to) in [(l, r), (r, l)] {
+                if let TermRef::Var(s) = to
+                    && !flows.slots[s.index()]
+                    && term_flows(v, from, &flows.slots)
+                {
+                    flows.mark(s, || "computes a value from a node".to_owned());
+                    changed = true;
+                }
+            }
+            changed
+        }
+        Lit::Agg { var, op, over, .. } if !matches!(op, AggRef::Count) && !flows.slots[var.index()] && over.is_some_and(|o| flows.slots[o.index()]) => {
+            flows.mark(var, || "aggregates a node".to_owned());
+            true
+        }
+        _ => false,
     }
 }
 
@@ -273,10 +285,25 @@ fn readers_of(program: &Version) -> HashMap<&str, BTreeSet<&str>> {
 pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local: &BTreeSet<String>) -> Vec<NodeCrossing> {
     let nodes = NodeColumns::of(program, f);
     let mut found: BTreeMap<String, String> = BTreeMap::new();
-    let shown = |v: &Version, r: RuleRef<'_>| v.show_rule(r).chars().take(300).collect::<String>();
     // A relation of the cross-file part: derived there, or made natively there (a function of values `locate` moved
     // for its cross-file readers, `value_type`).
     let crossing = |rel: &str| (f.derives(rel) || f.native(rel).is_some()) && !local.contains(rel);
+    entered(&nodes, f, cross, local, &crossing, &mut found);
+    setting_reads(&nodes, f, program, &mut found);
+    made_natively(&nodes, f, cross, &crossing, &mut found);
+    let readers = readers_of(program);
+    let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
+    // `under` is the split's to say (`crossings_under`, from its causes).
+    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None }).collect()
+}
+
+fn shown(v: &Version, r: RuleRef<'_>) -> String {
+    v.show_rule(r).chars().take(300).collect()
+}
+
+/// The derived relations of the cross-file part `cross` whose rule binds a node per file, by no node column of another
+/// cross-file relation.
+fn entered(nodes: &NodeColumns, f: &Fields<'_>, cross: &Version, local: &BTreeSet<String>, crossing: &dyn Fn(&str) -> bool, found: &mut BTreeMap<String, String>) {
     let inherited = |rel: &str| crossing(rel) && !f.is_output(rel);
     for r in cross.rules() {
         let head = cross.rel_name(r.head().rel());
@@ -291,35 +318,36 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
         let what = if held.is_empty() { "reads a node".to_owned() } else { format!("holds a node in {}", held.join(", ")) };
         found.insert(head.to_owned(), format!("{what}: its rule {cause}\n      {}", shown(cross, r)));
     }
-    // A phase's export the program reads as an input (`on_version`'s `run_constant`, but the run's options): one value
-    // for the run, every file's.
+}
+
+/// The rules of `program` reading a node column of a phase's export it reads as an input (`on_version`'s
+/// `run_constant`, but the run's options): one value for the run, every file's.
+fn setting_reads(nodes: &NodeColumns, f: &Fields<'_>, program: &Version, found: &mut BTreeMap<String, String>) {
     let settings = |rel: &str| crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && f.is_input(rel) && !super::option_input(rel);
+    let node_read = |a: &crate::code_rule_dsl::logic::program_image::AtomRef<'_>| {
+        let rel = program.rel_name(a.rel());
+        (settings(rel) && a.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(_)) && nodes.holds(rel, i))).then_some(rel)
+    };
     for r in program.rules() {
         let head = program.rel_name(r.head().rel());
         if found.contains_key(head) {
             continue;
         }
-        let read = r.body().filter_map(|l| l.atom()).find_map(|a| {
-            let rel = program.rel_name(a.rel());
-            (settings(rel) && a.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(_)) && nodes.holds(rel, i))).then_some(rel)
-        });
-        if let Some(rel) = read {
+        if let Some(rel) = r.body().filter_map(|l| l.atom()).find_map(|a| node_read(&a)) {
             found.insert(head.to_owned(), format!("reads a node of {rel}, a setting or an earlier phase's export, which every file reads\n      {}", shown(program, r)));
         }
     }
-    // A relation of the cross-file part made natively and read there, with a node column: the node enters where it
-    // is made.
+}
+
+/// A relation of the cross-file part made natively and read there, with a node column: the node enters where it is
+/// made.
+fn made_natively(nodes: &NodeColumns, f: &Fields<'_>, cross: &Version, crossing: &dyn Fn(&str) -> bool, found: &mut BTreeMap<String, String>) {
     let read_there: BTreeSet<&str> = cross.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| cross.rel_name(a.rel())).collect::<Vec<_>>()).collect();
-    for (rel, _) in f.decls_by_name() {
-        if f.native(rel).is_some() && crossing(rel) && read_there.contains(rel) && !nodes.of_relation(rel).is_empty() {
-            let held: Vec<String> = nodes.of_relation(rel).into_iter().map(|c| column_name(f, rel, c)).collect();
-            found.entry(rel.to_owned()).or_insert_with(|| format!("holds a node in {}: made natively in the cross-file part", held.join(", ")));
-        }
+    let native_crossing = |rel: &str| f.native(rel).is_some() && crossing(rel) && read_there.contains(rel);
+    for (rel, _) in f.decls_by_name().into_iter().filter(|(rel, _)| native_crossing(rel) && !nodes.of_relation(rel).is_empty()) {
+        let held: Vec<String> = nodes.of_relation(rel).into_iter().map(|c| column_name(f, rel, c)).collect();
+        found.entry(rel.to_owned()).or_insert_with(|| format!("holds a node in {}: made natively in the cross-file part", held.join(", ")));
     }
-    let readers = readers_of(program);
-    let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
-    // `under` is the split's to say (`crossings_under`, from its causes).
-    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None }).collect()
 }
 
 /// Column `c` of `rel` by its declared name, else its number.

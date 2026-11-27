@@ -1691,49 +1691,70 @@ mod pack_split_tests {
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(tmp.path().join("store.sqlite")));
         let _sinks = crate::code_rule_dsl::logic::plan::corpus::test_store::with_sinks(crate::code_rule_dsl::logic::plan::corpus::test_store::Sinks { crossings: crossings.clone(), nodes: nodes.clone() });
         let rules = tmp.path().join("rules").join(dir);
-        let mut policies = Vec::new();
-        let mut walk = vec![from.clone()];
-        while let Some(d) = walk.pop() {
-            for e in std::fs::read_dir(&d).unwrap() {
-                let path = e.unwrap().path();
-                if path.is_dir() {
-                    walk.push(path);
-                    continue;
-                }
-                if path.extension().is_none_or(|x| x != "rerail") {
-                    continue;
-                }
-                let text = std::fs::read_to_string(&path).unwrap();
-                let to = rules.join(path.strip_prefix(&from).unwrap());
-                std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-                // The scope's paths dropped (`include`, `exclude`, `dirs`), with the lines a list of them goes on to
-                // (an indented line after one ending in a comma): every policy runs over the corpus. What a policy
-                // reads (`.scope tool_calls`) stays.
-                let paths = |l: &str| l.strip_prefix(".scope").is_some_and(|r| ["include", "exclude", "dirs"].iter().any(|w| r.trim_start().starts_with(w)));
-                let code = |l: &str| l.split("//").next().unwrap_or("").trim_end().to_owned();
-                let mut dropping = false;
-                let kept: String = text
-                    .lines()
-                    .filter(|l| {
-                        let drop = paths(l) || (dropping && l.starts_with(char::is_whitespace));
-                        dropping = drop && code(l).ends_with(',');
-                        !drop
-                    })
-                    .map(|l| format!("{l}\n"))
-                    .collect();
-                std::fs::write(&to, kept).unwrap();
-                if text.lines().any(|l| l.starts_with(".policy")) {
-                    policies.push(to);
-                }
-            }
-        }
+        let mut policies = copy_unscoped(&from, &rules);
         policies.sort();
         assert!(!policies.is_empty(), "{dir}: no policies");
         if let Some((k, n)) = shard {
             policies = policies.into_iter().enumerate().filter(|(i, _)| i % n == k).map(|(_, p)| p).collect();
         }
         let root = tmp.path().join("root");
-        std::fs::create_dir_all(&root).unwrap();
+        write_corpus(&root);
+        let pack = list_name(dir, shard, batch);
+        let not_run = run_setting_aside(dir, &mut policies, &rules, &root, &tmp.path().join("out"));
+        check_not_run(dir, &pack, &not_run);
+        let failures: Vec<String> = [
+            ("cross-file without a declaration (decision 0652)", &crossings, SPLIT_CROSSINGS, "split_crossings.txt"),
+            ("holding a node id in the cross-file part (decision 0677)", &nodes, NODE_CROSSINGS, "node_crossings.txt"),
+        ]
+        .into_iter()
+        .flat_map(|(what, path, list, file)| list_failures(&pack, what, &read_found(path), list, file))
+        .collect();
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+    }
+
+    /// Each `.rerail` under `from` copied to the same place under `rules`, its scope's paths dropped: the policies
+    /// among them.
+    fn copy_unscoped(from: &std::path::Path, rules: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut policies = Vec::new();
+        let mut walk = vec![from.to_path_buf()];
+        while let Some(d) = walk.pop() {
+            for path in std::fs::read_dir(&d).unwrap().map(|e| e.unwrap().path()) {
+                if path.is_dir() {
+                    walk.push(path);
+                } else if path.extension().is_some_and(|x| x == "rerail") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let to = rules.join(path.strip_prefix(from).unwrap());
+                    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+                    std::fs::write(&to, unscoped(&text)).unwrap();
+                    if text.lines().any(|l| l.starts_with(".policy")) {
+                        policies.push(to);
+                    }
+                }
+            }
+        }
+        policies
+    }
+
+    /// `text` with its scope's paths dropped (`include`, `exclude`, `dirs`), with the lines a list of them goes on to
+    /// (an indented line after one ending in a comma): every policy runs over the corpus. What a policy reads (`.scope
+    /// tool_calls`) stays.
+    fn unscoped(text: &str) -> String {
+        let paths = |l: &str| l.strip_prefix(".scope").is_some_and(|r| ["include", "exclude", "dirs"].iter().any(|w| r.trim_start().starts_with(w)));
+        let code = |l: &str| l.split("//").next().unwrap_or("").trim_end().to_owned();
+        let mut dropping = false;
+        text.lines()
+            .filter(|l| {
+                let drop = paths(l) || (dropping && l.starts_with(char::is_whitespace));
+                dropping = drop && code(l).ends_with(',');
+                !drop
+            })
+            .map(|l| format!("{l}\n"))
+            .collect()
+    }
+
+    /// A file of each language under `root`.
+    fn write_corpus(root: &std::path::Path) {
+        std::fs::create_dir_all(root).unwrap();
         for (name, text) in [
             ("a.py", "import os\n\ndef f(x):\n    return os.path.join(x, 'a')\n"),
             ("a.js", "export function f(x) { return x + 1; }\n"),
@@ -1747,20 +1768,26 @@ mod pack_split_tests {
         ] {
             std::fs::write(root.join(name), text).unwrap();
         }
-        // A run of each policy alone splits each policy's program alone, which can place a relation the pack's does not:
-        // its lists are its own. So are a shard's (`python-main/3`): it runs its own policies only, so every list it
-        // reads is complete for it, and a relation fixed leaves the lists in every run (review F4).
-        let pack = match (batch, shard) {
+    }
+
+    /// The run's name in the lists. A run of each policy alone splits each policy's program alone, which can place a
+    /// relation the pack's does not: its lists are its own. So are a shard's (`python-main/3`): it runs its own policies
+    /// only, so every list it reads is complete for it, and a relation fixed leaves the lists in every run (review F4).
+    fn list_name(dir: &str, shard: Option<(usize, usize)>, batch: &str) -> String {
+        match (batch, shard) {
             ("off", _) => format!("{}:alone", pack_name(dir)),
             (_, Some((k, _))) => format!("{}/{k}", pack_name(dir)),
             _ => pack_name(dir).to_owned(),
-        };
-        // A policy that does not run (an error of its own, whatever the split) is set aside, with its error, and the
-        // rest run: the batch stops at the first such error.
-        let name = |p: &std::path::Path| p.strip_prefix(&rules).unwrap().display().to_string();
-        let mut not_run: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        }
+    }
+
+    /// `policies` run over `root`. A policy that does not run (an error of its own, whatever the split) is set aside,
+    /// with its error, and the rest run: the batch stops at the first such error. The ones set aside, by name.
+    fn run_setting_aside(dir: &str, policies: &mut Vec<std::path::PathBuf>, rules: &std::path::Path, root: &std::path::Path, out: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+        let name = |p: &std::path::Path| p.strip_prefix(rules).unwrap().display().to_string();
+        let mut not_run = std::collections::BTreeMap::new();
         let report = loop {
-            match super::run_policies(&policies, &root, &tmp.path().join("out"), &serde_json::Value::Null) {
+            match super::run_policies(policies, root, out, &serde_json::Value::Null) {
                 Ok(report) => break report,
                 Err(e) => {
                     let at = policies.iter().position(|p| e.starts_with(&p.display().to_string())).unwrap_or_else(|| panic!("{dir}: a run error naming no policy: {e}"));
@@ -1768,65 +1795,72 @@ mod pack_split_tests {
                 }
             }
         };
-        for (run, path) in report["runs"].as_array().unwrap().iter().zip(&policies) {
+        for (run, path) in report["runs"].as_array().unwrap().iter().zip(policies.iter()) {
             if let Some(e) = run["error"].as_str() {
                 not_run.insert(name(path), e.to_owned());
             }
         }
-        let known: std::collections::BTreeSet<String> = POLICIES_NOT_RUN.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == pack).map(|(_, r)| r.trim().to_owned()).collect();
+        not_run
+    }
+
+    /// The entries of `list` (`<pack> <entry>` lines) for run `pack`.
+    fn listed(list: &str, pack: &str) -> std::collections::BTreeSet<String> {
+        list.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == pack).map(|(_, r)| r.trim().to_owned()).collect()
+    }
+
+    /// The policies that did not run are policies_not_run.txt's for `pack`, both ways.
+    fn check_not_run(dir: &str, pack: &str, not_run: &std::collections::BTreeMap<String, String>) {
+        let known = listed(POLICIES_NOT_RUN, pack);
         if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
-            for (p, e) in &not_run {
+            for (p, e) in not_run {
                 println!("policies_not_run.txt: {pack} {p} because {}", e.lines().next().unwrap_or(""));
             }
         }
         let new: Vec<String> = not_run.iter().filter(|(p, _)| !known.contains(*p)).map(|(p, e)| format!("{pack} {p}: {e}")).collect();
         assert!(new.is_empty(), "{dir}: {} policies do not run, not in policies_not_run.txt:\n{}", new.len(), new.join("\n\n"));
-        {
-            let ran: Vec<&String> = known.iter().filter(|p| !not_run.contains_key(*p)).collect();
-            assert!(ran.is_empty(), "{dir}: these run now; take them out of policies_not_run.txt:\n{}", ran.iter().map(|p| format!("{pack} {p}")).collect::<Vec<_>>().join("\n"));
+        let ran: Vec<&String> = known.iter().filter(|p| !not_run.contains_key(*p)).collect();
+        assert!(ran.is_empty(), "{dir}: these run now; take them out of policies_not_run.txt:\n{}", ran.iter().map(|p| format!("{pack} {p}")).collect::<Vec<_>>().join("\n"));
+    }
+
+    /// The relations a sink found, each with the relation it was found under (`-`: none).
+    fn read_found(path: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+        std::fs::read_to_string(path)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| match l.split_once(' ') {
+                Some((r, u)) => (r.to_owned(), u.to_owned()),
+                None => (l.to_owned(), "-".to_owned()),
+            })
+            .collect()
+    }
+
+    /// How the relations found `under` differ from list `file`'s entries for `pack`: those it lacks, and those no
+    /// longer found.
+    fn list_failures(pack: &str, what: &str, under: &std::collections::BTreeMap<String, String>, list: &str, file: &str) -> Vec<String> {
+        // `RERAIL_SHOW_CROSSINGS=1`: each relation found, for the fixes' work and the lists (`--no-capture`).
+        if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
+            for (r, u) in under {
+                println!("{file}: {pack} {r} under {u}");
+            }
         }
-        let read = |path: &std::path::Path| -> std::collections::BTreeMap<String, String> {
-            std::fs::read_to_string(path)
-                .unwrap_or_default()
-                .lines()
-                .map(|l| match l.split_once(' ') {
-                    Some((r, u)) => (r.to_owned(), u.to_owned()),
-                    None => (l.to_owned(), "-".to_owned()),
-                })
-                .collect()
-        };
-        let listed = |list: &str| -> std::collections::BTreeSet<String> {
-            list.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == pack).map(|(_, r)| r.trim().to_owned()).collect()
-        };
+        let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
+        let listed = listed(list, pack);
         let mut failures = Vec::new();
-        for (what, path, list, file) in
-            [("cross-file without a declaration (decision 0652)", &crossings, SPLIT_CROSSINGS, "split_crossings.txt"), ("holding a node id in the cross-file part (decision 0677)", &nodes, NODE_CROSSINGS, "node_crossings.txt")]
-        {
-            let under = read(path);
-            // `RERAIL_SHOW_CROSSINGS=1`: each relation found, for the fixes' work and the lists (`--no-capture`).
-            if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
-                for (r, u) in &under {
-                    println!("{file}: {pack} {r} under {u}");
-                }
-            }
-            let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
-            let listed = listed(list);
-            let new: Vec<&String> = found.difference(&listed).collect();
-            if !new.is_empty() {
-                failures.push(format!(
-                    "{pack}: {} relation(s) {what}, not in {file}, the list of those still to fix, which only shrinks. Join the \
-                     rule's reads through a location or keep it per file; key a node by a symbol, a path or a value; declare a \
-                     relation meant to span files `cross_file` (RERAIL_STRICT_CROSSINGS=1, RERAIL_STRICT_NODES=1 show each rule):\n{}",
-                    new.len(),
-                    new.iter().map(|r| format!("{pack} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
-                ));
-            }
-            let fixed: Vec<&String> = listed.difference(&found).collect();
-            if !fixed.is_empty() {
-                failures.push(format!("{pack}: no longer {what}; take them out of {file}:\n{}", fixed.iter().map(|r| format!("{pack} {r}")).collect::<Vec<_>>().join("\n")));
-            }
+        let new: Vec<&String> = found.difference(&listed).collect();
+        if !new.is_empty() {
+            failures.push(format!(
+                "{pack}: {} relation(s) {what}, not in {file}, the list of those still to fix, which only shrinks. Join the \
+                 rule's reads through a location or keep it per file; key a node by a symbol, a path or a value; declare a \
+                 relation meant to span files `cross_file` (RERAIL_STRICT_CROSSINGS=1, RERAIL_STRICT_NODES=1 show each rule):\n{}",
+                new.len(),
+                new.iter().map(|r| format!("{pack} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
+            ));
         }
-        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+        let fixed: Vec<&String> = listed.difference(&found).collect();
+        if !fixed.is_empty() {
+            failures.push(format!("{pack}: no longer {what}; take them out of {file}:\n{}", fixed.iter().map(|r| format!("{pack} {r}")).collect::<Vec<_>>().join("\n")));
+        }
+        failures
     }
 
     macro_rules! packs {

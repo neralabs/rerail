@@ -140,6 +140,17 @@ enum Members {
 }
 
 /// A column type in the engine's names.
+/// `by_path`'s word as a relation keeps it, with the column naming the key its file reads (`by_path 1`), which must be
+/// one of the relation's `width`.
+fn by_path_word(name: &str, width: usize, column: Option<&String>) -> Result<String, Error> {
+    use crate::code_rule_dsl::logic::front::ast::BY_PATH;
+    match column.and_then(|k| k.parse::<usize>().ok()) {
+        Some(c) if c >= width => Err(Error::Syntax(format!(".decl {name}: `by_path {c}` names no column"))),
+        Some(c) => Ok(format!("{BY_PATH} {c}")),
+        None => Ok(BY_PATH.to_owned()),
+    }
+}
+
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
@@ -1398,79 +1409,79 @@ impl Lowerer {
     }
 
     fn decl(&mut self, name: String, cols: Vec<(String, String)>, tail: &[String]) -> Result<(), Error> {
+        let widen = self.decl_words(&name, &cols, tail)?;
+        if name == "docof" {
+            self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "loc");
+        }
+        let out = cols.iter().enumerate().map(|(i, (c, t))| self.decl_column(&name, i, cols.len(), c, t, widen)).collect::<Result<Vec<_>, _>>()?;
+        if widen.is_some() && !self.prog.lattice.contains_key(&name) {
+            return Err(Error::Syntax(format!("{name}: `widen` on a relation with no lattice column")));
+        }
+        self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        Ok(())
+    }
+
+    /// A `.decl`'s words after its columns, kept where they are the relation's: its `widen` count, if any.
+    fn decl_words(&mut self, name: &str, cols: &[(String, String)], tail: &[String]) -> Result<Option<u32>, Error> {
+        use crate::code_rule_dsl::logic::front::ast::{BY_PATH, KEYED, SETTING};
         let mut widen = None;
         let mut words = tail.iter().peekable();
         while let Some(w) = words.next() {
             match w.as_str() {
                 // `must, may`: three-valued (`three_valued`).
                 "must" | "may" | "," => {
-                    self.three.insert(name.clone());
+                    self.three.insert(name.to_owned());
                 }
                 // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
                 // A library's (not core's, whose `env`, `option` and `load` the engine gives) is kept as a word of the
                 // relation's, as the qualifiers are: where the whole program is known (`plan::corpus::combine_read`),
                 // one that nothing states is stated empty (decision 0677).
-                "extensible" if self::core::is_core(&name) => {}
-                "extensible" => {
-                    self.prog.qualifiers.entry(name.clone()).or_default().insert("extensible".to_owned());
-                }
+                "extensible" if self::core::is_core(name) => {}
                 // Where the relation's rows are placed (decision 0710): the project's settings, by key or by a file's
                 // path, the latter with the column naming the key its file reads (`by_path 1`).
-                w @ (crate::code_rule_dsl::logic::front::ast::SETTING | crate::code_rule_dsl::logic::front::ast::KEYED) => {
-                    self.prog.qualifiers.entry(name.clone()).or_default().insert(w.to_owned());
+                w @ ("extensible" | SETTING | KEYED) => {
+                    self.prog.qualifiers.entry(name.to_owned()).or_default().insert(w.to_owned());
                 }
-                crate::code_rule_dsl::logic::front::ast::BY_PATH => {
-                    let column = words.next_if(|k| k.parse::<usize>().is_ok());
-                    if let Some(c) = column.and_then(|k| k.parse::<usize>().ok())
-                        && c >= cols.len()
-                    {
-                        return Err(Error::Syntax(format!(".decl {name}: `by_path {c}` names no column")));
-                    }
-                    let word = column.map_or_else(|| crate::code_rule_dsl::logic::front::ast::BY_PATH.to_owned(), |k| format!("{} {k}", crate::code_rule_dsl::logic::front::ast::BY_PATH));
-                    self.prog.qualifiers.entry(name.clone()).or_default().insert(word);
+                BY_PATH => {
+                    let word = by_path_word(name, cols.len(), words.next_if(|k| k.parse::<usize>().is_ok()))?;
+                    self.prog.qualifiers.entry(name.to_owned()).or_default().insert(word);
                 }
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.
-                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
-                    let own = self.prog.qualifiers.entry(name.clone()).or_default();
-                    own.insert(q.to_owned());
-                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
-                        if own.contains(a) && own.contains(b) {
-                            return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
-                        }
-                    }
-                }
+                q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => self.keep_qualifier(name, q)?,
                 other => return not_yet(format!("`{other}` on .decl {name}")),
             }
         }
-        if name == "docof" {
-            self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "loc");
+        Ok(widen)
+    }
+
+    /// Planner qualifier `q` on relation `name`, refused beside its opposite.
+    fn keep_qualifier(&mut self, name: &str, q: &str) -> Result<(), Error> {
+        let own = self.prog.qualifiers.entry(name.to_owned()).or_default();
+        own.insert(q.to_owned());
+        match [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")].into_iter().find(|(a, b)| own.contains(*a) && own.contains(*b)) {
+            Some((a, b)) => Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together"))),
+            None => Ok(()),
         }
-        let mut out = Vec::new();
-        for (i, (c, t)) in cols.iter().enumerate() {
-            if t == "tape" {
-                self.prog.tapes.entry(name.clone()).or_default().insert(i);
-            }
-            let Some(lattice) = t.strip_suffix("<>") else {
-                out.push((c.clone(), ty(t)));
-                continue;
-            };
-            if i + 1 != cols.len() {
-                return Err(Error::Syntax(format!("{name}: the lattice column {c} must be the last")));
-            }
-            let (column, merge) = match self.lattices.get(lattice) {
-                Some((base, lub)) => (base.clone(), Some(lub.clone())),
-                None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
-                None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
-            };
-            self.prog.lattice.insert(name.clone(), LatticeDecl { keys: i, ty: column.clone(), merge, widen });
-            out.push((c.clone(), column));
+    }
+
+    /// Column `i` (`c`, of type `t`) of `.decl name`'s `width`: its type, a tape column noted, a lattice column (the
+    /// last only) declared with its merge.
+    fn decl_column(&mut self, name: &str, i: usize, width: usize, c: &str, t: &str, widen: Option<u32>) -> Result<(String, String), Error> {
+        if t == "tape" {
+            self.prog.tapes.entry(name.to_owned()).or_default().insert(i);
         }
-        if widen.is_some() && !self.prog.lattice.contains_key(&name) {
-            return Err(Error::Syntax(format!("{name}: `widen` on a relation with no lattice column")));
+        let Some(lattice) = t.strip_suffix("<>") else { return Ok((c.to_owned(), ty(t))) };
+        if i + 1 != width {
+            return Err(Error::Syntax(format!("{name}: the lattice column {c} must be the last")));
         }
-        self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        Ok(())
+        let (column, merge) = match self.lattices.get(lattice) {
+            Some((base, lub)) => (base.clone(), Some(lub.clone())),
+            None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
+            None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
+        };
+        self.prog.lattice.insert(name.to_owned(), LatticeDecl { keys: i, ty: column.clone(), merge, widen });
+        Ok((c.to_owned(), column))
     }
 
     /// `.decl r(…) must, may` (core.rerail 3): r is computed twice. Its may side, which keeps the name, holds what is

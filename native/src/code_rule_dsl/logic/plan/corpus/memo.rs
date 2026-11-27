@@ -221,115 +221,9 @@ pub enum SettingsScope {
 /// (`package_dep(dir, k, m) :- package_field(dir, k, m)`). A read through any other key (a constant, another file's
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
-    use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::Setting;
-    /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
-    #[derive(Clone, Default, PartialEq)]
-    struct Reach {
-        all: bool,
-        own: bool,
-        folder: BTreeSet<usize>,
-        path: BTreeSet<usize>,
-    }
-    let v = &local.v;
-    // Each relation's setting, as its `.decl` places it (decision 0710).
-    let fields = crate::code_rule_dsl::logic::plan::fields::Fields::of(local);
-    let setting = |rel: &str| fields.as_ref().and_then(|f| Setting::of(f.qualifiers_of(rel)));
-    let setting_by_path = |rel: &str| match setting(rel) {
-        Some(Setting::ByPath(c)) => Some(c),
-        _ => None,
-    };
-    let base = |rel: &str| -> Option<Reach> {
-        match setting(rel)? {
-            Setting::Keyed => Some(Reach { folder: [0].into(), ..Reach::default() }),
-            Setting::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
-            // One value for the run (`file`, `env`): its rows are every file's (review B70: a file added beside an
-            // unedited one changes what that one finds).
-            Setting::Whole => Some(Reach { all: true, ..Reach::default() }),
-        }
-    };
-    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
-    // at its own path (`package_for(p, dir)`, `tsx_names__target_at(p, s, t)`), or carried in a column of a derived
-    // relation made from them (`named`: `target(d, s, t)` from `tsx_names__target_at` at its own path).
-    let anchors = |rule: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>| {
-        let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).collect();
-        let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
-        let mut folders: HashSet<_> = atoms
-            .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).flatten().map(|c| (a, c)))
-            .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
-            .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
-            .collect();
-        for a in &atoms {
-            if let Some(cols) = named.get(v.rel_name(a.rel())) {
-                folders.extend(cols.iter().filter_map(|&c| a.args().nth(c).and_then(|t| t.var())));
-            }
-        }
-        (own, folders)
-    };
-    // `named` first, to its fixed point: a read is decided by its key's anchor, which must be known when it is. A
-    // column is a derived relation's anchor when every rule of it fills the column from one (review F3: a rule filling
-    // it from anything else makes it any file's key), so the fixed point is the greatest: every column at first, each
-    // round keeping the columns all of a head's rules fill so, and a recursive rule carrying its own anchor keeps it.
-    let mut named: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    for rule in v.rules() {
-        named.entry(v.rel_name(rule.head().rel()).to_owned()).or_insert_with(|| (0..rule.head().args().count()).collect());
-    }
-    loop {
-        let mut kept: HashMap<String, BTreeSet<usize>> = HashMap::new();
-        for rule in v.rules() {
-            let (_, folders) = anchors(&rule, &named);
-            let cols: BTreeSet<usize> = rule.head().args().enumerate().filter(|(_, t)| t.var().is_some_and(|x| folders.contains(&x))).map(|(j, _)| j).collect();
-            let head = v.rel_name(rule.head().rel()).to_owned();
-            let both = kept.get(&head).map_or(cols.clone(), |had| had.intersection(&cols).copied().collect());
-            kept.insert(head, both);
-        }
-        if kept == named {
-            break;
-        }
-        named = kept;
-    }
-    named.retain(|_, cols| !cols.is_empty());
-    let mut reach: HashMap<String, Reach> = HashMap::new();
-    loop {
-        let mut changed = false;
-        for rule in v.rules() {
-            let head = v.rel_name(rule.head().rel());
-            let head_at = |t: TermRef<'_>| -> Option<usize> { t.var().and_then(|s| rule.head().args().position(|h| h.var() == Some(s))) };
-            let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).collect();
-            let (own, folders) = anchors(&rule, &named);
-            let mut got = reach.get(head).cloned().unwrap_or_default();
-            for a in &atoms {
-                let rel = v.rel_name(a.rel());
-                let Some(r) = base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
-                got.all |= r.all;
-                got.own |= r.own;
-                for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
-                    for &c in keys {
-                        let t = a.args().nth(c);
-                        let anchored = t.and_then(|t| t.var()).is_some_and(|x| if by_folder { folders.contains(&x) } else { own.contains(&x) });
-                        match (anchored, t.and_then(head_at)) {
-                            (true, _) => got.own = true,
-                            (false, Some(j)) if by_folder => {
-                                got.folder.insert(j);
-                            }
-                            (false, Some(j)) => {
-                                got.path.insert(j);
-                            }
-                            (false, None) => got.all = true,
-                        }
-                    }
-                }
-            }
-            if reach.get(head) != Some(&got) && got != Reach::default() {
-                reach.insert(head.to_owned(), got);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let scopes = Scopes { v: &local.v, fields: crate::code_rule_dsl::logic::plan::fields::Fields::of(local) };
+    let named = scopes.named();
+    let reach = scopes.reach(&named);
     rels.iter()
         .filter_map(|rel| {
             let r = reach.get(rel.as_str())?;
@@ -337,6 +231,155 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             Some((rel.clone(), if all { SettingsScope::All } else { SettingsScope::OwnFile }))
         })
         .collect()
+}
+
+/// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
+#[derive(Clone, Default, PartialEq)]
+struct Reach {
+    all: bool,
+    own: bool,
+    folder: BTreeSet<usize>,
+    path: BTreeSet<usize>,
+}
+
+/// A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name.
+struct Anchors {
+    own: HashSet<crate::code_rule_dsl::logic::program_image::Slot>,
+    folders: HashSet<crate::code_rule_dsl::logic::program_image::Slot>,
+}
+
+/// `settings_scopes`' program, and each relation's placement as its `.decl` gives it (decision 0710).
+struct Scopes<'v> {
+    v: &'v crate::code_rule_dsl::logic::program_image::Version,
+    fields: Option<crate::code_rule_dsl::logic::plan::fields::Fields<'v>>,
+}
+
+type RuleRef<'r> = crate::code_rule_dsl::logic::program_image::RuleRef<'r>;
+
+impl Scopes<'_> {
+    fn setting(&self, rel: &str) -> Option<crate::code_rule_dsl::typing::file_local::Setting> {
+        self.fields.as_ref().and_then(|f| crate::code_rule_dsl::typing::file_local::Setting::of(f.qualifiers_of(rel)))
+    }
+
+    /// A setting's own reach.
+    fn base(&self, rel: &str) -> Option<Reach> {
+        use crate::code_rule_dsl::typing::file_local::Setting;
+        match self.setting(rel)? {
+            Setting::Keyed => Some(Reach { folder: [0].into(), ..Reach::default() }),
+            Setting::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
+            // One value for the run (`file`, `env`): its rows are every file's (review B70: a file added beside an
+            // unedited one changes what that one finds).
+            Setting::Whole => Some(Reach { all: true, ..Reach::default() }),
+        }
+    }
+
+    /// The column of a `by_path c` setting naming the key its rows read.
+    fn hop(&self, rel: &str) -> Option<usize> {
+        match self.setting(rel) {
+            Some(crate::code_rule_dsl::typing::file_local::Setting::ByPath(c)) => c,
+            _ => None,
+        }
+    }
+
+    /// Rule `rule`'s anchors: the folders or targets are read at its own path (`package_for(p, dir)`,
+    /// `tsx_names__target_at(p, s, t)`), or carried in a column of a derived relation made from them (`named`:
+    /// `target(d, s, t)` from `tsx_names__target_at` at its own path).
+    fn anchors(&self, rule: &RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>) -> Anchors {
+        let v = self.v;
+        let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).collect();
+        let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
+        let at_own_path = |a: &&crate::code_rule_dsl::logic::program_image::AtomRef<'_>| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p));
+        let hopped = atoms.iter().filter(at_own_path).filter_map(|a| self.hop(v.rel_name(a.rel())).and_then(|c| a.args().nth(c)?.var()));
+        let carried = atoms.iter().filter_map(|a| named.get(v.rel_name(a.rel())).map(|cols| (a, cols))).flat_map(|(a, cols)| cols.iter().filter_map(|&c| a.args().nth(c)?.var()));
+        let folders = hopped.chain(carried).collect();
+        Anchors { own, folders }
+    }
+
+    /// The columns each derived relation carries an anchor in, to their fixed point: a read is decided by its key's
+    /// anchor, which must be known when it is. A column is a derived relation's anchor when every rule of it fills the
+    /// column from one (review F3: a rule filling it from anything else makes it any file's key), so the fixed point is
+    /// the greatest: every column at first, each round keeping the columns all of a head's rules fill so, and a
+    /// recursive rule carrying its own anchor keeps it.
+    fn named(&self) -> HashMap<String, BTreeSet<usize>> {
+        let v = self.v;
+        let mut named: HashMap<String, BTreeSet<usize>> = HashMap::new();
+        for rule in v.rules() {
+            named.entry(v.rel_name(rule.head().rel()).to_owned()).or_insert_with(|| (0..rule.head().args().count()).collect());
+        }
+        loop {
+            let mut kept: HashMap<String, BTreeSet<usize>> = HashMap::new();
+            for rule in v.rules() {
+                let folders = self.anchors(&rule, &named).folders;
+                let cols: BTreeSet<usize> = rule.head().args().enumerate().filter(|(_, t)| t.var().is_some_and(|x| folders.contains(&x))).map(|(j, _)| j).collect();
+                let head = v.rel_name(rule.head().rel()).to_owned();
+                let both = kept.get(&head).map_or(cols.clone(), |had| had.intersection(&cols).copied().collect());
+                kept.insert(head, both);
+            }
+            if kept == named {
+                named.retain(|_, cols| !cols.is_empty());
+                return named;
+            }
+            named = kept;
+        }
+    }
+
+    /// Each relation's reach, to its fixed point.
+    fn reach(&self, named: &HashMap<String, BTreeSet<usize>>) -> HashMap<String, Reach> {
+        let mut reach: HashMap<String, Reach> = HashMap::new();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for rule in self.v.rules() {
+                let head = self.v.rel_name(rule.head().rel());
+                let got = self.rule_reach(&rule, named, &reach);
+                if reach.get(head) != Some(&got) && got != Reach::default() {
+                    reach.insert(head.to_owned(), got);
+                    changed = true;
+                }
+            }
+        }
+        reach
+    }
+
+    /// Rule `rule`'s head's reach, its rules' so far (`reach`) and this one's: per read of a setting or a relation
+    /// reaching one, its own file's where the key is an anchor, the head's column where the head carries the key, and
+    /// any file's else.
+    fn rule_reach(&self, rule: &RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>, reach: &HashMap<String, Reach>) -> Reach {
+        let head_at = |t: crate::code_rule_dsl::logic::program_image::TermRef<'_>| -> Option<usize> { t.var().and_then(|s| rule.head().args().position(|h| h.var() == Some(s))) };
+        let anchors = self.anchors(rule, named);
+        let mut got = reach.get(self.v.rel_name(rule.head().rel())).cloned().unwrap_or_default();
+        for a in rule.body().filter_map(|l| l.atom()) {
+            let rel = self.v.rel_name(a.rel());
+            let Some(r) = self.base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
+            got.all |= r.all;
+            got.own |= r.own;
+            for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
+                for t in keys.iter().map(|&c| a.args().nth(c)) {
+                    let anchor = if by_folder { &anchors.folders } else { &anchors.own };
+                    let anchored = t.and_then(|t| t.var()).is_some_and(|x| anchor.contains(&x));
+                    got.key(anchored, t.and_then(head_at), by_folder);
+                }
+            }
+        }
+        got
+    }
+}
+
+impl Reach {
+    /// A read of a key: its own file's where `anchored`, else through the head's column `head` if it carries it, else
+    /// any file's.
+    fn key(&mut self, anchored: bool, head: Option<usize>, by_folder: bool) {
+        match (anchored, head) {
+            (true, _) => self.own = true,
+            (false, Some(j)) if by_folder => {
+                self.folder.insert(j);
+            }
+            (false, Some(j)) => {
+                self.path.insert(j);
+            }
+            (false, None) => self.all = true,
+        }
+    }
 }
 
 /// The digests of the project's settings rows (decision 0665): all of them, and each file's own (`SettingsScope`), by
