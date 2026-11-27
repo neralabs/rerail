@@ -1817,6 +1817,22 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let why = if !walked { "its columns or dead rows" } else if v.src.has_walk().is_none() { "no walk of its source" } else { "walked" };
         crate::code_rule_dsl::prof::count_named_args(format_args!("device.walk {why}: {} by {cols:?} ndead {} src {}", of.chars().take(60).collect::<String>(), rel.ndead, v.src.as_any().map_or("?", |a| if a.is::<crate::code_rule_dsl::facts::vtab::syntax::within::Within>() { "Within" } else if a.is::<crate::code_rule_dsl::facts::vtab::syntax::values::Layered>() { "Layered" } else { "other" })), 1);
     }
+    // A measurement aid: a `node` view probed by its kind, by its source.
+    if crate::code_rule_dsl::logic::profile::on()
+        && let Some(v) = rel.view.as_ref()
+        && v.src.columns().get(2).is_some_and(|c| c == "kind")
+        && v.src.columns().len() == 5
+        && cols.iter().any(|&c| owner_col(rel, c) == 2)
+    {
+        use crate::code_rule_dsl::facts::vtab::syntax::values::Layered;
+        let src = v.src.as_any().map_or("?", |a| match a.downcast_ref::<Layered>() {
+            Some(l) if l.values_admitted() => "layered, values admitted",
+            Some(_) => "layered, none admitted",
+            None => "the batch's",
+        });
+        let by: Vec<usize> = cols.iter().map(|&c| owner_col(rel, c)).collect();
+        crate::code_rule_dsl::prof::count_named_args(format_args!("device.bykind {src} by {by:?} whole {}", v.whole()), rel.len());
+    }
     if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
         let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds, w.axis).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
         rep.in_place += 1;

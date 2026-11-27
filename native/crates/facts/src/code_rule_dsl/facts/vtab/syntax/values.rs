@@ -694,6 +694,10 @@ impl Layered {
         *held = (admitted, Arc::from(keys));
         Arc::clone(&held.1)
     }
+    /// Whether values with rows of this relation are admitted (`has_parts`): a measurement aid's question.
+    pub fn values_admitted(&self) -> bool {
+        self.has_parts()
+    }
     fn has_parts(&self) -> bool {
         let admitted = self.values.admitted() as u64;
         if admitted == 0 {
