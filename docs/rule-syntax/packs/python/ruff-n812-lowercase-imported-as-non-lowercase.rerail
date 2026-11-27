@@ -17,3 +17,17 @@
     suppress ruff "N812"
 N812(i, x, a) :- alias_import(i, x0, a0), x = @nfkc(x0), a = @nfkc(a0), pep8_cased_lower(i, x), !pep8_lower(i, a),
     !pep8_ignored(i, x), !pep8_ignored(i, a).
+
+.test alias_case_uses_the_linters_unicode_version exactly
+    .fixture "app/aliases.py" ```
+        from mod import foo as lower
+        from mod import foo as Lower
+        from mod import foo as ˤx
+        from mod import foo as 日本
+        from mod import foo as ǅx
+        ```
+    .expect N812 at "app/aliases.py":2
+    .expect N812 at "app/aliases.py":3
+    .expect N812 at "app/aliases.py":4
+    .expect N812 at "app/aliases.py":5
+.end

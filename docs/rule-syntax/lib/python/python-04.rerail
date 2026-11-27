@@ -92,8 +92,6 @@ cond_part(m, e, i) :- kind(m, "conditional_expression"), child(m, e, j), !trivia
 .decl arg_of(c: node, x: symbol, v: node)
 arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, _), call_kwarg(c, x, v).
 arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, i), !call_kwarg(c, x, _), ruff_arg(c, i, v).
-arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, _), ann_kwarg(c, x, v).
-arg_of(c, x, v) :- ann_call_q(c, q), param_slot(q, x, i), in_ann_tree(c), !ann_kwarg(c, x, _), ann_arg(c, i, v).
 
 // ---- string annotations ------------------------------------------------------------------------------------------
 // ann_tree(r): r is the root of the parsed tree of a string Ruff reads as a type (core's string_annotation:
@@ -126,23 +124,3 @@ ann_host_up(e, h) :- in_ann_tree(e), host_node(e, h).
 ann_host_up(e, h) :- ann_host_up(e, m), host_node(m, h).
 .decl file_binds(d: number, x: symbol)
 file_binds(d, x) :- bound_in(s, x), docof(s, d).
-// The arguments of a call in an ann_tree. There kind(n, k) has no row for a node n bound by field (an engine gap:
-// after field(c, "arguments", al), kind(al, "argument_list") fails, node(_, al, "argument_list", _, _) holds), so
-// python/ruff's call_item, ruff_arg and call_nargs see no arguments there; these read them through node rows.
-//   ann_item(c, a, j)    a is the j-th item of call c's argument list, as call_item
-//   ann_arg(c, i, a)     a is c's i-th positional argument (none after a `*args`), as ruff_arg
-//   ann_nitems(c, n)     c has n arguments, positional and keyword, a lone generator one
-.decl ann_item(c: node, a: node, j: number)
-ann_item(c, a, j) :- in_ann_tree(c), kind(c, "call"), field(c, "arguments", al), node(_, al, "argument_list", _, _),
-    child(al, a, j), !trivia(a).
-.decl ann_arg(c: node, i: number, a: node)
-ann_arg(c, i, a) :- ann_item(c, a, j), !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
-    count : { ann_item(c, s, j2), j2 < j, kind(s, "list_splat") } = 0,
-    i = count : { ann_item(c, b, j3), j3 < j, !kind(b, "keyword_argument"), !kind(b, "dictionary_splat") }.
-ann_arg(c, 0, g) :- in_ann_tree(c), kind(c, "call"), field(c, "arguments", g), node(_, g, "generator_expression", _, _).
-.decl ann_nitems(c: node, n: number)
-ann_nitems(c, n) :- in_ann_tree(c), kind(c, "call"), field(c, "arguments", al), node(_, al, "argument_list", _, _),
-    n = count : { ann_item(c, _, _) }.
-ann_nitems(c, 1) :- in_ann_tree(c), kind(c, "call"), field(c, "arguments", g), node(_, g, "generator_expression", _, _).
-.decl ann_kwarg(c: node, x: symbol, v: node)
-ann_kwarg(c, x, v) :- ann_item(c, a, _), kind(a, "keyword_argument"), field(a, "name", n), text(n, x), field(a, "value", v).

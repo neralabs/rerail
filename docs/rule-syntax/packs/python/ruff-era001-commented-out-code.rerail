@@ -15,93 +15,37 @@
 //   # x = foo(1, 2)         ← ERA001
 //   # This is a (real) comment.    not reported: `This is`
 //   # Issue #999: not code         not reported: `#9`
-// Ruff's last test is its parser on the text. Until a native one exists (NOTES: py_parses), it is approximated:
-// brackets and quotes balance (to a depth of five), and the text has the shape of a Python statement in a small
-// grammar of expressions (names, literals, brackets, calls, attributes, operators, lambda, `x if c else y`),
-// targets, simple statements and one-line compound statements. Text over 200 characters is not tested.
+// Ruff's final test is its own Python parser, through @py_parses. No bound on line length or nesting, and no
+// separate expression grammar that could mistake prose for Python.
 #include "python/misc2-noqa.rerail"
 //   own_line_comment(c): no token comes before comment c on its line
 
 .violation ERA001(at: node) code "ERA001"
     "Delete this commented-out code; version control keeps the history. Leave it only if the comment is prose or an example that merely looks like code."
     suppress ruff "ERA001"
-ERA001(c) :- era_line(c, l), own_line_comment(c), !era_script(c), !era_prose(c),
-    (match("[\\s\\S]*\\\\", l) ; era_header(c) ; era_parses(c)).
+.decl era_candidate(c: node, l: symbol)
+era_candidate(c, l) :- era_line(c, l), own_line_comment(c), !era_script(c), !era_prose(c).
+ERA001(c) :- era_candidate(c, l), (match("[\\s\\S]*\\\\", l) ; era_header(c)).
+// Parse only the remaining candidates, not prose, inline comments, pragmas or known partial statements.
+ERA001(c) :- era_candidate(c, l), !match("[\\s\\S]*\\\\", l), !era_header(c), @py_parses(l) = 1.
 
 // era_line(c, l): comment c's text without its leading `#`s and spaces, nor trailing spaces, when it has a code sign.
 .decl era_line(c: node, l: symbol)
-era_line(c, l) :- comment(c, _), text(c, s), match("[#\\s]*(?<l>[\\s\\S]*?)\\s*", s),
+era_line(c, l) :- comment(c, _), text(c, s), match("[# \\t\\f]*(?<l>[\\s\\S]*?)\\s*", s),
     match("[\\s\\S]*([()\\[\\]{}:=%]|return|break|continue|import)[\\s\\S]*", l).
+// Ruff's tokenizer distinguishes identifiers from string prefixes and quoted text. A regex word scan cannot:
+// `exceptions we've seen, though: ...` starts with two names despite the apostrophe after `we`.
 .decl era_prose(n: node)
-// Two names in a row, neither a keyword, before any string or `#`, the second not followed by a quote: prose
-// (`see the docs`). The words are read one at a time (era_word), so every adjacent pair is tried.
-era_prose(n) :- era_word(n, a, s, r), s != "", match("[A-Za-z_][\\s\\S]*", a), !era_kw(a), !era_kw(b),
-    match("(?<b>[A-Za-z_][A-Za-z0-9_]*)(?<t>[\\s\\S]*)", r), !match("['\"][\\s\\S]*", t).
-// era_word(n, w, s, r): in the code part of comment n's line l (before any quote or `#`), a word w (letters, digits, `_`), then
-// the blanks s after it, then the rest r.
-.decl era_word(n: node, w: symbol, s: symbol, r: symbol)
-era_word(n, w, s, r) :- era_rest(n, r0), match("[^A-Za-z0-9_'\"#]*(?<w>[A-Za-z0-9_]+)(?<s>[ \\t]*)(?<r>[\\s\\S]*)", r0).
-.decl era_rest(n: node, r: symbol)
-era_rest(n, l) :- era_line(n, l).
-era_rest(n, r) :- era_word(n, _, _, r).
-// era_kw(w): a keyword, soft ones and `lazy` included; era_hard(w): the same without `lazy`.
-.decl era_hard(w: symbol)
-era_hard("and"). era_hard("as"). era_hard("assert"). era_hard("async"). era_hard("await"). era_hard("break").
-era_hard("case"). era_hard("class"). era_hard("continue"). era_hard("def"). era_hard("del"). era_hard("elif").
-era_hard("else"). era_hard("except"). era_hard("finally"). era_hard("for"). era_hard("from"). era_hard("global").
-era_hard("if"). era_hard("import"). era_hard("in"). era_hard("is"). era_hard("lambda"). era_hard("match").
-era_hard("nonlocal"). era_hard("not"). era_hard("or"). era_hard("pass"). era_hard("raise"). era_hard("return").
-era_hard("try"). era_hard("type"). era_hard("while"). era_hard("with"). era_hard("yield").
-.decl era_kw(w: symbol)
-era_kw(w) :- era_hard(w).
-era_kw("lazy").
+era_prose(n) :- era_line(n, l), @py_consecutive_names(l) = 1.
 era_prose(n) :- era_line(n, l), match("(?:TODO|FIXME|XXX)(?:[ :(][\\s\\S]*)?", l).
 era_prose(n) :- era_line(n, l), match("(?:pyright|pyrefly|ruff\\s*:\\s*(?:disable|enable|ignore|file-ignore)|mypy:|type:\\s*ignore|ty:\\s*ignore|SPDX-License-Identifier:|fmt:\\s*(?:on|off|skip)|region|endregion|[nN][oO][qQ][aA]|[pP][yY][lL][iI][nN][tT]|[nN][oO][sS][eE][cC]|[iI][sS][oO][rR][tT]:\\s*(?:on|off|skip|skip_file|split|dont-add-imports)|(?:[eE][nN])?[cC][oO][dD][iI][nN][gG][:=][ \\t]*[-_.A-Za-z0-9]+|language=[-_.a-zA-Z0-9]+)[\\s\\S]*", l).
-era_prose(n) :- era_line(n, l), match("[\\s\\S]*#[0-9][\\s\\S]*", l).
-// era_header(n): comment n's line is one of Ruff's POSITIVE_CASES. The line's tests (era_prose, era_word, era_rest,
-// era_header, era_parses, era_bad) are keyed by the comment: keyed by its text, each was a table of every file's
-// comments, joined by text in the cross-file part (decision 0677).
+era_prose(n) :- era_line(n, l), match("[\\s\\S]*#\\d[\\s\\S]*", l).
+// era_header(n): comment n's line is one of Ruff's POSITIVE_CASES. Tests stay keyed by comment, not by text,
+// so no table of every file's comments crosses into the cross-file part (decision 0677).
 .decl era_header(n: node)
 era_header(n) :- era_line(n, l), (match("(?:elif\\s+.*\\s*:.*|else\\s*:.*|try\\s*:.*|finally\\s*:.*|except.*:.*|case\\s+.*\\s*:.*)", l) ;
     match("['\"]\\w+['\"]\\s*:.+[,{]\\s*(#.*)?", l) ; match("(?:[(\\[]\\s*)?(?:\\w+\\s*,\\s*)*\\w+\\s*([)\\]]\\s*)?=.*[(\\[{]\\s*(#.*)?", l) ;
     match("[()\\[\\]{}\\s]+\\s*(#.*)?", l)).
-// era_parses(n): comment n's line l balances and has a statement's shape (the approximation of Ruff's parse_module(l).is_ok()).
-.decl era_parses(n: node)
-era_parses(n) :- era_line(n, l), strlen(l) <= 200, era_bal(4, b), match(cat(b, "(?:#.*)?"), l), era_re("STMT", r),
-    match(r, l), !era_bad(n).
-// PEP 701 permits the quote that delimits an f-string inside its replacement field. The small string balancer
-// cannot model that nesting, but this common assignment form still has a closed replacement field and outer quote.
-era_parses(n) :- era_line(n, l), match("[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[fF](?:\"\\{[^\\n]+\\}\"|'\\{[^\\n]+\\}')", l).
-// era_bad(n): in comment n's line, before any string or `#`, two operands in a row (a number or a closing bracket, then a name or
-// number: `OK (88 characters)`, `foo() bar`), or an operator before a keyword that cannot start an operand
-// (`[useless-else-on-loop]`, `(and x)`).
-.decl era_bad(n: node)
-era_bad(n) :- era_line(n, l), match("(?<c>[^'\"#]*)[\\s\\S]*", l),
-    match_all("(?:(?:^|[^A-Za-z0-9_.])[0-9][A-Za-z0-9_.]*|[)\\]}])[ \\t]+(?<w>[A-Za-z0-9_]+)", c), !era_hard(w).
-era_bad(n) :- era_line(n, l), match("[^'\"#]*?[-+*/%&|^@<>=~,(\\[{][ \\t]*(?:and|or|else|elif|in|is|if|for|from|as|import|def|class|return|pass|break|continue|raise|del|global|nonlocal|assert|try|except|finally|while|with)(?:[^A-Za-z0-9_][\\s\\S]*)?", l).
-// era_bal(i, r): r matches text whose brackets nest at most i + 1 deep and balance, strings closed, no `#`.
-.decl era_bal(i: number, r: symbol)
-era_bal(0, "(?:[^()\\[\\]{}'\"#]|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")*").
-era_bal(i + 1, cat("(?:[^()\\[\\]{}'\"#]|'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\"|\\(", b, "\\)|\\[", b,
-    "\\]|\\{", b, "\\})*")) :- era_bal(i, b), i < 4.
-// era_re(k, r): the statement grammar, piece by piece: N name, NUM number, STR string, OPD operand (an atom with
-// its calls, subscripts and attributes), TGT assignment target, BIN binary operator, EXPR, LIST (a tuple), TGTS,
-// IMP import, KW keyword statement, SIMPLE simple statement, HEAD one-line compound statement, STMT the line.
-.decl era_re(k: symbol, r: symbol)
-era_re("N", "[A-Za-z_][A-Za-z0-9_]*").
-era_re("NUM", "(?:[0-9][0-9_]*(?:\\.[0-9_]*)?|\\.[0-9]+)(?:[eE][-+]?[0-9]+)?[jJ]?").
-era_re("STR", "[rRbBuUfF]{0,2}(?:'(?:[^'\\\\]|\\\\.)*'|\"(?:[^\"\\\\]|\\\\.)*\")").
-era_re("OPD", cat("(?:(?:await\\s+|not\\s+|[-+~]\\s*)*(?:\\.\\.\\.|", r_n, "|", r_num, "|", r_str, "(?:\\s*", r_str, ")*|\\(.*\\)|\\[.*\\]|\\{.*\\})(?:\\s*(?:\\.\\s*", r_n, "|\\(.*\\)|\\[.*\\]))*)")) :- era_re("N", r_n), era_re("NUM", r_num), era_re("STR", r_str).
-era_re("TGT", cat("(?:\\*?(?:", r_n, "|\\(.*\\)|\\[.*\\])(?:\\s*(?:\\.\\s*", r_n, "|\\[.*\\]|\\(.*\\)\\s*(?:\\.\\s*", r_n, "|\\[.*\\])))*)")) :- era_re("N", r_n).
-era_re("BIN", "(?:[-+*/%&|^@<>]|//|\\*\\*|<<|>>|==|!=|<=|>=|not\\s+in\\b|in\\b|is\\s+not\\b|is\\b|and\\b|or\\b|if\\b|else\\b)").
-era_re("EXPR", cat("(?:(?:lambda\\b[^:]*:\\s*)?", r_opd, "(?:\\s*", r_bin, "\\s*(?:lambda\\b[^:]*:\\s*)?", r_opd, ")*)")) :- era_re("OPD", r_opd), era_re("BIN", r_bin).
-era_re("LIST", cat("(?:\\*?", r_expr, "(?:\\s*,\\s*\\*?", r_expr, ")*(?:\\s*,)?)")) :- era_re("EXPR", r_expr).
-era_re("TGTS", cat("(?:", r_tgt, "(?:\\s*,\\s*", r_tgt, ")*(?:\\s*,)?)")) :- era_re("TGT", r_tgt).
-era_re("IMP", cat("(?:(?:lazy\\s+)?import\\s+[\\w.]+(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*[\\w.]+(?:\\s+as\\s+", r_n, ")?)*|(?:lazy\\s+)?from\\s+\\.*[\\w.]*\\s+import\\s+(?:\\*|\\(?\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?(?:\\s*,\\s*", r_n, "(?:\\s+as\\s+", r_n, ")?)*\\s*,?\\s*\\)?))")) :- era_re("N", r_n).
-era_re("KW", cat("(?:return(?:\\s+", r_list, ")?|pass|break|continue|raise(?:\\s+", r_expr, "(?:\\s+from\\s+", r_expr, ")?)?|del\\s+", r_list, "|(?:global|nonlocal)\\s+", r_n, "(?:\\s*,\\s*", r_n, ")*|assert\\s+", r_expr, "(?:\\s*,\\s*", r_expr, ")?|yield(?:\\s+from)?(?:\\s+", r_list, ")?)")) :- era_re("LIST", r_list), era_re("EXPR", r_expr), era_re("N", r_n).
-era_re("SIMPLE", cat("(?:", r_list, "|(?:", r_tgts, "\\s*=\\s*)+(?:", r_list, "|yield\\b.*)|", r_tgt, "\\s*(?:[-+*/%&|^@]|//|\\*\\*|<<|>>)=\\s*", r_list, "|", r_tgt, "\\s*:\\s*", r_expr, "(?:\\s*=\\s*", r_list, ")?|", r_kw, "|", r_imp, ")")) :- era_re("LIST", r_list), era_re("TGTS", r_tgts), era_re("TGT", r_tgt), era_re("EXPR", r_expr), era_re("KW", r_kw), era_re("IMP", r_imp).
-era_re("HEAD", cat("(?:(?:if|elif|while)\\s+", r_expr, "|(?:async\\s+)?for\\s+", r_tgts, "\\s+in\\s+", r_list, "|(?:async\\s+)?with\\s+", r_expr, "(?:\\s+as\\s+", r_tgt, ")?(?:\\s*,\\s*", r_expr, "(?:\\s+as\\s+", r_tgt, ")?)*|(?:async\\s+)?def\\s+", r_n, "(?:\\s*\\[.*\\])?\\s*\\(.*\\)(?:\\s*->\\s*", r_expr, ")?|class\\s+", r_n, "(?:\\s*\\[.*\\])?(?:\\s*\\(.*\\))?)\\s*:\\s*", r_simple)) :- era_re("EXPR", r_expr), era_re("TGTS", r_tgts), era_re("LIST", r_list), era_re("TGT", r_tgt), era_re("N", r_n), era_re("SIMPLE", r_simple).
-era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\s*;?)\\s*(?:#.*)?")) :- era_re("HEAD", r_head), era_re("SIMPLE", r_simple).
 
 // era_script(c): c lies in a PEP 723 block: a line `# /// script`, then lines `#` or `# …` (from column 0) up to the
 // last `# ///` before the first other line.
@@ -116,3 +60,26 @@ era_run(d, l0, l0) :- era_cline(d, l0, "# /// script").
 era_run(d, l0, l + 1) :- era_run(d, l0, l), era_cline(d, l + 1, _).
 .decl era_block(d: number, l0: number, e: number)
 era_block(d, l0, e) :- era_run(d, l0, _), e = max l : { era_run(d, l0, l), era_cline(d, l, "# ///") }.
+
+.test comments_are_parsed_not_guessed exactly
+    .fixture "app/comments.py" ```
+        # SIM103 (but not fixable)
+        # (See: http://example.test/revision)
+        # x = 1
+        # import os
+        # x = (((((((((((1)))))))))))
+        # value = "a valid assignment with a long literal that is intentionally longer than the old two hundred character heuristic, but remains ordinary Python code regardless of its length; the real Python parser accepts this without an arbitrary rule-side cutoff."
+        # This is a (real) comment.
+        # x = 1  #٣
+        # 'month'. Eg: "Title must be unique for pub_date year"
+        # exceptions we've seen, though: this call failing in other ways can reveal
+        # x = "hello world"
+        # x = 1
+        ```
+    .expect ERA001 at "app/comments.py":3
+    .expect ERA001 at "app/comments.py":4
+    .expect ERA001 at "app/comments.py":5
+    .expect ERA001 at "app/comments.py":6
+    .expect ERA001 at "app/comments.py":9
+    .expect ERA001 at "app/comments.py":11
+.end

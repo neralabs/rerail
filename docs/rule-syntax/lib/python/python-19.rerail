@@ -48,15 +48,15 @@ pep8_word(i, a) :- alias_import(i, _, a0), a = @nfkc(a0).
 
 // ---- 2. case -----------------------------------------------------------------------------------------------------
 .decl pep8_lower(n: node, x: symbol)
-pep8_lower(n, x) :- pep8_word(n, x), match("[\\p{Lowercase}\\P{Alphabetic}]*", x).
+pep8_lower(n, x) :- pep8_word(n, x), @is_lowercase(x) = 1.
 .decl pep8_cased_lower(n: node, x: symbol)
-pep8_cased_lower(n, x) :- pep8_word(n, x), match("\\P{Uppercase}*\\p{Lowercase}\\P{Uppercase}*", x).
+pep8_cased_lower(n, x) :- pep8_word(n, x), @is_cased_lowercase(x) = 1.
 .decl pep8_cased_upper(n: node, x: symbol)
-pep8_cased_upper(n, x) :- pep8_word(n, x), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", x).
+pep8_cased_upper(n, x) :- pep8_word(n, x), @is_cased_uppercase(x) = 1.
 .decl pep8_camel(n: node, x: symbol)
 pep8_camel(n, x) :- pep8_word(n, x), !pep8_cased_lower(n, x), !pep8_cased_upper(n, x), !contains("_", x).
 .decl pep8_capwords(n: node, x: symbol)
-pep8_capwords(n, x) :- pep8_word(n, x), match("_*\\p{Uppercase}[^_]*", x).
+pep8_capwords(n, x) :- pep8_word(n, x), match("_*(?<first>[^_])[^_]*", x), @is_cased_uppercase(first) = 1.
 
 // ---- 3. options --------------------------------------------------------------------------------------------------
 .decl pep8_ignored(n: node, x: symbol)

@@ -102,6 +102,14 @@ type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).
             pass
         except ValueError:
             del List
+        ```
+    .fixture "j.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
         for _ in ():
             pass
         else:
@@ -110,6 +118,7 @@ type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).
     .expect UP006 at "d.py":5
     .expect UP006 at "g.py":6
     .expect UP006 at "i.py":5
+    .expect UP006 at "j.py":5
 .end
 
 // A singledispatch implementation's non-variadic parameters and its return are runtime-required annotations, no

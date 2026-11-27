@@ -58,10 +58,10 @@ binding of the name shadows another binding of the same scope. So a name the sta
 
 ## ruff-up030-format-literals
 
-Followed Ruff: a `.format` call inside a string annotation (`x: "'{1} {0}'.format(a, b)"`) is reported. The
-library's `format_call` reads `plain_str`, which reads `value`, and the engine gives `str` but no `value` rows for
-literals in a guest document (a tree parsed from a string annotation). New library `lib/python/python-12.rerail`
-adds `plain_str` rows from `str` for those literals (UP030, UP031, UP032 include it).
+Followed Ruff: a `.format` call inside a string annotation (`x: "'{1} {0}'.format(a, b)"`) is reported.
+`lib/python/python-12.rerail` explicitly seeds `plain_str` from parsed annotations, which ordinary syntax queries
+do not see. It now reads native `value`, as file literals do; the old `str` fallback is removed. UP030, UP031
+and UP032 retain their corpus results with the native reader.
 
 ## ruff-up031-printf-string-formatting
 
@@ -107,8 +107,8 @@ is on line 4 (probe UP033-comments-around-callee.py).
 
 ## Library and engine
 
-- New `lib/python/python-12.rerail`: `plain_str` rows for literals of string annotations, from `str`. Proposed
-  instead (engine): `value` rows for literals in guest documents, as for a file's own; the file then goes.
+- `lib/python/python-12.rerail` is an annotation-domain opt-in for `plain_str`, using native `value` rows from
+  guest tapes. It is no longer a workaround for missing guest values or a second literal decoder.
 - UP031 and UP032 add seed clauses to library relations (`pct_value`, `brace_value`) to parse each piece of
   adjacent literals; UP032 adds a `format_call` clause for a parenthesized callee. Proposed (library): a
   `pct_piece`/`brace_piece` view in pyflakes-format and the parenthesized callee in `format_call` itself.

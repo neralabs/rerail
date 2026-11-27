@@ -64,24 +64,23 @@ and RUF061 `arg_of`, RUF060, RUF061 and RUF063 the string-annotation helpers, RU
 
 ### RUF063 access-annotations-from-class-dict — follows Ruff
 
-- String annotations (probe `RUF063-string-annotations-and-fstrings.py`, 10 lines), read through children and the
-  literal's text because of the engine gaps below.
+- String annotations (probe `RUF063-string-annotations-and-fstrings.py`, 10 lines) use the same fields, kinds,
+  arguments and native literal values as file expressions.
 
 ### RUF064 non-octal-permissions — follows Ruff
 
 - A parenthesised method callee: `((Path("x")).touch)(755)`, `(p.mkdir)(755, parent_mode=(511))` (probe
   `RUF064-continuation-and-parenthesized-callees.py:29, 33`).
 
-## Engine gaps (found here)
+## Engine integration
 
-1. In a guest tree (a string annotation parsed with `parsed(s, "annotation", r)`), `kind(n, k)` has no row for a
-   node `n` bound by `field`: `field(c, "function", f), kind(f, "attribute")` fails while
-   `node(_, f, "attribute", _, _)`, `child(c, f, 0), kind(f, "attribute")`, `docof(f, d)` and `within(f, r)` hold.
-   So python/ruff's `call_item`, `ruff_arg`, `call_nargs` (vacuously 0), `attr_of`, `unparen` see nothing there.
-   python-04 reads guest calls through `node` rows (`ann_item`, `ann_arg`, `ann_nitems`, `ann_kwarg`).
-2. In a guest tree `value(s, v)` has no row for a string, so `plain_str` fails; RUF063 tests the literal's text.
-3. python/names opens no scope for a guest outside an annotation position (`cast("T", x)`), so `call_q` resolves
-   nothing there; python-04's `ann_call_q` resolves through the file's module-level imports and builtins.
+The native AST wave now runs optimized `kind`/`field` matchers over parsed Python guests, identified by document
+key rather than shared facts. Guest documents also retain the tape needed for literal values. The `ann_item`,
+`ann_arg`, `ann_nitems` and `ann_kwarg` workarounds and RUF063's child-walk/text-literal branches are removed;
+the ordinary argument and value helpers cover annotations. RUF060 and RUF063 remain equivalent on the corpora.
+
+python/names still opens no scope for a guest outside an annotation position (`cast("T", x)`), so python-04's
+`ann_call_q` resolves through the file's module-level imports and builtins.
 
 ## Library changes proposed (existing files)
 
@@ -90,4 +89,3 @@ and RUF061 `arg_of`, RUF060, RUF061 and RUF063 the string-annotation helpers, RU
   (`cond_part` here counts past it).
 - `python/ruff.rerail` `empty_string`: a raw literal's `\` + newline is text (`rf"\⏎"` is not empty).
 - `python/ruff.rerail`: an `arg_of` (keyword first) beside `call_param`, which unions both.
-- With gap 1 fixed in the engine, `ann_item`/`ann_arg`/`ann_nitems`/`ann_kwarg` and RUF063's guest clauses go.

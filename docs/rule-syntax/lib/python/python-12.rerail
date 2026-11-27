@@ -1,22 +1,11 @@
-// python/python-12: string values inside string annotations, for Ruff's format-string rules (UP030, UP031, UP032).
+// python/python-12: opts Ruff's formatting rules (UP030–UP032) into string values inside parsed type definitions.
 //
-// Interface
-//   plain_str(e, v)      (python/ast) gains rows for str literals inside a tree parsed from a string annotation
-//                        (names' parsed_in), where the engine gives `str` but no `value` rows. Every rule built on
-//                        plain_str (format_call, percent_fmt, str_lit) then sees the code of string annotations, as
-//                        Ruff, which checks a string annotation's expression like any other.
-//
-// Python background
-//   - Ruff parses `x: "'{1} {0}'.format(a, b)"` and runs its expression rules on what it finds; the inner
-//     `'{1} {0}'` is a plain str literal there. The guest is parsed from the decoded string, so its literals'
-//     `str` is their decoded value, which is what `value` gives on a file's own literals.
-//
-//   x: "'{1} {0}'.format(a, b)"      plain_str(<'{1} {0}'>, "{1} {0}")  → UP030
-//   y: "'%s' % a"                    plain_str(<'%s'>, "%s")            → UP031
-// Proposed instead: `value` rows for guest documents' literals (NOTES-python-12.md); this file then goes.
+// Interface: python/ast's plain_str(e, v) gains an explicit parsed_in seed. Annotation documents are hidden from
+// ordinary syntax queries; this opt-in preserves the formatting rules' coverage without widening other policies.
+// Values use the same native reader as a file's literals, not a source-text fallback or a separate decoder.
 #include "python/ast.rerail"
 
-plain_str(e, v) :- parsed_in(e, _), string_form(e, "str"), !fstring(e), str(e, v).
+plain_str(e, v) :- parsed_in(e, _), string_form(e, "str"), !fstring(e), value(e, v).
 plain_str(e, v) :- parsed_in(e, _), kind(e, "concatenated_string"),
     count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0,
-    v = join x by i sep "" : { child(e, s, i), kind(s, "string"), str(s, x) }.
+    v = join x by i sep "" : { child(e, s, i), kind(s, "string"), value(s, x) }.

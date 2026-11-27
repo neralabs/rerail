@@ -33,16 +33,12 @@ in_empty(c, o) :- in_ann_tree(c), cmp(c, o, _, r), (o = "in" ; o = "not in"), em
 empty_coll(e) :- empty_literal(e, _), unparen(e, m), !str_node(m), !kind(m, "call").
 empty_coll(e) :- unparen(e, m), str_node(m), !tstring_lit(m), !str_nonempty(m).
 empty_coll(e) :- unparen(e, m), ann_call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), no_args(m).
-empty_coll(e) :- unparen(e, m), ann_call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), only_arg(m, a),
+empty_coll(e) :- unparen(e, m), ann_call_q(m, q), (empty_ctor(q, _) ; q = "builtins.bytearray"), call_only(m, a),
     empty_coll(a).
-// no_args(m), only_arg(m, a): call m has no arguments, or the one positional a; in a string annotation's tree
-// through python/python-04's ann_ helpers, as call_nargs and call_only see no arguments there.
+// The same native argument relations serve calls in files and parsed type strings.
 .decl no_args(m: node)
-no_args(m) :- call_nargs(m, 0), call_nkwargs(m, 0), !in_ann_tree(m).
-no_args(m) :- ann_nitems(m, 0).
-.decl only_arg(m: node, a: node)
-only_arg(m, a) :- call_only(m, a), !in_ann_tree(m).
-only_arg(m, a) :- ann_nitems(m, 1), ann_arg(m, 0, a).
+no_args(m) :- call_nargs(m, 0), call_nkwargs(m, 0).
+no_args(m) :- in_ann_tree(m), call_nargs(m, 0), call_nkwargs(m, 0).
 
 // str_nonempty(m): str, bytes or f-string literal m (adjacent ones too) has a character: one of its pieces does.
 .decl str_nonempty(m: node)
