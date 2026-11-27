@@ -38,7 +38,8 @@
 // Gaps: two wrappers around one endpoint in different files (`getUser` and `api.users.get`) are different
 // fetchers; the same fetcher with a transform outside `select` is the same one; `*` elements are not compared, so
 // ['user', id] and ['user', slug] meet; the v3 positional form `useQuery(key, fn)` is not read; a .ts and a .tsx
-// definition are not paired until the engine joins the two lanes.
+// definition are not paired until the engine joins the two lanes; two definitions whose queryFn start on one line (a
+// one-line `useQueries`) are one, by path and line, and are not paired.
 
 #include "tsx/names.rerail"
 

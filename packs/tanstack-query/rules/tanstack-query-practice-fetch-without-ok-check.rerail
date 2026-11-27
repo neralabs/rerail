@@ -181,8 +181,8 @@ fwoc_no_cors_pair(p) :- kind(p, "pair"), field(p, "key", k), text(k, "mode"), fi
 fwoc_unchecked(c) :- fwoc_consumed(c), !fwoc_escapes(c), !fwoc_checked(c), !fwoc_no_cors(c).
 
 // ---- library candidate: import resolution ----------------------------------------------------------------------
-// The runner binds no tsconfig_for/tsconfig_path (core.rerail's inputs), so tsx/names' target and sym_of cannot
-// cross files here. fwoc_resolve(d, s, d2): document d's import or re-export source s names workspace document d2:
+// Aliases are resolved by their shape, not yet through tsx/names' `target` and `sym_of` (which read the tsconfig).
+// fwoc_resolve(d, s, d2): document d's import or re-export source s names workspace document d2:
 //   "./a", "../a"            from d's directory, then .ts, .tsx, .js, .jsx, .mts, .mjs and index.* candidates
 //   "@/a", "~/a", "#/a"      by layout: a under any directory above d (src/a.ts for "@/*": ["./src/*"]), the
 //                            usual tsconfig `paths` alias; tsconfig.json itself is not read

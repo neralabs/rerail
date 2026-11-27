@@ -4,8 +4,8 @@ Found while writing the 12 `next-practice-*` rules and running them with `rerail
 apps of [README.md](README.md#the-corpus), 2026-11-24. Each section gives the symptom, a minimal repro, the rules it
 affects and what they do instead. Rule names drop the `next-practice-` prefix.
 
-The engine these packs need (Rerail 0.2.3) closes parts of the first three gaps; the rules still resolve imports by
-their own layout rules, and keep their workarounds until they move to it:
+The engine these packs need (Rerail 0.2.3) closes parts of the first three gaps. server-action-without-auth resolves
+imports through it (tsx/names' `target`); middleware-not-applied and the candidates keep their own resolvers:
 
 - engine-tsconfig: TypeScript's project reader makes `tsconfig`, `tsconfig_for` and `tsconfig_path` (decision 0710),
   the repository walk makes `package_export`, and a document's module is its path without its extension
@@ -61,7 +61,8 @@ workspace packages' `exports` through `package_field`. The single-file rules rea
 [NOTES-next.md](NOTES-next.md#library-proposed-ruleslibnextrerail); tsconfig `paths` other than `@/*` and `~/*`, and
 `baseUrl`-relative bare imports, are missed.
 
-**Closed by** engine-tsconfig (see the top); the rules keep their resolvers until they move to `target`/`sym_of`.
+**Closed by** engine-tsconfig (see the top). server-action-without-auth resolves through `target` and
+`tsx_names__exports`; middleware-not-applied and the candidates keep their resolvers until they move to them.
 
 ## 2. `.ts`, `.tsx` and `.js` files are separate runs
 

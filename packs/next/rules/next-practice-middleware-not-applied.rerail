@@ -26,8 +26,8 @@
 //   proxy.ts with "next": "catalog:" or "latest"                     not reported: version unknown
 // Gaps: a computed `config.matcher` (Next.js 15+ throws in dev and fails the build, so it is not silent); custom
 // `pageExtensions` (middleware.page.ts); a Next.js project with neither next.config.* nor a package.json naming next;
-// imports through tsconfig `paths` other than `@/`, `~/`, `#…/` style prefixes (no tsconfig facts in the runner);
-// dynamic `import()` of the file; a version given only by a workspace catalog.
+// imports through tsconfig `paths` other than `@/`, `~/`, `#…/` style prefixes (aliases are read by their shape, not
+// yet through tsx/names' `target`); dynamic `import()` of the file; a version given only by a workspace catalog.
 
 .violation MiddlewareNotApplied(at: node, file: symbol, want: symbol) "Next.js never loads this `{file}`: it reads the middleware/proxy file only from {want}, the folder that holds this app's `app`/`pages` directory, so every redirect, auth check, rewrite or header in it is silently skipped. Move the file to {want} (keeping the name and its `config`). Leave it where it is only if it is not this app's middleware: a helper another file imports, or a template your build copies into place."
 MiddlewareNotApplied(e, f, w) :- mna_entry(d, e, f, dir), !mna_imported(d, _), mna_home(r, h), !mna_custom_ext(r),
@@ -101,7 +101,7 @@ mna_home(r, s) :- mna_root(r), !mna_router(r), s = @join(r, "src"), mna_router(s
 mna_custom_ext(@dir(p)) :- kind(n, "property_identifier"), text(n, "pageExtensions"), docof(n, c), doc(c, p, _),
     mna_next_config(p).
 
-// library candidate: import resolution (no tsconfig facts in the runner, so aliases are read by their shape).
+// library candidate: import resolution (aliases are read by their shape, not yet through tsx/names' `target`).
 // mna_spec(i, s): import or re-export statement i names module s.
 .decl mna_spec(i: node, s: symbol)
 mna_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).

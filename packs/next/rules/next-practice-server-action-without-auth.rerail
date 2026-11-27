@@ -54,7 +54,8 @@
 // its name or folder says it is public. Whether the check's result is used, and whether it checks the right owner
 // (authorisation, not only authentication), is not seen: an action that calls auth() and ignores it passes. Imports
 // are resolved by tsx/names (the phase tsx_names): relative paths and tsconfig `paths` aliases (`@/`), with the
-// extensions and index files TypeScript tries; an ESM `./x.js` specifier for an `x.ts` source is not followed. The
+// extensions and index files TypeScript tries; an ESM `./x.js` specifier for an `x.ts` source is not followed, nor a
+// `paths` target under a `baseUrl` other than the tsconfig's folder (tsx_names joins it to the folder). The
 // call graph meets across files at symbols ("src/server/projects#archiveProject"), so two inline actions with the
 // same name and text in one file are one. The engine keeps .ts and .tsx files apart, so a call from one into the
 // other is not followed: a .tsx action is missed when its write is in a .ts module, and is reported if only a .ts
