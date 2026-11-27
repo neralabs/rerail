@@ -185,6 +185,220 @@ impl<'a> Bytes<'a> {
     }
 
     /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
+    /// `e` as one test of the byte at an offset from the byte asked (`prev`, `next` of a set of bytes).
+    fn single(&self, e: &Expr, depth: usize) -> Option<(i64, [bool; 256])> {
+        self.one_byte(e, depth).filter(|o| !o.out && o.req == 0).map(|o| (o.at, o.set))
+    }
+
+    /// `e` as a test of one byte at an offset (`OneByte`): `prev` and `next` of a set of bytes, their `~`, `&` and `|`.
+    fn one_byte(&self, e: &Expr, depth: usize) -> Option<OneByte> {
+        if depth > 48 {
+            return None;
+        }
+        if let Expr::Name(n) = e
+            && n.starts_with('\u{0}')
+        {
+            return None;
+        }
+        if let Some(b) = self.byte_set(e, 0) {
+            return Some(OneByte { at: 0, set: b, out: false, req: 0 });
+        }
+        match e {
+            Expr::Name(n) => self.one_byte(self.locals.get(n).or_else(|| self.defs.get(n))?, depth + 1),
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => {
+                let (x, k) = Bytes::shift(f, args)?;
+                let o = self.one_byte(&x, depth + 1)?;
+                // Past the file the shifted test is false; where its own holds there, it needs the byte it is
+                // shifted to in the file.
+                match (o.out, o.req) {
+                    (false, _) => Some(OneByte { at: o.at + k, set: o.set, out: false, req: 0 }),
+                    (true, 0) => Some(OneByte { at: o.at + k, set: o.set, out: true, req: k }),
+                    _ => None,
+                }
+            }
+            Expr::Not(a) => self.one_byte(a, depth + 1).map(|o| OneByte { set: o.set.map(|x| !x), out: !o.out, ..o }),
+            Expr::And(a, b) | Expr::Or(a, b) => {
+                let (x, y) = (self.one_byte(a, depth + 1)?, self.one_byte(b, depth + 1)?);
+                if x.at != y.at || x.req != y.req {
+                    return None;
+                }
+                let and = matches!(e, Expr::And(..));
+                Some(OneByte { at: x.at, set: std::array::from_fn(|c| if and { x.set[c] && y.set[c] } else { x.set[c] || y.set[c] }), out: if and { x.out && y.out } else { x.out || y.out }, req: x.req })
+            }
+            _ => None,
+        }
+    }
+
+    /// `e` at `q` (a byte in the file) as the lean lexer writes a test: an `|` of the terms' bits (`last`) one mask
+    /// test, an `&`'s tests of one byte one class at that byte, a byte past `q` bounded by the file and one before
+    /// it by its start (none where `before` says it is in the file).
+    fn lean_at(&self, e: &Expr, before: bool) -> Result<String, String> {
+        self.lean_at_off(e, before, 0)
+    }
+
+    /// `lean_at` of `e` at the byte `off` from `q`.
+    fn lean_at_off(&self, e: &Expr, before: bool, off: i64) -> Result<String, String> {
+        let bit = |e: &Expr| match e {
+            Expr::Name(n) => n.strip_prefix("\u{0}last").and_then(|k| k.parse::<u32>().ok()),
+            _ => None,
+        };
+        let mut ors = Vec::new();
+        or_terms(e, &mut ors);
+        if ors.len() > 1 {
+            if let Some(bits) = ors.iter().map(&bit).collect::<Option<Vec<u32>>>() {
+                let m = bits.iter().fold(0u32, |m, k| m | 1 << k);
+                return Ok(format!("last & {m:#b} != 0"));
+            }
+            let parts = ors.iter().map(|o| self.lean_at_off(o, before, off).map(|t| if ors.len() > 1 && t.contains(" && ") { format!("({t})") } else { t })).collect::<Result<Vec<_>, _>>()?;
+            return Ok(parts.join(" || "));
+        }
+        if let Some(k) = bit(e) {
+            if off != 0 {
+                return Err("a term's bit away from `q`".to_owned());
+            }
+            return Ok(format!("last >> {k} & 1 == 1"));
+        }
+        let mut fs = Vec::new();
+        factors(&self.shifts_in(e, 0, 0), &mut fs);
+        if fs.len() == 1
+            && let Expr::Not(a) = &fs[0]
+            && self.one_byte(&fs[0], 0).is_none()
+        {
+            let t = self.lean_at_off(a, before, off)?;
+            return Ok(format!("!({t})"));
+        }
+        // `A & ~(A & B)` is `A & ~B`.
+        let outer = fs.clone();
+        for f in fs.iter_mut() {
+            if let Expr::Not(g) = f {
+                let mut gs = Vec::new();
+                factors(g, &mut gs);
+                let kept: Vec<Expr> = gs.iter().filter(|x| !outer.contains(x)).cloned().collect();
+                if kept.len() < gs.len() && !kept.is_empty() {
+                    let k = kept.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))).expect("kept");
+                    *f = Expr::Not(Box::new(k));
+                }
+            }
+        }
+        let mut at: Vec<OneByte> = Vec::new();
+        let mut bits = Vec::new();
+        let mut rest = Vec::new();
+        let mut shifted: Vec<(i64, String)> = Vec::new();
+        for f in &fs {
+            if let Some(k) = bit(f) {
+                if off != 0 {
+                    return Err("a term's bit away from `q`".to_owned());
+                }
+                bits.push(format!("last >> {k} & 1 == 1"));
+            } else if let Some(o) = self.one_byte(f, 0) {
+                match at.iter_mut().find(|x| x.at == o.at && x.out == o.out && x.req == o.req) {
+                    Some(x) => x.set = std::array::from_fn(|c| x.set[c] && o.set[c]),
+                    None => at.push(o),
+                }
+            } else if fs.len() == 1 || matches!(f, Expr::Call(g, _) if matches!(g.as_str(), "prev" | "next")) {
+                match f {
+                    Expr::Not(a) => rest.push(format!("!({})", self.lean_at_off(a, before, off)?)),
+                    // A byte before or after, of a test of more than one byte: it in the file, the test there.
+                    Expr::Call(g, args) if matches!(g.as_str(), "prev" | "next") && let Some((x, k)) = Bytes::shift(g, args) => {
+                        let o = off + k;
+                        let t = self.lean_at_off(&x, before, o)?;
+                        let whole = t.starts_with("!(") && super::balanced_outer(&t[1..]);
+                        shifted.push((o, if t.contains(" || ") && !whole { format!("({t})") } else { t }));
+                    }
+                    _ if off == 0 => rest.push(self.at(f, "q", 0)?),
+                    _ => return Err("a test away from `q` of no byte".to_owned()),
+                }
+            } else {
+                let t = self.lean_at_off(f, before, off)?;
+                let whole = t.starts_with("!(") && super::balanced_outer(&t[1..]);
+                rest.push(if t.contains(" || ") && !whole { format!("({t})") } else { t });
+            }
+        }
+        if at.iter().any(|x| !x.out && !x.set.iter().any(|&c| c)) {
+            return Ok("false".to_owned());
+        }
+        at.sort_by_key(|x| (x.at != 0, x.at < 0, x.at.abs()));
+        // The bytes in the file: `q`, those before it where `before`, and those a test of no out-of-file value reads.
+        for x in at.iter_mut() {
+            x.at += off;
+            if x.req != 0 {
+                x.req += off;
+            }
+        }
+        let known: Vec<i64> = at.iter().filter(|x| !x.out).map(|x| x.at).collect();
+        let inside = |o: i64| o == 0 || (before && o == -1) || known.contains(&o) || (o < 0 && known.iter().any(|&k| k < o)) || (o > 0 && known.iter().any(|&k| k > o));
+        let mut parts: Vec<String> = Vec::new();
+        for x in &at {
+            let o = x.at;
+            let here = match o {
+                0 => "q".to_owned(),
+                o if o > 0 => format!("q + {o}"),
+                o => format!("q - {}", -o),
+            };
+            let (bound, past) = match o {
+                o if o > 0 => (format!("q + {o} < n"), format!("q + {o} >= n")),
+                o => (format!("q >= {}", -o), format!("q < {}", -o)),
+            };
+            let test = class_test(&here, &x.set);
+            let req = if x.req != 0 && !inside(x.req) {
+                match x.req {
+                    r if r > 0 => format!("q + {r} < n && "),
+                    r => format!("q >= {} && ", -r),
+                }
+            } else {
+                String::new()
+            };
+            parts.push(match (x.out, inside(o) && (x.out || known.iter().filter(|&&k| k == o).count() > 1 || o == 0 || (before && o == -1))) {
+                (_, true) => format!("{req}{test}"),
+                (false, false) => format!("{req}{bound} && {test}"),
+                (true, false) => format!("{req}({past} || {test})"),
+            });
+            if parts.len() == 1 {
+                parts.append(&mut bits);
+            }
+        }
+        parts.append(&mut bits);
+        // A test at a byte before or after: bounded where no test of a byte as far places it in the file.
+        for (o, t) in shifted {
+            let bound = if inside(o) || o == 0 {
+                String::new()
+            } else if o > 0 {
+                format!("q + {o} < n && ")
+            } else {
+                format!("q >= {} && ", -o)
+            };
+            parts.push(format!("{bound}{t}"));
+        }
+        parts.append(&mut rest);
+        Ok(if parts.is_empty() { "true".to_owned() } else { parts.join(" && ") })
+    }
+
+    /// `e` with its `prev` and `next` moved into its `&` and `|` (`prev(A & B)` is `prev(A) & prev(B)`), and a
+    /// `prev` of a `prev` one of two bytes back.
+    fn shifts_in(&self, e: &Expr, k: i64, depth: usize) -> Expr {
+        let shifted = |x: Expr, k: i64| -> Expr {
+            match k {
+                0 => x,
+                k if k < 0 => Expr::Call("prev".to_owned(), if k == -1 { vec![Arg::E(x)] } else { vec![Arg::E(x), Arg::N((-k) as u64)] }),
+                k => Expr::Call("next".to_owned(), if k == 1 { vec![Arg::E(x)] } else { vec![Arg::E(x), Arg::N(k as u64)] }),
+            }
+        };
+        if depth > 32 {
+            return shifted(e.clone(), k);
+        }
+        match e {
+            Expr::And(a, b) => Expr::And(Box::new(self.shifts_in(a, k, depth + 1)), Box::new(self.shifts_in(b, k, depth + 1))),
+            Expr::Or(a, b) if k != 0 => Expr::Or(Box::new(self.shifts_in(a, k, depth + 1)), Box::new(self.shifts_in(b, k, depth + 1))),
+            Expr::Not(a) if k == 0 => Expr::Not(Box::new(self.shifts_in(a, 0, depth + 1))),
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") && let Some((x, d)) = Bytes::shift(f, args) => match &x {
+                Expr::And(..) | Expr::Or(..) => self.shifts_in(&x, k + d, depth + 1),
+                Expr::Name(n) if !self.classes.contains_key(n.as_str()) && self.byte_set(&x, 0).is_none() && let Some(def) = self.locals.get(n).or_else(|| self.defs.get(n)) && matches!(def, Expr::And(..) | Expr::Or(..)) => self.shifts_in(&def.clone(), k + d, depth + 1),
+                _ => shifted(e.clone(), k),
+            },
+            _ => shifted(e.clone(), k),
+        }
+    }
+
     /// `in_run`'s test of `e` at `q`, each term's branch as the lean lexer writes it: its bit at the byte before, the
     /// bytes at `q` as one class, and what is left of the byte before as a class of the bytes the term may hold at.
     fn in_run_test(&self, e: &Expr, terms: &[Expr]) -> Option<String> {
@@ -200,14 +414,10 @@ impl<'a> Bytes<'a> {
             }
             let mut fs = Vec::new();
             factors(&g, &mut fs);
-            let mut here = [true; 256];
             let mut parts = vec![format!("last >> {k} & 1 == 1")];
             let own = self.own_bytes(t, 0);
+            let mut left: Option<Expr> = None;
             for f in &fs {
-                if let Some(b) = self.byte_set(f, 0) {
-                    here = std::array::from_fn(|c| here[c] && b[c]);
-                    continue;
-                }
                 // The byte before, of the bytes the term holds at.
                 let before = match f {
                     Expr::Call(p, a) if p == "prev" && let [Arg::E(y)] = a.as_slice() => self.byte_set(y, 0),
@@ -216,18 +426,31 @@ impl<'a> Bytes<'a> {
                 };
                 match before {
                     Some(b) => parts.push(class_test_in("q - 1", &b, &own)),
-                    None => parts.push(self.at(f, "q", 0).ok()?),
+                    None => left = Some(match left {
+                        None => f.clone(),
+                        Some(l) => Expr::And(Box::new(l), Box::new(f.clone())),
+                    }),
                 }
             }
-            if (0..256).any(|c| !here[c]) {
-                parts.push(class_test("q", &here));
+            if let Some(l) = left {
+                let t = self.lean_at(&l, true).ok()?;
+                if t == "false" {
+                    continue;
+                }
+                if t != "true" {
+                    parts.insert(1, t);
+                }
             }
-            branches.push(format!("({})", parts.join(" && ")));
+            branches.push(parts.join(" && "));
         }
         if !told {
             return None;
         }
-        Some(if branches.is_empty() { "false".to_owned() } else { branches.join(" || ") })
+        Some(match branches.len() {
+            0 => "false".to_owned(),
+            1 => branches.remove(0),
+            _ => branches.iter().map(|b| format!("({b})")).collect::<Vec<_>>().join(" || "),
+        })
     }
 
     /// `e` at a byte of a run after its first, where the run's terms at the byte before are `last` (`forward_run`):
@@ -1178,41 +1401,14 @@ impl<'a> Bytes<'a> {
                 t => parts.push((sub(self, t, &full, 0, true)?, None)),
             }
         }
-        // `e` as one test of the byte at an offset from the byte asked (`prev`, `next` of a set of bytes).
-        fn single(me: &Bytes, e: &Expr, depth: usize) -> Option<(i64, [bool; 256])> {
-            if depth > 48 {
-                return None;
-            }
-            match e {
-                Expr::Name(n) if n.starts_with('\u{0}') => None,
-                Expr::Name(n) => match me.classes.get(n.as_str()) {
-                    Some(rs) => Some((0, std::array::from_fn(|c| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))))),
-                    None => single(me, me.locals.get(n).or_else(|| me.defs.get(n))?, depth + 1),
-                },
-                Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => {
-                    let (x, k) = Bytes::shift(f, args)?;
-                    let (o, set) = single(me, &x, depth + 1)?;
-                    Some((o + k, set))
-                }
-                Expr::Not(a) => single(me, a, depth + 1).map(|(o, set)| (o, set.map(|x| !x))),
-                Expr::And(a, b) | Expr::Or(a, b) => {
-                    let ((oa, sa), (ob, sb)) = (single(me, a, depth + 1)?, single(me, b, depth + 1)?);
-                    if oa != ob {
-                        return None;
-                    }
-                    let and = matches!(e, Expr::And(..));
-                    Some((oa, std::array::from_fn(|c| if and { sa[c] && sb[c] } else { sa[c] || sb[c] })))
-                }
-                _ => None,
-            }
-        }
         // Whether `e`, read at offset `off` from a byte, may hold where that byte and the one before are of `set` and
         // `last` (the terms at the byte before) holds term `k` alone.
         fn may(me: &Bytes, e: &Expr, set: &[bool; 256], k: usize, off: i64, depth: usize) -> bool {
             if depth > 48 {
                 return true;
             }
-            if let Some((o, held)) = single(me, e, 0) {
+            // The byte and the one before are in the file: a test's value past it is no matter.
+            if let Some(OneByte { at: o, set: held, .. }) = me.one_byte(e, 0) {
                 return !matches!(off + o, 0 | -1) || (0..256).any(|c| set[c] && held[c]);
             }
             match e {
@@ -1230,14 +1426,65 @@ impl<'a> Bytes<'a> {
             }
         }
         let mut tests = String::new();
+        let mut firsts = String::new();
         let mut jumps = String::new();
+        let mut jump_why = String::new();
         let mut jumped: Vec<[bool; 256]> = Vec::new();
+        // The terms at the byte before, as `last` names them.
+        let reads_last = |e: &Expr| -> bool {
+            fn r(e: &Expr) -> bool {
+                match e {
+                    Expr::Name(n) => n.starts_with("\u{0}last"),
+                    Expr::Not(a) => r(a),
+                    Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => r(a) || r(b),
+                    Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(x) if r(x))),
+                    _ => false,
+                }
+            }
+            r(e)
+        };
+        fn no_last(e: &Expr) -> Expr {
+            match e {
+                Expr::Name(n) if n.starts_with("\u{0}last") => Expr::Empty,
+                Expr::Not(a) => Expr::Not(Box::new(no_last(a))),
+                Expr::And(a, b) => Expr::And(Box::new(no_last(a)), Box::new(no_last(b))),
+                Expr::Or(a, b) => Expr::Or(Box::new(no_last(a)), Box::new(no_last(b))),
+                e => e.clone(),
+            }
+        }
+        let terms_n: Vec<Expr> = full.iter().map(|t| self.norm(t, 0)).collect();
         for (k, (st, stop)) in parts.iter().enumerate() {
-            let start = self.at(st, "q", 0).ok()?;
-            let test = match stop {
-                Some(stop) => format!("{start} || (last >> {k} & 1 == 1 && !{})", self.at(stop, "q", 0).ok()?),
-                None => start,
-            };
+            // At the token's first byte no term held before it.
+            let first = super::simplify_all(no_last(st));
+            if !matches!(first, Expr::Empty) {
+                let t = self.lean_at(&first, false).ok()?;
+                let _ = write!(firsts, "            if {t} {{\n                now |= 1 << {k};\n            }}\n");
+            }
+            // After it, a start no term at the byte before reads is read as each term there tells it (`in_run`).
+            let mut ors = Vec::new();
+            or_terms(st, &mut ors);
+            let mut alts: Vec<String> = Vec::new();
+            for o in &ors {
+                if reads_last(o) {
+                    let t = self.lean_at(&super::simplify_all(o.clone()), true).ok()?;
+                    alts.push(t);
+                } else {
+                    match self.in_run_test(o, &terms_n) {
+                        Some(t) if t == "false" => {}
+                        Some(t) => alts.push(t),
+                        None => alts.push(self.lean_at(&super::simplify_all(o.clone()), true).ok()?),
+                    }
+                }
+            }
+            if let Some(stop) = stop {
+                let on = super::simplify_all(Expr::And(Box::new(Expr::Name(format!("\u{0}last{k}"))), Box::new(Expr::Not(Box::new(stop.clone())))));
+                alts.push(self.lean_at(&on, true).ok()?);
+            }
+            let alts: Vec<String> = alts.into_iter().filter(|a| a != "false").collect();
+            if alts.is_empty() {
+                continue;
+            }
+            let test = if alts.len() == 1 { alts[0].clone() } else { alts.iter().map(|a| if a.contains(" && ") && !(a.starts_with('(') && a.ends_with(')')) { format!("({a})") } else { a.clone() }).collect::<Vec<_>>().join(" || ") };
             let why = match stop {
                 Some(Expr::Not(c)) if let Expr::Name(cn) = &**c => format!(": a run of `{cn}`"),
                 Some(_) => ": a fill".to_owned(),
@@ -1254,8 +1501,9 @@ impl<'a> Bytes<'a> {
                 if alone {
                     jumped.push(set);
                     let cls = self.win(c, 0, 0).ok()?;
-                    let here = self.at(c, "q", 0).ok()?;
-                    let _ = write!(jumps, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).\n            if now == 1 << {k} && {here} {{\n                last = now;\n                q = wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| {cls}).unwrap_or(n);\n                continue;\n            }}\n");
+                    let here = class_test("q", &set);
+                    let _ = write!(jump_why, "            // `{cn}`'s run: term {k} alone holds over it (the lean lexer's `class_end`).\n");
+                    let _ = write!(jumps, "if now == 1 << {k} && {here} {{\n                wfirst_clear(n, q + 1, n, |p: isize, esc: &mut u64| {cls}).unwrap_or(n)\n            }} else ");
                 }
             }
         }
@@ -1275,7 +1523,8 @@ impl<'a> Bytes<'a> {
             })
             .collect();
         self.fwd_used = true;
-        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        let mut seen = 0u32;\n        let mut fills = 0u32;\n{pre}        while q < n {{\n            let mut now = 0u32;\n{tests}            if now == 0 && q > {s0} {{\n                break;\n            }}\n{marker}{jumps}            last = now;\n            q += 1;\n        }}\n        end_last = last;\n        end_seen = seen;\n        end_fills = fills;\n        q.saturating_sub(1)\n    }}"))
+        let step = if jumps.is_empty() { "            q += 1;\n".to_owned() } else { format!("{jump_why}            q = {jumps}{{\n                q + 1\n            }};\n") };
+        Some(format!("{{\n        // The run read forward from its first byte (in it, as `run_last` takes it), a term a bit (`now`: those at `q`, `last`: those at the byte before).\n        let mut q = {s0};\n        let mut last = 0u32;\n        let mut seen = 0u32;\n        let mut fills = 0u32;\n{pre}        // The terms at a byte that follows none.\n        let first = |q: usize| -> u32 {{\n            let mut now = 0u32;\n{firsts}            now\n        }};\n        let mut now = first(q);\n        // Where none holds at the first byte, the run is read from the byte after (`run_last`'s).\n        if now == 0 {{\n            q += 1;\n            if q < n {{\n                now = first(q);\n            }}\n        }}\n        while now != 0 {{\n{marker}            last = now;\n{step}            if q >= n {{\n                break;\n            }}\n            now = 0;\n{tests}        }}\n        end_last = last;\n        end_seen = seen;\n        end_fills = fills;\n        q.saturating_sub(1)\n    }}"))
     }
 
     /// The window function of the local `m` for a test of bytes `..=b` from the window's first (`l_m`), written once:
@@ -3241,4 +3490,25 @@ fn factors(e: &Expr, out: &mut Vec<Expr>) {
         }
         e => out.push(e.clone()),
     }
+}
+
+/// `e`'s operands of its `|`s.
+fn or_terms(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::Or(a, b) => {
+            or_terms(a, out);
+            or_terms(b, out);
+        }
+        e => out.push(e.clone()),
+    }
+}
+
+/// A test of one byte (`Bytes::one_byte`): the byte at offset `at` from the byte asked is one of `set`; where that
+/// byte is past the file, `out`; and it holds only where the byte at offset `req` is in the file (0: no such byte).
+#[derive(Clone, Copy)]
+struct OneByte {
+    at: i64,
+    set: [bool; 256],
+    out: bool,
+    req: i64,
 }

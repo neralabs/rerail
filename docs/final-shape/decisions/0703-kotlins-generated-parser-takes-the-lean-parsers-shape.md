@@ -373,6 +373,21 @@ them.
    as the lean lexer's `number`; the file is 17 KB smaller. The tests build `kotlin_aot` without `test-hooks`, and no
    input read the fill: a name touching a number now has its cases (`suffixes_are_the_names_touching_a_number`), which
    fail with `fill_7` false.
+43. **A run reads its first byte apart, and each byte after through the terms before it, as the lean lexer's
+   `number`**: the terms at a byte that follows none are a closure (`first`), read at the token's first byte, and at
+   the byte after where none holds there (the hex and binary runs, `prev(hex_at) | hx`, begin at the `0`, which no
+   term holds). After it, a term's start that reads no term's bit is read as each term at the byte before tells it
+   (`in_run_test`, step 41). So term 0 of a number is `last >> 5 & 1 == 1 && matches!(src[q], b'0'..=b'9') &&
+   !(src[q] == b'0' && …)`: a digit again only after the exponent's sign. A test is written as the lean lexer writes
+   one (`lean_at`):
+   - one class per byte;
+   - the terms' bits one mask (`last & 0b1001 != 0`);
+   - a byte past `q` bounded by the file, a negated one before it true outside it (`q < 1 || …`);
+   - `A & ~(A & B)` as `A & ~B`.
+
+   A step is one `q = if … { class_end } else { q + 1 }`. Step 42 says the tests build `kotlin_aot` without
+   `test-hooks`: they build it with them, and the check's second run set the values there. That no input read the fill
+   stands: the tests passed with `fill_7` false.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`
