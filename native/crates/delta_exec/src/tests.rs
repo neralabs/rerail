@@ -346,7 +346,7 @@ fn a_gone_document_is_retracted_from_the_kept_rows_not_its_old_tape() {
     let want = fx.rows(&b, d).unwrap();
     let mut t = Trace::new(&tape_shape()).unwrap().with_roll_up(RollUp::Never);
     let (ra, rb) = (tape_row(d, d, 0, &a.ids, &a.syms), tape_row(d, d, 0, &b.ids, &b.syms));
-    let h1 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra.clone(), 1)]).unwrap();
+    let h1 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, 1)]).unwrap();
     let h2 = push_layer(&fx.reg, &fx.traces, &mut fx.dir, &mut t, &[(ra, -1), (rb, 1)]).unwrap();
     let n = u64::from(fx.atoms.count(&fx.dir));
     let atoms = [GlobalIn { block: fx.atoms.0, before: Some(n), after: n }];

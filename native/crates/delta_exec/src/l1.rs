@@ -86,8 +86,9 @@ pub const TAPE_TAPE: usize = 7;
 pub const TAPE_SYMS: usize = 11;
 
 /// Document `d`'s row in the tape port: at `path` (its symbol), in `grammar`, its blobs `doc` and its symbols blob.
-pub fn tape_row(d: i64, path: i64, grammar: i64, doc: &DocIds, syms: &BlobId) -> Vec<i64> {
-    [d, path, grammar].into_iter().chain(doc.source.words()).chain(doc.tape.words()).chain(syms.words()).collect()
+pub fn tape_row(d: i64, path: i64, grammar: i64, doc: &DocIds, syms: &BlobId) -> [i64; 15] {
+    let (src, tape, sy) = (doc.source.words(), doc.tape.words(), syms.words());
+    [d, path, grammar, src[0], src[1], src[2], src[3], tape[0], tape[1], tape[2], tape[3], sy[0], sy[1], sy[2], sy[3]]
 }
 
 /// A tape port row's blobs: its source and tape, and its symbols.

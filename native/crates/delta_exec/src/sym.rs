@@ -67,14 +67,14 @@ pub fn find(atoms: &[u8], s: &str) -> Option<i64> {
 
 /// The kinds' and fields' names as symbols, found once in the atoms (`intern` adds them), so a view compares ids.
 pub struct Names {
-    kind: Vec<i64>,
-    field: Vec<i64>,
+    kind: [i64; KIND_NAMES.len()],
+    field: [i64; FIELD_NAMES.len()],
 }
 
 impl Names {
     pub fn new(atoms: &[u8]) -> Names {
-        let ids = |names: &[&str]| names.iter().map(|n| find(atoms, n).unwrap_or(0)).collect();
-        Names { kind: ids(KIND_NAMES), field: ids(FIELD_NAMES) }
+        let id = |n: &str| find(atoms, n).unwrap_or(0);
+        Names { kind: std::array::from_fn(|k| id(KIND_NAMES[k])), field: std::array::from_fn(|f| id(FIELD_NAMES[f])) }
     }
 
     pub fn kind(&self, k: u16) -> i64 {
