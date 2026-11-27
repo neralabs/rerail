@@ -690,8 +690,8 @@ impl St<'_> {
     /// Whether node row `q`'s kind atom is in the stage's set (ascending).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
-        let mut memo = NONE;
-        let k = vread(1, s.v_dir, q, 2, &mut memo);
+        // A `has` stage's rows are `node`'s (`row`): a walk's candidate is the row it holds.
+        let k = self.row(q).get(2);
         let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
         set.binary_search(&k).is_ok()
     }
@@ -800,21 +800,46 @@ impl St<'_> {
         if how == 1 { rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q) } else { q }
     }
 
-    /// The candidate after `q`.
-    unsafe fn cand_next(&self, how: u32, q: u32) -> u32 {
+    /// A walk of the tape (`how` 2: a parent's children from `child` row `q`; 3: a node's numbered ancestors from
+    /// `node` row `q`), each candidate's row given to `f` until it returns false: its document found once, each step
+    /// from the tape node in hand (the next sibling, the parent), as the host's walks take them
+    /// (`each_child_node`, `Within::containers_on`), and each candidate's row kept as the stage's last (`row`) with
+    /// its node, so its columns' reads select none.
+    unsafe fn walk_tape(&self, how: u32, q: u32, mut f: impl FnMut(u32) -> bool) {
         let d = self.s.v_dir;
-        match how {
-            2 => {
-                let e = view_rows(d).add(dir_doc_of_row(view_block(d), (*d).at, 1, q, NONE) as usize);
-                let n = doc(d, e).child_next(q.wrapping_sub((*e).rows[1]));
-                if n == NONE { NONE } else { (*e).rows[1].wrapping_add(n) }
+        let k = if how == 2 { 1 } else { 0 };
+        let a = dir_doc_of_row(view_block(d), (*d).at, k, q, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[k as usize];
+        let dd = doc(d, e);
+        let mut i = q.wrapping_sub(first);
+        // A `child` row's node is numbered node `i + 1`, a `node` row's node `i`.
+        let mut x = dd.tape_node(i.wrapping_add(k));
+        // A child's siblings end with its parent's subtree; one with no tape parent (a narrowed projection's) has none
+        // (`clif_view_child_next`).
+        let parent = if how == 2 { dd.tape.parent(x) } else { 0 };
+        let end = if how == 2 && parent != rerail_reads::views::NO_ROW { dd.tape.end_of(parent) } else { 0 };
+        loop {
+            let r = first.wrapping_add(i);
+            self.last.set((r, Some(Row::View(dd.at_node(k, i, x)))));
+            if !f(r) {
+                return;
             }
-            3 => {
-                let e = view_rows(d).add(dir_doc_of_row(view_block(d), (*d).at, 0, q, NONE) as usize);
-                let u = doc(d, e).up(q.wrapping_sub((*e).rows[0]));
-                if u == NONE { NONE } else { (*e).rows[0].wrapping_add(u) }
+            // The next numbered sibling within the parent, or numbered strict ancestor.
+            let mut c = match how {
+                2 if parent == rerail_reads::views::NO_ROW => rerail_reads::views::NO_ROW,
+                2 => dd.tape.next_in(x, end),
+                _ => dd.tape.parent(x),
+            };
+            while c != rerail_reads::views::NO_ROW && !dd.n.is(0, c) {
+                c = if how == 2 { dd.tape.next_in(c, end) } else { dd.tape.parent(c) };
             }
-            _ => q.wrapping_add(1),
+            if c == rerail_reads::views::NO_ROW {
+                return;
+            }
+            x = c;
+            i = dd.n.rank(0, c).wrapping_sub(k);
         }
     }
 
@@ -825,6 +850,10 @@ impl St<'_> {
     unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
         let known = self.parent_known(w.how);
+        if (w.how == 2 || w.how == 3) && q != NONE {
+            self.walk_tape(w.how, q, |r| f(r, r, known));
+            return;
+        }
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
         let mut last = 0u32;
         while q < w.hi {
@@ -846,7 +875,7 @@ impl St<'_> {
             if !f(self.cand_row(w.how, q), q, key || known) {
                 return;
             }
-            q = self.cand_next(w.how, q);
+            q = q.wrapping_add(1);
         }
     }
 
@@ -2428,8 +2457,9 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     if r0 == 0 && r1 > 0 {
         *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
     }
+    // Past its candidates every count is none (`scan_count_range`): nothing kept there to walk.
     let (_, cands) = st.scan_cands(j);
-    kept_runs(offsets, o0, r0, r1.min(rows), |r, a, len| {
+    kept_runs(offsets, o0, r0, r1.min(rows).min(cands.n), |r, a, len| {
         for i in 0..below(a, len, s.cap_out) {
             let id = st.scan_cand(&cands, r + i).expect("a kept candidate is one of the scan's");
             st.write_row(0, id, b.o, a + i);

@@ -461,6 +461,13 @@ impl<'a> Doc<'a> {
         At { d: self, k, r, x }
     }
 
+    /// View `k`'s row `r` whose tape node `x` its walk holds (a parent's next child, a node's next numbered ancestor):
+    /// no node selected.
+    #[inline]
+    pub fn at_node(self, k: u32, r: u32, x: u32) -> At<'a> {
+        At { d: self, k, r, x }
+    }
+
     /// View `k`'s rows from `r` on, in order (`Rows`): each one's tape node the next of its numbering's (`Nodes`),
     /// not selected again for each row.
     #[inline]
@@ -490,17 +497,6 @@ impl<'a> Doc<'a> {
     pub unsafe fn child_first(&self, l: u32) -> u32 {
         let x = self.tape_node(l);
         self.numbered_from(self.tape.first_child(x), self.tape.end_of(x))
-    }
-
-    /// The `child` row of the next child of the parent of `child` row `i`, or `NO_ROW` (`view_child_next`).
-    pub unsafe fn child_next(&self, i: u32) -> u32 {
-        let x = self.tape_node(i.wrapping_add(1));
-        let p = self.tape.parent(x);
-        if p == NO_ROW {
-            return NO_ROW;
-        }
-        let end = self.tape.end_of(p);
-        self.numbered_from(self.tape.next_in(x, end), end)
     }
 
     /// Numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW` (`view_up`).
