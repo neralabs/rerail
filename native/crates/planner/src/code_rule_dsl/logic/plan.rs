@@ -6686,6 +6686,10 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     keeps::latest::latest(p, &keys)
                 }).map_err(Error::Plan)?
             } else { None };
+            // The design's S1: the relations every reader reads by a key, reported (profiled runs).
+            if corpus && super::profile::on() {
+                keeps::chain::report(latest.as_ref().map(|x| &x.1).or(inlined.as_ref()).unwrap_or(&normal_v));
+            }
             let inlined = match latest {
                 Some((done, v)) => {
                     crate::threads::drop_behind(std::mem::take(&mut model.analysis));
@@ -9947,6 +9951,33 @@ mod climb_tests {
         let p = program(true);
         assert!(!keeps::latest::has_shape(&p.v, p.v.rel("seen_at").unwrap()), "read by two rules");
         assert!(keeps::latest::latest(&p, &keys).unwrap().is_none());
+    }
+
+    /// The design's S1: a relation keyed by `n` that every reader reads with `n` bound (`start`) is a functional
+    /// chain; one a reader scans (`scanned`, read first in `cls`) is not, nor a recursive one.
+    #[test]
+    fn a_relation_every_reader_reads_by_its_key_is_a_functional_chain() {
+        use crate::code_rule_dsl::logic::program_image::{Builder, RelId, T};
+        let mut b = Builder::base();
+        for (rel, cols) in [("name", &[("n", "node"), ("x", "symbol")][..]), ("near", &[("n", "node"), ("s", "node")]), ("start", &[("n", "node"), ("s", "node")]), ("scanned", &[("n", "node"), ("s", "node")]), ("seed", &[("n", "node"), ("x", "symbol"), ("s", "node")]), ("cls", &[("s", "node")]), ("up", &[("s", "node"), ("p", "node")]), ("walk", &[("n", "node"), ("s", "node")])] {
+            b.fields().declare(rel, cols);
+        }
+        let v = |x: &'static str| T::Var(x);
+        b.rule().head("start", &[v("n"), v("s")]).atom("name", &[v("n"), T::Wild]).atom("near", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("scanned", &[v("n"), v("s")]).atom("near", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("seed", &[v("n"), v("x"), v("s")]).atom("name", &[v("n"), v("x")]).atom("start", &[v("n"), v("s")]).not("start", &[v("n"), v("x")]).finish().unwrap();
+        b.rule().head("cls", &[v("s")]).atom("scanned", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("s")]).atom("name", &[v("n"), T::Wild]).atom("start", &[v("n"), v("s")]).finish().unwrap();
+        b.rule().head("walk", &[v("n"), v("p")]).atom("walk", &[v("n"), v("s")]).atom("up", &[v("s"), v("p")]).finish().unwrap();
+        let ver = b.finish().unwrap().0;
+        let id = |r: &str| ver.rel(r).unwrap();
+        let keyed: Vec<RelId> = ["start", "scanned", "walk"].iter().map(|r| id(r)).collect();
+        let keys = |r: RelId| if keyed.contains(&r) { vec![vec![0]] } else { Vec::new() };
+        let recursive: BTreeSet<RelId> = [id("walk")].into();
+        let got = keeps::chain::chains(&ver, &keys, &recursive, &|_| false);
+        let names: Vec<&str> = got.iter().map(|c| ver.rel_name(c.rel)).collect();
+        assert_eq!(names, ["start"], "{got:?}");
+        assert_eq!((got[0].key.as_slice(), got[0].reads), (&[0][..], 3));
     }
 
     /// The design's S4: a walk read by its climb's ends alone is inner; the ends, read by no rule but stated as
