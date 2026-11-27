@@ -681,6 +681,16 @@ impl Source for Layered {
         let p = parts.get(&self.name)?;
         p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n))
     }
+    /// As `node_read`: the base, then each part that holds `n`'s key. Not forwarded, every node text a chunk's join
+    /// read took the trait's `None` and was made as a string (7.6 M reads of an idc run, 227 ns each).
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        if let Some(v) = self.base.node_atom(name, n, make, held) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(&self.name)?;
+        p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_atom(name, n, make, held))
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
