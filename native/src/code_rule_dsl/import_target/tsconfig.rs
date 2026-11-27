@@ -109,10 +109,14 @@ impl<'a> Chains<'a> {
     }
 
     /// The merged `compilerOptions` of the configuration at `file` (absolute). `None` where it cannot be read, or
-    /// where its chain reads more than `MAX_CONFIGURATIONS` configurations not read before.
+    /// where its chain reads more than `MAX_CONFIGURATIONS` configurations not read before: then on every ask, though
+    /// the bases it read before the cut are kept for other configurations.
     pub(crate) fn of(&mut self, file: &str) -> Option<Entries> {
         (self.left, self.cut) = (MAX_CONFIGURATIONS, false);
         let options = self.options(file, 0);
+        if self.cut {
+            self.read.insert((file.to_owned(), 0), None);
+        }
         options.filter(|_| !self.cut)
     }
 
@@ -353,6 +357,7 @@ mod tests {
             .map(|k| chains.of(&view.absolute(&format!("t{k}.json"))))
             .collect();
         let wide = chains.of(&view.absolute("wide.json"));
+        let wide_again = chains.of(&view.absolute("wide.json"));
         let after = chains.of(&view.absolute("t0.json"));
         let _ = std::fs::remove_dir_all(&root);
         assert!(read.iter().all(|o| {
@@ -360,6 +365,7 @@ mod tests {
                 .is_some_and(|o| o.iter().any(|(k, _)| k == "strict"))
         }));
         assert!(wide.is_none(), "its chain reads past its budget");
+        assert!(wide_again.is_none(), "and so on every ask, its bases read before the cut kept");
         assert!(after.is_some_and(|o| o.iter().any(|(k, _)| k == "strict")));
     }
 }
