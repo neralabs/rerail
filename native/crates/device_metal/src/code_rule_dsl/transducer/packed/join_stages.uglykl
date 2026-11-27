@@ -1809,18 +1809,32 @@ UKL_INLINE void stage_map_one(JSPACE int64_t* B, JSPACE const uint32_t* totals, 
     }
 }
 
-// A join from one binding (a rule's first table): a thread per candidate row, not one thread walking them all.
+// A join from one binding (a rule's first table), thread `r`'s candidate (`join_run::ScanCands`): its keys' index
+// group's `r`th place, as a probe walks it (a place of another tag is none), where the stage probes an index by keys;
+// else the relation's row `r_from + r`. `NONE` past them. Its keys: slot 0's or constants.
+UKL_INLINE uint32_t scan_cand(StageP s, Longs L, RelB R, UKL_PRIVATE int64_t* kv, uint32_t r) {
+    for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in] : s->key_const[i];
+    uint32_t rows = stage_rows(s, R);
+    if (s->nkeys == 0u || s->v_parent != 0u || s->v_has != 0u) return r < rows ? s->r_from + r : NONE;
+    uint32_t lo, hi;
+    group_of(R, s->r_at, s->r_index, kv, s->nkeys, &lo, &hi);
+    if (r >= ukl_min(hi - lo, rows)) return NONE;
+    uint32_t tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME;
+    uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R.p, s->r_at, s->r_index, lo + r);
+    if (((m ^ tag) & ~MARK_SAME) != 0u) return NONE;
+    return group_row(s, R, lo + r);
+}
+
+// A join from one binding (a rule's first table): a thread per candidate (`scan_cand`), not one thread walking them all.
 UKL_INLINE void scan_count_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_far, JSPACE uint32_t* counters, JSPACE uint32_t* counts, JSPACE const uint32_t* totals, StageP s, uint32_t r)
 {
     RelB R = rel_b(R_rows, R_far);
     if (r > s->nr) return;
-    // Past R's rows (its length on the device, at most `nr`): no candidate, a count of none.
-    if (r >= stage_rows(s, R) || totals[s->in_slot] == 0) { counts[r] = 0; return; }
+    // Past its candidates (R's rows, its length on the device at most `nr`, or its keys' group): a count of none.
     int64_t kv[8];
-    for (uint32_t i = 0; i < s->nkeys && i < 8; i++) kv[i] = s->key_kind[i] == 1 ? L[(uint64_t)s->key_slot[i] * s->cap_in] : s->key_const[i];
+    uint32_t id = totals[s->in_slot] == 0 ? NONE : scan_cand(s, L, R, kv, r);
+    if (id == NONE) { counts[r] = 0; return; }
     uint32_t c = 0;
-    // Thread `r`'s row: the relation's `r_from + r` (its rows from `r_from`).
-    uint32_t id = s->r_from + r;
     if (matches(s, R, id, kv)) {
         uint64_t v = s->nops > 0 ? eval(s, L, 0, R, id) : 0;
         if (s->counter != NONE) {
@@ -1843,7 +1857,8 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_
     if (r == 0) totals[s->out_slot] = (offsets[rows] - o0);
     if (r >= rows) return;
     uint32_t at = (offsets[r] - o0);
-    if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, s->r_from + r, O, at);
+    int64_t kv[8];
+    if ((offsets[r + 1] - o0) > at && at < s->cap_out) write_row(s, L, 0, R, scan_cand(s, L, R, kv, r), O, at);
 }
 
 // A rule's head rows made distinct: each row claims a place in an open-addressed table by its columns' hash (the

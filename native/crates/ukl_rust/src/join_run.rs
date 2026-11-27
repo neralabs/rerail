@@ -1752,23 +1752,66 @@ unsafe fn rows_copy_one(src: *const u8, dst: *mut u8, c: &Copy, sf: *const u8, n
     }
 }
 
-unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, r: u32) {
+/// A join from one binding's (a rule's first table's) candidates, a thread each: where its stage probes an index by
+/// keys, the places of its keys' group (`St::probe`), from `lo`; else the relation's rows from `r_from`. `n` of them;
+/// `tag` the keys' (decision 0671). A scan of every row of the relation checked each row's keys: `node(_, n, K)` read
+/// every node of the batch for its kind, where the host reads that kind's nodes alone (`Batch::by_kind`).
+#[derive(Clone, Copy)]
+struct ScanCands {
+    lo: u32,
+    n: u32,
+    tag: u32,
+    grouped: bool,
+}
+
+impl St<'_> {
+    /// The scan's keys (slot 0's or constants) and its candidates (`ScanCands`).
+    unsafe fn scan_cands(&self, j: &Job) -> ([i64; 8], ScanCands) {
+        let s = self.s;
+        let mut kv = [0i64; 8];
+        for (i, k) in kv.iter_mut().enumerate().take(s.nkeys.min(8) as usize) {
+            *k = if s.key_kind[i] == 1 { col(self.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
+        }
+        let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
+        if s.nkeys == 0 || s.v_parent != 0 || s.v_has != 0 || rows == 0 {
+            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, grouped: false });
+        }
+        let w = self.probe(&kv);
+        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: true })
+    }
+
+    /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk
+    /// passes it, `St::each`).
+    #[inline]
+    unsafe fn scan_cand(&self, c: &ScanCands, r: u32) -> Option<u32> {
+        if r >= c.n {
+            return None;
+        }
+        if !c.grouped {
+            return Some(c.lo.wrapping_add(r));
+        }
+        let s = self.s;
+        let q = c.lo.wrapping_add(r);
+        let m = rel_group_mark(self.r as *const u8, s.r_at, s.r_index, q);
+        if (m ^ c.tag) & !MARK_SAME != 0 {
+            return None;
+        }
+        Some(rel_group_row(self.r as *const u8, s.r_at, s.r_index, q))
+    }
+}
+
+unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32) {
     let s = st.s;
     let counts = b.c;
     if r > s.nr {
         return;
     }
-    if r >= st.rows() || *j.totals.add(s.in_slot as usize) == 0 {
+    let Some(id) = st.scan_cand(cands, r) else {
         *counts.add(r as usize) = 0;
         return;
-    }
-    let mut kv = [0i64; 8];
-    for (i, k) in kv.iter_mut().enumerate().take(s.nkeys.min(8) as usize) {
-        *k = if s.key_kind[i] == 1 { col(st.l, s.key_slot[i], s.cap_in, 0) } else { s.key_const[i] };
-    }
-    let id = s.r_from.wrapping_add(r);
+    };
     let mut c = 0;
-    if st.matches(id, &kv, false) {
+    if st.matches(id, kv, false) {
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
@@ -2308,10 +2351,10 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     if t0 >= t1 {
         return;
     }
-    let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { st.rows() };
-    fill_u32(b.c, t0.max(rows), t1, 0);
-    for r in t0..t1.min(rows) {
-        scan_count_one(st, j, b, r);
+    let (kv, cands) = st.scan_cands(j);
+    fill_u32(b.c, t0.max(cands.n), t1, 0);
+    for r in t0..t1.min(cands.n) {
+        scan_count_one(st, j, b, &kv, &cands, r);
     }
 }
 
@@ -2385,9 +2428,11 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     if r0 == 0 && r1 > 0 {
         *j.totals.add(s.out_slot as usize) = (*offsets.add(rows as usize)).wrapping_sub(o0);
     }
+    let (_, cands) = st.scan_cands(j);
     kept_runs(offsets, o0, r0, r1.min(rows), |r, a, len| {
         for i in 0..below(a, len, s.cap_out) {
-            st.write_row(0, s.r_from.wrapping_add(r + i), b.o, a + i);
+            let id = st.scan_cand(&cands, r + i).expect("a kept candidate is one of the scan's");
+            st.write_row(0, id, b.o, a + i);
         }
     });
 }
