@@ -8,6 +8,7 @@
 //   import xml.etree.ElementTree as ET          B405
 //   from xml.etree import cElementTree          B405
 //   import xml.etree                            not reported
+//   import xml . etree . ElementTree            B405: `ast` reads the name without the spaces
 //   importlib.import_module("xml.etree.ElementTree") B405: a call that imports a listed module (exactly)
 
 #include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
@@ -15,4 +16,11 @@
 .violation B405(at: node) code "B405"
     "ElementTree XML parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
     suppress nosec "B405"
-B405(n) :- blacklisted(n, "B405").
+B405(c) :- blacklisted(c, "B405"), kind(c, "call").
+B405(i) :- b405_hit(i, "B405", r), r = min k : { b405_hit(i, _, k) }.
+// b405_hit(i, code, rank): security's import_hit, over each imported name as `ast` spells it, without the spaces
+// and line continuations a dotted name may hold (`import xml.etree\` / `.ElementTree`). The library's import_name
+// should drop them (NOTES-pt1120-python-06.md); then this rule is `blacklisted(n, "B405")` again.
+.decl b405_hit(i: node, code: symbol, rank: number)
+b405_hit(i, code, r) :- import_entry(i, s0), s = @replace_all(s0, "[\\s\\\\]+", ""), blacklist_import(code, r, m),
+    prefix(m, s).
