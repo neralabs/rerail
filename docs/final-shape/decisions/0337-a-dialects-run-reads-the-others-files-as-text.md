@@ -45,24 +45,25 @@ grammar's nodes (0058 §2).
 ## Decision
 
 1. **Each dialect's run reads the in-scope files of its language's other dialects as text documents**
-   (`corpus::lane_text_dialects`, applied in `corpus::scoped` when the run has the `dialect` option). They are read
-   as a `.scope text` document is: `doc`, `path_part`, `source`, `src_line`, `src_line_lf`, `tape_line`, and a
+   (`corpus::lane::with_other_dialects`, applied in `corpus::scoped` when the run has the `dialect` option). They are
+   read as a `.scope text` document is: `doc`, `path_part`, `source`, `src_line`, `src_line_lf`, `tape_line`, and a
    match's spans over them; no tree, so no node. They are in the run's policy scope as its own files are.
-2. **A run reports findings in its own dialect's files, and in files of no dialect of its language**
-   (`corpus::lane_reports`, in `tools::run_program` and `tools::run_pack`). A finding in another dialect's file is
+2. **A run writes findings in its own dialect's files, and in files of no dialect of its language**
+   (`corpus::lane::reporter`, as the writer composes each finding's message). A finding in another dialect's file is
    dropped: that dialect's run parses the file and reports it. A doc-level rule (`doc(d, p, _)` alone) is therefore
-   reported once per file, not once per run. The lane's own `outputs.rro` still holds every row its run derived.
-3. **A split run's `files` is the largest of its runs' counts**, not their sum: every run reads every file.
-4. **The facts memo's space names the grammar the run parses its files in** (`memo::space_digest`, v3). Its
-   space named the phase and the file-local part's relation names, and an entry is found by its file's content and
-   path, so the three runs of one policy shared a space: `a.ts`, parsed by the TypeScript run, was found as text by
-   the TSX run, and the reverse. The first build of this record did that, and the JavaScript run of a three-dialect
-   tree derived nothing at all (a rule joining its own `c.js`'s `doc` was empty) until `RERAIL_CORPUS_MEMO=off`. A
-   file read as text and parsed now has an entry in each run's space. The runs shared no entry worth keeping: each
-   parsed only its own dialect's files.
-5. **A text document's bytes are held from the run's one read** (decision 0300): the digest read before phase 1
-   keeps them for the builders, as it keeps the run's own files', so another dialect's file is read once a run, not
-   once for the memo lookup and again for its document.
+   reported once per file, not once per run, by every reader of the runs' outputs (`run-rr`, a pack's run, `logic`).
+3. **A run's `files` leaves out the other dialects' files it read as text**, which their own runs count, so a split
+   run's counts add up as before (`corpus::run_in_lane`).
+4. **The facts memo's space names the dialect the run was given** (`memo::space_digest`, through
+   `lane::RunDialect`, entered where a run begins: `corpus::run_in_lane`). Its space named the phase and
+   the file-local part's relation names, and an entry is found by its file's content and path, so the three runs of
+   one policy shared a space: `a.ts`, parsed by the TypeScript run, was found as text by the TSX run, and the
+   reverse. The first build of this record did that, and the JavaScript run of a three-dialect tree derived nothing
+   at all (a rule joining its own `c.js`'s `doc` was empty) until `RERAIL_CORPUS_MEMO=off`. A file read as text and
+   parsed now has an entry in each run's space. The runs shared no entry worth keeping: each parsed only its own
+   dialect's files. A run given no dialect keeps the space it had.
+5. **A text document is read twice a run**: once for the memo lookup and again for its document. Holding its bytes
+   from the run's one read (decision 0300), as the run's own files' are, is left: it is a change of `run_observed`.
 
 So a rule of any dialect sees every file of the language: its `doc` row, its path and its text and lines. A rule
 that needs another dialect's nodes still cannot have them. A negation over nodes of such a file finds none, as
@@ -90,5 +91,8 @@ against 20 s), which shrank to the above once the contention passed; without ite
 
 - `logic::rr::tests::a_dialects_run_reads_the_others_files_as_text`: a `.test` block run as `test-rr` runs it, then
   `run-rr` over the same files. A rule joining `kind(n, "program")` with `a.ts`'s `doc` and first `src_line` is
-  reported in `a.ts`, `b.tsx` and `c.js`; a doc-level rule once per file; `files` is 3.
+  reported in `a.ts`, `b.tsx` and `c.js`; a doc-level rule once per file; `files` is 3. Its three runs share one
+  store: with the memo's space not naming the dialect (item 4) the test fails (checked 2026-11-27).
+- `logic::plan::corpus::lane::tests::a_runs_dialect_holds_while_it_lasts`: a run's dialect holds while it lasts, a
+  phase's run inside it is under its own, and a run of no dialect writes every finding.
 - `logic::rr::tests::a_language_of_several_dialects_runs_over_each`: unchanged.

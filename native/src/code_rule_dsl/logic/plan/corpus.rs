@@ -34,6 +34,7 @@ pub mod cache_architecture;
 // Its tests run in the engine's test binary (its facade of this module mounts `corpus/cache_tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rerail` libraries).
 pub use hiding::qualified;
+pub mod lane;
 pub mod memo;
 pub mod kept_strata;
 pub mod maintained;
@@ -2607,7 +2608,17 @@ pub fn run_with_options(
 ) -> Result<Report> {
     // The run's options as it is first given them: a `toolCalls` option not of its shape is an error here (`added`).
     added::check_tool_calls(options).map_err(Error::Plan)?;
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+    run_in_lane(options, || run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options))
+}
+
+/// `run` under the run's dialect (`lane::RunDialect`, decision 0337), held while it lasts: the memo's space names it,
+/// the run writes its own dialect's findings, and its `files` leave out the other dialects' it read as text, which
+/// their own runs count.
+fn run_in_lane(options: &serde_json::Value, run: impl FnOnce() -> Result<Report>) -> Result<Report> {
+    let lane = lane::RunDialect::enter(options);
+    let mut report = run()?;
+    report.files = report.files.saturating_sub(lane.read_as_text());
+    Ok(report)
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
@@ -2641,7 +2652,7 @@ pub(super) fn run_read_handing(
 ) -> Result<Report> {
     added::check_tool_calls(options).map_err(Error::Plan)?;
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
+    run_in_lane(options, || run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options))
 }
 
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
@@ -2897,17 +2908,20 @@ fn message_templates(programs: &[&str], settings: &[(String, String)]) -> HashMa
 
 /// `part`'s rows of a finding's relation (`rr::lower`'s `diagnostic_rule`) with their message made from their policy's
 /// and clause's template and their last `holes` columns' values (`findings::HOLE`), and those columns dropped: the
-/// message's words are the writer's, not the program's (decision 0225 §3).
+/// message's words are the writer's, not the program's (decision 0225 §3). A run of one dialect of a language of
+/// several writes no finding in another dialect's file, which it read as text and that dialect's run reports
+/// (`lane::reporter`, decision 0337).
 fn compose_messages(part: &output::Rows, holes: usize, templates: &HashMap<(String, String), String>) -> output::Rows {
-    use crate::code_rule_dsl::logic::rr::lower::findings::{message_of, MESSAGE_COLUMN};
+    use crate::code_rule_dsl::logic::rr::lower::findings::{message_of, MESSAGE_COLUMN, PATH_COLUMN};
     let w = part.width();
     let kept = w.saturating_sub(holes);
     let text = |i: usize, c: usize| match part.cell(i, c) {
         output::Cell::Text(t) => t.to_owned(),
         output::Cell::Int(v) => v.to_string(),
     };
+    let reported = lane::reporter();
     let mut composed = output::Rows::new(part.types()[..kept].to_vec());
-    for i in 0..part.len() {
+    for i in (0..part.len()).filter(|&i| reported(&text(i, PATH_COLUMN))) {
         let values: Vec<String> = (kept..w).map(|c| text(i, c)).collect();
         let (policy, clause) = (text(i, 0), text(i, 1));
         let message = match templates.get(&(policy, clause.clone())).or_else(|| templates.get(&(String::new(), clause))) {
@@ -3122,11 +3136,9 @@ fn run_observed(
             // only where the observer cannot vouch for it).
             // A Python file's module is the name its package root gives it (`package_root_modules`), as imports name it.
             let renamed = package_root_modules(root, &files);
-            let (of_label, text): (Vec<&String>, Vec<&String>) = files.iter().partition(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label));
-            // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders, a
-            // text document's too (a `.scope text` file, another dialect's: decision 0337), which phase 1 does not state.
-            let read: Vec<std::path::PathBuf> = of_label.iter().chain(&text).map(|p| root.join(p)).collect();
-            let digests = world::bytes_digests_held(&read, Some(&own_sources));
+            let of_label: Vec<&String> = files.iter().filter(|p| crate::code_rule_dsl::language::label_of_path(p) == Some(label)).collect();
+            // The run's one read of each (decision 0300): the bytes are held for phase 1's and this run's builders.
+            let digests = world::bytes_digests_held(&of_label.iter().map(|p| root.join(p)).collect::<Vec<_>>(), Some(&own_sources));
             let stated: Vec<(String, String, String, String)> = of_label
                 .into_iter()
                 .zip(digests)
@@ -3908,7 +3920,7 @@ fn run_observed(
         debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
         strata.identities(options, &phased, &base_rows, &|r| crate::code_rule_dsl::typing::file_local::setting_input(prog, r))
     };
-    let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref(), label);
+    let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
     // The components' stored rows are a function of the phases' exports the cross-file rules read too (P3's
     // `types__attr`, `types__tmap`: a library's stubs, which no component's documents hold), so the plan is digested
     // under those as well. Coarse: an export that changes misses every component, not only those that read the rows
@@ -10360,7 +10372,7 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 /// The dialects a run of `program` reads, when its `.language` names a language of several (TypeScript's: `.ts`,
 /// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
 /// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own, which reads the
-/// others' files as text (`lane_text_dialects`). Empty when the language has one dialect: the run reads it as before.
+/// others' files as text (`lane::text_dialects`). Empty when the language has one dialect: the run reads it as before.
 pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
     run_dialects_in(&|| corpus_files(root), prog, options)
 }
@@ -10381,13 +10393,17 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Pr
     Ok(labels)
 }
 
+/// The files the program's policies select (`policies_scope`), and, for a run of one dialect of a language of several
+/// (the `dialect` option), the others' files in scope read as text (`lane::with_other_dialects`, decision 0337).
+fn scoped(found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
+    lane::with_other_dialects(policies_scope(found, prog, options), options)
+}
+
 /// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
-/// A run of one dialect of a language of several (the `dialect` option) reads the others' files in scope as text too
-/// (`lane_text_dialects`).
-fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
+fn policies_scope(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::Value) -> CorpusFiles {
     let text_glob = |p: &String| prog.text_globs.iter().any(|g| crate::code_rule_dsl::logic::strings::test("glob", p, g));
     found.text.retain(text_glob);
     // A glob names files of a grammar too (`"**/*.md"`): a run of another grammar reads them as text (`CorpusFiles::of`).
@@ -10398,40 +10414,18 @@ fn scoped(mut found: CorpusFiles, prog: &front::Program, options: &serde_json::V
     found.text.sort();
     // A program of JSON policies (`.policy {…}`) and no `.scope`: their `scope`s (decision 0107).
     let doc_scopes = prog.doc_scopes.clone().or_else(|| json_scopes(&prog.policies));
-    if doc_scopes.is_some() {
-        let scopes = front::resolve_scopes(&doc_scopes, options);
-        let before = found.parsed();
-        for files in found.by_label.values_mut().chain([&mut found.text]) {
-            files.retain(|p| front::in_doc_scopes(&scopes, p));
-        }
-        crate::code_rule_dsl::logic::profile::decision("documents", || {
-            format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
-        });
+    if doc_scopes.is_none() {
+        return found;
     }
-    if let Some(dialect) = options.get("dialect").and_then(serde_json::Value::as_str) {
-        let others: Vec<String> = lane_text_dialects(dialect).into_iter().filter_map(|l| found.by_label.get(l)).flatten().cloned().collect();
-        found.text.extend(others);
-        found.text.sort();
-        found.text.dedup();
+    let scopes = front::resolve_scopes(&doc_scopes, options);
+    let before = found.parsed();
+    for files in found.by_label.values_mut().chain([&mut found.text]) {
+        files.retain(|p| front::in_doc_scopes(&scopes, p));
     }
+    crate::code_rule_dsl::logic::profile::decision("documents", || {
+        format!("{} of {before} files, by the policies' `.scope`; {} read as text (`.scope text`)", found.parsed(), found.text.len())
+    });
     found
-}
-
-/// The dialects whose files a run of `dialect` reads as text only (decision 0337): where `dialect` is one of a
-/// language of several (TypeScript's `.ts`, `.tsx` and `.js` files), the language's others. Each of the program's
-/// runs is lowered for its own dialect, and parses and reports that dialect's files alone (`lane_reports`); a
-/// cross-file rule of one sees every file's `doc` and source text.
-pub fn lane_text_dialects(dialect: &str) -> Vec<&'static str> {
-    use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
-    let mut several = CodeRuleLanguage::ALL.into_iter().filter(|l| l.dialects().len() > 1);
-    let Some(language) = several.find(|l| l.dialects().iter().any(|d| label(*d) == Some(dialect))) else { return Vec::new() };
-    language.dialects().iter().filter_map(|d| label(*d)).filter(|l| *l != dialect).collect()
-}
-
-/// Whether the run of `dialect` reports a finding in the file at `path`: not in a file of another dialect of its
-/// language, which it read as text only (`lane_text_dialects`) and which that dialect's own run reports.
-pub fn lane_reports(dialect: &str, path: &str) -> bool {
-    crate::code_rule_dsl::language::label_of_path(path).is_none_or(|l| !lane_text_dialects(dialect).contains(&l))
 }
 
 /// The files Git sees under `root`, relative, and how many of them Git's status changed (staged, untracked,
