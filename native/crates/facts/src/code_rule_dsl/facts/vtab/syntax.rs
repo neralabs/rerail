@@ -425,6 +425,38 @@ impl LongTexts {
         (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
     }
 
+    /// `f` of node, token or span `n`'s text's bytes where its source holds them, so no text is made or interned. A
+    /// line (`src_line`'s span, `granules::line_of`) is its bytes in the document's lines (`LineTable::text_of`), the
+    /// whole source (`source`'s) all of them; a comment no node is, its text (`text_any`). None for another span (a
+    /// match's) or an id of no document of the batch.
+    fn in_source<R>(&self, n: i64, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        if granules::comment_of(low).is_some() {
+            return self.text_any(n).map(|t| f(t.as_bytes()));
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let source = p.facts.source.as_bytes();
+        let [a, b] = match granules::line_of(low) {
+            Some(0) => [0, source.len() as u32],
+            Some(l) if (l as usize) <= p.f().lines.count() => p.f().lines.text_of(l as usize, source),
+            Some(_) => return None,
+            None => p.span(p.local_of(low)?),
+        };
+        source.get(a as usize..b as usize).map(f)
+    }
+
+    /// The length in characters of node, token or span `n`'s text (`@text_len`): strlen of its text, counted in its
+    /// bytes where they lie (`in_source`: the bytes that begin a character).
+    pub fn text_len(&self, n: i64) -> Option<i64> {
+        self.in_source(n, |bytes| bytes.iter().filter(|&&c| (c as i8) >= -0x40).count() as i64)
+    }
+
+    /// How many spaces, tabs and form feeds node, token or span `n`'s text starts with (`@indent`), counted in its
+    /// bytes where they lie (`in_source`): a line's whitespace before column k is `@indent(line) >= k`.
+    pub fn indent(&self, n: i64) -> Option<i64> {
+        self.in_source(n, |bytes| bytes.iter().take_while(|&&c| matches!(c, b' ' | b'\t' | 0x0c)).count() as i64)
+    }
+
     /// Node `n`'s structural digest's 64 hex digits (`@tree_digest_hex`), read in its projection's hashes
     /// (`tape_rows::TreeDigest`), the text made only for the node asked; none for a node of a document not in the
     /// batch. The digest's 64-bit value, `@tree_digest`'s, is its first 16 digits (`core_rr::digest_value`).
@@ -437,8 +469,9 @@ impl LongTexts {
         Some(core_rr::hex(&tape_rows::TreeDigest::hashes(&at)[local as usize]))
     }
 
-    /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
-    /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
+    /// Node `n`'s exact source text at any length, a comment span's (a comment no node is: `Extra`'s `node_text`
+    /// rows) or a line's (`src_line`'s span, `granules::line_of`: its bytes in the document's lines); none for another
+    /// span or a node of a document not in the batch. It answers `node_text`'s requests
     /// (decision 0174): only the nodes a rule asks for are read and interned.
     pub fn text_any(&self, n: i64) -> Option<String> {
         let (key, low) = ((n >> 32) as u32, n as u32);
@@ -461,6 +494,9 @@ impl LongTexts {
                 }
             }
             return None;
+        }
+        if granules::line_of(low).is_some() {
+            return self.in_source(n, |bytes| String::from_utf8_lossy(bytes).into_owned());
         }
         let core = p.ranks().select(Item::Node, p.local_of(low)?)?;
         Some(f.text(core).to_owned())
@@ -548,8 +584,9 @@ impl Source for LongTexts {
         // makes there too. `str`'s is `str_any`'s, which answers `str` on request in either shape.
         if let Some(rel) = TRel::ALL.into_iter().find(|r| r.read() == name && *r != TRel::Str).filter(|r| self.batch.shape == Shape::T || matches!(r, TRel::Intval | TRel::Op)) {
             // A comment, declared a node though T's nodes leave it out, is a span whose `text` is its text
-            // (`Extra::document`).
-            if rel == TRel::Text && granules::comment_of(n as u32).is_some() {
+            // (`Extra::document`), and so is a line (`src_line`'s span, read in place: `text`'s rows of it, made
+            // when a rule reads one, are its text whatever its characters).
+            if rel == TRel::Text && (granules::comment_of(n as u32).is_some() || granules::line_of(n as u32).is_some()) {
                 return self.text_any(n);
             }
             let (p, x, dialect) = self.node_at(n)?;
@@ -561,6 +598,8 @@ impl Source for LongTexts {
             "rr_node_value" => self.value_any(n),
             "rr_node_str" => self.str_any(n),
             "tree_digest_hex" => self.digest_hex(n),
+            "text_len" => self.text_len(n).map(|k| k.to_string()),
+            "indent" => self.indent(n).map(|k| k.to_string()),
             // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
             // last: an operator is never empty).
             "rr_node_op_at" => {

@@ -1931,6 +1931,35 @@ dig(l, @tree_digest_hex(r), @tree_digest(r)) :- field(a, "left", x), text(x, l),
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `@text_len(n)` is `strlen` of `n`'s text, a node's or a line's, in characters (`é` one, `漢` one), and `@indent(n)`
+/// the spaces, tabs and form feeds it starts with, each counted in the source: rules measure a text without reading
+/// it. Read in a head alone too (`HeadReads`), of a rule whose document is `_` (its located form's cross part).
+#[test]
+fn text_len_is_strlen_of_the_text_of_a_node_or_a_line() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("textlen");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a = 'é漢'\nbb = 12345\n\nif bb:\n  \tc = 1\n").unwrap();
+    let rule = dir.join("len.rerail");
+    std::fs::write(&rule, r#"
+.decl node_len(l: symbol, k: number, s: number)
+node_len(l, @text_len(r), strlen(t)) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment"), text(r, t).
+.decl line_len(l: number, k: number, s: number)
+line_len(l, @text_len(sp), strlen(t)) :- src_line(_, l, sp), text(sp, t).
+.decl line_ind(l: number, k: number, w: number)
+line_ind(l, @indent(sp), @text_len(sp)) :- src_line(_, l, sp).
+.output node_len, line_len, line_ind
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let shown = |r: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().into_iter().map(|row| row.join(" ")).collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(shown("node_len"), ["a 4 4", "bb 5 5", "c 1 1"].map(str::to_owned).into());
+    // The empty line between the two terminators, and the one after the last.
+    assert_eq!(shown("line_len"), ["1 8 8", "2 10 10", "3 0 0", "4 6 6", "5 8 8", "6 0 0"].map(str::to_owned).into());
+    assert_eq!(shown("line_ind"), ["1 0 8", "2 0 10", "3 0 0", "4 0 6", "5 3 8", "6 0 0"].map(str::to_owned).into());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `def_digest(n, h)` (decision 0083 §0) hashes each definition unit's own code: the module, each class and each
 /// function, a nested unit standing for its kind and name. A comment or a moved line changes nothing; a method's body
 /// changes the method's digest alone, not its class's or its module's.

@@ -140,6 +140,12 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // hashes: `@tree_digest_hex(n)`, for a key or a signature over the digest's text; `@tree_digest(n)` is its 64-bit
     // value, a number.
     ("tree_digest_hex", &[Number], Text),
+    // The length in characters of a node's, token's or span's text (the syntax table's `LongTexts::text_len`), counted
+    // in its source: `@text_len(n)`, strlen of its text with no text made.
+    ("text_len", &[Number], Number),
+    // How many spaces, tabs and form feeds a node's, token's or span's text starts with (`LongTexts::indent`), counted
+    // in its source: `@indent(n)`.
+    ("indent", &[Number], Number),
     // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
     // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
     ("rr_node_name", &[Number], Text),

@@ -2777,10 +2777,14 @@ impl Lowerer {
             if let Some(x) = tm_var(&self.prog, l) {
                 match r {
                     _ if tm_var(&self.prog, r).is_some() => equal = Some((x.to_owned(), tm_var(&self.prog, r).expect("a variable").to_owned())),
-                    // A computed value: a number from arithmetic and the functions of numbers, else a symbol.
+                    // A computed value: a number from arithmetic and the functions of numbers (those the catalogue
+                    // says return one: `@text_len`, `@semver_valid`, …), else a symbol.
                     Tm::Int(_) => typed.push((x.to_owned(), "int".to_owned())),
                     _ if let Some((f, _)) = tm_call(&self.prog, r) => {
-                        let number = matches!(f, "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches") || f.starts_with("float_") && f != "float_str";
+                        use crate::code_rule_dsl::logic::strings::functions::{Kind, native_call};
+                        let number = matches!(f, "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches")
+                            || f.starts_with("float_") && f != "float_str"
+                            || native_call(f).is_some_and(|(_, _, ret)| matches!(ret, Kind::Number));
                         typed.push((x.to_owned(), if number { "int" } else { "sym" }.to_owned()));
                     }
                     Tm::Str(_) | Tm::StrAtom(_) => typed.push((x.to_owned(), "sym".to_owned())),

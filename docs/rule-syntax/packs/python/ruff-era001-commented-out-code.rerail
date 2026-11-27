@@ -104,12 +104,14 @@ era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\
 // last `# ///` before the first other line.
 .decl era_script(c: node)
 era_script(c) :- comment(c, _), docof(c, d), line(c, l), era_block(d, l0, e), l0 <= l, l <= e.
-.decl era_cline(d: number, l: number, s: symbol)
-era_cline(d, l, s) :- era_has_script(d), src_line(d, l, sp), text(sp, s), match("#(?: [\\s\\S]*)?", s).
+.decl era_cline(d: number, l: number)  // line l of a script's file is `#` or `# …`; each test reads the line in place
+era_cline(d, l) :- era_has_script(d), src_line(d, l, sp), match("#(?: [\\s\\S]*)?", sp).
 .decl era_has_script(d: number)
 era_has_script(d) :- comment(c, _), text(c, "# /// script"), docof(c, d).
 .decl era_run(d: number, l0: number, l: number)
-era_run(d, l0, l0) :- era_cline(d, l0, "# /// script").
-era_run(d, l0, l + 1) :- era_run(d, l0, l), era_cline(d, l + 1, _).
+era_run(d, l0, l0) :- era_has_script(d), src_line(d, l0, sp), match("# /// script", sp).
+era_run(d, l0, l + 1) :- era_run(d, l0, l), era_cline(d, l + 1).
 .decl era_block(d: number, l0: number, e: number)
-era_block(d, l0, e) :- era_run(d, l0, _), e = max l : { era_run(d, l0, l), era_cline(d, l, "# ///") }.
+era_block(d, l0, e) :- era_run(d, l0, _), e = max l : { era_run(d, l0, l), era_close(d, l) }.
+.decl era_close(d: number, l: number)
+era_close(d, l) :- era_has_script(d), src_line(d, l, sp), match("# ///", sp).

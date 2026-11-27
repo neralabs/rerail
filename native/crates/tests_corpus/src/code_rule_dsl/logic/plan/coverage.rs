@@ -198,7 +198,7 @@ fn probes() -> Vec<Probe> {
     // without anyone writing its probe.
     let probed: BTreeSet<String> = out.iter().flat_map(|p| p.ops.iter().cloned()).collect();
     let decls = functor_decls();
-    let tree = ["doc", "in", "place", "place_path", "place_line", "id", "line", "depth", "within", "tree_digest", "tree_digest_hex"];
+    let tree = ["doc", "in", "place", "place_path", "place_line", "id", "line", "depth", "within", "tree_digest", "tree_digest_hex", "text_len", "indent"];
     for op in census().0.keys() {
         let Some((name, arity)) = op.strip_prefix("arity ").and_then(|r| r.split_once(' ')) else { continue };
         let Ok(arity) = arity.parse::<usize>() else { continue };
@@ -679,7 +679,7 @@ fn every_operation_a_shipped_rule_uses_has_a_probe() {
     let probed: BTreeSet<String> = probes().into_iter().flat_map(|p| p.ops).collect();
     let (used, files, unread) = census();
     // Forms the tree probes cover (`tree_forms_run_on_every_executor`) once they exist; until then, named here.
-    let tree = ["nearest", "ast", "call doc", "call in", "call place", "call place_path", "call place_line", "call flat_bin", "call id", "call line", "call depth", "call within", "call tree_digest", "call tree_digest_hex"];
+    let tree = ["nearest", "ast", "call doc", "call in", "call place", "call place_path", "call place_line", "call flat_bin", "call id", "call line", "call depth", "call within", "call tree_digest", "call tree_digest_hex", "call text_len", "call indent"];
     let missing: Vec<String> = used.iter().filter(|(op, _)| !op.starts_with("arity ") && !probed.contains(*op) && !tree.contains(&op.as_str())).map(|(op, f)| format!("{op} (first in {})", f.first().map_or("", String::as_str))).collect();
     eprintln!("{files} shipped files ({unread} unparsed), {} operations used", used.len());
     assert!(missing.is_empty(), "operations shipped rules use that no coverage probe runs:\n{}", missing.join("\n"));

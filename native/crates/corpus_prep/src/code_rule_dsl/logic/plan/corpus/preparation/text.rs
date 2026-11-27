@@ -47,6 +47,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
     }
+    p.rules(&mut HeadReads);
     p.rules(&mut ImpliedSets { added: 0 });
     let mut relations = TextRelations::default();
     p.rules(&mut relations);
@@ -487,6 +488,61 @@ impl RulePass for NodeSubjects {
     }
 }
 
+// ---- a node read in a head is read in the body ----
+
+/// A node read (`syntax::NODE_READS`) in a rule's head, `len(n, @text_len(n)) :- …`, is read in its body: the head's
+/// argument that calls it becomes a fresh variable, bound by `v = <the argument>` in the body, where every other node
+/// read stands (`NodeReads` writes them so). In the head, the run read it in no batch where the rule was located
+/// (decision 0665: its located form's cross part reads it again, its binding of the long-text nodes holding no batch),
+/// and it made no row.
+struct HeadReads;
+
+/// Whether term `t` calls a node read.
+fn reads_a_node(v: &Version, t: TermRef<'_>) -> bool {
+    match t {
+        TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| reads_a_node(v, a)),
+        _ => false,
+    }
+}
+
+/// The head's arguments that call a node read, each the variable named next in `names`.
+struct Hoisted<'a> {
+    v: &'a Version,
+    names: &'a [crate::code_rule_dsl::logic::program_image::AtomId],
+    next: usize,
+}
+
+impl Rewrite for Hoisted<'_> {
+    fn term(&mut self, site: crate::code_rule_dsl::logic::program_image::build::Site<'_>, t: TermRef<'_>) -> Option<T<'static>> {
+        use crate::code_rule_dsl::logic::program_image::build::Site;
+        // Asked of each argument before its own arguments: the whole argument is the one hoisted.
+        (matches!(site, Site::Head(_)) && reads_a_node(self.v, t)).then(|| {
+            self.next += 1;
+            T::VarAtom(self.names[self.next - 1])
+        })
+    }
+}
+
+impl RulePass for HeadReads {
+    const NAME: &'static str = "a node read in a head is read in the body";
+    fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
+        let v = cx.v();
+        let read: Vec<TermRef<'_>> = r.head().args().filter(|&t| reads_a_node(v, t)).collect();
+        if read.is_empty() {
+            return Ok(Step::Keep);
+        }
+        let mut held: HashSet<String> = r.vars().map(|a| v.text(a).to_owned()).collect();
+        let mut count = 0;
+        let names: Vec<_> = read.iter().map(|_| fresh(&mut held, &mut count, "rr_head_read")).map(|n| out.builder().atom(&n)).collect();
+        let mut w = out.rewriting(&mut Hoisted { v, names: &names, next: 0 });
+        for (&t, &n) in read.iter().zip(&names) {
+            w = w.cmp(T::VarAtom(n), CmpOp::Eq, t_of(r, t));
+        }
+        w.finish()?;
+        Ok(Step::Written)
+    }
+}
+
 // ---- a bound node's per-node values are read ----
 
 /// `core.rerail`'s per-node relations a node read answers (decision 0353 step 3), each with its read: `text`'s at any
@@ -617,6 +673,12 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
         if !derived.contains(rel.as_str()) && v.declares(rel) {
             cols.insert(rel.clone(), c.iter().copied().collect());
         }
+    }
+    // A line's span (`src_line`'s): no node, but the reads answer it in place (`LongTexts::text_any` its text, the
+    // others none), so `text(sp, t)` of a line a rule binds reads that line, and no line's text is made for it
+    // (`text_demand`: a `text` row of a line made every line's text, D411's docstring lines all of a file's).
+    if !derived.contains("src_line") && v.declares("src_line") {
+        cols.insert("src_line".to_owned(), BTreeSet::from([2]));
     }
     for rel in matchers.iter().filter(|r| !derived.contains(r.as_str())) {
         if let Some(d) = v.decl_of(rel) {
