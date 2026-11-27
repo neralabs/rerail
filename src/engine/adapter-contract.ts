@@ -45,12 +45,6 @@ export type SteerStrategy = (typeof STEER_STRATEGIES)[number];
 /** How a person types a Rerail command in a coding agent: Codex runs skills as `$name`, every other agent as `/name`. */
 export type CommandSigil = "/" | "$";
 
-/**
- * How a coding agent writes a file so that Rerail's hooks see the edit: Codex's hooks see a write through its shell
- * tool, not through apply_patch; every other agent's own edit tool is seen.
- */
-export type ObservedFileWrite = "edit-tool" | "shell";
-
 export interface AdapterCapabilityProfile {
   host: RerailHost;
   assistantObservation: AssistantObservation;
@@ -63,8 +57,13 @@ export interface AdapterCapabilityProfile {
   statusLine: boolean;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
   commandSigil: CommandSigil;
-  /** How this coding agent writes a file so that Rerail's hooks see the edit. */
-  observedFileWrite: ObservedFileWrite;
+  /**
+   * The version from which this coding agent's hooks show its own edit tool, where an older one runs it with no hook:
+   * Codex fires PreToolUse and PostToolUse for `apply_patch` only from 0.124.0. Until one of a session's calls names the
+   * files it writes, its whole turn counts as one call, so what an unseen edit wrote is still its own (`RerailRuntime`'s
+   * turn window). Undefined where every version's hooks show it.
+   */
+  editToolHookedSince: string | undefined;
   /**
    * The shell this coding agent runs the commands Rerail names in on Windows (steers, command files, set-up answers):
    * Git Bash (`posix`) or PowerShell. Off Windows every agent runs a POSIX shell. Hooks are separate: their commands
@@ -93,7 +92,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "turn_end",
     },
     commandSigil: "/",
-    observedFileWrite: "edit-tool",
+    editToolHookedSince: undefined,
     windowsCommandShell: "posix",
   },
   pi: {
@@ -115,7 +114,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "turn_end",
     },
     commandSigil: "/",
-    observedFileWrite: "edit-tool",
+    editToolHookedSince: undefined,
     windowsCommandShell: "posix",
   },
   "claude-code": {
@@ -137,7 +136,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "Stop/StopFailure",
     },
     commandSigil: "/",
-    observedFileWrite: "edit-tool",
+    editToolHookedSince: undefined,
     windowsCommandShell: "posix",
   },
   codex: {
@@ -159,7 +158,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "Stop",
     },
     commandSigil: "$",
-    observedFileWrite: "shell",
+    editToolHookedSince: "0.124.0",
     windowsCommandShell: "powershell",
   },
   cursor: {
@@ -181,7 +180,7 @@ export const ADAPTER_CAPABILITIES = {
       turn: "stop",
     },
     commandSigil: "/",
-    observedFileWrite: "edit-tool",
+    editToolHookedSince: undefined,
     windowsCommandShell: "powershell",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;

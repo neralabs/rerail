@@ -110,9 +110,16 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
 }
 
 type Assertion = { name: string; passed: boolean; detail: string };
+/**
+ * How Codex writes the violation: with a shell command, whose result reconciles the workspace, or with `apply_patch`,
+ * whose PreToolUse and PostToolUse Codex fires from 0.124, so the patch's own result is checked (`--apply-patch`).
+ */
+type CodexWrite = "shell" | "apply_patch";
 /** INCONCLUSIVE: the provider, not Rerail, never got the session to the violation (or stalled); the attempt is retried. */
 type Evidence = {
   harness: RerailHost;
+  /** Set for Codex's `apply_patch` case. */
+  write?: "apply_patch";
   attempt: number;
   status: "PASSED" | "FAILED" | "INCONCLUSIVE";
   versions: Record<string, string>;
@@ -145,20 +152,22 @@ const SET_CALL_SCRIPT = join("tools", "set_call.py");
 const VIOLATION_POLL_MS = 100;
 
 function usage(): never {
-  throw new Error("Usage: node --import tsx scripts/host/host-smoke.ts --host <omp|pi|claude-code|codex|cursor|all>");
+  throw new Error("Usage: node --import tsx scripts/host/host-smoke.ts --host <omp|pi|claude-code|codex|cursor|all> | --host codex --apply-patch");
 }
-function selectedHosts(): RerailHost[] {
+function selectedRun(): { hosts: RerailHost[]; codexWrite: CodexWrite } {
   const args = process.argv.slice(2);
-  if (args.length !== 2 || args[0] !== "--host") usage();
-  if (args[1] === "all") return [...HOSTS];
+  if (args[0] !== "--host") usage();
+  if (args.length === 3 && args[1] === "codex" && args[2] === "--apply-patch") return { hosts: ["codex"], codexWrite: "apply_patch" };
+  if (args.length !== 2) usage();
+  if (args[1] === "all") return { hosts: [...HOSTS], codexWrite: "shell" };
   const selected = HOSTS.find((host) => host === args[1]);
-  return selected === undefined ? usage() : [selected];
+  return selected === undefined ? usage() : { hosts: [selected], codexWrite: "shell" };
 }
 function append(assertions: Assertion[], name: string, passed: boolean, detail: string): void {
   assertions.push({ name, passed, detail });
 }
 
-async function createProject(project: string, host: RerailHost): Promise<void> {
+async function createProject(project: string, host: RerailHost, codexWrite: CodexWrite): Promise<void> {
   await mkdir(join(project, "api"), { recursive: true });
   await writeFile(
     join(project, "api", "route.py"),
@@ -173,7 +182,7 @@ async function createProject(project: string, host: RerailHost): Promise<void> {
       "",
     ].join("\n"),
   );
-  if (host !== "codex") return;
+  if (host !== "codex" || codexWrite === "apply_patch") return;
   await mkdir(join(project, "tools"), { recursive: true });
   await writeFile(
     join(project, SET_CALL_SCRIPT),
@@ -216,14 +225,51 @@ function contains(value: unknown, needle: string): boolean {
   return JSON.stringify(value)?.includes(needle) ?? false;
 }
 
-export function hasCompletedViolation(events: readonly { kind: string; payload: unknown }[]): boolean {
+/** The tool calls whose input holds the forbidden call and that have a matching completed native tool-result. */
+function completedViolations(events: readonly { kind: string; payload: unknown }[]): { toolCallId: string; toolName: string; input: unknown }[] {
   const native = events.flatMap(({ kind, payload }) => {
     const event = AdapterEventSchema.safeParse(payload).data;
     return event?.kind === kind ? [event] : [];
   });
-  return native.some((call, index) => call.kind === "call" && contains(call.input, "cursor.execute") &&
+  return native.flatMap((call, index) => call.kind === "call" && contains(call.input, "cursor.execute") &&
     native.some((result, resultIndex) => resultIndex > index && result.kind === "result" && !result.failed &&
-      result.sessionId === call.sessionId && result.toolCallId === call.toolCallId && result.toolName === call.toolName));
+      result.sessionId === call.sessionId && result.toolCallId === call.toolCallId && result.toolName === call.toolName)
+    ? [{ toolCallId: call.toolCallId, toolName: call.toolName, input: call.input }]
+    : []);
+}
+
+export function hasCompletedViolation(events: readonly { kind: string; payload: unknown }[]): boolean {
+  return completedViolations(events).length > 0;
+}
+
+/**
+ * Whether Codex's own `--json` stream reports a completed `apply_patch` of api/route.py: a `file_change` item, which
+ * Codex emits only once a patch succeeds or fails. Judged without Rerail's records, so a model that wrote the file some
+ * other way is told apart from hooks that never arrived.
+ */
+export function codexPatchedRoute(stdout: string): boolean {
+  return stdout.split("\n").some((line) => {
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      return false;
+    }
+    if (!isRecord(event) || event.type !== "item.completed" || !isRecord(event.item)) return false;
+    const { type, status, changes } = event.item;
+    return type === "file_change" && status === "completed" && Array.isArray(changes) &&
+      changes.some((change) => isRecord(change) && typeof change.path === "string" && change.path.replaceAll("\\", "/").endsWith("api/route.py"));
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object";
+}
+
+/** The tool call a persisted delivery rode the result of (`AdapterDelivery.toolCallId`), when it did. */
+function deliveredWithResultOf(entry: unknown): string | undefined {
+  const toolCallId = isRecord(entry) && isRecord(entry.delivery) ? entry.delivery.toolCallId : undefined;
+  return typeof toolCallId === "string" ? toolCallId : undefined;
 }
 
 /**
@@ -265,17 +311,28 @@ const AFTER_VIOLATION: Record<string, true> = {
   "real final assistant output": true,
 };
 
+/** Failures that follow from Codex never writing the violation with `apply_patch`, in its apply_patch case. */
+const AFTER_PATCH: Record<string, true> = {
+  "Codex patched api/route.py": true,
+  "apply_patch hooks recorded": true,
+  "steered at the patch's own result": true,
+};
+
 /**
  * An attempt is inconclusive, and worth another session, only when everything Rerail could be held to passed: the
- * failures are a harness timeout (a stalled provider) or follow from the violation never reaching the file. A
- * violation that reached the file without Rerail's record or diagnostic, a crash, an extension error or a lost
- * delivery stays FAILED.
+ * failures are a harness timeout (a stalled provider) or follow from the violation never reaching the file, or, in
+ * Codex's apply_patch case, from the model never writing it with `apply_patch`. A violation that reached the file
+ * without Rerail's record or diagnostic, a patch Codex applied without its hooks' record or a steer at its result, a
+ * crash, an extension error or a lost delivery stays FAILED.
  */
 export function isInconclusive(assertions: readonly Assertion[], exitCode: number): boolean {
   const failed = assertions.filter((assertion) => !assertion.passed);
   const violationMissing = failed.some((assertion) => assertion.name === "violation reached the file");
+  const patchMissing = failed.some((assertion) => assertion.name === "Codex patched api/route.py");
   return failed.length > 0 && failed.every((assertion) =>
-    assertion.name === "harness exited cleanly" ? exitCode === 124 : violationMissing && AFTER_VIOLATION[assertion.name] === true);
+    assertion.name === "harness exited cleanly"
+      ? exitCode === 124
+      : (violationMissing && AFTER_VIOLATION[assertion.name] === true) || (patchMissing && AFTER_PATCH[assertion.name] === true));
 }
 
 /** A host line about Rerail: it names the extension file the host loaded (`Extension error (<path>): ...`), Rerail or its engine. */
@@ -296,6 +353,7 @@ export async function inspectOutcome(
   result: CommandResult,
   violationSeen: boolean,
   acceptanceMode: "full" | "transport",
+  codexWrite: CodexWrite = "shell",
 ): Promise<string> {
   append(
     assertions,
@@ -375,6 +433,33 @@ export async function inspectOutcome(
     deliveries.some((entry) => contains(entry, "CURSOR_EXECUTE")),
     "a separate persisted executable-policy delivery contains CURSOR_EXECUTE",
   );
+  if (codexWrite === "apply_patch") {
+    append(
+      assertions,
+      "Codex patched api/route.py",
+      codexPatchedRoute(result.stdout),
+      "Codex's JSON stream reports a completed apply_patch file_change of api/route.py",
+    );
+    // The patch that adds the forbidden call, not the one restoring the helper, whose removed line names it too.
+    const patches = completedViolations(normalized)
+      .filter((call) => call.toolName === "apply_patch" && isRecord(call.input) && typeof call.input.command === "string" &&
+        /^\+.*cursor\.execute/mu.test(call.input.command))
+      .map((call) => call.toolCallId);
+    append(
+      assertions,
+      "apply_patch hooks recorded",
+      patches.length > 0,
+      "Rerail recorded the violating apply_patch call from PreToolUse and its result from PostToolUse",
+    );
+    // A steer names the call whose result carries it only when it is that call's own edit check, made while the result
+    // was answered: one the turn's end or a later walk found has none.
+    append(
+      assertions,
+      "steered at the patch's own result",
+      deliveries.some((entry) => contains(entry, "CURSOR_EXECUTE") && patches.includes(deliveredWithResultOf(entry) ?? "")),
+      "the CURSOR_EXECUTE delivery rode the violating apply_patch call's PostToolUse",
+    );
+  }
   return bounded(JSON.stringify({ toolCalls: normalized.filter((event) => event.kind === "call"), deliveries }));
 }
 
@@ -404,7 +489,7 @@ async function enforceSandboxIsolation(
 process.env.RERAIL_EXPERIMENTAL_CONVERSATION_RULES = "1";
 
 /** What every attempt's evidence names: the host, the attempt and the versions it ran. */
-type AttemptOf = Pick<Evidence, "harness" | "attempt" | "versions">;
+type AttemptOf = Pick<Evidence, "harness" | "write" | "attempt" | "versions">;
 
 /**
  * Runs the host's session under the sandbox profile while watching api/route.py: the session's result, and the stop
@@ -446,6 +531,7 @@ function sessionEvidence(
   if (failed.length > 0) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
   return {
     harness: attempt.harness,
+    ...(attempt.write === undefined ? {} : { write: attempt.write }),
     attempt: attempt.attempt,
     status,
     versions: attempt.versions,
@@ -466,6 +552,7 @@ function failedEvidence(
 ): Evidence {
   return {
     harness: attempt.harness,
+    ...(attempt.write === undefined ? {} : { write: attempt.write }),
     attempt: attempt.attempt,
     status: "FAILED",
     versions: attempt.versions,
@@ -476,9 +563,19 @@ function failedEvidence(
   };
 }
 
-async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
+/** What the model is asked to do: break the rule, wait for Rerail's diagnostic, then restore the file. */
+function smokePrompt(host: RerailHost, codexWrite: CodexWrite): string {
+  if (host === "codex" && codexWrite === "shell")
+    return "Controlled Rerail acceptance exercise. Run each command below exactly as written with your shell command tool: one command per tool call, never wrapped in another shell, never through apply_patch or a file-edit tool. First create the intentional violation: `python3 tools/set_call.py cursor.execute`. Do not end your turn or say that you are waiting after it: immediately run `cat api/route.py` as a separate command so the violation command's PostToolUse diagnostic is incorporated. Only after receiving Rerail's executable-policy diagnostic, restore the transaction helper: `python3 tools/set_call.py transaction.fetch_value`. If the diagnostic is still absent after the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity.";
+  if (host === "codex")
+    return "Controlled Rerail acceptance exercise. Read only api/route.py. With your apply_patch tool, never a shell command, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the patch: immediately run `cat api/route.py` as a separate command so the patch's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the patch's result or with the cat; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper with apply_patch. Only if you have received no such diagnostic by the end of the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity.";
+  return "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
+}
+
+async function runHost(host: RerailHost, attempt: number, codexWrite: CodexWrite): Promise<Evidence> {
   const assertions: Assertion[] = [];
   const versions: Record<string, string> = { node: process.version };
+  const attemptOf: AttemptOf = { harness: host, ...(host === "codex" && codexWrite === "apply_patch" ? { write: codexWrite } : {}), attempt, versions };
   const previousRerailHome = process.env.RERAIL_HOME;
   let sandbox: string | undefined;
   let daemon: RerailDaemon | undefined;
@@ -492,10 +589,8 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     process.env.RERAIL_HOME = rerailHome;
     const project = join(sandbox, "workspace");
     const nonce = smokeNonce();
-    const prompt = host === "codex"
-      ? "Controlled Rerail acceptance exercise. Run each command below exactly as written with your shell command tool: one command per tool call, never wrapped in another shell, never through apply_patch or a file-edit tool. First create the intentional violation: `python3 tools/set_call.py cursor.execute`. Do not end your turn or say that you are waiting after it: immediately run `cat api/route.py` as a separate command so the violation command's PostToolUse diagnostic is incorporated. Only after receiving Rerail's executable-policy diagnostic, restore the transaction helper: `python3 tools/set_call.py transaction.fetch_value`. If the diagnostic is still absent after the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity."
-      : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
-    await createProject(project, host);
+    const prompt = smokePrompt(host, codexWrite);
+    await createProject(project, host, codexWrite);
     const env = await sandboxEnvironment(sandbox, project, rerailHome);
     const profile = await sandboxProfile(sandbox, host);
     await enforceSandboxIsolation(sandbox, profile, project, env, assertions);
@@ -513,10 +608,10 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     const watched = await runWatched(hostCommand(host, project, prompt), profile, project, env);
     result = watched.result;
     const violationSeen = await watched.stopWatching();
-    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE);
-    return sessionEvidence({ harness: host, attempt, versions }, assertions, result, runtimeTrace);
+    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE, codexWrite);
+    return sessionEvidence(attemptOf, assertions, result, runtimeTrace);
   } catch (error) {
-    return failedEvidence({ harness: host, attempt, versions }, assertions, result, error);
+    return failedEvidence(attemptOf, assertions, result, error);
   } finally {
     try {
       await daemon?.close();
@@ -536,10 +631,10 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
 }
 
 /** Inconclusive attempts get a fresh session, up to RERAIL_SMOKE_ATTEMPTS; every attempt is reported. */
-async function runHostAttempts(host: RerailHost): Promise<Evidence[]> {
+async function runHostAttempts(host: RerailHost, codexWrite: CodexWrite): Promise<Evidence[]> {
   const evidence: Evidence[] = [];
   for (let attempt = 1; ; attempt += 1) {
-    const result = await runHost(host, attempt);
+    const result = await runHost(host, attempt, codexWrite);
     if (result.status !== "INCONCLUSIVE") return [...evidence, result];
     if (attempt === ATTEMPTS)
       return [...evidence, { ...result, status: "FAILED", failure: `${result.failure ?? ""}; inconclusive on all ${ATTEMPTS} attempt(s)` }];
@@ -549,7 +644,8 @@ async function runHostAttempts(host: RerailHost): Promise<Evidence[]> {
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const results: Evidence[] = [];
-  for (const host of selectedHosts()) results.push(...(await runHostAttempts(host)));
+  const { hosts, codexWrite } = selectedRun();
+  for (const host of hosts) results.push(...(await runHostAttempts(host, codexWrite)));
   for (const result of results) process.stdout.write(`${JSON.stringify(result)}\n`);
   if (results.some((result) => result.status === "FAILED")) process.exitCode = 1;
 }

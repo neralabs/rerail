@@ -5,11 +5,12 @@ import { basename, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
-import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
+import type { CodeRuleAuditor, CodeRuleEditBatch, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { CodeRuleBridge, MAX_TOLD_AT_ONCE, MAX_TOLD_GAPS } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
+import { codexHookEvents } from "../../../src/hosts/codex/index.js";
 import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 
 /** The store of suspended sessions an engine service gives its runtimes, and what it keeps for one session. */
@@ -37,9 +38,12 @@ interface FixtureOptions {
   /** Start the workspace's repository and gate the runtime on it, as resident runtimes are. */
   startGate?: boolean;
   timingLog?(line: string): void;
+  /** The folder of an earlier fixture, closed, whose session this one opens again, as a restarted daemon does. */
+  root?: string;
+  startEventId?: string;
 }
-async function fixture({ deliverBackground, host = "claude-code", prepare, auditGeneratedEdits, startGate, timingLog }: FixtureOptions = {}) {
-  const root = await temporaryDirectory();
+async function fixture({ deliverBackground, host = "claude-code", prepare, auditGeneratedEdits, startGate, timingLog, root: reopened, startEventId = "start" }: FixtureOptions = {}) {
+  const root = reopened ?? await temporaryDirectory();
   await prepare?.(root);
   const databasePath = join(root, "rerail.sqlite");
   if (startGate === true) startTestRepository(root, databasePath);
@@ -63,7 +67,7 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, audit
     },
   });
   const session = { host, sessionId: "session-1", cwd: root };
-  await runtime.ingest({ kind: "session-start", eventId: "start", session });
+  await runtime.ingest({ kind: "session-start", eventId: startEventId, session });
   // The evaluator opens behind the session start; what is left of that after its openWorkspace is microtasks.
   await opened.promise;
   await new Promise<void>(resolve => setImmediate(resolve));
@@ -1784,6 +1788,90 @@ describe("source-scoped steers", () => {
     } finally { await test.close(); }
   });
 
+  describe("a Codex apply_patch whose hooks Codex fires (0.124 and later)", () => {
+    const patch = "*** Begin Patch\n*** Update File: route.py\n@@\n-transaction.fetch_value('SELECT 1')\n+cursor.execute('SELECT 1')\n*** End Patch\n";
+    /** Codex's hook payloads as its hook schemas give them, for `apply_patch` too: `tool_input.command` is the patch. */
+    function codexHooks(runtime: RerailRuntime, root: string) {
+      const common = { session_id: "session-1", cwd: root, transcript_path: null, model: "gpt-5.5", permission_mode: "default" };
+      const send = async (input: Record<string, unknown>) => {
+        const deliveries: AdapterDelivery[] = [];
+        for (const event of codexHookEvents({ ...common, ...input })) deliveries.push(...await runtime.ingest(event));
+        return deliveries;
+      };
+      const tool = { turn_id: "t1", tool_name: "apply_patch", tool_use_id: "call_patch", tool_input: { command: patch } };
+      return {
+        prompt: () => send({ hook_event_name: "UserPromptSubmit", turn_id: "t1", prompt: "use a cursor" }),
+        patchCall: () => send({ hook_event_name: "PreToolUse", ...tool }),
+        patchResult: () => send({ hook_event_name: "PostToolUse", ...tool, tool_response: "Success. Updated the following files:\nM route.py\n" }),
+        stop: () => send({ hook_event_name: "Stop", turn_id: "t1", stop_hook_active: false, last_assistant_message: "done" }),
+      };
+    }
+    /** An auditor that records each batch and steers on any edit that writes `cursor.execute` or `NEEDLE`. */
+    const steeringAuditor = (batches: CodeRuleEditBatch[]) => (steerDelivery: RuleSteerDelivery): CodeRuleAuditor["auditGeneratedEdits"] =>
+      async (sessionId, batch) => {
+        batches.push(batch);
+        if (batch.edits.some(edit => /cursor\.execute|NEEDLE/u.test(edit.generatedText ?? ""))) {
+          // As the enforcer's steer of a generated edit, which the result whose check it is carries.
+          await steerDelivery.requestSteer(sessionId, "steer", `STEER revision ${batch.revision}`, {
+            revision: batch.revision, scope: batch.edits.map(edit => edit.path), generatedEdit: { violations: [], sourceOf: () => undefined },
+          });
+        }
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      };
+    const prepare = async (root: string) => {
+      await writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n");
+      await writeFile(join(root, "other.py"), "ok = 1\n");
+    };
+
+    it("is checked and steered at its own result, and then the turn takes a change no call made for another writer's", async () => {
+      const batches: CodeRuleEditBatch[] = [];
+      const test = await fixture({ host: "codex", prepare, auditGeneratedEdits: steeringAuditor(batches) });
+      try {
+        const codex = codexHooks(test.runtime, test.root);
+        expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: test.session.sessionId, text: "" })).toEqual([]);
+        await codex.prompt();
+        await codex.patchCall();
+        await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+        // The patch names its file, so its text before the patch is captured and the edit is read against it.
+        expect(await codex.patchResult()).toEqual([expect.objectContaining({ content: "STEER revision 1", toolCallId: "call_patch" })]);
+        expect(batches).toEqual([{
+          revision: 1, checkpoints: ["edit", "function"],
+          edits: [{ path: "route.py", language: "python", previousText: "transaction.fetch_value('SELECT 1')\n", generatedText: "cursor.execute('SELECT 1')\n" }],
+        }]);
+        // Another writer, while no call of the session runs: with the patch's hooks seen, the turn is no call of its own,
+        // so the change is not the session's, and as the session never changed the file, nothing of it is checked.
+        await writeFile(join(test.root, "other.py"), "NEEDLE = 1\n");
+        expect(await codex.stop()).toEqual([]);
+        expect(batches.slice(1)).toEqual([]);
+      } finally { await test.close(); }
+    });
+
+    it("still takes for another writer's a change made during a later turn, after a restart reads the patch's call back from the ledger", async () => {
+      const batches: CodeRuleEditBatch[] = [];
+      const first = await fixture({ host: "codex", prepare, auditGeneratedEdits: steeringAuditor(batches) });
+      const root = first.root;
+      try {
+        const codex = codexHooks(first.runtime, root);
+        expect(await first.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId: first.session.sessionId, text: "" })).toEqual([]);
+        await codex.prompt();
+        await codex.patchCall();
+        await writeFile(join(root, "route.py"), "cursor.execute('SELECT 1')\n");
+        await codex.patchResult();
+        await codex.stop();
+      } finally { await first.close(); }
+      const second = await fixture({ host: "codex", root, startEventId: "start-after-restart", auditGeneratedEdits: steeringAuditor(batches) });
+      try {
+        const sessionId = second.session.sessionId;
+        expect(await second.runtime.ingest({ kind: "turn-end", eventId: "baseline-after-restart", sessionId, text: "" })).toEqual([]);
+        batches.length = 0;
+        await second.runtime.ingest({ kind: "user-prompt", eventId: "prompt-after-restart", sessionId, text: "go on" });
+        await writeFile(join(root, "other.py"), "NEEDLE = 1\n");
+        expect(await second.runtime.ingest({ kind: "turn-end", eventId: "turn-after-restart", sessionId, text: "done" })).toEqual([]);
+        expect(batches).toEqual([]);
+      } finally { await second.close(); }
+    });
+  });
+
   it("steers a Codex write no hook showed, made between the prompt and the turn's end, as the session's own", async () => {
     const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
     const test = await fixture({
@@ -1801,7 +1889,7 @@ describe("source-scoped steers", () => {
       const sessionId = test.session.sessionId;
       expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
       await test.runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId, text: "use a cursor" });
-      // `apply_patch`: Codex fires no hook for it, so no call opens around the write.
+      // `apply_patch` in a Codex before 0.124 fires no hook, so no call opens around the write.
       await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
       const turnEnd = await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
       // Steered, not recorded in Log as another writer's change.
@@ -1829,7 +1917,7 @@ describe("source-scoped steers", () => {
       const command = { sessionId, toolCallId: "shell-1", toolName: "exec_command" };
       await test.runtime.ingest({ kind: "call", eventId: "call", ...command, input: { cmd: "ls" } });
       await test.runtime.ingest({ kind: "result", eventId: "result", ...command, output: "" });
-      // `apply_patch` after the command, which no hook shows.
+      // `apply_patch` after the command, which a Codex before 0.124 shows no hook of.
       await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
       await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
       expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([

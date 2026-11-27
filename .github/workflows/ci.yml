@@ -2153,8 +2153,9 @@ jobs:
         )
       }}
     runs-on: macos-15
-    # Three provider attempts of up to 3 minutes each, side by side, after about 2 minutes of set-up; the host assets
-    # are the build job's package (dist/ is the same on every OS), the engine build-macos'.
+    # Three provider attempts of up to 3 minutes each, the four sessions side by side (Codex once writing with a shell
+    # command, once with apply_patch), after about 2 minutes of set-up; the host assets are the build job's package
+    # (dist/ is the same on every OS), the engine build-macos'.
     timeout-minutes: 20
     env:
       # One Azure AI key serves both the Foundry Anthropic endpoint and the Azure OpenAI endpoint.
@@ -2223,14 +2224,18 @@ jobs:
           claude_pid=$!
           RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host codex > "$results/codex.log" 2>&1 &
           codex_pid=$!
+          RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host codex --apply-patch > "$results/codex-apply-patch.log" 2>&1 &
+          codex_patch_pid=$!
           RERAIL_SMOKE_ACCEPTANCE=transport node --import tsx scripts/host/host-smoke.ts --host cursor > "$results/cursor.log" 2>&1 &
           cursor_pid=$!
           status=0
           if ! wait "$claude_pid"; then status=1; fi
           if ! wait "$codex_pid"; then status=1; fi
+          if ! wait "$codex_patch_pid"; then status=1; fi
           if ! wait "$cursor_pid"; then status=1; fi
           cat "$results/claude-code.log"
           cat "$results/codex.log"
+          cat "$results/codex-apply-patch.log"
           cat "$results/cursor.log"
           exit "$status"
 

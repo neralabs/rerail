@@ -205,7 +205,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   }, true);
 
   register("rerail-show-me", async () => {
-    pi.sendUserMessage(showMeInstructions({ cli, sigil: "/", write: "edit-tool" }));
+    pi.sendUserMessage(showMeInstructions({ cli, sigil: "/" }));
   });
 
   register("rerail-bug-report", async (_ctx, request) => {

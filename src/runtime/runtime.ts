@@ -874,6 +874,11 @@ interface RuntimeSessionState {
   mergeAssistNotesInFlight: Set<string>;
   /** The session's tool calls that edit files, until their results: each result finds the checkout's conflicts again. */
   mergeAssistEdits: Set<string>;
+  /**
+   * Whether one of the session's calls, its ledger's too, named the files it writes: its hooks show its edit tool, so a
+   * host whose older versions do not (`editToolHookedSince`) needs no turn window (`#noteTurnWindow`).
+   */
+  editToolHooked: boolean;
   repositoryAudit: Promise<void> | undefined;
   /** Set while `repositoryAudit` runs: the idle close lets it finish (`#owesScan`). */
   repositoryAuditRunning?: true;
@@ -1904,16 +1909,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A host whose own edit tool no hook shows (`observedFileWrite: "shell"`: Codex's `apply_patch`) writes outside every
-   * call's window, so its turn, from the prompt to the turn's end, is one: what is stamped then is the session's own.
-   * A call opens it too, as a turn has one only at its prompt, which a daemon restart in the middle of the turn loses;
-   * a window already open keeps its start. Two of its sessions' turns in one folder at once both take a change made
-   * then, as overlapping calls do. It runs in the folder the hook names (Codex's `cwd`), as the turn's calls do.
+   * A host whose older versions run its own edit tool with no hook (`editToolHookedSince`: Codex's `apply_patch` before
+   * 0.124) may write outside every call's window, so until the session's hooks show it, its turn, from the prompt to the
+   * turn's end, is one: what is stamped then is the session's own. A call opens it too, as a turn has one only at its
+   * prompt, which a daemon restart in the middle of the turn loses; a window already open keeps its start. Two of its
+   * sessions' turns in one folder at once both take a change made then, as overlapping calls do. It runs in the folder
+   * the hook names (Codex's `cwd`), as the turn's calls do. The first call that names the files it writes proves this
+   * version's hooks show its edits, each in its own call's window: the turn's window ends there, keeping what it held,
+   * and no later turn opens one, so a change no call made is another writer's, as in every other host.
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
-    if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
-    else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
+    if (ADAPTER_CAPABILITIES[state.descriptor.host].editToolHookedSince === undefined || state.editToolHooked) return;
+    if (event.kind === "call" && generatedEditPaths(event.toolName, event.input).length > 0) {
+      state.editToolHooked = true;
+      await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
+    } else if (event.kind === "user-prompt" || event.kind === "call") {
+      await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
+    } else if (event.kind === "turn-end") {
+      await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
+    }
   }
 
   /**
@@ -2899,6 +2913,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       auditRequestWork: undefined,
       mergeAssistNotesInFlight: new Set(),
       mergeAssistEdits: new Set(),
+      editToolHooked: ledger.entries.some(entry => entry.type === "policy-call" && entry.paths.length > 0),
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: openCalls.map(call => ({

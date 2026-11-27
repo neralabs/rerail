@@ -1736,8 +1736,7 @@ describe("Claude Code commands", () => {
     expect(claudeStart).toContain(`'${nodePath}' '${cli}' start --relay\n`);
     expect(claudeStart).not.toContain("--powershell");
     const codexShowMe = await readFile(join(home, ".codex", "skills", "rerail-show-me", "SKILL.md"), "utf8");
-    expect(codexShowMe).not.toContain("<<'EOF'");
-    expect(codexShowMe).toContain("Set-Content -NoNewline -LiteralPath '<file>' -Value @'");
+    expect(codexShowMe).toContain(`${powershell} show-me --json`);
   });
 
   it("writes Claude Code's Windows commands with words Git Bash reads as they are: a `$`, a backtick, a UNC path", async () => {
@@ -2141,8 +2140,8 @@ describe("Codex Rerail skills", () => {
       expect(text).toContain(`---\nname: ${name}\ndescription: ${description}.\n---\n`);
       expect(text).toContain("require_escalated");
     }
-    // Codex's hooks see a shell write, not apply_patch, so its demo writes the file with one shell command.
-    expect(await readFile(skillPath(options.home, "rerail-show-me"), "utf8")).toContain("with one shell command");
+    // Codex's hooks show its apply_patch, so its demo writes the file with it.
+    expect(await readFile(skillPath(options.home, "rerail-show-me"), "utf8")).toContain("with your file edit or write tool");
     expect(await readFile(path, "utf8")).toContain(`\n${options.nodePath} ${join(options.root, "dist", "cli", "cli.js")} session\n`);
     await registerHarnesses({ ...options, harnesses: ["codex"] });
     expect(await backups(path)).toEqual([]);

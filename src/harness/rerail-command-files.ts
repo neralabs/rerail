@@ -198,7 +198,7 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
   }),
   // The demo file's write and fix still go through the coding agent's own edit permission.
   "rerail-show-me": (agent, { cli, shell }) => ({
-    text: showMeInstructions({ cli, sigil: ADAPTER_CAPABILITIES[agent].commandSigil, write: ADAPTER_CAPABILITIES[agent].observedFileWrite, shell }),
+    text: showMeInstructions({ cli, sigil: ADAPTER_CAPABILITIES[agent].commandSigil, shell }),
     allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
   }),
   // `--output` writes any path and `rules add` changes a rule, so both are left out; reading and editing the bundle, and
