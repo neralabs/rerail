@@ -1952,6 +1952,28 @@ function scanGaps(errors: readonly ScanError[]): WalkGap[] {
   return byPath(errors.map(({ path, readError, unrecorded }): WalkGap => ({ path: path || ".", reason: readError, ...(unrecorded ? { unrecorded } : {}) })));
 }
 /**
+ * Whether a listed name may be the `.git` entry a lookup of its folder finds. Compared in upper case: Windows and macOS
+ * find `.GIT` as `.git`, and elsewhere such a name costs a lookup that finds none.
+ */
+function mayBeGitEntry(name: string): boolean {
+  return name.toUpperCase() === ".GIT";
+}
+
+/**
+ * Every entry of `listing`, the folder `folder`'s, read whole, the walk's view told whether one may be its `.git`
+ * (`WalkView.folderListed`) before the walk asks about any; none once the walk is cancelled.
+ */
+async function wholeListing(walk: SourceWalk, folder: string, listing: AsyncIterable<Dirent>): Promise<Dirent[]> {
+  const entries: Dirent[] = [];
+  for await (const entry of listing) {
+    if (walk.discovery.cancelled) return [];
+    entries.push(entry);
+  }
+  walk.view.folderListed?.(folder, entries.some(entry => mayBeGitEntry(entry.name)));
+  return entries;
+}
+
+/**
  * Whether Git ignores the folder `child` a listing named. One removed as the walk asks (its owner's lookup `vanished`) is
  * left to its own examination, which finds it gone (`goneWhenExamined`): it never fails the folder that listed it.
  */
@@ -3760,10 +3782,11 @@ export class CodeRuleBridge {
     }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
-    const asked = this.#auditor.walkView?.(request.root) ?? this.#auditor;
+    const asked: WalkView = this.#auditor.walkView?.(request.root) ?? this.#auditor;
     const view: WalkView = {
       acceptsPath: path => asked.acceptsPath(named(path)),
       ignoresPath: (path, directory) => asked.ignoresPath?.(named(path), directory) === true,
+      folderListed: (path, holdsGitEntry) => asked.folderListed?.(named(path), holdsGitEntry),
     };
     const abandoned = (): boolean => this.#abandoned(discovery);
     const scope: WalkScope = { root: request.root, startedAt: request.startedAt, get cancelled() { return abandoned(); } };
@@ -4967,12 +4990,15 @@ export class CodeRuleBridge {
   /**
    * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed.
    * A folder's `.git` is not entered either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   * The listing is read whole first, so the view learns whether it names a `.git` entry before any of its entries is
+   * asked about (`WalkView.folderListed`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     const listing = await opendir(absolute);
     const seen = walk.scan.seen;
-    seen?.folders.add(sessionPath(walk.discovery.root, absolute));
-    for await (const entry of listing) {
+    const folder = sessionPath(walk.discovery.root, absolute);
+    seen?.folders.add(folder);
+    for (const entry of await wholeListing(walk, folder, listing)) {
       if (walk.discovery.cancelled) return;
       if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
       else if (this.#walksInto(walk, absolute, entry)) walk.stack.push(join(absolute, entry.name));

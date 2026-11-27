@@ -1,0 +1,1 @@
+In a checkout of many folders, a walk of the session's folder no longer asks the disk whether each folder it enters holds a `.git`: the folder's own listing says so, and only a folder that holds one, or that Git ignores, is looked up, so hooks wait less behind the walks.

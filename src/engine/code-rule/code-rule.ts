@@ -1590,7 +1590,14 @@ export interface IgnoredEditMatch {
 }
 
 /** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
-export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot">;
+export interface WalkView extends Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot"> {
+  /**
+   * The walk listed the folder `path` (as for `acceptsPath`), and the listing named a `.git` entry or none
+   * (`holdsGitEntry`); told before the walk asks about any entry the listing named. Absent: the view learns nothing
+   * from a listing.
+   */
+  folderListed?(path: string, holdsGitEntry: boolean): void;
+}
 
 /**
  * Puts `item` last in the list `groups` holds for `key`, starting one for a new key. The list grows in place, so
@@ -1632,8 +1639,8 @@ export interface CodeRuleAuditor {
   /**
    * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
    * never of a link, reaching each through folders from `root` (absolute), where it starts. It may keep what it learns
-   * of a folder for the rest of the walk, so a walk costs a lookup per folder where the auditor would make one per
-   * file. Absent: the walk asks the auditor itself.
+   * of a folder for the rest of the walk, and what each listing told it (`WalkView.folderListed`), so a walk costs a
+   * lookup per folder holding `.git` where the auditor would make one per file. Absent: the walk asks the auditor itself.
    */
   walkView?(root?: string): WalkView;
   /**
