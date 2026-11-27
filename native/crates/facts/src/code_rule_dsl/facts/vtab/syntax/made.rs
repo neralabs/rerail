@@ -2572,18 +2572,13 @@ impl Source for MadeRows {
             None => self.template().keys_rows(_column),
         }
     }
-    /// A chunk's tests of nodes (t57 E6) as `keys_rows` answers: the relation's once made, else its template's (a
-    /// view of the tape reads a node's document in place, makes no document's rows).
-    fn reads_tests_by(&self, by: usize) -> bool {
+    /// A batch of rows by their own id (decision 0706 E1; a fused row program's tests of the nodes it bound, t57
+    /// E6) as `keys_rows` answers: the relation's once made, else its template's (a view of the tape reads a node's
+    /// document in place, makes no document's rows).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
         match self.done() {
-            Some(t) => t.reads_tests_by(by),
-            None => self.template().reads_tests_by(by),
-        }
-    }
-    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64]) -> bool {
-        match self.done() {
-            Some(t) => t.holds_each(by, ids, col, want, cursor, out),
-            None => self.template().holds_each(by, ids, col, want, cursor, out),
+            Some(t) => t.read_own_batch(column, values, reads, out, found, cursor),
+            None => self.template().read_own_batch(column, values, reads, out, found, cursor),
         }
     }
     /// A key column's row. `keys_rows` answers from the template before the rows are made, and a key's values are one

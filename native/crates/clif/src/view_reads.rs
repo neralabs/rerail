@@ -72,8 +72,15 @@ pub struct ViewDoc {
     /// anchor's is its rank among the anchors (`ids` item `ANCHOR_ITEM`).
     pub place: u32,
     pub pad: u32,
+    /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
+    /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
+    pub node_table: Run,
+    /// SPIKE (local fixes, 1): the numbered nodes' local ids by their place among every granule's own nodes, in
+    /// granule order (`Numbering::own_place_of`, `own_numbers`), derived once with `node_table`: an id's local is the
+    /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
+    pub node_by_id: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 8);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 8 + 16 + 16);
 
 /// A language's place in the codes' directory (decision 0697, `rerail_tape_format::codes_dir`, in the binary): by
 /// tape tag, the offsets from the directory's first byte of its codes' kind atoms and field atoms (u32s, by the tape's
@@ -386,7 +393,7 @@ pub const OP_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 23] = [
+    let fields: [(&str, &str, usize); 25] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -410,6 +417,8 @@ pub fn ukl() -> String {
         ("Run", "segments", offset_of!(ViewDoc, segments)),
         ("uint32_t", "place", offset_of!(ViewDoc, place)),
         ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("Run", "node_table", offset_of!(ViewDoc, node_table)),
+        ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\

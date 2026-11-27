@@ -4880,12 +4880,13 @@ fn what_a_kind_test_of_a_bound_node_costs() {
     }
 }
 
-/// t57 E6: the node view's tests of a chunk of nodes by their own ids (`Source::holds_each`, read off the tape)
-/// answer as its probes do (`holds_each_probed`): every node's id in row order and shuffled, ids of no node, each
-/// kind the documents have and none (a node's row alone), across chunks that keep one cursor.
+/// t57 E6: the node view's tests of a chunk of nodes by their own ids, read as one batch (`Source::read_own_batch`,
+/// the fused row program's view tests, decision 0706 E1) answer as its probes do (`lookup_read_at`): every node's id
+/// in row order and shuffled, ids of no node, each kind the documents have and none (a node's row alone), across
+/// chunks that keep one cursor.
 #[test]
 fn a_node_views_tests_of_a_chunk_are_its_probes() {
-    use crate::code_rule_dsl::facts::vtab::{ProbeCursor, holds_each_probed};
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
     let store = ContentStore::open(&temp("holds-each")).unwrap();
     let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
     let n = node.len();
@@ -4904,15 +4905,25 @@ fn a_node_views_tests_of_a_chunk_are_its_probes() {
         let col = if want.is_some() { 2 } else { 1 };
         let (mut cursor, mut probes) = (ProbeCursor::default(), ProbeCursor::default());
         for chunk in ids.chunks(97) {
-            let (mut got, mut expect) = (vec![9i64; chunk.len()], vec![9i64; chunk.len()]);
-            assert!(node.holds_each(1, chunk, col, want, &mut cursor, &mut got), "the node view reads its tests");
-            assert!(holds_each_probed(node.as_ref(), 1, chunk, col, want, &mut probes, &mut expect));
+            let reads: &[usize] = if want.is_some() { &[2] } else { &[] };
+            let (mut vals, mut found) = (vec![9i64; chunk.len() * reads.len()], vec![9u8; chunk.len()]);
+            assert!(node.read_own_batch(1, chunk, reads, &mut vals, &mut found, &mut cursor), "the node view reads its rows in a batch");
+            assert!(found.iter().all(|&f| f < 2), "the node view answers every id");
+            let got: Vec<i64> = (0..chunk.len()).map(|j| i64::from(found[j] == 1 && want.is_none_or(|w| vals[j] == w))).collect();
+            let expect: Vec<i64> = chunk
+                .iter()
+                .map(|&v| {
+                    let mut hit = false;
+                    assert!(node.lookup_read_at(1, v, &[col], &mut probes, &mut |_, g| hit |= want.is_none_or(|w| g[0] == w)), "the node view probes");
+                    i64::from(hit)
+                })
+                .collect();
             assert_eq!(got, expect, "kind {want:?}");
             tried += got.iter().filter(|&&v| v == 1).count();
         }
     }
     assert!(tried > n, "{tried}");
-    assert!(!node.holds_each(2, &ids[..4], 1, None, &mut ProbeCursor::default(), &mut [0; 4]), "by a column not its own: refused");
+    assert!(!node.read_own_batch(2, &ids[..4], &[], &mut [], &mut [0; 4], &mut ProbeCursor::default()), "by a column not its own: refused");
 }
 
 /// Decision 0431 step 6: a dialect whose embeddings are all the parse's (`programs_are_the_parse`: none reads the

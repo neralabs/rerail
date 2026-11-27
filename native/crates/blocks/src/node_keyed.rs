@@ -345,6 +345,42 @@ mod tests {
         assert!(rows.rows(node(u32::MAX, 0), &mut hint).is_empty());
     }
 
+    /// Decision 0706 E2: a relation's membership filter on two columns never rejects a key a row has, rejects nearly
+    /// every key no row has, and is found only by its own finder.
+    #[test]
+    fn a_relations_filter_rejects_only_keys_no_row_has() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let mut s = 5u64;
+        let held: Vec<i64> = (0..20_000).flat_map(|_| [i64::from(lcg(&mut s) % 50_000), i64::from(lcg(&mut s) % 64)]).collect();
+        let (rel, ix) = relation(&block, 2, &held);
+        let n = rel.rows.len();
+        // SAFETY: one thread; the rows are written.
+        let f = unsafe { rel.try_add_filter(&block, &[0, 1], n) }.expect("room");
+        assert_eq!(rel.find_filter(&[0, 1], n), Some(f));
+        assert_eq!(rel.find_filter(&[1, 0], n), None, "another key's order is another filter");
+        assert_eq!(rel.find_filter(&[0, 1], n + 1), None);
+        assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
+        assert_eq!(rel.find_node_index(NODE_BITS, 0, n), None);
+        let mut has = std::collections::HashSet::new();
+        for r in 0..n {
+            has.insert([rel.rows.get(r, 0), rel.rows.get(r, 1)]);
+        }
+        let (mut absent, mut passed) = (0u32, 0u32);
+        for a in 0..60_000i64 {
+            for b in [0i64, 7, 63, 64, -1] {
+                let k = [a, b];
+                let may = rel.filter_may_hold(f, crate::bloom::key(&k));
+                if has.contains(&k) {
+                    assert!(may, "a held key {k:?} is never rejected");
+                } else {
+                    absent += 1;
+                    passed += u32::from(may);
+                }
+            }
+        }
+        assert!(passed * 100 < absent, "{passed} of {absent} absent keys passed");
+    }
+
     /// A `ONE` gives each node its value; the same value again is no new row, another breaks the key and says where.
     #[test]
     fn a_one_keeps_a_value_a_node_and_reports_a_broken_key() {

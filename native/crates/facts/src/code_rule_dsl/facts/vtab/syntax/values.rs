@@ -806,6 +806,10 @@ impl Source for Layered {
         let p = parts.get(self.name.as_str())?;
         p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
+    /// The base's (a part's node is read as text).
+    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
+        self.base.node_text_atom(name, n)
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -872,6 +876,9 @@ impl Source for Layered {
     }
     fn made_on_lookup(&self) -> bool {
         self.base.made_on_lookup()
+    }
+    fn build_value_index(&self, column: usize) -> Option<usize> {
+        self.base.build_value_index(column)
     }
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()
@@ -945,14 +952,22 @@ impl Source for Layered {
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
-    /// The base's: its probe (`lookup_read_at`) answers a part's values too.
-    fn reads_tests_by(&self, by: usize) -> bool {
-        self.base.reads_tests_by(by)
-    }
-    /// The base's tests while no part holds a row (`lookup_read_at`'s own case); else each value asked as a probe.
-    fn holds_each(&self, by: usize, ids: &[i64], col: usize, want: Option<i64>, cursor: &mut super::super::ProbeCursor, out: &mut [i64]) -> bool {
-        let parts = self.values.admitted.load(Ordering::Acquire) != 0 && self.values.parts.load().get(self.name.as_str()).is_some_and(|p| p.total > 0);
-        (!parts && self.base.holds_each(by, ids, col, want, cursor, out)) || super::super::holds_each_probed(self, by, ids, col, want, cursor, out)
+    /// The base's batch test (decision 0706 E1), then, for each value the base has no such row of, the parts that may
+    /// hold it, read as `lookup_read_at` reads them.
+    /// The base's read; a node it has no row of, while the chunk has admitted values of the relation, may be a part's
+    /// (or a made row's): the caller probes it as one row.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        if !self.base.read_own_batch(column, values, reads, out, found, cursor) {
+            return false;
+        }
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        let all = self.values.parts.load();
+        if all.get(self.name.as_str()).is_some_and(|p| p.total > 0) {
+            found.iter_mut().filter(|f| **f == 0).for_each(|f| *f = 2);
+        }
+        true
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
@@ -1033,46 +1048,6 @@ impl Source for Layered {
         });
         Some(found)
     }
-    fn row_column(&self) -> Option<usize> {
-        self.base.row_column()
-    }
-    /// The base's read, else the row of the part that holds the value (as `test_at` asks them: the base, then each
-    /// part that may hold it, a value's rows are few). Made on lookup, `None` (the matches are read).
-    fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
-        if self.values.admitted.load(Ordering::Acquire) == 0 {
-            return self.base.read_one_at(column, value, columns, out, cursor);
-        }
-        let all = self.values.parts.load();
-        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
-            return self.base.read_one_at(column, value, columns, out, cursor);
-        };
-        if self.made.is_some() || columns.len() > out.len() {
-            return None;
-        }
-        if self.base.read_one_at(column, value, columns, out, cursor)? {
-            return Some(true);
-        }
-        let mut found = false;
-        p.of(value, self.base.keys_documents(column), &mut |part| {
-            if found {
-                return;
-            }
-            let mut each = |_: usize, got: &[i64]| {
-                if !found {
-                    out[..got.len()].copy_from_slice(got);
-                    found = true;
-                }
-            };
-            if !part.src.lookup_read(column, value, columns, &mut each) {
-                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
-                if let Some(&r) = rows.first() {
-                    part.src.row_at(r, columns, &mut out[..columns.len()]);
-                    found = true;
-                }
-            }
-        });
-        Some(found)
-    }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
     }
@@ -1140,6 +1115,16 @@ impl Source for Layered {
     /// The base's test (`within`'s interval, t50 step 4), else the test of each part that may hold the row's first
     /// value's node: a value's nodes are its part's, never the batch's. Unforwarded, a chunk's every `within` test was
     /// a lookup of the node's rows (`def_outside`: 1.56 M tests at 1.6 µs on 1,000 files).
+    /// The base's; a pair it does not hold may be a part's, where the relation has parts: asked as one row.
+    fn holds_batch(&self, cols: [usize; 2], pairs: &[i64], out: &mut [u8]) -> bool {
+        if !self.base.holds_batch(cols, pairs, out) {
+            return false;
+        }
+        if !pairs.is_empty() && self.has_parts() {
+            out.iter_mut().filter(|o| **o == 0).for_each(|o| *o = 2);
+        }
+        true
+    }
     fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
         let base = self.base.holds(equal)?;
         if base || !self.has_parts() {

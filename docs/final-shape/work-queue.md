@@ -11764,3 +11764,28 @@ Tests:
 - setfix 141/142, blocks 116/116, planner 6/6, ukl-rust 6/6, store kept_facts 23/23.
 - tests-logic: `kept_keys_price_a_probe_against_the_binding_its_constant_filters_leave` and `every_executor_and_shape_has_an_oracle_case` pass.
 - Red, as at roll-up 139: `a_step_clocks_switches_are_no_steps_time`. It compares the best of eight short batches with a long loop's average at load 30, and this merge leaves the clock alone.
+
+### Q569. Roll-up 141 (django-bugs 9cdfd17b0f onto Pulling-it-all-together): what the merge chose
+
+django-bugs' fourteen commits: decision 0706 (join steps run by kind, in batches, on indexes the planner builds ahead), with its two spikes (a node table in each document's view entry, an id's local by one load).
+
+- **One read of a node's row by its own id: `Source::read_own_batch` (the user's decision A).** Three lines each built a read for this case: Typing's t57 E6 (`holds_each` / `reads_tests_by`, a fused chunk's tests), final-rerail-shape's (`row_column` / `read_one_at`, one row at a step) and django's 0706 E1 (`read_own_batch`, a batch of ids found first, then read). The user chose one batched read, and that the batching is the calling loop's job: the loop gathers its ids and asks once, never a probe a row.
+  - `holds_each`, `reads_tests_by`, `row_column`, `read_one_at` and `holds_each_probed` are gone from `Source` and every source. `cands::read_one` and `View::read_one` are gone; after the merge nothing called them (`RERAIL_READ_ONE` with them).
+  - `read_own_batch` takes the caller's `ProbeCursor`, kept from batch to batch. `Viewed`'s keeps E6's node memo (`node_hint` through the cursor's hints and memo, the tape node a directory read selects kept in it) and final-rerail-shape's plan of the reads (`plan_for`, made on the first batch). The made relation, the values layer and places pass the cursor on.
+  - The batched walk's step (`kinds::OwnRead`) keeps its cursor across batches.
+  - The fused row program's view tests (`rowcode::Test::view`): the chunk loop gathers the alive rows' nodes and makes one `read_own_batch` call, the tested column read and compared; a node a values part holds (`found` 2) is asked as one row. A test qualifies where the view reads rows by their own id in the node's column (asked with no values), so it now covers every such view, not the node view alone.
+  - A fused test of a pair (`within(n, f)` after the scan of `n`, `f` a row's column or bound before): its chunk's pairs asked as one `holds_batch` call (`ViewTest::pair`), where each alive row asked `cands::holds`. 0706 E5's `within_pairs_in_batches_give_each_pairs_rows` found the fused step probing a row at a time (210 rows batched, the walk's negated `within` alone).
+  - The screened step (decision 0488) batches too: its rows wait as any step's, and the batch is screened (`Screening::refuses`) before its read; a row asked again as one row is not screened twice. A keyed probe at that step stays the walker's.
+  - Not batched, as django has it: the step a delta restricts (`only`: its rows are the step's row ids, which a batch does not read) and a cut walk that collects (rows past the cut would be walked and collected again).
+- **Indexes are built ahead by the level (0706), never by a reader.** final-rerail-shape's node bits and node-keyed rows are found only (`find_node_index` for `NODE_BITS`, `NODE_ROWS`); `access::build_orders` builds a one-column key's rows by value (`own_node_rows`) as its order, and `InRel::probe_each` reads them first, as the walker's probe does. django's membership filter is index kind 6 (`FILTER`), beside final-rerail-shape's 4 and 5. The tests' order counters are per thread, so tests beside them do not move them.
+- django's step 9733 keeps E2's filter rejection; `ids.rs`'s hinted granule search (`granule_of_low_near`, `number_of_near`) carries django's `own_place_of`; `ViewDoc` is the hub's (names, segments) with django's `node_table` and `node_by_id` at 208 and 224 (kept alive with the entry's `Filled`). The reads header lists both, regenerated (`the_view_kernels_reads_are_these`); django's generator had not listed them.
+- `runs::Sorted::whole` is Typing's, untagged (roll-up 140).
+
+Checked with Relax: facts-base, facts, setfix, tests-lang, blocks, clif, tape-format, logic-core, plan-base, plan-search, planner, tests-corpus, ukl, tests-sql, vector, tests-logic and the device crate check with 0 errors.
+
+Tests:
+- setfix 144/145, blocks 117/117, facts 18/18, facts-base 87/87, clif 19/19, tape-format 54/54, logic-core access 4/4.
+- tests-lang: E6's `a_node_views_tests_of_a_chunk_are_its_probes`, now `read_own_batch` against the view's probes, passes.
+- tests-corpus `base_tests` 50/50, among them E6's `a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program` and 0706's `kind_tests_in_batches_give_each_rows_rows`, `node_reads_that_bind_in_batches_give_each_rows_rows`, `keyed_probes_in_sorted_batches_give_each_rows_rows` and `within_pairs_in_batches_give_each_pairs_rows`.
+- Red, as at roll-ups 139 and 140: `a_step_clocks_switches_are_no_steps_time` (it passed once in this merge's runs, at a lower load).
+- Not measured: the user's no-farm rule leaves `all` unrun.

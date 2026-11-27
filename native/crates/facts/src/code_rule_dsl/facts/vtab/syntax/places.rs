@@ -313,6 +313,19 @@ impl Source for Places {
         }
         true
     }
+    /// By a row's id (decision 0706 E1): a node's or a position's place is the view's batch read; a span's is probed
+    /// as one row (`found` 2).
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        if column != 0 || !self.view.read_own_batch(column, values, reads, out, found, cursor) {
+            return false;
+        }
+        for (f, &v) in found.iter_mut().zip(values) {
+            if is_span(v) {
+                *f = 2;
+            }
+        }
+        true
+    }
     fn made_on_lookup(&self) -> bool {
         self.spans.made_on_lookup()
     }

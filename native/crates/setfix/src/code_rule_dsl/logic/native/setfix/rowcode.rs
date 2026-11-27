@@ -20,7 +20,8 @@
 //!   shape kernel of a scan and the tests on its nodes (the design's layer 5): the chunk's tests are
 //!   asked one input at a time, not a row at a time through the walk. A test of a node by a view keyed by it
 //!   (`kind(n, #k)` after the atom that binds `n`, t57 E6) is asked of those rows at once and in place
-//!   (`Test::view`, `Source::holds_each`: a view of the tape reads each node's tape node and kind).
+//!   (`Test::view`, `Source::read_own_batch`: the rows' nodes read as one batch, every node found first, then the
+//!   tested column read and compared).
 //!
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
@@ -61,8 +62,10 @@ pub struct Test {
 }
 
 /// A test of a node by a view of it, asked a chunk at a time (`Test::view`): the view's source, the program column
-/// holding the node (`node`), the node's column in the source (`by`, a column it reads tests by), the column tested
-/// and the parameter holding its value (`None`: any value).
+/// holding the node (`node`), the node's column in the source (`by`, a column it reads its rows by their own id in),
+/// the column tested and the parameter holding its value (`None`: any value). Or a test of a pair (`pair`, the
+/// source's columns `by` and `col`: `within(n, f)` with both bound), each side a row's column or a parameter, at
+/// least one a row's, its pairs asked of the source at once (`Source::holds_batch`, decision 0706 E5).
 #[derive(Clone)]
 pub struct ViewTest {
     pub src: Arc<dyn Source>,
@@ -70,6 +73,14 @@ pub struct ViewTest {
     pub by: usize,
     pub col: usize,
     pub want: Option<usize>,
+    pub pair: Option<[PairKey; 2]>,
+}
+
+/// A side of a pair test (`ViewTest::pair`): a program column, or a parameter.
+#[derive(Clone, Copy)]
+pub enum PairKey {
+    Col(usize),
+    Param(usize),
 }
 
 /// A derived input's view, as a fused test reads it: its source and, by the atom's column, the source's.
@@ -370,17 +381,33 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: 
     Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests })
 }
 
-/// A view's test (`Test::view`): `None` where the step is not one (its source no view, its node no row's column the
-/// view reads tests by, `Source::reads_tests_by`, a key neither the node nor a parameter, or more than two keys). A
-/// test asks whether some row holds the node with the value, so the view's rows need not be one a node (a view with
-/// values admitted holds more).
+/// A view's test (`Test::view`): `None` where the step is not one (its source no view, its node no column the view
+/// reads rows by their own id in, `Source::read_own_batch` asked with no values, a key neither the node nor a
+/// parameter, or more than two keys). A node the view cannot read in a batch (a values part's) is asked as one row.
 fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, src: &Src, keys: &[(usize, Key)], view: ViewOf<'_>) -> Option<ViewTest> {
     let (source, cols) = view(src)?;
     if keys.is_empty() || keys.len() > 2 {
         return None;
     }
     let at = |k: usize| cols.get(keys[k].0).copied();
-    let node = (0..keys.len()).find(|&k| matches!(val(env, keys[k].1), Val::Row(Word::Col(_))) && at(k).is_some_and(|c| source.reads_tests_by(c)))?;
+    // A pair of the row's columns, where the source tests pairs of those columns in batches.
+    if let [(_, ka), (_, kb)] = keys
+        && let (va, vb) = (val(env, *ka), val(env, *kb))
+        && (matches!(va, Val::Row(Word::Col(_))) || matches!(vb, Val::Row(Word::Col(_))))
+        && matches!(va, Val::Row(Word::Col(_)) | Val::Param(_))
+        && matches!(vb, Val::Row(Word::Col(_)) | Val::Param(_))
+        && let (Some(ca), Some(cb)) = (at(0), at(1))
+        && super::kinds::keyed_enabled()
+        && source.holds_batch([ca, cb], &[], &mut [])
+    {
+        let mut side = |v: Val| match v {
+            Val::Row(w) => PairKey::Col(usize::from(b.column(w))),
+            Val::Param(p) => PairKey::Param(usize::from(b.param(p))),
+        };
+        let pair = [side(va), side(vb)];
+        return Some(ViewTest { src: source, node: 0, by: ca, col: cb, want: None, pair: Some(pair) });
+    }
+    let node = (0..keys.len()).find(|&k| matches!(val(env, keys[k].1), Val::Row(Word::Col(_))) && at(k).is_some_and(|c| source.read_own_batch(c, &[], &[], &mut [], &mut [], &mut ProbeCursor::default())))?;
     let Val::Row(w @ Word::Col(_)) = val(env, keys[node].1) else { return None };
     let (by, want) = (at(node)?, match keys.len() {
         1 => None,
@@ -392,7 +419,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     });
     // With no value, the column tested is the node's own (a row there is the test).
     let (col, want) = want.map_or((by, None), |(c, p)| (c, Some(usize::from(p))));
-    Some(ViewTest { src: source, node: usize::from(b.column(w)), by, col, want })
+    Some(ViewTest { src: source, node: usize::from(b.column(w)), by, col, want, pair: None })
 }
 
 /// The slots the steps bind (`docof` into an unbound slot, `let`), in order.
@@ -415,10 +442,12 @@ pub(super) struct Scratch {
     pub(super) asked: Vec<super::cands::Asked>,
     /// Each fused test's view cursor (`Test::view`), kept from chunk to chunk: a chunk's nodes after the last's.
     pub(super) cursors: Vec<ProbeCursor>,
-    /// A view's test's rows still passing, their nodes and its answers (`Source::holds_each`).
+    /// A view's test's rows still passing, their nodes, the tested column's values and whether each has a row
+    /// (`Source::read_own_batch`).
     pub(super) view_rows: Vector<u32>,
     pub(super) view_ids: Vector<i64>,
     pub(super) view_out: Vector<i64>,
+    pub(super) view_found: Vector<u8>,
 }
 
 impl Fused {
@@ -439,9 +468,42 @@ impl Fused {
                 let mut out = std::mem::take(&mut s.columns[k]);
                 out.clear();
                 out.resize(n, 0);
-                if let Some(v) = &test.view {
-                    // The rows still passing, their nodes asked of the view at once and in place (t57 E6).
-                    let (mut rows, mut ids, mut got) = (std::mem::take(&mut s.view_rows), std::mem::take(&mut s.view_ids), std::mem::take(&mut s.view_out));
+                if let Some(v) = &test.view
+                    && let Some(pair) = v.pair
+                {
+                    let side = |k: PairKey, r: usize| match k {
+                        PairKey::Col(c) => s.columns[c][r],
+                        PairKey::Param(p) => s.params[p],
+                    };
+                    // The rows still passing, their pairs asked of the source as one batch (decision 0706 E5).
+                    let (mut rows, mut ids, mut found) = (std::mem::take(&mut s.view_rows), std::mem::take(&mut s.view_ids), std::mem::take(&mut s.view_found));
+                    rows.clear();
+                    ids.clear();
+                    for r in 0..n {
+                        if alive[r / 64] >> (r % 64) & 1 != 0 {
+                            rows.push(r as u32);
+                            ids.extend([side(pair[0], r), side(pair[1], r)]);
+                        }
+                    }
+                    found.clear();
+                    found.resize(rows.len(), 0);
+                    super::kinds::count_pairs_for_tests(rows.len());
+                    let answered = v.src.holds_batch([v.by, v.col], &ids, &mut found);
+                    assert!(answered, "a view testing pairs of these columns tests them in a batch");
+                    for (j, &r) in rows.iter().enumerate() {
+                        let r = r as usize;
+                        let h = match found[j] {
+                            0 => false,
+                            1 => true,
+                            // A pair the source cannot say in a batch: asked as one row.
+                            _ => held(t, r, &s.columns, &s.params),
+                        };
+                        if h != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                    }
+                    (s.view_rows, s.view_ids, s.view_found) = (rows, ids, found);
+                } else if let Some(v) = &test.view {
+                    // The rows still passing, their nodes read by the view as one batch (t57 E6, decision 0706 E1).
+                    let (mut rows, mut ids, mut got, mut found) = (std::mem::take(&mut s.view_rows), std::mem::take(&mut s.view_ids), std::mem::take(&mut s.view_out), std::mem::take(&mut s.view_found));
                     rows.clear();
                     ids.clear();
                     for r in 0..n {
@@ -450,17 +512,27 @@ impl Fused {
                             ids.push(s.columns[v.node][r]);
                         }
                     }
-                    got.clear();
-                    got.resize(ids.len(), 0);
+                    // With no value, a row of the node is the test: no column read.
                     let want = v.want.map(|p| s.params[p]);
-                    // Fused only where the source reads such tests (`reads_tests_by`).
-                    let answered = v.src.holds_each(v.by, &ids, v.col, want, &mut s.cursors[t], &mut got);
-                    assert!(answered, "a view keyed by its node's column answers its tests");
-                    for (&r, &h) in rows.iter().zip(got.iter()) {
+                    let reads: &[usize] = if want.is_some() { std::slice::from_ref(&v.col) } else { &[] };
+                    got.clear();
+                    got.resize(ids.len() * reads.len(), 0);
+                    found.clear();
+                    found.resize(ids.len(), 0);
+                    // Fused only where the source reads rows by their own id (`view_test`).
+                    let answered = v.src.read_own_batch(v.by, &ids, reads, &mut got, &mut found, &mut s.cursors[t]);
+                    assert!(answered, "a view keyed by its node's column reads its rows in a batch");
+                    for (j, &r) in rows.iter().enumerate() {
                         let r = r as usize;
-                        if (h == 1) != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                        let h = match found[j] {
+                            0 => false,
+                            1 => want.is_none_or(|w| got[j] == w),
+                            // A node the view cannot read in a batch: asked as one row.
+                            _ => held(t, r, &s.columns, &s.params),
+                        };
+                        if h != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
                     }
-                    (s.view_rows, s.view_ids, s.view_out) = (rows, ids, got);
+                    (s.view_rows, s.view_ids, s.view_out, s.view_found) = (rows, ids, got, found);
                 } else {
                     for (r, o) in out.iter_mut().enumerate() {
                         if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }

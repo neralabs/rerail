@@ -163,6 +163,17 @@ pub(super) fn node_bits_test(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tes
     ix.node_bits_has(rel, v, hint)
 }
 
+/// A membership test of a derived input by several bound columns (decision 0706 E2): whether the filter the level's
+/// build ahead made rejects `key` (the step's keys' values): then no row holds it, and the step reads none.
+pub(super) fn filter_rejects(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64]) -> bool {
+    let Src::In(rel, ix) = src else { return false };
+    if keys.len() < 2 || !tests.is_empty() {
+        return false;
+    }
+    let (rel, ix) = j.src_in(rel, ix);
+    ix.cols.len() == keys.len() && ix.cols.iter().zip(keys).all(|(&c, &(k, _))| c == k) && ix.filter_rejects(rel, key)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
@@ -367,8 +378,8 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     if let Some(found) = node_bits_test(j, src, keys, tests, asked.key.first().copied().unwrap_or(0), &mut asked.hints[0]) {
         return found;
     }
-    if let Some(found) = read_one(j, src, keys, tests, &asked.key, 0, &mut asked.last.cursor, &mut [0; super::READ]) {
-        return found;
+    if filter_rejects(j, src, keys, tests, &asked.key) {
+        return false;
     }
     // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
     let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
@@ -391,27 +402,6 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
-}
-
-/// A step of a view by a key with at most one row (`View::read_one`: a node's own facts by its id), read in place:
-/// whether its row holds the keys and `tests`, its values of view columns `need` in `out`. `None` where the step's
-/// source has no such read (it probes), or `RERAIL_READ_ONE=off` (a measurement aid, the run's setting).
-pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], need: u64, cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, out: &mut [i64; super::READ]) -> Option<bool> {
-    let Src::In(rel, ix) = src else { return None };
-    if keys.len() > MAX_KEY || !read_one_on() {
-        return None;
-    }
-    let (rel, _) = j.src_in(rel, ix);
-    let v = rel.view.as_ref()?;
-    let mut cols = [0usize; MAX_KEY];
-    for (o, &(c, _)) in cols.iter_mut().zip(keys) {
-        *o = c;
-    }
-    v.read_one(&cols[..keys.len()], key, tests, need, cursor, out)
-}
-
-fn read_one_on() -> bool {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_READ_ONE").map_or(true, |v| v != "off"))
 }
 
 /// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
