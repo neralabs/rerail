@@ -46,6 +46,25 @@ fn findings(program: &str, dir: &Path) -> Vec<Vec<String>> {
     crate::code_rule_dsl::logic::plan::output::shown(&out, "unsafe_pair").unwrap()
 }
 
+/// The decisions of `topics` in the profile report a run wrote to `dir`: a topic's line, then a `- ` line for each
+/// run that decided it (the program's, and its phases').
+fn decided(dir: &Path, topics: &[&str]) -> Vec<String> {
+    let text = std::fs::read_to_string(dir.join("profile.txt")).unwrap_or_default();
+    let mut out = Vec::new();
+    let mut topic: Option<&str> = None;
+    for line in text.lines() {
+        match line.strip_prefix("  - ") {
+            Some(text) => {
+                if let Some(t) = topic {
+                    out.push(format!("{t} {text}"));
+                }
+            }
+            None => topic = topics.iter().any(|t| line.starts_with(t)).then_some(line),
+        }
+    }
+    out
+}
+
 /// The program with `same_globals` made whole, as it was before it was callable.
 fn whole() -> String {
     PROGRAM.replace(".callable same_globals bbbf\n", "")
@@ -87,4 +106,80 @@ fn an_edit_invalidates_what_called_into_the_file() {
     // And an edit to a file nothing calls into (c.py) changes nothing, its asks none.
     std::fs::write(dir.join("c.py"), "def lone():\n    return 1\n").unwrap();
     assert_eq!(findings(PROGRAM, &dir), fresh);
+}
+
+/// The page's measurement: 3 files of `n` functions, each touching `x` (so every pair of a file shares it), and one
+/// function a file calling 4 of them (12 ordered pairs asked a file). `mode` is `whole` (`same_globals` made in full:
+/// n(n-1) rows a file), `magic` (made whole, demand by magic sets: `.pragma "magic-transform"`) or `called` (the 12
+/// asked). One configuration a process (`cargo test … callable_measure_whole_100 -- --ignored`), so its peak is its
+/// own: a line of rows, findings, wall and CPU seconds, and peak MB.
+fn measure(n: usize, mode: &str) {
+    let mut text = String::from("x = 0\n");
+    for i in 0..n {
+        text.push_str(&format!("def f{i}():\n    return x\n"));
+    }
+    text.push_str("def run():\n    f0()\n    f1()\n    f2()\n    f3()\n");
+    let files: Vec<(String, String)> = ["a.py", "b.py", "c.py"].iter().map(|p| (p.to_string(), text.clone())).collect();
+    let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();
+    let dir = corpus(&format!("callable-measure-{mode}-{n}"), &borrowed);
+    let program = match mode {
+        "called" => PROGRAM.to_owned(),
+        "whole" => whole(),
+        "magic" => format!("{}.pragma \"magic-transform\" \"same_globals\"\n", whole()),
+        m => panic!("{m}: not a mode"),
+    };
+    let out = dir.join("out");
+    // Profiled in every mode (like with like): the calls' line is a decision of the run's report.
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    let (wall, cpu) = (std::time::Instant::now(), rerail_prof::process_cpu());
+    let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let (wall, cpu) = (wall.elapsed().as_secs_f64(), (rerail_prof::process_cpu() - cpu).as_secs_f64());
+    let found = crate::code_rule_dsl::logic::plan::output::shown(&out, "unsafe_pair").unwrap();
+    let _ = report;
+    let peak = rerail_prof::code_rule_dsl::prof::max_footprint_mb();
+    // The rows the files made of `same_globals` (handed on whole; none, called) and the calls' answers.
+    let lines = decided(&prof, &["callable", "rows handed on to the cross-file part"]);
+    eprintln!("callable_measure {mode:>6} n={n:>5}: unsafe_pair {}, wall {wall:.2} s, cpu {cpu:.2} s, peak {peak} MB; {lines:?}", found.len());
+    // 12 ordered pairs of f0..f3, over x: the same in each file, and `unsafe_pair` names no file.
+    assert_eq!(found.len(), 12);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+macro_rules! measures {
+    ($($name:ident: $n:expr, $mode:expr;)*) => {$(
+        #[test]
+        #[ignore = "a measurement: one configuration a process"]
+        fn $name() {
+            measure($n, $mode);
+        }
+    )*};
+}
+
+measures! {
+    callable_measure_whole_10: 10, "whole";
+    callable_measure_magic_10: 10, "magic";
+    callable_measure_called_10: 10, "called";
+    callable_measure_whole_100: 100, "whole";
+    callable_measure_magic_100: 100, "magic";
+    callable_measure_called_100: 100, "called";
+    callable_measure_whole_1000: 1000, "whole";
+    callable_measure_magic_1000: 1000, "magic";
+    callable_measure_called_1000: 1000, "called";
+}
+
+/// The run names the files' relations its cross part could call, by their rows: made whole, `same_globals` is one,
+/// its pattern what `unsafe_pair` binds (`bbbf`).
+#[test]
+fn a_run_names_the_relations_it_could_call() {
+    // A corpus of its own: the same files and program as another test's would replay that run's frame, deciding nothing.
+    let dir = corpus("callable-candidates", &[("a.py", A), ("b.py", B), ("d.py", "def k():\n    return 1\n")]);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    findings(&whole(), &dir);
+    let lines = decided(&prof, &["callable candidates"]);
+    assert!(lines.iter().any(|l| l.contains("1 of 2 exports: same_globals bbbf (")), "{lines:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

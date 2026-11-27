@@ -47,8 +47,8 @@ impl CallCounts {
     /// The profile's line.
     pub fn text(&self) -> String {
         format!(
-            "{} batches, {} requests ({} from the memo), {} files asked, {} holders entered ({} requests of no file), {} answer rows, {:.3} s",
-            self.batches, self.asked, self.memo_hits, self.files, self.entered, self.missing_files, self.answers, self.seconds
+            "{} batches, {} requests ({} from the memo), {} files asked, {} holders entered ({} requests of no file), {} answer rows, {:.0} µs ({:.0} µs a holder entered)",
+            self.batches, self.asked, self.memo_hits, self.files, self.entered, self.missing_files, self.answers, self.seconds * 1e6, self.seconds * 1e6 / self.entered.max(1) as f64
         )
     }
 }
