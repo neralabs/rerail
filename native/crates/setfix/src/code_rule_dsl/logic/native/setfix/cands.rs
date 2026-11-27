@@ -383,13 +383,153 @@ pub(super) fn read_one(j: &JoinRule, src: &Src, keys: &[(usize, Key)], tests: &[
     if keys.len() > MAX_KEY {
         return None;
     }
-    let (rel, _) = j.src_in(rel, ix);
-    let v = rel.view.as_ref()?;
+    let (rel, ix) = j.src_in(rel, ix);
+    let Some(v) = rel.view.as_ref() else { return read_one_in(rel, ix, keys, tests, key, out) };
     let mut cols = [0usize; MAX_KEY];
     for (o, &(c, _)) in cols.iter_mut().zip(keys) {
         *o = c;
     }
     v.read_one(&cols[..keys.len()], key, tests, need, cursor, out)
+}
+
+/// `read_one` of a derived input whose key has at most one live row (`Csr::at_most_one`): its row found by the index
+/// a probe reads (by value, a one-column key; else the sorted order), no candidates handed to a walk. Its columns in
+/// `out`; whether it is there and holds the keys and tests. `None` where neither index answers it.
+pub(super) fn read_one_in(rel: &InRel, ix: &Csr, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], out: &mut [i64; super::READ]) -> Option<bool> {
+    if rel.k > super::READ || !ix.at_most_one(rel) {
+        return None;
+    }
+    let mut hints = [0u32; runs::HINTS];
+    if keys.len() == 1 && ix.by_value_kind() && let Some(found) = ix.by_value(rel, key[0], &mut hints[0]) {
+        return Some(found.iter().any(|&id| one_row(rel, id, keys, tests, key, out)));
+    }
+    // Its index in the relation's block: the key's bucket, each row checked (`one_row`).
+    if ix.block.is_some() && keys.len() == ix.cols.len() {
+        return Some(ix.get(rel, key).iter().any(|&id| one_row(rel, id, keys, tests, key, out)));
+    }
+    let index = ix.runs(rel)?;
+    let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
+    if m == 0 {
+        return None;
+    }
+    let mut buf = [0i64; MAX_KEY];
+    let at = |c: usize| key[ix.cols.iter().position(|&x| x == c).expect("a key column")];
+    let found = index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, &mut hints);
+    Some(found.ids().any(|id| one_row(rel, id, keys, tests, key, out)))
+}
+
+/// Whether row `id` of `rel` is live and holds the step's keys (`key`, in `keys`' order) and tests: its columns then
+/// in `out`.
+fn one_row(rel: &InRel, id: u32, keys: &[(usize, Key)], tests: &[(usize, usize)], key: &[i64], out: &mut [i64; super::READ]) -> bool {
+    if is_dead(&rel.dead, id) {
+        return false;
+    }
+    let row = rel.at(id as usize);
+    if !keys.iter().zip(key).all(|(&(c, _), &k)| row.at(c) == k) || !tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0)) {
+        return false;
+    }
+    for (c, o) in out.iter_mut().enumerate().take(rel.k) {
+        *o = row.at(c);
+    }
+    true
+}
+
+/// A fused test or lookup (`rowcode::Test`, step `step`) asked of every row of a chunk still `alive` at once, where
+/// its one key column is read by value: a loop over the key's column, not a probe a row. Its forms:
+/// - a test of a derived input (binds nothing): the input's node-keyed bit of each value (`Csr::node_bits_has`);
+/// - a lookup of a derived input: each value's row by its value-keyed index (`Csr::by_value`, at most one live row);
+/// - a lookup of a view by the column its source reads one row by (`Source::row_column`, `read_one_at`).
+///
+/// A row that passes gets 1 in column `verdict` and a lookup's values in `looks`' columns; one that fails is cleared
+/// in `alive`. Returns the rows it found no row for and those it found one for; `None` (nothing written) where the
+/// step has no such read: the caller asks row by row.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, columns: &mut [Vector<i64>], alive: &mut [u64], n: usize, verdict: usize, looks: &[(usize, usize)], asked: &mut Asked) -> Option<(u64, u64)> {
+    let Step::Atom { src: Src::In(rel, ix), keys, tests, binds, neg } = step else { return None };
+    let [(col, Key::Slot(s))] = keys.as_slice() else { return None };
+    if !tests.is_empty() {
+        return None;
+    }
+    // The key's values: a column of the chunk (a test fused so reads the row, `rowcode::fused`).
+    let kc = test.slots.iter().find_map(|&(x, b)| match b { rowcode::Bind::Column(k) if x == *s => Some(k), _ => None })?;
+    let (rel, ix) = j.src_in(rel, ix);
+    let lookup = !binds.is_empty();
+    let hint = &mut asked.hints[0];
+    let (mut none, mut one) = (0u64, 0u64);
+    // Each alive row's verdict from `found(v)`, its look columns from `got` (input column `c`'s value).
+    let mut each = |columns: &mut [Vector<i64>], alive: &mut [u64], found: &mut dyn FnMut(i64, &mut [i64; super::READ]) -> bool| {
+        let mut got = [0i64; super::READ];
+        for r in 0..n {
+            if alive[r / 64] >> (r % 64) & 1 == 0 {
+                continue;
+            }
+            let hit = found(columns[kc][r], &mut got);
+            if hit { one += 1 } else { none += 1 }
+            if hit != *neg {
+                columns[verdict][r] = 1;
+                for &(k, c) in looks {
+                    columns[k][r] = got[c];
+                }
+            } else {
+                alive[r / 64] &= !(1u64 << (r % 64));
+            }
+        }
+    };
+    match &rel.view {
+        None if ix.cols.len() != 1 || ix.cols[0] != *col => return None,
+        None if !lookup => {
+            ix.node_bits_has(rel, 0, &mut 0)?;
+            run_counts().chunk_asks[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, _| ix.node_bits_has(rel, v, hint).unwrap_or(false));
+        }
+        None => {
+            if rel.k > super::READ || !ix.by_value_kind() || ix.by_value(rel, 0, &mut 0).is_none() {
+                return None;
+            }
+            run_counts().chunk_asks[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |v, got| {
+                let Some(&id) = ix.by_value(rel, v, hint).and_then(|ids| ids.first()) else { return false };
+                let row = rel.at(id as usize);
+                for (c, o) in got.iter_mut().enumerate().take(rel.k) {
+                    *o = row.at(c);
+                }
+                true
+            });
+        }
+        Some(v) => {
+            if !lookup || !v.eqs.is_empty() || v.ids.is_some() || v.cols.len() > super::READ || v.src.row_column() != Some(v.cols[*col]) {
+                return None;
+            }
+            // The view columns its looks read, in the source's columns.
+            let (mut src, mut at, mut m) = ([0usize; super::READ], [0usize; super::READ], 0);
+            for &(_, c) in looks {
+                if !at[..m].contains(&c) {
+                    src[m] = v.cols[c];
+                    at[m] = c;
+                    m += 1;
+                }
+            }
+            let own = v.cols[*col];
+            let cursor = &mut asked.last.cursor;
+            // Its read exists for these columns (`None`: the caller asks row by row, nothing written yet).
+            let first = (0..n).find(|&r| alive[r / 64] >> (r % 64) & 1 != 0)?;
+            let mut buf = [0i64; super::READ];
+            v.src.read_one_at(own, columns[kc][first], &src[..m], &mut buf[..m], cursor)?;
+            run_counts().chunk_asks[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            each(columns, alive, &mut |value, got| {
+                let mut buf = [0i64; super::READ];
+                if !v.src.read_one_at(own, value, &src[..m], &mut buf[..m], cursor).unwrap_or(false) {
+                    return false;
+                }
+                got[*col] = value;
+                for x in 0..m {
+                    got[at[x]] = buf[x];
+                }
+                true
+            });
+        }
+    }
+    Some((none, one))
 }
 
 /// A lookup asked in a fused chunk (`rowcode::Test::reads`), `slots` the row's values: whether its one row is there

@@ -398,36 +398,28 @@ pub(super) struct Scratch {
 impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
-    /// words of the rows that go on. `held(test, row, columns, params, out)` is whether test `test`'s input (`Fused::tests`) holds row `row`'s keys,
-    /// asked only of rows that passed the tests before it; a lookup's (`Test::reads`) writes the values of its
-    /// input's columns to `out` (by column), which become its `Word::Look` columns.
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
+    /// words of the rows that go on. `ask(test, columns, params, alive, rows, verdict, looks)` asks test `test`'s input
+    /// (`Fused::tests`) of the chunk's rows at once, those still `alive` (a bit a row) alone: for each that passes it
+    /// writes 1 to column `verdict`, and a lookup's (`Test::reads`) values of its input's columns to `looks`' program
+    /// columns (program column, input column), its `Word::Look` columns; each that fails it clears in `alive`.
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut ask: impl FnMut(usize, &mut [Vector<i64>], &[i64], &mut [u64], usize, usize, &[(usize, usize)])) -> &'s [u64] {
         let n = s.rows;
         if !self.tests.is_empty() {
             // The rows still passing, a bit each: a test is asked only of rows every test before it passed.
             let mut alive = std::mem::take(&mut s.alive);
             alive.clear();
             alive.resize(n.div_ceil(64), u64::MAX);
-            for (t, test) in self.tests.iter().enumerate() {
+            for t in 0..self.tests.len() {
                 let k = self.columns.iter().position(|&w| w == Word::Held(t)).expect("a test's column");
-                let mut out = std::mem::take(&mut s.columns[k]);
-                out.clear();
-                out.resize(n, 0);
+                s.columns[k].clear();
+                s.columns[k].resize(n, 0);
                 // A lookup's columns: (program column, input column).
                 let looks: InlineVec<(usize, usize), 8> = self.columns.iter().enumerate().filter_map(|(k, &w)| match w { Word::Look(u, c) if u == t => Some((k, c)), _ => None }).collect();
                 for &(k, _) in looks.iter() {
                     s.columns[k].clear();
                     s.columns[k].resize(n, 0);
                 }
-                let mut vals = [0i64; 8];
-                for (r, o) in out.iter_mut().enumerate() {
-                    if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }
-                    if held(t, r, &s.columns, &s.params, &mut vals) != test.neg {
-                        *o = 1;
-                        for &(k, c) in looks.iter() { s.columns[k][r] = vals[c]; }
-                    } else { alive[r / 64] &= !(1u64 << (r % 64)); }
-                }
-                s.columns[k] = out;
+                ask(t, &mut s.columns, &s.params, &mut alive, n, k, &looks);
             }
             s.alive = alive;
         }

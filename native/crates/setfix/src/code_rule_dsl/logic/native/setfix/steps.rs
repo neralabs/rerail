@@ -216,6 +216,10 @@ pub struct Plan {
     /// place, no join loop. Empty: none.
     #[archive(flat)]
     pub lookups: Vec<bool>,
+    /// Per step, whether its key names at most one row (`setfix::at_most_one`): a test, a view's key, a derived
+    /// input's key measured so. Empty: none known.
+    #[archive(flat)]
+    pub one: Vec<bool>,
 }
 
 /// An edit an analysis of the plan's view asks for, made on the owned steps before they are encoded again.
@@ -348,6 +352,7 @@ impl Plan {
             plan_steps: p.plan_steps,
             ranges: p.ranges.to_vec(),
             lookups: p.lookups.to_vec(),
+            one: p.one.to_vec(),
         }
     }
 }

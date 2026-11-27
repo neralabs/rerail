@@ -142,6 +142,10 @@ pub struct State {
     /// By (span path, plan text): per step, and last its head's rows made, the CPU seconds its walks spent there
     /// (`setfix::step_cpu`), where the engine timed them.
     pub native_step_cpu: BTreeMap<(String, String), Vec<f64>>,
+    /// By (span path, a join's steps as setfix names them): per step, its `Rows::each` calls' shapes
+    /// (`setfix::SHAPES`: calls and candidates walked by call site, calls by candidates' kind, calls by candidates
+    /// walked), where the engine counted them.
+    pub native_shapes: BTreeMap<(String, String), Vec<Vec<u64>>>,
     pub notes: BTreeMap<String, String>,
     pub join_rows: BTreeMap<String, (usize, usize)>,
     /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
@@ -221,6 +225,9 @@ impl State {
         }
         for (k, t) in o.native_step_cpu {
             add_cpu(self.native_step_cpu.entry(k).or_default(), &t);
+        }
+        for (k, t) in o.native_shapes {
+            add_shapes(self.native_shapes.entry(k).or_default(), &t);
         }
         for (k, t) in o.notes {
             self.notes.entry(k).or_insert(t);
@@ -2164,6 +2171,29 @@ pub fn work(unit: Unit, n: u64) {
 /// made 243,092 rows as 1 (`kind__sup0`, O125).
 pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
     steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
+}
+
+/// Adds `add`'s per-step counts to `to`'s.
+fn add_shapes(to: &mut Vec<Vec<u64>>, add: &[Vec<u64>]) {
+    if to.len() < add.len() {
+        to.resize(add.len(), Vec::new());
+    }
+    for (t, a) in to.iter_mut().zip(add) {
+        if t.len() < a.len() {
+            t.resize(a.len(), 0);
+        }
+        for (x, y) in t.iter_mut().zip(a) {
+            *x += y;
+        }
+    }
+}
+
+/// Adds a join's `Rows::each` call shapes per step (`setfix::SHAPES`), `join` its steps as setfix names them, to the
+/// current span.
+pub fn native_shapes(join: String, steps: &[Vec<u64>]) {
+    let path = current();
+    let mut state = state();
+    add_shapes(state.native_shapes.entry((path, join)).or_default(), steps);
 }
 
 /// Adds a native plan's rows in and out per step, its probes' CPU seconds, and their CPU seconds per step and last

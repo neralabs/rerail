@@ -2595,6 +2595,7 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
     for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
         let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        assert_eq!(source.row_column(), (axis == within::Axis::Nearest).then_some(0), "{name}");
         let id = batch.id(nodes / 2, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         assert!(!source.lookup_read(0, id, &[0, 1], &mut |_, _| panic!("{name}: read before its solve")), "{name}: unsolved, nothing read");
         let _ = (0..source.len()).count();
@@ -2608,6 +2609,18 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
             assert!(source.lookup_read(0, n, &[1, 0], &mut |row, v| got.push((row, v[1], v[0]))), "{name}");
             assert_eq!(got, want, "{name}: node row {r}");
             read_rows += got.len();
+            // The nearest axis's one row by `n` (`row_column`, `read_one_at`): the row `lookup` gives, or none.
+            let mut out = [0i64; 2];
+            let one = source.read_one_at(0, n, &[1, 0], &mut out, &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default());
+            if axis == within::Axis::Nearest {
+                assert!(want.len() <= 1, "{name}: at most one nearest ancestor");
+                assert_eq!(one, Some(!want.is_empty()), "{name}: node row {r}");
+                if let Some(&(_, n0, a)) = want.first() {
+                    assert_eq!(out, [a, n0], "{name}: node row {r}");
+                }
+            } else {
+                assert_eq!(one, None, "{name}: a row an ancestor, no one-row read");
+            }
         }
         assert!(read_rows > 0, "{name}: some node has a member ancestor");
         assert!(!source.lookup_read(1, id, &[0], &mut |_, _| ()), "{name}: by `a`, the solve's rows are searched as before");

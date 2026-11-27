@@ -287,6 +287,18 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
+    // Per join and step, its `Rows::each` calls' shapes (`setfix::SHAPES`), where counted.
+    let mut shapes_tsv = String::from("span\tjoin\tstep\tcalls_gather\tcalls_walk\tcalls_list0\tcands_gather\tcands_walk\tcands_list0\trange\tslice\towned\tshared\truns\tpending\tread\tstream\tn0\tn1\tn2_3\tn4_15\tn16_255\tn256_\tm0\tm1\tm2_\tdirect\n");
+    for ((p, join), steps) in &state.native_shapes {
+        for (i, c) in steps.iter().enumerate() {
+            if c.iter().all(|&x| x == 0) {
+                continue;
+            }
+            let cs: Vec<String> = c.iter().map(u64::to_string).collect();
+            let _ = writeln!(shapes_tsv, "{p}\t{join}\t{i}\t{}", cs.join("\t"));
+        }
+    }
+    std::fs::write(dir.join("native_shapes.tsv"), shapes_tsv)?;
     let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\trules\tgpu_views\tgpu_s\tgpu_rounds\tgpu_handed\tlacking\n");
     for (key, t) in &state.placements {
         let _ = writeln!(

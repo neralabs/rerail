@@ -1112,6 +1112,29 @@ impl Source for Within {
         }
         Some(self.below(n, a))
     }
+    /// The nearest axis's `n`: a node has at most one nearest ancestor in the set, so at most one row (`within`'s
+    /// climb stops at the first). The other axes have a row an ancestor.
+    fn row_column(&self) -> Option<usize> {
+        matches!(self.mode, Mode::Axis(Axis::Nearest)).then_some(0)
+    }
+    /// The nearest axis's one row by `n`, read from the batch's solve (`lookup_read`'s rows, at most one). `None`
+    /// where the axis is not solved for the batch: its rows are made per lookup, which the caller probes.
+    fn read_one_at(&self, column: usize, value: i64, columns: &[usize], out: &mut [i64], _cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        if self.row_column() != Some(column) || !self.reads_solved() || columns.len() > out.len() {
+            return None;
+        }
+        let Some((doc, local)) = self.batch.node(value, &mut 0) else { return Some(false) };
+        let row = self.batch.nodes().at(doc) + local as usize;
+        let start = self.starts();
+        if start[row] == start[row + 1] {
+            return Some(false);
+        }
+        let rows = self.solved_rows();
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = rows.get(start[row], c.min(1));
+        }
+        Some(true)
+    }
     /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
     /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved
     /// for the batch gives nothing here (`false`), and its rows are made per lookup as before.

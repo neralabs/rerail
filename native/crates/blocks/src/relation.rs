@@ -683,6 +683,14 @@ impl Relation {
         &ix.rows.as_slice()[offs[b] as usize..offs[b + 1] as usize]
     }
 
+    /// Index `i`'s buckets, each its rows before liveness and key equality (`group`'s, every one): none for an index
+    /// of no buckets.
+    pub fn buckets(&self, i: usize) -> impl Iterator<Item = &[u32]> + '_ {
+        let ix = self.index_at(i);
+        let (offs, rows) = (ix.offs.as_slice(), ix.rows.as_slice());
+        offs.windows(2).map(move |w| &rows[w[0] as usize..w[1] as usize])
+    }
+
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
     /// An index of fewer rows (built before the relation grew) is not it.
     pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
