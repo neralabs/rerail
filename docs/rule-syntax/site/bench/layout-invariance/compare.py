@@ -1,5 +1,6 @@
 """compare.py MAP ORIG_ROOT MOVED_ROOT ORIG_CSV_DIR MOVED_CSV_DIR REL...: a relation's rows that differ once each
-node (`path:slot.index`) is its line in its layout (its start, from `answer_at`), and the moved layout's lines are mapped back (t22's compare.py)."""
+term (decision 0677) is its line in its layout (its path and start, from `answer_at`), and the moved layout's lines
+are mapped back (t22's compare.py)."""
 import bisect, sys
 
 m = {}
@@ -25,10 +26,10 @@ spans = {}
 
 
 def place(root, value, back):
-    path, sep, rest = value.rpartition(":")
-    if not sep or (root, value) not in spans:
+    if (root, value) not in spans:
         return value
-    line = line_of(root, path, spans[(root, value)])
+    path, start = spans[(root, value)]
+    line = line_of(root, path, start)
     if back:
         path, line = m.get((path, line), (path, line))
     return f"{path}:{line}"
@@ -39,8 +40,8 @@ def rows(root, folder, rel, back):
         spans[(root, "spans")] = 1
         for l in open(f"{folder}/answer_at.csv"):
             if l.strip():
-                node, start = l.rstrip("\n").split("\t")
-                spans[(root, node)] = int(start)
+                term, path, start = l.rstrip("\n").split("\t")
+                spans[(root, term)] = (path, int(start))
     out = set()
     for l in open(f"{folder}/{rel}.csv"):
         if l.strip():

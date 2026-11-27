@@ -1015,8 +1015,13 @@ fn without_requests(p: &Version) -> Arc<Version> {
     b.finish().unwrap().0
 }
 
+/// The `.rdl` programs whose `.rerail` beside them was rewritten after it was translated: keyed by symbols and terms, so
+/// that no node is in their cross-file part (decision 0677). Their `.rdl` is T's still, and is translated, lowered and
+/// printed back as the others are.
+const REWRITTEN: [&str; 2] = ["typing/programs/calls_rust.rdl", "typing/programs/workload.rdl"];
+
 /// Each copied `.rdl` program (T's, until step 31 removes them) translates to `.rerail` that lowers, its `.rerail` beside it
-/// is that translation, and the lowered program prints back as itself. (The `.rdl` was also read by the front end's
+/// is that translation (but `REWRITTEN`'s), and the lowered program prints back as itself. (The `.rdl` was also read by the front end's
 /// own parser and compared; that parser went with the intermediate forms, 0276 step 6.)
 #[test]
 fn rdl_programs_translate_to_the_same_program() {
@@ -1030,7 +1035,7 @@ fn rdl_programs_translate_to_the_same_program() {
             }
         };
         let beside = path.with_extension("rerail");
-        if beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
+        if !REWRITTEN.contains(&name.as_str()) && beside.exists() && std::fs::read_to_string(&beside).unwrap() != rr {
             failures.push(format!("{name}: {} is not its translation", beside.display()));
         }
         // The program's own statements: an `#include` passes through the translation as it is (checked above), and
@@ -3538,8 +3543,9 @@ one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
 }
 
 /// Decision 0091: in a combined run, an included library's relations are one copy for the run, made over every
-/// document read, and each policy's rules see only its own scope's documents. Policy B's cross-file rule (two
-/// definitions of one name) would join a document only A's scope reads if the library's rows reached it unguarded.
+/// document read, and each policy's rules see only its own scope's documents. Policy B's cross-file rule (a
+/// name defined in two documents, by the documents: their nodes would cross, decision 0677) would join a document
+/// only A's scope reads if the library's rows reached it unguarded.
 /// `.global` shares a policy's own relation when the definitions are alike, and refuses it when they differ.
 #[test]
 fn library_relations_are_shared_and_each_policy_reads_its_own_scope() {
@@ -3558,7 +3564,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
         crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
-    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- def_at(f, s), def_at(g, s), f != g.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
+    let b = policy("b", "b", ".decl def_in(d: number, s: symbol)\n.decl twice(s: symbol) cross_file\ndef_in(d, s) :- def_at(f, s), docof(f, d).\ntwice(s) :- def_in(d, s), def_in(e, s), d != e.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3586,8 +3592,9 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
 }
 
 /// Decision 0091 with the libraries held once (0089): the library is a part of its own, under its own names, made
-/// over every document read; each policy's rules still see only its scope. Policy B's cross-file rule (two calls of
-/// one name) would join a call only A's scope reads if the library's rows reached it unguarded.
+/// over every document read; each policy's rules still see only its scope. Policy B's cross-file rule (a name called
+/// in two documents, by the documents: their nodes would cross, decision 0677) would join a call only A's scope reads
+/// if the library's rows reached it unguarded.
 #[test]
 fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-once");
@@ -3597,7 +3604,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     }
     let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
-    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- call_name(c, s), call_name(d, s), c != d.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
+    let b = policy("b", "b", ".decl call_in(d: number, s: symbol)\n.decl twice(s: symbol) cross_file\ncall_in(d, s) :- call_name(c, s), docof(c, d).\ntwice(s) :- call_in(d, s), call_in(e, s), d != e.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -4778,20 +4785,24 @@ fn program_srcs(paths: Vec<PathBuf>) -> Vec<(PathBuf, String)> {
 /// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
 /// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
 /// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
-/// Another file deriving it is still refused.
+/// So do W's graph (`python/references_w.rerail`) and the definitions' symbols (`python/references-defs.rerail`'s
+/// `reference_def`). Another file deriving one is still refused, though core declares the three `extensible`
+/// (decision 0677): DERIVED_BY names who derives them.
 #[test]
 fn a_module_derives_the_core_relation_its_file_is_named_for() {
     let lib = super::library();
     let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
-    let (references, core) = (path("python/references.rerail"), path("core.rerail"));
-    let checked = super::module_statements(&references, &core);
-    assert!(checked.is_ok(), "{:?}", checked.err());
+    let core = path("core.rerail");
+    for file in ["python/references.rerail", "python/references_w.rerail", "python/references-defs.rerail"] {
+        let checked = super::module_statements(&path(file), &core);
+        assert!(checked.is_ok(), "{file}: {:?}", checked.err());
+    }
     let dir = tempfile::tempdir().unwrap();
     let other = dir.path().join("other.rerail");
     std::fs::write(&other, "reference_edge(a, a, \"x\") :- kind(a, \"call\").\n").unwrap();
     let other = other.canonical().unwrap().to_string_lossy().into_owned();
     let refused = super::module_statements(&other, &core).map(|_| ()).expect_err("another file derives no reference_edge");
-    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("DERIVED_BY"), "{refused}");
 }
 
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
@@ -4872,16 +4883,20 @@ fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
 .policy "t:values" revision 1
 .decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
 pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
-.decl cv(v: symbol)
-cv(v) :- pick(n), value(n, v).
+.decl cv(n: node, v: symbol)
+cv(n, v) :- pick(n), value(n, v).
 .decl vals(v: symbol)
 vals(v) :- kind(n, "integer"), value(n, v).
 .decl ends(l: number)
 ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
-.output cv, vals, ends
+// `pick` and `cv` are findings: a node in the cross-file part is a finding's place, or refused (decision 0677).
+.output pick, cv, vals, ends
 "#;
     let [cv, vals, ends] = <[Vec<String>; 3]>::try_from(joined(guests_run("cross-value", &[("a.py", "x = 1\n"), ("b.py", "x = 2\n")], rule, &["cv", "vals", "ends"])).into_iter().map(|mut rows| { rows.sort(); rows }).collect::<Vec<_>>()).unwrap();
     assert_eq!(vals, ["1", "2"], "the file-local reader's values");
+    // `cv(n, v)`: each row's value, its last column.
+    let mut cv: Vec<&str> = cv.iter().map(|r| r.rsplit('\t').next().unwrap_or_default()).collect();
+    cv.sort();
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rerail's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");

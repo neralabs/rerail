@@ -291,8 +291,7 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
             // Decision 0677: no node crosses into the cross-file part. Its readers (an export's, or a pair cache's,
             // whose guard counts the whole factors) join the parts in the cross part, so a key that is a node
             // carries it there. A relation that holds no node is handed on whole, its rows symbols; one that does
-            // holds a node already, a crossing the check names, and is factorized as before until its family is
-            // keyed by symbols. `base_name(q, q0) :- base_expr(q, e), qn(e, q0)` (py_names) held `e` in the cross
+            // holds a node already, which the check refuses. `base_name(q, q0) :- base_expr(q, e), qn(e, q0)` (py_names) held `e` in the cross
             // part, by its pair cache.
             let node_at = |rel: &str, c: usize| f.columns(rel).and_then(|cols| cols.get(c).map(|(_, t)| super::super::node_crossings::NODE_TYPES.contains(t))).unwrap_or(false);
             let key_is_node = lits.iter().any(|l| match l.view() {
@@ -306,8 +305,14 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
             // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
             // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
             // tables of every file's values, and their readers, which join them at the file's nodes, went to the
-            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`).
-            let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r));
+            // cross part (decision 0677), as the deferred joins' lookups did (`product_demand::deferred`). A setting
+            // is one (`file_local::placeless_input`: a run's option, a phase's export declared keyed or whole):
+            // each file reads its rows. `class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _),
+            // py_names__own_at(p, q), py_names__ancestor(q, m, b)` is a lookup in `py_names__ancestor` by the file's
+            // own class symbol q; as parts, its node part `(c, q)` went to the cross part.
+            let constant = |r: &str| {
+                constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r)) || super::super::placeless_input(r)
+            };
             let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
             if head_holds_node && lookup {
                 break;

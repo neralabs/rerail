@@ -114,6 +114,12 @@ pub struct Report {
     /// Of the files the memo held, those read as partial hits (decision 0225 §2): their entries kept but the
     /// relations an edit changed, which their chunk derives again.
     pub memo_partial: usize,
+    /// The most rules a chunk of partial hits ran (its cone, decision 0225 §2): an asked phase's later round runs the
+    /// rules that read its asks, reading what they read from the entries (decision 0705).
+    pub memo_partial_rules: usize,
+    /// The chunk mixes whose constants this run measured (`corpus::Own::measure`), not read from an earlier chunk of
+    /// the mix or an earlier round of its asked phase (`phases::RoundsMeasured`).
+    pub constants_measured: usize,
     /// The digest of the project's settings rows the run bound (decision 0665, `memo::SettingsDigests`): a source
     /// file's edit leaves it, an edit of a configuration file changes it. `None`: the file-local part reads none.
     pub settings: Option<[u8; 32]>,

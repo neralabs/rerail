@@ -141,7 +141,7 @@ c_nameref(n) :- nameref(n, _).
 c_look(n, s) :- look(n, _, s).
 .decl c_ref(t: node, k: symbol, a: symbol, x: symbol, q: symbol)
 c_ref(t, k, a, x, q) :- rf_ref(t, k, a, x, q).
-.decl c_edge(s: node, t: node)
+.decl c_edge(s: symbol, t: symbol)
 c_edge(s, t) :- reference_edge(s, t, _).
 .decl c_ident(n: node)
 c_ident(n) :- kind(n, "identifier").

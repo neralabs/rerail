@@ -280,7 +280,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
+    use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop, setting_input};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -295,6 +295,9 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             Some(Reach { folder: [0].into(), ..Reach::default() })
         } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
+        } else if setting_input(rel) {
+            // Keyed by nothing (`Keyed::Whole`: `env`, `py_names__dj_app_defers`): every file's rows.
+            Some(Reach { all: true, ..Reach::default() })
         } else {
             None
         }
@@ -315,6 +318,21 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             if let Some(cols) = named.get(v.rel_name(a.rel())) {
                 folders.extend(cols.iter().filter_map(|&c| a.args().nth(c).and_then(|t| t.var())));
             }
+        }
+        // A key a row read under one of them names (`resolved(k, q) by_key 1`, `k` the file's own ask): the facts
+        // under `q` are the file's own too.
+        loop {
+            let more: Vec<_> = atoms
+                .iter()
+                .filter_map(|a| setting_key_hop(v.rel_name(a.rel())).map(|c| (a, c)))
+                .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|k| folders.contains(&k)))
+                .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
+                .filter(|x| !folders.contains(x))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            folders.extend(more);
         }
         (own, folders)
     };
@@ -394,12 +412,14 @@ pub struct SettingsDigests {
     /// The folder or target column of each relation keyed by a path (`file_local::setting_by_path`), by its index.
     hop: HashMap<usize, usize>,
     by_folder: HashMap<i64, Vec<(usize, Vec<i64>)>>,
+    /// The column of each relation keyed in column 0 that names further keys (`file_local::setting_key_hop`).
+    key_hop: HashMap<usize, usize>,
 }
 
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path};
+        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -420,6 +440,9 @@ impl SettingsDigests {
                 }
                 Some(&mut out.by_path)
             } else if setting_by_folder(name) {
+                if let Some(c) = setting_key_hop(name) {
+                    out.key_hop.insert(k, c);
+                }
                 Some(&mut out.by_folder)
             } else {
                 None
@@ -447,7 +470,18 @@ impl SettingsDigests {
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings-of-a-file/v1\0");
         let own = self.by_path.get(&path).map(Vec::as_slice).unwrap_or_default();
-        let folders: BTreeSet<i64> = own.iter().filter_map(|(k, r)| r.get(*self.hop.get(k)?).copied()).collect();
+        // The keys its own rows name, and those the rows under them name in turn (`by_key C`), to their closure.
+        let mut folders: BTreeSet<i64> = own.iter().filter_map(|(k, r)| r.get(*self.hop.get(k)?).copied()).collect();
+        let mut todo: Vec<i64> = folders.iter().copied().collect();
+        while let Some(f) = todo.pop() {
+            for (k, r) in self.by_folder.get(&f).into_iter().flatten() {
+                if let Some(&x) = self.key_hop.get(k).and_then(|c| r.get(*c))
+                    && folders.insert(x)
+                {
+                    todo.push(x);
+                }
+            }
+        }
         for (k, row) in own.iter().chain(folders.iter().flat_map(|f| self.by_folder.get(f).into_iter().flatten())) {
             hash.update((*k as u64).to_le_bytes());
             row.iter().for_each(|x| hash.update(x.to_le_bytes()));

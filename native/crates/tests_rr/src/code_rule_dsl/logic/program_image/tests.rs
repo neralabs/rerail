@@ -77,22 +77,30 @@ fn pack_files() -> Vec<std::path::PathBuf> {
     files
 }
 
-/// Every seventh pack program, as the text's test samples them, parsed a thread each: one after another they took
-/// most of a minute (two on Windows). Three tests read them, so they are parsed once for the three: three tests
-/// parsing them at once held a store's atom lease from each other for minutes (each run's observer waiting for the
-/// lease its flushing holder gives back only at the lease's timeout). The loop is on the machine's cores (`on_cores`,
-/// decision 0442): a parse waits for the engine's jobs, which a thread of rayon's global pool queues on its own pool,
-/// whose threads' stacks are too small for their waits to help.
+/// Every seventh pack program, as the text's test samples them, parsed on a few threads: one after another they took
+/// most of a minute (two on Windows), and three tests read them. Each thread runs on the test's object (decision 0442),
+/// which holds the graphs `keep_files` kept: on a pool's thread, whose own is the tests' one, each parse derived its graph
+/// in a run of its own, nested in the pool, and none of them ended.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
-    use rayon::prelude::*;
-    static PARSED: std::sync::OnceLock<Vec<(std::path::PathBuf, Arc<Version>)>> = std::sync::OnceLock::new();
-    PARSED
-        .get_or_init(|| {
-            let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
-            crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-            crate::code_rule_dsl::logic::profile::on_cores(|| files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect())
-        })
-        .clone()
+    let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
+    crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
+    let object = crate::code_rule_dsl::logic::profile::shared_here();
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).min(8);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let out: Vec<std::sync::Mutex<Option<Arc<Version>>>> = files.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                let _within = crate::code_rule_dsl::logic::profile::within(Arc::clone(&object));
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(p) = files.get(at) else { break };
+                    *out[at].lock().unwrap() = crate::code_rule_dsl::logic::rr::parse_file_version(p).ok();
+                }
+            });
+        }
+    });
+    files.into_iter().zip(out).filter_map(|(p, v)| Some((p, v.into_inner().unwrap()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,

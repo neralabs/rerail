@@ -334,7 +334,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\ndep(a, b) :- dep_from(a, m), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -360,7 +360,9 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
 .decl reach(a: number, b: number) reach
@@ -504,12 +506,16 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
+unused(f) :- def(f, q), !used(q).
 .output uses
 .output unused
 "#).unwrap();
@@ -556,10 +562,14 @@ fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node) cross_file
-used(f) :- imp(_, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl used(q: symbol) cross_file
+used(q) :- imp_at(_, q), def_at(_, q).
 .decl finding(category: symbol, q: symbol, n: node)
-finding("unused", q, f) :- def(f, q), !used(f).
+finding("unused", q, f) :- def(f, q), !used(q).
 .output finding
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -891,12 +901,16 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
+unused(f) :- def(f, q), !used(q).
 .output unused
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -944,12 +958,16 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
+unused(f) :- def(f, q), !used(q).
 .output unused
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -990,14 +1008,18 @@ fn a_maintained_strata_pieces_run_as_one_component() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl used(f: node)
-used(f) :- uses(_, f).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl used(q: symbol)
+used(q) :- uses(_, q).
 .decl unused(f: node)
-unused(f) :- def(f, _), !used(f).
+unused(f) :- def(f, q), !used(q).
 .decl lone(f: node)
-lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
+lone(f) :- unused(f), def(f, q), !used(q), !imp_at(_, q).
 .output unused
 .output lone
 "#).unwrap();
@@ -1065,14 +1087,18 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl never(n: node)
-never(n) :- kind(n, "no_such_kind").
-.decl reach(a: node, b: node)
-reach(a, b) :- uses(a, b).
-reach(a, c) :- reach(a, b), uses(b, c).
-.decl side(a: node)
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl never(d: number)
+never(d) :- kind(n, "no_such_kind"), docof(n, d).
+.decl reach(a: number, b: number)
+reach(a, b) :- uses(a, q), def_at(b, q).
+reach(a, c) :- reach(a, b), uses(b, q), def_at(c, q).
+.decl side(a: number)
 side(a) :- reach(a, _).
 reach(a, a) :- side(a), never(a).
 .output reach
@@ -1118,14 +1144,18 @@ fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
-.decl fanout(f: node, n: number)
-fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
+.decl fanout(q: symbol, n: number)
+fanout(q, n) :- def_at(_, q), n = count : { uses(_, q) }.
 .decl most(m: number)
 most(m) :- fanout(_, _), m = max x : { fanout(_, x) }.
 .decl named(n: node, q: symbol)
-named(n, @dot(q, q)) :- uses(n, f), def(f, q).
+named(n, @dot(q, q)) :- imp(n, q), docof(n, a), uses(a, q).
 .output fanout
 .output most
 .output named
@@ -1180,12 +1210,16 @@ fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_r
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .output uses
 "#;
-    let unused = ".decl used(f: node)\nused(f) :- uses(_, f).\n.decl unused(f: node)\nunused(f) :- def(f, _), !used(f).\n.output unused\n";
-    let named = ".decl named(q: symbol)\nnamed(q) :- uses(_, f), def(f, q).\n.output named\n";
+    let unused = ".decl used(q: symbol)\nused(q) :- uses(_, q).\n.decl unused(f: node)\nunused(f) :- def(f, q), !used(q).\n.output unused\n";
+    let named = ".decl named(q: symbol)\nnamed(q) :- uses(_, q).\n.output named\n";
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("kept.sqlite")));
     let run = |extra: &str| {
@@ -1202,7 +1236,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     let (ran_a, _) = run(unused);
     assert!(ran_a < all, "the first program's relations are still kept ({ran_a} of {all})");
     // An edit to `unused`'s rule: `uses` and what it reads stay clean.
-    let (edited, all_e) = run(&unused.replace("!used(f)", "!used(f), f != 0"));
+    let (edited, all_e) = run(&unused.replace("!used(q)", "!used(q), f != 0"));
     assert!(edited < all_e, "a rule edit reruns only what it reaches ({edited} of {all_e})");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2102,10 +2136,14 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl passes(f: node)
-passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
+passes(f) :- def(f, q), uses(_, q), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -2175,7 +2213,7 @@ name(p, m) :- g(p), j = join q by q sep "+" : {{ member(p, q) }}, m = cat("core"
 
 /// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
 /// its request is narrowed to the node's own document (`file_local::requests_file_local`, the hub's work-queue
-/// question 2, option a), `uses` unfolded to `def(f, _)`, so the text is answered in the chunk that holds it. Asked in
+/// question 2, option a), at `def(f, q)`, so the text is answered in the chunk that holds it. Asked in
 /// the cross-file part, the chunk's batch was gone and the text was empty: no row.
 #[test]
 fn a_cross_file_reader_finds_the_text_of_another_files_node() {
@@ -2189,10 +2227,14 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node) cross_file
-uses(n, f) :- imp(n, q), def(f, q).
+.decl def_at(d: number, q: symbol)
+def_at(d, q) :- def(f, q), docof(f, d).
+.decl imp_at(d: number, q: symbol)
+imp_at(d, q) :- imp(n, q), docof(n, d).
+.decl uses(a: number, q: symbol) cross_file
+uses(a, q) :- imp_at(a, q), def_at(_, q).
 .decl passes(f: node)
-passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
+passes(f) :- def(f, q), uses(_, q), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
@@ -2465,17 +2507,22 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind
 }
 
 /// Decision 0431 R7's program: a cross-file rule (`refers`) joins an annotation's identifier (a node of its tape value,
-/// `guest_of`) in one file with a class of that name in another, and `shown` reads that node's facts across files:
-/// its text, and its place in its file through the string (`guest_place`).
+/// `guest_of`) in one file with a class of that name in another, by the name and the class's file (no node crosses,
+/// decision 0677), and `shown` reads the identifier's facts in the cross part: its text, and its place in its file
+/// through the string (`guest_place`).
 const CROSS_FILE_VALUES: &str = r#"
 .decl ann_node(m: node, x: symbol)
 ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
 .decl cls(c: node, x: symbol)
 cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
-.decl refers(m: node, c: node) cross_file
-refers(m, c) :- ann_node(m, x), cls(c, x).
+.decl ann_at(x: symbol, a: number)
+ann_at(x, a) :- ann_node(m, x), docof(m, a).
+.decl cls_at(x: symbol, d: number)
+cls_at(x, d) :- cls(c, x), docof(c, d).
+.decl refers(x: symbol, d: number) cross_file
+refers(x, d) :- ann_at(x, _), cls_at(x, d).
 .decl shown(x: symbol, p: symbol, l: number)
-shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).
+shown(x, p, l) :- ann_node(m, x), refers(x, d), text(m, x), guest_place(m, _, l, _), doc(d, p, _).
 .output shown
 "#;
 
@@ -2715,7 +2762,8 @@ fn a_files_entry_is_kept_under_its_own_imports_resolution() {
 
 /// Decision 0677, fix 2: Python's names through the phase `py_names`. `sym_of` and `site_exported` read the phase's
 /// rows at their own file's path (or by a module those name), so they are file-local, and they find what the cross-file
-/// rules found before: those rules are written out here (`old_sym`, `old_public`) and run beside them. The workspace
+/// rules found before: `site_exported`'s is written out here (`old_exported_at`) and runs beside it, and `sym_of`'s
+/// answers are written out as rows (`PY_NAMES_OLD`). The workspace
 /// has a package re-exporting a class from a submodule, a chain of two re-exports, a star import under `__all__` and
 /// one without, a class's nested class and method read as its attributes, and a module outside the workspace.
 const PY_NAMES_FILES: [(&str, &str); 6] = [
@@ -2739,18 +2787,11 @@ exported_at(p, x) :- site_exported(site), binding(s, x, site, _), docof(s, d), d
 .output exported_at
 "#;
 
-/// The rules `py_names` replaced (python/names' `sym_of` rules 1 and 3, and `site_exported`, before 0677 fix 2): they
-/// read every file's rows.
+/// The rule `py_names` replaced for `site_exported` (before 0677 fix 2): it reads every file's rows. `sym_of`'s old
+/// rules (`old_sym`: rules 1 and 3, a module's names resolved through every file's exports) carried a reference's
+/// node across files, which 0677's check refuses; this test ran them beside the phase, and they gave the rows its
+/// first assertion names.
 const PY_NAMES_OLD: &str = r#"
-.decl old_sym(n: node, q: symbol) cross_file
-old_sym(n, q) :- qn(n, q0), resolve_export(q0, q).
-export_query(q) :- qn(_, q).
-old_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
-old_sym(n, q) :- attr_of(n, o, a), old_sym(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
-old_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
-.decl old_used(p: symbol, l: number, q: symbol)
-old_used(p, l, q) :- at(n, p, l), old_sym(n, q).
-.output old_used
 .decl old_exported_at(p: symbol, x: symbol)
 old_exported_at(p, x) :- binding(s, x, site, _), kind(s, "module"), module_of(s, m), public_name(m, x), docof(s, d), doc(d, p, _).
 .output old_exported_at
@@ -2805,9 +2846,9 @@ fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
             row("use.py", 8, "pkg.nall.visible"),
             row("use.py", 9, "os.path.join"),
         ],
-        "each name, re-exports and star imports followed, and each member of a class read as its attribute: {rows:?}"
+        "each name, re-exports and star imports followed, and each member of a class read as its attribute (the rows the \
+         cross-file rules found): {rows:?}"
     );
-    assert_eq!(rows["used"], rows["old_used"], "sym_of finds what the cross-file rules found");
     assert_eq!(rows["exported_at"], rows["old_exported_at"], "site_exported finds what the cross-file rule found");
     let exported = |p: &str, x: &str| rows["exported_at"].contains(&vec![p.to_owned(), x.to_owned()]);
     assert!(exported("pkg/more.py", "helper") && !exported("pkg/more.py", "hidden"), "__all__ names helper alone: {:?}", rows["exported_at"]);
@@ -2815,10 +2856,11 @@ fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
-/// file alone. A method added to `App` adds a row to pkg.core's `defined`: the files that read pkg.core (core.py,
-/// pkg/__init__.py and chain.py, which re-export App, and use.py, which reads it) miss, and more.py and nall.py are
-/// read from the memo. The rows are a fresh run's.
+/// Decision 0677, fix 2, and 0705's keying by a file's asks: an edit misses the files whose asks' answers changed. A
+/// body edit in pkg/core.py misses that file alone. A method added to `App`, which no file asks for, misses it alone
+/// too. `App.run` renamed `App.go` changes the answer to use.py's ask `App.run`: core.py and use.py miss, and
+/// pkg/__init__.py and chain.py, which re-export App but ask nothing of its members, are read from the memo. The rows
+/// are a fresh run's.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
@@ -2831,8 +2873,16 @@ fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
     let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
-    assert_eq!(edited.memo.0, edited.files - 4, "pkg.core's readers alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, edited.files - 1, "a method no file asks for misses its own file alone: {:?} of {}", edited.memo, edited.files);
     let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let renamed = ("pkg/core.py", method.1.replace("def run(self)", "def go(self)"));
+    std::fs::write(dir.join("ws").join(renamed.0), &renamed.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 2, "core.py and use.py, whose ask App.run changed, alone miss: {:?} of {}", edited.memo, edited.files);
+    assert!(!rows["used"].contains(&vec!["use.py".to_owned(), "5".to_owned(), "pkg.core.App.run".to_owned()]), "App.run is gone: {rows:?}");
+    let fresh = py_names_workspace("py-names-memo-fresh", &[(renamed.0, &renamed.1)]);
     assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2880,6 +2930,18 @@ fn py_classes_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBu
         std::fs::write(to, text).unwrap();
     }
     dir
+}
+
+/// `dir/lib/django.rerail`, the Django pack's library (`packs/django/rules/lib`) as the tree has it now: a program of
+/// `dir` includes `lib/django.rerail` beside it, as the pack's own rules do. A hard link, or a copy across volumes; not
+/// a symbolic link, which the file observer lists as no directory.
+fn django_beside(dir: &std::path::Path) {
+    let lib = crate::source_tree::root().expect("a checkout").join("packs/django/rules/lib/django.rerail");
+    std::fs::create_dir_all(dir.join("lib")).unwrap();
+    let to = dir.join("lib/django.rerail");
+    if std::fs::hard_link(&lib, &to).is_err() {
+        std::fs::copy(&lib, &to).unwrap();
+    }
 }
 
 /// `anc` and `old_anc`'s rows of a run of `program` over `dir`'s workspace.
@@ -3013,7 +3075,7 @@ fn a_django_model_is_read_by_its_symbol_in_another_file() {
     ];
     let dir = py_classes_workspace("dj-models", &edits);
     let program = r#".language python
-#include "python/django.rerail"
+#include "lib/django.rerail"
 .decl dq(p: symbol, mq: symbol)
 dq(p, mq) :- dj_qs_class(q, mq), docof(q, d), doc(d, p, _).
 .output dq
@@ -3027,6 +3089,7 @@ dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d),
 dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
 .output dm
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
@@ -3078,7 +3141,7 @@ fn a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file() 
     ];
     let dir = py_classes_workspace("dj-meta", &edits);
     let program = r#".language python
-#include "python/django.rerail"
+#include "lib/django.rerail"
 .decl at_view(e: node, mq: symbol)
 at_view(e, mq) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _).
 .decl mg(mq: symbol, g: symbol, x: symbol)
@@ -3100,6 +3163,7 @@ da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p,
 mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
 .output mm
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(
@@ -3148,7 +3212,7 @@ fn a_django_models_hooks_are_read_by_their_symbol_in_another_file() {
     ];
     let dir = py_classes_workspace("dj-hooks", &edits);
     let program = r#".language python
-#include "python/django.rerail"
+#include "lib/django.rerail"
 .decl hk(mq: symbol, k: symbol, h: symbol)
 hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _), dj_model_hook(e, k, h).
 .output hk
@@ -3156,6 +3220,7 @@ hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "vi
 rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
 .output rd
 "#;
+    django_beside(&dir);
     let (_, rows) = py_classes_run(&dir, program);
     let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
     assert_eq!(
@@ -3175,9 +3240,9 @@ rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A body edit misses its own file alone; a changed base misses the files that read the modules whose ancestry rows
-/// change (decision 0665's keys: a file's own module's rows, and those of the modules its imports reach), not a file
-/// that reaches none of them.
+/// A body edit misses its own file alone; a changed base misses the files whose own classes' ancestry changes
+/// (decision 0705's keys: a file's own definitions that facts are handed on of, `own_at`, and their facts): not
+/// other.py, which reaches no class of the hierarchy, nor app/__init__.py, which re-exports Mid and defines no class.
 #[test]
 fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
@@ -3190,7 +3255,7 @@ fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
     assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
     std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
     let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
-    assert_eq!(edited.memo.0, 1, "only other.py, which reaches no module of the hierarchy, hits: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(edited.memo.0, 2, "other.py and app/__init__.py alone hit: {:?} of {}", edited.memo, edited.files);
     let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
     assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
@@ -3206,16 +3271,17 @@ fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
 const OPTION_READ: &str = r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
-.decl dec_named(n: node, o: symbol) cross_file
-dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
-.decl ignored(n: node) cross_file
-ignored(n) :- dec_named(n, "ignore").
+.decl def_at(x: symbol, d: number)
+def_at(x, d) :- def(n, x), docof(n, d).
+// An option's item that names a definition of any file (by its name: no node crosses, decision 0677).
+.decl dec_named(o: symbol) cross_file
+dec_named(o) :- option_item(o, _, q), def_at(q, _).
 .decl ver(v: symbol)
 ver(v) :- env("demo.version", v).
 ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
 ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
 .decl shown(p: symbol, x: symbol)
-shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+shown(p, x) :- def(n, x), !dec_named("ignore"), ver("3.13"), docof(n, d), doc(d, p, _).
 .output shown
 .decl flagged(n: node)
 flagged(n) :- def(n, x), option(cat(x, "-on"), _).
@@ -3300,14 +3366,14 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 none(n) :- kind(n, "function_definition").
 .output none
 .decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__module(m: symbol)
 .decl tgt(d: number, s: symbol, t: symbol)
 tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
-.decl resolved(n: node, q: symbol)
-resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
+.decl resolved(n: node, t: symbol)
+resolved(n, t) :- kind(n, "identifier"), text(n, s), docof(n, d), tgt(d, s, t), tsx_names__module(t).
 .output resolved
-.decl other(n: node, q: symbol)
-other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
+.decl other(n: node, t: symbol)
+other(n, t) :- kind(n, "identifier"), text(n, t), tsx_names__module(t).
 .output other
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
@@ -3318,7 +3384,7 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("none"), None, "{scopes:?}");
-    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its module's read as its own.
     assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -3625,7 +3691,7 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let shown = v.show();
     // The nodes of no file's document, and the finding's rule refusing one of them by its clause.
     let unplaced = crate::code_rule_dsl::logic::rr::UNPLACED_NODE;
-    assert!(shown.contains(&format!("rr_unplaced(\"Assert\") :- ")) && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- ") && shown.contains(&format!("{unplaced}($rr_n) :- ")) && shown.contains("!doc("), "the lowering writes R9's rules:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);

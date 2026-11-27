@@ -59,10 +59,10 @@ fn line(source: &str, offset: usize) -> u64 {
 /// The spans the scorer reads, added to the program as one more output: each answered call's and each named
 /// definition's `(start, end)` bytes. A definition's line is its `def`'s, decorated or not, as the oracle records it.
 const SPANS: &str = "
-.decl oracle_score_at(n: node, s: number, e: number)
-oracle_score_at(n, s, e) :- call_target(n, _), node(_, n, _, s, e).
-oracle_score_at(n, s, e) :- call_open(n), node(_, n, _, s, e).
-oracle_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
+.decl oracle_score_at(t: symbol, p: symbol, s: number, e: number)
+oracle_score_at(t, p, s, e) :- oracle_score_kind(k), kind(n, k), pt_tm(n, t), node(d, n, _, s, e), doc(d, p, _).
+.decl oracle_score_kind(k: symbol)
+oracle_score_kind(\"call\"). oracle_score_kind(\"function_definition\"). oracle_score_kind(\"class_definition\").
 .output oracle_score_at
 ";
 
@@ -72,13 +72,13 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
     let src = format!("{program}\n{SPANS}");
     corpus::run(&src, project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
-    // Each node's document and span, keyed by the node as shown.
+    // Each call's and definition's document and span, keyed by its term (`pt_tm`: a definition's is its symbol).
     let at: BTreeMap<String, (String, usize, usize)> = outputs
         .rows("oracle_score_at")
         .into_iter()
-        .map(|r| (r.get(0).to_string(), (r.get(0).path().unwrap().to_owned(), r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize)))
+        .map(|r| (r.get(0).to_string(), (r.get(1).to_string(), r.get(2).int().unwrap() as usize, r.get(3).int().unwrap() as usize)))
         .collect();
-    let key = |node: Value<'_>| at[&node.to_string()].clone();
+    let key = |term: Value<'_>| at[&term.to_string()].clone();
     let mut answers = BTreeMap::new();
     for r in outputs.rows("call_open") {
         answers.insert(key(r.get(0)), Answer::Unknown);
@@ -148,10 +148,10 @@ pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>
     (agree, departures, never_ran)
 }
 
-/// `RERAIL_PYTHON_PROGRAM`: the calls program the oracle tests score, `calls` unless it names another (`calls_cx`,
-/// the closure-local version; O114).
+/// `RERAIL_PYTHON_PROGRAM`: the calls program the oracle tests score, `calls_p3` (the analysis phase's rules as a
+/// program, decision 0677) unless it names another.
 fn calls_name() -> String {
-    std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls".to_owned())
+    std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls_p3".to_owned())
 }
 
 /// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
@@ -159,7 +159,7 @@ fn calls_name() -> String {
 /// O125's cross-file rules and a quarter of a one-file edit's CPU.
 #[test]
 fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
-    let text = program("calls");
+    let text = program("calls_p3");
     use crate::code_rule_dsl::logic::plan::corpus::preparation::{DropRepeated, MergeIdentical};
     let v = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()]).unwrap();
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
@@ -174,7 +174,7 @@ fn program(name: &str) -> String {
     crate::code_rule_dsl::logic::settings::program_text(&crate::source_tree::native().join(format!("src/code_rule_dsl/typing/programs/{name}.rerail"))).unwrap()
 }
 
-/// Where `calls.rerail` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
+/// Where `calls_p3` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
 /// wrong, as the spike scored). The native resolver departs at 17 calls on the same oracle; the program resolves `super()`, a local
 /// holding an instance, a call's result and an instance's `__call__`, which the native resolver leaves unknown.
 const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
@@ -189,16 +189,16 @@ const PYTHON_DEPARTURES: &[(&str, Departure, &str)] = &[
     ("pkg/dynamic.py:35 `functools.partial(util.helper, 1)()`", Departure::Unknown, "`functools.partial`"),
 ];
 
-/// `calls.rerail` against the CPython runtime oracle (`fixtures/python/calls`): no wrong answer, nothing named that
+/// `calls_p3` against the CPython runtime oracle (`fixtures/python/calls`): no wrong answer, nothing named that
 /// never ran, and the departures as recorded. The native resolver's test
 /// (`calls::python_tests::python_calls_agree_with_the_runtime`) holds the same oracle to its own list.
 #[test]
 fn python_calls_program_agrees_with_the_runtime() {
     let (agree, departures, never_ran) = score_python(&program(&calls_name()));
-    println!("calls.rerail: {agree} agree, {} depart", departures.len());
+    println!("calls_p3: {agree} agree, {} depart", departures.len());
     assert!(never_ran.is_empty(), "{never_ran:#?}");
     let listed: BTreeMap<String, Departure> = PYTHON_DEPARTURES.iter().map(|(at, d, _)| ((*at).to_owned(), *d)).collect();
-    assert_eq!(departures, listed, "calls where calls.rerail answers otherwise than CPython ran");
+    assert_eq!(departures, listed, "calls where calls_p3 answers otherwise than CPython ran");
     assert!(agree >= 84, "{agree} agree");
 }
 
@@ -208,8 +208,9 @@ fn line_column(source: &str, offset: usize) -> (u64, u64) {
     (line(source, offset), source[start..offset].chars().count() as u64 + 1)
 }
 
-/// The positions the Rust scorer reads: each answered call's callee name (the last segment of its path, or the
-/// method's field) and each named definition's name, as `(node, start byte)`.
+/// The positions the Rust scorer reads: each call's callee name (the last segment of its path, or the method's
+/// field) and each named definition's name, as `(term or symbol, path, start byte)`. The program's answers are keyed
+/// by terms and symbols (`rs_tm`, `rs_ss`, decision 0677), so each position is keyed by its node's.
 const RUST_SPANS: &str = "
 .decl rr_score_callee(c: node, x: node)
 rr_score_callee(c, x) :- field(c, \"function\", x), kind(x, \"identifier\").
@@ -218,13 +219,10 @@ rr_score_callee(c, x) :- field(c, \"function\", p), kind(p, \"field_expression\"
 rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", x), kind(x, \"identifier\").
 rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", p), kind(p, \"scoped_identifier\"), field(p, \"name\", x).
 rr_score_callee(c, x) :- field(c, \"function\", g), kind(g, \"generic_function\"), field(g, \"function\", p), kind(p, \"field_expression\"), field(p, \"field\", x).
-.decl rr_score_pos(n: node, s: number)
-rr_score_pos(c, s) :- call_target(c, _), rr_score_callee(c, x), node(_, x, _, s, _).
-rr_score_pos(c, s) :- call_open(c), rr_score_callee(c, x), node(_, x, _, s, _).
-rr_score_pos(f, s) :- call_target(_, f), field(f, \"name\", x), node(_, x, _, s, _).
-rr_score_pos(f, s) :- call_target(_, f), !rr_score_named(f), node(_, f, _, s, _).
-.decl rr_score_named(f: node)
-rr_score_named(f) :- call_target(_, f), field(f, \"name\", _).
+.decl rr_score_pos(n: symbol, p: symbol, s: number)
+rr_score_pos(t, p, s) :- kind(c, \"call_expression\"), rs_tm(c, t), rr_score_callee(c, x), node(d, x, _, s, _), doc(d, p, _).
+rr_score_pos(v, p, s) :- rs_ss(f, v), field(f, \"name\", x), node(d, x, _, s, _), doc(d, p, _).
+rr_score_pos(v, p, s) :- rs_ss(f, v), !field(f, \"name\", _), node(d, f, _, s, _), doc(d, p, _).
 .output rr_score_pos
 ";
 
@@ -245,11 +243,15 @@ pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) 
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-rust");
     corpus::run(&format!("{program}\n{RUST_SPANS}"), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
-    let pos: BTreeMap<String, usize> = outputs.rows("rr_score_pos").into_iter().map(|r| (r.get(0).to_string(), r.get(1).int().unwrap() as usize)).collect();
-    let at = |node: Value<'_>| -> (String, u64, u64) {
-        let file = node.path().unwrap().to_owned();
-        let (l, c) = line_column(&sources[&file], pos[&node.to_string()]);
-        (file, l, c)
+    let pos: BTreeMap<String, (String, usize)> = outputs
+        .rows("rr_score_pos")
+        .into_iter()
+        .map(|r| (r.get(0).to_string(), (r.get(1).to_string(), r.get(2).int().unwrap() as usize)))
+        .collect();
+    let at = |term: Value<'_>| -> (String, u64, u64) {
+        let (file, start) = &pos[&term.to_string()];
+        let (l, c) = line_column(&sources[file], *start);
+        (file.clone(), l, c)
     };
     let mut answers: BTreeMap<(String, u64, u64), Answer> = BTreeMap::new();
     for r in outputs.rows("call_open") {
@@ -335,9 +337,8 @@ pub(super) enum TypeAnswer {
 
 /// The spans the types scorer reads: each typed or open node's.
 const TYPE_SPANS: &str = "
-.decl oracle_type_at(n: node, s: number, e: number)
-oracle_type_at(n, s, e) :- type_of(n, _), node(_, n, _, s, e).
-oracle_type_at(n, s, e) :- type_open(n), node(_, n, _, s, e).
+.decl oracle_type_at(t: symbol, p: symbol, s: number, e: number)
+oracle_type_at(t, p, s, e) :- pt_vpos(n), pt_tm(n, t), node(d, n, _, s, e), doc(d, p, _).
 .output oracle_type_at
 ";
 
@@ -363,9 +364,9 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     let at: BTreeMap<String, (String, usize, usize)> = outputs
         .rows("oracle_type_at")
         .into_iter()
-        .map(|r| (r.get(0).to_string(), (r.get(0).path().unwrap().to_owned(), r.get(1).int().unwrap() as usize, r.get(2).int().unwrap() as usize)))
+        .map(|r| (r.get(0).to_string(), (r.get(1).to_string(), r.get(2).int().unwrap() as usize, r.get(3).int().unwrap() as usize)))
         .collect();
-    let at = |node: Value<'_>| at[&node.to_string()].clone();
+    let at = |term: Value<'_>| at[&term.to_string()].clone();
     let mut typed: BTreeMap<(String, usize, usize), Typed> = BTreeMap::new();
     for r in outputs.rows("type_of") {
         typed.entry(at(r.get(0))).or_default().of.insert(r.get(1).to_string());
@@ -428,22 +429,22 @@ pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> 
     answers
 }
 
-/// `calls.rerail`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
+/// `calls_p3`'s type relations against the classes CPython's receivers were (decision 0047, point 3): never wrong,
 /// and the receivers not exact as listed.
 const PYTHON_TYPE_DEPARTURES: &[(&str, TypeAnswer, &str)] = &[];
 
 #[test]
 fn python_type_relations_agree_with_the_runtime() {
-    let answers = score_python_types(&program("calls"));
+    let answers = score_python_types(&program("calls_p3"));
     let exact = answers.values().filter(|a| **a == TypeAnswer::Exact).count();
-    println!("calls.rerail types: {exact} exact of {} receivers", answers.len());
+    println!("calls_p3 types: {exact} exact of {} receivers", answers.len());
     for (at, a) in &answers {
         println!("  {a:?}\t{at}");
     }
     let departures: BTreeMap<String, TypeAnswer> = answers.into_iter().filter(|(_, a)| *a != TypeAnswer::Exact).collect();
     let listed: BTreeMap<String, TypeAnswer> = PYTHON_TYPE_DEPARTURES.iter().map(|(at, a, _)| ((*at).to_owned(), *a)).collect();
     assert!(!departures.values().any(|a| *a == TypeAnswer::Wrong), "{departures:#?}");
-    assert_eq!(departures, listed, "receivers whose classes calls.rerail does not give exactly");
+    assert_eq!(departures, listed, "receivers whose classes calls_p3 does not give exactly");
 }
 
 /// A rule reads Python's call targets and types through `lib/python/calls.rerail` and `lib/python/types.rerail`: their rules
@@ -577,24 +578,57 @@ own(n) :- imp(n, _).
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// Where a run of `calls_p3` places its calls into a library: each workspace call's path (`oracle_call_path`), and
+/// the library callable it reaches, by the symbol P2 resolved it to, with where P1 read that definition
+/// (`struct__at`, a library file as the engine has it). The analysis phase reads no library node (decision 0677): a
+/// library value is a symbol (`pt_lv`). `oracle_lib_anc` is P2's ancestors of each library class a call makes.
+const LIB_SPANS: &str = "
+.decl struct__at(s: symbol, p: symbol, l: number)
+.decl types__anc(c: symbol, a: symbol)
+.decl oracle_call_path(c: symbol, p: symbol)
+oracle_call_path(t, p) :- kind(n, \"call\"), pt_tm(n, t), docof(n, d), doc(d, p, _).
+.decl oracle_lib_kind(k: symbol)
+oracle_lib_kind(\"fn\"). oracle_lib_kind(\"cls\").
+.decl oracle_lib(c: symbol, s: symbol, p: symbol, l: number)
+oracle_lib(c, s, p, l) :- pt_callee_t(c, e), pt_lv(e, k, s), oracle_lib_kind(k), struct__at(s, p, l).
+.decl oracle_lib_anc(k: symbol, a: symbol)
+oracle_lib_anc(k, a) :- pt_callee_t(_, e), pt_lv(e, \"cls\", k), types__anc(k, a).
+.output oracle_call_path, oracle_lib, oracle_lib_anc
+";
+
+/// `calls_p3`'s calls into a library over the workspace at `project`: (call's path, symbol, definition's path, line),
+/// sorted, the run's outputs kept in `out`.
+fn lib_calls(project: &Path, out: &Path) -> Vec<(String, String, String, i64)> {
+    corpus::run(&format!("{}\n{LIB_SPANS}", program("calls_p3")), project, None, out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let paths: BTreeMap<String, String> = output::shown(out, "oracle_call_path").unwrap().into_iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    let mut got: Vec<(String, String, String, i64)> = output::shown(out, "oracle_lib")
+        .unwrap()
+        .into_iter()
+        .map(|r| (paths[&r[0]].clone(), r[1].clone(), r[2].replace(std::path::MAIN_SEPARATOR, "/"), r[3].parse().unwrap()))
+        .collect();
+    got.sort();
+    got
+}
+
 #[test]
 fn calls_into_the_standard_library_reach_its_stubs() {
-    // fixtures/python/typing/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. calls.rerail includes
-    // python/modules.rerail, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
-    // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
+    // fixtures/python/typing/world_load/ws: `python.typeshed = ../ts`, a miniature typeshed. The typing phases resolve
+    // `import os.path` into ts/stdlib/os/path.pyi (python/modules.rerail) and read it: `os.path.join("a", "b")` is a
+    // call of the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
     // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_load/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let outputs = Outputs::open(&out).unwrap();
-    let rows = outputs.rows("call_target");
-    // Nodes of documents: the one call is main.py's, its target in the stub.
-    assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0].get(0).path(), Some("main.py"), "{rows:?}");
-    // A library document is named as the engine has the file: on Windows, with `\`.
-    assert!(std::path::Path::new(rows[0].get(1).path().unwrap()).ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
-    drop(rows);
-    drop(outputs);
+    let got = lib_calls(&project, &out);
+    // main.py's two calls: `collections.OrderedDict()`, a library class's, and `os.path.join`, the stub's one `join`:
+    // the `else` branch's, line 7.
+    let short: Vec<(&str, &str, &str, i64)> =
+        got.iter().map(|(c, s, p, l)| (c.as_str(), s.as_str(), p.split("world_load/").nth(1).unwrap_or(p), *l)).collect();
+    assert_eq!(
+        short,
+        [("main.py", "collections.OrderedDict", "ts/stdlib/collections/__init__.pyi", 1), ("main.py", "os.path.join", "ts/stdlib/os/path.pyi", 7)],
+        "{got:?}"
+    );
+    assert!(output::shown(&out, "call_target").unwrap().is_empty(), "a library's callable is no workspace target");
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -604,15 +638,13 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     // module of main.py resolves at one layer of python/modules.rerail: alpha's stub package before its typed package,
     // beta's typed package from its `.py`, gamma (installed untyped, so not read) from typeshed's stubs/, delta from
     // a directory a `.pth` file names, eps from the declarations before its stub package. zeta, a single-file module
-    // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
-    // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
-    // another generic class, would be Var's base and its `__init__` a target).
+    // in site-packages, is not a typed package: its call reaches no library. `cv.Var("x")` makes a Var, and typeshed's
+    // `Generic: type[_Generic]` is a special form as a base, not `_Generic` (else Var would have it, and its subclasses
+    // such as Box, as kin).
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_site/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    let outputs = Outputs::open(&out).unwrap();
-    let text = outputs.rows("call_target");
-    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().replace(std::path::MAIN_SEPARATOR, "/").split("world_site/").nth(1).unwrap().to_owned()).collect();
+    let text = lib_calls(&project, &out);
+    let mut got: Vec<String> = text.iter().map(|r| r.2.split("world_site/").nth(1).unwrap().to_owned()).collect();
     got.sort();
     assert_eq!(
         got,
@@ -626,8 +658,10 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
         ],
         "{text:?}"
     );
-    drop(text);
-    drop(outputs);
+    // `cv.Var("x")` makes a Var, whose `Generic[_T]` base is a special form: Var has no ancestor, not `_Generic`.
+    assert!(text.iter().any(|r| r.1 == "cv.Var"), "{text:?}");
+    let anc = output::shown(&out, "oracle_lib_anc").unwrap();
+    assert!(anc.is_empty(), "{anc:?}");
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -639,20 +673,18 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/typing/world_decl/app");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let targets = lib_calls(&project, &out);
     let text = output::shown(&out, "type_of").unwrap();
     let mut got: Vec<&str> = text.iter().map(|r| r[1].as_str()).filter(|t| *t != "module").collect();
     got.sort();
-    // version() and make(): str; other.thing(): bytes | None.
-    assert_eq!(got, ["None", "bytes", "str", "str"], "{text:?}");
-    let outputs = Outputs::open(&out).unwrap();
-    let targets = outputs.rows("call_target");
-    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| std::path::Path::new(p).ends_with(file)));
+    // make(): str, its declaration's; other.thing(): bytes | None. version(), in vendor's installed sources, is declared
+    // nothing, and its body is no library's interface: P1 reads an untyped library's `.py` files and no function's
+    // body (decision 0083 §1, §8), so its value is open.
+    assert_eq!(got, ["None", "bytes", "str"], "{text:?}");
+    let reaches = |file: &str| targets.iter().any(|r| r.2.ends_with(file));
     assert!(reaches("world_decl/decls/vendor/core.pyi"), "{targets:?}");
     assert!(reaches("world_decl/decls/other.pyi"), "{targets:?}");
     assert!(reaches("site-packages/vendor/__init__.py"), "{targets:?}");
-    drop(targets);
-    drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
 }
 
@@ -669,7 +701,7 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     let open = output::shown(&out, "call_open").unwrap();
     // c.size() and h.first().size() reach Concrete.size; h.first() reaches Holder.first.
@@ -690,7 +722,7 @@ fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_ge
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     // get, get, pick, and the three `.m()` calls.
     assert_eq!(targets.len(), 6, "{targets:?}");
@@ -711,7 +743,7 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     assert_eq!(targets.len(), 2, "{targets:?}");
     let open = output::shown(&out, "call_open").unwrap();
@@ -731,7 +763,7 @@ fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered(
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     assert_eq!(targets.len(), 2, "{targets:?}");
     let open = output::shown(&out, "call_open").unwrap();
@@ -752,7 +784,7 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     assert_eq!(targets.len(), 2, "{targets:?}");
     // Both calls target one definition (V.run, not W.run).
@@ -1156,7 +1188,7 @@ fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     assert_eq!(targets.len(), 1, "{targets:?}");
     let open = output::shown(&out, "call_open").unwrap();
@@ -1178,7 +1210,7 @@ fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     assert_eq!(targets.len(), 2, "{targets:?}");
     let open = output::shown(&out, "call_open").unwrap_or_default();
@@ -1201,7 +1233,7 @@ fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     let open = output::shown(&out, "call_open").unwrap_or_default();
     eprintln!("T {targets:?}\nO {open:?}");
@@ -1222,7 +1254,7 @@ fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let targets = output::shown(&out, "call_target").unwrap();
     let open = output::shown(&out, "call_open").unwrap_or_default();
     assert_eq!(open.len(), 0, "{open:?}");
@@ -1243,7 +1275,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
     )
     .unwrap();
     let out = project.join("out");
-    corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&program("calls_p3"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let types = output::shown(&out, "type_of").unwrap();
     let open = output::shown(&out, "call_open").unwrap_or_default();
     assert_eq!(open.len(), 0, "{open:?}");
@@ -1342,7 +1374,7 @@ oracle_jedi_at(f, s, e) :- kind(f, \"lambda\"), node(_, f, _, s, e).
 .output oracle_jedi_cls, oracle_jedi_at
 ";
 
-/// `calls.rerail` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
+/// `calls_p3` against Jedi 0.19.2's `goto` over a Python corpus (`RERAIL_PYTHON_CALLS`, written by
 /// `fixtures/python/calls/generate_corpus.py`; O88). The program runs over `RERAIL_PYTHON_CALLS_ROOT`, a directory
 /// whose tree holds the corpus's paths as the recording names them (`django/...`). Where both decide, the program
 /// agrees when Jedi's definition is among those it names, its class among the classes a class call makes, or, for
@@ -1355,7 +1387,7 @@ fn benchmark_python_calls_program_corpus() {
     // `RERAIL_PYTHON_CALLS_OUT`: write the outputs there and keep them (the program's other `.output`s too, for counting).
     let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::fixtures::temp().with_extension("jedi"));
     // `RERAIL_PYTHON_REUSE=on`: phase 0's cutoff, as the command line's runs have it (`corpus::reuse`).
-    // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rerail loads the standard library's stubs (t21).
+    // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so the typing phases read the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     // `RERAIL_PYTHON_PROGRAM_FILE`: the program read from that file, in place of `RERAIL_PYTHON_PROGRAM`'s (to compare a
     // rule's earlier form).
@@ -1367,7 +1399,7 @@ fn benchmark_python_calls_program_corpus() {
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("phase 0: {}; {}", report.files_observed, report.phases.first().map_or("", |p| p.0));
-    println!("calls.rerail over {} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
+    println!("calls_p3 over {} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
     // The comparison below is the benchmark's, not the run's: its own span, for the memory sampler's peaks.
     let compare = crate::code_rule_dsl::logic::profile::span(|| "benchmark: compare with Jedi".to_owned());
     let outputs = Outputs::open(&out).unwrap();
@@ -1767,7 +1799,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// O125 (decision 0083, spike 1): delete-and-rederive on calls.rerail's cross-file fixpoint. A session (0077) keeps the
+/// O125 (decision 0083, spike 1): delete-and-rederive on calls_p3's cross-file fixpoint. A session (0077) keeps the
 /// cross-file part; each edit (`RERAIL_SPIKE_EDITS`: E1 append to exceptions.py, E2 a comment at its top, E3 a
 /// statement in an early body of lazy_reads.py) is run through the session, then without it, and the outputs are
 /// compared. `RERAIL_SPIKE_DELTA` prints the rows overdeleted and put back per relation.
@@ -1777,7 +1809,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
     use crate::code_rule_dsl::logic::plan::corpus::session;
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("o125");
     let out = base.join("out");
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
@@ -1831,11 +1863,11 @@ fn spike_o125_a_session_maintains_calls_rr() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-/// Spike O125 (decision 0083 §2): `calls.rerail`'s cross-file part kept by a session and maintained from deltas
+/// Spike O125 (decision 0083 §2): `calls_p3`'s cross-file part kept by a session and maintained from deltas
 /// (decision 0077's delete-and-rederive) over `RERAIL_PYTHON_CALLS_ROOT`, copied, edited a file at a time. Each run's
 /// outputs must be a full run's; prints each run's strata run and maintained and its CPU against the full run's.
 #[test]
-#[ignore = "calls.rerail in a session over a Python corpus, edited (minutes)"]
+#[ignore = "calls_p3 in a session over a Python corpus, edited (minutes)"]
 fn spike_o125_session_maintains_calls() {
     use crate::code_rule_dsl::logic::plan::corpus::session;
     let given = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
@@ -1844,7 +1876,7 @@ fn spike_o125_session_maintains_calls() {
     std::fs::create_dir_all(&base).unwrap();
     let copy = std::process::Command::new("cp").arg("-R").arg(&given).arg(&root).status().unwrap();
     assert!(copy.success());
-    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": [] })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type", "finding"];
     let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };
@@ -1916,7 +1948,7 @@ fn spike_o125_session_maintains_calls() {
 /// every step with `O125_FULL_EACH`. With `RERAIL_PROFILE`, each run's `native.tsv` is kept as
 /// `<profile>/native-<step>-<cold|session|full>.tsv`. `RERAIL_PYTHON_TYPESHED` loads the standard library's stubs.
 #[test]
-#[ignore = "calls.rerail in a session over real commits (minutes)"]
+#[ignore = "calls_p3 in a session over real commits (minutes)"]
 fn spike_o125_replay() {
     // Several sessions and full runs of the corpus: more than a test's 10 minutes, never hours.
     crate::test_watchdog::allow(std::time::Duration::from_secs(1200));
@@ -1951,7 +1983,7 @@ fn spike_o125_replay() {
     for step in 0..a {
         overlay(step);
     }
-    let text = format!("{}\n{}", program("calls"), jedi_spans("calls"));
+    let text = format!("{}\n{}", program("calls_p3"), jedi_spans("calls_p3"));
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let rels = ["call_target", "call_open", "type_of", "possible_type"];
     let outputs = || -> Vec<Vec<Vec<String>>> { rels.iter().map(|r| output::shown(&out, r).unwrap_or_default()).collect() };

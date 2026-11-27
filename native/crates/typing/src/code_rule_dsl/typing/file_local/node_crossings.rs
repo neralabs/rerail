@@ -189,6 +189,9 @@ pub struct NodeCrossing {
     /// names; `None` where it is cross-file for a reason of its own, or the causes are not known (a split read from
     /// the store keeps none).
     pub under: Option<String>,
+    /// Why it is in the cross-file part, read down the split's causes (`crossing_chain`): `rel: cause`, a line each,
+    /// from the relation to the first one cross-file for a reason of its own. What a fix starts from.
+    pub chain: Vec<String>,
 }
 
 impl NodeCrossing {
@@ -239,7 +242,26 @@ pub fn crossings_under(program: &Version, crossings: &mut [NodeCrossing], causes
     let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
     for c in crossings {
         c.under = crossing_under(&c.rel, causes).map(|u| unprefixed(&super::lowering_source_in(program, &u, &readers).unwrap_or(u)));
+        c.chain = crossing_chain(&c.rel, causes);
     }
+}
+
+/// The split's causes read down from `rel` (`crossing_under`'s path): each relation on it with the first line of its
+/// cause, to the first relation cross-file for a reason of its own.
+fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
+    let mut at = rel.to_owned();
+    let mut out = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while seen.insert(at.clone()) {
+        let Some(cause) = causes.get(&at) else { break };
+        let cause = cause.lines().next().unwrap_or("");
+        out.push(format!("{at}: {cause}"));
+        match cause.strip_prefix("reads cross-file ") {
+            Some(x) => at = x.split_whitespace().next().unwrap_or("").to_owned(),
+            None => break,
+        }
+    }
+    out
 }
 
 /// Each relation's readers' heads, once, for the helpers' sources (`lowering_source`).
@@ -317,7 +339,7 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
     let readers = readers_of(program);
     let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
     // `under` is the split's to say (`crossings_under`, from its causes).
-    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None }).collect()
+    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None, chain: Vec::new() }).collect()
 }
 
 /// Column `c` of `rel` by its declared name, else its number.
@@ -325,55 +347,27 @@ fn column_name(f: &Fields<'_>, rel: &str, c: usize) -> String {
     f.columns(rel).and_then(|cols| cols.get(c).map(|(n, _)| format!("{rel}.{n}"))).unwrap_or_else(|| format!("{rel}'s column {c}"))
 }
 
-/// `RERAIL_STRICT_NODES=1`: a program whose cross-file part holds a node id is refused (decision 0677). Read where a
-/// split is made, once per program version (no process-global state, decision 0442).
-pub fn strict_nodes() -> bool {
-    std::env::var("RERAIL_STRICT_NODES").is_ok_and(|v| !matches!(v.as_str(), "" | "0"))
-}
-
-/// The cross-file part's node crossings (`node_crossings`) refused under `strict`, else reported in one line, by the
-/// crossing each is under: once per program version, as its split is made once. `RERAIL_NODE_CROSSINGS=FILE`
-/// appends each one's name (`NodeCrossing::named`) and its crossing's to FILE, a line each, for the pack test's list
-/// of offenders.
-pub fn nodes_checked(crossings: &[NodeCrossing], strict: bool) -> Result<(), String> {
+/// The cross-file part's node crossings (`node_crossings`), refused (decision 0677), whatever made them: a rule as
+/// written, a pass of the split's (factorize's parts, a pair cache), or a setting the split did not know. Each is
+/// named with its rule and the crossing it is in the cross-file part under. Checked once per program version, as its
+/// split is made once.
+pub fn nodes_checked(crossings: &[NodeCrossing]) -> Result<(), String> {
     if crossings.is_empty() {
         return Ok(());
     }
-    if let Some(path) = std::env::var_os("RERAIL_NODE_CROSSINGS") {
-        use std::io::Write as _;
-        let lines: String = crossings.iter().map(|c| format!("{} {}\n", c.named(), c.under.as_deref().unwrap_or("-"))).collect();
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            // One write of every line: the runs of a batch append to one file at once.
-            let _ = file.write_all(lines.as_bytes());
-        }
-    }
-    if strict {
-        let shown: Vec<String> = crossings
-            .iter()
-            .map(|c| {
-                let under = c.under.as_ref().map_or_else(String::new, |u| format!(" (in the cross-file part under {u})"));
-                super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}", c.why))
-            })
-            .collect();
-        return Err(format!(
-            "RERAIL_STRICT_NODES: {} relation(s) of the cross-file part hold or read a node id (decision 0677). Key each by a \
-             symbol (a module, a qualified name), a path, a document key or a value, relating the file's nodes to it in the \
-             file's own rules; or keep the rule per file:\n{}",
-            crossings.len(),
-            shown.join("\n")
-        ));
-    }
-    let mut by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for c in crossings {
-        by.entry(c.under.clone().unwrap_or_default()).or_default().insert(c.named());
-    }
-    let line: Vec<String> = by
-        .into_iter()
-        .map(|(under, names)| match under.as_str() {
-            "" => names.into_iter().collect::<Vec<_>>().join(", "),
-            _ => format!("{} under {under}", names.len()),
+    let shown: Vec<String> = crossings
+        .iter()
+        .map(|c| {
+            let under = c.under.as_ref().map_or_else(String::new, |u| format!(" (in the cross-file part under {u})"));
+            let chain: String = c.chain.iter().map(|l| format!("\n      cross-file because {l}")).collect();
+            super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}{chain}", c.why))
         })
         .collect();
-    eprintln!("rerail: the cross-file part holds node ids, which every edit of their file moves (decision 0677): {}", line.join("; "));
-    Ok(())
+    Err(format!(
+        "{} relation(s) of the cross-file part hold or read a node id (decision 0677). Key each by a symbol (a module, a \
+         qualified name), a path, a document key or a value, relating the file's nodes to it in the file's own rules; or \
+         keep the rule per file:\n{}",
+        crossings.len(),
+        shown.join("\n")
+    ))
 }

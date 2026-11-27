@@ -69,9 +69,11 @@ fn ours_at(dir: &std::path::Path, out: &std::path::Path, setting: &str) -> Graph
 .scope include \"**/*.py\", \"**/*.pyi\"
 #include \"python/references.rerail\"
 .decl edge(sp: symbol, ss: number, se: number, tp: symbol, ts: number, te: number, via: symbol)
-edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), node(d, s, _, ss, se), doc(d, sp, _), node(e, t, _, ts, te), doc(e, tp, _).
+// The graph is by symbol (decision 0677): each definition placed on its node by reference_def.
+edge(sp, ss, se, tp, ts, te, v) :- reference_edge(s, t, v), reference_def(sn, s), node(d, sn, _, ss, se), doc(d, sp, _),
+    reference_def(tn, t), node(e, tn, _, ts, te), doc(e, tp, _).
 .decl open(p: symbol, s: number, e: number)
-open(p, s, e) :- reference_open(n), node(d, n, _, s, e), doc(d, p, _).
+open(p, s, e) :- reference_open(k), reference_def(n, k), node(d, n, _, s, e), doc(d, p, _).
 .output edge, open
 "
     );
@@ -326,30 +328,63 @@ fn reference_edge_matches_the_eager_graph_after_git_cache_reuse() {
     rerail_accel::upkeep::retire_files_under(root.path());
 }
 
-/// A node as the outputs give it: its document's path and its local part (its preorder index).
-type At = (String, i64);
+/// A definition as the graph names it: its symbol (`python/references-defs.rerail`'s rf_sym, decision 0677).
+type At = String;
 
 /// The graph a program of `head` (its settings) makes over the files under `dir` with `include`'s rules
 /// (`python/references.rerail`, or `python/references_w.rerail`: W's Rust), `reference_edge` and `reference_open`
-/// output as they are: no join locates their nodes, so the run is the graph's alone.
+/// output as they are, by symbol: no join locates their definitions, so the run is the graph's alone.
 fn bare_graph(head: &str, include: &str, dir: &std::path::Path, out: &std::path::Path) -> (BTreeSet<(At, At, String)>, BTreeSet<At>) {
     let program = format!("{head}\n#include \"{include}\"\n.output reference_edge, reference_open\n");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, dir, None, out, "program", Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(out).unwrap();
-    let at = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| {
-        let node = r.get(c).node().expect("a node column");
-        let (path, local) = node.at().unwrap_or_else(|| panic!("a node of a file of the run: {node:?}"));
-        (path.to_owned(), local)
-    };
+    let at = |r: &crate::code_rule_dsl::logic::plan::output::Row<'_>, c: usize| r.get(c).to_string();
     (
         outputs.rows("reference_edge").iter().map(|r| (at(r, 0), at(r, 1), r.get(2).to_string())).collect(),
         outputs.rows("reference_open").iter().map(|r| at(r, 0)).collect(),
     )
 }
 
+/// The two ways of making the reference graph on a small package: the rules (`python/references.rerail`) and W's Rust
+/// (`python/references_w.rerail`) give the same edges and open definitions, by the same symbols. Its definitions
+/// include two of one name in a file (`#0`, `#1`), a method, a subclass's `super()`, and a nested function. Neither
+/// run carries a node into the cross-file part: the split refuses a program that does (decision 0677).
+#[test]
+fn the_rules_and_ws_rust_make_one_graph_by_symbol() {
+    let dir = tempfile::tempdir().unwrap();
+    let files = [
+        ("pkg/__init__.py", ""),
+        (
+            "pkg/a.py",
+            "def helper():\n    return 1\n\n\nclass Base:\n    def run(self):\n        return self.step()\n\n    def step(self):\n        return helper()\n\n\ndef helper():\n    return 2\n",
+        ),
+        (
+            "pkg/b.py",
+            "from pkg.a import Base, helper\n\n\nclass Child(Base):\n    def step(self):\n        return super().step()\n\n\ndef main():\n    return helper() + Child().run()\n\n\ndef outer():\n    def inner():\n        return main()\n\n    return inner\n",
+        ),
+    ];
+    for (path, text) in files {
+        let at = dir.path().join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
+    let head = ".language python\n.scope include \"**/*.py\"";
+    let outs = tempfile::tempdir().unwrap();
+    let (rules_edges, rules_open) = bare_graph(head, "python/references.rerail", dir.path(), &outs.path().join("rules"));
+    let (rust_edges, rust_open) = bare_graph(head, "python/references_w.rerail", dir.path(), &outs.path().join("rust"));
+    assert!(rules_edges.len() >= 4, "too few edges to compare: {rules_edges:?}");
+    assert_eq!(rules_edges, rust_edges);
+    assert_eq!(rules_open, rust_open);
+    let paths: BTreeSet<&str> = files.iter().map(|(p, _)| *p).collect();
+    for s in rules_edges.iter().flat_map(|(a, b, _)| [a, b]) {
+        let (path, rest) = s.split_once(':').unwrap_or_else(|| panic!("a symbol is path:qn#k: {s}"));
+        assert!(paths.contains(path) && rest.rsplit_once('#').is_some_and(|(_, k)| k.parse::<usize>().is_ok()), "a symbol is path:qn#k: {s}");
+    }
+}
+
 /// The reference graph made by the rules (`python/references.rerail`) against the same graph from W's Rust
 /// (`python/references_w.rerail`: `calls::summarize` per file, `Graph::link_references` once), on the corpus at
-/// `RERAIL_REFERENCE_CORPUS` under `internal_dead_code`'s policy scope: the two graphs are equal, and each run's CPU is
+/// `RERAIL_REFERENCE_CORPUS` under `internal_dead_code`'s policy scope: the two graphs are equal by symbol, and each run's CPU is
 /// printed. The program outputs the graph and nothing else (`bare_graph`), so the two runs differ only in how the graph
 /// is made: on the data-layer repository (`all`) this is the head's whole difference from W on `internal_dead_code`
 /// (the rules' joins against W's Rust): 58 s CPU against the whole program's 57 s, both in profiling builds of the CLI;

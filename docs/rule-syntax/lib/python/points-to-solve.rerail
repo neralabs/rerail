@@ -40,7 +40,8 @@
 // classes (`list[C]`'s `__iter__`, `dict[str, C].get`), overloads fitted by arity (every overload's return is
 // taken), and `async def` in stubs. Those values are unknown here (`vopen`), never wrong.
 //
-// What follows is calls_cx.rerail's header.
+// What follows is calls_cx.rerail's header. calls_cx.rerail, calls.rerail and make_cx.py are removed (decision 0677):
+// these rules are the Python typing program, and `calls_p3` runs them.
 // calls_cx.rerail (P3's source): calls.rerail with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
 // so its fixpoint can be memoised per import component. Generated from calls.rerail by
 // fixtures/python/calls/make_cx.py; edit calls.rerail and regenerate. What differs:
@@ -595,6 +596,10 @@ pt_lval(d, "none", "builtins.None") :- types__vtype(d, _, "builtins.None"), !str
 .decl pt_lret(f: symbol, k: symbol, v: symbol)
 // Not an `async def`'s: its call holds a coroutine (open, as a workspace one's).
 pt_lret(f, "inst", t) :- types__rtype(f, _, t), struct__def(t, "class"), !struct__flag(f, "async").
+// A builtin class P2 names with no builtins stub read (`-> str` resolves to `builtins.str`): the class, as a workspace
+// annotation's (`pt_dtype`).
+pt_lret(f, "inst", t) :- types__rtype(f, _, t), pt_bclass(x), t = cat("builtins.", x), !struct__def(t, "class"),
+    !struct__flag(f, "async").
 pt_lret(f, "none", "builtins.None") :- types__rtype(f, _, "builtins.None"), !struct__flag(f, "async").
 // pt_lopenret(f): some alternative of f's declared return is no class nor None (`Any`, a type variable, a name no
 // symbol gives; types.rerail's "" row): a call of f may hold what no symbol names. pt_lopenv(s): so is s's declared type.
@@ -1253,6 +1258,13 @@ type_of(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t).
 .decl pt_dtype_t(m: symbol, t: symbol)
 pt_dtype_t(m__t, t) :- pt_dtype(m, t), pt_tm(m, m__t).
 type_of(n, t) :- pt_vpos_t(n), pt_dtype_t(m, t), pt_tv(n, "decl", m).
+// A library's instance, by its class's qualified name (a builtin's bare, as `pt_btype` names one), and a library's
+// None: what a library declares a call returns (`pt_lret`, P2's `rtype`), an attribute holds, and so on. The value
+// stays open (`ext`), as every library value is: the library's declarations are not checked.
+.decl pt_lname(k: symbol, t: symbol)
+pt_lname(k, t) :- pt_lv(_, "inst", k), t = @replace_all(k, "^builtins\\.", "").
+type_of(n, t) :- pt_vpos_t(n), pt_lv(n, "inst", k), pt_lname(k, t).
+type_of(n, "None") :- pt_vpos_t(n), pt_lv(n, "none", _).
 // A class object's class is `type`, unless a metaclass may make it another: a `metaclass=` keyword, an external base
 // (`enum.Enum`, `abc.ABC`) or a base that is no known class, on the class or an ancestor. A builtin base keeps `type`.
 type_of(n, "type") :- pt_vpos_t(n), pt_pv(n, "cls", c), !pt_meta_open(c).

@@ -152,7 +152,7 @@ pub fn process_counters() -> Option<(u64, u64)> {
 }
 
 /// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library named by its path
-/// from the library (`../../packs/django/rules/lib/django.rerail`), which phase 0 resolves for a text as for a file:
+/// from the library (`../../../packs/django/rules/lib/django.rerail`), which phase 0 resolves for a text as for a file:
 /// the file is a module of the program's library (decision 0639 §1), planned, lowered and kept once however many
 /// programs include it. (It was written into each program's text, which lowered it again with every program: a
 /// pack's own library, Django's `lib/django.rerail`, was no module.)

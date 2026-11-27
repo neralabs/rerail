@@ -226,7 +226,9 @@ fn recursive_cross_file_stratum() -> Ran {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -291,7 +293,9 @@ fn a_session_passes_on_a_quiet_stratum() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl via_h(a: number)
 via_h(a) :- dep(a, b), doc(b, _, "h").
 .decl seen(a: number)
@@ -336,8 +340,9 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
 
 /// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
 /// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
-/// the edit's nodes are none of (the delta's own rows); `pair` joins `node`'s new rows to `wh`, which holds none of
-/// their nodes (a derived witness, read through its index). `rr_unplaced` (decision 0431 R9) joins the findings `W` to
+/// the edit's nodes are none of (the delta's own rows), and `wh_in` names each file that has one; `pair` pairs those
+/// files (by their document keys, decision 0677), and `W` joins `node`'s new rows to `wh`, which holds none of their
+/// nodes (a derived witness, read through its index). `rr_unplaced` (decision 0431 R9) joins the findings `W` to
 /// the nodes no file places, each file's own (`rr_unplaced_node`, decision 0677), which no edit of a placed file
 /// changes: no edit reaches it. A second edit adds a `while` loop, which `pair` sees; a third moves a.py's loop a line
 /// down (`Net`). Each run's findings are a full run's.
@@ -356,10 +361,12 @@ fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
 .scope include "**/*.py"
 .decl wh(n: number)
 wh(n) :- kind(n, "while_statement").
-.decl pair(n: number, m: number) cross_file
-pair(n, m) :- wh(n), node(a, n, _, _, _), wh(m), node(b, m, _, _, _), a != b.
+.decl wh_in(d: number)
+wh_in(d) :- wh(n), node(d, n, _, _, _).
+.decl pair(a: number, b: number) cross_file
+pair(a, b) :- wh_in(a), wh_in(b), a != b.
 .violation W(at: node) code "W" "A while loop in a file, where another file has one too."
-W(n) :- pair(n, _).
+W(n) :- wh(n), node(a, n, _, _, _), pair(a, _).
 "#,
     )
     .unwrap();
@@ -415,7 +422,8 @@ fn unplaced_not_reached(report: &super::super::Report) {
 }
 
 /// A run admits no guest where none of its documents embeds a program (decision 0563 A) and its file-local part
-/// answers no request: here `parsed` is asked only across files (`far`), as ep2's string annotations are, so no part
+/// answers no request: here the program reads a guest relation, `host_node`, and asks no request. (A request the cross-file part asks, as ep2's string annotations
+/// were asked across files, names its node there, in the request's cover, and is refused: decision 0677.) So no part
 /// answers it. Python embeds HTML only by call argument (`Markup("…")`), so a batch whose texts name no such callee
 /// drops the guest rules: the first run (no text in the store yet: the embedder's own test) and the next (each text
 /// recorded with no programs). An edit that adds a `Markup` call may embed, so the run keeps them. Each run's
@@ -435,13 +443,13 @@ fn a_session_drops_the_guest_rules_where_no_document_embeds() {
 .scope include "**/*.py"
 .decl at_call(n: number)
 at_call(n) :- kind(n, "call").
-.decl far(s: number) cross_file
-far(s) :- kind(s, "string"), docof(s, a), at_call(t), docof(t, b), a != b.
-.decl annotated(r: number)
-annotated(r) :- far(s), parsed(s, "annotation", r).
-.violation C(at: node) code "C" "A call, or an annotation a string of another file holds."
+.violation C(at: node) code "C" "A call."
 C(n) :- at_call(n).
-C(r) :- annotated(r).
+// Each node that hosts an embedded program (Python's HTML by call argument): a guest relation, read in the file's
+// part, which asks no request.
+.decl hosted(h: node)
+hosted(h) :- host_node(_, h).
+.output hosted
 "#,
     )
     .unwrap();
@@ -494,7 +502,9 @@ fn a_session_keeps_its_part_around_an_inlined_relation() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl back(a: number, b: number) inline
 back(a, b) :- dep(b, a).
 .violation BACK(at: node) code "BACK" "This import's module imports this one."
@@ -550,7 +560,9 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -652,7 +664,7 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
     let rule = base.join("w0.rerail");
-    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n";
+    let head = ".policy \"test-wave0\" revision 1\n.description \"A maintained stratum's first wave.\"\n.language python\n.mode steer\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\n.decl dep_from(a: number, m: symbol)\ndep_from(a, m) :- impmod(i, m), docof(i, a).\ndep(a, b) :- dep_from(a, m), doc(b, _, m).\n";
     std::fs::write(&rule, format!("{head}{rules}")).unwrap();
     for (path, text) in files {
         std::fs::write(src.join(path), text).unwrap();
@@ -760,7 +772,9 @@ fn cross_file_aggregate() -> Ran {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl fan(b: number, n: number)
 fan(b, n) :- doc(b, _, _), n = count : { dep(_, b) }.
 .decl leaf(b: number)
@@ -827,7 +841,9 @@ fn a_session_keeps_a_negation_that_still_fails() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .violation LONE(at: node) code "LONE" "An import of no file, in a file that imports none."
 LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
 "#,
@@ -882,7 +898,9 @@ fn session_costs() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number)
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -1130,7 +1148,9 @@ fn a_session_derives_nothing_again_that_no_change_reaches() {
 .scope include "**/*.py"
 #include "python/names.rerail"
 .decl dep(a: number, b: number) cross_file
-dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+dep(a, b) :- dep_from(a, m), doc(b, _, m).
 .decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
@@ -1138,10 +1158,10 @@ reach(a, c) :- reach(a, b), dep(b, c).
 CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 .decl defines(d: number)
 defines(d) :- kind(n, "function_definition"), docof(n, d).
-.decl imports_definer(i: node) cross_file   // i imports a module that defines a function (decision 0652)
-imports_definer(i) :- impmod(i, m), doc(b, _, m), defines(b).
+.decl imports_definer(a: number, m: symbol) cross_file   // a imports m, a module that defines a function (decision 0677)
+imports_definer(a, m) :- dep_from(a, m), doc(b, _, m), defines(b).
 .violation SHADOW(at: node) code "SHADOW" "A module that defines a function imports one that does too."
-SHADOW(i) :- imports_definer(i), docof(i, a), defines(a).
+SHADOW(i) :- impmod(i, m), docof(i, a), imports_definer(a, m), defines(a).
 "#,
     )
     .unwrap();

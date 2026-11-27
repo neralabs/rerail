@@ -1,5 +1,6 @@
 // tsx/exports: what a file's import and export statements name, read off its own tree (no other file): the
-// specifiers' names, each statement's module, and the names an export statement exports or re-exports. Included by
+// specifiers' names, each statement's module, the names an export statement exports or re-exports, and the names an
+// import binds (`import_binding`). Included by
 // tsx/names.rerail and by the phase `tsx_names` (typing/programs/tsx_names.rerail), which resolves them across files.
 
 // ts_module(d, m): document d's module, the name its symbols are qualified by ("src/util#f"): the one core names, else
@@ -49,3 +50,25 @@ export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n,
 .decl star_export(e: node, s: symbol)  // export * from "s"
 star_export(e, s) :- kind(e, "export_statement"), field(e, "source", src), str(src, s),
     count : { child(e, c, _), kind(c, "export_clause") } = 0.
+
+// ---- imports -----------------------------------------------------------------------------------------------------
+// import_binding(site, local, source, imported): imported is "default", "*" or the exported name.
+// The forms, with the row each produces:
+//   import { a } from "m"           (spec, "a", "m", "a")
+//   import { a as b } from "m"      (spec, "b", "m", "a")        local name differs from the exported name
+//   import D from "m"               (clause, "D", "m", "default")
+//   import * as NS from "m"         (ns, "NS", "m", "*")         NS is the module object, see ns_target
+.decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
+import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), spec_name(n, x),
+    local_of(sp, l), source_of(sp, m).
+// Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
+import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
+    text(id, l), source_of(c, m).
+import_binding(ns, l, m, "*") :- kind(ns, "namespace_import"), child(ns, id, 0), text(id, l), source_of(ns, m).
+// local_of: the name a specifier binds in this file: the alias if there is one (`a as b` binds b), else the name.
+.decl local_of(sp: node, l: symbol)
+local_of(sp, l) :- field(sp, "alias", a), text(a, l).
+local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l).
+// source_of: the module specifier string of the enclosing import statement, without quotes: "./util", "react".
+.decl source_of(n: node, m: symbol)
+source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).

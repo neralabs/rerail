@@ -233,13 +233,15 @@ st_ref(p, s, e, @concat(c, ".<super>.", f)) :- rf_ref(t, "super", c, f, _), node
 st_ref(p, s, e, @concat(c, ".<field>.", x, ".", f)) :- rf_ref(t, "field", c, x, f), node(d_t, t, _, s, e), doc(d_t, p, _).
 st_ref(p, s, e, @concat(m, ".<type>.", ty, ".", f)) :- rf_ref(t, "type", m, ty, f), node(d_t, t, _, s, e), doc(d_t, p, _).
 .decl st_link(q: symbol, p: symbol, s: number)
-st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, d), node(d_d, d, _, s, _), doc(d_d, p, _).
+st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, k), rf_sym(d, k), node(d_d, d, _, s, _), doc(d_d, p, _).
 .decl st_open_name(q: symbol)
 st_open_name(q) :- rf_ref(_, "name", q, _, _), rf_open_name(q).
 .decl st_edge(sp: symbol, ss: number, tp: symbol, ts: number, via: symbol)
-st_edge(sp, ss, tp, ts, v) :- reference_edge(s, t, v), node(d_s, s, _, ss, _), doc(d_s, sp, _), node(d_t, t, _, ts, _), doc(d_t, tp, _).
+// The graph is by symbol (decision 0677): each definition placed on its node by reference_def.
+st_edge(sp, ss, tp, ts, v) :- reference_edge(ks, kt, v), reference_def(s, ks), node(d_s, s, _, ss, _), doc(d_s, sp, _),
+    reference_def(t, kt), node(d_t, t, _, ts, _), doc(d_t, tp, _).
 .decl st_open(p: symbol, s: number)
-st_open(p, s) :- reference_open(n), node(d_n, n, _, s, _), doc(d_n, p, _).
+st_open(p, s) :- reference_open(k), reference_def(n, k), node(d_n, n, _, s, _), doc(d_n, p, _).
 .output st_load, st_look, st_def, st_ref, st_link, st_open_name, st_edge, st_open
 "#;
 

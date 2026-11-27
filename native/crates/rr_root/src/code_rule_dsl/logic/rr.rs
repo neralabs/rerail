@@ -755,15 +755,17 @@ fn closed_heads(file: &str, statements: &Statements, open: &std::collections::Ha
     let own: BTreeSet<String> = declared_in(statements).map(|(n, _)| n).collect();
     // A relation `core.rerail` declares that one library file derives (`DERIVED_BY`, decision 0483:
     // `python/references.rerail`'s `reference_edge`) is that file's to derive, as `check_names` allows it.
+    // Such a relation is `extensible` too (its table stated empty where nothing states it, decision 0677), but only
+    // the files DERIVED_BY names derive it.
     let derives = |h: &str| DERIVED_BY.iter().any(|(rel, by)| *rel == h && library().join(by).canonical().is_ok_and(|by| by == Path::new(file)));
+    let derived_by = |h: &str| DERIVED_BY.iter().any(|(rel, _)| *rel == h);
     for s in statements {
         for h in s.heads().into_iter().filter(|h| !own.contains(*h) && !derives(h)) {
-            if let Some((home, false)) = open.get(h) {
-                return Err(Error::Syntax(format!(
-                    "{file}:{}: `{h}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
-                    s.line(),
-                    home.display()
-                )));
+            if let Some((home, extensible)) = open.get(h)
+                && (!extensible || derived_by(h))
+            {
+                let why = if *extensible { "and derived only by the files `rr::DERIVED_BY` names (decision 0483)" } else { "and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)" };
+                return Err(Error::Syntax(format!("{file}:{}: `{h}` is declared in {}, {why}", s.line(), home.display())));
             }
         }
     }
@@ -1792,141 +1794,147 @@ pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, decla
     let mut p = Pipeline::new("the lowering's tail", start);
     for (at, &step) in steps.iter().enumerate() {
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("the lowering's tail: {step:?}"));
-        let on_link = match onto {
-            Some(_) => super::program_image::manager::Delta::read_off(&link, p.current().map_err(Error::Syntax)?),
-            None => false,
+        // A step of several passes (`SourcesOnRequest`'s rounds) has its changes read pass by pass: two passes' layers
+        // (an overlay, then a fold of it) are neither one edit of the step's input nor one copy of it.
+        let parts = match step {
+            TailStep::SourcesOnRequest => lower::ON_REQUEST.len(),
+            _ => 1,
         };
-        let before = match touched {
-            Some(_) => Some(std::sync::Arc::clone(p.current().map_err(Error::Syntax)?)),
-            None => None,
-        };
-        let stages = p.stages().len();
-        match step {
-            TailStep::ContextPasses => {
-                p.program(&mut super::contexts::Passes);
-            }
-            TailStep::CrossingCycles => {
-                p.program(&mut super::contexts::CrossingCycles);
-            }
-            TailStep::Declared if declared => {
-                p.program(&mut lowering_tail::Declared);
-            }
-            TailStep::Declared => {}
-            TailStep::ThreeValued => {
-                p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-            }
-            TailStep::Findings => {
-                p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
-            }
-            TailStep::CoreDecls => {
-                p.program(&mut lowering_tail::CoreDecls { docof_of_locs });
-            }
-            TailStep::SpanPatterns => {
-                p.program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) });
-            }
-            TailStep::GrammarNames => {
-                p.program(&mut lowering_tail::GrammarNames);
-            }
-            TailStep::BuiltinsOut => {
-                p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-            }
-            TailStep::KindSets => {
-                p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)), rules: kind_set_rules });
-            }
-            TailStep::WithinRead => {
-                p.program(&mut lowering_tail::WithinRead);
-            }
-            TailStep::PassesOnce => {
-                p.program(&mut super::contexts::PassesOnce);
-            }
-            TailStep::HostCopiesOut => {
-                p.program(&mut super::contexts::HostCopiesOut);
-            }
-            TailStep::Unit => {
-                p.program(&mut lowering_tail::Unit);
-            }
-            TailStep::BooleanRelations => {
-                p.program(&mut lowering_tail::BooleanRelations);
-            }
-            TailStep::ScopeGlobs => {
-                p.program(&mut lowering_tail::ScopeGlobs);
-            }
-            TailStep::SourcesOnRequest => {
-                for round in lower::ON_REQUEST {
-                    p.program(&mut SourcesOnRequest { round });
+        for part in 0..parts {
+            let on_link = match onto {
+                Some(_) => super::program_image::manager::Delta::read_off(&link, p.current().map_err(Error::Syntax)?),
+                None => false,
+            };
+            let before = match touched {
+                Some(_) => Some(std::sync::Arc::clone(p.current().map_err(Error::Syntax)?)),
+                None => None,
+            };
+            let stages = p.stages().len();
+            match step {
+                TailStep::ContextPasses => {
+                    p.program(&mut super::contexts::Passes);
                 }
-            }
-            TailStep::OrderNodes => {
-                p.program(&mut lowering_tail::OrderNodes);
-            }
-            TailStep::DeclareAxes => {
-                p.program(&mut lowering_tail::DeclareAxes);
-            }
-            TailStep::Checks => {
-                let v = p.current().map_err(Error::Syntax)?;
-                match &touched {
-                    Some(touched) => super::front::finish_checks_within(v, touched)?,
-                    None => super::front::finish_checks_given(v, library.map(|l| &*l.version))?,
+                TailStep::CrossingCycles => {
+                    p.program(&mut super::contexts::CrossingCycles);
                 }
-            }
-            TailStep::AggregateDemand => {
-                p.program(&mut lowering_tail::AggregateDemand);
-            }
-            TailStep::LiteralsOnce => {
-                p.program(&mut lowering_tail::LiteralsOnce);
-            }
-            TailStep::DropSelfRules => {
-                p.program(&mut lowering_tail::DropSelfRules);
-            }
-            TailStep::DropRepeated => {
-                p.program(&mut DropRepeated::default());
-            }
-            TailStep::FactsOnce => {
-                p.program(&mut lowering_tail::FactsOnce);
-            }
-            TailStep::Widen => {
-                for _ in 0..16 {
-                    let mut widen = lowering_tail::WidenCyclicContexts::default();
-                    p.program(&mut widen);
-                    p.current().map_err(Error::Syntax)?;
-                    if !widen.changed {
-                        break;
+                TailStep::Declared if declared => {
+                    p.program(&mut lowering_tail::Declared);
+                }
+                TailStep::Declared => {}
+                TailStep::ThreeValued => {
+                    p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
+                }
+                TailStep::Findings => {
+                    p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
+                }
+                TailStep::CoreDecls => {
+                    p.program(&mut lowering_tail::CoreDecls { docof_of_locs });
+                }
+                TailStep::SpanPatterns => {
+                    p.program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) });
+                }
+                TailStep::GrammarNames => {
+                    p.program(&mut lowering_tail::GrammarNames);
+                }
+                TailStep::BuiltinsOut => {
+                    p.program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+                }
+                TailStep::KindSets => {
+                    p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)), rules: kind_set_rules });
+                }
+                TailStep::WithinRead => {
+                    p.program(&mut lowering_tail::WithinRead);
+                }
+                TailStep::PassesOnce => {
+                    p.program(&mut super::contexts::PassesOnce);
+                }
+                TailStep::HostCopiesOut => {
+                    p.program(&mut super::contexts::HostCopiesOut);
+                }
+                TailStep::Unit => {
+                    p.program(&mut lowering_tail::Unit);
+                }
+                TailStep::BooleanRelations => {
+                    p.program(&mut lowering_tail::BooleanRelations);
+                }
+                TailStep::ScopeGlobs => {
+                    p.program(&mut lowering_tail::ScopeGlobs);
+                }
+                TailStep::SourcesOnRequest => {
+                    p.program(&mut SourcesOnRequest { round: lower::ON_REQUEST[part] });
+                }
+                TailStep::OrderNodes => {
+                    p.program(&mut lowering_tail::OrderNodes);
+                }
+                TailStep::DeclareAxes => {
+                    p.program(&mut lowering_tail::DeclareAxes);
+                }
+                TailStep::Checks => {
+                    let v = p.current().map_err(Error::Syntax)?;
+                    match &touched {
+                        Some(touched) => super::front::finish_checks_within(v, touched)?,
+                        None => super::front::finish_checks_given(v, library.map(|l| &*l.version))?,
+                    }
+                }
+                TailStep::AggregateDemand => {
+                    p.program(&mut lowering_tail::AggregateDemand);
+                }
+                TailStep::LiteralsOnce => {
+                    p.program(&mut lowering_tail::LiteralsOnce);
+                }
+                TailStep::DropSelfRules => {
+                    p.program(&mut lowering_tail::DropSelfRules);
+                }
+                TailStep::DropRepeated => {
+                    p.program(&mut DropRepeated::default());
+                }
+                TailStep::FactsOnce => {
+                    p.program(&mut lowering_tail::FactsOnce);
+                }
+                TailStep::Widen => {
+                    for _ in 0..16 {
+                        let mut widen = lowering_tail::WidenCyclicContexts::default();
+                        p.program(&mut widen);
+                        p.current().map_err(Error::Syntax)?;
+                        if !widen.changed {
+                            break;
+                        }
                     }
                 }
             }
-        }
-        // A step's changes: read off the overlays and views it made, or, where it made one fold or one derivation of
-        // its input, off that version's rules' sources (`derived_changes`): a fold records them as a derivation does
-        // (`Builder::folding_edit`), and which of the two a step's edit is depends only on its size against its input's
-        // (an edit of a small program's own module, more than half its size, folds). Several passes' derivations or
-        // folds leave them unread: the program is checked whole.
-        // Onto the link, every step's output is an edit of it: what changed since is read off the one layer, or since
-        // the last fold or derivation a step made of it, which the later steps' edits are of.
-        if let Some((_, on)) = &mut onto {
-            on.resize(on.len() + p.stages().len() - stages, on_link);
-        }
-        if let Some(before) = before {
-            use super::program_image::manager::Form;
-            let one_copy = p.stages().len() == stages + 1 && p.stages().last().is_some_and(|s| matches!(s.form, Form::Derived | Form::Folded));
-            let now = p.current().map_err(Error::Syntax)?;
-            let extend = |t: Option<std::collections::BTreeSet<String>>, c: Option<std::collections::BTreeSet<String>>| {
-                t.zip(c).map(|(mut t, c)| {
-                    t.extend(c);
-                    t
-                })
-            };
-            touched = match &mut onto {
-                Some((was, _)) => match changed_since(&since, now) {
-                    Some(c) => extend(was.clone(), Some(c)),
-                    None => {
-                        let t = extend(touched, one_copy.then(|| derived_changes(&before, now)).flatten());
-                        since = std::sync::Arc::clone(now);
-                        was.clone_from(&t);
+            // A step's changes: read off the overlays and views it made, or, where it made one fold or one derivation of
+            // its input, off that version's rules' sources (`derived_changes`): a fold records them as a derivation does
+            // (`Builder::folding_edit`), and which of the two a step's edit is depends only on its size against its input's
+            // (an edit of a small program's own module, more than half its size, folds). Several passes' derivations or
+            // folds leave them unread: the program is checked whole.
+            // Onto the link, every step's output is an edit of it: what changed since is read off the one layer, or since
+            // the last fold or derivation a step made of it, which the later steps' edits are of.
+            if let Some((_, on)) = &mut onto {
+                on.resize(on.len() + p.stages().len() - stages, on_link);
+            }
+            if let Some(before) = before {
+                use super::program_image::manager::Form;
+                let one_copy = p.stages().len() == stages + 1 && p.stages().last().is_some_and(|s| matches!(s.form, Form::Derived | Form::Folded));
+                let now = p.current().map_err(Error::Syntax)?;
+                let extend = |t: Option<std::collections::BTreeSet<String>>, c: Option<std::collections::BTreeSet<String>>| {
+                    t.zip(c).map(|(mut t, c)| {
+                        t.extend(c);
                         t
-                    }
-                },
-                None => extend(touched, changed_since(&before, now).or_else(|| one_copy.then(|| derived_changes(&before, now)).flatten())),
-            };
+                    })
+                };
+                touched = match &mut onto {
+                    Some((was, _)) => match changed_since(&since, now) {
+                        Some(c) => extend(was.clone(), Some(c)),
+                        None => {
+                            let t = extend(touched, one_copy.then(|| derived_changes(&before, now)).flatten());
+                            since = std::sync::Arc::clone(now);
+                            was.clone_from(&t);
+                            t
+                        }
+                    },
+                    None => extend(touched, changed_since(&before, now).or_else(|| one_copy.then(|| derived_changes(&before, now)).flatten())),
+                };
+            }
         }
         if Some(at) == last_down {
             p.left_as_is(std::sync::Arc::clone(&link));
@@ -2578,8 +2586,11 @@ impl LibraryFile {
 /// The relations `core.rerail` declares for libraries to derive for the engine to read: the documents they load (t21 E2).
 pub const LIBRARY_DERIVED: [&str; 1] = ["load"];
 /// The relations `core.rerail` declares that one library file derives, and that file (decision 0483: the reference graph).
-/// `python/references_w.rerail` derives them from W's Rust graph instead, which the engine binds (`RERAIL_REFERENCES`).
-pub const DERIVED_BY: [(&str, &str); 4] = [
+/// A definition's symbol (`reference_def`) is `python/references-defs.rerail`'s, which both graphs include; the graph
+/// itself is `python/references.rerail`'s rules, or `python/references_w.rerail`'s from W's Rust graph, which the engine
+/// binds (`RERAIL_REFERENCES`).
+pub const DERIVED_BY: [(&str, &str); 5] = [
+    ("reference_def", "python/references-defs.rerail"),
     ("reference_edge", "python/references.rerail"),
     ("reference_open", "python/references.rerail"),
     ("reference_edge", REFERENCES_W),

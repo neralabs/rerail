@@ -123,7 +123,7 @@ position report does. `RERAIL_STRICT_NODES=1` refuses the program instead, namin
   run also fails on any listed relation that is no longer found, so the list only shrinks and stays current. A
   python-main shard sees a twelfth of its programs, so it checks only for new relations; the shards can't tell that a listed one was fixed, and a python-main relation leaves the list by hand. Its failure prints each new
   relation with its crossing (`<pack> <relation>  under <crossing>`).
-- **Cost.** The program with 2,523 rules takes 5 ms (spark2, a python-main shard, measured during a test run).
+- **Cost.** The program with 2,523 rules takes 5 ms (a farm host, a python-main shard, measured during a test run).
   Resolving the lowering's helpers to their source relations was 110 ms of a first version. It now reads an index
   of each relation's readers, made once. A helper's source is the least by name among the source relations of its
   first round of readers, so it is the same whatever order the readers are read in.
@@ -1095,18 +1095,203 @@ Results, on the checkout's engine against batch 7's, each run with its own store
   every file's texts). It is keyed by the literal now, `radix_digits(n, digits, zeros, b)` over `raw_number(n, r)`. The
   same 12 findings.
 
+## Built: a node in the cross-file part is refused, whatever made it (2026-11-26)
+
+By the user's ask: "I want crossings to be a hard fail now, no matter what causes them." The list had emptied, and two
+asked-phase commits of 0705 put four relations back in it unseen, since only the pack tests read the list. Now
+the split refuses the program.
+
+- **The check.** `programs_of` refuses a program whose cross-file part holds or reads a node id, through
+  `nodes_checked`, at every split. That covers every run, test and tool. It doesn't matter whether the node came
+  from a rule as written, a pass of the split (factorize's parts, a pair cache, the deferred joins), or a setting
+  the split didn't know. `RERAIL_STRICT_NODES`, `RERAIL_NODE_CROSSINGS` and `node_crossings.txt` are removed. The
+  pack tests (`tools::pack_split_tests`, now `…_is_split_with_no_node_crossing`) fail on the refusal as on any
+  other run error.
+- **The refusal names why.** Each relation comes with its rule, the crossing it is under, and the split's cause
+  chain down to the first relation in the cross part for a reason of its own, a line each:
+  `cross-file because naming_meta_any: reads fz792394792_class_anc with no location`. That is where a fix starts.
+- **Tests whose programs carried a node across.** Five of the split's tests did, for other subjects:
+  - 0652's declared crossing now pairs documents, not nodes.
+  - The semi-join and pushed-lookup tests make their node relations findings (`pick`, `own`, `warn`), which may
+    hold their node.
+  - 0649's position report and 0677's own test read the split short of the refusal (`unrefused`), and check the
+    refusal itself.
+
+### The four crossings and their fixes
+
+All four came from 0705.
+
+- **`dj_task_waits_for_commit`** (Django), under `py_names__dj_app_defers`. 0705 had each phase declare how its
+  exports key a reader's memo. `phased::declared_in` drops an export written with no key, so `dj_app_defers`, the
+  run's Celery app, was no setting any more. Before 0705 it was on the split's hand list. Its reader
+  `dj_app_defers(d) :- doc(d, _, _), py_names__dj_app_defers(_)` then read an input with no location, and went to
+  the cross part with the rule above it. Now an export can be declared `whole` (`phased::key_of`), and py_names
+  declares `dj_app_defers whole`. A whole setting keys every reader's memo entry by every file's rows of the
+  settings (`memo::settings_scopes`), as a read through no key already did. Phases' other exports written with no
+  key (`struct`, `types`, `values`, `sources`) were no settings before 0705 either, and stay none.
+- **`class_anc` and its readers** `naming_meta_any`, `naming_maybe_metaclass`, `naming_method_kind` and
+  `dispatched` (Python), under `class_anc`. 0705 has `class_anc` read `py_names__own_at(p, q)`. It now meets
+  `py_names__ancestor(q, m, b)` at `q` alone, where before it met it at `q` and `m`. Two passes then handed it on
+  as parts: a node part `(c, q)` and the setting's part.
+  - The export factorizer (`passes::factorize`).
+  - The deferred joins (`product_demand::deferred`, through `factorize_intermediates`).
+  
+  The readers joined those parts at `c` in the cross part. Both passes leave a lookup in a constant whole, but
+  neither counted a setting as one. `file_local::placeless_input` (an option or a setting) is now the one test.
+  The split, factorize and the deferred joins all read it.
+
+Tests: all 32 pack split tests; the split's tests (`file_local::`, 47); and the quick tier of every crate the change touches (below).
+
+With no list, a sharded pack has no entry that can go stale: a shard refuses its own policies' crossings as it splits
+them. The Open item on shards' stale entries is closed by this.
+### The programs that still carried a node, rewritten (2026-11-26)
+
+With the hard fail on, 26 tests failed: their programs held or read a node in the cross part. Each program is now
+keyed as § Decision 3 says. A definition is named by its symbol. Any other node the cross part reasons about is
+named by its term: its place in its nearest definition. Each file's rules state their facts over those, the cross
+part solves over them alone, and the outputs are keyed by them. The design was a page, "Typing programs by symbol".
+
+- **The four small test programs** (0652's declared crossing, the semi-join, the pushed lookup, the library's
+  policies): they pair documents, or make their node relations findings, which may hold their node.
+- **`python/references.rerail`, and core's reference graph, by symbol.** `reference_def(n, s)` names each
+  definition `path:qualname#k`, `k` its place among the file's definitions of that name. `reference_edge(src, dst,
+  via)` and `reference_open(s)` are keyed by it. They were keyed by node, so this changes the interface of decision
+  0483. The cross rules read each file's references by symbol (`rf_ref_sym`, `rf_unq_sym`, `rf_sib_sym`). A rule that
+  wants the nodes reads them back through `reference_def`: the reference tests, the CLI's batch test, and the data
+  layer's `imperative-private-functions` (disabled, so not run). Tests: the stage tests on the cases, in small chunks
+  and on the projects; `failed_batch_reports_each_policy_in_argument_order`.
+- **W's graph (`python/references_w.rerail`, `RERAIL_REFERENCES=rust`), by the same symbols.** It was keyed by node
+  too: the engine bound each edge's two definitions by their nodes in the cross part. A definition's symbol is now
+  made by one set of rules, `python/references-defs.rerail` (the setting's facts, `rf_def`, `rf_module`, `rf_qn`,
+  `rf_sym`, `reference_def`), which both graphs include. The engine names W's definitions the same way from W's
+  summary (`w_references::symbols`: the path, `Def::name`, which rf_qn spells alike, and the file's earlier
+  definitions of that name), so no node of W's graph crosses either, and `syntax::definitions`, its node lookup, is
+  gone. Test: `the_rules_and_ws_rust_make_one_graph_by_symbol` (both graphs on a small package, equal by symbol);
+  `reference_graph_by_rules_against_ws_rust_on_a_corpus` compares by symbol.
+- **`workload.rerail` (W4).** A call's type was its callee's return, the callee a node of any file
+  (`fn_ref(n, f)`, `returns(f, t)`).
+  - Each file now gives each typed node a type it decides itself (`lt`) or a dependency on a function's return
+    (`dep`), and each module-level function's return the same (`fret`, `fdep`).
+  - The cross part solves `returns(d, q, t)` by the function's symbol, and `type_of` places it per file.
+  - The engine's typing summaries read `returns` and `functions(q)` after the run (`corpus::typing::HELD`). `fn_q`,
+    the join from a symbol to a function's node, is gone.
+  - A relation is held only at its width: `python/typing.rerail`'s own `returns(f, t)` is per file and not read.
+  
+  Test: `typed_corpus_reads_declarations_and_dependency_summaries`, unchanged.
+- **`calls_rust.rerail`.** `res(p, k, v)` resolved a path to an item node of any file.
+  - Each entity and item scope now has a symbol (`rs_ss`). A module is named by its qualified name. An item is named
+    by its scope's symbol and its name, an impl by its place among its scope's impls (`crate::impl#1`), and a block
+    by its place in its scope.
+  - Each path, call, receiver and type has a term (`rs_tm`), as P3's `pt_tm` does.
+  - Each file states its `use` entries, globs, impls, fields and declared types over those. `res`, `mexport`,
+    `globx`, `assoc`, `etype` and `rext` are solved over them.
+  - `call_target`, `call_open`, `calls` and `reaches_open` are keyed by term and symbol.
+  - `tpname(x)`, a table of the names any generic parameter has, was keyed by no location, so it was a whole-run
+    fact. It pulled `generic` into the cross part, and it is inlined.
+  
+  Test: `rust_calls_program_agrees_with_rust_analyzer`. Its scorer places terms and symbols by span. Its 7
+  departures are as recorded.
+- **The typing program `calls` is P3.** `python/points-to-file` and `points-to-solve` already were `calls.rerail`'s
+  rules keyed by term (fix 3e). `calls.rerail`, `calls_cx.rerail` and `fixtures/python/calls/make_cx.py` are removed.
+  Every test that ran `calls` runs `calls_p3`, and reads its answers by term.
+  - The runtime oracle has the same 9 departures, at least 84 agree, and nothing is named that never ran.
+  - The type oracle has no wrong answer and no departure.
+  
+  Where P3 answered otherwise, the fix is in the phases:
+  - **A library's declared return types its call.** `type_of` names a library instance's class (a builtin's bare, as
+    `pt_btype` does) and a library's None. The value stays open, as every library value is.
+  - **P2 names a builtin class when no builtins stub was read** (no typeshed), as it named None (`types.rerail`'s
+    `hexpr`, `hclass`). P3's `pt_lret` takes it.
+  - **A call into a library is a library symbol, never a target.** P3 reads no library node, so it never names one.
+    The standard-library and site-packages tests place the symbol where P1 read it (`struct__at`), and read the
+    class of the special-form check from P2's `types__anc`.
+  - **`version()` stays open, by decision.** It is a function of an installed package with no annotation, read under
+    `python.untyped = read`. P1 reads such a package's `.py` files and no function body (0083 §1, §8). The old program
+    typed it `str` by loading the package's document and reading its `return "1.0"`.
+  
+  The engine tests that used `calls.rerail` as an input:
+  - Phase 0's plan test has a program of T's shape of its own: library modules without `core.rerail`, as
+    `calls.rerail` was.
+  - Phase 0's graph test reads `calls_p3`.
+  - **0094 §8's move gate passes** and is no longer ignored. Joins' work: cold 140,322, the edit in place 7,880, the
+    move 15,894. That is 2.0 times the edit, where the bar is 3, and 0.11 of a cold run. Under `calls_cx` the move
+    was 21,737 against 6,821, 3.2 times.
+  - The layout-invariance bench (`site/bench/layout-invariance`) places terms. It has not been run since.
+
+**The engine's own tests.** Sixty-two tests of the cross-file part's maintenance, cross views, partial hits,
+sessions and warm runs had programs that paired two files' nodes in a cross-file stratum. Under them are decisions
+0364 (R1–R10), 0458 (R1–R5), 0563, 0431 R7 and 0665, and those programs were how each test made a cross-file stratum.
+Each program is now written as § Decision 3 says, and keeps the stratum its test is about:
+- `uses(a, q)`: the file `a` imports `q`, which a file defines. It is over each file's `imp_at(d, q)` and `def_at(d, q)`.
+  The readers place the definition by its name in its file (`def(f, q), uses(_, q)`).
+- `dep(a, b)`, keyed by document keys: its node read is each file's (`dep_from(a, m)`).
+- `both`, `pair`, `refers`, `dec_named`, `defines` and `imports_definer` are keyed by document key, name or symbol.
+  `first`, a `min` over a node, is now one over a document key (a `min` over a symbol is refused).
+
+What the tests measure stays:
+- 0458's outputs still read the definitions' base relations (`child`, `kind`, `line`, `col`, `node`, `text`) in the
+  cross part.
+- 0431 R7's `shown` reads the memo'd file's annotation node (its text, its place through the string).
+- The guests test places a finding at each guest node, decoded off the corpus batch, so the batch holds the guests.
+
+Three requirements needed more than a rewrite:
+- **0364 R6 (a component that cannot cycle keeps no levels).** Its stratum stepped down the tree in the cross part.
+  It now climbs an index to the used function's line count (`below(q, @add(i, 1))`). The static check
+  (`wellfounded::classify`) asked every relation for a node column. A relation with none (a cross-file stratum keyed by
+  symbols) is now measured by an index alone: a column it holds the same at each step, and an index that climbs or
+  falls beside it. A tree order needs a node, so it is still refused, as "a relation with no node column, and no index
+  step", with what else failed. Test: `wellfounded::tests::an_index_climbing_beside_a_symbol_is_proved`.
+- **0364 R4 (a line inserted is maintained).** A file's rows that the cross part reads now hold no offset, so lines
+  inserted that define nothing reach no stratum. The inserted lines now define a function above the used one: every node
+  after them moves, and the one new `def_at` row reaches `unused`, `fanout` and `defq`.
+- **0563 A (no guest where no document embeds).** Its program asked `parsed` only across files. A request the cross part
+  asks names its node there, in the request's cover (`rr_h_cover(s)`), and is refused. The program now reads a guest
+  relation in each file's part (`host_node`) and asks no request, so a batch that embeds nothing drops those rules, and
+  an edit that adds a `Markup` call keeps them.
+
+The `py_names` test ran fix 2's old crossing rules (`old_sym`) beside the phase to show that they agree. Those rules
+are refused now. Their answers are the test's literal rows, which it held equal to `old_used` until now.
+`old_exported_at` still runs beside the phase.
+
+**The engine: a cross part that reads no base relation keeps its documents' table.** An edit takes a kept input's rows
+of an unchanged document as they were (`same_docs`), from the table of the documents the last run read (0458). That
+table was written only when the cross part read a base relation. A cross part keyed the 0677 way reads none, so its
+next run hashed every kept input whole: R1/R2, R2 in a new process and R8 found 2 such inputs (`imp`, `imp_at`). The
+table is kept now whatever the part reads. With no base relation's digest to say it is unchanged, it is written again
+when the run's documents are not the table's: one changed, or one added, removed or reverted. So no later run takes a
+document as holding rows it does not hold.
+
+A file's rows are a function of more than its content, though: where entries are kept under the project's settings
+(0665), and so under a phase's exports read as settings (an asked phase's reader is keyed by its asks' answers, 0705),
+another file's edit changes them. With the table kept for those programs too, four tests found a warm run's rows not a
+fresh run's: three of 0705's (`a_reader_is_keyed_by_the_answers_to_its_asks`,
+`an_edit_reruns_the_files_its_asks_reach`, `the_asked_tsx_names_answers_only_what_is_imported`) and
+`a_python_files_entry_is_kept_under_its_own_classes_ancestry`. The table is now written and read under a tag of the
+memo plan and, where entries are kept under settings, of every settings row (`retain::table_tag`). A run whose settings
+changed takes no document as unchanged and hashes its inputs again, as it did before the table was kept for it. The
+digest-only route, a cross part that reads base relations, had the same gap, and the same tag closes it.
+
+**The program image's pack tests.** `program_image::tests::pack_programs` keeps the sampled pack programs' graphs
+(`keep_files`), then parsed them on rayon's pool. In a test build a pool thread's shared object is the tests' one, not
+the test's (`context::tests_object`), so no parse found its kept graph. Each one derived its graph in a corpus run of its
+own, nested in the pool, and none of those runs ended: the three tests that read the programs ran past 240 s, where they
+had taken 7–10 s. They now parse on scoped threads that each run on the test's object, as `rr::tests::in_parallel`
+does, and pass in 12–15 s. Handing the object to the pool's threads (`within` in a rayon closure) was not enough: those
+threads still asked for the process's store.
+
+`rdl_programs_translate_to_the_same_program`: `workload.rdl` and `calls_rust.rdl` are T's still. Their `.rerail` is
+rewritten, so the test no longer compares those two with their translation (`REWRITTEN`). It still translates, lowers
+and prints back both.
+
+Tests: the quick tier of the nine crates the change touches (`rerail-tests-logic`, `-tests-corpus`, `-tests-rr`, `-boot`,
+`-typing`, `-logic`, `-corpus-memo`, `-rr-root`, `-plan-base`), 1321 tests, all pass, on a macOS host.
+
 ## Open
 
 - **FAST003's `guest_of` has no rows.** A violation that reads a recursive relation over one that reads `guest_of(c, h)`
   gets no `guest_of` rows in its program, on batch 5's engine as on this one: FAST003 (python-main) finds nothing in
   the pack's sample. The smallest program that shows it is a violation reading `ra`, recursive over `dm`, where `dm`
   reads `guest_of(c2, h4)`.
-
-- **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
-  can say a listed relation no longer crosses. Fix 3's were found by comparing the shards' logs with the list by hand,
-  and fix 3f's from the union of one run's `RERAIL_SHOW_CROSSINGS` lines. The same holds for a run of each policy
-  alone (`data-layer:alone`).
-  The gate needs a test that unions the shards' logs and refuses a listed relation none of them names.
 
 - **A `match_all` over a node that only a derived relation binds scans nothing.** `match_all("re", n, m)` goes to
   `rx_span`, which scans nodes of the kinds the span analysis gives, only when a `kind(n, "K")` atom of the same rule
