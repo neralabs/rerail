@@ -9111,6 +9111,8 @@ fn run_observed_within(
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(db, rel, source)?;
     }
+    // The relations the cone of requests hands on: an output among them is published by the cross part (below).
+    let from_cone: BTreeSet<String> = loading_rows.iter().map(|(rel, _)| rel.clone()).collect();
     // The cone of requests' rows and the answers, as the rest of the cross-file part reads them (decision 0065 §2a).
     if let Some((load, ..)) = &loading {
         for (rel, rows) in std::mem::take(&mut loading_rows) {
@@ -9167,9 +9169,10 @@ fn run_observed_within(
         .filter(|r| !head_outputs.contains(r))
         .collect();
     let mut typing_held: BTreeMap<String, Vec<Vector<i64>>> = BTreeMap::new();
-    // Constant folding can leave an exported relation with facts and no rule heads.
-    // The cross-file part still has to publish those rows, including for an empty corpus.
-    if run_placed.v.rules().next().is_some() || run_f.outputs().any(|rel| run_f.facts(rel).is_some()) {
+    // Constant folding can leave an exported relation with facts and no rule heads, and the cone of requests can hold
+    // every rule of an output (a request reads it, so its rules are the cone's): the cross-file part still has to
+    // publish those rows, including for an empty corpus.
+    if run_placed.v.rules().next().is_some() || run_f.outputs().any(|rel| run_f.facts(rel).is_some() || from_cone.contains(rel)) {
         // RERAIL_DUMP_CROSS=<file>: the cross-file part's rules, one per line, each run's after a line naming it,
         // appended (a phase's run and its reader's both; a debugging aid).
         if let Ok(path) = std::env::var("RERAIL_DUMP_CROSS") {

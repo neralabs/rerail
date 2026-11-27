@@ -347,6 +347,40 @@ listed(d) :- hit(_, "stubs", d), dir_entry(d, _, _).
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A plain program whose request reads a listing at a folder its files' rows name: `want` is each file's (its
+    /// import), `sd` one folder for the run, `dbg_try`'s stubs row joins them with that folder's listing, and `listed`
+    /// asks for the listing of each folder a `dbg_try` row names. The request reads `dbg_try`, so every rule of the
+    /// output is the cone of requests' and none the cross part's: the cross part still publishes its rows. It ran
+    /// only for rules or facts of its own, and `dbg_try` was written empty.
+    #[test]
+    fn an_output_whose_rules_are_all_the_cone_of_requests_is_published() {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("plain-listing-cone");
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("ws");
+        std::fs::create_dir_all(src.join("stubs/types-gamma/gamma")).unwrap();
+        std::fs::write(src.join("main.py"), "import gamma\n").unwrap();
+        let program = r#"#include "core.rerail"
+.decl want(q: symbol)
+want(q) :- kind(i, "import_statement"), q = "gamma".
+.decl sd(b: symbol)
+sd("stubs/types-gamma").
+.decl dbg_try(q: symbol, l: symbol, b: symbol, t: symbol)
+dbg_try(q, "stubs", b, q) :- want(q), dir_entry(b, q, 1), sd(b).
+dbg_try(q, "decl", "", q) :- want(q).
+.decl listed(d: symbol)
+listed(d) :- dbg_try(_, _, d, _), dir_entry(d, _, _).
+.output dbg_try
+"#;
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        crate::code_rule_dsl::logic::plan::corpus::run(program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        assert_eq!(
+            crate::code_rule_dsl::logic::plan::output::shown(&out, "dbg_try").unwrap(),
+            [["gamma", "decl", "", "gamma"], ["gamma", "stubs", "stubs/types-gamma", "gamma"]]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An asked phase (decision 0705), `q`: a file's asks of other modules by key (`asked_at`, "m.x"), each sent to
     /// the file of the module it names (`ask_in`), answered there in the next round (`answer`), and followed through
     /// a star import into another module's file in the round after (`forward`, `resolved`).
