@@ -1,0 +1,116 @@
+// `intern` (`rerail_delta_twins::intern`): a document's names into the store's atoms, each node's symbols into its
+// symbols block. The hash phase (an item a node) finds each node's names and marks the rest; the scan (one item, in
+// node order) makes them, so new ids follow node order. The tape is read where it lies by the reads written once
+// (`<ukl/reads/tape.h>`), through the view in the params; a node's kind by its code's entry in the language's table.
+#include <ukl/delta/atoms.h>
+#include <ukl/reads/tape.h>
+
+// The launch's blocks: the source's, the tape's, the atoms, the symbols block (`SYMS_*`) and the language's table;
+// the source's start in its block, and the tape's view (the thread's, as the reads take it).
+typedef struct Doc {
+    CBlk src, tape, lang;
+    Atoms atoms;
+    Blk syms;
+    uint32_t src_at;
+    uint32_t v[VIEW_WORDS];
+} Doc;
+
+UKL_INLINE Doc doc_of(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p) {
+    UKL_GLOBAL const InternP* q = &PARAMS(InternP);
+    Doc d = {SLOT(0), SLOT(1), SLOT(4), atoms_of(SLOT(2)), SLOT(3), (uint32_t)q->src_at};
+    for (uint32_t k = 0u; k < VIEW_WORDS; k++) d.v[k] = q->view[k];
+    return d;
+}
+
+UKL_INLINE uint32_t syms_n(Doc d) { return (uint32_t)U64(d.syms, SYMS_N_AT); }
+
+// Node `n`'s two symbols' words (its text's, then its value's).
+UKL_INLINE uint64_t syms_node(Doc d, uint32_t n) {
+    return SYMS_NAMES_AT + ((U32(d.syms, SYMS_PATH_LEN_AT) + U32(d.syms, SYMS_MODULE_LEN_AT) + 7u) & ~7u) + 8u * n;
+}
+
+// What a node names: its text (`make`: an identifier's or a variable's; else an operator's, found only) and its
+// value (a string's body), each `has` when it names one.
+typedef struct Names {
+    Text text, value;
+    bool has_text, make, has_value;
+} Names;
+
+UKL_INLINE Names names_of(UKL_PRIVATE const Doc* d, uint32_t n) {
+    UKL_PRIVATE const uint32_t* v = d->v;
+    uint32_t e = U32(d->lang, LANG_CODES_AT + 4u * clif_f16_number(d->tape, v, n)), k = e & 0xFFFFu;
+    uint32_t s = d->src_at + clif_f16_start(d->tape, v, n), end = d->src_at + clif_f16_end(d->tape, v, n);
+    bool leaf = (e & LANG_EXTRA) == 0u && clif_f16_first_child(d->tape, v, n) == CLIF_T_NONE;
+    Names m;
+    m.text.s = m.value.s = d->src;
+    m.text.at = s;
+    m.text.end = end;
+    m.text.esc = false;
+    m.make = k == KIND_IDENTIFIER || k == KIND_VARIABLE;
+    m.has_text = m.make || (k >= FIRST_ANONYMOUS && leaf);
+    m.value.at = s + 1u;
+    m.value.end = end - 1u;
+    m.value.esc = true;
+    m.has_value = k == KIND_STRING && end - s >= 2u && d->src[s] == '"' && d->src[end - 1u] == '"' && text_ok(m.value);
+    return m;
+}
+
+// The hash phase: each node's names found, the rest marked (SYM_NEW, SYM_FIND). It writes no atom.
+DELTA_KERNEL(intern_hash_items) { if (i == 0u) res[0] = syms_n(doc_of(t, slots, p)); }
+DELTA_KERNEL(intern_hash)
+{
+    DELTA_ITEM(n);
+    Doc d = doc_of(t, slots, p);
+    Names m = names_of(&d, n);
+    uint32_t tx = 0u, vx = 0u;
+    if (m.has_text) {
+        tx = atoms_find(d.atoms, m.text, atom_hash(m.text));
+        if (tx == NONE) tx = m.make ? SYM_NEW : SYM_FIND;
+    }
+    if (m.has_value) {
+        vx = atoms_find(d.atoms, m.value, atom_hash(m.value));
+        if (vx == NONE) vx = SYM_NEW;
+    }
+    uint64_t at = syms_node(d, n);
+    U32(d.syms, at) = tx;
+    U32(d.syms, at + 4u) = vx;
+}
+
+// Bytes `at..end` of block `b`, as written.
+UKL_INLINE Text text_in(CBlk b, uint32_t at, uint32_t end) { Text x = {b, at, end, false}; return x; }
+
+// The language's names, interned once: on the first run that finds its last one missing.
+UKL_INLINE void intern_language(Doc d) {
+    uint32_t nc = U32(d.lang, LANG_CODES_N_AT), nn = U32(d.lang, LANG_NAMES_N_AT);
+    uint32_t ends = LANG_CODES_AT + 4u * nc, first = ends + 4u * nn;
+    Text last = text_in(d.lang, first + (nn > 1u ? U32(d.lang, ends + 4u * (nn - 2u)) : 0u), first + U32(d.lang, ends + 4u * (nn - 1u)));
+    if (atoms_find(d.atoms, last, atom_hash(last)) != NONE) return;
+    for (uint32_t k = 0u, at = first; k < nn; k++) {
+        uint32_t end = first + U32(d.lang, ends + 4u * k);
+        atoms_put(d.atoms, text_in(d.lang, at, end));
+        at = end;
+    }
+}
+
+// The scan: the language's names, the path and the module, then each marked name in node order.
+DELTA_ONE(intern_scan)
+{
+    if (i != 0u) return;
+    Doc d = doc_of(t, slots, p);
+    intern_language(d);
+    uint32_t pl = U32(d.syms, SYMS_PATH_LEN_AT), ml = U32(d.syms, SYMS_MODULE_LEN_AT);
+    U32(d.syms, SYMS_PATH_SYM_AT) = atoms_put(d.atoms, text_in(d.syms, SYMS_NAMES_AT, SYMS_NAMES_AT + pl));
+    U32(d.syms, SYMS_MODULE_SYM_AT) = atoms_put(d.atoms, text_in(d.syms, SYMS_NAMES_AT + pl, SYMS_NAMES_AT + pl + ml));
+    for (uint32_t n = 0u, len = syms_n(d); n < len; n++) {
+        uint64_t at = syms_node(d, n);
+        uint32_t tx = U32(d.syms, at), vx = U32(d.syms, at + 4u);
+        if (tx != SYM_NEW && tx != SYM_FIND && vx != SYM_NEW) continue;
+        Names m = names_of(&d, n);
+        if (m.has_text && tx == SYM_NEW) U32(d.syms, at) = atoms_put(d.atoms, m.text);
+        if (m.has_text && tx == SYM_FIND) {
+            uint32_t id = atoms_find(d.atoms, m.text, atom_hash(m.text));
+            U32(d.syms, at) = id == NONE ? 0u : id;
+        }
+        if (m.has_value && vx == SYM_NEW) U32(d.syms, at + 4u) = atoms_put(d.atoms, m.value);
+    }
+}

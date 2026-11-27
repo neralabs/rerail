@@ -2,7 +2,7 @@
 //! reference, and the call that runs it over a changed document. Its layout and its twin are
 //! `rerail_delta_twins::intern`.
 
-use crate::dir::Directory;
+use crate::dir::{BlockId, Directory};
 use crate::files::{BlobId, BlobRows, Placed};
 use crate::op::{Across, Found, Independence, Inside, Output, ParamsLayout, Phase, Registry, Runner, Signature, Tiling, Unit, Version};
 use crate::sym::Atoms;
@@ -21,7 +21,7 @@ static INTERN_PHASE: [Phase; 2] = [
 ];
 
 /// `intern`: read the document's source and tape (their blocks, which may be one) · rw the atoms · rw the document's
-/// symbols block.
+/// symbols block · read the language's table (`intern::write_language`).
 pub static INTERN: Signature = Signature::of(
     &crate::op::interfaces::INTERN,
     ParamsLayout::of::<InternP>(),
@@ -66,19 +66,9 @@ pub fn intern(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms: At
 /// `intern` with its hash phase's items run in tiles of `tiling` (its scan is one item, in node order).
 #[allow(clippy::too_many_arguments)]
 pub fn intern_at(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str, tiling: Tiling) -> Result<BlobId, String> {
-    let n = crate::files::nodes(dir, src, tape)?;
-    let body = twin::syms_bytes(n, path, module);
-    // Kept where the directory keeps what lasts: a pure answer, kept by key (D4) while the store's atoms keep their ids.
-    let id = dir.make_placed(dir.lasting(), kind::FACTS, body, 0)?;
+    let (id, slots, p, body) = launch(dir, atoms, src, tape, path, module)?;
     let made = (|| {
-        {
-            let b = dir.block(id).expect("just made");
-            let mut w = pin_block(&b, "intern", true)?;
-            twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
-        }
-        let mut p = [0u8; InternP::SIZE];
-        InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
-        ops.run(dir, &INTERN, &[src.block, tape.block, atoms.0, id], &p, tiling)?;
+        ops.run(dir, &INTERN, &slots, &p, tiling)?;
         dir.freeze(id)?;
         blobs.house(ops, dir, Placed { block: id, at: BODY_AT, len: body })
     })();
@@ -94,6 +84,45 @@ pub fn intern_at(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms:
             Err(e)
         }
     }
+}
+
+/// `intern`'s launch over the document at `src` and `tape`: its symbols block made (kept where the directory keeps
+/// what lasts: a pure answer, kept by key, D4, while the store's atoms keep their ids), its header written; its slots,
+/// its params (the tape's view where it lies) and the symbols block's body bytes.
+pub(crate) fn launch(dir: &mut Directory, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<(BlockId, [BlockId; 5], [u8; InternP::SIZE], usize), String> {
+    let n = crate::files::nodes(dir, src, tape)?;
+    let view = {
+        let l = dir.read("intern's tape", &[tape.block])?;
+        let bytes = &l.block(0)[tape.at..tape.at + tape.len];
+        let v = rerail_rr_syntax::tape_format::f16::placement(bytes)?.view(rerail_rr_syntax::tape::lang(), tape.at)?;
+        // SAFETY: a view is `VIEW_WORDS` u32s (`TapeView`, `repr(C)`), its size checked by the transmute.
+        unsafe { core::mem::transmute::<_, [u32; twin::VIEW_WORDS]>(v) }
+    };
+    let lang = language(dir)?;
+    let body = twin::syms_bytes(n, path, module);
+    let id = dir.make_placed(dir.lasting(), kind::FACTS, body, 0)?;
+    let b = dir.block(id).expect("just made");
+    let mut w = pin_block(&b, "intern", true)?;
+    twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
+    let mut p = [0u8; InternP::SIZE];
+    InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64, view }.write(&mut p);
+    Ok((id, [src.block, tape.block, atoms.0, id, lang], p, body))
+}
+
+/// The `.rerail` language's table for `intern`'s kernels (`intern::write_language`): made once a directory, frozen.
+fn language(dir: &mut Directory) -> Result<BlockId, String> {
+    if let Some(id) = dir.language {
+        return Ok(id);
+    }
+    let id = dir.make(kind::CONTROL, twin::language_bytes());
+    {
+        let b = dir.block(id).expect("just made");
+        let mut w = pin_block(&b, "the language's table", true)?;
+        twin::write_language(w.bytes_mut().expect("a write pin"));
+    }
+    dir.freeze(id)?;
+    dir.language = Some(id);
+    Ok(id)
 }
 
 #[cfg(test)]

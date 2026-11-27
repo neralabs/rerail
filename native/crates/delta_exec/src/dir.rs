@@ -118,6 +118,8 @@ pub struct Directory {
     ledger: Ledger,
     /// The slabs' residency (`residency`): they are its, not the directory's.
     residency: crate::residency::Residency,
+    /// The `.rerail` language's table for `intern` (`intern::language`), made once.
+    pub(crate) language: Option<BlockId>,
 }
 
 impl Directory {

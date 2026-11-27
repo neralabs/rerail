@@ -11,6 +11,7 @@ use crate::contract::push_layer;
 use crate::dir::Directory;
 use crate::drop::{DROP_PARTS, Parts};
 use crate::k0::{DOCS_OF, NAMED_BLOCKS, ROOM_OF};
+use crate::intern::INTERN;
 use crate::semi::{CHANGE_ROWS, REPLACE_ROWS, SEMI_CHANGE};
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::set_word;
@@ -26,6 +27,8 @@ use rerail_delta_twins::cache::{self as cache_twin, CacheP};
 use rerail_delta_twins::drop::{self as drop_twin, DropP};
 use rerail_delta_twins::k0::{self as k0_twin, DocAt, DocsOfP, NamedP};
 use rerail_delta_twins::semi::{ReplaceP, SemiP};
+use rerail_delta_twins::intern as intern_twin;
+use rerail_blocks::atoms::AtomsRoot;
 
 /// Every backend a UKL version runs on.
 const EVERY_BACKEND: Devices = Devices(Devices::CPU.0 | Devices::METAL.0 | Devices::CUDA.0 | Devices::HIP.0 | Devices::OPENCL.0);
@@ -46,6 +49,7 @@ const MODULES: &[(&str, &str)] = &[
     ("drop", include_str!("../ukl/drop.uglykl")),
     ("semi", include_str!("../ukl/semi.uglykl")),
     ("k0", include_str!("../ukl/k0.uglykl")),
+    ("intern", include_str!("../ukl/intern.uglykl")),
 ];
 
 /// The operations with a UKL version.
@@ -59,6 +63,7 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &DOCS_OF, module: "k0", case: docs_of_case },
     Ukl { sig: &ROOM_OF, module: "k0", case: room_of_case },
     Ukl { sig: &NAMED_BLOCKS, module: "k0", case: named_blocks_case },
+    Ukl { sig: &INTERN, module: "intern", case: intern_case },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -261,6 +266,24 @@ fn docs_of_case(dir: &mut Directory) -> Case {
     Case { slots: vec![rows, blobs, docs, list], params: params(p) }
 }
 
+/// Two documents interned in turn into one atoms block, the second's launch the case: names the first made (found),
+/// new ones (made in node order), an operator, strings with escapes (a surrogate pair; one read as written), a comment.
+fn intern_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut blobs = crate::files::BlobRows::new();
+    let atoms = crate::sym::Atoms::new(dir);
+    let doc = |dir: &mut Directory, blobs: &mut crate::files::BlobRows, src: &str| {
+        let ids = crate::files::doc_of(&cpu, dir, blobs, src).expect("a document");
+        let place = |id| blobs.get(dir, id).unwrap().expect("a blob housed");
+        (place(&ids.source), place(&ids.tape))
+    };
+    let (s, t) = doc(dir, &mut blobs, "p(x) :- e(x, \"s\").\n");
+    crate::intern::intern(&cpu, dir, &mut blobs, atoms, s, t, "a.rerail", "a").expect("the first interned");
+    let (s, t) = doc(dir, &mut blobs, "// a comment\nq(y, \"t\\u{e9}\\n\\ud83d\\ude00\", \"\\q\") :- p(y), e(y, \"s\"), y != 3.\n");
+    let (_, slots, p, _) = crate::intern::launch(dir, atoms, s, t, "b.rerail", "b").expect("the second's launch");
+    Case { slots: slots.to_vec(), params: p.to_vec() }
+}
+
 /// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 1's and 5's take.
 fn room_of_case(dir: &mut Directory) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
@@ -338,6 +361,37 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("DOCS_AT", k0_twin::DOCS_AT),
         ("DOC_WORDS", k0_twin::DOC_WORDS),
         ("K0_RELATIONS", k0_twin::R),
+        // An atoms block's root (`rerail_blocks::atoms`), at the block header's root word.
+        ("ATOMS_ROOT_WORD", offset_of!(rerail_blocks::block::Header, root)),
+        ("ATOMS_FIRST_AT", offset_of!(AtomsRoot, first)),
+        ("ATOMS_CAP_AT", offset_of!(AtomsRoot, cap)),
+        ("ATOMS_BYTES_CAP_AT", offset_of!(AtomsRoot, bytes_cap)),
+        ("ATOMS_COUNT_AT", offset_of!(AtomsRoot, count)),
+        ("ATOMS_BYTES_LEN_AT", offset_of!(AtomsRoot, bytes_len)),
+        ("ATOMS_MASK_AT", offset_of!(AtomsRoot, mask)),
+        ("ATOMS_PLACED_AT", offset_of!(AtomsRoot, placed)),
+        ("ATOMS_ENDS_AT", offset_of!(AtomsRoot, ends)),
+        ("ATOMS_HASHES_AT", offset_of!(AtomsRoot, hashes)),
+        ("ATOMS_TABLE_AT", offset_of!(AtomsRoot, table)),
+        ("ATOMS_STRINGS_AT", offset_of!(AtomsRoot, strings)),
+        // `rerail_delta_twins::intern`'s symbols block and the language's table, and the kinds it reads names by.
+        ("SYMS_N_AT", intern_twin::N_AT),
+        ("SYMS_PATH_SYM_AT", intern_twin::PATH_SYM_AT),
+        ("SYMS_MODULE_SYM_AT", intern_twin::MODULE_SYM_AT),
+        ("SYMS_PATH_LEN_AT", intern_twin::PATH_LEN_AT),
+        ("SYMS_MODULE_LEN_AT", intern_twin::MODULE_LEN_AT),
+        ("SYMS_NAMES_AT", intern_twin::NAMES_AT),
+        ("SYM_NEW", intern_twin::NEW as usize),
+        ("SYM_FIND", intern_twin::FIND as usize),
+        ("LANG_CODES_N_AT", intern_twin::LANG_CODES_N_AT),
+        ("LANG_NAMES_N_AT", intern_twin::LANG_NAMES_N_AT),
+        ("LANG_CODES_AT", intern_twin::LANG_CODES_AT),
+        ("LANG_EXTRA", intern_twin::LANG_EXTRA as usize),
+        ("KIND_IDENTIFIER", rerail_rr_syntax::tape::Kind::Identifier as usize),
+        ("KIND_VARIABLE", rerail_rr_syntax::tape::Kind::Variable as usize),
+        ("KIND_STRING", rerail_rr_syntax::tape::Kind::String as usize),
+        ("FIRST_ANONYMOUS", rerail_rr_syntax::tape::FIRST_ANONYMOUS as usize),
+        ("VIEW_WORDS", intern_twin::VIEW_WORDS),
     ]
 }
 

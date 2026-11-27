@@ -271,7 +271,8 @@ impl ParamsLayout {
     pub fn ukl(&self) -> String {
         let mut s = format!("typedef struct {} {{\n", self.name);
         for f in self.fields {
-            s += &format!("    {} {};\n", f.c, f.name);
+            let dims = if f.n == 0 { String::new() } else { format!("[{}]", f.n) };
+            s += &format!("    {} {}{dims};\n", f.c, f.name);
         }
         s += &format!("}} {};\n", self.name);
         s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", self.name, self.size);

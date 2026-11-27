@@ -25,14 +25,19 @@ use rerail_blocks::maps::{HashBytes, hash_bytes};
 use rerail_rr_syntax::tape::{FIRST_ANONYMOUS, KIND_NAMES, Kind};
 
 crate::params! {
-    /// Where the document's source and tape lie in their blocks, by offset and length.
+    /// Where the document's source and tape lie in their blocks, by offset and length, and the tape's view there
+    /// (`f16::Placement::view`): what the device's tape reads read it by (`<ukl/reads/tape.h>`).
     pub struct InternP {
         pub src_at: u64,
         pub src_len: u64,
         pub tape_at: u64,
         pub tape_len: u64,
+        pub view: [u32; VIEW_WORDS],
     }
 }
+
+/// A tape's view, in words (`rerail_clif::view::TapeView`).
+pub const VIEW_WORDS: usize = 34;
 
 /// K-form's step kinds, which a pass writes as symbols.
 pub const STEP_KINDS: [&str; 3] = ["atom", "not", "cmp"];
@@ -42,14 +47,64 @@ const SOURCE: usize = 0;
 const TAPE: usize = 1;
 pub const ATOMS: usize = 2;
 const SYMS: usize = 3;
+/// The language's table (read; `language_bytes`): what a kernel reads a node's kind by, and the names it interns.
+pub const LANG: usize = 4;
 
 const LEN_AT: usize = BODY_AT;
-const N_AT: usize = BODY_AT + 8;
-const PATH_SYM_AT: usize = BODY_AT + 16;
-const MODULE_SYM_AT: usize = BODY_AT + 20;
-const PATH_LEN_AT: usize = BODY_AT + 24;
-const MODULE_LEN_AT: usize = BODY_AT + 28;
-const NAMES_AT: usize = BODY_AT + 32;
+pub const N_AT: usize = BODY_AT + 8;
+pub const PATH_SYM_AT: usize = BODY_AT + 16;
+pub const MODULE_SYM_AT: usize = BODY_AT + 20;
+pub const PATH_LEN_AT: usize = BODY_AT + 24;
+pub const MODULE_LEN_AT: usize = BODY_AT + 28;
+pub const NAMES_AT: usize = BODY_AT + 32;
+
+/// The language block's words, at `BODY_AT`: its body's length, its codes' and its names' counts; then each code's
+/// entry by its number in the table (its kind, and `LANG_EXTRA`: a comment); each name's end in the names' bytes; the
+/// names' bytes, back to back.
+pub const LANG_CODES_N_AT: usize = BODY_AT + 8;
+pub const LANG_NAMES_N_AT: usize = BODY_AT + 12;
+pub const LANG_CODES_AT: usize = BODY_AT + 16;
+/// A language entry's bit for a comment.
+pub const LANG_EXTRA: u32 = 1 << 16;
+
+/// The names the scan interns once, in order: the language's kinds and fields, and K-form's step kinds.
+pub fn language_names() -> impl DoubleEndedIterator<Item = &'static str> + Clone {
+    KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).copied().filter(|n| !n.is_empty())
+}
+
+/// The `.rerail` language's table, by code number: each code's kind (`entry_kind_field`'s) and whether it is extra.
+fn language_codes() -> impl Iterator<Item = u32> {
+    let t = rerail_rr_syntax::tape::lang().table();
+    (0..t.len() as u32).map(move |n| {
+        let e = t.entry(n);
+        let (k, _) = rerail_rr_syntax::tape::entry_kind_field(e);
+        u32::from(k) | if e.flags & rerail_rr_syntax::tape_format::CODE_EXTRA != 0 { LANG_EXTRA } else { 0 }
+    })
+}
+
+/// The language block's body bytes.
+pub fn language_bytes() -> usize {
+    let names: usize = language_names().map(str::len).sum();
+    (LANG_CODES_AT - BODY_AT + 4 * (language_codes().count() + language_names().count()) + names).next_multiple_of(8)
+}
+
+/// The language block written (its room `language_bytes`): once, for every document's `intern`.
+pub fn write_language(bytes: &mut [u8]) {
+    let (nc, nn) = (language_codes().count(), language_names().count());
+    set_word::<u64>(bytes, LEN_AT, language_bytes() as u64);
+    set_word::<u32>(bytes, LANG_CODES_N_AT, nc as u32);
+    set_word::<u32>(bytes, LANG_NAMES_N_AT, nn as u32);
+    for (k, e) in language_codes().enumerate() {
+        set_word::<u32>(bytes, LANG_CODES_AT + 4 * k, e);
+    }
+    let (ends, first) = (LANG_CODES_AT + 4 * nc, LANG_CODES_AT + 4 * (nc + nn));
+    let mut at = first;
+    for (k, n) in language_names().enumerate() {
+        bytes[at..at + n.len()].copy_from_slice(n.as_bytes()); // copy: derived (the language's names, written once)
+        at += n.len();
+        set_word::<u32>(bytes, ends + 4 * k, (at - first) as u32);
+    }
+}
 
 fn nodes_at(path_len: usize, module_len: usize) -> usize {
     NAMES_AT + (path_len + module_len).next_multiple_of(8)
@@ -132,9 +187,9 @@ fn put_value(atoms: &mut [u8], v: &Str<'_>) -> u32 {
 }
 
 /// A node's symbol the hash phase did not find: a name the scan makes, in node order.
-const NEW: u32 = u32::MAX;
+pub const NEW: u32 = u32::MAX;
 /// An operator's token the hash phase did not find: the scan finds it once the language's names are in (never made).
-const FIND: u32 = u32::MAX - 1;
+pub const FIND: u32 = u32::MAX - 1;
 
 /// The document's source and tape, read where they lie.
 fn reads<'b>(source: &'b [u8], tape: &'b [u8], p: &InternP) -> Reads<'b> {
@@ -180,10 +235,9 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let p = <InternP as crate::Params>::read(c.params);
     let ([source, tape], [atoms, syms]) = c.views([SOURCE, TAPE], [ATOMS, SYMS]);
     let r = reads(source, tape, &p);
-    let language = || KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).filter(|n| !n.is_empty());
-    let last = language().next_back().expect("the language's names");
+    let last = language_names().next_back().expect("the language's names");
     if find_in(atoms, last, hash_bytes(last.as_bytes())).is_none() {
-        for n in language() {
+        for n in language_names() {
             put(atoms, n);
         }
     }

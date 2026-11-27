@@ -47,6 +47,7 @@ DECLARE_KERNEL2(delta_exec, intern,
     ROBUFFER, ukl_tape_block, tape, "[block]",
     RWBUFFER, ukl_atoms_block, atoms, "[block]",
     RWBUFFER, ukl_facts_block, syms, "[block]",
+    ROBUFFER, ukl_control_block, lang, "[block]",
     ARGS, InternP, p, )
 
 // rerail_delta_exec::k0
