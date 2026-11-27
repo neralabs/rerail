@@ -383,7 +383,7 @@ imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", 
 .decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl placed(f: node, l: number)
-placed(f, l) :- used(f), line(f, l).
+placed(f, l) :- used(f), node_line_number(f, l).
 .output placed
 "#;
     // `used`: 200 functions of z.py that b.py imports, and a0.py's `g0`, and its `h0` once the append defines it

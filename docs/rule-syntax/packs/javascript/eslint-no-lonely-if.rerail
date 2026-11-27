@@ -34,4 +34,4 @@ layout_at(b) :- lonely(b, _).
 unfixable(b, x) :- lonely(b, x), child(b, c, _), is_comment(c).
 // ESLint's ASI test, on the inner if's consequent c (not its else) and the token after the block.
 unfixable(b, x) :- lonely(b, x), field(x, "consequence", c), !braced(c), text(c, t), !match("(?s).*;", t),
-    next_code(b, _), (after_line(b, l), end_line(c, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t)).
+    next_code(b, _), (after_line(b, l), node_end_line_number(c, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t)).

@@ -56,7 +56,7 @@ ann401_def_like(n) :-
 
 // overload_of_name(n): the JSON util `overload-of-name`, used where the JSON says `matches: "overload-of-name"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann401_overload_of_name(n: node, n_mv: loc)
+.decl ann401_overload_of_name(n: node, n_mv: node)
 ann401_overload_of_name(n, N) :- kind(n, "decorated_definition"), child(n, c1, _),
     kind(c1, "decorator"), child(c1, c2, _), ann401_overload_ref(c2), child(n, c3, _),
     kind(c3, "function_definition"), field(c3, "name", c4), node(_, c4, _, _, _), N = c4.
@@ -68,7 +68,7 @@ ann401_has_def(n) :- within(c1, n), ann401_def_like(c1).
 
 // ends_with_overload(n): the JSON util `ends-with-overload`, used where the JSON says `matches: "ends-with-overload"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann401_ends_with_overload(n: node, n_mv: loc)
+.decl ann401_ends_with_overload(n: node, n_mv: node)
 ann401_ends_with_overload(n, N) :- ann401_overload_of_name(n, N).
 ann401_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1, _),
     ann401_has_def(c1), count : { precedes(c1, s2), ann401_has_def(s2) } = 0,
@@ -76,7 +76,7 @@ ann401_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1,
 
 // after_overload(n): the JSON util `after-overload`, used where the JSON says `matches: "after-overload"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann401_after_overload(n: node, n_mv: loc)
+.decl ann401_after_overload(n: node, n_mv: node)
 ann401_after_overload(n, N) :- precedes_stop(s1, n, ann401_stop_5), ann401_ends_with_overload(s1, N).
 ann401_after_overload(n, N) :- count : { precedes(s2, n), ann401_has_def(s2) } = 0, child(p3, n, _),
     !kind(p3, "function_definition"), !kind(p3, "class_definition"),
@@ -84,7 +84,7 @@ ann401_after_overload(n, N) :- count : { precedes(s2, n), ann401_has_def(s2) } =
 
 // overload_impl(n): the JSON util `overload-impl`, used where the JSON says `matches: "overload-impl"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_overload_impl(n: node, n_mv: loc)
+.decl ann401_overload_impl(n: node, n_mv: node)
 ann401_overload_impl(n, N) :- ann401_demand_overload_impl(n, N), kind(n, "function_definition"),
     count : { child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _), ann401_overload_ref(c3) } = 0,
     ann401_after_overload(n, N).
@@ -649,51 +649,51 @@ ann401_tok_has_31(n) :- node_text(n, g12), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:Annotated)(?:\\W.*)?)$", g12).
 
 // demand_alt_34: the rows of alt_34 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_34(n: node, la: loc)
+.decl ann401_demand_alt_34(n: node, la: node)
 ann401_demand_alt_34(c5, LA) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, docof(n, d2),
     modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
 
 // demand_alt_35: the rows of alt_35 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_35(n: node, la: loc)
+.decl ann401_demand_alt_35(n: node, la: node)
 ann401_demand_alt_35(c23, LA) :- kind(n, "attribute"), ann401_tok_has_28(n), field(n, "object", c18),
     kind(c18, "identifier"), node(_, c18, _, _, _), LA = c18, docof(c18, d20), modnode(d20, m21),
     inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_36: the rows of alt_36 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_36(n: node, lo: loc)
+.decl ann401_demand_alt_36(n: node, lo: node)
 ann401_demand_alt_36(c5, LO) :- kind(n, "identifier"), node(_, n, _, _, _), LO = n, docof(n, d2),
     modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
 
 // demand_alt_37: the rows of alt_37 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_37(n: node, lo: loc)
+.decl ann401_demand_alt_37(n: node, lo: node)
 ann401_demand_alt_37(c23, LO) :- kind(n, "attribute"), ann401_tok_has_29(n), field(n, "object", c18),
     kind(c18, "identifier"), node(_, c18, _, _, _), LO = c18, docof(c18, d20), modnode(d20, m21),
     inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_38: the rows of alt_38 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_38(n: node, lu: loc)
+.decl ann401_demand_alt_38(n: node, lu: node)
 ann401_demand_alt_38(c5, LU) :- kind(n, "identifier"), node(_, n, _, _, _), LU = n, docof(n, d2),
     modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
 
 // demand_alt_39: the rows of alt_39 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_39(n: node, lu: loc)
+.decl ann401_demand_alt_39(n: node, lu: node)
 ann401_demand_alt_39(c23, LU) :- kind(n, "attribute"), ann401_tok_has_30(n), field(n, "object", c18),
     kind(c18, "identifier"), node(_, c18, _, _, _), LU = c18, docof(c18, d20), modnode(d20, m21),
     inside(c18, p22, "module"), within(c23, p22).
 
 // demand_alt_40: the rows of alt_40 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_40(n: node, lt: loc)
+.decl ann401_demand_alt_40(n: node, lt: node)
 ann401_demand_alt_40(c5, LT) :- kind(n, "identifier"), node(_, n, _, _, _), LT = n, docof(n, d2),
     modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
 
 // demand_alt_41: the rows of alt_41 its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_alt_41(n: node, lt: loc)
+.decl ann401_demand_alt_41(n: node, lt: node)
 ann401_demand_alt_41(c23, LT) :- kind(n, "attribute"), ann401_tok_has_31(n), field(n, "object", c18),
     kind(c18, "identifier"), node(_, c18, _, _, _), LT = c18, docof(c18, d20), modnode(d20, m21),
     inside(c18, p22, "module"), within(c23, p22).
 
 // demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
-.decl ann401_demand_overload_impl(n: node, n_mv: loc)
+.decl ann401_demand_overload_impl(n: node, n_mv: node)
 ann401_demand_overload_impl(n, N) :- kind(n, "function_definition"), field(n, "name", c1),
     node(_, c1, _, _, _), N = c1.
 
@@ -802,7 +802,7 @@ ann401_alt_29(n) :- ann401_r_extra(n).
 
 // alt_34(n): the JSON `any`: n matches if any one of these rules does
 //   LA: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_34(n: node, la: loc)
+.decl ann401_alt_34(n: node, la: node)
 ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "dotted_name"),
     text(n, t_la1), text(LA, t_la1),
     ( imported_sym(n, "typing.Any")
@@ -823,7 +823,7 @@ ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "aliased_import"),
 
 // alt_35(n): the JSON `any`: n matches if any one of these rules does
 //   LA: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_35(n: node, la: loc)
+.decl ann401_alt_35(n: node, la: node)
 ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "dotted_name"),
     text(n, t_la3), text(LA, t_la3),
     ( imported_sym(n, "typing")
@@ -844,7 +844,7 @@ ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "aliased_import"),
 
 // alt_36(n): the JSON `any`: n matches if any one of these rules does
 //   LO: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_36(n: node, lo: loc)
+.decl ann401_alt_36(n: node, lo: node)
 ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "dotted_name"),
     text(n, t_lo5), text(LO, t_lo5),
     ( imported_sym(n, "typing.Optional")
@@ -865,7 +865,7 @@ ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "aliased_import"),
 
 // alt_37(n): the JSON `any`: n matches if any one of these rules does
 //   LO: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_37(n: node, lo: loc)
+.decl ann401_alt_37(n: node, lo: node)
 ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "dotted_name"),
     text(n, t_lo7), text(LO, t_lo7),
     ( imported_sym(n, "typing")
@@ -886,7 +886,7 @@ ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "aliased_import"),
 
 // alt_38(n): the JSON `any`: n matches if any one of these rules does
 //   LU: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_38(n: node, lu: loc)
+.decl ann401_alt_38(n: node, lu: node)
 ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "dotted_name"),
     text(n, t_lu9), text(LU, t_lu9),
     ( imported_sym(n, "typing.Union")
@@ -907,7 +907,7 @@ ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "aliased_import"),
 
 // alt_39(n): the JSON `any`: n matches if any one of these rules does
 //   LU: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_39(n: node, lu: loc)
+.decl ann401_alt_39(n: node, lu: node)
 ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "dotted_name"),
     text(n, t_lu11), text(LU, t_lu11),
     ( imported_sym(n, "typing")
@@ -928,7 +928,7 @@ ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "aliased_import"),
 
 // alt_40(n): the JSON `any`: n matches if any one of these rules does
 //   LT: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_40(n: node, lt: loc)
+.decl ann401_alt_40(n: node, lt: node)
 ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "dotted_name"),
     text(n, t_lt13), text(LT, t_lt13),
     ( imported_sym(n, "typing.Annotated")
@@ -949,7 +949,7 @@ ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "aliased_import"),
 
 // alt_41(n): the JSON `any`: n matches if any one of these rules does
 //   LT: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann401_alt_41(n: node, lt: loc)
+.decl ann401_alt_41(n: node, lt: node)
 ann401_alt_41(n, LT) :- ann401_demand_alt_41(n, LT), kind(n, "dotted_name"),
     text(n, t_lt15), text(LT, t_lt15),
     ( imported_sym(n, "typing")

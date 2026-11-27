@@ -40,7 +40,7 @@
 #include "data-layer/signing.rerail"
 #include "../data-layer/cached-pure-lazy-allowlist.symbols.rerail"
 
-.violation CPL(at: loc, m: symbol) code {m} "{m}"
+.violation CPL(at: node, m: symbol) code {m} "{m}"
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_msg(m), !cpl_crash(_).
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_sign_msg(m).
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_crash(m).
@@ -115,7 +115,7 @@ cpl_args_form(f, t) :- cpl_deco(f, c), cpl_nargs(c, 0, 1), cpl_kw(c, "cache_args
 cpl_arg(f, i, x) :- cpl_args_form(f, t), child(t, el, i), plain_str(el, x).
 
 // cpl_param(f, x, k, ann, dflt): f's parameter x of kind k (python/ast's sig_param, NFKC-normalised name).
-.decl cpl_param(f: node, x: symbol, k: symbol, ann: loc, dflt: loc)
+.decl cpl_param(f: node, x: symbol, k: symbol, ann: node, dflt: node)
 cpl_param(f, x, k, a, d) :- cpl_def(f, _), sig_param(f, _, nm, _, k, a, d), cpl_id(nm, x).
 .decl cpl_named(k: symbol)  // the kinds the verifier reads: posonlyargs, args, kwonlyargs
 cpl_named("posonly"). cpl_named("pos"). cpl_named("kwonly").
@@ -236,7 +236,7 @@ cpl_unparse(e, s) :- text(e, s), !dotted_expr(e, _), !plain_str(e, _).
 .decl cpl_item(x: node, fn: symbol)
 cpl_item(f, fn) :- cpl_def(f, fn).
 cpl_item(c, cat(m, ".<unsupported_cached_pure_lazy_call_", to_string(l), "_", to_string(k), ">")) :- cpl_odd_call(c, _),
-    cpl_mod(c, m), line(c, l), col(c, k).
+    cpl_mod(c, m), node_line_number(c, l), node_start_column(c, k).
 cpl_err(c, e) :- cpl_odd_call(c, e).
 .decl cpl_odd_call(c: node, e: symbol)
 .decl cpl_odd_call0(c: node, e: symbol)
@@ -245,7 +245,7 @@ cpl_odd_call0(c, "cached_pure_lazy must use decorator syntax") :- cpl_callee(c, 
 cpl_odd_call0(c, "unresolved cache decorator alias is forbidden") :- cpl_kw(c, "cache_args", _), cpl_callee(c, g),
     !cpl_ref(g), !cpl_name(g, "CachedPureLazyPolicyEntry").
 cpl_item(e, cat(m, ".<escaped_cached_pure_lazy_reference_", to_string(l), "_", to_string(k), ">")) :- cpl_escaped(e),
-    cpl_mod(e, m), line(e, l), col(e, k).
+    cpl_mod(e, m), node_line_number(e, l), node_start_column(e, k).
 cpl_err(e, "cached_pure_lazy cannot escape as a first-class value") :- cpl_escaped(e).
 .decl cpl_escaped(e: node)
 cpl_escaped(e) :- cpl_ref(e), expr_ctx(e, "load"), !cpl_called_by(e), !cpl_value_of(e), docof(e, d), cpl_doc(d).
@@ -270,7 +270,7 @@ tree_hashes(x, h, h) :- (cpl_odd_call(x, _) ; cpl_escaped(x) ; mpl_odd(x, _, _))
 // ---- 3. memoized items ------------------------------------------------------------------------------------------
 // Only in documents whose text mentions memoized_pure_lazy (comments too), as the verifier reads them.
 .decl mpl_doc(d: number)
-mpl_doc(d) :- cpl_doc(d), source(d, sp), text(sp, t), contains("memoized_pure_lazy", t).
+mpl_doc(d) :- cpl_doc(d), document_source(d, sp), line_text(sp, t), contains("memoized_pure_lazy", t).
 .decl purity_doc(d: number)
 purity_doc(d) :- doc(d, "l2055_lazy_result/purity.py", _).
 // mpl_deco(f, c): f's first decorator `memoized_pure_lazy(…)` (a bare Name as the callee).
@@ -312,9 +312,9 @@ mpl_odd(n, "private_memoized_storage_access", "direct access to private memoizat
     docof(n, d), mpl_doc(d), !purity_doc(d).
 .decl mpl_item(x: node, fn: symbol)
 mpl_item(f, fn) :- mpl_def(f, fn).
-mpl_item(n, cat(m, ".<", t, "_", to_string(l), "_", to_string(k), ">")) :- mpl_odd(n, t, _), cpl_mod(n, m), line(n, l),
-    col(n, k).
-mpl_item(i, cat(m, ".<memoized_decorator_alias_", to_string(l), ">")) :- mpl_alias(i), cpl_mod(i, m), line(i, l).
+mpl_item(n, cat(m, ".<", t, "_", to_string(l), "_", to_string(k), ">")) :- mpl_odd(n, t, _), cpl_mod(n, m), node_line_number(n, l),
+    node_start_column(n, k).
+mpl_item(i, cat(m, ".<memoized_decorator_alias_", to_string(l), ">")) :- mpl_alias(i), cpl_mod(i, m), node_line_number(i, l).
 mpl_err(x, e) :- mpl_odd(x, _, e).
 mpl_err(i, "memoized_pure_lazy decorator aliases are forbidden") :- mpl_alias(i).
 .decl mpl_alias(i: node)

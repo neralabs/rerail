@@ -34,7 +34,7 @@ double_parens(p, "Remove the redundant outer parentheses around this expression.
 // tt_before(p, s): inside a token tree, s is the token before p.
 .stored tt_before "a token tree's contents are a repeat of choices, so the tape keeps every token in it"
 .decl tt_before(p: node, s: symbol)
-tt_before(p, s) :- sole_group(p, _), child(q, p, _), kind(q, "token_tree"), token_before(p, b), text(b, s).
+tt_before(p, s) :- sole_group(p, _), child(q, p, _), kind(q, "token_tree"), node_to_token_before(p, b), token_text(b, s).
 double_parens(t, "Remove the extra parentheses around this call's argument.") :-
     sole_group(p, t), expr_tokens(p), prefix("(", p), prefix("(", t), !has_comment(p),
     next_sibling(f, p), (kind(f, "identifier") ; kind(f, "metavariable")), node(_, f, _, _, fe), node(_, p, _, ps, _),

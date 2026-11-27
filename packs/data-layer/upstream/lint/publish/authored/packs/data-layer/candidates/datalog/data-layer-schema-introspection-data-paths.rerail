@@ -229,8 +229,8 @@ introspection_peel(c, i) :- introspection_peel(c, e), node(_, e, "parenthesized_
 introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "identifier", _, _), text(u, x).
 introspection_callee(c, x) :- introspection_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a), text(a, x).
 introspection_primitive_call(c) :- introspection_callee(c, x), node(d, c, _, _, _), doc(d, p, _), introspection_frame(c, f), field(f, "name", nm), text(nm, y), introspection_primitive(p, y, x).
-introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p), prefix("impl/common/l7245_versioned_backends/", p), line(c, l).
-introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c), !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), line(c, l).
+introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_flush(x), node(d, c, _, _, _), introspection_doc(d, p), prefix("impl/common/l7245_versioned_backends/", p), node_line_number(c, l).
+introspection_hit(p, l, x) :- introspection_callee(c, x), introspection_forbidden(x), !introspection_authority(c), !introspection_primitive_call(c), node(d, c, _, _, _), introspection_doc(d, p), node_line_number(c, l).
 introspection_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
 introspection_lit(s) :- node(d, s, "string", _, _), introspection_doc(d, _), !introspection_in_run(s).
 introspection_lit(c) :- node(d, c, "concatenated_string", _, _), introspection_doc(d, _).
@@ -247,11 +247,11 @@ introspection_part(s, s) :- introspection_fhost(s), node(_, s, "string", _, _).
 introspection_part(e, s) :- introspection_fhost(e), node(_, e, "concatenated_string", _, _), child(e, s, _), node(_, s, "string", _, _).
 introspection_field(e, f, b, fe) :- introspection_part(e, s), child(s, f, _), node(_, f, "interpolation", b, fe).
 introspection_field(e, f, b, fe) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), child(e, f, _), node(_, f, "format_expression", b, fe).
-introspection_item(e, o, l) :- introspection_part(e, s), introspection_fpart(s), child(s, c, _), node(_, c, "string_content", o, _), line(c, l).
-introspection_item(e, o, l) :- introspection_part(e, s), !introspection_fpart(s), node(_, s, _, o, _), line(s, l).
-introspection_item(e, o, l) :- introspection_field(e, f, b, _), token(f, _, "=", _, _), o = @add(b, 1), line(f, l).
-introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", s, _), a = @add(s, 1), line(e, l).
-introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), introspection_field(e, f, _, a), end_line(f, l).
+introspection_item(e, o, l) :- introspection_part(e, s), introspection_fpart(s), child(s, c, _), node(_, c, "string_content", o, _), node_line_number(c, l).
+introspection_item(e, o, l) :- introspection_part(e, s), !introspection_fpart(s), node(_, s, _, o, _), node_line_number(s, l).
+introspection_item(e, o, l) :- introspection_field(e, f, b, _), token(f, _, "=", _, _), o = @add(b, 1), node_line_number(f, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", s, _), a = @add(s, 1), node_line_number(e, l).
+introspection_slice(e, a, l) :- introspection_fhost(e), node(_, e, "format_specifier", _, _), introspection_field(e, f, _, a), node_end_line_number(f, l).
 introspection_item(e, a, l) :- introspection_slice(e, a, l), node(_, e, _, _, k), a < k, !introspection_field(e, _, a, _).
 introspection_after(e, o, b) :- introspection_item(e, o, _), introspection_field(e, _, b, fe), fe > o.
 introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_after(e, o, b2), b2 < b.
@@ -267,7 +267,7 @@ introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "inte
 introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
 introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j), fstring_piece(e, h, "literal", v), i = @add(h, 1), introspection_run_line(e, b, l).
 introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v), !introspection_later(e, h), introspection_run_line(e, k, l).
-introspection_hit(p, l, m) :- introspection_const(n, v), introspection_sql_marker(m, re), match(re, v), !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), line(n, l).
+introspection_hit(p, l, m) :- introspection_const(n, v), introspection_sql_marker(m, re), match(re, v), !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p), node_line_number(n, l).
 introspection_hit(p, l, m) :- introspection_fconst(n, v, l), introspection_sql_marker(m, re), match(re, v), !introspection_authority(n), node(d, n, _, _, _), introspection_doc(d, p).
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- option_value("entryPoint", "_collect_violations"), introspection_hit(p, l, _).
 violation("data-layer-schema-introspection-data-paths", "schema-introspection", "SIDP001", p, l) :- option_value("entryPoint", v), v != "_collect_violations", schema_approval_approved(1), introspection_hit(p, l, x), k = @concat(@concat(@concat(p, ":"), @to_string(l)), @concat(":", x)), !schema_approval_entry(k).

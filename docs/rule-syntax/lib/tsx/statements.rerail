@@ -98,8 +98,8 @@ dangling_if(x) :- body(x, b, w), w != "if", w != "else", w != "do", dangling_if(
 // code_end_line(n, l): the line n's code ends on, not counting a trailing `;`. ESLint measures lines to it, so
 // `x()\n;` still counts as one line.
 .decl code_end_line(n: node, l: number)
-code_end_line(n, l) :- end_line(n, l), text(n, t), !match("(?s).*;", t).
-code_end_line(n, l) :- text(n, t), match("(?s).*;", t), last_code_child(n, c), end_line(c, l).
+code_end_line(n, l) :- node_end_line_number(n, l), text(n, t), !match("(?s).*;", t).
+code_end_line(n, l) :- text(n, t), match("(?s).*;", t), last_code_child(n, c), node_end_line_number(c, l).
 .decl last_code_child(n: node, c: node)
 last_code_child(n, c) :- child(n, c, i), !kind(c, "comment"), !code_child_after(n, i).
 .decl code_child_after(n: node, i: number)
@@ -107,7 +107,7 @@ code_child_after(n, i) :- child(n, _, i), child(n, d, j), j > i, !kind(d, "comme
 // one_liner(x): ESLint's isOneLiner. `foo();` is; `foo(\n  a);` is not; `;` (empty statement) always is.
 .decl one_liner(x: node)
 one_liner(x) :- kind(x, "empty_statement").
-one_liner(x) :- line(x, l), code_end_line(x, l).
+one_liner(x) :- node_line_number(x, l), code_end_line(x, l).
 // collapsed(b): ESLint's isCollapsedOneLiner: the body ends on the line of the token before it (the `)` of the
 // condition, `else` or `do`). `if (a) b();` and `if (a) { b(); }` are; `if (a)\n  b();` is not.
 .decl collapsed(b: node)
@@ -127,7 +127,7 @@ layout_at(b) :- braced(b).
 //    Safe: the last statement ends in `;`, nothing follows the block, or it ends with a block of its own.
 .decl unbrace_unsafe(b: node)
 unbrace_unsafe(b) :- braced(b), last_code_child(b, x), text(x, t), !match("(?s).*;", t), !closes_block(x), next_code(b, _),
-    ( end_line(x, l), after_line(b, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t) ).
+    ( node_end_line_number(x, l), after_line(b, l) ; asi_hazard(b) ; match("(?s).*(\\+\\+|--)", t) ).
 // 2. b holds a TypeScript enum or interface, which may not stand bare as a body. ESLint's curly does not count
 //    them as declarations, so it reports the braces (and its fix breaks the code).
 unbrace_unsafe(b) :- single_statement(b, x), kind(x, k), (k = "enum_declaration" ; k = "interface_declaration").
@@ -171,7 +171,7 @@ lead(s, x) :- kind(s, "expression_statement"), child(s, q, 0), kind(q, "sequence
 .decl for_head(f: node, k: symbol)
 for_head(f, k) :- kind(f, "for_in_statement"), field(f, "left", _), op(f, k), (k = "var" ; k = "let" ; k = "const").
 // keyword(d, t): `var` in `var a;`, and in `for (\n var k in o)` too, where the head starts after the loop.
-.decl keyword(d: node, t: span)
+.decl keyword(d: node, t: match)
 // The first word of the declaration (`var` the kind implies, so the tape keeps none), or of the for's head.
 keyword(d, t) :- var_decl(d, _), match("(?s)(?<t>[A-Za-z]+)\\b.*", d).
 keyword(f, t) :- for_head(f, _), field(f, "left", _), match("(?s)for\\s*(await\\s*)?\\(\\s*(?<t>var|let|const)\\b.*", f).

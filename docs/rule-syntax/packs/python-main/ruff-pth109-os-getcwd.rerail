@@ -10,7 +10,7 @@
 // PTH109(n, detail): findings from clauses `os-getcwd`, `os-getcwdb`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH109(at: loc, f: node, detail: symbol) "Use `Path.cwd()` from pathlib instead of {detail} is required."
+.violation PTH109(at: node, f: node, detail: symbol) "Use `Path.cwd()` from pathlib instead of {detail} is required."
     suppress noqa "PTH109"
 PTH109(F, n, "`os.getcwd()`; it returns a `Path`, so wrap it in `str()` or adjust the code where a string") :- kind(n, "call"),
     field(n, "function", c1), pth109_callee(c1, F).
@@ -25,7 +25,7 @@ pth109_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "o
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_callee(n: node, f: loc)
+.decl pth109_callee(n: node, f: node)
 pth109_callee(n, F) :- pth109_target(n), node(_, n, _, _, _), F = n.
 pth109_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth109_callee(c1, F).
 
@@ -35,7 +35,7 @@ pth109_ann_args(n) :- (kind(n, "argument_list") ; kind(n, "generator_expression"
 
 // ann_call(n): the JSON util `ann-call`, used where the JSON says `matches: "ann-call"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_ann_call(n: node, f: loc)
+.decl pth109_ann_call(n: node, f: node)
 pth109_ann_call(n, F) :- kind(n, "call"), child(n, c1, _), pth109_callee(c1, F),
     next_sibling(c1, s2), pth109_ann_args(s2).
 
@@ -45,7 +45,7 @@ pth109_arg_name(n) :- kind(n, "identifier"), !pth109_alt_1(n).
 
 // ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_ann_string(n: node, f: loc)
+.decl pth109_ann_string(n: node, f: node)
 pth109_ann_string(n, F) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pth109_alt_2(c3, F).
@@ -59,7 +59,7 @@ pth109_target_os_getcwdb(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // callee_os_getcwdb(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_callee_os_getcwdb(n: node, f: loc)
+.decl pth109_callee_os_getcwdb(n: node, f: node)
 pth109_callee_os_getcwdb(n, F) :- pth109_target_os_getcwdb(n), node(_, n, _, _, _), F = n.
 pth109_callee_os_getcwdb(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pth109_callee_os_getcwdb(c1, F).
@@ -70,7 +70,7 @@ pth109_ann_args_os_getcwdb(n) :- (kind(n, "argument_list") ; kind(n, "generator_
 
 // ann_call_os_getcwdb(n): the JSON util `ann-call`, used where the JSON says `matches: "ann-call"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_ann_call_os_getcwdb(n: node, f: loc)
+.decl pth109_ann_call_os_getcwdb(n: node, f: node)
 pth109_ann_call_os_getcwdb(n, F) :- kind(n, "call"), child(n, c1, _),
     pth109_callee_os_getcwdb(c1, F), next_sibling(c1, s2), pth109_ann_args_os_getcwdb(s2).
 
@@ -80,7 +80,7 @@ pth109_arg_name_os_getcwdb(n) :- kind(n, "identifier"), !pth109_alt_1(n).
 
 // ann_string_os_getcwdb(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_ann_string_os_getcwdb(n: node, f: loc)
+.decl pth109_ann_string_os_getcwdb(n: node, f: node)
 pth109_ann_string_os_getcwdb(n, F) :- kind(n, "string"),
     count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
     parsed(n, "annotation", r2), within(c3, r2), pth109_alt_8(c3, F).
@@ -144,7 +144,7 @@ pth109_alt_1(n) :- pth109_tok_precedes_2(n), child(p15, n, _), kind(p15, "keywor
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_alt_2(n: node, f: loc)
+.decl pth109_alt_2(n: node, f: node)
 pth109_alt_2(n, F) :- pth109_ann_call(n, F).
 pth109_alt_2(n, F) :- pth109_ann_string(n, F).
 
@@ -155,14 +155,14 @@ pth109_alt_3(n) :- kind(n, "string"), has(n, c1, "escape_sequence").
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_alt_5(n: node, f: loc)
+.decl pth109_alt_5(n: node, f: node)
 pth109_alt_5(n, F) :- pth109_ann_call(n, F), child(n, c1, _), pth109_callee(c1, F), pth109_alt_10(c1),
     count : { child(n, c10, _), pth109_ann_args(c10), within(c11, c10), pth109_arg_name(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.
 pth109_alt_5(n, F) :- pth109_ann_string(n, F).
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_alt_8(n: node, f: loc)
+.decl pth109_alt_8(n: node, f: node)
 pth109_alt_8(n, F) :- pth109_ann_call_os_getcwdb(n, F).
 pth109_alt_8(n, F) :- pth109_ann_string_os_getcwdb(n, F).
 
@@ -173,7 +173,7 @@ pth109_alt_10(n) :- has(n, c1, "identifier"), !pth109_tok_follows_4(c1), node(_,
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth109_alt_11(n: node, f: loc)
+.decl pth109_alt_11(n: node, f: node)
 pth109_alt_11(n, F) :- pth109_ann_call_os_getcwdb(n, F), child(n, c1, _), pth109_callee_os_getcwdb(c1, F),
     pth109_alt_10(c1),
     count : { child(n, c10, _), pth109_ann_args_os_getcwdb(c10), within(c11, c10), pth109_arg_name_os_getcwdb(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.

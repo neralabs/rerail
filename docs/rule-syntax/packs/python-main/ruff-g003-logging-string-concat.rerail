@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on M are added to every rule.
-.violation G003(at: loc, x: node) "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."
+.violation G003(at: node, x: node) "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."
     suppress noqa "G003"
 G003(X, n) :- kind(n, "call"), g003_alt_2(n, M), g003_msg(M, X).
 
@@ -66,7 +66,7 @@ g003_log_callee(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
 
 // msg(n): the JSON util `msg`, used where the JSON says `matches: "msg"`
 //   X: metavariable this relation binds for the calling rule
-.decl g003_msg(n: node, x: loc)
+.decl g003_msg(n: node, x: node)
 g003_msg(n, X) :- kind(n, "binary_operator"), g003_tok_has_4(n), node(_, n, _, _, _), X = n.
 g003_msg(n, X) :- kind(n, "parenthesized_expression"), child(n, c9, _), g003_msg(c9, X).
 
@@ -204,7 +204,7 @@ g003_set_1("logging.warning").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   M: metavariable this relation binds for the calling rule
-.decl g003_alt_2(n: node, m: loc)
+.decl g003_alt_2(n: node, m: node)
 g003_alt_2(n, M) :- field(n, "function", c1), g003_level_callee(c1), kind(n, "call"),
     g003_arg_msg_1(n, a2), M = a2.
 g003_alt_2(n, M) :- field(n, "function", c3), g003_log_callee(c3), kind(n, "call"),

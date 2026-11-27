@@ -35,7 +35,7 @@
 // Used by the js-1 rules accessor-pairs, grouped-accessor-pairs, class-methods-use-this, func-name-matching,
 // func-style, default-param-last, max-params, max-statements, max-nested-callbacks, max-classes-per-file,
 // no-empty-function, no-empty-static-block, no-dupe-class-members, no-extra-bind and arrow-body-style.
-// Builds on tsx/eslint-a-common (function_node, deparen, key_static, static_prop, call_arg, token_text, this_owner,
+// Builds on tsx/eslint-a-common (function_node, deparen, key_static, static_prop, call_arg, node_tokens_text, this_owner,
 // upper_first, limit) and tsx/modules (fn_region, not_stmt).
 #include "tsx/eslint-a-common.rerail"
 
@@ -147,7 +147,7 @@ accessor(t, "", m, k, w) :- (kind(t, "object_type") ; kind(t, "interface_body"))
 acc(m, k, w) :- (op(m, "get"), w = "get" ; op(m, "set"), w = "set"), key_of(m, k).
 .decl key_of(m: node, k: symbol)
 key_of(m, cat("=", x)) :- static_key(m, x).
-key_of(m, cat("~", t)) :- !static_key(m, _), estree_key(m, e), token_text(e, t).
+key_of(m, cat("~", t)) :- !static_key(m, _), estree_key(m, e), node_tokens_text(e, t).
 // accessor_name(m, s): how ESLint names accessor m (getFunctionNameWithKind). A type's method signature has
 // no function value, so ESLint names it from the signature: "setter 'a'".
 .decl accessor_name(m: node, s: symbol)
@@ -155,7 +155,7 @@ accessor_name(m, s) :- kind(m, "method_definition"), acc(m, _, _), fn_words(m, s
 accessor_name(m, cat(cat(w, "ter '"), cat(x, "'"))) :- kind(m, "method_signature"), acc(m, _, w), static_key(m, x).
 accessor_name(m, cat(w, "ter 'null'")) :- kind(m, "method_signature"), acc(m, _, w), !static_key(m, _).
 // accessor_at(m, at): where ESLint reports it: the function head; a signature's own start.
-.decl accessor_at(m: node, at: loc)
+.decl accessor_at(m: node, at: place)
 accessor_at(m, at) :- kind(m, "method_definition"), acc(m, _, _), fn_head(m, at).
 accessor_at(m, m) :- kind(m, "method_signature"), acc(m, _, _).
 // list_index(l, m, i): m is the i-th member of l, from 0, as ESTree's `properties` or `body` counts: comments
@@ -220,7 +220,7 @@ fn_id(f, x) :- function_node(f), !kind(f, "method_definition"), field(f, "name",
 // ---- where ESLint reports a function ------------------------------------------------------------------------------
 // fn_head(f, at): getFunctionHeadLoc's start. A held function starts at its holder (`static async m`), an arrow
 // at its `=>`, any other function at itself.
-.decl fn_head(f: node, at: loc)
+.decl fn_head(f: node, at: place)
 fn_head(f, h) :- fn_holder(f, h).
 // The tape keeps no `=>` (the arrow's kind implies it): it is the last `=>` in the arrow's source before its body.
 fn_head(f, m) :- kind(f, "arrow_function"), !fn_holder(f, _), arrow_op(f, m).
@@ -252,7 +252,7 @@ callback_kind(f) :- (kind(f, "function_expression") ; kind(f, "arrow_function") 
 
 
 // The keys compared by their tokens: those with no static name.
-token_text_ask(e) :- estree_key(h, e), !static_key(h, _).
+node_tokens_text_ask(e) :- estree_key(h, e), !static_key(h, _).
 
 // ---- calls -------------------------------------------------------------------------------------------------------
 // method_call(c, o, x): call c calls member x of the identifier o, as ESLint's isSpecificMemberAccess reads it:

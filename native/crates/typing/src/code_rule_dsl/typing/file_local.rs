@@ -562,7 +562,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         // Another column of nodes: by its type, or by its name where the type is a number (`tape`'s parent `par`, an
         // ancestor `a`, `ast_match`'s pattern root `p`, `host_node`'s host `h`); a walk up `tape(p, par)` reaches
         // parents no export holds.
-        let others_nodes = types.iter().enumerate().any(|(i, t)| i != k && (matches!(*t, "node" | "loc" | "span") || matches!(columns[i], "par" | "a" | "p" | "h")));
+        let others_nodes = types.iter().enumerate().any(|(i, t)| i != k && (matches!(*t, "node" | "place") || matches!(columns[i], "par" | "a" | "p" | "h")));
         if !others_nodes && columns.len() == types.len() {
             key.insert(rel.clone(), k);
         }
@@ -588,7 +588,7 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
     }
     let root = |rel: &str| view_of.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
     // A relation with no node column reaches no node.
-    let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "loc" | "span")));
+    let reaches_nodes = |rel: &str| types_of(rel).is_none_or(|ts| ts.iter().any(|t| matches!(*t, "node" | "place")));
     let is_base = |rel: &str| base.iter().any(|b| b == rel);
     let about = crate::code_rule_dsl::logic::program_image::About::of(v);
     let natives = &about.natives;

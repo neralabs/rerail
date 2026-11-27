@@ -10,7 +10,7 @@
 // INT002(n): a finding at node n, from clause `format-in-gettext-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation INT002(at: loc, arg: node) "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+.violation INT002(at: node, arg: node) "Translate the template, then format it: `_(\"Hello, {{}}!\").format(name)`, not `_(\"Hello, {{}}!\".format(name))`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress noqa "INT002"
 INT002(ARG, n) :- int002_target(n), node(_, n, _, _, _), ARG = n.
 INT002(ARG, n) :- int002_in_annotation(n, ARG).
@@ -47,7 +47,7 @@ int002_target(n) :- kind(n, "call"), int002_first_gettext_arg(n), child(n, c1, _
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   ARG: metavariable this relation binds for the calling rule
-.decl int002_in_annotation(n: node, arg: loc)
+.decl int002_in_annotation(n: node, arg: node)
 int002_in_annotation(n, ARG) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), int002_alt_3(c2, ARG).
 
@@ -80,6 +80,6 @@ int002_alt_2(n) :- node(_, n, _, _, _), glob("[(,]", n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   ARG: metavariable this relation binds for the calling rule
-.decl int002_alt_3(n: node, arg: loc)
+.decl int002_alt_3(n: node, arg: node)
 int002_alt_3(n, ARG) :- int002_target(n), ARG = n.
 int002_alt_3(n, ARG) :- int002_in_annotation(n, ARG).

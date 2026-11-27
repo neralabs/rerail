@@ -190,9 +190,9 @@ ss_runtime_ref(d, n) :- node(d, n, "identifier", _, _), ss_doc(d, _), text(n, x)
 ss_runtime_ref(d, n) :- node(d, n, "attribute", _, _), ss_doc(d, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_ref_name(x).
 ss_runtime_ref(d, n) :- ss_string(d, n, _, _, v), ss_ref_name(v).
 ss_flag(d) :- ss_assign_to(a, "ENFORCE_POST_OP_RUNTIME_ALLOWLIST"), ss_top_assign(a), node(d, a, _, _, _), ss_doc(d, _).
-ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, x), ss_verify_name(x), line(c, l).
-ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_verify_name(x), line(c, l).
-ss_return(d, s, e, l) :- node(d, r, "return_statement", s, e), ss_doc(d, _), line(r, l).
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "identifier", _, _), text(f, x), ss_verify_name(x), node_line_number(c, l).
+ss_verification(d, s, e, l) :- node(d, c, "call", s, e), ss_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, x), ss_verify_name(x), node_line_number(c, l).
+ss_return(d, s, e, l) :- node(d, r, "return_statement", s, e), ss_doc(d, _), node_line_number(r, l).
 ss_override_rest(e, e) :- option_json("fateOverrides", _, e).
 ss_override_rest(e, t) :- ss_override_rest(e, q), @strlen(q) > 0, @substr(q, 0, 1) != "=", t = @substr(q, 1, 1000000000).
 ss_override(e, s, f) :- ss_override_rest(e, q), @substr(q, 0, 1) = "=", s = @substr(e, 0, @sub(@strlen(e), @strlen(q))), f = @substr(q, 1, 1000000000).

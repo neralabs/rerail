@@ -26,7 +26,7 @@
 //!   (`Lowerer::negated_conjunction`); `!(a ; b)` is one per alternative;
 //! - other disjunctions are one rule per alternative.
 //!
-//! - `.violation V(at: loc, …)` declares V as an output, and each row of V is a finding
+//! - `.violation V(at: place, …)` declares V as an output, and each row of V is a finding
 //!   `violation(policy, V, code, path, line)`: at a node, its document's path and its line; at a span, its `docof`
 //!   document and its line; a head `V(@place(path, line), …)` writes V's place relation, and a `@place(path, line)`
 //!   value elsewhere (the loc value `-2 - (path << 32 | line)`) is found at that path and line. The code is V,
@@ -133,7 +133,9 @@ fn ty(t: &str) -> String {
         // A tape, a digest and a blob are stored as symbols (their content keys, decision 0103 §3); `tape_type` checks
         // them before lowering.
         "symbol" | "tape" | "digest" | "blob" => "sym".to_owned(),
-        "span" | "loc" => "node".to_owned(),
+        // The place types (decision 0724 §3) are ids alike to the engine; the type check (`place_type`) keeps them
+        // apart in the rules. `place` is core.rerail's own: a read of the engine's that takes any of them.
+        "line" | "match" | "token" | "place" => "node".to_owned(),
         // A float column holds floats' keys (`float_key`).
         "float" => "int".to_owned(),
         other => other.to_owned(),
@@ -787,13 +789,13 @@ pub fn reads_tool_calls(settings: &[(String, String)]) -> bool {
     settings.iter().any(|(k, t)| k == "scope" && t.trim() == "tool_calls")
 }
 
-/// Whether a `.violation`'s `at` is a node; a span, a loc and a tool call's id (a symbol, in a `.scope tool_calls`
+/// Whether a `.violation`'s `at` is a node; a line, a match, a token and a tool call's id (a symbol, in a `.scope tool_calls`
 /// policy: `findings::tool_call_findings`) are not, and anything else is no `at`.
 fn at_is_node(name: &str, at: &str) -> Result<bool, Error> {
     match at {
         "node" => Ok(true),
-        "span" | "loc" | "symbol" => Ok(false),
-        _ => Err(Error::Syntax(format!(".violation {name}: `at` is a node, a span, a loc or a tool call (symbol), not a {at}"))),
+        "line" | "match" | "token" | "place" | "symbol" => Ok(false),
+        _ => Err(Error::Syntax(format!(".violation {name}: `at` is a node, a line, a match, a token, a place or a tool call (symbol), not a {at}"))),
     }
 }
 
@@ -1004,6 +1006,7 @@ pub fn lower_module_seeded_written(statements: Statements, seeds: &Seeds) -> Res
         })
         .collect();
     super::tape_type::check_in(&statements, &seeds.given)?;
+    super::place_type::check_in(&statements, &seeds.given)?;
     drop(typing);
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
     let declares_docof = statements.iter().any(|s| s.what() == Some(S::Decl("docof")));
@@ -2122,7 +2125,8 @@ impl Seeds {
 /// `sets`, `widen_cyclic_contexts`) make of it `rr::link_seeded_version` makes on the version.
 fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
-    let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
+    let aliases = self::core::ALIASES.iter().map(|(r, _, _)| *r).filter(|r| !l.derived.contains(*r));
+    let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).chain(aliases).map(str::to_owned).collect();
     drop(analyses);
     let findings = PendingFindings { violations: std::mem::take(&mut l.violations), next: l.next };
     Ok(Lowered { sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings, three: l.three, modal: l.modal })
@@ -2252,6 +2256,8 @@ fn spans(p: &SpanProgram<'_>, patterns: bool) -> Result<(SpanPatterns, SpanColum
         body.iter().filter(|b| !b.neg).find_map(|b| match (b.rel, b.args.as_slice()) {
             ("source", [_, Term::Var(y)]) if *y == x => Some([SpanIn::Source].into()),
             ("src_line", [_, _, Term::Var(y)]) if *y == x => Some([SpanIn::Line].into()),
+            // core.rerail's `document_line(d, l)` (decision 0724), lowered to `src_line` after the spans are read.
+            ("document_line", [_, Term::Var(y)]) if *y == x => Some([SpanIn::Line].into()),
             ("kind", [Term::Var(y), Term::Str(k)]) if *y == x && *k == "comment" => Some([SpanIn::Comment].into()),
             ("kind", [Term::Var(y), Term::Str(k)]) if *y == x => Some([SpanIn::Kind(k.to_string())].into()),
             ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if *y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
@@ -3308,7 +3314,7 @@ impl Lowerer {
             }
         }
         if name == "docof" {
-            self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "loc");
+            self.docof_of_locs = cols.first().is_some_and(|(_, t)| t == "place");
         }
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
@@ -4560,7 +4566,7 @@ impl Lowerer {
         // unread), and the head declared (if it is) with the native's columns. Over a node or span (`piece(t: loc)`)
         // the matches are spans placed in the file, which `text_matches` makes.
         let types = |rel: &str| self.prog.columns_of(rel).map(|cols| cols.into_iter().map(|(_, t)| t).collect::<Vec<String>>());
-        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(t.as_str(), "node" | "loc"))) {
+        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(t.as_str(), "node" | "place"))) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
@@ -4791,7 +4797,7 @@ impl Lowerer {
         })
     }
 
-    /// Whether a sibling binds `v` to a `source` or `src_line` span or a comment, the spans `rx_span` runs over.
+    /// Whether a sibling binds `v` to a `source`, `src_line` or `document_line` span or a comment, the spans `rx_span` runs over.
     fn span_container(&self, v: &str) -> Option<SpanIn> {
         self.siblings.iter().find_map(|l| match self.lit(l) {
             L::Atom { rel, args, neg: false } => {
@@ -4799,6 +4805,8 @@ impl Lowerer {
                 match (rel.as_str(), args.as_slice()) {
                     ("source", [_, x]) if is(x) => Some(SpanIn::Source),
                     ("src_line", [_, _, x]) if is(x) => Some(SpanIn::Line),
+                    // core.rerail's `document_line(d, l)` (decision 0724), lowered to `src_line` after this.
+                    ("document_line", [_, x]) if is(x) => Some(SpanIn::Line),
                     ("kind", [x, k]) if is(x) && matches!(self.tv(k), T::Str(k) if k == "comment") => Some(SpanIn::Comment),
                     _ => None,
                 }

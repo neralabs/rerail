@@ -10,7 +10,7 @@
 // T201(n): a finding at node n, from clause `print-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation T201(at: loc, f: node) "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
+.violation T201(at: place, f: node) "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
     suppress noqa "T201"
 T201(F, n) :- kind(n, "call"),
     ( field(n, "function", c1), t201_callee(c1, F)
@@ -25,7 +25,7 @@ T201(F, n) :- t201_call_in_annotation(n, F), t201_python3_file(n).
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl t201_callee(n: node, f: loc)
+.decl t201_callee(n: node, f: node)
 t201_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "print"),
     sym_of(n, "builtins.print"), node(_, n, _, _, _), F = n.
 t201_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), t201_callee(c1, F).
@@ -54,7 +54,7 @@ t201_default_output(n) :- node(_, n, _, _, _),
 
 // call_in_annotation(n): the JSON util `call-in-annotation`, used where the JSON says `matches: "call-in-annotation"`
 //   F: metavariable this relation binds for the calling rule
-.decl t201_call_in_annotation(n: node, f: loc)
+.decl t201_call_in_annotation(n: node, f: node)
 t201_call_in_annotation(n, F) :- t201_demand_call_in_annotation(n),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), t201_alt_2(c2, F).
@@ -132,7 +132,7 @@ t201_alt_1(n) :- (kind(n, "parameters") ; kind(n, "lambda_parameters")), child(n
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl t201_alt_2(n: node, f: loc)
+.decl t201_alt_2(n: node, f: node)
 t201_alt_2(n, F) :- t201_demand_alt_2(n), kind(n, "call"), child(n, c1, _), t201_callee(c1, F),
     count : { child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), match("file\\s*=.*", c3), count : { child(c3, c4, _), t201_default_target(c4) } = 0 } = 0.
 t201_alt_2(n, F) :- t201_demand_alt_2(n), t201_call_in_annotation(n, F).

@@ -51,11 +51,11 @@ pkg_bin_file(d) :- doc(d, f, _), package_for(f, dir), pkg_bin_target(dir, b),
 src_shebang(d, t) :- node(d, h, "hash_bang_line", _, e), node(d, _, "program", _, pe), pe > e, text(h, t).
 .decl src_bom(d: number)
 // The grammar reads a `#!` line only at the very start of the text, so only a byte order mark can stand before it.
-src_bom(d) :- kind(h, "hash_bang_line"), col(h, c), c > 0, docof(h, d).
+src_bom(d) :- kind(h, "hash_bang_line"), node_start_column(h, c), c > 0, docof(h, d).
 .decl src_env_shebang(d: number)
 src_env_shebang(d) :- src_shebang(d, t), prefix("#!/usr/bin/env", t).
 
-.decl program_start(d: number, at: loc)
+.decl program_start(d: number, at: node)
 // Its first token starts its first child that is code (not a comment or the `#!` line).
 program_start(d, c) :- kind(p, "program"), docof(p, d), child(p, c, i), program_code(c),
     i = min j : { child(p, x, j), program_code(x) }.

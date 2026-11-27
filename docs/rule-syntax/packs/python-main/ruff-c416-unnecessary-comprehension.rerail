@@ -62,21 +62,21 @@ c416_any_xname(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c416_
 
 // name_elt(n): the JSON util `name-elt`, used where the JSON says `matches: "name-elt"`
 //   E: metavariable this relation binds for the calling rule
-.decl c416_name_elt(n: node, e: loc)
+.decl c416_name_elt(n: node, e: node)
 c416_name_elt(n, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n.
 c416_name_elt(n, E) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     c416_name_elt(c1, E).
 
 // name_key(n): the JSON util `name-key`, used where the JSON says `matches: "name-key"`
 //   EK: metavariable this relation binds for the calling rule
-.decl c416_name_key(n: node, ek: loc)
+.decl c416_name_key(n: node, ek: node)
 c416_name_key(n, EK) :- kind(n, "identifier"), node(_, n, _, _, _), EK = n.
 c416_name_key(n, EK) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     c416_name_key(c1, EK).
 
 // name_value(n): the JSON util `name-value`, used where the JSON says `matches: "name-value"`
 //   EV: metavariable this relation binds for the calling rule
-.decl c416_name_value(n: node, ev: loc)
+.decl c416_name_value(n: node, ev: node)
 c416_name_value(n, EV) :- kind(n, "identifier"), node(_, n, _, _, _), EV = n.
 c416_name_value(n, EV) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     c416_name_value(c1, EV).
@@ -89,28 +89,28 @@ c416_any_pname(n) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, 
 
 // name_tgt(n): the JSON util `name-tgt`, used where the JSON says `matches: "name-tgt"`
 //   T: metavariable this relation binds for the calling rule
-.decl c416_name_tgt(n: node, t: loc)
+.decl c416_name_tgt(n: node, t: node)
 c416_name_tgt(n, T) :- kind(n, "identifier"), node(_, n, _, _, _), T = n.
 c416_name_tgt(n, T) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
     c416_name_tgt(c9, T).
 
 // tgt_key(n): the JSON util `tgt-key`, used where the JSON says `matches: "tgt-key"`
 //   TK: metavariable this relation binds for the calling rule
-.decl c416_tgt_key(n: node, tk: loc)
+.decl c416_tgt_key(n: node, tk: node)
 c416_tgt_key(n, TK) :- kind(n, "identifier"), node(_, n, _, _, _), TK = n.
 c416_tgt_key(n, TK) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
     c416_tgt_key(c9, TK).
 
 // tgt_value(n): the JSON util `tgt-value`, used where the JSON says `matches: "tgt-value"`
 //   TV: metavariable this relation binds for the calling rule
-.decl c416_tgt_value(n: node, tv: loc)
+.decl c416_tgt_value(n: node, tv: node)
 c416_tgt_value(n, TV) :- kind(n, "identifier"), node(_, n, _, _, _), TV = n.
 c416_tgt_value(n, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
     c416_tgt_value(c9, TV).
 
 // target_pair(n): the JSON util `target-pair`, used where the JSON says `matches: "target-pair"`
 //   TK, TV: metavariables this relation binds for the calling rule
-.decl c416_target_pair(n: node, tk: loc, tv: loc)
+.decl c416_target_pair(n: node, tk: node, tv: node)
 c416_target_pair(n, TK, TV) :- (kind(n, "pattern_list") ; kind(n, "tuple_pattern") ; kind(n, "list_pattern")),
     k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
     count : { child(n, c3, _), !c416_alt_6(c3) } = 0, child(n, c4, _), c416_tgt_key(c4, TK),
@@ -120,7 +120,7 @@ c416_target_pair(n, TK, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_7(n), chi
 
 // target_tuple_pair(n): the JSON util `target-tuple-pair`, used where the JSON says `matches: "target-tuple-pair"`
 //   TK, TV: metavariables this relation binds for the calling rule
-.decl c416_target_tuple_pair(n: node, tk: loc, tv: loc)
+.decl c416_target_tuple_pair(n: node, tk: node, tv: node)
 c416_target_tuple_pair(n, TK, TV) :- (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
     k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
     count : { child(n, c3, _), !c416_alt_6(c3) } = 0, child(n, c4, _), c416_tgt_key(c4, TK),
@@ -130,7 +130,7 @@ c416_target_tuple_pair(n, TK, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_7(n
 
 // tuple_pair(n): the JSON util `tuple-pair`, used where the JSON says `matches: "tuple-pair"`
 //   EK, EV: metavariables this relation binds for the calling rule
-.decl c416_tuple_pair(n: node, ek: loc, ev: loc)
+.decl c416_tuple_pair(n: node, ek: node, ev: node)
 c416_tuple_pair(n, EK, EV) :- kind(n, "tuple"),
     k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
     count : { child(n, c3, _), !c416_alt_10(c3) } = 0, child(n, c4, _), c416_name_key(c4, EK),
@@ -140,7 +140,7 @@ c416_tuple_pair(n, EK, EV) :- kind(n, "parenthesized_expression"), child(n, c6, 
 
 // single_for(n): the JSON util `single-for`, used where the JSON says `matches: "single-for"`
 //   IT: metavariable this relation binds for the calling rule
-.decl c416_single_for(n: node, it: loc)
+.decl c416_single_for(n: node, it: node)
 c416_single_for(n, IT) :- k2 = count : { child(n, c1, _), kind(c1, "for_in_clause") },
     k2 >= 1, k2 <= 1, count : { child(n, c3, _), c416_alt_11(c3) } = 0, child(n, c4, _),
     kind(c4, "for_in_clause"), field(c4, "right", c5), node(_, c5, _, _, _), IT = c5.
@@ -155,7 +155,7 @@ c416_items_call(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
 // kind_name(n): the JSON util `kind-name`, used where the JSON says `matches: "kind-name"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   KN: metavariable this relation binds for the calling rule
-.decl c416_kind_name(n: node, kn: symbol, w: loc)
+.decl c416_kind_name(n: node, kn: symbol, w: node)
 c416_kind_name(n, KN, W) :- c416_demand_kind_name(n, W),
     (kind(n, "identifier") ; kind(n, "dotted_name")), node(_, n, _, _, _), BN = n, text(BN, KN),
     text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
@@ -185,7 +185,7 @@ c416_not_first_iter(n) :- kind(n, "for_in_clause"), precedes(s1, n),
 // comp_binds(n): the JSON util `comp-binds`, used where the JSON says `matches: "comp-binds"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   KN: metavariable this relation binds for the calling rule
-.decl c416_comp_binds(n: node, kn: symbol, w: loc)
+.decl c416_comp_binds(n: node, kn: symbol, w: node)
 c416_comp_binds(n, KN, W) :- c416_demand_comp_binds(n, W), c416_comp(n), child(n, c1, _),
     kind(c1, "for_in_clause"), within(c2, c1),
     field(c1, "left", f3), (f3 = c2 ; within(c2, f3)), c416_kind_name(c2, KN, W),
@@ -194,7 +194,7 @@ c416_comp_binds(n, KN, W) :- c416_demand_comp_binds(n, W), c416_comp(n), child(n
 // shadowed(n): the JSON util `shadowed`, used where the JSON says `matches: "shadowed"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   KN: metavariable this relation binds for the calling rule
-.decl c416_shadowed(n: node, kn: symbol, w: loc)
+.decl c416_shadowed(n: node, kn: symbol, w: node)
 c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), c416_fn_body(n), inside(n, p1, "module"),
     within(c2, p1), c416_kind_name(c2, KN, W),
     count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
@@ -263,7 +263,7 @@ c416_shadowed(n, KN, W) :- c416_demand_shadowed(n, W), inside(n, p89, "type_alia
 // list_comprehension_in_annotation(n): the JSON util `list-comprehension-in-annotation`, used where the JSON says `matches: "list-comprehension-in-annotation"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_list_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_list_comprehension_in_annotation(n: node, c416_comp: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_list_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), c416_alt_17(c2, COMP, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
@@ -272,7 +272,7 @@ c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand
 // set_comprehension_in_annotation(n): the JSON util `set-comprehension-in-annotation`, used where the JSON says `matches: "set-comprehension-in-annotation"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_set_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_set_comprehension_in_annotation(n: node, c416_comp: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_set_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), c416_alt_19(c2, COMP, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
@@ -281,7 +281,7 @@ c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV, W) :- c416_demand_
 // dict_comprehension_in_annotation(n): the JSON util `dict-comprehension-in-annotation`, used where the JSON says `matches: "dict-comprehension-in-annotation"`
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, EK, EV, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_dict_comprehension_in_annotation(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_dict_comprehension_in_annotation(n: node, c416_comp: node, ek: node, ev: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c416_demand_dict_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1), c416_alt_20(c2, COMP, EK, EV, IT, KN, TK, TV, W), !c416_shadowed(n, KN, W),
@@ -291,7 +291,7 @@ c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c41
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
-.violation C416(at: loc, c416_comp: node, it: loc) "Replace this comprehension with `list({it})`, which copies the same items; keep it inside `__len__`, where `list()` can recurse."
+.violation C416(at: node, c416_comp: node, it: node) "Replace this comprehension with `list({it})`, which copies the same items; keep it inside `__len__`, where `list()` can recurse."
     suppress noqa "C416"
 C416(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_17(n, COMP, IT, KN, _, _, W), text(W, t1),
     KN = @replace_all(t1, "(?s)^.*$", "list").
@@ -300,7 +300,7 @@ C416(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_17(n, COMP, IT, KN, _,
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
-.violation C416_set_comprehension(at: loc, c416_comp: node, it: loc) code "C416" "Replace this comprehension with `set({it})`, which copies the same items; keep it inside `__len__`, where `set()` can recurse."
+.violation C416_set_comprehension(at: node, c416_comp: node, it: node) code "C416" "Replace this comprehension with `set({it})`, which copies the same items; keep it inside `__len__`, where `set()` can recurse."
     suppress noqa "C416"
 C416_set_comprehension(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_19(n, COMP, IT, KN, _, _, W),
     text(W, t1), KN = @replace_all(t1, "(?s)^.*$", "set").
@@ -309,7 +309,7 @@ C416_set_comprehension(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_19(n
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
-.violation C416_dict_comprehension(at: loc, c416_comp: node, it: loc) code "C416" "Replace this comprehension with `dict({it})`; if `{it}` is a mapping whose keys are pairs, use `dict({it}.keys())`; keep it inside `__len__`, where `dict()` can recurse."
+.violation C416_dict_comprehension(at: node, c416_comp: node, it: node) code "C416" "Replace this comprehension with `dict({it})`; if `{it}` is a mapping whose keys are pairs, use `dict({it}.keys())`; keep it inside `__len__`, where `dict()` can recurse."
     suppress noqa "C416"
 C416_dict_comprehension(COMP, n, IT) :- node(_, n, _, _, _), W = n,
     c416_alt_20(n, COMP, _, _, IT, KN, _, _, W), text(W, t1),
@@ -527,40 +527,40 @@ c416_tok_has_8(n) :- node_text(n, g5), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:items)(?:\\W.*)?)$", g5).
 
 // demand_alt_17: the rows of alt_17 its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_alt_17(n: node, w: loc)
+.decl c416_demand_alt_17(n: node, w: node)
 c416_demand_alt_17(c2, W) :- c416_demand_list_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1).
 c416_demand_alt_17(n, W) :- node(_, n, _, _, _), W = n, text(W, t1).
 
 // demand_list_comprehension_in_annotation: the rows of list_comprehension_in_annotation its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_list_comprehension_in_annotation(n: node, w: loc)
+.decl c416_demand_list_comprehension_in_annotation(n: node, w: node)
 c416_demand_list_comprehension_in_annotation(n, W) :- c416_demand_alt_17(n, W).
 
 // demand_alt_19: the rows of alt_19 its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_alt_19(n: node, w: loc)
+.decl c416_demand_alt_19(n: node, w: node)
 c416_demand_alt_19(c2, W) :- c416_demand_set_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1).
 c416_demand_alt_19(n, W) :- node(_, n, _, _, _), W = n, text(W, t1).
 
 // demand_set_comprehension_in_annotation: the rows of set_comprehension_in_annotation its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_set_comprehension_in_annotation(n: node, w: loc)
+.decl c416_demand_set_comprehension_in_annotation(n: node, w: node)
 c416_demand_set_comprehension_in_annotation(n, W) :- c416_demand_alt_19(n, W).
 
 // demand_alt_20: the rows of alt_20 its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_alt_20(n: node, w: loc)
+.decl c416_demand_alt_20(n: node, w: node)
 c416_demand_alt_20(c2, W) :- c416_demand_dict_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1).
 c416_demand_alt_20(n, W) :- node(_, n, _, _, _), W = n, text(W, t1).
 
 // demand_dict_comprehension_in_annotation: the rows of dict_comprehension_in_annotation its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_dict_comprehension_in_annotation(n: node, w: loc)
+.decl c416_demand_dict_comprehension_in_annotation(n: node, w: node)
 c416_demand_dict_comprehension_in_annotation(n, W) :- c416_demand_alt_20(n, W).
 
 // demand_shadowed: the rows of shadowed its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_shadowed(n: node, w: loc)
+.decl c416_demand_shadowed(n: node, w: node)
 c416_demand_shadowed(n, W) :- c416_demand_list_comprehension_in_annotation(n, W),
     (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
     within(c2, r1).
@@ -586,24 +586,24 @@ c416_demand_shadowed(n, W) :- c416_demand_alt_20(n, W), kind(n, "dictionary_comp
     text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), node(_, n, _, _, _), COMP = n, @doc(EK) = @doc(TK), @doc(EV) = @doc(TV).
 
 // demand_alt_13: the rows of alt_13 its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_alt_13(n: node, f: loc, w: loc)
+.decl c416_demand_alt_13(n: node, f: node, w: node)
 c416_demand_alt_13(n, F, W) :- c416_demand_shadowed(n, W), within(n, p25),
     field(p25, "body", f26), (f26 = n ; within(n, f26)),
     (kind(p25, "function_definition") ; kind(p25, "lambda")), node(_, p25, _, _, _), F = p25.
 
 // demand_alt_14: the rows of alt_14 its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_alt_14(n: node, f: loc, w: loc)
+.decl c416_demand_alt_14(n: node, f: node, w: node)
 c416_demand_alt_14(n, F, W) :- c416_demand_shadowed(n, W), inside(n, p49, "class_definition"),
     field(p49, "body", f50), (f50 = n ; within(n, f50)), node(_, p49, _, _, _), F = p49.
 
 // demand_comp_binds: the rows of comp_binds its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_comp_binds(n: node, w: loc)
+.decl c416_demand_comp_binds(n: node, w: node)
 c416_demand_comp_binds(p77, W) :- c416_demand_shadowed(n, W), child(p77, n, _).
 c416_demand_comp_binds(p79, W) :- c416_demand_shadowed(n, W), within(n, p78),
     c416_not_first_iter(p78), child(p79, p78, _).
 
 // demand_kind_name: the rows of kind_name its callers ask for (the metavariable columns they pass in)
-.decl c416_demand_kind_name(n: node, w: loc)
+.decl c416_demand_kind_name(n: node, w: node)
 c416_demand_kind_name(c2, W) :- c416_demand_comp_binds(n, W), c416_comp(n), child(n, c1, _),
     kind(c1, "for_in_clause"), within(c2, c1), field(c1, "left", f3),
     (f3 = c2 ; within(c2, f3)).
@@ -724,7 +724,7 @@ c416_alt_11(n) :- kind(n, "for_in_clause"), match("async\\b.*", n).
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   F, W: metavariables of the calling rule, passed in (bound by the caller)
 //   KN: metavariable this relation binds for the calling rule
-.decl c416_alt_13(n: node, f: loc, kn: symbol, w: loc)
+.decl c416_alt_13(n: node, f: node, kn: symbol, w: node)
 c416_alt_13(n, F, KN, W) :- c416_demand_alt_13(n, F, W), precedes(s1, n), within(c2, s1),
     c416_kind_name(c2, KN, W),
     count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
@@ -744,7 +744,7 @@ c416_alt_13(n, F, KN, W) :- c416_demand_alt_13(n, F, W), within(n, p9), precedes
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
 //   F, W: metavariables of the calling rule, passed in (bound by the caller)
 //   KN: metavariable this relation binds for the calling rule
-.decl c416_alt_14(n: node, f: loc, kn: symbol, w: loc)
+.decl c416_alt_14(n: node, f: node, kn: symbol, w: node)
 c416_alt_14(n, F, KN, W) :- c416_demand_alt_14(n, F, W), precedes(s1, n), within(c2, s1),
     c416_kind_name(c2, KN, W),
     count : { bind_name(c2, b3), (main_form(b3, "except") ; main_form(b3, "annotation")) } = 0,
@@ -763,7 +763,7 @@ c416_alt_14(n, F, KN, W) :- c416_demand_alt_14(n, F, W), within(n, p9), precedes
 // alt_17(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_alt_17(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_alt_17(n: node, c416_comp: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 // KN, TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_17(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_17(n, W),
     kind(n, "list_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_1_6), c416_name_elt(c1_1_6, E), child(n, c2_1_6, _), kind(c2_1_6, "for_in_clause"), field(c2_1_6, "left", c3_1_6), c416_name_tgt(c3_1_6, T), text(E, t4_1_6), text(T, t4_1_6), @doc(E) = @doc(T) ; child(n, c6_2_6, _), kind(c6_2_6, "for_in_clause"), field(c6_2_6, "right", c7_2_6), c416_items_call(c7_2_6), field(c6_2_6, "left", c8_2_6), c416_target_pair(c8_2_6, TK, TV), field(n, "body", c9_2_6), c416_tuple_pair(c9_2_6, EK, EV), text(EK, t10_2_6), text(TK, t10_2_6), text(EV, t12_2_6), text(TV, t12_2_6), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,
@@ -775,7 +775,7 @@ c416_alt_17(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_17(n, W),
 // alt_19(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_alt_19(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_alt_19(n: node, c416_comp: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 // KN, TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_19(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_19(n, W),
     kind(n, "set_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_3_7), c416_name_elt(c1_3_7, E), child(n, c2_3_7, _), kind(c2_3_7, "for_in_clause"), field(c2_3_7, "left", c3_3_7), c416_name_tgt(c3_3_7, T), text(E, t4_3_7), text(T, t4_3_7), @doc(E) = @doc(T) ; child(n, c6_4_7, _), kind(c6_4_7, "for_in_clause"), field(c6_4_7, "right", c7_4_7), c416_items_call(c7_4_7), field(c6_4_7, "left", c8_4_7), c416_target_pair(c8_4_7, TK, TV), field(n, "body", c9_4_7), c416_tuple_pair(c9_4_7, EK, EV), text(EK, t10_4_7), text(TK, t10_4_7), text(EV, t12_4_7), text(TV, t12_4_7), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,
@@ -787,7 +787,7 @@ c416_alt_19(n, COMP, IT, KN, TK, TV, W) :- c416_demand_alt_19(n, W),
 // alt_20(n): the JSON `any`: n matches if any one of these rules does
 //   W: metavariable of the calling rule, passed in (bound by the caller)
 //   COMP, EK, EV, IT, KN, TK, TV: metavariables this relation binds for the calling rule
-.decl c416_alt_20(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc, w: loc)
+.decl c416_alt_20(n: node, c416_comp: node, ek: node, ev: node, it: node, kn: symbol, tk: node, tv: node, w: node)
 // KN: not bound by this rule, so empty (unset) here, as in ast-grep.
 c416_alt_20(n, COMP, EK, EV, IT, KN, TK, TV, W) :- c416_demand_alt_20(n, W),
     kind(n, "dictionary_comprehension"), c416_single_for(n, IT), field(n, "body", c1_5), kind(c1_5, "pair"), field(c1_5, "key", c2_5), c416_name_key(c2_5, EK), field(c1_5, "value", c3_5), c416_name_value(c3_5, EV), child(n, c4_5, _), kind(c4_5, "for_in_clause"), field(c4_5, "left", c5_5), c416_target_tuple_pair(c5_5, TK, TV), text(EK, t6_5), text(TK, t6_5), text(EV, t8_5), text(TV, t8_5), !c416_shadowed(n, _, W), node(_, n, _, _, _), COMP = n,

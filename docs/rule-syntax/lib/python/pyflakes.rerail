@@ -38,7 +38,7 @@
 // which is where Ruff reports.
 //   try: f()
 //   except: pass          bare_except(<except clause>, <except>)
-.decl bare_except(x: node, kw: span)
+.decl bare_except(x: node, kw: match)
 bare_except(x, kw) :- kind(x, "except_clause"), !field(x, "value", _), match("(?s)(?<kw>except)\\b.*", x).
 // handler_block(x, b): the body of except clause x.
 .decl handler_block(x: node, b: node)
@@ -211,7 +211,7 @@ all_entry(s, x) :- all_value(s), str(s, x).                                     
 //   ]
 .decl noqa_ask(st: node, code: symbol) extensible
 .decl noqa(st: node, code: symbol)
-noqa(st, c) :- noqa_ask(st, c), line(st, l), docof(st, d), kind(n, "comment"), line(n, l), docof(n, d), comment(n, t),
+noqa(st, c) :- noqa_ask(st, c), node_line_number(st, l), docof(st, d), kind(n, "comment"), node_line_number(n, l), docof(n, d), comment(n, t),
     (match("(?i)\\s*noqa\\s*", t) ; match("(?i)\\s*noqa\\s*:[\\s\\S]*", t), contains(c, t)).
 
 // ---- 7. literal keys ---------------------------------------------------------------------------------------------

@@ -33,7 +33,7 @@ no_useless_constructor(m) :- ctor(m), fn_block(m, b), derived(m), stmts(b, 1), c
 remove(m) :- keep_semi(m) => replace(m, `;`).
 remove(m) :- no_useless_constructor(m), !keep_semi(m) => delete(m).
 .decl keep_semi(m: node)
-keep_semi(m) :- ctor(m), token_after(m, t), text(t, "["), member_runs_on(m).
+keep_semi(m) :- ctor(m), node_to_token_after(m, t), token_text(t, "["), member_runs_on(m).
 
 // kept(m): TypeScript's reasons to keep a constructor that looks useless.
 .decl kept(m: node)

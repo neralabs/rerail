@@ -13,7 +13,7 @@
 //   # https://github.com/astral-sh/ruff/issues/3870
 #include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD003(at: span, tag: symbol) code "TD003"
+.violation TD003(at: match, tag: symbol) code "TD003"
     "Add an issue link or ticket id for this `{tag}`: a URL or `#123` on the same line, or a URL or id like `PROJ-123` on the next comment line; leave it if no issue exists yet."
     suppress ruff "TD003"
 TD003(t, D) :- todo_item(c, D, _), !todo_linked(c), todo_at(c, t).

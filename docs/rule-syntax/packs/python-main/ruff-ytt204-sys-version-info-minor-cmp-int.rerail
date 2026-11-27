@@ -10,7 +10,7 @@
 // YTT204(n): a finding at node n, from clause `sys-version-info-minor-cmp-int`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT204(at: loc, c: node) "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."
+.violation YTT204(at: node, c: node) "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."
     suppress noqa "YTT204"
 YTT204(C, n) :- ytt204_target(n), node(_, n, _, _, _), C = n.
 YTT204(C, n) :- ytt204_in_string(n, C).
@@ -51,7 +51,7 @@ ytt204_target(n) :- kind(n, "attribute"), ytt204_left_operand(n), field(n, "obje
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ytt204_in_string(n: node, c: loc)
+.decl ytt204_in_string(n: node, c: node)
 ytt204_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ytt204_alt_4(c2, C).
 
@@ -85,6 +85,6 @@ ytt204_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_co
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ytt204_alt_4(n: node, c: loc)
+.decl ytt204_alt_4(n: node, c: node)
 ytt204_alt_4(n, C) :- ytt204_target(n), C = n.
 ytt204_alt_4(n, C) :- ytt204_in_string(n, C).

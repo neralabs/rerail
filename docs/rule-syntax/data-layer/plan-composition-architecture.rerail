@@ -114,7 +114,7 @@ SPC_005(f) :- spc_add_fragment(_, f, w), (!spc_uses(w, "RefRemap") ; !spc_uses(w
 .decl spc_second_ref(r: symbol)
 .input spc_second_ref(IO=json, artifact="plan_composition_probes", path="/second_refs")
 
-.violation SPC_012(at: loc) code "SPC-012" "equivalent semantic plans produced different fingerprints"
+.violation SPC_012(at: node) code "SPC-012" "equivalent semantic plans produced different fingerprints"
 SPC_012(@place("l2070_batching/semantic_plan.py", 1)) :- spc_fingerprint(a), spc_fingerprint(b), a != b.
-.violation SPC_005_probe(at: loc) code "SPC-005" "colliding fragment imports reused destination refs"
+.violation SPC_005_probe(at: node) code "SPC-005" "colliding fragment imports reused destination refs"
 SPC_005_probe(@place("l2070_batching/semantic_plan.py", 1)) :- spc_first_ref(r), spc_second_ref(r).

@@ -24,7 +24,7 @@ impl CodeRuleSqlExecutor {
                         let actual = match actual.as_str() {
                             "number" => "int",
                             "symbol" => "sym",
-                            "loc" => "node",
+                            "place" => "node",
                             other => other,
                         };
                         if actual != declared {

@@ -65,7 +65,7 @@ decimal_object(n) :- field(n, "object", o), kind(o, "number"), match("0|0[0-7]*[
 .stored to_brackets "a member expression's `.` is a choice with `?.`, so the tape keeps it"
 // to_brackets: `.class` becomes `["class"]`; not after `let` (`let["x"]` would declare), nor across a comment.
 to_brackets(p, _) :- dotted_member(n, o, p), text(p, x), !commented(n), !field(n, "optional_chain", _),
-    !text(o, "let"), token_before(p, dot) => delete(dot), replace(p, `["$x"]`).
+    !text(o, "let"), node_to_token_before(p, dot) => delete(dot), replace(p, `["$x"]`).
 to_brackets(p, _) :- dotted_member(n, _, p), text(p, x), !commented(n), field(n, "optional_chain", _)
     => replace(p, `["$x"]`).
 .decl commented(n: node)  // a comment after n's object: between the brackets, or between the dot and the name

@@ -258,7 +258,7 @@ CONN401(f, cx, x, y) :- csa_legacy(_, cx, f, x, k), csa_lazy_name(f, k, y), !csa
 CONN402(g, y, x) :- csa_legacy(_, _, f, x, _), csa_counterpart(f, y, g), !csa_dec(g, "pure_lazy").
 
 // ---- CONN000: fixed-file assertions, at line 1 ---------------------------------------------------------------------
-.violation CONN000(at: loc, what: symbol) "{what}"
+.violation CONN000(at: node, what: symbol) "{what}"
 // sql_connection.py: _SqlConnectionCore exists and defines none of the schema wrappers; the two services own their methods.
 .decl csa_sql_forbidden(v: symbol)  // FORBIDDEN_SQL_CORE_SCHEMA_METHODS
 csa_sql_forbidden("create_table_from_schema"). csa_sql_forbidden("create_tables_from_schema").

@@ -37,7 +37,7 @@ no_unused_vars(at, msg) :- unused(s, x), place(s, x, at), (only_type(s, x), w = 
     msg = cat("'", cat(x, cat("' is ", cat(a, cat(" but ", cat(w, cat(n, "."))))))).
 no_unused_vars(at, msg) :- used_ignored(s, x), place(s, x, at), note(s, x, "Used ", " must not match ", n),
     msg = cat("'", cat(x, cat("' is marked as ignored but is used", cat(n, ".")))).
-.violation unused_global(at: loc, x: symbol) code "@typescript-eslint/no-unused-vars" "Remove '{x}' from this global comment; nothing in the file uses it."
+.violation unused_global(at: node, x: symbol) code "@typescript-eslint/no-unused-vars" "Remove '{x}' from this global comment; nothing in the file uses it."
     suppress eslint "@typescript-eslint/no-unused-vars"
 unused_global(c, x) :- global_item(c, x, v, _), v != "off", !global_read(c, x), !script_declared(c, x).
 

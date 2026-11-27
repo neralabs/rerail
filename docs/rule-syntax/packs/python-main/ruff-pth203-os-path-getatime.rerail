@@ -22,7 +22,7 @@ pth203_single_filename_arg(n) :- child(n, c2, _), kind(c2, "argument_list"),
 // PTH203(n): a finding at node n, from clause `os-path-getatime`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH203(at: loc, f: node, s: loc) "Use `Path({s}).stat().st_atime` instead of `os.path.getatime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+.violation PTH203(at: node, f: node, s: node) "Use `Path({s}).stat().st_atime` instead of `os.path.getatime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH203"
 PTH203(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth203_callee(c1, F),
     pth203_arg_filename_1(n, a2), S = a2,
@@ -33,14 +33,14 @@ PTH203(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth203_callee(c1, 
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth203_callee(n: node, f: loc)
+.decl pth203_callee(n: node, f: node)
 pth203_callee(n, F) :- pth203_ref(n), node(_, n, _, _, _), F = n.
 pth203_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth203_callee(c1, F).
 
 // PTH203_os_path_getatime_in_annotation(n): a finding at node n, from clause `os-path-getatime-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH203_os_path_getatime_in_annotation(at: loc, f: node) code "PTH203" "Use `Path(...).stat().st_atime` instead of `os.path.getatime(...)`; leave it where the argument is a bytes path or a file descriptor."
+.violation PTH203_os_path_getatime_in_annotation(at: node, f: node) code "PTH203" "Use `Path(...).stat().st_atime` instead of `os.path.getatime(...)`; leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH203"
 PTH203_os_path_getatime_in_annotation(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1),
@@ -125,7 +125,7 @@ pth203_alt_3(n) :- pth203_alt_1(n).
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth203_alt_12(n: node, f: loc)
+.decl pth203_alt_12(n: node, f: node)
 pth203_alt_12(n, F) :- pth203_ref(n), F = n.
 pth203_alt_12(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth203_ref(c1), F = c1.
 pth203_alt_12(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
@@ -133,7 +133,7 @@ pth203_alt_12(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth203_alt_15(n: node, f: loc)
+.decl pth203_alt_15(n: node, f: node)
 pth203_alt_15(n, F) :- kind(n, "call"), child(n, c1, _), pth203_alt_12(c1, F),
     pth203_single_filename_arg(n).
 pth203_alt_15(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),

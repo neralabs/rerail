@@ -91,7 +91,7 @@ bootstrap_invariants_bootstrap_path(d) :- option_json("parameters", ptr, p), pre
 .decl bootstrap_invariants_has_fline(x: number)
 bootstrap_invariants_has_fline(1) :- option_json("parameters", "/functionLine", v), match("-?[0-9]+", v).
 .decl bootstrap_invariants_fline_def(f: node)
-bootstrap_invariants_fline_def(f) :- option_json("parameters", "/functionLine", v), node(_, f, "function_definition", _, _), line(f, l),
+bootstrap_invariants_fline_def(f) :- option_json("parameters", "/functionLine", v), node(_, f, "function_definition", _, _), node_line_number(f, l),
     v = to_string(l).
 // rawSources: a document's source given in parameters (`$.rawSources.<json_quote(path)>`: the key is the path,
 // exactly), which effective_source prefers to the file's. option_json's pointer holds the key as an RFC 6901 token:
@@ -107,7 +107,7 @@ bootstrap_invariants_raw(d, s) :- bootstrap_invariants_raw_key(q, s), doc(d, p, 
 // after it, replaced by nothing.
 .decl bootstrap_invariants_text(d: number, s: symbol)
 bootstrap_invariants_text(d, s) :- bootstrap_invariants_raw(d, s).
-bootstrap_invariants_text(d, s) :- bootstrap_invariants_scope(d, _), !bootstrap_invariants_raw(d, _), source(d, sp), text(sp, s).
+bootstrap_invariants_text(d, s) :- bootstrap_invariants_scope(d, _), !bootstrap_invariants_raw(d, _), document_source(d, sp), line_text(sp, s).
 .decl bootstrap_invariants_raw_before(d: number, u: symbol, b: symbol)
 bootstrap_invariants_raw_before(d, u, b) :- bootstrap_invariants_text(d, s), bootstrap_invariants_deleted_surface(_, u, _), contains(u, s),
     e = @rx_replace(u, "[^0-9A-Za-z_]", "\\$0"), b = @rx_replace(s, cat(cat("(?s)", e), ".*"), "").
@@ -779,17 +779,17 @@ bootstrap_invariants_row(d, i, l) :- bootstrap_invariants_surface_in(d, s, i), b
 // BEI005, BEI023, BEI006: in a checked @pure_lazy def.
 .decl bootstrap_invariants_lazy_fn(d: number, f: node)
 bootstrap_invariants_lazy_fn(d, f) :- bootstrap_invariants_checked(d, f), bootstrap_invariants_pure_lazy(f).
-bootstrap_invariants_row(d, "BEI005", l) :- bootstrap_invariants_lazy_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_exec_surface(s), line(n, l).
-bootstrap_invariants_row(d, "BEI023", l) :- bootstrap_invariants_lazy_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_boundary_surface(s), line(n, l).
+bootstrap_invariants_row(d, "BEI005", l) :- bootstrap_invariants_lazy_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_exec_surface(s), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI023", l) :- bootstrap_invariants_lazy_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_boundary_surface(s), node_line_number(n, l).
 .decl bootstrap_invariants_work(w: node)
 bootstrap_invariants_work(w) :- bootstrap_invariants_call(w, _, s), bootstrap_invariants_exec_surface(s).
 bootstrap_invariants_work(w) :- bootstrap_invariants_call(w, _, s), suffix("_direct", s).
 bootstrap_invariants_work(w) :- bootstrap_invariants_call(w, _, s), prefix("build_", s).
 bootstrap_invariants_row(d, "BEI006", l) :- bootstrap_invariants_lazy_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, "Attribute", "of"), bootstrap_invariants_receiver(n, r), bootstrap_invariants_name(r, "LazyResult"),
-    bootstrap_invariants_arg0(n, w), bootstrap_invariants_work(w), line(n, l).
+    bootstrap_invariants_arg0(n, w), bootstrap_invariants_work(w), node_line_number(n, l).
 // BEI007: execute_application_plan discards conn; or returns zero mutation counts unguarded.
 bootstrap_invariants_row(d, "BEI007", l) :- bootstrap_invariants_checked(d, f), bootstrap_invariants_def(d, f, "execute_application_plan"), bootstrap_invariants_in(f, n), bootstrap_invariants_del_target(n, t),
-    bootstrap_invariants_name(t, "conn"), line(n, l).
+    bootstrap_invariants_name(t, "conn"), node_line_number(n, l).
 .decl bootstrap_invariants_facts_call(f: node, n: node, v: node)
 bootstrap_invariants_facts_call(f, n, v) :- bootstrap_invariants_checked(d, f), bootstrap_invariants_def(d, f, "execute_application_plan"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "BootstrapExecutionFacts"),
     bootstrap_invariants_kw(n, _, "mutation_counts", v), bootstrap_invariants_call(v, _, "BootstrapMutationCounts").
@@ -803,19 +803,19 @@ bootstrap_invariants_zero_branch(f, s, e) :- bootstrap_invariants_facts_call(f, 
     bootstrap_invariants_ast(o0, o), bootstrap_invariants_attr(o, "ZERO_APPLICATION_TERMINALS", _), bootstrap_invariants_if_span(b, s, e).
 .decl bootstrap_invariants_zero_guarded(n: node)
 bootstrap_invariants_zero_guarded(n) :- bootstrap_invariants_facts_call(f, n, _), bootstrap_invariants_zero_branch(f, s, e), node(_, n, _, ns, ne), ns >= s, ne <= e.
-bootstrap_invariants_row(d, "BEI007", l) :- bootstrap_invariants_facts_call(f, n, v), node(d, n, _, _, _), !bootstrap_invariants_zero_guarded(n), bootstrap_invariants_zero_kws(v, k), k >= 4, line(n, l).
+bootstrap_invariants_row(d, "BEI007", l) :- bootstrap_invariants_facts_call(f, n, v), node(d, n, _, _, _), !bootstrap_invariants_zero_guarded(n), bootstrap_invariants_zero_kws(v, k), k >= 4, node_line_number(n, l).
 // BEI016: dependency_refs=() to publish_bootstrap_metadata_lazy.
 .decl bootstrap_invariants_coord_fn(d: number, f: node, x: symbol)
 bootstrap_invariants_coord_fn(d, f, x) :- bootstrap_invariants_fnode(d, f, x), bootstrap_invariants_base(d, "bootstrap_coordinator.py").
 .decl bootstrap_invariants_coord_checked(d: number, f: node, x: symbol)
 bootstrap_invariants_coord_checked(d, f, x) :- bootstrap_invariants_coord_fn(d, f, x), bootstrap_invariants_checked(d, f).
 bootstrap_invariants_row(d, "BEI016", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "publish_bootstrap_metadata_lazy"),
-    bootstrap_invariants_kw(n, _, "dependency_refs", v), bootstrap_invariants_tuple_len(v, 0), line(n, l).
+    bootstrap_invariants_kw(n, _, "dependency_refs", v), bootstrap_invariants_tuple_len(v, 0), node_line_number(n, l).
 // BEI012: the last-line bootstrap_schema_tail_lazy call, with no publish call at or before its line, or one after.
 .decl bootstrap_invariants_tail_line(f: node, l: number)
-bootstrap_invariants_tail_line(f, l) :- bootstrap_invariants_coord_checked(_, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "bootstrap_schema_tail_lazy"), line(n, l).
+bootstrap_invariants_tail_line(f, l) :- bootstrap_invariants_coord_checked(_, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "bootstrap_schema_tail_lazy"), node_line_number(n, l).
 .decl bootstrap_invariants_pub_line(f: node, l: number)
-bootstrap_invariants_pub_line(f, l) :- bootstrap_invariants_coord_checked(_, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "publish_bootstrap_metadata_lazy"), line(n, l).
+bootstrap_invariants_pub_line(f, l) :- bootstrap_invariants_coord_checked(_, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "publish_bootstrap_metadata_lazy"), node_line_number(n, l).
 .decl bootstrap_invariants_tail_last(f: node, m: number)
 bootstrap_invariants_tail_last(f, m) :- bootstrap_invariants_tail_line(f, _), m = max l : { bootstrap_invariants_tail_line(f, l) }.
 .decl bootstrap_invariants_pub_before(f: node)
@@ -835,94 +835,94 @@ bootstrap_invariants_lock_continue(b) :- bootstrap_invariants_lock_if(_, _, _, b
 .decl bootstrap_invariants_lock_applied(b: node)
 bootstrap_invariants_lock_applied(b) :- bootstrap_invariants_lock_if(d, _, _, b), node(d, b, _, s, e), node(d, c, "call", cs, ce), cs >= s, ce <= e,
     bootstrap_invariants_call(c, _, "apply_bootstrap_ddl_lockdown_effect").
-bootstrap_invariants_row(d, "BEI015", l) :- bootstrap_invariants_lock_if(d, n, t, b), bootstrap_invariants_lock_test(t), bootstrap_invariants_lock_continue(b), !bootstrap_invariants_lock_applied(b), line(n, l).
+bootstrap_invariants_row(d, "BEI015", l) :- bootstrap_invariants_lock_if(d, n, t, b), bootstrap_invariants_lock_test(t), bootstrap_invariants_lock_continue(b), !bootstrap_invariants_lock_applied(b), node_line_number(n, l).
 // BEI019.
-bootstrap_invariants_row(d, "BEI019", l) :- bootstrap_invariants_coord_checked(d, f, "plan_application"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "lower_bootstrap_lifecycle_effects"), line(n, l).
+bootstrap_invariants_row(d, "BEI019", l) :- bootstrap_invariants_coord_checked(d, f, "plan_application"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "lower_bootstrap_lifecycle_effects"), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI019", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "bootstrap_schema_tail_lazy"),
-    bootstrap_invariants_haskw(n, "lifecycle_effects"), line(n, l).
+    bootstrap_invariants_haskw(n, "lifecycle_effects"), node_line_number(n, l).
 // BEI024: bootstrap_schema_tail_lazy has no produced_ref parameter (args or kwonlyargs).
 .decl bootstrap_invariants_st_fn(d: number, f: node, x: symbol)
 bootstrap_invariants_st_fn(d, f, x) :- bootstrap_invariants_fnode(d, f, x), bootstrap_invariants_base(d, "schema_transaction.py").
 .decl bootstrap_invariants_has_produced_ref(f: node)
 bootstrap_invariants_has_produced_ref(f) :- bootstrap_invariants_param(f, _, fld, "produced_ref"), (fld = "args" ; fld = "kwonlyargs").
-bootstrap_invariants_row(d, "BEI024", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_schema_tail_lazy"), bootstrap_invariants_checked(d, f), !bootstrap_invariants_has_produced_ref(f), line(f, l).
+bootstrap_invariants_row(d, "BEI024", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_schema_tail_lazy"), bootstrap_invariants_checked(d, f), !bootstrap_invariants_has_produced_ref(f), node_line_number(f, l).
 
 // ---- diagnostics_1 ----
-bootstrap_invariants_row(d, "BEI024", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_schema_tail_lazy"), bootstrap_invariants_checked(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_tail_flush(s), line(n, l).
+bootstrap_invariants_row(d, "BEI024", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_schema_tail_lazy"), bootstrap_invariants_checked(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_tail_flush(s), node_line_number(n, l).
 // BEI025: schema_dependency_refs = (); bootstrap_schema_tail_lazy without produced_ref=.
 bootstrap_invariants_row(d, "BEI025", l) :- bootstrap_invariants_coord_checked(d, f, "_materialize_application_lazy_results"), bootstrap_invariants_in(f, n), bootstrap_invariants_assign(n),
-    bootstrap_invariants_assign_target(n, t), bootstrap_invariants_name(t, "schema_dependency_refs"), bootstrap_invariants_assign_value(n, v), bootstrap_invariants_tuple_len(v, 0), line(n, l).
+    bootstrap_invariants_assign_target(n, t), bootstrap_invariants_name(t, "schema_dependency_refs"), bootstrap_invariants_assign_value(n, v), bootstrap_invariants_tuple_len(v, 0), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI025", l) :- bootstrap_invariants_coord_checked(d, f, "_materialize_application_lazy_results"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "bootstrap_schema_tail_lazy"),
-    !bootstrap_invariants_haskw(n, "produced_ref"), line(n, l).
+    !bootstrap_invariants_haskw(n, "produced_ref"), node_line_number(n, l).
 // BEI026: BootstrapDataPrimitiveKind.<x> in _materialize_application_lazy_results.
 bootstrap_invariants_row(d, "BEI026", l) :- bootstrap_invariants_coord_checked(d, f, "_materialize_application_lazy_results"), bootstrap_invariants_in(f, n), bootstrap_invariants_attr(n, _, v),
-    bootstrap_invariants_name(v, "BootstrapDataPrimitiveKind"), line(n, l).
+    bootstrap_invariants_name(v, "BootstrapDataPrimitiveKind"), node_line_number(n, l).
 // BEI027: _transition_replay_plan_for_observation names none of some identity field.
 .decl bootstrap_invariants_replay_mention(f: node, x: symbol)
 bootstrap_invariants_replay_mention(f, x) :- bootstrap_invariants_coord_checked(_, f, "_transition_replay_plan_for_observation"), bootstrap_invariants_in(f, n), bootstrap_invariants_named(n, x), bootstrap_invariants_replay_ids(x).
-bootstrap_invariants_row(d, "BEI027", l) :- bootstrap_invariants_coord_checked(d, f, "_transition_replay_plan_for_observation"), bootstrap_invariants_replay_ids(x), !bootstrap_invariants_replay_mention(f, x), line(f, l).
+bootstrap_invariants_row(d, "BEI027", l) :- bootstrap_invariants_coord_checked(d, f, "_transition_replay_plan_for_observation"), bootstrap_invariants_replay_ids(x), !bootstrap_invariants_replay_mention(f, x), node_line_number(f, l).
 // BEI029 (its first case, `name IN ('_enqueue_application_schema_lazy') AND substr(name, -5) != '_lazy'`, can
 // never hold): the runner is @pure_lazy and returns LazyResult[...].
-bootstrap_invariants_row(d, "BEI029", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_pure_lazy(f), line(f, l).
-bootstrap_invariants_row(d, "BEI029", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_lazy_return(f), line(f, l).
+bootstrap_invariants_row(d, "BEI029", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_pure_lazy(f), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI029", l) :- bootstrap_invariants_coord_checked(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_lazy_return(f), node_line_number(f, l).
 // BEI033.
-bootstrap_invariants_row(d, "BEI033", l) :- bootstrap_invariants_coord_checked(d, f, x), bootstrap_invariants_run_apis(x), !bootstrap_invariants_pure_lazy(f), line(f, l).
-bootstrap_invariants_row(d, "BEI033", l) :- bootstrap_invariants_coord_checked(d, f, x), bootstrap_invariants_run_apis(x), !bootstrap_invariants_lazy_return(f), line(f, l).
+bootstrap_invariants_row(d, "BEI033", l) :- bootstrap_invariants_coord_checked(d, f, x), bootstrap_invariants_run_apis(x), !bootstrap_invariants_pure_lazy(f), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI033", l) :- bootstrap_invariants_coord_checked(d, f, x), bootstrap_invariants_run_apis(x), !bootstrap_invariants_lazy_return(f), node_line_number(f, l).
 // BEI034: run/run_async call both public lazy APIs, and no eager/internal surface.
 .decl bootstrap_invariants_run_fn(d: number, f: node)
 bootstrap_invariants_run_fn(d, f) :- bootstrap_invariants_coord_checked(d, f, x), (x = "run" ; x = "run_async").
 .decl bootstrap_invariants_run_calls(f: node, x: symbol)
 bootstrap_invariants_run_calls(f, x) :- bootstrap_invariants_run_fn(_, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, x), bootstrap_invariants_run_apis(x).
-bootstrap_invariants_row(d, "BEI034", l) :- bootstrap_invariants_run_fn(d, f), bootstrap_invariants_run_apis(x), !bootstrap_invariants_run_calls(f, x), line(f, l).
-bootstrap_invariants_row(d, "BEI034", l) :- bootstrap_invariants_run_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_run_eager(s), line(n, l).
+bootstrap_invariants_row(d, "BEI034", l) :- bootstrap_invariants_run_fn(d, f), bootstrap_invariants_run_apis(x), !bootstrap_invariants_run_calls(f, x), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI034", l) :- bootstrap_invariants_run_fn(d, f), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_run_eager(s), node_line_number(n, l).
 // BEI014 (not gated on `checked`).
-bootstrap_invariants_row(d, "BEI014", l) :- bootstrap_invariants_coord_fn(d, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_legacy5(s), line(n, l).
-bootstrap_invariants_row(d, "BEI014", l) :- bootstrap_invariants_st_fn(d, f, x), bootstrap_invariants_ensure5(x), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_legacy5(s), line(n, l).
+bootstrap_invariants_row(d, "BEI014", l) :- bootstrap_invariants_coord_fn(d, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_legacy5(s), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI014", l) :- bootstrap_invariants_st_fn(d, f, x), bootstrap_invariants_ensure5(x), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_legacy5(s), node_line_number(n, l).
 // BEI036: the tripwire def, calls to it, and placeholder texts in ensure_bootstrap_*_lazy.
-bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_st_fn(d, f, "_unsupported_bootstrap_schema_surface_lazy"), line(f, l).
-bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "_unsupported_bootstrap_schema_surface_lazy"), line(n, l).
-bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_str(n, s), bootstrap_invariants_placeholder(w), contains(w, s), line(n, l).
-bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_fconst(n, s), bootstrap_invariants_placeholder(w), contains(w, s), line(n, l).
+bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_st_fn(d, f, "_unsupported_bootstrap_schema_surface_lazy"), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "_unsupported_bootstrap_schema_surface_lazy"), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_str(n, s), bootstrap_invariants_placeholder(w), contains(w, s), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI036", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_fconst(n, s), bootstrap_invariants_placeholder(w), contains(w, s), node_line_number(n, l).
 
 // ---- diagnostics_2 ----
 // BEI039: schema-transaction lazy surfaces are @pure_lazy and return LazyResult; lowerers take keyword-only refs.
 .decl bootstrap_invariants_st_surface(d: number, f: node)
 bootstrap_invariants_st_surface(d, f) :- bootstrap_invariants_ensure_fn(d, f, _).
 bootstrap_invariants_st_surface(d, f) :- bootstrap_invariants_st_fn(d, f, x), bootstrap_invariants_st_lazy4(x).
-bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_st_surface(d, f), !bootstrap_invariants_pure_lazy(f), line(f, l).
-bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_st_surface(d, f), !bootstrap_invariants_lazy_return(f), line(f, l).
+bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_st_surface(d, f), !bootstrap_invariants_pure_lazy(f), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_st_surface(d, f), !bootstrap_invariants_lazy_return(f), node_line_number(f, l).
 .decl bootstrap_invariants_kwonly(f: node, x: symbol)
 bootstrap_invariants_kwonly(f, x) :- bootstrap_invariants_ensure_fn(_, f, _), bootstrap_invariants_param(f, _, "kwonlyargs", x).
-bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_ensure_fn(d, f, _), !bootstrap_invariants_kwonly(f, "produced_ref"), line(f, l).
-bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_ensure_fn(d, f, _), !bootstrap_invariants_kwonly(f, "dependency_refs"), line(f, l).
+bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_ensure_fn(d, f, _), !bootstrap_invariants_kwonly(f, "produced_ref"), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI039", l) :- bootstrap_invariants_ensure_fn(d, f, _), !bootstrap_invariants_kwonly(f, "dependency_refs"), node_line_number(f, l).
 // BEI040: `del produced_ref` / `del dependency_refs`.
 bootstrap_invariants_row(d, "BEI040", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_del_target(n, t), bootstrap_invariants_name(t, x),
-    (x = "produced_ref" ; x = "dependency_refs"), line(n, l).
+    (x = "produced_ref" ; x = "dependency_refs"), node_line_number(n, l).
 // BEI043.
 bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, "build_execution_plan_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s),
-    (s = "_materialize_application_lazy_results" ; s = "_install_application_lazy_results"), line(n, l).
+    (s = "_materialize_application_lazy_results" ; s = "_install_application_lazy_results"), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_attr(n, x, _),
-    (x = "lazy_results" ; x = "application_tail_result"), line(n, l).
+    (x = "lazy_results" ; x = "application_tail_result"), node_line_number(n, l).
 .decl bootstrap_invariants_calls_tail(f: node)
 bootstrap_invariants_calls_tail(f) :- bootstrap_invariants_coord_fn(_, f, "_enqueue_application_schema_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "bootstrap_schema_tail_lazy").
-bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_calls_tail(f), line(f, l).
-bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, x), (x = "_materialize_application_lazy_results" ; x = "_install_application_lazy_results"), line(f, l).
+bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, "_enqueue_application_schema_lazy"), !bootstrap_invariants_calls_tail(f), node_line_number(f, l).
+bootstrap_invariants_row(d, "BEI043", l) :- bootstrap_invariants_coord_fn(d, f, x), (x = "_materialize_application_lazy_results" ; x = "_install_application_lazy_results"), node_line_number(f, l).
 // BEI044: a lowerer calling an ordinary SQL step surface other than itself.
 bootstrap_invariants_row(d, "BEI044", l) :- bootstrap_invariants_st_fn(d, f, x), (prefix("ensure_bootstrap_", x) ; bootstrap_invariants_lowerer4(x)), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_step6(s),
-    s != x, line(n, l).
+    s != x, node_line_number(n, l).
 // BEI037.
 bootstrap_invariants_row(d, "BEI037", l) :- bootstrap_invariants_coord_fn(d, f, x), (x = "_materialize_application_lazy_results" ; x = "_install_application_lazy_results"),
-    bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_installer12(s), line(n, l).
+    bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_installer12(s), node_line_number(n, l).
 // BEI011.
-bootstrap_invariants_row(d, "BEI011", l) :- bootstrap_invariants_coord_fn(d, f, "execute_interrogation_plan"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_helper_refs(s), line(n, l).
-bootstrap_invariants_row(d, "BEI011", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_interrogation_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_helper_refs(s), line(n, l).
+bootstrap_invariants_row(d, "BEI011", l) :- bootstrap_invariants_coord_fn(d, f, "execute_interrogation_plan"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_helper_refs(s), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI011", l) :- bootstrap_invariants_st_fn(d, f, "bootstrap_interrogation_lazy"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_helper_refs(s), node_line_number(n, l).
 // BEI013.
 bootstrap_invariants_row(d, "BEI013", l) :- bootstrap_invariants_fnode(d, f, "execute_runtime_rows"), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), bootstrap_invariants_in(f, n), bootstrap_invariants_attr(n, x, v),
-    (x = "TABLE" ; x = "COLUMN" ; x = "INDEX"), bootstrap_invariants_name(v, "BootstrapInterrogationRowKind"), line(n, l).
+    (x = "TABLE" ; x = "COLUMN" ; x = "INDEX"), bootstrap_invariants_name(v, "BootstrapInterrogationRowKind"), node_line_number(n, l).
 // BEI045.
-bootstrap_invariants_row(d, "BEI045", l) :- bootstrap_invariants_fnode(d, f, "ensure_versioning_domain_schema"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "ensure_tables"), line(n, l).
+bootstrap_invariants_row(d, "BEI045", l) :- bootstrap_invariants_fnode(d, f, "ensure_versioning_domain_schema"), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, "ensure_tables"), node_line_number(n, l).
 // BEI046.
-bootstrap_invariants_row(d, "BEI046", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_nonbatch7(s), line(n, l).
+bootstrap_invariants_row(d, "BEI046", l) :- bootstrap_invariants_ensure_fn(d, f, _), bootstrap_invariants_in(f, n), bootstrap_invariants_call(n, _, s), bootstrap_invariants_nonbatch7(s), node_line_number(n, l).
 
 // ---- diagnostics_3 ----
 // BEI047: a sync/async variant of a bootstrap surface outside tests.
@@ -944,100 +944,100 @@ bootstrap_invariants_variant(f) :- bootstrap_invariants_fnode(d, f, x), !bootstr
 bootstrap_invariants_bootstrap_file(d) :- bootstrap_invariants_bootstrap_path(d).
 bootstrap_invariants_bootstrap_file(d) :- bootstrap_invariants_base_bootstrap(d).
 bootstrap_invariants_row(d, "BEI047", l) :- bootstrap_invariants_fnode(d, f, x), !bootstrap_invariants_test_path(d), bootstrap_invariants_bootstrap_file(d), contains("bootstrap", x), !bootstrap_invariants_fname_lazy(f),
-    !bootstrap_invariants_pure_lazy(f), bootstrap_invariants_variant(f), line(f, l).
+    !bootstrap_invariants_pure_lazy(f), bootstrap_invariants_variant(f), node_line_number(f, l).
 // BEI001, BEI002, BEI047: old/direct/deleted surfaces defined.
 .decl bootstrap_invariants_defnode(d: number, n: node, x: symbol)
 bootstrap_invariants_defnode(d, n, x) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_def(d, n, x).
 bootstrap_invariants_defnode(d, n, x) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_class(d, n, x).
-bootstrap_invariants_row(d, "BEI001", l) :- bootstrap_invariants_defnode(d, n, x), bootstrap_invariants_old_symbol(x), line(n, l).
-bootstrap_invariants_row(d, "BEI002", l) :- bootstrap_invariants_defnode(d, n, x), bootstrap_invariants_direct_surface(x), line(n, l).
-bootstrap_invariants_row(d, "BEI047", l) :- bootstrap_invariants_defnode(d, n, x), (x = "_install_schema_primitive_contract" ; x = "ensure_schema_callback"), line(n, l).
+bootstrap_invariants_row(d, "BEI001", l) :- bootstrap_invariants_defnode(d, n, x), bootstrap_invariants_old_symbol(x), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI002", l) :- bootstrap_invariants_defnode(d, n, x), bootstrap_invariants_direct_surface(x), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI047", l) :- bootstrap_invariants_defnode(d, n, x), (x = "_install_schema_primitive_contract" ; x = "ensure_schema_callback"), node_line_number(n, l).
 // BEI017: publish_bootstrap_metadata_lazy (a FunctionDef) takes bootstrap_plan/model_classes positionally.
 bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_fnode(d, f, "publish_bootstrap_metadata_lazy"), !op(f, "async"), bootstrap_invariants_param(f, nm, "args", x),
-    (x = "bootstrap_plan" ; x = "model_classes"), line(nm, l).
+    (x = "bootstrap_plan" ; x = "model_classes"), node_line_number(nm, l).
 // BEI032: PipelineLifecycleEffect classes and connection authority in them.
 .decl bootstrap_invariants_lifecycle_class(d: number, c: node)
 bootstrap_invariants_lifecycle_class(d, c) :- bootstrap_invariants_scope(d, _), node(d, c, "class_definition", _, _), bootstrap_invariants_base_named(c, "PipelineLifecycleEffect").
 .decl bootstrap_invariants_conn_name(s: symbol)
 bootstrap_invariants_conn_name("conn"). bootstrap_invariants_conn_name("connection"). bootstrap_invariants_conn_name("database_connection"). bootstrap_invariants_conn_name("sql_conn").
-bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, nm), bootstrap_invariants_param(_, nm, _, x), bootstrap_invariants_conn_name(x), line(nm, l).
-bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, n), bootstrap_invariants_name(n, x), bootstrap_invariants_conn_name(x), line(n, l).
+bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, nm), bootstrap_invariants_param(_, nm, _, x), bootstrap_invariants_conn_name(x), node_line_number(nm, l).
+bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, n), bootstrap_invariants_name(n, x), bootstrap_invariants_conn_name(x), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, n), bootstrap_invariants_attr(n, x, _),
-    (x = "_conn" ; x = "conn" ; x = "connection" ; x = "sql_conn"), line(n, l).
+    (x = "_conn" ; x = "conn" ; x = "connection" ; x = "sql_conn"), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI032", l) :- bootstrap_invariants_lifecycle_class(d, c), bootstrap_invariants_in(c, n), bootstrap_invariants_call(n, _, x),
-    (x = "__setattr__" ; x = "getattr" ; x = "hasattr"), line(n, l).
+    (x = "__setattr__" ; x = "getattr" ; x = "hasattr"), node_line_number(n, l).
 // BEI002, BEI047: references.
-bootstrap_invariants_row(d, "BEI002", l) :- bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_direct_surface(x), line(n, l).
-bootstrap_invariants_row(d, "BEI047", l) :- bootstrap_invariants_enode_named(d, n, x), (x = "_install_schema_primitive_contract" ; x = "ensure_schema_callback"), line(n, l).
+bootstrap_invariants_row(d, "BEI002", l) :- bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_direct_surface(x), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI047", l) :- bootstrap_invariants_enode_named(d, n, x), (x = "_install_schema_primitive_contract" ; x = "ensure_schema_callback"), node_line_number(n, l).
 // BEI003: .resolve() outside run/run_async.
 .decl bootstrap_invariants_resolve_call(d: number, n: node)
 bootstrap_invariants_resolve_call(d, n) :- bootstrap_invariants_ecall(d, n, "Attribute", "resolve"), bootstrap_invariants_engine(d).
 bootstrap_invariants_fn_need(n) :- bootstrap_invariants_resolve_call(_, n).
 .decl bootstrap_invariants_in_run(n: node)
 bootstrap_invariants_in_run(n) :- bootstrap_invariants_fn(n, f), bootstrap_invariants_def(_, f, x), (x = "run" ; x = "run_async").
-bootstrap_invariants_row(d, "BEI003", l) :- bootstrap_invariants_resolve_call(d, n), !bootstrap_invariants_in_run(n), line(n, l).
+bootstrap_invariants_row(d, "BEI003", l) :- bootstrap_invariants_resolve_call(d, n), !bootstrap_invariants_in_run(n), node_line_number(n, l).
 // BEI004: a lambda, but as a default_factory= value.
 .decl bootstrap_invariants_default_factory(n: node)
 bootstrap_invariants_default_factory(n) :- node(_, k, "keyword_argument", _, _), field(k, "name", nm), text(nm, "default_factory"), field(k, "value", v0),
     bootstrap_invariants_ast(v0, n).
-bootstrap_invariants_row(d, "BEI004", l) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_engine(d), node(d, n, "lambda", _, _), !bootstrap_invariants_default_factory(n), line(n, l).
+bootstrap_invariants_row(d, "BEI004", l) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_engine(d), node(d, n, "lambda", _, _), !bootstrap_invariants_default_factory(n), node_line_number(n, l).
 // BEI008: BootstrapServerPlanContract(step_refs=(), steps=(<one or none>)).
 bootstrap_invariants_row(d, "BEI008", l) :- bootstrap_invariants_ecall(d, n, _, "BootstrapServerPlanContract"), bootstrap_invariants_engine(d), bootstrap_invariants_kw(n, _, "step_refs", v), bootstrap_invariants_tuple_len(v, 0),
-    bootstrap_invariants_kw(n, _, "steps", w), bootstrap_invariants_tuple_len(w, k), k <= 1, line(n, l).
+    bootstrap_invariants_kw(n, _, "steps", w), bootstrap_invariants_tuple_len(w, k), k <= 1, node_line_number(n, l).
 
 // ---- diagnostics_4 ----
 bootstrap_invariants_row(d, "BEI009", l) :- bootstrap_invariants_ecall(d, n, _, "_bootstrap_engine_placeholder"), bootstrap_invariants_engine(d), bootstrap_invariants_arg0(n, v),
-    bootstrap_invariants_str(v, "lazy bootstrap index interrogation"), line(n, l).
+    bootstrap_invariants_str(v, "lazy bootstrap index interrogation"), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI010", l) :- bootstrap_invariants_ecall(d, n, _, "_plan_physical_schema_contract"), bootstrap_invariants_engine(d), bootstrap_invariants_base(d, "bootstrap_coordinator.py"),
-    bootstrap_invariants_haskw(n, "conn"), line(n, l).
+    bootstrap_invariants_haskw(n, "conn"), node_line_number(n, l).
 .decl bootstrap_invariants_publish_call(d: number, n: node)
 bootstrap_invariants_publish_call(d, n) :- bootstrap_invariants_ecall(d, n, _, "publish_bootstrap_metadata_lazy"), bootstrap_invariants_engine(d).
-bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), bootstrap_invariants_posraw(n, _, _), line(n, l).
-bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), !bootstrap_invariants_haskw(n, "publication_plan"), line(n, l).
-bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), !bootstrap_invariants_haskw(n, "publication_rows"), line(n, l).
+bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), bootstrap_invariants_posraw(n, _, _), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), !bootstrap_invariants_haskw(n, "publication_plan"), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), !bootstrap_invariants_haskw(n, "publication_rows"), node_line_number(n, l).
 bootstrap_invariants_fn_need(n) :- bootstrap_invariants_publish_call(d, n), bootstrap_invariants_base(d, "bootstrap_coordinator.py").
 .decl bootstrap_invariants_plan_artifact(v: node)
 bootstrap_invariants_plan_artifact(v) :- bootstrap_invariants_attr(v, _, o), bootstrap_invariants_name(o, "application_plan").
 bootstrap_invariants_row(d, "BEI017", l) :- bootstrap_invariants_publish_call(d, n), bootstrap_invariants_base(d, "bootstrap_coordinator.py"), bootstrap_invariants_fn(n, f), bootstrap_invariants_def(_, f, "_enqueue_application_schema_lazy"),
-    bootstrap_invariants_kw(n, _, x, v), (x = "publication_plan" ; x = "publication_rows"), !bootstrap_invariants_plan_artifact(v), line(v, l).
+    bootstrap_invariants_kw(n, _, x, v), (x = "publication_plan" ; x = "publication_rows"), !bootstrap_invariants_plan_artifact(v), node_line_number(v, l).
 // BEI020: table_source_refs.get(k, default) in _application_sql_assertions_for_plan.
 .decl bootstrap_invariants_refs_get(d: number, n: node)
 bootstrap_invariants_refs_get(d, n) :- bootstrap_invariants_ecall(d, n, "Attribute", "get"), bootstrap_invariants_engine(d), bootstrap_invariants_base(d, "bootstrap_coordinator.py"), bootstrap_invariants_receiver(n, r),
     bootstrap_invariants_name(r, "table_source_refs"), bootstrap_invariants_nargs(n, k), k > 1.
 bootstrap_invariants_fn_need(n) :- bootstrap_invariants_refs_get(_, n).
-bootstrap_invariants_row(d, "BEI020", l) :- bootstrap_invariants_refs_get(d, n), bootstrap_invariants_fn(n, f), bootstrap_invariants_def(_, f, "_application_sql_assertions_for_plan"), line(n, l).
+bootstrap_invariants_row(d, "BEI020", l) :- bootstrap_invariants_refs_get(d, n), bootstrap_invariants_fn(n, f), bootstrap_invariants_def(_, f, "_application_sql_assertions_for_plan"), node_line_number(n, l).
 // BEI018.
 bootstrap_invariants_row(d, "BEI018", l) :- bootstrap_invariants_fnode(d, f, "plan_bootstrap_schema_generation"), !op(f, "async"), bootstrap_invariants_in(f, n), bootstrap_invariants_name(n, x),
-    (x = "BootstrapObservedState" ; x = "SCHEMA_GENERATION_GLOBAL_TAG"), line(n, l).
+    (x = "BootstrapObservedState" ; x = "SCHEMA_GENERATION_GLOBAL_TAG"), node_line_number(n, l).
 bootstrap_invariants_row(d, "BEI018", l) :- bootstrap_invariants_scope(d, _), node(d, t, "boolean_operator", _, _), bootstrap_invariants_or_value(t, n), bootstrap_invariants_attr(n, x, _),
-    (x = "schema_generation" ; x = "schema_version"), line(n, l).
+    (x = "schema_generation" ; x = "schema_version"), node_line_number(n, l).
 // BEI021: test bootstrap helpers.
 .decl bootstrap_invariants_helper_file(d: number)
 bootstrap_invariants_helper_file(d) :- bootstrap_invariants_scope(d, p), match("^data_layer_testing/helpers/bootstrap[^/]*$", p).
-bootstrap_invariants_row(d, "BEI021", l) :- bootstrap_invariants_helper_file(d), bootstrap_invariants_ecall(d, n, _, s), bootstrap_invariants_probe11(s), line(n, l).
-bootstrap_invariants_row(d, "BEI021", l) :- bootstrap_invariants_helper_file(d), bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_proof_state3(x), line(n, l).
+bootstrap_invariants_row(d, "BEI021", l) :- bootstrap_invariants_helper_file(d), bootstrap_invariants_ecall(d, n, _, s), bootstrap_invariants_probe11(s), node_line_number(n, l).
+bootstrap_invariants_row(d, "BEI021", l) :- bootstrap_invariants_helper_file(d), bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_proof_state3(x), node_line_number(n, l).
 // BEI028: backend-specific probes in bootstrap files.
 .decl bootstrap_invariants_probe_file(d: number)
 bootstrap_invariants_probe_file(d) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_base(d, b), prefix("bootstrap", b).
 bootstrap_invariants_probe_file(d) :- bootstrap_invariants_scope(d, _), path_part(d, "bootstrap").
 bootstrap_invariants_row(d, "BEI028", l) :- bootstrap_invariants_probe_file(d), !bootstrap_invariants_base(d, "bootstrap_backend_collaborators.py"), bootstrap_invariants_scope(d, _), node(d, n, _, _, _),
-    bootstrap_invariants_attr(n, x, _), bootstrap_invariants_backend5(x), line(n, l).
+    bootstrap_invariants_attr(n, x, _), bootstrap_invariants_backend5(x), node_line_number(n, l).
 // BEI041: reconciliation fallbacks in the SQL dialect.
 .decl bootstrap_invariants_dialect_file(d: number)
 bootstrap_invariants_dialect_file(d) :- path_part(d, "l2200_sql_dialect").
-bootstrap_invariants_row(d, "BEI041", l) :- bootstrap_invariants_ecall(d, n, _, s), bootstrap_invariants_fallback8(s), (bootstrap_invariants_dialect_file(d) ; bootstrap_invariants_base(d, "generic_sparse.py")), line(n, l).
+bootstrap_invariants_row(d, "BEI041", l) :- bootstrap_invariants_ecall(d, n, _, s), bootstrap_invariants_fallback8(s), (bootstrap_invariants_dialect_file(d) ; bootstrap_invariants_base(d, "generic_sparse.py")), node_line_number(n, l).
 // BEI035: deferred_state.pending_* in the SQL dialect.
 bootstrap_invariants_row(d, "BEI035", l) :- bootstrap_invariants_dialect_file(d), bootstrap_invariants_scope(d, _), node(d, n, _, _, _), bootstrap_invariants_attr(n, x, v), prefix("pending_", x),
-    bootstrap_invariants_name(v, "deferred_state"), line(n, l).
+    bootstrap_invariants_name(v, "deferred_state"), node_line_number(n, l).
 // BEI042.
 bootstrap_invariants_row(d, "BEI042", l) :- bootstrap_invariants_enode_named(d, n, x), bootstrap_invariants_scaffold7(x),
-    (bootstrap_invariants_base(d, "bootstrap_application_plan.py") ; bootstrap_invariants_base(d, "bootstrap_coordinator.py")), line(n, l).
+    (bootstrap_invariants_base(d, "bootstrap_application_plan.py") ; bootstrap_invariants_base(d, "bootstrap_coordinator.py")), node_line_number(n, l).
 // BEI022.
 .decl bootstrap_invariants_hash_names(s: symbol)
 bootstrap_invariants_hash_names("_proof_hashes_from_payload"). bootstrap_invariants_hash_names("_seed_hashes_from_payload"). bootstrap_invariants_hash_names("_stable_payload_hash").
-bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_fnode(d, f, x), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), bootstrap_invariants_hash_names(x), line(f, l).
+bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_fnode(d, f, x), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), bootstrap_invariants_hash_names(x), node_line_number(f, l).
 bootstrap_invariants_row(d, "BEI022", l) :- bootstrap_invariants_scope(d, _), bootstrap_invariants_base(d, "bootstrap_interrogation.py"), node(d, t, "boolean_operator", _, _), bootstrap_invariants_or_value(t, v),
-    bootstrap_invariants_named(v, x), (x = "request" ; x = "proof_hashes" ; x = "seed_hashes"), line(t, l).
+    bootstrap_invariants_named(v, x), (x = "request" ; x = "proof_hashes" ; x = "seed_hashes"), node_line_number(t, l).
 
 // ---- the final query ----
 // entryPoint "all": nothing when coverage_errors (bootstrap_coordinator.py or bootstrap_data_plan.py not parsing, in
@@ -1104,4 +1104,4 @@ bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), bootstrap
 bootstrap_source_syntax_scope(d) :- bootstrap_source_syntax_doc(d, _), node(d, m, "module", _, _), node_text(m, s), (contains("Bootstrap", s) ; contains("bootstrap", s) ;
     contains("schema_transaction", s) ; contains("materialized_pipeline", s) ; contains("physical_table", s) ; contains("reconciliation", s)).
 violation("data-layer-bootstrap-engine-invariants", "bootstrap-source-syntax", "NATIVE-SYNTAX", p, l) :- bootstrap_source_syntax_scope(d), bootstrap_source_syntax_doc(d, p),
-    node(d, m, "module", _, _), line(m, l).
+    node(d, m, "module", _, _), node_line_number(m, l).

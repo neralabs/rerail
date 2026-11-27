@@ -40,12 +40,12 @@ fast_app_site(site) :- perf_site_ann(site, h), ruff_qual(h, q), fast_app(q).
 .decl fast_app(q: symbol)
 fast_app("fastapi.FastAPI"). fast_app("fastapi.APIRouter").
 
-.decl fast_param(f: node, p: node, x: symbol, ann: loc, dflt: loc)
+.decl fast_param(f: node, p: node, x: symbol, ann: node, dflt: node)
 // An unset annotation or default stays unset: tested here, in the parameter's own rule. A row of the empty value in
 // fast_strip would name no document, and every reader of it would join in the cross-file part (decision 0677).
 fast_param(f, p, x, a, d) :- sig_param(f, p, nm, _, k, a0, d0), (k = "pos" ; k = "kwonly"), text(nm, x),
     (unset(a0), unset(a) ; fast_strip(a0, a)), (unset(d0), unset(d) ; fast_strip(d0, d)).
-.decl fast_strip(e: loc, m: loc)  // parentheses and the annotation's `type` wrapper off
+.decl fast_strip(e: node, m: node)  // parentheses and the annotation's `type` wrapper off
 fast_strip(e, m) :- unparen(e, b), !kind(b, "type"), m = b.
 fast_strip(e, m) :- unparen(e, b), kind(b, "type"), child(b, i, 0), fast_strip(i, m).
 
@@ -119,7 +119,7 @@ fast_ann_dep(p, c, e, how) :- fast_param(_, p, _, ann, _), fast_annotated(ann, c
 fast_param_dep(p, e, how) :- fast_param(_, p, _, _, d), fast_dep_src(d, e, how), fast_dep_some(e, how).
 fast_param_dep(p, e, how) :- fast_param(_, p, _, _, d), !fast_default_dep(d), fast_ann_dep(p, c, e, how),
     count : { fast_ann_dep(p, c2, _, _) } = 1.
-.decl fast_default_dep(d: loc)
+.decl fast_default_dep(d: node)
 fast_default_dep(d) :- fast_dep_src(d, e, how), fast_dep_some(e, how).
 .decl fast_dep_param(f: node, x: symbol)
 fast_dep_param(f, x) :- fast_param(f, p, _, _, _), fast_param_dep(p, e, how), fast_dep_known(e, how, x), x != "".

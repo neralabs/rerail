@@ -393,7 +393,7 @@ dj_manager_method(m, q, a, x) :- class(m, q), (own_ref(q, a, s) ; anc(q, o), own
 // own into symbols, keyed by place ("path:line"); the phase joins senders and ancestors by symbol.
 // dj_place(n, p): node n's place, "path:line".
 .decl dj_place(n: node, p: symbol)
-dj_place(n, p) :- docof(n, d), doc(d, path, _), line(n, l), p = cat(path, ":", to_string(l)).
+dj_place(n, p) :- docof(n, d), doc(d, path, _), node_line_number(n, l), p = cat(path, ":", to_string(l)).
 // dj_bare_super(f): f's body, its docstring aside, is one statement calling the base class's method of f's name, maybe
 // returned: `super().<name>(…)`, or the old style `models.Model.<name>(self, …)`.
 .decl dj_bare_super(f: node)

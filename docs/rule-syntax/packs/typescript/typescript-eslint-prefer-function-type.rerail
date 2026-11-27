@@ -74,7 +74,7 @@ head_params(i, "") :- kind(i, "interface_declaration"), !field(i, "type_paramete
 semi(s, ";") :- returns(s, _), ends_semi(s).
 semi(s, "") :- returns(s, _), !ends_semi(s).
 .decl ends_semi(s: node)
-ends_semi(s) :- returns(s, _), token_after(s, t), text(t, ";").
+ends_semi(s) :- returns(s, _), node_to_token_after(s, t), token_text(t, ";").
 .decl wrapped(o: node)  // TSUnionType, TSIntersectionType and TSArrayType need parentheses around a function type
 wrapped(o) :- child(p, o, _), (kind(p, "union_type") ; kind(p, "intersection_type") ; kind(p, "array_type")).
 .decl default_export(i: node)

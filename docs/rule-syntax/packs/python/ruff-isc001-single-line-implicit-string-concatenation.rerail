@@ -18,4 +18,4 @@
     "Merge these adjacent literals into one string, escaping any braces or quotes the merge exposes; if they were meant as separate items, add the missing comma instead."
     suppress ruff "ISC001"
 ISC001(a) :- kind(cs, "concatenated_string"), child(cs, a, _), kind(a, "string"), next_sibling(a, b), kind(b, "string"),
-    end_line(a, l), line(b, l).
+    node_end_line_number(a, l), node_line_number(b, l).

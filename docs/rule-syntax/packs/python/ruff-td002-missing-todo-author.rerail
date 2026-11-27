@@ -12,7 +12,7 @@
 //   # TODO @mona: fix this         not reported
 #include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD002(at: span, tag: symbol, msg: symbol) code "TD002" "{msg}"
+.violation TD002(at: match, tag: symbol, msg: symbol) code "TD002" "{msg}"
     suppress ruff "TD002"
 TD002(t, D, cat(cat(cat(cat("Add the author after `", D), "`, as `"), D), "(name): ...`, naming whoever owns the follow-up; if nobody is known, leave it and tell the user.")) :-
     todo_item(c, D, _), todo_author(c, "no", a), !prefix("@", a), todo_at(c, t).

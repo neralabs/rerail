@@ -12,7 +12,7 @@
 //       int                  ← D412 (at `Returns`)
 #include "python/docstrings-sections.rerail"
 
-.violation D412(at: span, k: symbol) code "D412"
+.violation D412(at: place, k: symbol) code "D412"
     "Remove the blank lines between the `{k}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."
     suppress ruff "D412"
 D412(at, v) :- doc_section(s, i, v, _, _, _), content(s, i, c, k), k > 0, (!doc_sphinx(s, c) ; k != 1), doc_at(s, i, at).

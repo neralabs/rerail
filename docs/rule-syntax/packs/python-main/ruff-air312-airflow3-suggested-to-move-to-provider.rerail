@@ -10,7 +10,7 @@
 // AIR312(n): a finding at node n, from clause `airflow3-suggested-to-move-to-provider`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR312(at: loc, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
+.violation AIR312(at: node, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
     suppress noqa "AIR312"
 AIR312(ATTR, n) :- air312_alt_20(n, ATTR), inside(n, p4, "module"), within(c5, p4),
     air312_airflow_name(c5), air312_seen_airflow(n).
@@ -112,7 +112,7 @@ air312_guarded_import(n) :- air312_alt_2(n, REAL), within_stop(n, p10, air312_st
 
 // guarded_attribute(n): the JSON util `guarded-attribute`, used where the JSON says `matches: "guarded-attribute"`
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
-.decl air312_guarded_attribute(n: node, attr: loc)
+.decl air312_guarded_attribute(n: node, attr: node)
 air312_guarded_attribute(n, ATTR) :- air312_demand_guarded_attribute(n, ATTR),
     within_stop(n, p1, air312_stop_3), kind(p1, "except_clause"),
     within_stop(n, p2, "try_statement"), kind(p2, "try_statement"), child(p2, c3, _),
@@ -126,13 +126,13 @@ air312_guarded_attribute(n, ATTR) :- air312_demand_guarded_attribute(n, ATTR),
 
 // guarded_local(n): the JSON util `guarded-local`, used where the JSON says `matches: "guarded-local"`
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
-.decl air312_guarded_local(n: node, attr: loc)
+.decl air312_guarded_local(n: node, attr: node)
 air312_guarded_local(n, ATTR) :- air312_demand_guarded_local(n, ATTR), air312_alt_8(n, LOCAL),
     text(LOCAL, t5), text(ATTR, t5), @doc(LOCAL) = @doc(ATTR).
 
 // guarded_forward(n): the JSON util `guarded-forward`, used where the JSON says `matches: "guarded-forward"`
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
-.decl air312_guarded_forward(n: node, attr: loc)
+.decl air312_guarded_forward(n: node, attr: node)
 air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), inside(n, p1, "module"),
     has(p1, c2, "except_clause"), within(c3, c2), air312_guarded_local(c3, ATTR),
     count : { within(c3, p4), (kind(p4, "function_definition") ; kind(p4, "class_definition")) } = 0.
@@ -141,13 +141,13 @@ air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), air31
 
 // string_name(n): the JSON util `string-name`, used where the JSON says `matches: "string-name"`
 //   ATTR: metavariable this relation binds for the calling rule
-.decl air312_string_name(n: node, attr: loc)
+.decl air312_string_name(n: node, attr: node)
 air312_string_name(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), air312_alt_16(c2, ATTR).
 
 // string_attribute(n): the JSON util `string-attribute`, used where the JSON says `matches: "string-attribute"`
 //   ATTR: metavariable this relation binds for the calling rule
-.decl air312_string_attribute(n: node, attr: loc)
+.decl air312_string_attribute(n: node, attr: node)
 air312_string_attribute(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), air312_alt_17(c2, ATTR).
 
@@ -226,7 +226,7 @@ air312_tok_precedes_3(n) :- structural_after(n, g4), match("\\s*", g4), child(p5
 air312_tok_precedes_3(n) :- structural_after(n, g4), match("(?s)^\\s*\\S.*$", g4).
 
 // demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
-.decl air312_demand_alt_2(n: node, real: loc)
+.decl air312_demand_alt_2(n: node, real: node)
 air312_demand_alt_2(n, REAL) :- within_stop(n, p10, air312_stop_3), kind(p10, "except_clause"),
     within_stop(n, p11, "try_statement"), kind(p11, "try_statement"),
     child(p11, c12, _), kind(c12, "except_clause"), field(c12, "value", c13),
@@ -237,21 +237,21 @@ air312_demand_alt_2(n, REAL) :- within_stop(n, p10, air312_stop_3), kind(p10, "e
     (f16 = c15 ; within(c15, f16)), node(_, c15, _, _, _), REAL = c15, air312_statement_name(c15, q17).
 
 // demand_guarded_attribute: the rows of guarded_attribute its callers ask for (the metavariable columns they pass in)
-.decl air312_demand_guarded_attribute(n: node, attr: loc)
+.decl air312_demand_guarded_attribute(n: node, attr: node)
 air312_demand_guarded_attribute(p3, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
     field(p3, "attribute", n), kind(p3, "attribute"), air312_deprecated(p3).
 air312_demand_guarded_attribute(n, ATTR) :- air312_string_attribute(n, ATTR).
 
 // demand_guarded_forward: the rows of guarded_forward its callers ask for (the metavariable columns they pass in)
-.decl air312_demand_guarded_forward(n: node, attr: loc)
+.decl air312_demand_guarded_forward(n: node, attr: node)
 air312_demand_guarded_forward(n, ATTR) :- air312_string_name(n, ATTR).
 
 // demand_alt_12: the rows of alt_12 its callers ask for (the metavariable columns they pass in)
-.decl air312_demand_alt_12(n: node, attr: loc)
+.decl air312_demand_alt_12(n: node, attr: node)
 air312_demand_alt_12(n, ATTR) :- air312_demand_guarded_forward(n, ATTR).
 
 // demand_guarded_local: the rows of guarded_local its callers ask for (the metavariable columns they pass in)
-.decl air312_demand_guarded_local(n: node, attr: loc)
+.decl air312_demand_guarded_local(n: node, attr: node)
 air312_demand_guarded_local(c3, ATTR) :- air312_demand_guarded_forward(n, ATTR),
     inside(n, p1, "module"), has(p1, c2, "except_clause"), within(c3, c2).
 air312_demand_guarded_local(c4, ATTR) :- air312_demand_alt_12(n, ATTR), inside(n, p1, "block"),
@@ -340,7 +340,7 @@ air312_stop_11("function_definition"). air312_stop_11("class_definition").
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   REAL: metavariable of the calling rule, passed in (bound by the caller)
-.decl air312_alt_2(n: node, real: loc)
+.decl air312_alt_2(n: node, real: node)
 air312_alt_2(n, REAL) :- air312_demand_alt_2(n, REAL), kind(n, "dotted_name"),
     text(n, t_real1), text(REAL, t_real1), @doc(n) = @doc(REAL).
 air312_alt_2(n, REAL) :- air312_demand_alt_2(n, REAL), kind(n, "aliased_import"),
@@ -355,7 +355,7 @@ air312_stop_3(n) :- kind(n, "block"), child(p1, n, _),
 
 // alt_8(n): the JSON `any`: n matches if any one of these rules does
 //   LOCAL: metavariable this relation binds for the calling rule
-.decl air312_alt_8(n: node, local: loc)
+.decl air312_alt_8(n: node, local: node)
 air312_alt_8(n, LOCAL) :- kind(n, "dotted_name"), air312_guarded_import(n), node(_, n, _, _, _), LOCAL = n,
     bind_name(n, b1), site_latest(b1),
     count : { child(p2, n, _), kind(p2, "aliased_import") } = 0.
@@ -369,7 +369,7 @@ air312_stop_10(n) :- kind(n, "block"), child(p1, n, _),
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
-.decl air312_alt_12(n: node, attr: loc)
+.decl air312_alt_12(n: node, attr: node)
 air312_alt_12(n, ATTR) :- air312_demand_alt_12(n, ATTR), inside(n, p1, "block"), child(p2, p1, _),
     kind(p2, "function_definition"), has(p2, c3, "except_clause"), within(c4, c3),
     air312_guarded_local(c4, ATTR), within_stop(c4, p5, air312_stop_11),
@@ -381,14 +381,14 @@ air312_alt_12(n, ATTR) :- air312_demand_alt_12(n, ATTR), within_stop(n, p6, air3
 
 // alt_16(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule
-.decl air312_alt_16(n: node, attr: loc)
+.decl air312_alt_16(n: node, attr: node)
 air312_alt_16(n, ATTR) :- kind(n, "identifier"), ATTR = n, air312_deprecated(n),
     count : { child(p1, n, _), kind(p1, "attribute"), !air312_tok_precedes_3(n) } = 0.
 air312_alt_16(n, ATTR) :- air312_string_name(n, ATTR).
 
 // alt_17(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule
-.decl air312_alt_17(n: node, attr: loc)
+.decl air312_alt_17(n: node, attr: node)
 air312_alt_17(n, ATTR) :- kind(n, "identifier"), ATTR = n, child(p1, n, _),
     kind(p1, "attribute"), air312_deprecated(p1), !air312_tok_precedes_3(n).
 air312_alt_17(n, ATTR) :- air312_string_attribute(n, ATTR).
@@ -401,7 +401,7 @@ air312_alt_19(n) :- ref_site(n, b1), st2 = b1, air312_guarded_import(st2).
 
 // alt_20(n): the JSON `any`: n matches if any one of these rules does
 //   ATTR: metavariable this relation binds for the calling rule
-.decl air312_alt_20(n: node, attr: loc)
+.decl air312_alt_20(n: node, attr: node)
 air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, air312_deprecated(n), !air312_alt_19(n).
 air312_alt_20(n, ATTR) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n, field(p3, "attribute", n),
     kind(p3, "attribute"), air312_deprecated(p3), !air312_guarded_attribute(p3, ATTR).

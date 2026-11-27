@@ -94,7 +94,7 @@ ruf037_target_str(n) :- kind(n, "call"), field(n, "function", c1), ruf037_callee
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl ruf037_in_annotation(n: node, call: loc)
+.decl ruf037_in_annotation(n: node, call: node)
 ruf037_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf037_alt_10(c2, CALL).
 
@@ -113,7 +113,7 @@ RUF037(n, "Remove the empty iterable argument; `deque()`") :- kind(n, "call"),
 // RUF037_empty_iterable_in_annotation(n): a finding at node n, from clause `empty-iterable-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF037_empty_iterable_in_annotation(at: loc, call: node) code "RUF037" "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`."
+.violation RUF037_empty_iterable_in_annotation(at: node, call: node) code "RUF037" "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`."
     suppress noqa "RUF037"
 RUF037_empty_iterable_in_annotation(CALL, n) :- ruf037_in_annotation(n, CALL).
 
@@ -486,6 +486,6 @@ ruf037_alt_6(n) :- ruf037_empty_part(n).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl ruf037_alt_10(n: node, call: loc)
+.decl ruf037_alt_10(n: node, call: node)
 ruf037_alt_10(n, CALL) :- ruf037_target_str(n), CALL = n.
 ruf037_alt_10(n, CALL) :- ruf037_in_annotation(n, CALL).

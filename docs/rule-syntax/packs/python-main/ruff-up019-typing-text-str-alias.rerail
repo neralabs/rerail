@@ -10,7 +10,7 @@
 // UP019(n): a finding at node n, from clause `typing-text`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP019(at: loc, t: node) "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
+.violation UP019(at: node, t: node) "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
     suppress noqa "UP019"
 UP019(T, n) :- up019_text_ref(n), node(_, n, _, _, _), T = n.
 UP019(T, n) :- up019_text_in_string(n, T).
@@ -25,12 +25,12 @@ up019_text_ref(n) :- kind(n, "dotted_name"), inside(n, p1, "case_pattern"),
 
 // text_in_string(n): the JSON util `text-in-string`, used where the JSON says `matches: "text-in-string"`
 //   T: metavariable this relation binds for the calling rule
-.decl up019_text_in_string(n: node, t: loc)
+.decl up019_text_in_string(n: node, t: node)
 up019_text_in_string(n, T) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up019_alt_1(c2, T).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   T: metavariable this relation binds for the calling rule
-.decl up019_alt_1(n: node, t: loc)
+.decl up019_alt_1(n: node, t: node)
 up019_alt_1(n, T) :- up019_text_ref(n), T = n.
 up019_alt_1(n, T) :- up019_text_in_string(n, T).

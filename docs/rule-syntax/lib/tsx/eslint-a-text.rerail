@@ -26,28 +26,28 @@ js_comment(c, "Block", v) :- kind(c, "comment"), comment(c, v), prefix("/*", c).
 
 // end_col(n, c): `/* a */` at column 4 ends at column 11. A node over several lines ends where its last line of
 // text does. A text that ends in a line break (a template's raw text can) ends just past that break.
-.decl end_col(n: loc, c: number)
-end_col(n, x + strlen(s)) :- text(n, s), !contains("\n", s), col(n, x).
+.decl end_col(n: node, c: number)
+end_col(n, x + strlen(s)) :- text(n, s), !contains("\n", s), node_start_column(n, x).
 end_col(n, strlen(@replace_all(s, "^[\\s\\S]*\\n", ""))) :- text(n, s), contains("\n", s), !suffix("\n", s).
-end_col(n, x + strlen(s)) :- text(n, s), suffix("\n", s), !contains("\n", substr(s, 0, strlen(s) - 1)), col(n, x).
+end_col(n, x + strlen(s)) :- text(n, s), suffix("\n", s), !contains("\n", substr(s, 0, strlen(s) - 1)), node_start_column(n, x).
 end_col(n, 1 + strlen(@replace_all(u, "^[\\s\\S]*\\n", ""))) :- text(n, s), suffix("\n", s),
     u = substr(s, 0, strlen(s) - 1), contains("\n", u).
 
 // code_before(c): `f(); // why` and `/* a */ /* b */`: something other than whitespace is on c's line before
 // it. code_after(c): the same after it on its last line. no-inline-comments reads the line text, as ESLint does.
 .decl code_before(c: node)
-code_before(c) :- kind(c, "comment"), docof(c, d), line(c, l), src_line(d, l, sp), text(sp, s), col(c, x),
+code_before(c) :- kind(c, "comment"), docof(c, d), node_line_number(c, l), document_line(d, sp), line_number(sp, l), line_text(sp, s), node_start_column(c, x),
     match("[\\s\\S]*\\S[\\s\\S]*", substr(s, 0, x)).
 .decl code_after(c: node)
-code_after(c) :- kind(c, "comment"), docof(c, d), end_line(c, l), src_line(d, l, sp), text(sp, s), end_col(c, x),
+code_after(c) :- kind(c, "comment"), docof(c, d), node_end_line_number(c, l), document_line(d, sp), line_number(sp, l), line_text(sp, s), end_col(c, x),
     strlen(s) > x, match("[\\s\\S]*\\S[\\s\\S]*", substr(s, x, strlen(s) - x)).
 // pre_text(c, s), post_text(c, s): that text, trimmed, for the `{ /* c */ }` test of no-inline-comments.
 .decl pre_text(c: node, s: symbol)
-pre_text(c, @replace_all(substr(s, 0, x), "^\\s+|\\s+$", "")) :- code_before(c), docof(c, d), line(c, l),
-    src_line(d, l, sp), text(sp, s), col(c, x).
+pre_text(c, @replace_all(substr(s, 0, x), "^\\s+|\\s+$", "")) :- code_before(c), docof(c, d), node_line_number(c, l),
+    document_line(d, sp), line_number(sp, l), line_text(sp, s), node_start_column(c, x).
 .decl post_text(c: node, s: symbol)
 post_text(c, @replace_all(substr(s, x, strlen(s) - x), "^\\s+|\\s+$", "")) :- code_after(c), docof(c, d),
-    end_line(c, l), src_line(d, l, sp), text(sp, s), end_col(c, x).
+    node_end_line_number(c, l), document_line(d, sp), line_number(sp, l), line_text(sp, s), end_col(c, x).
 
 // tool_comment(c): `// eslint-disable-line`, `/* global $ */`, `// istanbul ignore next` are not prose.
 .decl tool_comment(c: node)
@@ -64,28 +64,28 @@ eslint_directive(c) :- js_comment(c, "Block", v), match("\\s*(?:eslint[- ]|(?:gl
 .decl token_neighbours(c: node)
 token_neighbours(c) :- kind(c, "comment"), near_before(c), near_after(c).
 .decl near_before(c: node)
-near_before(c) :- kind(c, "comment"), token_before(c, t), end_line(t, l), line(c, l), !comment_between_before(c, t).
-near_before(c) :- kind(c, "comment"), prev_comment(c, p), end_line(p, l), line(c, l).
+near_before(c) :- kind(c, "comment"), node_to_token_before(c, t), token_end_line_number(t, l), node_line_number(c, l), !comment_between_before(c, t).
+near_before(c) :- kind(c, "comment"), prev_comment(c, p), node_end_line_number(p, l), node_line_number(c, l).
 .decl near_after(c: node)
-near_after(c) :- kind(c, "comment"), token_after(c, t), line(t, l), end_line(c, l), !comment_between_after(c, t).
-near_after(c) :- kind(c, "comment"), next_comment(c, n), line(n, l), end_line(c, l).
+near_after(c) :- kind(c, "comment"), node_to_token_after(c, t), token_line_number(t, l), node_end_line_number(c, l), !comment_between_after(c, t).
+near_after(c) :- kind(c, "comment"), next_comment(c, n), node_line_number(n, l), node_end_line_number(c, l).
 // prev_comment(c, p): p is the comment right before c, with no token between them: of the comments that share
 // c's next token (or, at the end of the file, share having none), the latest before c by visit order.
 //   a; /* p */ /* c */ b;      a /* p */ ; /* c */ b   (here `;` is between, so p is not c's previous)
 // One max per comment over its gap: linear in a run of consecutive comments per comment, never cubic.
 .decl prev_comment(c: node, p: node)
-prev_comment(c, p) :- kind(c, "comment"), token_after(c, t), visit_index(c, vc),
-    i = max v : { kind(q, "comment"), token_after(q, t), visit_index(q, v), v < vc },
-    kind(p, "comment"), token_after(p, t), visit_index(p, i).
-prev_comment(c, p) :- kind(c, "comment"), !token_after(c, _), docof(c, d), visit_index(c, vc),
-    i = max v : { kind(q, "comment"), !token_after(q, _), docof(q, d), visit_index(q, v), v < vc },
-    kind(p, "comment"), !token_after(p, _), docof(p, d), visit_index(p, i).
+prev_comment(c, p) :- kind(c, "comment"), node_to_token_after(c, t), visit_index(c, vc),
+    i = max v : { kind(q, "comment"), node_to_token_after(q, t), visit_index(q, v), v < vc },
+    kind(p, "comment"), node_to_token_after(p, t), visit_index(p, i).
+prev_comment(c, p) :- kind(c, "comment"), !node_to_token_after(c, _), docof(c, d), visit_index(c, vc),
+    i = max v : { kind(q, "comment"), !node_to_token_after(q, _), docof(q, d), visit_index(q, v), v < vc },
+    kind(p, "comment"), !node_to_token_after(p, _), docof(p, d), visit_index(p, i).
 .decl next_comment(c: node, n: node)
 next_comment(c, n) :- prev_comment(n, c).
-.decl comment_between_before(c: node, t: span)  // a comment lies between token t and comment c
-comment_between_before(c, t) :- token_before(c, t), prev_comment(c, _).
-.decl comment_between_after(c: node, t: span)
-comment_between_after(c, t) :- token_after(c, t), next_comment(c, _).
+.decl comment_between_before(c: node, t: token)  // a comment lies between token t and comment c
+comment_between_before(c, t) :- node_to_token_before(c, t), prev_comment(c, _).
+.decl comment_between_after(c: node, t: token)
+comment_between_after(c, t) :- node_to_token_after(c, t), next_comment(c, _).
 
 // follows_comment(c): `// a` then `// b` on the next line: b follows a comment.
 .decl follows_comment(c: node)

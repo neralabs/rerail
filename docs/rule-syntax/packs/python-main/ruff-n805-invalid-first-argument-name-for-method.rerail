@@ -144,7 +144,7 @@ n805_named_ok(n) :- node(_, n, _, _, _),
 
 // first_param_name(n): the JSON util `first-param-name`, used where the JSON says `matches: "first-param-name"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl n805_first_param_name(n: node, name: loc)
+.decl n805_first_param_name(n: node, name: node)
 n805_first_param_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !n805_named_ok(n).
 
 // ann_of(n, key): 3 copies of one rule set (`dict-ann`, `str-ann`, `tuple-ann`), folded into one: row `key` of
@@ -161,7 +161,7 @@ n805_ann_of(n, q1) :- n805_ann_of_case(q1, s1), kind(n, "parenthesized_expressio
 // N805(n): findings from clauses `plain-first-parameter`, `typed-first-parameter`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N805(at: node, name: loc) "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+.violation N805(at: node, name: node) "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
     suppress noqa "N805"
 N805(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !n805_named_ok(n),
     ( child(p1, n, _), n805_counted_of(n), k1 = count : { child(p1, s1, _), precedes(s1, n), n805_counted_of(s1) }, k1 = 0, child(p2, n, _), n805_method_parameters(p2)
@@ -176,7 +176,7 @@ N805(n, NAME) :- kind(n, "typed_parameter"), child(p1, n, _), n805_counted_of(n)
 // N805_typed_default_first_parameter(n): a finding at node n, from clause `typed-default-first-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N805_typed_default_first_parameter(at: loc, n805_param: node, name: loc) code "N805" "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+.violation N805_typed_default_first_parameter(at: match, n805_param: node, name: node) code "N805" "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
     suppress noqa "N805"
 N805_typed_default_first_parameter(PARAM, n, NAME) :- kind(n, "typed_default_parameter"),
     child(p1, n, _), n805_counted_of(n),

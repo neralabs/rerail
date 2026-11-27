@@ -47,7 +47,7 @@ up013_second_positional(n) :- up013_positional_arg(n), precedes(s1, n), up013_po
 
 // typed_dict_ref(n): the JSON util `typed-dict-ref`, used where the JSON says `matches: "typed-dict-ref"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up013_typed_dict_ref(n: node, base: loc)
+.decl up013_typed_dict_ref(n: node, base: node)
 up013_typed_dict_ref(n, BASE) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), BASE = n,
     ( sym_of(n, "typing.TypedDict")
     ; sym_of(n, "typing_extensions.TypedDict")
@@ -57,21 +57,21 @@ up013_typed_dict_ref(n, BASE) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // typed_dict_callee(n): the JSON util `typed-dict-callee`, used where the JSON says `matches: "typed-dict-callee"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up013_typed_dict_callee(n: node, base: loc)
+.decl up013_typed_dict_callee(n: node, base: node)
 up013_typed_dict_callee(n, BASE) :- up013_typed_dict_ref(n, BASE).
 up013_typed_dict_callee(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     up013_typed_dict_callee(c1, BASE).
 
 // name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl up013_name_target(n: node, name: loc)
+.decl up013_name_target(n: node, name: node)
 up013_name_target(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
 up013_name_target(n, NAME) :- kind(n, "tuple_pattern"), !up013_tok_has_1(n), child(n, c9, _),
     up013_name_target(c9, NAME).
 
 // typed_dict_value(n): the JSON util `typed-dict-value`, used where the JSON says `matches: "typed-dict-value"`
 //   BASE: metavariable this relation binds for the calling rule
-.decl up013_typed_dict_value(n: node, base: loc)
+.decl up013_typed_dict_value(n: node, base: node)
 up013_typed_dict_value(n, BASE) :- kind(n, "call"), field(n, "function", c1),
     up013_typed_dict_callee(c1, BASE), field(n, "arguments", c2), up013_typed_dict_arguments(c2).
 up013_typed_dict_value(n, BASE) :- kind(n, "parenthesized_expression"), child(n, c3, _),
@@ -114,7 +114,7 @@ up013_typed_dict_arguments(n) :- up013_two_positional(n), child(n, c1, _), up013
 // UP013(n): a finding at node n, from clause `typed-dict-functional`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP013(at: node, name: loc, base: loc) "Define `{name}` as `class {name}({base}):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords."
+.violation UP013(at: node, name: node, base: node) "Define `{name}` as `class {name}({base}):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords."
     suppress noqa "UP013"
 UP013(n, NAME, BASE) :- kind(n, "assignment"),
     count : { child(p1, n, _), kind(p1, "assignment") } = 0, field(n, "left", c2),

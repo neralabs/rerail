@@ -96,8 +96,8 @@ back_prop(p, q) :- next_entry(r, p), !property(_, r, _), back_prop(r, q).
 .decl property(o: node, p: node, i: number)
 property(o, p, i) :- entry(o, p, i), !kind(p, "spread_element"), !ignored(p).
 .decl blank_between(q: node, p: node)  // a line with nothing on it, not inside a comment or a template
-blank_between(q, p) :- prev_prop(p, q), docof(p, d), end_line(q, a), line(p, b), src_line(d, l, sp), a < l, l < b,
+blank_between(q, p) :- prev_prop(p, q), docof(p, d), node_end_line_number(q, a), node_line_number(p, b), document_line(d, sp), line_number(sp, l), a < l, l < b,
     match("\\s*", sp), !spanned(d, l).
 .decl spanned(d: number, l: number)  // line l is inside a multi-line comment or template string
-spanned(d, l) :- (kind(c, "comment") ; kind(c, "template_string")), docof(c, d), line(c, a), end_line(c, b), a < b,
-    src_line(d, l, _), a < l, l <= b.
+spanned(d, l) :- (kind(c, "comment") ; kind(c, "template_string")), docof(c, d), node_line_number(c, a), node_end_line_number(c, b), a < b,
+    document_line(d, Rr_line1), line_number(Rr_line1, l), a < l, l <= b.

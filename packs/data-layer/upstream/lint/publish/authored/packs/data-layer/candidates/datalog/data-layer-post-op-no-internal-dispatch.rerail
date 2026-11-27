@@ -123,12 +123,12 @@ pod_kwargs_container(n) :- pod_keys_call(n).
 pod_key_membership(d, c) :- pod_binary_cmp(c, "in"), pod_nth(c, k, 1), pod_plain_string(k), pod_nth(c, x, 2), pod_kwargs_container(x), nearest(c, f, pod_fdef), pod_materializer_fn(f), node(d, c, _, _, _), pod_doc(d).
 duplicate_enum_start(d, f, e, m, s) :- pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _).
 duplicate_enum_first(d, f, e, m, s) :- duplicate_enum_start(d, f, e, m, _), k = count : { duplicate_enum_start(d, f, e, m, _) }, k > 1, s = min t : { duplicate_enum_start(d, f, e, m, t) }.
-violation("data-layer-post-op-no-internal-dispatch", "duplicate-enum", "POSTOPDISPATCH001", p, l) :- duplicate_enum_first(d, f, e, m, s), pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _), doc(d, p, _), line(c, l).
-violation("data-layer-post-op-no-internal-dispatch", "builder-name", "POSTOPDISPATCH002", p, l) :- pod_enum_cmp(d, c, f, "RuntimeBuilderName", _), pod_builder_fn(f), doc(d, p, _), line(c, l).
-violation("data-layer-post-op-no-internal-dispatch", "literal-kwargs", "POSTOPDISPATCH003", p, l) :- pod_key_membership(d, c), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "duplicate-enum", "POSTOPDISPATCH001", p, l) :- duplicate_enum_first(d, f, e, m, s), pod_enum_cmp(d, c, f, e, m), node(d, c, _, s, _), doc(d, p, _), node_line_number(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "builder-name", "POSTOPDISPATCH002", p, l) :- pod_enum_cmp(d, c, f, "RuntimeBuilderName", _), pod_builder_fn(f), doc(d, p, _), node_line_number(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "literal-kwargs", "POSTOPDISPATCH003", p, l) :- pod_key_membership(d, c), doc(d, p, _), node_line_number(c, l).
 multi_enum_builder_fn(f) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s), glob("materialize_*builder", s).
 multi_enum_builder_row(d, f, c) :- pod_enum_cmp(d, c, f, _, _), multi_enum_builder_fn(f).
-violation("data-layer-post-op-no-internal-dispatch", "multi-enum-builder", "POSTOPDISPATCH004", p, l) :- multi_enum_builder_row(d, f, _), k = count : { multi_enum_builder_row(d, f, _) }, k > 1, doc(d, p, _), line(f, l).
+violation("data-layer-post-op-no-internal-dispatch", "multi-enum-builder", "POSTOPDISPATCH004", p, l) :- multi_enum_builder_row(d, f, _), k = count : { multi_enum_builder_row(d, f, _) }, k > 1, doc(d, p, _), node_line_number(f, l).
 removed_surface_excluded(n) :- inside(n, _, removed_surface_imports).
 removed_surface_excluded(n) :- field(q, "attribute", n), node(_, q, "attribute", _, _).
 removed_surface_excluded(n) :- field(q, "name", n), node(_, q, "keyword_argument", _, _).
@@ -142,9 +142,9 @@ removed_surface_excluded(n) :- child(q, n, _), node(_, q, "dictionary_splat_patt
 removed_surface_excluded(n) :- child(q, n, 0), node(_, q, "typed_parameter", _, _).
 removed_surface_hit(n) :- node(_, n, "identifier", _, _), text(n, s), removed_surface_name(s), !removed_surface_excluded(n).
 removed_surface_hit(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, s), removed_surface_name(s).
-violation("data-layer-post-op-no-internal-dispatch", "removed-surface", "POSTOPDISPATCH005", p, l) :- removed_surface_hit(n), node(d, n, _, _, _), pod_doc(d), doc(d, p, _), line(n, l).
+violation("data-layer-post-op-no-internal-dispatch", "removed-surface", "POSTOPDISPATCH005", p, l) :- removed_surface_hit(n), node(d, n, _, _, _), pod_doc(d), doc(d, p, _), node_line_number(n, l).
 domain_helper_allowed_name(f) :- field(f, "name", x), node(_, x, "identifier", _, _), text(x, s), domain_helper_allowed(s).
-violation("data-layer-post-op-no-internal-dispatch", "domain-helper", "POSTOPDISPATCH006", p, l) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x), text(x, s), prefix("_materialize_", s), !domain_helper_allowed_name(f), pod_doc(d), doc(d, p, _), line(f, l).
+violation("data-layer-post-op-no-internal-dispatch", "domain-helper", "POSTOPDISPATCH006", p, l) :- node(d, f, "function_definition", _, _), doc(d, "l2070_batching/post_op.py", _), field(f, "name", x), text(x, s), prefix("_materialize_", s), !domain_helper_allowed_name(f), pod_doc(d), doc(d, p, _), node_line_number(f, l).
 payload_aliases_lp(q) :- node(_, q, "attribute", _, _), field(q, "attribute", x), node(_, x, "identifier", _, _), text(x, "literal_payload").
 payload_aliases_assign(d, a, f, t, s, v) :- node(d, a, "assignment", s, _), pod_doc(d), field(a, "left", x), node(_, x, "identifier", _, _), text(x, t), field(a, "right", v), nearest(a, f, pod_fdef).
 payload_aliases_payload(a) :- payload_aliases_assign(d, a, _, _, _, v), node(d, v, _, vs, ve), payload_aliases_lp(q), node(d, q, _, qs, qe), vs <= qs, qe <= ve.
@@ -155,10 +155,10 @@ payload_aliases_probe(d, n, r) :- node(d, n, "call", _, _), field(n, "function",
 payload_aliases_probe(d, n, r) :- node(d, n, "subscript", _, _), field(n, "value", o), node(_, o, "identifier", _, _), text(o, r), field(n, "subscript", k), pod_plain_string(k).
 payload_aliases_probe(d, n, r) :- pod_binary_cmp(n, "in"), pod_nth(n, k, 1), pod_plain_string(k), pod_nth(n, o, 2), node(_, o, "identifier", _, _), text(o, r), node(d, n, _, _, _).
 payload_aliases_owned_probe(d, n, f, r, s) :- payload_aliases_probe(d, n, r), pod_doc(d), nearest(n, f, pod_fdef), pod_materializer_fn(f), node(d, n, _, s, _).
-violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- payload_aliases_owned_probe(d, n, f, r, s), payload_aliases_alias(f, r, s0), s0 <= s, doc(d, p, _), line(n, l).
-violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- pod_key_membership(d, c), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- payload_aliases_owned_probe(d, n, f, r, s), payload_aliases_alias(f, r, s0), s0 <= s, doc(d, p, _), node_line_number(n, l).
+violation("data-layer-post-op-no-internal-dispatch", "payload-aliases", "POSTOPDISPATCH007", p, l) :- pod_key_membership(d, c), doc(d, p, _), node_line_number(c, l).
 removed_base_name(n) :- node(_, n, "identifier", _, _), text(n, "ResultRowMaterializer").
 removed_base_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, "ResultRowMaterializer").
-violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :- node(d, c, "class_definition", _, _), field(c, "superclasses", sc), child(sc, b, _), removed_base_name(b), pod_doc(d), doc(d, p, _), line(c, l).
-violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :- node(d, c, "call", _, _), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "row_materializer"), pod_doc(d), doc(d, p, _), line(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :- node(d, c, "class_definition", _, _), field(c, "superclasses", sc), child(sc, b, _), removed_base_name(b), pod_doc(d), doc(d, p, _), node_line_number(c, l).
+violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :- node(d, c, "call", _, _), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "row_materializer"), pod_doc(d), doc(d, p, _), node_line_number(c, l).
 rr_demand_agg_rr_agg3(p, xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).

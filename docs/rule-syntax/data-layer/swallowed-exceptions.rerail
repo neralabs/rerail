@@ -139,7 +139,7 @@ swallowed(x, b) :- handler(x, b), !reraises(x), !protocol_only(x).
     "Swallowed exception: the handler communicates the error but does not re-raise (body: {body})"
 WARNING(x, s) :- warn_at(x, s, p, l), !ignored(p, l).
 .decl warn_at(x: node, s: symbol, p: symbol, l: number)
-warn_at(x, s, p, l) :- swallowed(x, b), reads_exc(x), summary(b, s), docof(x, d), doc(d, p, _), line(x, l).
+warn_at(x, s, p, l) :- swallowed(x, b), reads_exc(x), summary(b, s), docof(x, d), doc(d, p, _), node_line_number(x, l).
 
 // CRITICAL, first rule: a swallowed handler that never reads the exception.
 // Second rule: a with-statement item the linter reads as a suppress that matters (suppress_with). {body}
@@ -149,9 +149,9 @@ warn_at(x, s, p, l) :- swallowed(x, b), reads_exc(x), summary(b, s), docof(x, d)
 CRITICAL(x, f, s) :- critical_at(x, f, s, p, l), !ignored(p, l).
 .decl critical_at(x: node, form: symbol, s: symbol, p: symbol, l: number)
 critical_at(x, "except", s, p, l) :- swallowed(x, b), !reads_exc(x), summary(b, s), docof(x, d), doc(d, p, _),
-    line(x, l).
+    node_line_number(x, l).
 critical_at(w, "contextlib.suppress", s, p, l) :- suppress_with(w, _), field(w, "body", b), summary(b, s),
-    docof(w, d), doc(d, p, _), line(w, l).
+    docof(w, d), doc(d, p, _), node_line_number(w, l).
 
 // suppress_with(w, c): with-statement w has the item c, a call the Python linter reads as contextlib.suppress, and
 // c does not suppress only protocol exceptions. The linter tests each item twice; either test reports (CRITICAL at

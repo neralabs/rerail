@@ -61,7 +61,7 @@ fn unrestricted(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<
     atoms.iter().any(|a| matches!(rel(a), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
         && atoms.iter().all(|a| {
             let attribute = ATTRIBUTES.contains(&rel(a));
-            (attribute && plain(v, rule, *a)) || (!attribute && !f.columns(rel(a)).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "loc" | "span"))))
+            (attribute && plain(v, rule, *a)) || (!attribute && !f.columns(rel(a)).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(*t, "node" | "place"))))
         })
 }
 
@@ -88,7 +88,7 @@ fn node_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>) -
     let Some(columns) = f.columns(v.rel_name(atom.rel())) else { return BTreeSet::new() };
     atom.args()
         .zip(&columns)
-        .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "loc" | "span") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
+        .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "place") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
         .collect()
 }
 

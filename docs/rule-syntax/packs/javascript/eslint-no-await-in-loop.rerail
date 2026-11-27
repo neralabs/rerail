@@ -15,7 +15,7 @@
 //   for await (const u of us) await save(u);      fine: inside a for-await the waiting is intended
 //   for (const x of await load()) {}              fine: what is iterated is evaluated once
 // No options.
-.violation no_await_in_loop(at: loc) code "no-await-in-loop" "Unexpected `await` inside a loop."
+.violation no_await_in_loop(at: place) code "no-await-in-loop" "Unexpected `await` inside a loop."
     suppress eslint "no-await-in-loop"
     suppress oxlint "no-await-in-loop"
     suppress biome "lint/performance/noAwaitInLoops"
@@ -26,7 +26,7 @@ no_await_in_loop(t) :- kind(l, "for_in_statement"), op(l, "using"), !boundary(l)
     match("(?s)for\\s*\\(\\s*(?<t>await)\\s+using\\b.*", l).
 
 // awaits(n, at): node n waits, and ESLint reports it at at.
-.decl awaits(n: node, at: loc)
+.decl awaits(n: node, at: node)
 awaits(n, n) :- kind(n, "await_expression"), !using_await(n).
 awaits(n, n) :- for_await(n).
 awaits(d, d) :- var_decl(d, "await using").

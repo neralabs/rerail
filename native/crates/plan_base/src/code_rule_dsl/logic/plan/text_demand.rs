@@ -748,7 +748,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     }
     // An export's name is its item's first word: an asked phase writes its key after it (`asked_at by_path 1`).
     let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').filter_map(|e| e.trim().trim_end_matches('.').split_whitespace().next().map(str::to_owned)).collect::<Vec<_>>()).collect();
-    let is_node = |t: &str| t == "node" || t == "loc";
+    let is_node = |t: &str| t == "node" || t == "place";
     let ast = crate::code_rule_dsl::facts::core::ast_matches::PREFIX;
     let types = |rel: &str| -> Option<Vec<&str>> { v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect()) };
     for e in &exports {

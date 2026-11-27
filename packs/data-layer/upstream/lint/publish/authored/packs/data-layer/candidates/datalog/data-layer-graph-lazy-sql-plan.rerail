@@ -215,34 +215,34 @@ graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x
 graph_plan_contracts_named(d, i, x) :- node(d, i, "identifier", _, _), text(i, x), graph_plan_contracts_wanted(x), field(a, "attribute", i), node(_, a, "attribute", _, _).
 graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, f, graph_plan_contracts_fdef).
 graph_plan_contracts_mention(f, x) :- graph_plan_contracts_named(_, i, x), inside(i, dc, graph_plan_contracts_deco), child(dd, dc, _), field(dd, "definition", f).
-graph_plan_contracts_topdef(d, x, s, "class", l) :- graph_plan_contracts_tclass(d, x, c, s), line(c, l).
-graph_plan_contracts_topdef(d, x, s, "function", l) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_nested(f), field(f, "name", nm), text(nm, x), line(f, l).
+graph_plan_contracts_topdef(d, x, s, "class", l) :- graph_plan_contracts_tclass(d, x, c, s), node_line_number(c, l).
+graph_plan_contracts_topdef(d, x, s, "function", l) :- node(d, f, "function_definition", s, _), !graph_plan_contracts_nested(f), field(f, "name", nm), text(nm, x), node_line_number(f, l).
 graph_plan_contracts_chain(a, a) :- node(_, a, "assignment", _, _), !field(a, "type", _), !graph_plan_contracts_inner(a).
 graph_plan_contracts_chain(a, c) :- graph_plan_contracts_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
 graph_plan_contracts_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a).
 graph_plan_contracts_target(a, t) :- graph_plan_contracts_chain(a, b), field(b, "left", l), graph_plan_contracts_bare(l, t).
 graph_plan_contracts_bare(l, l) :- node(_, l, "identifier", _, _).
 graph_plan_contracts_bare(l, t) :- node(_, l, "tuple_pattern", _, _), child(l, c, 0), !child(l, _, 1), !token(l, _, ",", _, _), graph_plan_contracts_bare(c, t).
-graph_plan_contracts_topdef(d, x, s, "assign", l) :- node(d, a, "assignment", s, _), !graph_plan_contracts_nested(a), graph_plan_contracts_target(a, t), text(t, x), line(a, l).
+graph_plan_contracts_topdef(d, x, s, "assign", l) :- node(d, a, "assignment", s, _), !graph_plan_contracts_nested(a), graph_plan_contracts_target(a, t), text(t, x), node_line_number(a, l).
 graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, i, 0), node(_, i, "identifier", _, _).
 graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", t), node(_, t, "type", _, _), child(t, g, 0), node(_, g, "generic_type", _, _), child(g, i, 0), node(_, i, "identifier", _, _).
 graph_plan_contracts_alias_name(o, i) :- node(_, o, "type_alias_statement", _, _), field(o, "left", g), node(_, g, "generic_type", _, _), child(g, i, 0), node(_, i, "identifier", _, _).
-graph_plan_contracts_topdef(d, x, s, "typealias", l) :- node(d, o, "type_alias_statement", s, _), !graph_plan_contracts_nested(o), graph_plan_contracts_alias_name(o, i), text(i, x), line(o, l).
+graph_plan_contracts_topdef(d, x, s, "typealias", l) :- node(d, o, "type_alias_statement", s, _), !graph_plan_contracts_nested(o), graph_plan_contracts_alias_name(o, i), text(i, x), node_line_number(o, l).
 graph_plan_contracts_symbol(d, x, k, l) :- graph_plan_contracts_topdef(d, x, s, k, l), s = max t : { graph_plan_contracts_topdef(d, x, t, _, _) }.
 graph_plan_contracts_has_def(d, x) :- graph_plan_contracts_symbol(d, x, k, _), graph_plan_contracts_defkind(k).
 graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_class(c, p, x, code), graph_plan_contracts_file(d, p), !graph_plan_contracts_has_class(d, x).
 graph_plan_contracts_hit(c, code, p, 1) :- graph_plan_contracts_req_symbol(c, p, x, code), graph_plan_contracts_file(d, p), !graph_plan_contracts_has_def(d, x).
 graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "def", need, code), graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, k, l), graph_plan_contracts_defkind(k), graph_plan_contracts_has_class(d, need).
 graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_banned(c, p, x, "any", "", code), graph_plan_contracts_file(d, p), graph_plan_contracts_symbol(d, x, _, l).
-graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_method(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_class(d, o, k), !graph_plan_contracts_has_method(d, o, x), line(k, l).
-graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_deco(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_decorator(f, y), line(f, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_method(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_class(d, o, k), !graph_plan_contracts_has_method(d, o, x), node_line_number(k, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_deco(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_decorator(f, y), node_line_number(f, l).
 graph_plan_contracts_alias(y, y) :- graph_plan_contracts_req_mention(_, _, _, _, y, _), y != "legacy".
 graph_plan_contracts_mentions(f, y) :- graph_plan_contracts_alias(y, x), graph_plan_contracts_mention(f, x).
-graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_mention(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_mentions(f, y), line(f, l).
-graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_removed(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), line(f, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_req_mention(c, p, o, x, y, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), !graph_plan_contracts_mentions(f, y), node_line_number(f, l).
+graph_plan_contracts_hit(c, code, p, l) :- graph_plan_contracts_removed(c, p, o, x, code), graph_plan_contracts_file(d, p), graph_plan_contracts_method(d, o, x, f), node_line_number(f, l).
 graph_plan_contracts_surface(d) :- graph_plan_contracts_target(a, t), text(t, "__pure_lazy_surface__"), node(d, a, _, _, _), !graph_plan_contracts_in_fn(a), nearest(a, c, graph_plan_contracts_cdef), graph_plan_contracts_tclass(d, "GraphLazyStepRegistrar", c, _).
 graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, 1) :- graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py", !graph_plan_contracts_has_class(d, "GraphLazyStepRegistrar").
-graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, l) :- graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py", graph_plan_contracts_class(d, "GraphLazyStepRegistrar", k), !graph_plan_contracts_surface(d), line(k, l).
+graph_plan_contracts_hit("graph-plan-contracts-1", "GLSP-007", p, l) :- graph_plan_contracts_file(d, p), p = "l7200_versioned_transactions/graph_lazy_sql.py", graph_plan_contracts_class(d, "GraphLazyStepRegistrar", k), !graph_plan_contracts_surface(d), node_line_number(k, l).
 violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-0", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-0", code, p, l).
 violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-1", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-1", code, p, l).
 violation("data-layer-graph-lazy-sql-plan", "graph-plan-contracts-2", code, p, l) :- graph_plan_contracts_hit("graph-plan-contracts-2", code, p, l).

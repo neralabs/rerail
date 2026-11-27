@@ -10,7 +10,7 @@
 // ASYNC105(n): a finding at node n, from clause `trio-sync-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ASYNC105(at: node, callee: loc) "Call to `{callee}` is not immediately awaited"
+.violation ASYNC105(at: node, callee: node) "Call to `{callee}` is not immediately awaited"
     suppress noqa "ASYNC105"
 ASYNC105(n, CALLEE) :- kind(n, "call"), child(n, c1, _), node(_, c1, _, _, _), CALLEE = c1,
     async105_callee_of_target(c1), next_sibling(c1, s2),

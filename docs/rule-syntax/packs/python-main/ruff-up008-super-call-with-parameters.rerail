@@ -10,7 +10,7 @@
 // UP008(n): a finding at node n, from clause `super-with-class-and-instance`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP008(at: loc, args: node) "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
+.violation UP008(at: node, args: node) "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
     suppress noqa "UP008"
 UP008(ARGS, n) :- kind(n, "call"), field(n, "function", c1), up008_any_super_p(c1),
     up008_arg_cls_slot_1(n, a2), A = a2, up008_arg_obj_slot_2(n, a3), B = a3,
@@ -58,7 +58,7 @@ up008_positional_param(n) :- up008_param_unit(n), !up008_alt_2(n).
 
 // first_param(n): the JSON util `first-param`, used where the JSON says `matches: "first-param"`
 //   P: metavariable this relation binds for the calling rule
-.decl up008_first_param(n: node, p: loc)
+.decl up008_first_param(n: node, p: node)
 up008_first_param(n, P) :- up008_positional_param(n), child(p1, n, _), up008_counted_3(n),
     k3 = count : { child(p1, s2, _), precedes(s2, n), up008_counted_3(s2) }, k3 = 0,
     up008_alt_4(n, P).
@@ -119,7 +119,7 @@ up008_cell_name(n) :- kind(n, "identifier"), glob("{super,__class__}", n), !up00
 
 // chain(n, …): the JSON util `chain`, called with `matches` and arguments C
 //   CC, K, KN, PC, SEG: metavariables this relation binds for the calling rule
-.decl up008_chain(n: node, c: node, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
+.decl up008_chain(n: node, c: node, cc: node, k: node, kn: node, pc: node, seg: node)
 up008_chain(n, C, CC, K, KN, PC, SEG) :- up008_demand_chain(n), up008_alt_14(n, C, CC, K, KN, PC, SEG).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^slots$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
@@ -214,7 +214,7 @@ up008_arg_no_over_slot_3(n) :- kind(n, "call"), field(n, "arguments", l), !up008
     count : { up008_args_star(l, j), j <= 2 } = 0.
 
 // demand_alt_35: the rows of alt_35 its callers ask for (the metavariable columns they pass in)
-.decl up008_demand_alt_35(n: node, t0: loc)
+.decl up008_demand_alt_35(n: node, t0: node)
 up008_demand_alt_35(p22, T0) :- within_stop(n, p9, "class_definition"),
     kind(p9, "class_definition"), node(_, p9, _, _, _), C0 = p9, field(n, "arguments", c10),
     child(c10, c11, _), child(p12, c11, _), up008_counted(c11), field(n, "arguments", c15),
@@ -277,7 +277,7 @@ up008_counted_3(n) :- up008_positional_param(n).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   P: metavariable this relation binds for the calling rule
-.decl up008_alt_4(n: node, p: loc)
+.decl up008_alt_4(n: node, p: node)
 up008_alt_4(n, P) :- kind(n, "identifier"), node(_, n, _, _, _), P = n.
 up008_alt_4(n, P) :- child(n, c1, _), kind(c1, "identifier"), child(_, c1, 0), node(_, c1, _, _, _), P = c1.
 
@@ -296,14 +296,14 @@ up008_alt_11(n) :- field(p7, "name", n), kind(p7, "keyword_argument").
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   SEG: metavariable this relation binds for the calling rule
-.decl up008_alt_12(n: node, seg: loc)
+.decl up008_alt_12(n: node, seg: node)
 up008_alt_12(n, SEG) :- kind(n, "identifier"), node(_, n, _, _, _), SEG = n.
 up008_alt_12(n, SEG) :- kind(n, "attribute"), field(n, "attribute", c1), node(_, c1, _, _, _), SEG = c1.
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   C, K, KN, SEG: metavariables of the calling rule, passed in (bound by the caller)
 //   CC, PC: metavariables this relation binds for the calling rule
-.decl up008_alt_13(n: node, c: loc, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
+.decl up008_alt_13(n: node, c: node, cc: node, k: node, kn: node, pc: node, seg: node)
 // CC, PC: not bound by this rule, so empty (unset) here, as in ast-grep.
 up008_alt_13(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_13(n),kind(n, "identifier"),inside(n, p1, "class_definition"),node(_, p1, _, _, _),K2 = p1,node(_, K2, _, _, _),node(_, C, _, _, _),K2 = C,count : { inside(p1, p4, "class_definition"), node(_, p4, _, _, _) } = 0,unset(CC),unset(PC), unset(K), unset(KN), unset(SEG).
 up008_alt_13(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_13(n), kind(n, "attribute"),
@@ -315,7 +315,7 @@ up008_alt_13(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_13(n), kind(n, "attri
 // alt_14(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable of the calling rule, passed in (bound by the caller)
 //   CC, K, KN, PC, SEG: metavariables this relation binds for the calling rule
-.decl up008_alt_14(n: node, c: loc, cc: loc, k: loc, kn: loc, pc: loc, seg: loc)
+.decl up008_alt_14(n: node, c: node, cc: node, k: node, kn: node, pc: node, seg: node)
 up008_alt_14(n, C, CC, K, KN, PC, SEG) :- up008_demand_alt_14(n),
     kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
     up008_chain(c1, C, CC, K, KN, PC, SEG).
@@ -340,19 +340,19 @@ up008_counted(n) :- node(_, n, _, _, _), !kind(n, "comment").
 
 // alt_24(n): the JSON `any`: n matches if any one of these rules does
 //   B2: metavariable this relation binds for the calling rule
-.decl up008_alt_24(n: node, b2: loc)
+.decl up008_alt_24(n: node, b2: node)
 up008_alt_24(n, B2) :- kind(n, "identifier"), node(_, n, _, _, _), B2 = n.
 up008_alt_24(n, B2) :- has(n, c1, "identifier"), node(_, c1, _, _, _), B2 = c1.
 
 // alt_30(n): the JSON `any`: n matches if any one of these rules does
 //   T0: metavariable this relation binds for the calling rule
-.decl up008_alt_30(n: node, t0: loc)
+.decl up008_alt_30(n: node, t0: node)
 up008_alt_30(n, T0) :- kind(n, "identifier"), node(_, n, _, _, _), T0 = n.
 up008_alt_30(n, T0) :- has(n, c1, "identifier"), node(_, c1, _, _, _), T0 = c1.
 
 // alt_33(n): the JSON `any`: n matches if any one of these rules does
 //   SH: metavariable this relation binds for the calling rule
-.decl up008_alt_33(n: node, sh: loc)
+.decl up008_alt_33(n: node, sh: node)
 up008_alt_33(n, SH) :- (kind(n, "identifier") ; kind(n, "dotted_name")), node(_, n, _, _, _), SH = n,
     bind_name(n, b1), binding(sc2, x3, b1, _),
     k5 = count : { binding(sc2, x3, s4, _) }, k5 >= 1.
@@ -363,7 +363,7 @@ up008_alt_33(n, SH) :- kind(n, "identifier"), node(_, n, _, _, _), SH = n, child
 
 // alt_35(n): the JSON `any`: n matches if any one of these rules does
 //   T0: metavariable of the calling rule, passed in (bound by the caller)
-.decl up008_alt_35(n: node, t0: loc)
+.decl up008_alt_35(n: node, t0: node)
 up008_alt_35(n, T0) :- up008_demand_alt_35(n, T0), within_stop(c1, n, up008_stop_17),
     text(SH, t2), text(T0, t2), up008_alt_33(c1, SH), @doc(SH) = @doc(T0).
 up008_alt_35(n, T0) :- up008_demand_alt_35(n, T0), within_stop(c11, n, up008_stop_34),

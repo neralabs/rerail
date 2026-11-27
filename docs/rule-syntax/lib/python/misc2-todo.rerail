@@ -67,6 +67,6 @@ todo_link_line(l) :- kind(l, "comment"),
     (match("#\\s*https?://.*", l) ; match("#\\s*[0-9]+", l) ; match("#\\s*[A-Z]+-?[0-9]+", l)).
 // todo_block(c, o): comment o comes after comment c with no token between them.
 .decl todo_block(c: node, o: node)
-todo_block(c, o) :- todo_item(c, _, _), token_before(c, t), token_before(o, t), kind(o, "comment"), c < o.
-todo_block(c, o) :- todo_item(c, _, _), !token_before(c, _), docof(c, d), kind(o, "comment"), docof(o, d),
-    !token_before(o, _), c < o.
+todo_block(c, o) :- todo_item(c, _, _), node_to_token_before(c, t), node_to_token_before(o, t), kind(o, "comment"), c < o.
+todo_block(c, o) :- todo_item(c, _, _), !node_to_token_before(c, _), docof(c, d), kind(o, "comment"), docof(o, d),
+    !node_to_token_before(o, _), c < o.

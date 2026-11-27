@@ -145,4 +145,4 @@ embedding_issue(n, "EVO102") :- embedding_attr_call(n, x, _), embedding_resolve(
 embedding_in_publisher(n) :- embedding_fn(n, f), embedding_fn_name(f, x), embedding_publisher(x).
 embedding_issue(n, "EVO107") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_next_ref", _), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
 embedding_issue(n, "EVO108") :- option_value("entryPoint", v), embedding_full_union(v), embedding_attr_call(n, "_add_server_step", _), !embedding_in_publisher(n), node(d, n, _, _, _), doc(d, p, _), embedding_worker_path(p).
-violation("data-layer-embedding-vector-orchestration", "embedding-orchestration", i, p, l) :- embedding_issue(n, i), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+violation("data-layer-embedding-vector-orchestration", "embedding-orchestration", i, p, l) :- embedding_issue(n, i), node(d, n, _, _, _), doc(d, p, _), node_line_number(n, l).

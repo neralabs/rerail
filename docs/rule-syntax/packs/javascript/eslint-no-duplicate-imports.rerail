@@ -15,11 +15,11 @@
     suppress eslint "no-duplicate-imports"
     suppress oxlint "no-duplicate-imports"
 duplicate(x, cat("Merge this import into the earlier import from '", m, "' (line ", to_string(l), ").")) :-
-    dup(x, "import", p, "import", m), line(p, l).
+    dup(x, "import", p, "import", m), node_line_number(p, l).
 duplicate(x, cat("Combine this import with the re-export from '", m, "': import once, then export the imported names.")) :-
     dup(x, "import", _, "export", m).
 duplicate(x, cat("Merge this re-export into the earlier re-export from '", m, "' (line ", to_string(l), ").")) :-
-    dup(x, "export", p, "export", m), line(p, l).
+    dup(x, "export", p, "export", m), node_line_number(p, l).
 duplicate(x, cat("Replace this re-export from '", m, "' by exporting the names already imported from it.")) :-
     dup(x, "export", _, "import", m).
 

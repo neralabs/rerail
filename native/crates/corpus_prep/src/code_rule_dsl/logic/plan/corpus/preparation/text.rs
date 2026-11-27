@@ -413,7 +413,7 @@ impl RulePass for MatcherRelations {
         let read = self.docof || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == "docof"));
         if !self.out.is_empty() && !derived && !inputs.iter().any(|r| r == "docof") && read {
             if v.decl_of("docof").is_none() {
-                b.fields().declare("docof", &[("n", "loc"), ("d", "number")]);
+                b.fields().declare("docof", &[("n", "place"), ("d", "number")]);
             }
             inputs.push("docof".to_owned());
         }
@@ -450,7 +450,7 @@ impl RulePass for NodeSubjects {
             let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
             for (c, t) in a.args().enumerate() {
                 if let (TermRef::Var(s), Some(ty)) = (t, types.as_ref().and_then(|ts| ts.get(c)))
-                    && (*ty == "node" || *ty == "loc") {
+                    && (*ty == "node" || *ty == "place") {
                         nodes.insert(s);
                     }
             }

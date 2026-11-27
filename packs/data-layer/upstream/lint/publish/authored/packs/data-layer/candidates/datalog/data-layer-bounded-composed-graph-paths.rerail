@@ -64,7 +64,7 @@
 .decl text_contract_nonword(c: symbol)
 .decl text_contract_paren(p: symbol, j: number, j2: number)
 .decl text_contract_present(p: symbol)
-.decl text_contract_span(p: symbol, l: number, sp: node)
+.decl text_contract_span(p: symbol, l: number, sp: line)
 .decl text_contract_src(p: symbol, t: symbol)
 .decl text_contract_top(p: symbol, l: number)
 .decl text_contract_word(k: symbol, p: symbol, l: number)
@@ -190,9 +190,9 @@ in_scope(d) :- doc(d, p, _), glob("scripts/lint_all.py", p).
 in_scope(d) :- doc(d, p, _), glob("docs/design/architecture_linter_rules/serverplan/bounded_composed_graph_paths.md", p).
 in_scope(d) :- doc(d, p, _), glob("conform/l9700_graph_query/test_bounded_composed_paths.py", p).
 text_contract_present(p) :- doc(d, p, _), in_scope(d).
-text_contract_src(p, t) :- doc(d, p, _), in_scope(d), source(d, sp), text(sp, t).
-text_contract_span(p, l, sp) :- doc(d, p, _), in_scope(d), src_line(d, l, sp).
-text_contract_line(p, l, u) :- text_contract_span(p, l, sp), text(sp, u).
+text_contract_src(p, t) :- doc(d, p, _), in_scope(d), document_source(d, sp), line_text(sp, t).
+text_contract_span(p, l, sp) :- doc(d, p, _), in_scope(d), document_line(d, sp), line_number(sp, l).
+text_contract_line(p, l, u) :- text_contract_span(p, l, sp), place_text(sp, u).
 text_contract_next(p, l, j) :- text_contract_line(p, l, _), j = @add(l, 1), text_contract_line(p, j, _).
 text_contract_blank(p, l) :- text_contract_line(p, l, u), match("[\\s\\x1c-\\x1f]*", u).
 text_contract_empty(p, l) :- text_contract_line(p, l, "").
@@ -211,7 +211,7 @@ text_contract_word_first(k, p, l) :- text_contract_word(k, p, _), l = min x : { 
 text_contract_hdr(p, c, l) :- text_contract_clsspec(p, c), text_contract_line(p, l, u), x = @concat("class ", @concat(c, "(?:\\[.*\\])?(?:\\(.*\\))?:.*")), match(x, u).
 text_contract_cls(p, c, l) :- text_contract_hdr(p, c, _), l = min x : { text_contract_hdr(p, c, x) }.
 text_contract_has_cls(p, c) :- text_contract_cls(p, c, _).
-text_contract_cquirk(p, c) :- text_contract_cls(p, c, h), text_contract_span(p, h, sp), match_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "n", gn), text(gn, c), match_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:class |def |async def ).*", r).
+text_contract_cquirk(p, c) :- text_contract_cls(p, c, h), text_contract_span(p, h, sp), place_regex_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "n", gn), match_text(gn, c), place_regex_group("\\Aclass (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?(?:\\([^\\n]*\\))?:(?P<rest>.*)\\z", sp, m, "rest", gr), match_text(gr, r), match("(?:class |def |async def ).*", r).
 text_contract_top(p, l) :- text_contract_line(p, l, u), match("(?:class |def |async def ).*", u).
 text_contract_cafter(p, c, t) :- text_contract_cls(p, c, l0), text_contract_top(p, t), t > l0.
 text_contract_cend(p, c, e) :- text_contract_cafter(p, c, _), e = min x : { text_contract_cafter(p, c, x) }.
@@ -245,7 +245,7 @@ text_contract_mhdr(k, a) :- text_contract_mcross(k, a, _).
 text_contract_has_m(k) :- text_contract_mhdr(k, _).
 text_contract_m0(k, a) :- text_contract_mhdr(k, _), a = min x : { text_contract_mhdr(k, x) }.
 text_contract_mquirk(k) :- text_contract_m0(k, a), text_contract_mcross(k, a, j), text_contract_mspec(k, p, _), text_contract_line(p, j, u), match("[\\s\\x1c-\\x1f]*\\((?:    @|    (?:async )?def ).*", u).
-text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
+text_contract_mquirk(k) :- text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), place_regex_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "rest", gr), match_text(gr, r), match("(?:    @|    (?:async )?def ).*", r).
 text_contract_mtop(p, l) :- text_contract_line(p, l, u), match("    (?:@|(?:async )?def ).*", u).
 text_contract_mafter(k, t) :- text_contract_m0(k, l0), text_contract_mspec(k, p, _), text_contract_mtop(p, t), t > l0.
 text_contract_mend(k, e) :- text_contract_mafter(k, _), e = min x : { text_contract_mafter(k, x) }.
@@ -253,7 +253,7 @@ text_contract_mended(k) :- text_contract_mend(k, _).
 text_contract_min(k, l, u) :- text_contract_m0(k, l0), !text_contract_mquirk(k), text_contract_mspec(k, p, _), text_contract_line(p, l, u), l >= l0, text_contract_mend(k, e), l < e.
 text_contract_min(k, l, u) :- text_contract_m0(k, l0), !text_contract_mquirk(k), text_contract_mspec(k, p, _), text_contract_line(p, l, u), l >= l0, !text_contract_mended(k).
 text_contract_mhead(k, u) :- text_contract_mquirk(k), text_contract_m0(k, a), text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_line(p, a, u).
-text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), match_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "head", gh), text(gh, h).
+text_contract_mhead(k, h) :- text_contract_mquirk(k), text_contract_m0(k, a), !text_contract_mcross(k, a, _), text_contract_mspec(k, p, _), text_contract_span(p, a, sp), place_regex_group("\\A(?P<head>    (?:async )?def (?P<n>[A-Za-z0-9_]+)(?:\\[[^\\n]*\\])?[\\s\\x1c-\\x1f]*\\()(?P<rest>.*)\\z", sp, m, "head", gh), match_text(gh, h).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-0", "BCGP001", "l7200_versioned_transactions/versioned_lazy_mixin.py", 1) :- text_contract_anchor("text-contract-0"), !text_contract_present("l7200_versioned_transactions/versioned_lazy_mixin.py").
 violation("data-layer-bounded-composed-graph-paths", "text-contract-1", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-1", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).
 violation("data-layer-bounded-composed-graph-paths", "text-contract-2", "BCGP002", "l7200_versioned_transactions/versioned_lazy_mixin.py", l) :- text_contract_def_first("text-contract-2", "l7200_versioned_transactions/versioned_lazy_mixin.py", l).

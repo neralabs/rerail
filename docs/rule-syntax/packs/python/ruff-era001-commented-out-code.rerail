@@ -103,9 +103,9 @@ era_re("STMT", cat("(?:", r_head, "|", r_simple, "(?:\\s*;\\s*", r_simple, ")*\\
 // era_script(c): c lies in a PEP 723 block: a line `# /// script`, then lines `#` or `# …` (from column 0) up to the
 // last `# ///` before the first other line.
 .decl era_script(c: node)
-era_script(c) :- comment(c, _), docof(c, d), line(c, l), era_block(d, l0, e), l0 <= l, l <= e.
+era_script(c) :- comment(c, _), docof(c, d), node_line_number(c, l), era_block(d, l0, e), l0 <= l, l <= e.
 .decl era_cline(d: number, l: number, s: symbol)
-era_cline(d, l, s) :- era_has_script(d), src_line(d, l, sp), text(sp, s), match("#(?: [\\s\\S]*)?", s).
+era_cline(d, l, s) :- era_has_script(d), document_line(d, sp), line_number(sp, l), line_text(sp, s), match("#(?: [\\s\\S]*)?", s).
 .decl era_has_script(d: number)
 era_has_script(d) :- comment(c, _), text(c, "# /// script"), docof(c, d).
 .decl era_run(d: number, l0: number, l: number)

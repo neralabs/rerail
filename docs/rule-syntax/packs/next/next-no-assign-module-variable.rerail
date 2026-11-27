@@ -10,7 +10,7 @@
 //   const { module } = x     fine: a pattern, not a name
 //   for (module of xs)       fine: no declaration
 
-.violation module_var(at: loc) code "@next/next/no-assign-module-variable"
+.violation module_var(at: place) code "@next/next/no-assign-module-variable"
     "Do not assign to the variable `module`. See: https://nextjs.org/docs/messages/no-assign-module-variable"
     suppress eslint "@next/next/no-assign-module-variable"
     suppress oxlint "no-assign-module-variable"

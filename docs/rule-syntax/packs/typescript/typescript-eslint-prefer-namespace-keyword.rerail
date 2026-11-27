@@ -20,6 +20,6 @@
 prefer_namespace_keyword(at) :- module_keyword(m, _), estree_at(m, at).
 to_namespace(at) :- module_keyword(m, t), estree_at(m, at) => replace(t, `namespace`).
 
-.decl module_keyword(m: node, t: span)  // t is the `module` keyword of namespace m
+.decl module_keyword(m: node, t: match)  // t is the `module` keyword of namespace m
 // The kind implies `module` (the tape keeps none): it is the first word of m's source.
 module_keyword(m, t) :- ts_namespace(m), kind(m, "module"), match("(?s)(?<t>module)\\b.*", m).

@@ -31,7 +31,7 @@ b507_after_paramiko_import(n) :- b507_demand_after_paramiko_import(n), within(n,
 
 // alias_to_target(n): the JSON util `alias-to-target`, used where the JSON says `matches: "alias-to-target"`
 //   ALIAS: metavariable of the calling rule, passed in (bound by the caller)
-.decl b507_alias_to_target(n: node, alias: loc)
+.decl b507_alias_to_target(n: node, alias: node)
 b507_alias_to_target(n, ALIAS) :- b507_demand_alias_to_target(n, ALIAS),
     kind(n, "aliased_import"), field(n, "alias", c1),
     text(c1, t_alias1), text(ALIAS, t_alias1), field(n, "name", c2),
@@ -39,7 +39,7 @@ b507_alias_to_target(n, ALIAS) :- b507_demand_alias_to_target(n, ALIAS),
 
 // after_alias_to_target(n): the JSON util `after-alias-to-target`, used where the JSON says `matches: "after-alias-to-target"`
 //   ALIAS: metavariable of the calling rule, passed in (bound by the caller)
-.decl b507_after_alias_to_target(n: node, alias: loc)
+.decl b507_after_alias_to_target(n: node, alias: node)
 b507_after_alias_to_target(n, ALIAS) :- b507_demand_after_alias_to_target(n, ALIAS),
     within(n, p1), precedes(s2, p1), within(c3, s2), b507_alias_to_target(c3, ALIAS).
 
@@ -152,11 +152,11 @@ b507_arg_no_policy_1(n) :- kind(n, "call"), field(n, "arguments", l), !b507_args
     !kind(l, "generator_expression").
 
 // demand_after_alias_to_target: the rows of after_alias_to_target its callers ask for (the metavariable columns they pass in)
-.decl b507_demand_after_alias_to_target(n: node, alias: loc)
+.decl b507_demand_after_alias_to_target(n: node, alias: node)
 b507_demand_after_alias_to_target(n, ALIAS) :- kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n.
 
 // demand_alias_to_target: the rows of alias_to_target its callers ask for (the metavariable columns they pass in)
-.decl b507_demand_alias_to_target(n: node, alias: loc)
+.decl b507_demand_alias_to_target(n: node, alias: node)
 b507_demand_alias_to_target(c3, ALIAS) :- b507_demand_after_alias_to_target(n, ALIAS),
     within(n, p1), precedes(s2, p1), within(c3, s2).
 

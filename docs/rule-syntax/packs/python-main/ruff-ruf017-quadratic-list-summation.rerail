@@ -10,7 +10,7 @@
 // RUF017(n): a finding at node n, from clause `quadratic-list-summation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF017(at: loc, c: node) "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
+.violation RUF017(at: node, c: node) "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
     suppress noqa "RUF017"
 RUF017(C, n) :- ruf017_summation(n), node(_, n, _, _, _), C = n.
 RUF017(C, n) :- ruf017_in_annotation(n, C).
@@ -56,7 +56,7 @@ ruf017_summation(n) :- kind(n, "call"), child(n, c1, _), ruf017_callee_sum(c1), 
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf017_in_annotation(n: node, c: loc)
+.decl ruf017_in_annotation(n: node, c: node)
 ruf017_in_annotation(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf017_alt_4(c2, C).
 
@@ -81,6 +81,6 @@ ruf017_alt_3(n) :- count : { child(n, c4, _), kind(c4, "keyword_argument"), matc
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf017_alt_4(n: node, c: loc)
+.decl ruf017_alt_4(n: node, c: node)
 ruf017_alt_4(n, C) :- ruf017_summation(n), C = n.
 ruf017_alt_4(n, C) :- ruf017_in_annotation(n, C).

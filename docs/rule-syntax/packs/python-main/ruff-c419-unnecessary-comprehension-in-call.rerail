@@ -10,7 +10,7 @@
 // C419(n): a finding at node n, from clause `unnecessary-comprehension-in-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C419(at: loc, comp: node) "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
+.violation C419(at: node, comp: node) "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
     suppress noqa "C419"
 C419(COMP, n) :- c419_target(n), node(_, n, _, _, _), COMP = n.
 C419(COMP, n) :- c419_in_annotation(n, COMP).
@@ -43,7 +43,7 @@ c419_target(n) :- (kind(n, "list_comprehension") ; kind(n, "set_comprehension"))
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   COMP: metavariable this relation binds for the calling rule
-.decl c419_in_annotation(n: node, comp: loc)
+.decl c419_in_annotation(n: node, comp: node)
 c419_in_annotation(n, COMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c419_alt_4(c2, COMP).
 
@@ -55,6 +55,6 @@ c419_alt_2(n) :- child(n, c3, _), kind(c3, "for_in_clause"), match("async\\b.*",
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   COMP: metavariable this relation binds for the calling rule
-.decl c419_alt_4(n: node, comp: loc)
+.decl c419_alt_4(n: node, comp: node)
 c419_alt_4(n, COMP) :- c419_target(n), COMP = n.
 c419_alt_4(n, COMP) :- c419_in_annotation(n, COMP).

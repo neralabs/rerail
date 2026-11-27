@@ -8,21 +8,21 @@
 // PIE794(n): a finding at node n, from clause `duplicate-class-field-definition`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PIE794(at: node, n_mv: loc) "Class field `{n_mv}` is defined multiple times"
+.violation PIE794(at: node, n_mv: node) "Class field `{n_mv}` is defined multiple times"
     suppress noqa "PIE794"
 PIE794(n, N) :- pie794_field_def(n, N), child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
     kind(p2, "class_definition"), precedes(s3, n), pie794_field_def(s3, N).
 
 // target_n(n): the JSON util `target-n`, used where the JSON says `matches: "target-n"`
 //   N: metavariable this relation binds for the calling rule
-.decl pie794_target_n(n: node, n_mv: loc)
+.decl pie794_target_n(n: node, n_mv: node)
 pie794_target_n(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
 pie794_target_n(n, N) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern")),
     !pie794_tok_has_1(n), child(n, c9, _), pie794_target_n(c9, N).
 
 // field_def(n): the JSON util `field-def`, used where the JSON says `matches: "field-def"`
 //   N: metavariable this relation binds for the calling rule
-.decl pie794_field_def(n: node, n_mv: loc)
+.decl pie794_field_def(n: node, n_mv: node)
 pie794_field_def(n, N) :- kind(n, "expression_statement"), child(n, c1, _),
     kind(c1, "assignment"), child(c1, c2, _), !pie794_tok_follows_2(c2), pie794_target_n(c2, N),
     count : { child(c1, c10, _), kind(c10, "assignment") } = 0,
@@ -119,7 +119,7 @@ pie794_tok_precedes_9(n) :- structural_after(n, g12),
     match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
 
 // demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
-.decl pie794_demand_alt_2(n: node, n_mv: loc)
+.decl pie794_demand_alt_2(n: node, n_mv: node)
 pie794_demand_alt_2(c11, N) :- kind(n, "expression_statement"), child(n, c1, _),
     kind(c1, "assignment"), child(c1, c2, _), pie794_target_n(c2, N), child(c1, c11, _),
     pie794_tok_follows_3(c11).
@@ -131,7 +131,7 @@ pie794_alt_1(n) :- child(p8, n, _), kind(p8, "keyword_argument"), pie794_tok_pre
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pie794_alt_2(n: node, n_mv: loc)
+.decl pie794_alt_2(n: node, n_mv: node)
 pie794_alt_2(n, N) :- pie794_demand_alt_2(n, N), kind(n, "identifier"), text(n, t_n1), text(N, t_n1), @doc(n) = @doc(N).
 pie794_alt_2(n, N) :- pie794_demand_alt_2(n, N), has(n, c1, "identifier"),
     text(c1, t_n2), text(N, t_n2), !pie794_alt_1(c1), @doc(c1) = @doc(N).

@@ -43,7 +43,7 @@ b615_after_hf_import(n) :- within(n, p2), precedes(s3, p2), b615_hf_import_withi
 
 // alias_writer(n): the JSON util `alias-writer`, used where the JSON says `matches: "alias-writer"`
 //   HEAD: metavariable of the calling rule, passed in (bound by the caller)
-.decl b615_alias_writer(n: node, head: loc)
+.decl b615_alias_writer(n: node, head: node)
 b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "aliased_import"),
     field(n, "alias", c1), text(c1, t_head1), text(HEAD, t_head1), @doc(c1) = @doc(HEAD).
 b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "dotted_name"),
@@ -55,7 +55,7 @@ b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "dotted_name"),
 // writer(n, key): 3 copies of one rule set (`writer-datasets`, `writer-huggingface-hub`, `writer-transformers`), folded into one: row `key` of
 // writer_case gives the strings each copy had.
 //   HEAD: metavariable of the calling rule, passed in (bound by the caller)
-.decl b615_writer(n: node, key: symbol, head: loc)
+.decl b615_writer(n: node, key: symbol, head: node)
 b615_writer(n, q1, HEAD) :- b615_writer_case(q1), b615_alias_writer(n, HEAD),
     ( kind(n, "dotted_name"), glob(q1, n)
     ; kind(n, "aliased_import"), field(n, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob(q1, c2)

@@ -41,12 +41,12 @@ hasattr_call(c, a, s) :- hasattr_args(c, a, s), hasattr_pos(a, x, 2), node(_, x,
 
 // The call's first line matches the allowlist (W: `layout.line`, a search).
 .decl hasattr_allowed(c: node)
-hasattr_allowed(c) :- hasattr_call(c, _, _), node(d, c, _, _, _), line(c, l), src_line(d, l, sp), text(sp, s),
+hasattr_allowed(c) :- hasattr_call(c, _, _), node(d, c, _, _, _), node_line_number(c, l), document_line(d, sp), line_number(sp, l), line_text(sp, s),
     match("(?s:.*)(?:(?:_has_sql_template_support_async)|(?:_has_sql_template_support\\b)|(?:hasattr\\(txn._conn, ['\\\"]_execute_template_with_params)|(?:hasattr\\(txn, ['\\\"]_conn['\\\"].*hasattr\\(txn._conn)|(?:_select_one_direct_async)|(?:insert_many_raw_async)|(?:upsert_many_raw_async)|(?:upsert_many_async)|(?:update_async)|(?:delete_async)|(?:delete_all_async)|(?:delete_many_async)|(?:getattr\\(scheme, ['\\\"]resolve_context_async)|(?:getattr\\(graph_scheme, ['\\\"]resolve_context_async)|(?:keyset_paginate_async)|(?:_execute_aggregate_async)|(?:_execute_windowed_async)|(?:_execute_grammar_async)|(?:fetchall_raw_async)|(?:_update_fts_polyfill_index_async))(?s:.*)", s).
 
 violation("data-layer-hasattr-async", "hasattr", "hasattr", p, l) :-
     hasattr_call(c, _, f), suffix("hasattr", f), !hasattr_allowed(c),
-    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
+    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(c, l).
 
 // getattr: the list's third named child is `None` and its last (nthChild 3, and 1 from the end).
 .decl getattr_three(a: node)
@@ -54,4 +54,4 @@ getattr_three(a) :- hasattr_call(_, a, _), hasattr_pos(a, y, 3), node(_, y, "non
 
 violation("data-layer-hasattr-async", "getattr", "getattr", p, l) :-
     hasattr_call(c, a, f), suffix("getattr", f), getattr_three(a), !hasattr_allowed(c),
-    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(c, l).
+    node(d, c, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), node_line_number(c, l).

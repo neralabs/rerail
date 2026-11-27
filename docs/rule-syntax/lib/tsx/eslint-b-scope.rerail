@@ -106,8 +106,8 @@ key_site(k, s) :- kind(k, "object_assignment_pattern"), field(k, "left", s).
 .decl global_item(c: node, x: symbol, v: symbol, l: number)
 // An item is split in its comment's file, by its own text: "b:readonly" is b, "readonly"; "a" is a, "". (A table of
 // every file's items, keyed by the text, made each comment's items a join in the cross-file part, decision 0677.)
-global_item(c, N, V, l + k) :- gitem(c, i, k), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i), line(c, l).
-global_item(c, i, "", l + k) :- gitem(c, i, k), !contains(":", i), line(c, l).
+global_item(c, N, V, l + k) :- gitem(c, i, k), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i), node_line_number(c, l).
+global_item(c, i, "", l + k) :- gitem(c, i, k), !contains(":", i), node_line_number(c, l).
 .decl glist(c: node, s: symbol, k: number)  // s is what is left of c's list, k line breaks after c's start
 glist(c, @replace_all(B, "\\s*:\\s*", ":"), @count_matches("\n", P)) :- js_comment(c, "Block", v),
     match("(?<P>\\s*globals?)(?<B>\\s[\\s\\S]*)", v).

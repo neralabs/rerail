@@ -21,7 +21,7 @@
 //   interface A {} interface A {}   class B {} namespace B {}   function C() {} namespace C {}      fine
 // Scopes checked, as the rule visits them: the program, functions, blocks, for loops and switch; not classes, catch
 // clauses, static blocks, namespace bodies or enums.
-.violation no_redeclare(at: loc, msg: symbol) code "@typescript-eslint/no-redeclare" "{msg}"
+.violation no_redeclare(at: node, msg: symbol) code "@typescript-eslint/no-redeclare" "{msg}"
     suppress eslint "@typescript-eslint/no-redeclare"
     suppress oxlint "no-redeclare"
     suppress biome "lint/suspicious/noRedeclare"
@@ -89,7 +89,7 @@ builtin(p, x) :- (counted(p, x, _) ; comment_decl(p, x, _, _)), program(_, p), !
     es_builtin(x).
 // comment_decl(p, x, c, at): `/* global x */` comment c declares x (an `off` item declares nothing); at is c on its
 // first line, else a place at the item's line.
-.decl comment_decl(p: node, x: symbol, c: node, at: loc)
-comment_decl(p, x, c, c) :- global_item(c, x, v, l), v != "off", line(c, l), docof(c, d), program(d, p).
-comment_decl(p, x, c, @place(f, l)) :- global_item(c, x, v, l), v != "off", !line(c, l), docof(c, d), program(d, p),
+.decl comment_decl(p: node, x: symbol, c: node, at: node)
+comment_decl(p, x, c, c) :- global_item(c, x, v, l), v != "off", node_line_number(c, l), docof(c, d), program(d, p).
+comment_decl(p, x, c, @place(f, l)) :- global_item(c, x, v, l), v != "off", !node_line_number(c, l), docof(c, d), program(d, p),
     doc(d, f, _).

@@ -416,8 +416,8 @@ esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("SqlLegacy"
 esc_gate(d) :- node(d, m, "module", _, _), node_text(m, s), contains("_SqlPrebuilt", s).
 esc_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
 esc_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d), esc_gate(d).
-forbidden_class_line_ok(d, l) :- src_line(d, l, sp), text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
-forbidden_class_hit(d, n) :- node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s), esc_forbidden(s), line(n, l), !forbidden_class_line_ok(d, l).
+forbidden_class_line_ok(d, l) :- document_line(d, sp), line_number(sp, l), line_text(sp, s), match("(?s:.*)(?:(?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)\\(|import (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery)|, (?:SqlAdminQuery|SqlBuiltQuery|SqlDdlStatement|SqlLegacy|SqlRawSql|SqlRawSqlWithParams|SqlUnsafe|_SqlPrebuiltCondition|_SqlPrebuiltQuery))(?s:.*)", s).
+forbidden_class_hit(d, n) :- node(d, n, "class_definition", _, _), esc_doc(d), field(n, "name", x), node(d, x, "identifier", _, _), text(x, s), esc_forbidden(s), node_line_number(n, l), !forbidden_class_line_ok(d, l).
 unsafe_seed(s) :- option_item("grammar_class_names", _, s).
 unsafe_class_arg(d, cls, arg) :- node(d, cls, "class_definition", _, _), esc_doc(d), child(cls, al, _), node(d, al, "argument_list", _, _), child(al, arg, _).
 unsafe_base_walk(arg, arg) :- unsafe_class_arg(_, _, arg).
@@ -493,7 +493,7 @@ unsafe_word(v, w) :- unsafe_word_run(v, i, j), unsafe_word_end(v, j), w = @subst
 unsafe_leaf(p, w) :- unsafe_text(p, v), unsafe_word(v, w), !unsafe_safe_name(w), !unsafe_str_exempt_name(p, w).
 unsafe_parameter_hit(d, p, owner) :- unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_leaf(p, s), !unsafe_known(s).
 unsafe_parameter_hit(d, p, owner) :- unsafe_grammar_class(d, cls, owner), unsafe_init(cls, f), unsafe_param(f, p, _), unsafe_literal(p).
-unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), line(p, l).
+unsafe_group(d, l, owner) :- unsafe_parameter_hit(d, p, owner), node_line_number(p, l).
 usage_call_slot(n) :- node(_, p, "call", _, _), field(p, "function", n).
 usage_call_slot(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n), node(_, p, "call", _, _), field(p, "function", a).
 usage_call_slot(n) :- node(_, c, "class_definition", _, _), field(c, "name", n), field(c, "superclasses", al), node(_, al, "argument_list", _, _).
@@ -507,59 +507,59 @@ usage_name_before(s, n) :- field(s, "name", n), node(_, n, _, a, _), field(s, "n
 usage_0_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlAdminQuery", s), usage_call_slot(n).
 usage_0_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlAdminQuery", s).
 usage_0_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlAdminQuery", s).
-usage_0_earlier(n) :- usage_0_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_0_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_0_earlier(n) :- usage_0_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_0_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_0_current(d, n) :- usage_0_hit(d, n), esc_doc(d), !usage_0_earlier(n).
 usage_1_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlBuiltQuery", s), usage_call_slot(n).
 usage_1_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlBuiltQuery", s).
 usage_1_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlBuiltQuery", s).
-usage_1_earlier(n) :- usage_1_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_1_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_1_earlier(n) :- usage_1_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_1_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_1_current(d, n) :- usage_1_hit(d, n), esc_doc(d), !usage_1_earlier(n).
 usage_2_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlDdlStatement", s), usage_call_slot(n).
 usage_2_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlDdlStatement", s).
 usage_2_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlDdlStatement", s).
-usage_2_earlier(n) :- usage_2_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_2_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_2_earlier(n) :- usage_2_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_2_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_2_current(d, n) :- usage_2_hit(d, n), esc_doc(d), !usage_2_earlier(n).
 usage_3_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlLegacy", s), usage_call_slot(n).
 usage_3_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlLegacy", s).
 usage_3_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlLegacy", s).
-usage_3_earlier(n) :- usage_3_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_3_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_3_earlier(n) :- usage_3_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_3_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_3_current(d, n) :- usage_3_hit(d, n), esc_doc(d), !usage_3_earlier(n).
 usage_4_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlRawSql", s), usage_call_slot(n).
 usage_4_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlRawSql", s).
 usage_4_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSql", s).
-usage_4_earlier(n) :- usage_4_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_4_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_4_earlier(n) :- usage_4_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_4_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_4_current(d, n) :- usage_4_hit(d, n), esc_doc(d), !usage_4_earlier(n).
 usage_5_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlRawSqlWithParams", s), usage_call_slot(n).
 usage_5_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlRawSqlWithParams", s).
 usage_5_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlRawSqlWithParams", s).
-usage_5_earlier(n) :- usage_5_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_5_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_5_earlier(n) :- usage_5_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_5_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_5_current(d, n) :- usage_5_hit(d, n), esc_doc(d), !usage_5_earlier(n).
 usage_6_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("SqlUnsafe", s), usage_call_slot(n).
 usage_6_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("SqlUnsafe", s).
 usage_6_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("SqlUnsafe", s).
-usage_6_earlier(n) :- usage_6_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_6_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_6_earlier(n) :- usage_6_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_6_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_6_current(d, n) :- usage_6_hit(d, n), esc_doc(d), !usage_6_earlier(n).
 usage_7_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("_SqlPrebuiltCondition", s), usage_call_slot(n).
 usage_7_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("_SqlPrebuiltCondition", s).
 usage_7_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltCondition", s).
-usage_7_earlier(n) :- usage_7_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_7_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_7_earlier(n) :- usage_7_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_7_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_7_current(d, n) :- usage_7_hit(d, n), esc_doc(d), !usage_7_earlier(n).
 usage_8_hit(d, n) :- node(d, n, "identifier", _, _), text(n, s), suffix("_SqlPrebuiltQuery", s), usage_call_slot(n).
 usage_8_hit(d, n) :- node(d, n, k, _, _), usage_import_kind(k), usage_prev(n, "import"), node_text(n, s), prefix("_SqlPrebuiltQuery", s).
 usage_8_hit(d, n) :- node(d, n, k, _, _), usage_comma_kind(k), usage_prev(n, ","), node_text(n, s), prefix("_SqlPrebuiltQuery", s).
-usage_8_earlier(n) :- usage_8_hit(d, n), node(d, n, _, ns, _), line(n, l), usage_8_hit(d, m), node(d, m, _, _, me), me <= ns, end_line(m, l).
+usage_8_earlier(n) :- usage_8_hit(d, n), node(d, n, _, ns, _), node_line_number(n, l), usage_8_hit(d, m), node(d, m, _, _, me), me <= ns, node_end_line_number(m, l).
 usage_8_current(d, n) :- usage_8_hit(d, n), esc_doc(d), !usage_8_earlier(n).
-esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), line(n, l).
+esc_found("forbidden-class", p, l) :- forbidden_class_hit(d, n), doc(d, p, _), node_line_number(n, l).
 esc_found("unsafe-parameter", p, l) :- unsafe_group(d, l, _), doc(d, p, _).
-esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-3", p, l) :- usage_3_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-4", p, l) :- usage_4_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), line(n, l).
-esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), line(n, l).
+esc_found("usage-0", p, l) :- usage_0_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-1", p, l) :- usage_1_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-2", p, l) :- usage_2_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-3", p, l) :- usage_3_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-4", p, l) :- usage_4_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-5", p, l) :- usage_5_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-6", p, l) :- usage_6_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-7", p, l) :- usage_7_current(d, n), doc(d, p, _), node_line_number(n, l).
+esc_found("usage-8", p, l) :- usage_8_current(d, n), doc(d, p, _), node_line_number(n, l).
 esc_usage_witness("usage-0", n) :- usage_0_current(_, n).
 esc_usage_witness("usage-1", n) :- usage_1_current(_, n).
 esc_usage_witness("usage-2", n) :- usage_2_current(_, n).

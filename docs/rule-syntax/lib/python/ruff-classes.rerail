@@ -76,7 +76,7 @@ frozen_dataclass(c) :- dataclass_of(c, "stdlib", e), unparen(e, m), call_kwarg(m
 frozen_dataclass(c) :- dataclass_of(c, "attrs", e), dc_dec(c, e, q, _), (q = "attrs.frozen" ; q = "attr.frozen").
 
 // ---- class bodies ------------------------------------------------------------------------------------------------
-.decl class_field(c: node, a: node, t: node, v: loc)
+.decl class_field(c: node, a: node, t: node, v: node)
 class_field(c, a, t, v) :- class_stmt(c, s), kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"),
     field(a, "type", _), field(a, "left", t), (field(a, "right", v) ; !field(a, "right", _), unset(v)).
 .decl class_assign(c: node, a: node, v: node)

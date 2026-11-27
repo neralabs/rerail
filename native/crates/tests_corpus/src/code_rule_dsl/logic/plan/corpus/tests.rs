@@ -1304,13 +1304,13 @@ fn mf_def_is_the_climb_through_classes() {
         odef(n, f) :- oup(n, f), kind(f, \"function_definition\").\n\
         odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
         .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
-        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
-        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
-        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
-        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n\
+        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n\
+        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), node_line_number(n, l), node_line_number(f, lf).\n.output gap\n\
         .decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
         .decl decorated(l: number, lf: number)\n\
-        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), node_line_number(n, l), node_line_number(f, lf).\n.output decorated\n";
     let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1409,7 +1409,7 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
 /// ran, `value` eager. Alone it runs too, and finds what it finds there.
 #[test]
 fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
-    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), node_line_number(e, l).\n\
                 .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
                 cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
     let across = ".language python\n.decl twin(v: symbol) cross_file\n\
@@ -3030,7 +3030,7 @@ const PY_NAMES_FILES: [(&str, &str); 6] = [
 const PY_NAMES_PROGRAM: &str = r#".language python
 #include "python/names.rerail"
 .decl at(n: node, p: symbol, l: number)
-at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), line(n, l), docof(n, d), doc(d, p, _).
+at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), node_line_number(n, l), docof(n, d), doc(d, p, _).
 .decl used(p: symbol, l: number, q: symbol)
 used(p, l, q) :- at(n, p, l), sym_of(n, q).
 .output used
@@ -3653,7 +3653,7 @@ fn a_files_programs_are_kept_with_its_tape() {
     let run = |extra: &str| -> (super::Report, Vec<Vec<String>>) {
         crate::install_store_functions();
         let rule = dir.join("program.rerail");
-        let text = format!(".language javascript\n.embedded on\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n{extra}");
+        let text = format!(".language javascript\n.embedded on\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), node_line_number(c, l).\n.output calls\n{extra}");
         std::fs::write(&rule, text).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
@@ -3817,7 +3817,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 .language html
 #include "html/embeds.rerail"
 .decl calls(x: symbol, d: number, l: number)
-calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d), line(c, l).
+calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d), node_line_number(c, l).
 .output calls
 "#;
     let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
@@ -4223,9 +4223,9 @@ fn sql_in_a_template_is_read_in_its_own_context() {
 .language python
 #include \"python/sql-template.rerail\"
 .decl tables(x: symbol, l: number)
-tables(x, l) :- sql_template_table(s, x), line(s, l).
+tables(x, l) :- sql_template_table(s, x), node_line_number(s, l).
 .decl holes(x: symbol, k: symbol, l: number)
-holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
+holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), node_line_number(i, l).
 .output tables, holes
 ";
     let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
@@ -4483,7 +4483,7 @@ fn a_components_template_and_script_are_contexts_of_their_own() {
 .decl names(x: symbol)
 names(x) :- vscript_name(_, x).
 .decl reads(x: symbol, l: number)
-reads(x, l) :- vtemplate_ref(a, x), line(a, l).
+reads(x, l) :- vtemplate_ref(a, x), node_line_number(a, l).
 .decl script_reads(x: symbol)
 script_reads(x) :- vtemplate_script_ref(_, x).
 .output names, reads, script_reads
@@ -4526,7 +4526,7 @@ fn a_components_code_is_pieces_made_where_a_rule_asks() {
 .language vue
 #include \"vue/script.rerail\"
 .decl pieces_in(r: symbol, x: symbol, l: number)
-pieces_in(r, x, l) :- vcode(_, g, r), within(i, g), kind(i, \"identifier\"), text(i, x), line(i, l).
+pieces_in(r, x, l) :- vcode(_, g, r), within(i, g), kind(i, \"identifier\"), text(i, x), node_line_number(i, l).
 .decl names_in(x: symbol)
 names_in(x) :- vscript(p, \"true\"), decl_site(p, x, _, _, _).
 .context expression of vue roots vexpr_root exports pieces_in

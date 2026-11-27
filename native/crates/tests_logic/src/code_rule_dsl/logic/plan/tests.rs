@@ -1132,7 +1132,7 @@ fn rules_test_names_paths_and_lines_without_regexes() {
 .input doc, node, text, line
 .decl private_in_impl(p: symbol, s: symbol, l: number)
 private_in_impl(p, s, l) :- doc(d, p, _), glob("impl/**/*.py", p), node(d, n, "identifier", _, _), text(n, s),
-    prefix("_", s), line(n, l).
+    prefix("_", s), node_line_number(n, l).
 .decl async_in_fts(s: symbol)
 async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifier", _, _), text(n, s), suffix("_async", s).
 .output private_in_impl, async_in_fts
@@ -1529,14 +1529,14 @@ fn violations_at_places_are_found_at_their_path_and_line() {
 .decl doc(d: number, path: symbol, module: symbol)
 .decl line(n: node, l: number)
 .input node, doc, line
-.violation LONG(at: loc, what: symbol) code "FILE_LENGTH" "{what}"
+.violation LONG(at: place, what: symbol) code "FILE_LENGTH" "{what}"
     suppress ruff "E501"
 LONG(n, "call") :- node(_, n, "call", _, _).
 LONG(@place(p, 0), "file") :- doc(_, p, _).
 LONG(@place("missing.json", 3), "missing") :- doc(_, _, _).
-.decl spot(d: number, at: loc)
+.decl spot(d: number, at: place)
 spot(d, @place(p, 7)) :- doc(d, p, _).
-.violation PIN(at: span) "pin"
+.violation PIN(at: place) "pin"
 PIN(s) :- spot(_, s).
 "#;
     let out = dir.join("out");
@@ -2328,7 +2328,7 @@ fn finding_place_model() -> (Arc<Version>, Model) {
     let p = parse_version(
         ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
          .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
-         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), line(n, l), col(n, c).\n.output violation\n",
+         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), node_line_number(n, l), node_start_column(n, c).\n.output violation\n",
     )
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
@@ -2928,7 +2928,7 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
 /// With `text` and `line` probed by their node, `used` leads and each is read by `c`.
 #[test]
 fn a_step_that_binds_no_column_a_made_relation_is_looked_up_by_is_priced_as_reading_every_row() {
-    let p = parse(".decl used(c: node)\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), line(c, l).\n.output named\n").unwrap();
+    let p = parse(".decl used(c: node)\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), node_line_number(c, l).\n.output named\n").unwrap();
     let lead_of = |probed: bool| -> (Option<String>, f64) {
         let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
         let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
@@ -3694,7 +3694,7 @@ fn a_demanded_rule_is_driven_by_its_demand() {
     let p = parse(
         ".decl x(v: number)\n.decl demand_x(v: number)\n.decl col(n: number, c: number)\n.decl line(n: number, l: number)\n\
          demand_x(1). col(1, 2). line(1, 3).\n\
-         x(v) :- demand_x(v), col(v, c), line(v, l), c < l.\n.output x\n",
+         x(v) :- demand_x(v), node_start_column(v, c), node_line_number(v, l), c < l.\n.output x\n",
     )
     .unwrap();
     let db = Connection::open_in_memory().unwrap();

@@ -111,9 +111,9 @@ fn source_relations_keep_their_document_location() {
 #[test]
 fn a_relation_of_values_read_across_files_and_per_file_is_relayed_not_moved() {
     let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl node(d: number, n: node, k: symbol, p: node, e: number)\n.input node\n\
-                .decl docof(n: loc, d: number)\n.input docof\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
-                .decl first(d: number, at: loc)\nfirst(d, n) :- node(d, n, \"program\", _, _).\nfirst(d, @place(p, 1)) :- doc(d, p, _), !node(d, _, \"program\", _, _).\n\
-                .decl spot(at: loc)\nspot(at) :- owner(d), first(d, at).\n.decl seen(d: number)\nseen(d) :- spot(v), docof(v, d).\n.output seen\n\
+                .decl docof(n: place, d: number)\n.input docof\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
+                .decl first(d: number, at: place)\nfirst(d, n) :- node(d, n, \"program\", _, _).\nfirst(d, @place(p, 1)) :- doc(d, p, _), !node(d, _, \"program\", _, _).\n\
+                .decl spot(at: place)\nspot(at) :- owner(d), first(d, at).\n.decl seen(d: number)\nseen(d) :- spot(v), docof(v, d).\n.output seen\n\
                 .decl found(k: number)\nfound(n) :- n = count : { spot(_) }.\n.output found\n";
     let v = read(text);
     assert!(split_of(&v).local.contains("spot"), "spot is file-local: {:?}", split_of(&v).local);
@@ -196,9 +196,9 @@ fn a_rule_joining_a_phase_export_or_an_option_is_file_local() {
 /// per-file only by its own document.
 #[test]
 fn a_join_by_a_files_own_path_stays_per_file() {
-    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl src_line(d: number, l: number, sp: span)\n.input src_line\n\
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl src_line(d: number, l: number, sp: place)\n.input src_line\n\
                 .decl package_for(path: symbol, dir: symbol)\n.input package_for\n\
-                .decl line_of(p: symbol, l: number)\nline_of(p, l) :- doc(d, p, _), src_line(d, l, _).\n\
+                .decl line_of(p: symbol, l: number)\nline_of(p, l) :- doc(d, p, _), document_line(d, Rr_line3), line_number(Rr_line3, l).\n\
                 .decl last(p: symbol, k: number)\nlast(p, k) :- line_of(p, _), k = max l : { line_of(p, l) }.\n\
                 .decl lead(p: symbol, l: number)\nlead(p, l) :- last(p, k), line_of(p, l), l < k.\n.output lead\n\
                 .decl same_pkg(p: symbol, q: symbol)\nsame_pkg(p, q) :- package_for(p, dir), package_for(q, dir), p != q.\n.output same_pkg\n\
@@ -250,9 +250,9 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
                 .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
                 .decl mod_of(d: number, m: symbol)\nmod_of(d, @replace_all(m, \"/\", \".\")) :- doc(d, p, _), match(\"(?<m>.*)\\\\.py\", p).\n\
                 .decl sym(f: node, s: symbol)\nsym(f, cat(m, \".\", q)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
-                .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), line(f, l), l = max a : { sym(g, s), line(g, a) }.\n.output last_def\n\
+                .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), node_line_number(f, l), l = max a : { sym(g, s), node_line_number(g, a) }.\n.output last_def\n\
                 .decl tail(f: node, s: symbol)\ntail(f, cat(q, \".\", m)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
-                .decl last_tail(s: symbol, f: node)\nlast_tail(s, f) :- tail(f, s), line(f, l), l = max a : { tail(g, s), line(g, a) }.\n.output last_tail\n";
+                .decl last_tail(s: symbol, f: node)\nlast_tail(s, f) :- tail(f, s), node_line_number(f, l), l = max a : { tail(g, s), node_line_number(g, a) }.\n.output last_tail\n";
     let split = split_of(&read(text));
     for rel in ["mod_of", "sym", "last_def"] {
         assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
@@ -366,7 +366,7 @@ fn a_nullable_location_tested_set_places_its_head() {
 .decl child(p: node, c: node, i: number)
 .decl docof(n: node, d: number)
 .input node, child, docof
-.decl param(f: node, d: loc)
+.decl param(f: node, d: place)
 param(f, d) :- node(_, f, "param", _, _), child(f, d, 0).
 param(f, d) :- node(_, f, "param", _, _), !child(f, _, 0), unset(d).
 .decl simple(d: node)
@@ -506,12 +506,12 @@ exported_at(m, x, c) :- defs(c, x), node(d, c, _, _, _), doc(d, _, m).
 at_def(n, c) :- imports(n, m, x), exported_at(m, x, c).
 .output at_def
 .decl exported_line(m: symbol, x: symbol, l: number)
-exported_line(m, x, l) :- defs(c, x), node(d, c, _, _, _), doc(d, _, m), line(c, l).
+exported_line(m, x, l) :- defs(c, x), node(d, c, _, _, _), doc(d, _, m), node_line_number(c, l).
 .decl at_line(n: node, l: number)
 at_line(n, l) :- imports(n, m, x), exported_line(m, x, l).
 .output at_line
 .decl first(m: symbol, x: symbol)
-first(m, x) :- defs(c, x), node(d, c, _, _, _), doc(d, _, m), line(c, 1).
+first(m, x) :- defs(c, x), node(d, c, _, _, _), doc(d, _, m), node_line_number(c, 1).
 .decl at_first(n: node)
 at_first(n) :- imports(n, m, x), first(m, x).
 .output at_first
@@ -641,7 +641,7 @@ item(c, I, k + @count_matches("\n", W)) :- list(c, s, k), match("(?<W>[\\s,]*)(?
 parts(i, N, V) :- item(_, i, _), match("(?<N>[^:]*):(?<V>[\\s\\S]*)", i).
 parts(i, i, "#n0") :- item(_, i, _), !contains(":", i).
 .decl global(c: node, x: symbol, v: symbol, l: number)
-global(c, x, v, l + k) :- item(c, i, k), parts(i, x, v), line(c, l).
+global(c, x, v, l + k) :- item(c, i, k), parts(i, x, v), node_line_number(c, l).
 .output global
 .decl zero(t: symbol)
 zero(t) :- node(_, n, "#k12", _, _), text(n, t), match("0+", t), n < 6917529027641081856.
@@ -1251,7 +1251,7 @@ fn a_location_or_unset_column_keeps_a_rule_through_it_on_one_document() {
 .decl child(p: node, c: node, i: number)
 .decl field(p: node, f: symbol, c: node)
 .input node, child, field
-.decl ann_of(f: node, a: loc)
+.decl ann_of(f: node, a: place)
 ann_of(f, a) :- node(_, f, "function_definition", _, _), field(f, "return_type", a).
 ann_of(f, a) :- node(_, f, "function_definition", _, _), !field(f, "return_type", _), unset(a).
 .decl ann_head(f: node, e: node)
@@ -1536,7 +1536,7 @@ fn a_cross_file_rule_reading_a_position_is_refused() {
             r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl visit_index(n: node, i: number)
-.decl line(n: loc, l: number)
+.decl line(n: place, l: number)
 .decl text(n: node, s: symbol)
 .input node, visit_index, line, text
 .decl call(n: node, s: symbol)
@@ -1544,9 +1544,9 @@ call(n, s) :- node(_, n, "call", _, _), text(n, s).
 .decl first_of(s: symbol, i: number)
 {first_of}
 .decl local_at(n: node, l: number)
-local_at(n, l) :- call(n, _), line(n, l).
+local_at(n, l) :- call(n, _), node_line_number(n, l).
 .decl found(n: node, l: number)
-found(n, l) :- call(n, s), first_of(s, _), line(n, l).
+found(n, l) :- call(n, s), first_of(s, _), node_line_number(n, l).
 .output found, local_at
 "#
         ))
@@ -1595,7 +1595,7 @@ fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl text(n: node, s: symbol)
-.decl line(n: loc, l: number)
+.decl line(n: place, l: number)
 .input node, child, text, line
 .decl names(x: symbol)
 names(x) :- node(_, n, "string", _, _), text(n, x).
@@ -1604,7 +1604,7 @@ ident(n, x) :- node(_, n, "identifier", _, _), text(n, x).
 .decl pick(n: node)
 pick(n) :- ident(n, x), names(x).
 .decl hit(n: node, l: number)
-hit(n, l) :- pick(n), line(n, l).
+hit(n, l) :- pick(n), node_line_number(n, l).
 {extra}
 .output hit
 "#);
@@ -1616,14 +1616,14 @@ hit(n, l) :- pick(n), line(n, l).
     assert!(held.contains("line"), "{held:?}");
     // `child(p, c, _)` reaches nodes no export holds: their lines would be missing. So would a cross-file rule's
     // own enumeration of nodes (`node(_, n, "identifier", _, _), text(n, x), names(x)`).
-    let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
+    let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), node_line_number(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
     assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
-    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen"))).unwrap();
+    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), node_line_number(n, l).\n.output seen"))).unwrap();
     let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
     // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
-    let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), line(p, l).\n.output kid, kidline"));
+    let parts = split(&source(".decl kid(c: node, i: number)\nkid(c, i) :- pick(p), child(p, c, i).\n.decl kidline(p: node, l: number)\nkidline(p, l) :- kid(c, _), pick(p), child(p, c, _), node_line_number(p, l).\n.output kid, kidline"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
     let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(held.contains("line"), "{held:?}");
@@ -1646,7 +1646,7 @@ fn a_pushed_location_lookup_is_narrowed_to_the_findings_nodes() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl doc(d: number, p: symbol, h: symbol)
 .decl text(n: node, s: symbol)
-.decl line(n: loc, l: number)
+.decl line(n: place, l: number)
 .input node, doc, text, line
 .decl names(x: symbol)
 names(x) :- node(_, n, "string", _, _), text(n, x).
@@ -1655,7 +1655,7 @@ at(n, x) :- node(_, n, "identifier", _, _), text(n, x).
 .decl warn(n: node)
 warn(n) :- at(n, x), !names(x).
 .decl found(p: symbol, n: node, l: number)
-found(p, n, l) :- warn(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+found(p, n, l) :- warn(n), node(d, n, _, _, _), doc(d, p, _), node_line_number(n, l).
 .output found
 "#;
     let (v, made) = pushed(read(text));
@@ -2094,7 +2094,7 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
 named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
 .decl at(f: node, l: number)
 .output at
-at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
+at(f, l) :- uses(f, _), docof(f, d), node_line_number(f, l), d > 0.
 "#;
     let (out, made) = pushed(read(text));
     assert!(!made.is_empty(), "{made:?}");
@@ -2282,10 +2282,10 @@ fn a_rule_comparing_two_constants_falsely_derives_nothing() {
     let text = r#"
 .decl kind(n: node, k: symbol)
 .input kind
-.decl rx_at(n: node, at: loc)
+.decl rx_at(n: node, at: place)
 rx_at(n, at) :- kind(n, "decorator"), at = n.
 rx_at(n, at) :- kind(n, "decorator"), -1 != -1, at = -1.
-.decl mark(at: loc)
+.decl mark(at: place)
 mark(at) :- rx_at(_, at).
 mark(at) :- kind(at, "call"), "a" = "b".
 .output mark

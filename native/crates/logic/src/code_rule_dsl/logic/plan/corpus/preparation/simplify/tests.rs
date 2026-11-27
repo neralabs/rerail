@@ -656,9 +656,9 @@ fn a_zero_counts_helper_keeps_only_the_columns_read() {
     let (report, v) = simplified(
         r#"
         .decl doc(d: number, p: symbol, q: symbol)
-        .decl src_line(d: number, l: number, sp: span)
+        .decl src_line(d: number, l: number, sp: place)
         .input doc, src_line
-        .decl line(p: symbol, l: number, s: span)
+        .decl line(p: symbol, l: number, s: place)
         line(p, l, s) :- doc(d, p, _), src_line(d, l, s).
         .decl at(p: symbol, l: number)
         .decl deco(p: symbol, a: number)

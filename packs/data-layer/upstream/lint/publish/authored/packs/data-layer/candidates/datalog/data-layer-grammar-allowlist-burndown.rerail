@@ -60,7 +60,7 @@ allowlist_value(r) :- allowlist_set_string(r).
 allowlist_value(r) :- node(_, r, "call", _, _), field(r, "arguments", g), allowlist_first_arg(g, c), allowlist_set_string(c).
 allowlist_row(c, d) :- allowlist_names(c, x), node(d, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, x), field(a, "right", r), allowlist_value(r), in_scope(d), !out_scope(d), !tape_syntax_error(d).
 allowlist_first_doc(c, d) :- allowlist_row(c, _), d = min e : { allowlist_row(c, e) }.
-allowlist_at(c, p, l) :- allowlist_first_doc(c, d), doc(d, p, _), node(d, m, "module", _, _), line(m, l).
+allowlist_at(c, p, l) :- allowlist_first_doc(c, d), doc(d, p, _), node(d, m, "module", _, _), node_line_number(m, l).
 violation("data-layer-grammar-allowlist-burndown", "allowlist-allowlisted_static_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-allowlisted_static_classes", p, l).
 violation("data-layer-grammar-allowlist-burndown", "allowlist-legacy_allowlisted_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-legacy_allowlisted_classes", p, l).
 violation("data-layer-grammar-allowlist-burndown", "allowlist-allowlisted_classes", "allowlist_grew", p, l) :- allowlist_at("allowlist-allowlisted_classes", p, l).

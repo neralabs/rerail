@@ -10,7 +10,7 @@
 // LOG004(n): a finding at node n, from clause `log-exception-outside-except-handler`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG004(at: loc, c: node) "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+.violation LOG004(at: node, c: node) "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress noqa "LOG004"
 LOG004(C, n) :- count : { inside(n, p1, "except_clause"), node(_, p1, _, _, _) } = 0,
     log004_alt_3(n, C).
@@ -46,7 +46,7 @@ log004_exception_callee(n) :- kind(n, "parenthesized_expression"), child(n, c9, 
 
 // call_in_string(n): the JSON util `call-in-string`, used where the JSON says `matches: "call-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl log004_call_in_string(n: node, c: loc)
+.decl log004_call_in_string(n: node, c: node)
 log004_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), log004_alt_2(c2, C).
 
@@ -70,12 +70,12 @@ log004_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl log004_alt_2(n: node, c: loc)
+.decl log004_alt_2(n: node, c: node)
 log004_alt_2(n, C) :- kind(n, "call"), child(n, c1, _), log004_exception_callee(c1), C = n.
 log004_alt_2(n, C) :- log004_call_in_string(n, C).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl log004_alt_3(n: node, c: loc)
+.decl log004_alt_3(n: node, c: node)
 log004_alt_3(n, C) :- kind(n, "call"), child(n, c1, _), log004_exception_callee(c1), node(_, n, _, _, _), C = n.
 log004_alt_3(n, C) :- log004_call_in_string(n, C).

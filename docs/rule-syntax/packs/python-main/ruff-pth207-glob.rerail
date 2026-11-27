@@ -11,7 +11,7 @@
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on D are added to every rule.
-.violation PTH207(at: loc, f: node, detail: symbol) "Use `Path(root).glob(pattern)` (or `rglob`) instead of {detail}."
+.violation PTH207(at: node, f: node, detail: symbol) "Use `Path(root).glob(pattern)` (or `rglob`) instead of {detail}."
     suppress noqa "PTH207"
 PTH207(F, n, "`glob.glob(...)`; it lazily yields `Path` objects and includes hidden files, so wrap it in `list(...)` where a list is needed") :- kind(n, "call"),
     field(n, "function", c1), pth207_callee(c1, F),
@@ -28,7 +28,7 @@ PTH207(F, n, "`glob.iglob(...)`; it yields `Path` objects, includes hidden files
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth207_callee(n: node, f: loc)
+.decl pth207_callee(n: node, f: node)
 pth207_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "glob.glob"),
     node(_, n, _, _, _), F = n.
 pth207_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth207_callee(c1, F).
@@ -41,7 +41,7 @@ pth207_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 
 // callee_glob_iglob(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth207_callee_glob_iglob(n: node, f: loc)
+.decl pth207_callee_glob_iglob(n: node, f: node)
 pth207_callee_glob_iglob(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, "glob.iglob"), node(_, n, _, _, _), F = n.
 pth207_callee_glob_iglob(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),

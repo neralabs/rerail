@@ -8,7 +8,7 @@
 // N801(n): a finding at node n, from clause `invalid-class-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N801(at: node, name: loc) "Rename class `{name}` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it."
+.violation N801(at: node, name: node) "Rename class `{name}` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it."
     suppress noqa "N801"
 N801(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
     kind(p1, "class_definition"), !n801_alt_1(n).

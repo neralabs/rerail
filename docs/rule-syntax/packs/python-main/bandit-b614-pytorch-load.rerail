@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on F, WEIGHTS are added to every rule.
-.violation B614(at: loc, f: node) "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
+.violation B614(at: node, f: node) "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
     suppress nosec "B614"
 B614(F, n) :- node(_, WEIGHTS, _, _, _), n ~ `$F($$$ARGS)`,
     ( kind(n, "call"), b614_arg_no_weights_only_1(n), unset(WEIGHTS)

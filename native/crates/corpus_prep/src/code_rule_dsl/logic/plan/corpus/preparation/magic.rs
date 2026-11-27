@@ -1160,7 +1160,7 @@ fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M
         let document = crate::code_rule_dsl::logic::front::document_column(rel);
         for (i, (t, (_, ty))) in a.args().zip(d.cols()).enumerate() {
             if let TermRef::Var(x) = t
-                && (matches!(v.text(ty), "node" | "loc" | "span") || document == Some(i))
+                && (matches!(v.text(ty), "node" | "place") || document == Some(i))
             {
                 places.insert(x);
             }

@@ -34,7 +34,7 @@ d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition")
 
 // exempt_decorator(n): the JSON util `exempt-decorator`, used where the JSON says `matches: "exempt-decorator"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl d105_exempt_decorator(n: node, name: loc)
+.decl d105_exempt_decorator(n: node, name: node)
 // NAME: not bound by this rule, so empty (unset) here, as in ast-grep.
 d105_exempt_decorator(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), d105_set_11(q1), unset(NAME).
@@ -47,7 +47,7 @@ d105_exempt_decorator(n, NAME) :- kind(n, "parenthesized_expression"), child(n, 
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation D105(at: node, name: loc) "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
+.violation D105(at: node, name: node) "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
     suppress noqa "D105"
 D105_raw(n, NAME) :- kind(n, "identifier"), glob("__{_,**__,}", n), node(_, n, _, _, _), NAME = n,
     !glob("__{init,new,call}__", n), field(p1, "name", n),
@@ -57,7 +57,7 @@ D105_raw(n, NAME) :- kind(n, "identifier"), glob("__{_,**__,}", n), node(_, n, _
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation D105_undocumented_magic_method_in_package(at: node, name: loc) code "D105" "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
+.violation D105_undocumented_magic_method_in_package(at: node, name: node) code "D105" "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
     suppress noqa "D105"
 D105_undocumented_magic_method_in_package_raw(n, NAME) :- kind(n, "identifier"),
     glob("__{_,**__,}", n), node(_, n, _, _, _), NAME = n, !glob("__{init,new,call}__", n),
@@ -137,14 +137,14 @@ d105_alt_6(n) :- d105_demand_alt_6(n),
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl d105_alt_12(n: node, name: loc)
+.decl d105_alt_12(n: node, name: node)
 d105_alt_12(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
 d105_alt_12(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     kind(c1, "identifier"), node(_, c1, _, _, _), NAME = c1.
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl d105_alt_13(n: node, name: loc)
+.decl d105_alt_13(n: node, name: node)
 d105_alt_13(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
 d105_alt_13(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     d105_alt_12(c1, NAME).
@@ -154,9 +154,9 @@ d105_alt_13(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 d105_stop_10_within(x, y) :- within_stop(x, y, d105_stop_10).
 
 // main's file condition {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
-.decl D105_raw(at: node, name: loc)
+.decl D105_raw(at: node, name: node)
 D105(v0, v1) :- D105_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl D105_undocumented_magic_method_in_package_raw(at: node, name: loc)
+.decl D105_undocumented_magic_method_in_package_raw(at: node, name: node)
 D105_undocumented_magic_method_in_package(v0, v1) :- D105_undocumented_magic_method_in_package_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

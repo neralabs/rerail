@@ -121,3 +121,45 @@ Kept per-file facts are kept in that form, and a batch that reads them puts its 
 Built straight through, with no compatibility kept: the types and functions (§3, §4), the 95 rewrites (§5), lines,
 matches and tokens out of the node space, the batch ids (§1), the chunker (§2), leaving (§6), the 4-byte node columns,
 and the bench (300 files on the M1 Max, CPU: 463 violations and the same relation rows, then CPU, wall and peak).
+
+## 8. As built: the types and functions (step 2)
+
+What building §3 to §5 settled that the text above did not say:
+
+- **`place`.** A finding's place, and a metavariable a JSON rule binds from a pattern (a node) or from a regex's
+  group (a match), is the one place that can hold either. A column declared `place` takes any of the four from a
+  rule's head; a value read from it is a `place`, no other type, read through `place_text`, `place_document`,
+  `place_line_number`, `place_end_line_number`, `place_start_column`, and made a node by `place_to_node` (none where
+  it is not one). Of the 2,784 `loc` and `span` columns, 108 became `place`: the columns RR201 names, where a rule
+  puts a node and another a match, a line or a token.
+- **Text tests stay.** `match(re, x)` and `glob` over a node read its text, as before. Over any place a named group of
+  `match` is a `match`.
+- **The engine's reads are refused by name.** A rule that reads `line`, `end_line`, `col`, `source`, `src_line`,
+  `first_token`, `last_token`, `token_before`, `token_after` or `end_point` is a compile error naming the typed read
+  to use (`node_line_number`, `document_line`, `node_to_first_token`, …). The typed names lower to the engine's reads
+  in the lowering (`lower/core.rs`, as `next_sibling` does), so nothing is made for them. `text`, `docof` and the
+  node's other relations keep their names over nodes.
+- **Every regex form is typed.** `<type>_regex_match(re, x, m)` and `<type>_regex_group(re, x, m, name, g)` for each
+  of node, line, match, token and place, which lower to `match_all` and `match_group`.
+- **The rules were rewritten by a type inference, not by hand.** Each variable's type is inferred through every rule's
+  head to a fixpoint, per program and its includes. The rewrite left no site for a hand fix: 619 files.
+- **The JSON translator writes the types.** Its passes write a metavariable's column `place`, and a last pass
+  (`json_rules::place_columns`) narrows each to the one type its rows hold, so the python-main pack stays the
+  translator's output.
+- **A line by its number.** `document_line_by_number(d, k, l)` is line `l` of document `d`, numbered `k`: the read
+  a rule wrote as `src_line(d, k, l)`.
+- **Token and position reads over any place.** `place_to_first_token`, `place_to_last_token`,
+  `place_to_token_before`, `place_to_token_after` and `place_to_end_position` take any place, as the other `place_`
+  reads do.
+- **A printed program reads back.** The lowering holds every place as a node, so a printed program cannot say which
+  typed name a rule wrote. It writes each engine read by the `place_` name that lowers to it (`place_text`,
+  `place_document`, `place_line_number`, …; `document_source`, `document_line_by_number`), and its own node columns
+  as `place`, which the check takes for any one type. A relation the program derives itself (a T program's own
+  `docof`) keeps its name.
+- **How the check reads columns.** A `place` column agrees with the one type a variable's other columns give it.
+  Each alternative of a disjunction is checked on its own (up to 64 per clause), as a variable may be a node in one
+  and a line in another. `unset`'s column takes any place. A `.violation`'s columns are typed as a `.decl`'s are.
+  A program that declares a relation under an engine read's name (a T program's own `line`), or under one of core's
+  names with another arity, reads it as its own.
+- **The engine's own column types are `place` too.** The type names `loc` and `span` are gone from the engine as
+  from the rules.

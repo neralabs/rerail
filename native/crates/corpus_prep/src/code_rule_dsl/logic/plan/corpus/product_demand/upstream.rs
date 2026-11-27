@@ -438,7 +438,7 @@ fn node_columns(program: &Program<'_>, rel: &str) -> Vector<usize> {
         .unwrap_or_default()
         .iter()
         .enumerate()
-        .filter(|(_, (_, ty))| matches!(ty.as_str(), "node" | "loc"))
+        .filter(|(_, (_, ty))| matches!(ty.as_str(), "node" | "place"))
         .map(|(i, _)| i)
         .collect()
 }

@@ -10,7 +10,7 @@
 // G101(n): a finding at node n, from clause `logging-extra-attr-clash`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation G101(at: node, k: loc) "Rename the `extra` key {k}: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record."
+.violation G101(at: node, k: node) "Rename the `extra` key {k}: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record."
     suppress noqa "G101"
 G101(n, K) :-
     ( kind(n, "string"), !g101_interpolated_part(n)

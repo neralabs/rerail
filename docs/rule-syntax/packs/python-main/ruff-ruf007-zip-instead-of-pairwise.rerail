@@ -12,7 +12,7 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes A1, A2, B2, C1, C2, D1, S1, S2, S3, S4, S5, S6, S7, S8, S9, V1, V2 from other metavariables' text; its literals end each rule.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation RUF007(at: node, id1: loc) "Replace this `zip` with `itertools.pairwise({id1})`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `{id1}` is not a plain sequence."
+.violation RUF007(at: node, id1: node) "Replace this `zip` with `itertools.pairwise({id1})`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `{id1}` is not a plain sequence."
     suppress noqa "RUF007"
 // A2, B2, C2, D1: not bound by this rule, so empty (unset) here, as in ast-grep.
 RUF007(n, ID1) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "zip"),
@@ -31,25 +31,25 @@ RUF007(n, ID1) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, 
 
 // name1(n): the JSON util `name1`, used where the JSON says `matches: "name1"`
 //   ID1: metavariable this relation binds for the calling rule
-.decl ruf007_name1(n: node, id1: loc)
+.decl ruf007_name1(n: node, id1: node)
 ruf007_name1(n, ID1) :- kind(n, "identifier"), node(_, n, _, _, _), ID1 = n.
 ruf007_name1(n, ID1) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_name1(c1, ID1).
 
 // name2(n): the JSON util `name2`, used where the JSON says `matches: "name2"`
 //   ID2: metavariable this relation binds for the calling rule
-.decl ruf007_name2(n: node, id2: loc)
+.decl ruf007_name2(n: node, id2: node)
 ruf007_name2(n, ID2) :- kind(n, "identifier"), node(_, n, _, _, _), ID2 = n.
 ruf007_name2(n, ID2) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_name2(c1, ID2).
 
 // int1(n): the JSON util `int1`, used where the JSON says `matches: "int1"`
 //   L1: metavariable this relation binds for the calling rule
-.decl ruf007_int1(n: node, l1: loc)
+.decl ruf007_int1(n: node, l1: node)
 ruf007_int1(n, L1) :- kind(n, "integer"), node(_, n, _, _, _), L1 = n.
 ruf007_int1(n, L1) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf007_int1(c1, L1).
 
 // int2(n): the JSON util `int2`, used where the JSON says `matches: "int2"`
 //   L2: metavariable this relation binds for the calling rule
-.decl ruf007_int2(n: node, l2: loc)
+.decl ruf007_int2(n: node, l2: node)
 ruf007_int2(n, L2) :- kind(n, "integer"), node(_, n, _, _, _), L2 = n, value(n, v1),
     (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) <= 2147483647.
 ruf007_int2(n, L2) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf007_int2(c2, L2).
@@ -79,7 +79,7 @@ ruf007_sliced(n) :- kind(n, "subscript"), !ruf007_tok_has_3(n).
 
 // first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
 //   ID1, L1: metavariables this relation binds for the calling rule
-.decl ruf007_first_arg(n: node, id1: loc, l1: loc)
+.decl ruf007_first_arg(n: node, id1: node, l1: node)
 // L1: not bound by this rule, so empty (unset) here, as in ast-grep.
 ruf007_first_arg(n, ID1, L1) :- ruf007_name1(n, ID1), unset(L1).
 // L1: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
@@ -94,7 +94,7 @@ ruf007_first_arg(n, ID1, L1) :- kind(n, "parenthesized_expression"), child(n, c5
 
 // second_arg(n): the JSON util `second-arg`, used where the JSON says `matches: "second-arg"`
 //   ID2, L2: metavariables this relation binds for the calling rule
-.decl ruf007_second_arg(n: node, id2: loc, l2: loc)
+.decl ruf007_second_arg(n: node, id2: node, l2: node)
 ruf007_second_arg(n, ID2, L2) :- ruf007_sliced(n), field(n, "value", c1), ruf007_name2(c1, ID2),
     field(n, "subscript", c2), kind(c2, "slice"), ruf007_step_ok(c2), child(c2, c3, _),
     ruf007_lower_node(c3), ruf007_int2(c3, L2).

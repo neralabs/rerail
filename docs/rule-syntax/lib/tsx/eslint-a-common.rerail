@@ -24,8 +24,8 @@
 //     call_arg(c, a, i)        a is call (or `new`) c's i-th argument as written, from 0; comments are not arguments
 //     call_arg_count(c, k)     c has k arguments
 //   tokens
-//     token_text(n, s)         s is n's tokens joined by one space, comments left out: ESLint's equalTokens and
-//                              getTokens comparisons. Asked for the nodes of token_text_ask(n), which includers fill
+//     node_tokens_text(n, s)         s is n's tokens joined by one space, comments left out: ESLint's equalTokens and
+//                              getTokens comparisons. Asked for the nodes of node_tokens_text_ask(n), which includers fill
 //   this
 //     this_frame(r)            r is a region with its own `this`: a non-arrow function's code, a class field's value,
 //                              a static block, the program
@@ -113,28 +113,28 @@ call_arg_count(c, k) :- (kind(c, "call_expression") ; kind(c, "new_expression"))
 // arrow_op(f, m): where arrow function f's `=>` is, for a finding: the source line it is on (a finding is keyed by
 // its line). The tape keeps no `=>` (the kind implies it): it is in the source before the body, so its line is the
 // body's less the line breaks after it.
-.decl arrow_op(f: node, m: span)
+.decl arrow_op(f: node, m: line)
 arrow_op(f, m) :- kind(f, "arrow_function"), field(f, "body", b), structural_before(b, g), match("(?s).*=>.*", g),
-    w = @replace_all(g, "(?s)^.*=>", ""), line(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
-    src_line(d, l, m).
+    w = @replace_all(g, "(?s)^.*=>", ""), node_line_number(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
+    document_line(d, m), line_number(m, l).
 
 // ---- tokens --------------------------------------------------------------------------------------------------------
-// token_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
-// compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in token_text_ask,
+// node_tokens_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
+// compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in node_tokens_text_ask,
 // which the including library or rule fills: tokens are a walk per node, so only compared nodes take it.
-.decl token_text_ask(n: node) extensible
-.decl token_text(n: node, s: symbol)
+.decl node_tokens_text_ask(n: node) extensible
+.decl node_tokens_text(n: node, s: symbol)
 // The tape keeps no token its grammar implies, so the pieces are the stored leaves and the source between stored
 // children (spacing taken out), in source order: what the tape leaves out is in that source.
-token_text(n, s) :- token_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
+node_tokens_text(n, s) :- node_tokens_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
 .decl tt_part(n: node, p: node)  // p is n or a node inside it
-tt_part(n, n) :- token_text_ask(n).
-tt_part(n, p) :- token_text_ask(n), within(p, n).
+tt_part(n, n) :- node_tokens_text_ask(n).
+tt_part(n, p) :- node_tokens_text_ask(n), within(p, n).
 .decl tt_piece(n: node, p: number, q: number, x: symbol)
 // A stored child with no stored children of its own: an anonymous token, a leaf. Comments drop out.
 tt_piece(n, 2 * st, 0, x) :- tt_part(n, p), token(p, _, x, st, _), !tt_inner(p, st).
 // A node asked about that is itself a leaf (`1`, `x`) is its one piece; with none, any two leaves were equal.
-tt_piece(n, 2 * st, 0, x) :- token_text_ask(n), !token(n, _, _, _, _), text(n, x), node(_, n, _, st, _).
+tt_piece(n, 2 * st, 0, x) :- node_tokens_text_ask(n), !token(n, _, _, _, _), text(n, x), node(_, n, _, st, _).
 .decl tt_inner(p: node, st: number)  // p's child at st is a comment, or has stored children (it gives their pieces)
 tt_inner(p, st) :- tt_part(_, p), child(p, c, _), node(_, c, _, st, _), (comment(c, _) ; token(c, _, _, _, _)).
 // The source before each stored named child, and after the last one.

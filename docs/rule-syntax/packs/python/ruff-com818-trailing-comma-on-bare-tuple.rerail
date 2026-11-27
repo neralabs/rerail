@@ -25,4 +25,4 @@ COM818(x) :- (kind(p, "module") ; kind(p, "block")), child(p, s, _), node(_, s, 
     node(_, x, _, _, e), (x = s ; within(x, s)), count : { child(x, c, _), !kind(c, "comment") } = 1,
     !semicolon_after(s).
 .decl semicolon_after(s: node)
-semicolon_after(s) :- token_after(s, u), text(u, ";").
+semicolon_after(s) :- node_to_token_after(s, u), token_text(u, ";").

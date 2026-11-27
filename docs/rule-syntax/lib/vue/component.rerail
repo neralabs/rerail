@@ -60,8 +60,8 @@ vcomp(o) :- kind(e, "export_statement"), field(e, "value", w), deparen(w, o), ki
 vcomp(o) :- kind(c, "call_expression"), vdefiner(c), vlast_arg(c, o).
 vcomp(o) :- kind(c, "new_expression"), field(c, "constructor", f), text(f, "Vue"), call_arg(c, a, 0), vskip_as(a, o),
     kind(o, "object").
-vcomp(o) :- kind(o, "object"), vin_script(o), line(o, l), comment(k, s), contains("@vue/component", s),
-    end_line(k, l - 1), docof(k, d), docof(o, d).
+vcomp(o) :- kind(o, "object"), vin_script(o), node_line_number(o, l), comment(k, s), contains("@vue/component", s),
+    node_end_line_number(k, lk), lk = l - 1, docof(k, d), docof(o, d).
 .decl vin_script(n: node)
 vin_script(n) :- vscript(p, _), within(n, p).
 // vunwrap(e, x): e without parentheses and TypeScript's `as` / `satisfies`: export default {} as Component.

@@ -13,7 +13,7 @@
 // FAST003(n): a finding at node n, from clause `unused-path-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FAST003(at: loc, f: node, k: loc, fn: loc) "Declare `{k}` as a non-positional-only parameter of `{fn}` so FastAPI passes the `{{{k}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{k}}}` from the path."
+.violation FAST003(at: node, f: node, k: node, fn: node) "Declare `{k}` as a non-positional-only parameter of `{fn}` so FastAPI passes the `{{{k}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{k}}}` from the path."
     suppress noqa "FAST003"
 FAST003(F, n, K, FN) :- fast003_plain_str(n), fast003_route_arg(n, FN), parsed(n, "braceFormat", r1),
     has(r1, c2, "field"),
@@ -101,7 +101,7 @@ fast003_depends_call(n) :- kind(n, "call"), field(n, "function", c1), fast003_re
 
 // alias_str(n): the JSON util `alias-str`, used where the JSON says `matches: "alias-str"`
 //   AL: metavariable this relation binds for the calling rule
-.decl fast003_alias_str(n: node, al: loc)
+.decl fast003_alias_str(n: node, al: node)
 fast003_alias_str(n, AL) :- fast003_plain_str(n), node(_, n, _, _, _), AL = n.
 fast003_alias_str(n, AL) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     fast003_alias_str(c1, AL).
@@ -155,7 +155,7 @@ fast003_param_eq(n, K) :- fast003_alt_2(n, K).
 
 // alias_form(n): the JSON util `alias-form`, used where the JSON says `matches: "alias-form"`
 //   AL: metavariable this relation binds for the calling rule
-.decl fast003_alias_form(n: node, al: loc)
+.decl fast003_alias_form(n: node, al: node)
 fast003_alias_form(n, AL) :- fast003_typed_param(n), field(n, "type", c1), has(c1, c2, "call"),
     fast003_elem_2(c2), field(c2, "function", c3), fast003_ref_of(c3, "path"), child(c2, c4, _),
     kind(c4, "argument_list"), child(c4, c5, _), kind(c5, "keyword_argument"),
@@ -201,7 +201,7 @@ fast003_call_has(n, K) :- kind(n, "class_definition"), field(n, "body", c1), kin
 
 // route_arg(n): the JSON util `route-arg`, used where the JSON says `matches: "route-arg"`
 //   FN: metavariable this relation binds for the calling rule
-.decl fast003_route_arg(n: node, fn: loc)
+.decl fast003_route_arg(n: node, fn: node)
 fast003_route_arg(n, FN) :- fast003_demand_route_arg(n), count : { precedes(s1, n), !fast003_alt_14(s1) } = 0,
     child(p2, n, _), kind(p2, "argument_list"), child(p3, p2, _), kind(p3, "call"),
     fast003_route_call(p3), within_stop(p3, p4, "decorator"), kind(p4, "decorator"),
