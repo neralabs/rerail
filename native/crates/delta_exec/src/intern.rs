@@ -86,7 +86,7 @@ pub fn intern_at(reg: &Registry, ops: &InternOps, dir: &mut Directory, blobs: &m
             let mut w = pin_block(&b, "intern", true)?;
             twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
         }
-        let mut p = vec![0u8; InternP::SIZE];
+        let mut p = [0u8; InternP::SIZE];
         InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
         run_cpu(reg, dir, ops.intern, &[src.block, tape.block, atoms.0, id], &p, tiling)?;
         dir.freeze(id)?;

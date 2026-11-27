@@ -114,7 +114,7 @@ pub fn drop_parts(reg: &Registry, ops: &DropOps, dir: &mut Directory, head: Bloc
         return Ok(0);
     }
     let before = Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed;
-    let mut p = vec![0u8; DropP::SIZE];
+    let mut p = [0u8; DropP::SIZE];
     DropP { head: u64::from(head.0), diff: i64::from(diff) }.write(&mut p);
     run_cpu(reg, dir, ops.drop_parts, &[head, parts.id(), runs], &p, Tiling::WHOLE)?;
     Ok(u64::from(Runs::new(dir.read("drop_parts", &[runs])?.block(0)).head.claimed - before))

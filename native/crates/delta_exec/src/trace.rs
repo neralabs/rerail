@@ -264,7 +264,7 @@ impl Trace {
         }
         let ctl = dir.make(kind::CONTROL, CONTROL_BYTES);
         let scratch = scratch_slot(dir, n);
-        let mut params = vec![0u8; ConsolidateP::SIZE];
+        let mut params = [0u8; ConsolidateP::SIZE];
         ConsolidateP { below: self.head.map_or(NONE, |h| h.0), pad: 0 }.write(&mut params);
         let run = run_cpu(reg, dir, ops.consolidate, &[runs, out, ctl, scratch], &params, tiling);
         let (code, due) = {
@@ -319,7 +319,7 @@ impl Trace {
             dir.refer(out, BlockId(b), BODY_AT)?;
         }
         let scratch = scratch_slot(dir, rows);
-        let mut params = vec![0u8; MergeP::SIZE];
+        let mut params = [0u8; MergeP::SIZE];
         MergeP { head: head.0, count, below: below.unwrap_or(NONE), pad: 0 }.write(&mut params);
         let run = run_cpu(reg, dir, ops.merge, &[head, out, scratch], &params, tiling);
         dir.release(scratch);

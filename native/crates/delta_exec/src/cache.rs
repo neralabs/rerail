@@ -158,7 +158,7 @@ impl OpCache {
     /// A run begins: the header marked open, the cache reset to ∅ unless it holds `from`, the state the run starts
     /// from. True when it held it.
     pub fn open(self, reg: &Registry, ops: &CacheOps, dir: &Directory, from: u64) -> Result<bool, String> {
-        let mut p = vec![0u8; CacheP::SIZE];
+        let mut p = [0u8; CacheP::SIZE];
         CacheP { state: from }.write(&mut p);
         run_cpu(reg, dir, ops.open, &[self.0], &p, Tiling::WHOLE)?;
         Ok(twin::held(dir.read("cache", &[self.0])?.block(0)))
@@ -166,14 +166,14 @@ impl OpCache {
 
     /// A run ends: `to`, the state it made, in the header, and the mark cleared, last.
     pub fn commit(self, reg: &Registry, ops: &CacheOps, dir: &Directory, to: u64) -> Result<(), String> {
-        let mut p = vec![0u8; CacheP::SIZE];
+        let mut p = [0u8; CacheP::SIZE];
         CacheP { state: to }.write(&mut p);
         run_cpu(reg, dir, ops.commit, &[self.0], &p, Tiling::WHOLE)
     }
 
     /// Adds layer `layer`'s order by `cols` to the cache, unless it holds it (`order`).
     pub fn order(self, reg: &Registry, ops: &CacheOps, dir: &Directory, layer: BlockId, cols: &[u16]) -> Result<(), String> {
-        let mut p = vec![0u8; OrderP::SIZE];
+        let mut p = [0u8; OrderP::SIZE];
         twin::order_params(layer.0, cols).write(&mut p);
         run_cpu(reg, dir, ops.order, &[layer, self.0], &p, Tiling::WHOLE)
     }

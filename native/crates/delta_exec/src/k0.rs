@@ -279,7 +279,7 @@ pub fn k0_pass(reg: &Registry, ops: &K0Ops, dir: &mut Directory, atoms: BlockId,
             let mut w = pin_block(&b, "k0_pass", true).map_err(fail)?;
             twin::init_control(w.bytes_mut().expect("a write pin"));
         }
-        let mut p = vec![0u8; K0P::SIZE];
+        let mut p = [0u8; K0P::SIZE];
         K0P { docs: u64::from(docs.first.0), diff: i64::from(diff) }.write(&mut p);
         let mut slots = [control; twin::CACHE + 1];
         (slots[twin::DOCS], slots[twin::ATOMS], slots[twin::GONE]) = (docs.first, atoms, gone.id());
