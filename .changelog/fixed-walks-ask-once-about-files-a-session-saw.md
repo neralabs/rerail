@@ -1,0 +1,1 @@
+Walks of other worktrees ask the daemon's thread nothing about files sessions saw that no walk reads (`build/`, ignored folders, links) or that went during their shell command. Of the first a walk asks one `lstat` each off that thread, sixteen at a time, until abandoned, and records deletions: that count grows as sessions age, the daemon's calls do not.
