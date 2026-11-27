@@ -28,7 +28,7 @@ import { defaultRerailDatabasePath } from "../../engine/storage/database.js";
 import { RerailRuntime } from "../../runtime/runtime.js";
 import { messageSteer } from "../../engine/code-rule/rerail-steer.js";
 import { MERGE_ASSIST_NOTE_LEAD } from "../../engine/merge-assist/conflict-note.js";
-import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
+import { MATCH_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents } from "../../runtime/session-state.js";
 
 export interface PiConversationRulesOptions extends SessionDatabaseOptions {
   modelPath?: string;
@@ -235,8 +235,21 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
     };
 
     const sessionFor = async (): Promise<AdapterSession | undefined> => {
-      while (attaching !== undefined) await attaching;
+      for (let pending = attaching; pending !== undefined; pending = attaching) {
+        // An attach that failed with a newer one queued behind it is not the event's outcome: the event waits for the newer one.
+        await pending.catch((error: unknown) => {
+          if (attaching === undefined) throw error;
+        });
+      }
       return native.session() ?? activeSession;
+    };
+    /** The runtime attached to `sessionId` now, which records the gap of what arrived while its attach was failing. */
+    const gapRecorder = (sessionId: string): { recordDropped(gaps: readonly DroppedEvents[]): void } | undefined => {
+      const client = native.current();
+      if (client !== undefined) return native.session()?.sessionId === sessionId ? client : undefined;
+      const local = runtime;
+      if (local === undefined || activeSession?.sessionId !== sessionId) return undefined;
+      return { recordDropped: gaps => { for (const gap of gaps) local.recordDroppedEvents(sessionId, gap); } };
     };
 
     const initializeNow = async (ctx: ExtensionContext, options_: InitializeOptions = {}): Promise<void> => {
@@ -348,7 +361,12 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         liveSessionId = context.sessionManager.getSessionId();
         return initialize(context, { rebuild });
       },
-      close: closeRuntime,
+      // Rerail's removal takes the footer down, as OMP's does: a failing attach's dropped count would stay in it after the
+      // removal. A reattach draws it again.
+      close: async () => {
+        presentation.stop();
+        await closeRuntime();
+      },
       shutdown: async () => {
         try {
           presentation.stop();
@@ -362,6 +380,13 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         }
       },
       sessionFor,
+      attachGaps: {
+        reportDropped: count => presentation.dropped(count),
+        // With no runtime left, the footer follows the failing session, so it can say what is being dropped.
+        failed: context => { if (native.current() === undefined && runtime === undefined) presentation.start(context); },
+        recorder: gapRecorder,
+      },
+      markGapFinal: sessionId => { native.markGapFinal(sessionId); },
       ingest,
       yieldDeliveries,
       conversationRulesTool: {
@@ -393,9 +418,6 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         };
       },
     });
-    // The old client's open gap gets its count while its session is still the one Pi appends to; a switch that follows closes that client into a session it no longer writes to.
-    pi.on("session_before_switch", (_event, ctx) => { native.markGapFinal(ctx.sessionManager.getSessionId()); });
-    pi.on("session_before_fork", (_event, ctx) => { native.markGapFinal(ctx.sessionManager.getSessionId()); });
   };
 }
 
