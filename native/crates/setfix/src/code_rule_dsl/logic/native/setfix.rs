@@ -3997,7 +3997,7 @@ pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
                     s.columns[g.0].extend_from_slice(&col[start..end]);
                 }
                 s.rows = end - start;
-                let words = f.run(&mut s, |_, _| {}, |_, _, _, _| unreachable!("no test"));
+                let words = f.run(&mut s, |_, _| {}, |_, _, _, _, _| unreachable!("no test"));
                 for (w, &word) in words.iter().enumerate() {
                     let mut m = word;
                     while m != 0 { passed.push((start + 64 * w + m.trailing_zeros() as usize) as u32); m &= m - 1; }
@@ -9019,7 +9019,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
         ((0..steps.len()).collect(), steps.len())
     };
     let multi = multi.into_iter().map(|(rel, cols)| steps::Multi { rel, cols }).collect();
-    let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new() };
+    let plan = steps::Plan { steps, out, nslots: bound.len(), multi, probes: Vec::new(), fused: Vec::new(), spec: level::digest(spec), from, plan_steps, ranges: Vec::new(), lookups: Vec::new() };
     Ok(JoinRule::encoded(analysed(plan, !env_set!("RERAIL_NO_ROW_PROGRAMS"), |c| syms.name(c) == ".")))
 }
 
@@ -9072,7 +9072,8 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
         let v = rel.view.as_ref()?;
         (v.ids.is_none() && v.eqs.is_empty() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone()))
     };
-    plan.fused = if fuse { rowcode::fuse(&s.steps, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
+    plan.lookups = lookups(&s, &plan.ranges);
+    plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
     let s = plan.encode();
     scalars::register(&s, None);
     s
@@ -9083,6 +9084,22 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
 /// run, so it holds for a process's runs, as a measurement's (one run a process).
 fn view_tests_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_VIEW_TESTS").map_or(true, |v| v != "off"))
+}
+
+/// Per step, whether it is a lookup: an atom of a view whose source reads its rows by their own id in a column the
+/// step's keys bind (`Source::read_own_batch` asked with no values: a node's own facts by its id, `kind(n, k)` by
+/// `n`), not ranged. Its rows are that one row, a value computed from the key, not a loop over candidates: a fused
+/// chunk reads its rows' with the chunk's others as computed columns (`rowcode`), and no lookup starts a fused scan.
+/// The walk batches it as any node read (`kinds::OwnRead`). `RERAIL_LOOKUPS=off` (a measurement aid, the run's
+/// setting) makes none.
+fn lookups(s: &Section<steps::Plan>, ranges: &[Option<Ranged>]) -> Vec<bool> {
+    let on = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_LOOKUPS").map_or(true, |v| v != "off"));
+    s.steps.iter().enumerate().map(|(i, st)| {
+        let Step::Atom { src: Src::In(rel, _), keys, .. } = st else { return false };
+        let Some(v) = &s.bound(rel).view else { return false };
+        on && ranges.get(i).is_none_or(Option::is_none) && v.eqs.is_empty() && v.ids.is_none() && v.cols.len() <= READ
+            && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && v.src.read_own_batch(v.cols[c], &[], &[], &mut [], &mut [], &mut crate::code_rule_dsl::facts::vtab::ProbeCursor::default()))
+    }).collect()
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -9811,15 +9828,22 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         if f.tests.iter().any(|t| t.view.is_some()) {
                             run_counts().view_tests.fetch_add(s.rows as u64, AtomicOrdering::Relaxed);
                         }
+                        if f.tests.iter().any(|t| t.view.as_ref().is_some_and(|v| !v.looks.is_empty())) {
+                            run_counts().view_looks.fetch_add(s.rows as u64, AtomicOrdering::Relaxed);
+                        }
                         // The fused tests (`rowcode::Test`): each asked of its input as the walk's test step asks it
                         // (`cands::holds`), the row's values in the slots its keys read.
                         let mut asked = std::mem::take(&mut s.asked);
                         asked.resize_with(f.tests.len(), Default::default);
                         let (j, store) = (cx.j, cx.store);
-                        let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64]| {
+                        let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64], out: &mut [i64]| {
                             let test = &f.tests[t];
                             for &(slot, b) in &test.slots {
                                 slots[slot] = match b { rowcode::Bind::Column(k) => columns[k][r], rowcode::Bind::Param(k) => params[k] };
+                            }
+                            // A lookup: the one row its key names, its values of the columns it binds in `out`.
+                            if j.lookups.get(i + 1 + test.at).copied().unwrap_or(false) {
+                                return cands::look(j, &j.steps[i + 1 + test.at], store, slots, &mut asked[t], out);
                             }
                             cands::holds(j, &j.steps[i + 1 + test.at], store, slots, &mut asked[t])
                         };
@@ -11467,7 +11491,7 @@ pub mod probe_tests {
     fn a_tested_result_reads_its_slot() {
         use steps::Step as Made;
         // The steps' plan, read as every reader reads it (`steps::Plan`'s view).
-        let plan = |steps: Vec<Made>| steps::Plan { steps, out: Vec::new(), nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new() }.encode();
+        let plan = |steps: Vec<Made>| steps::Plan { steps, out: Vec::new(), nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new() }.encode();
         // Slots: 0 the whole, 1 and 2 its parts, 3 the text the function reads.
         let split = || Made::Split { whole: Key::Slot(0), a: Some(1), b: Some(2), ka: Key::Slot(1), kb: Key::Slot(2), last: false };
         let tested = |out| Made::Func { name: "substr", kinds: &[Kind::Text, Kind::Number, Kind::Number], args: vec![Key::Slot(3), Key::Const(0), Key::Const(1)], out, bind: false, texts: None, kept: None };
@@ -11494,7 +11518,7 @@ pub mod probe_tests {
         use steps::Step as Made;
         const DOT: i64 = 7;
         let plan = |steps: Vec<Made>, out: Vec<Term>| {
-            let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new() };
+            let mut plan = steps::Plan { steps, out, nslots: 4, multi: Vec::new(), probes: Vec::new(), fused: Vec::new(), spec: 0, from: Vector::new(), plan_steps: 0, ranges: Vec::new(), lookups: Vec::new() };
             let s = plan.encode();
             plan.edit(last_splits(&s.steps, &s.out, |c| c == DOT));
             plan.encode()
@@ -11622,6 +11646,9 @@ pub struct SetfixCounts {
     pub node_bits: [std::sync::atomic::AtomicU64; 2],
     /// Nodes a fused row program tested by a view (t57 E6, `rowcode::Test::view`): a chunk's at once.
     pub view_tests: std::sync::atomic::AtomicU64,
+    /// Rows of chunks whose row program read a lookup's values with the chunk's others (`setfix::lookups`,
+    /// `rowcode::ViewTest::looks`).
+    pub view_looks: std::sync::atomic::AtomicU64,
 }
 
 /// The run's `SetfixCounts`.

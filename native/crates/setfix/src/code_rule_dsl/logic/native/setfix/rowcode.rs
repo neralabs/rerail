@@ -46,6 +46,9 @@ pub enum Word {
     /// Test `k`'s verdict on the row (`Fused::tests`): 1 where it passes (a negated one, where its input holds no
     /// row), else 0.
     Held(usize),
+    /// Lookup test `k`'s (`ViewTest::looks`) value of its input's column `c` for the row: the one row its key names,
+    /// read with the chunk's others (`Source::read_own_batch`).
+    Look(usize, usize),
 }
 
 /// A test fused as a computed column: the step (after the atom) whose atom it asks, and each slot its keys read with
@@ -56,27 +59,35 @@ pub struct Test {
     pub at: usize,
     pub neg: bool,
     pub slots: Vec<(usize, Bind)>,
-    /// Where the input is a view that answers a chunk's tests by the node a row holds (t57 E6): asked so, for the
-    /// rows still passing at once, not row by row.
+    /// Where the input is a view that reads the chunk's rows at once (t57 E6, decision 0706): asked so, for the rows
+    /// still passing, not row by row.
     pub view: Option<ViewTest>,
 }
 
-/// A test of a node by a view of it, asked a chunk at a time (`Test::view`): the view's source, the program column
-/// holding the node (`node`), the node's column in the source (`by`, a column it reads its rows by their own id in),
-/// the column tested and the parameter holding its value (`None`: any value). Or a test of a pair (`pair`, the
-/// source's columns `by` and `col`: `within(n, f)` with both bound), each side a row's column or a parameter, at
-/// least one a row's, its pairs asked of the source at once (`Source::holds_batch`, decision 0706 E5).
+/// A view's step asked a chunk at a time (`Test::view`): a node's own row by its id (`kind(n, #k)`, or a lookup,
+/// `setfix::lookups`, `kind(n, k)` binding `k`), or a pair (`within(n, f)` with both bound).
+///
+/// A node's row: the node (`node`, a row's column or a parameter) is the source's column `by`, the column it reads
+/// its rows by their own id in; the chunk's rows still passing are read as one batch (`Source::read_own_batch`) of
+/// columns `reads`, each `checks` read equal to its key's value, each `equal` pair of reads equal, and each of `looks`
+/// (the atom's column, its read) the value a lookup binds (`Word::Look`).
+///
+/// A pair: `pair`'s sides (a row's column or a parameter, at least one a row's) are the source's columns `by` and
+/// `col`, the chunk's pairs asked at once (`Source::holds_batch`, decision 0706 E5).
 #[derive(Clone)]
 pub struct ViewTest {
     pub src: Arc<dyn Source>,
-    pub node: usize,
+    pub node: PairKey,
     pub by: usize,
+    pub reads: Vec<usize>,
+    pub checks: Vec<(usize, PairKey)>,
+    pub equal: Vec<(usize, usize)>,
+    pub looks: Vec<(usize, usize)>,
     pub col: usize,
-    pub want: Option<usize>,
     pub pair: Option<[PairKey; 2]>,
 }
 
-/// A side of a pair test (`ViewTest::pair`): a program column, or a parameter.
+/// A value a fused view step reads (`ViewTest`): a program column, or a parameter.
 #[derive(Clone, Copy)]
 pub enum PairKey {
     Col(usize),
@@ -189,7 +200,9 @@ impl Build {
 /// The fusions of a rule's steps, by the step of the atom: each atom that binds a slot, with the
 /// row-code steps after it, when at least one of them tests. None after a step that can leave a
 /// sum pending (the run checks each step for it, which fused steps would skip).
-pub(super) fn fuse(steps: &[Step], view: ViewOf<'_>) -> Vec<Option<Box<Fused>>> {
+/// A lookup (`lookups`, `setfix::lookups`) is no atom's scan: its one row is read, by the walk or, after a fused atom,
+/// with the chunk's others as its computed columns.
+pub(super) fn fuse(steps: &[Step], lookups: &[bool], view: ViewOf<'_>) -> Vec<Option<Box<Fused>>> {
     let mut out: Vec<Option<Box<Fused>>> = (0..steps.len()).map(|_| None).collect();
     for (i, step) in steps.iter().enumerate() {
         if steps[..i].iter().any(|s| matches!(s, Step::Scalar { kind: ScalarKind::Sum, bind: true, .. })) {
@@ -197,8 +210,9 @@ pub(super) fn fuse(steps: &[Step], view: ViewOf<'_>) -> Vec<Option<Box<Fused>>> 
         }
         if let Step::Atom { neg: false, binds, .. } = step
             && !binds.is_empty()
+            && !lookups.get(i).copied().unwrap_or(false)
         {
-            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), view).map(Box::new);
+            out[i] = fused_viewing(binds, &steps[i + 1..], tests_on(), lookups.get(i + 1..).unwrap_or(&[]), view).map(Box::new);
         }
     }
     out
@@ -210,15 +224,17 @@ fn tests_on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FUSED_TESTS").map_or(true, |v| v != "off"))
 }
 
-/// `fused_viewing` with no view's tests (a reader that has none, the device's).
-pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool) -> Option<Fused> {
-    fused_viewing(binds, after, ask, &|_| None)
+/// `fused_viewing` with no view's tests (a reader that has none, the device's): its lookups (`lookups`, per step of
+/// `after`) end the fusion.
+pub fn fused(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool]) -> Option<Fused> {
+    fused_viewing(binds, after, ask, lookups, &|_| None)
 }
 
 /// The steps after an atom that binds `binds` fused with it, as far as each is row code: a comparison, a document's
-/// test or read, a `let`, a set's test, or a test of an input (`Test`). `ask`: whether a test of an input is asked
-/// row by row (which only the CPU's walk does); a test a view answers a chunk at a time (`view`) is fused either way.
-pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: ViewOf<'_>) -> Option<Fused> {
+/// test or read, a `let`, a set's test, a test of an input (`Test`), or a lookup (`lookups`, per step of `after`) a
+/// view reads with the chunk's others, its values computed columns. `ask`: whether a test of an input is asked row
+/// by row (which only the CPU's walk does); a view's step read a chunk at a time (`view`) is fused either way.
+pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool], view: ViewOf<'_>) -> Option<Fused> {
     let mut env: Vec<(usize, Val)> = binds.iter().map(|&(c, s)| (s, Val::Row(Word::Col(c)))).collect();
     let mut b = Build::default();
     let mut acc: Option<u16> = None;
@@ -240,10 +256,11 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: 
                 _ => None,
             }
         };
-        // A view's test of a node a row holds (t57 E6): binds nothing, its node a row's column the view's rows are
-        // keyed by, its other key (if any) a parameter.
+        // A view's step a chunk reads at once (t57 E6, decision 0706): a test that binds nothing, or a lookup's
+        // (`lookups`, not negated), its node a row's column.
+        let lookup = lookups.get(at).copied().unwrap_or(false);
         let mut viewed = match step {
-            Step::Atom { src, keys, binds, tests: st, .. } if binds.is_empty() && st.is_empty() => view_test(&mut b, &env, val, src, keys, view),
+            Step::Atom { binds, neg, .. } if binds.is_empty() || (lookup && !*neg) => view_test(&mut b, &env, val, step, view),
             _ => None,
         };
         let mask: Option<Option<u16>> = match *step {
@@ -281,9 +298,26 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: 
                 Val::Param(_) => None,
             },
             // A view's test (`viewed`): its verdicts a computed column, asked of the view a chunk at a time.
-            Step::Atom { neg, .. } if viewed.is_some() => {
-                tests.push(Test { at, neg, slots: Vec::new(), view: viewed.take() });
-                let col = Val::Row(Word::Held(tests.len() - 1));
+            Step::Atom { neg, ref keys, ref binds, .. } if viewed.is_some() => {
+                // A node the view cannot read in a batch (a values part's) is asked as one row: its keys' slots.
+                let mut slots = Vec::new();
+                for &(_, k) in keys {
+                    if let Key::Slot(s) = k {
+                        match val(&env, k) {
+                            Val::Row(w) => slots.push((s, Bind::Column(usize::from(b.column(w))))),
+                            Val::Param(p) if p.key != Key::Slot(s) => slots.push((s, Bind::Param(usize::from(b.param(p))))),
+                            Val::Param(_) => {}
+                        }
+                    }
+                }
+                tests.push(Test { at, neg, slots, view: viewed.take() });
+                let t = tests.len() - 1;
+                // A lookup's values: computed columns of the rows that pass.
+                for &(c, s) in binds {
+                    env.push((s, Val::Row(Word::Look(t, c))));
+                    b.column(Word::Look(t, c));
+                }
+                let col = Val::Row(Word::Held(t));
                 b.compare(col, CmpOp::Eq, Val::Param(Param { key: Key::Const(1), doc: false })).map(Some)
             }
             // A test of an input whose keys read the row (`Src::In`: an input, fixed while the rule runs; the
@@ -344,11 +378,11 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: 
             keys.iter().any(|&(_, k)| k == Key::Slot(s))
         });
         if !binds.iter().all(|&(_, s)| read(s)) {
-            return fused_viewing(binds, after, false, view);
+            return fused_viewing(binds, after, false, lookups, view);
         }
     }
     // Only the binds the kept steps made, and the atom's.
-    let kept_binds = binds.len() + count_binds(&after[..steps]);
+    let kept_binds = binds.len() + count_binds(&after[..steps]) + tests.iter().map(|t| t.view.as_ref().map_or(0, |v| v.looks.len())).sum::<usize>();
     env.truncate(kept_binds);
     // The outputs: each distinct running mask, the last one's rows extracted.
     let mut outputs: Vector<u16> = Vector::new();
@@ -376,50 +410,71 @@ pub fn fused_viewing(binds: &[(usize, usize)], after: &[Step], ask: bool, view: 
     let program = BlockProgram::row_program(shape, b.ops, outputs, extracts).ok()?;
     let gather = b.columns.iter().enumerate().filter_map(|(k, w)| match *w {
         Word::Col(c) => Some((k, c)),
-        Word::Doc(_) | Word::Held(_) => None,
+        Word::Doc(_) | Word::Held(_) | Word::Look(..) => None,
     }).collect();
     Some(Fused { steps, program, columns: b.columns, params: b.params, passed, last, binds: bind_list, gather, tests })
 }
 
-/// A view's test (`Test::view`): `None` where the step is not one (its source no view, its node no column the view
-/// reads rows by their own id in, `Source::read_own_batch` asked with no values, a key neither the node nor a
-/// parameter, or more than two keys). A node the view cannot read in a batch (a values part's) is asked as one row.
-fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, src: &Src, keys: &[(usize, Key)], view: ViewOf<'_>) -> Option<ViewTest> {
+/// A view's step a chunk reads at once (`Test::view`), as `ViewTest` says: a pair test, or a node's own row by its
+/// id (a test of it, or a lookup's, its values `binds` read with it). `None` where the step is not one: its source no
+/// view; no key a row's value the view reads its rows by their own id in (`Source::read_own_batch` asked with no
+/// values); a key neither a row's value nor a parameter. A row's value is one of the atom's columns or a lookup's
+/// before it (a computed column made before the tests), not a document (made after them). A node the view cannot read
+/// in a batch (a values part's) is asked as one row.
+fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, step: &Step, view: ViewOf<'_>) -> Option<ViewTest> {
+    let Step::Atom { src, keys, tests, binds, .. } = step else { return None };
+    let (keys, tests, binds): (&[(usize, Key)], &[(usize, usize)], &[(usize, usize)]) = (keys, tests, binds);
     let (source, cols) = view(src)?;
-    if keys.is_empty() || keys.len() > 2 {
+    if keys.is_empty() {
         return None;
     }
     let at = |k: usize| cols.get(keys[k].0).copied();
-    // A pair of the row's columns, where the source tests pairs of those columns in batches.
+    let row = |v: Val| matches!(v, Val::Row(Word::Col(_) | Word::Look(..)));
+    let known = |v: Val| row(v) || matches!(v, Val::Param(Param { doc: false, .. }));
+    let mut side = |b: &mut Build, v: Val| match v {
+        Val::Row(w) => PairKey::Col(usize::from(b.column(w))),
+        Val::Param(p) => PairKey::Param(usize::from(b.param(p))),
+    };
+    // A pair of the row's values, where the source tests pairs of those columns in batches.
     if let [(_, ka), (_, kb)] = keys
+        && binds.is_empty()
+        && tests.is_empty()
         && let (va, vb) = (val(env, *ka), val(env, *kb))
-        && (matches!(va, Val::Row(Word::Col(_))) || matches!(vb, Val::Row(Word::Col(_))))
-        && matches!(va, Val::Row(Word::Col(_)) | Val::Param(_))
-        && matches!(vb, Val::Row(Word::Col(_)) | Val::Param(_))
+        && (row(va) || row(vb))
+        && known(va)
+        && known(vb)
         && let (Some(ca), Some(cb)) = (at(0), at(1))
         && super::kinds::keyed_enabled()
         && source.holds_batch([ca, cb], &[], &mut [])
     {
-        let mut side = |v: Val| match v {
-            Val::Row(w) => PairKey::Col(usize::from(b.column(w))),
-            Val::Param(p) => PairKey::Param(usize::from(b.param(p))),
-        };
-        let pair = [side(va), side(vb)];
-        return Some(ViewTest { src: source, node: 0, by: ca, col: cb, want: None, pair: Some(pair) });
+        let pair = [side(b, va), side(b, vb)];
+        return Some(ViewTest { src: source, node: pair[0], by: ca, reads: Vec::new(), checks: Vec::new(), equal: Vec::new(), looks: Vec::new(), col: cb, pair: Some(pair) });
     }
-    let node = (0..keys.len()).find(|&k| matches!(val(env, keys[k].1), Val::Row(Word::Col(_))) && at(k).is_some_and(|c| source.read_own_batch(c, &[], &[], &mut [], &mut [], &mut ProbeCursor::default())))?;
-    let Val::Row(w @ Word::Col(_)) = val(env, keys[node].1) else { return None };
-    let (by, want) = (at(node)?, match keys.len() {
-        1 => None,
-        _ => {
-            let other = 1 - node;
-            let Val::Param(p) = val(env, keys[other].1) else { return None };
-            Some((at(other)?, b.param(p)))
+    // A node's own row: the node's key, then every other column the step reads, once.
+    let node = (0..keys.len()).find(|&k| row(val(env, keys[k].1)) && at(k).is_some_and(|c| source.read_own_batch(c, &[], &[], &mut [], &mut [], &mut ProbeCursor::default())))?;
+    if !keys.iter().all(|&(_, k)| known(val(env, k))) {
+        return None;
+    }
+    let by = at(node)?;
+    let mut reads: Vec<usize> = Vec::new();
+    let mut place = |c: usize| -> Option<usize> {
+        let c = *cols.get(c)?;
+        Some(reads.iter().position(|&r| r == c).unwrap_or_else(|| {
+            reads.push(c);
+            reads.len() - 1
+        }))
+    };
+    let mut checks = Vec::new();
+    for (k, &(c, key)) in keys.iter().enumerate() {
+        if k != node {
+            checks.push((place(c)?, key));
         }
-    });
-    // With no value, the column tested is the node's own (a row there is the test).
-    let (col, want) = want.map_or((by, None), |(c, p)| (c, Some(usize::from(p))));
-    Some(ViewTest { src: source, node: usize::from(b.column(w)), by, col, want, pair: None })
+    }
+    let equal = tests.iter().map(|&(x, y)| Some((place(x)?, place(y)?))).collect::<Option<Vec<_>>>()?;
+    let looks = binds.iter().map(|&(c, _)| Some((c, place(c)?))).collect::<Option<Vec<_>>>()?;
+    let node = side(b, val(env, keys[node].1));
+    let checks = checks.into_iter().map(|(r, key)| (r, side(b, val(env, key)))).collect();
+    Some(ViewTest { src: source, node, by, reads, checks, equal, looks, col: by, pair: None })
 }
 
 /// The slots the steps bind (`docof` into an unbound slot, `let`), in order.
@@ -453,9 +508,10 @@ pub(super) struct Scratch {
 impl Fused {
     /// The chunk's computed columns from its gathered ones, then the program over the chunk:
     /// calls `each` with each fused step's passed count (`counts`), then returns the output
-    /// words of the rows that go on. `held(test, row, columns, params)` is whether test `test`'s input (`Fused::tests`) holds row `row`'s keys,
-    /// asked only of rows that passed the tests before it.
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64]) -> bool) -> &'s [u64] {
+    /// words of the rows that go on. `held(test, row, columns, params, out)` is whether test `test`'s input (`Fused::tests`) holds row `row`'s keys,
+    /// asked only of rows that passed the tests before it; a lookup's (`ViewTest::looks`, a node its view cannot read in a batch) writes the values of its
+    /// input's columns to `out` (by column), which become its `Word::Look` columns.
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
         let n = s.rows;
         if !self.tests.is_empty() {
             // The rows still passing, a bit each: a test is asked only of rows every test before it passed.
@@ -496,47 +552,73 @@ impl Fused {
                             0 => false,
                             1 => true,
                             // A pair the source cannot say in a batch: asked as one row.
-                            _ => held(t, r, &s.columns, &s.params),
+                            _ => held(t, r, &s.columns, &s.params, &mut [0; super::READ]),
                         };
                         if h != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
                     }
                     (s.view_rows, s.view_ids, s.view_found) = (rows, ids, found);
                 } else if let Some(v) = &test.view {
-                    // The rows still passing, their nodes read by the view as one batch (t57 E6, decision 0706 E1).
+                    // The rows still passing, their nodes' rows read by the view as one batch (t57 E6, decision 0706
+                    // E1): each checked as the step's keys and tests say, and a lookup's values its columns.
+                    let side = |k: PairKey, r: usize, columns: &[Vector<i64>]| match k {
+                        PairKey::Col(c) => columns[c][r],
+                        PairKey::Param(p) => s.params[p],
+                    };
                     let (mut rows, mut ids, mut got, mut found) = (std::mem::take(&mut s.view_rows), std::mem::take(&mut s.view_ids), std::mem::take(&mut s.view_out), std::mem::take(&mut s.view_found));
                     rows.clear();
                     ids.clear();
                     for r in 0..n {
                         if alive[r / 64] >> (r % 64) & 1 != 0 {
                             rows.push(r as u32);
-                            ids.push(s.columns[v.node][r]);
+                            ids.push(side(v.node, r, &s.columns));
                         }
                     }
-                    // With no value, a row of the node is the test: no column read.
-                    let want = v.want.map(|p| s.params[p]);
-                    let reads: &[usize] = if want.is_some() { std::slice::from_ref(&v.col) } else { &[] };
+                    let w = v.reads.len();
                     got.clear();
-                    got.resize(ids.len() * reads.len(), 0);
+                    got.resize(ids.len() * w, 0);
                     found.clear();
                     found.resize(ids.len(), 0);
                     // Fused only where the source reads rows by their own id (`view_test`).
-                    let answered = v.src.read_own_batch(v.by, &ids, reads, &mut got, &mut found, &mut s.cursors[t]);
+                    let answered = v.src.read_own_batch(v.by, &ids, &v.reads, &mut got, &mut found, &mut s.cursors[t]);
                     assert!(answered, "a view keyed by its node's column reads its rows in a batch");
+                    // A lookup's columns, out while they are written: (program column, its read, the atom's column).
+                    let mut looks: Vec<(usize, usize, usize, Vector<i64>)> = v.looks.iter().map(|&(c, at)| {
+                        let k = self.columns.iter().position(|&x| x == Word::Look(t, c)).expect("a lookup's column");
+                        let mut col = std::mem::take(&mut s.columns[k]);
+                        col.clear();
+                        col.resize(n, 0);
+                        (k, at, c, col)
+                    }).collect();
+                    let mut one = [0i64; super::READ];
                     for (j, &r) in rows.iter().enumerate() {
                         let r = r as usize;
+                        let row = &got[j * w..(j + 1) * w];
                         let h = match found[j] {
                             0 => false,
-                            1 => want.is_none_or(|w| got[j] == w),
-                            // A node the view cannot read in a batch: asked as one row.
-                            _ => held(t, r, &s.columns, &s.params),
+                            1 => v.checks.iter().all(|&(at, key)| row[at] == side(key, r, &s.columns)) && v.equal.iter().all(|&(a, c)| row[a] == row[c]),
+                            // A node the view cannot read in a batch: asked as one row, its values by the atom's column.
+                            _ => {
+                                let h = held(t, r, &s.columns, &s.params, &mut one);
+                                if h {
+                                    for (_, _, c, col) in &mut looks { col[r] = one[*c]; }
+                                }
+                                if h != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                                continue;
+                            }
                         };
+                        if h {
+                            for (_, at, _, col) in &mut looks { col[r] = row[*at]; }
+                        }
                         if h != test.neg { out[r] = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                    }
+                    for (k, _, _, col) in looks {
+                        s.columns[k] = col;
                     }
                     (s.view_rows, s.view_ids, s.view_out, s.view_found) = (rows, ids, got, found);
                 } else {
                     for (r, o) in out.iter_mut().enumerate() {
                         if alive[r / 64] >> (r % 64) & 1 == 0 { continue; }
-                        if held(t, r, &s.columns, &s.params) != test.neg { *o = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
+                        if held(t, r, &s.columns, &s.params, &mut [0; super::READ]) != test.neg { *o = 1; } else { alive[r / 64] &= !(1u64 << (r % 64)); }
                     }
                 }
                 s.columns[k] = out;

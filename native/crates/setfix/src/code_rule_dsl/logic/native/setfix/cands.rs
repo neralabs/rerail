@@ -404,6 +404,33 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     })
 }
 
+/// A lookup's row a fused chunk's batch could not read (`rowcode::ViewTest::looks`, `found` 2: a values part's
+/// node), `slots` the row's values: whether its one row is there and holds its keys and tests, its values of the
+/// columns it binds in `out` (by column), probed, its first matching row's.
+pub(super) fn look(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], asked: &mut Asked, out: &mut [i64]) -> bool {
+    let Step::Atom { src, keys, tests, binds, .. } = step else { unreachable!("a lookup is an atom") };
+    let val = |k: Key| match k {
+        Key::Slot(s) => slots[s],
+        Key::Const(c) => c,
+    };
+    asked.key.clear();
+    asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
+    let need = binds.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | keys.iter().fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
+    let (rows, cands) = candidates(j, src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    let mut found = false;
+    rows.each(cands, need, &mut asked.last, |id, r| {
+        if rows.dead(id) || !keys.iter().all(|&(c, k)| r.at(c) == val(k)) || !tests.iter().all(|&(c, c0)| r.at(c) == r.at(c0)) {
+            return false;
+        }
+        for &(c, _) in binds {
+            out[c] = r.at(c);
+        }
+        found = true;
+        true
+    });
+    found
+}
+
 /// Whether a test of one node column reads its node-keyed index: `RERAIL_NODE_BITS=off` (a measurement aid, the
 /// run's setting) probes as before.
 pub(super) fn node_bits_on() -> bool {

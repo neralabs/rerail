@@ -242,6 +242,7 @@ fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize])
         from: (0..n).collect(),
         plan_steps: n,
         ranges: Vec::new(),
+        lookups: Vec::new(),
     };
     let drafted = plan.encode();
     plan.probes = super::probes(&drafted.steps, &drafted.out);

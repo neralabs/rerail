@@ -1792,6 +1792,41 @@ same_bound(n, m) :- pair(n, p), pair(m, p), n < m, kind(n, k), kind(m, j), j = k
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A lookup (`setfix::lookups`: a node's own facts by its id, `kind(n, k)` binding `k`) after a fused atom is read
+/// with the chunk's other rows, its values computed columns (`rowcode::ViewTest::looks`, one `read_own_batch` a
+/// chunk): no probe a row. A lookup keyed by another's value (`child(g, p, _)` then `kind(g, k)`) reads it. Its rows
+/// are those of the same rules over a derived copy of the views, which are no lookups (each probed as a step).
+#[test]
+fn a_lookup_after_a_fused_atom_is_read_with_its_chunks_rows() {
+    let dir = corpus("view-looks", &[TREE]);
+    let program = r#"
+.decl pair(n: node, p: node)
+pair(n, p) :- child(p, n, _).
+.decl kinds(n: node, k: symbol)
+kinds(n, k) :- kind(n, k).
+.decl up(c: node, g: node)
+up(c, g) :- child(g, c, _).
+.decl looked(n: node, a: symbol, b: symbol)
+looked(n, a, b) :- pair(n, p), kind(n, a), kind(p, b).
+.decl probed(n: node, a: symbol, b: symbol)
+probed(n, a, b) :- pair(n, p), kinds(n, a), kinds(p, b).
+.decl chained(n: node, k: symbol)
+chained(n, k) :- pair(n, p), child(g, p, _), kind(g, k).
+.decl chained_probed(n: node, k: symbol)
+chained_probed(n, k) :- pair(n, p), up(p, g), kinds(g, k).
+.output looked, probed, chained, chained_probed
+"#;
+    // The run's own scope, held here: its counts are read before it ends.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let got = run(&dir, program, &["looked", "probed", "chained", "chained_probed"]);
+    let looked = crate::code_rule_dsl::logic::native::setfix::run_counts().view_looks.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(looked > 0, "a row program read a lookup's values with its chunk's rows");
+    assert!(got.iter().all(|rows| !rows.is_empty()), "{got:?}");
+    assert_eq!(got[0], got[1], "a lookup's rows are its probes'");
+    assert_eq!(got[2], got[3], "a lookup by a lookup's value: its probes' rows");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0706 E1: a kind test after the first step (`kind(n, K)` and `!kind(n, K)`, the node bound) is tested a
 /// batch of rows at a time, by the source's batch test, and gives the rows each row's test gives: the call children
 /// that are identifiers (every line of `a.py` calls one, and lines 2 and 4 of `b.py`), and the statements' children

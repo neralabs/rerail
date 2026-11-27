@@ -11789,3 +11789,23 @@ Tests:
 - tests-corpus `base_tests` 50/50, among them E6's `a_kind_test_of_a_node_the_atom_bound_is_read_in_its_row_program` and 0706's `kind_tests_in_batches_give_each_rows_rows`, `node_reads_that_bind_in_batches_give_each_rows_rows`, `keyed_probes_in_sorted_batches_give_each_rows_rows` and `within_pairs_in_batches_give_each_pairs_rows`.
 - Red, as at roll-ups 139 and 140: `a_step_clocks_switches_are_no_steps_time` (it passed once in this merge's runs, at a lower load).
 - Not measured: the user's no-farm rule leaves `all` unrun.
+
+### Q570. Roll-up 142 (final-rerail-shape 140b9a97c9 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's one new commit: a lookup is no join loop (an atom whose rows are a key's one row is read, in the walk and as a chunk's columns).
+
+- **Lookups, under decision A (roll-up 141): read a chunk at a time, never a row at a time.** final-rerail-shape's commit marks a plan's lookups (`Plan::lookups`, `setfix::lookups`, `RERAIL_LOOKUPS=off`): an atom of a view whose rows are a key's one row (`kind(n, k)` by `n`). It reads them by `read_one_at`, one row at a time, both in the walk and in a fused chunk (`cands::look`). That read is gone from the hub since roll-up 141, so its shape is the user's: the loop around the reads gathers them.
+  - Taken: the plan's marks; a lookup starts no fused scan (`rowcode::fuse`); a lookup after a fused atom is the chunk's computed columns, its verdict (`Word::Held`) and the values it binds (`Word::Look`), with the filters after it run on them in the row program.
+  - A lookup is marked where its view reads rows by their own id in the key's column (`read_own_batch` asked with no values), not by `row_column`.
+  - In a chunk, a lookup is a view's own-row read (`rowcode::ViewTest`, now one form for E6's tests and lookups): the rows still passing read as one `read_own_batch` call, with the node a row's column or a lookup's value before it; the other keys checked against the row's values or parameters; the atom's equal columns compared; and the bound values written to the lookup's columns. A node the view cannot read in a batch (a values part's, `found` 2) is asked as one row (`cands::look`, its probe alone). `view_looks` counts the rows of chunks that read lookups so.
+  - In the walk: not taken. `kinds::OwnRead` (0706 E1) batches these steps already (node reads that bind), so the walk's own one-row read would be a second mechanism for the same step. Where a walk cannot batch (a delta's step, a cut walk that collects), the step is the walker's probe.
+  - The device's fusion asks no lookups (`fused(…, &[])`); its shape is unchanged.
+- Test added: tests-corpus `a_lookup_after_a_fused_atom_is_read_with_its_chunks_rows`. Lookups after a fused atom, one keyed by another lookup's value (`child(g, p, _)` then `kind(g, k)`), give the rows of the same rules over a derived copy of the views (no lookups), and the row program read them (`view_looks`).
+
+Checked with Relax: setfix, the device crate, tests-logic, tests-corpus and tests-lang check with 0 errors.
+
+Tests:
+- setfix 145/145 (the step clock passed in this run).
+- tests-corpus `base_tests` 51/51, with the new test, E6's kind test and 0706's batch tests.
+- tests-logic `executor` and `kept_keys` 3/3.
+- Not measured: the user's no-farm rule leaves `all` unrun. The commit's own measure (m3, `all`): kind's lookup by `n` 288 to 14.5 ns a row, but the joins' samples no fewer.
