@@ -139,7 +139,6 @@ enum Members {
     Derived,
 }
 
-/// A column type in the engine's names.
 /// `by_path`'s word as a relation keeps it, with the column naming the key its file reads (`by_path 1`), which must be
 /// one of the relation's `width`.
 fn by_path_word(name: &str, width: usize, column: Option<&String>) -> Result<String, Error> {
@@ -151,6 +150,7 @@ fn by_path_word(name: &str, width: usize, column: Option<&String>) -> Result<Str
     }
 }
 
+/// A column type in the engine's names.
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
@@ -1584,7 +1584,7 @@ impl Lowerer {
             Some(Code::Column(c)) => FindingCode::Column(column(&c)?),
             Some(Code::Constant(c)) => FindingCode::Constant(c),
         };
-        self.finding_settings(&name, suppress, fixes, code_in);
+        self.finding_settings(&name, &cols, suppress, fixes, code_in)?;
         self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
         self.prog.outputs.push(name);
@@ -1592,9 +1592,10 @@ impl Lowerer {
     }
 
     /// A `.violation`'s `suppress` and `fix` lines and `code {c} in "re"`, as the findings layer's settings
-    /// (`violation`).
-    fn finding_settings(&mut self, name: &str, suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) {
+    /// (`violation`). Each `suppress` line is checked first (`check_suppress`).
+    fn finding_settings(&mut self, name: &str, cols: &[(String, String)], suppress: Vec<Suppress>, fixes: Vec<Fix>, code_in: Option<String>) -> Result<(), Error> {
         for s in suppress {
+            self.check_suppress(name, cols, &s)?;
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
             self.prog.settings.push(("suppress".to_owned(), format!("{name} {} {rules}{over}", s.tool)));
@@ -1605,6 +1606,44 @@ impl Lowerer {
         if let Some(re) = code_in {
             self.prog.settings.push(("code_in".to_owned(), format!("{name} {}", quote(&re))));
         }
+        Ok(())
+    }
+
+    /// A `suppress` line names a linter of `SUPPRESS_TOOLS`, names it reads as the JSON rule's `suppress` does
+    /// (`suppress_spec`), a linter the family of the policy's `.language` (stated before it) honours, as compiling a
+    /// JSON rule checks, and its `over` a column of `cols`: lowering refuses another, which the run would refuse or
+    /// drop nothing by.
+    fn check_suppress(&self, name: &str, cols: &[(String, String)], s: &Suppress) -> Result<(), Error> {
+        let names: Vec<&str> = s.rules.iter().map(String::as_str).collect();
+        let Some(spec) = suppress_spec(&s.tool, &names) else {
+            let tools = SUPPRESS_TOOLS.iter().map(|(tool, _, _)| *tool).collect::<Vec<_>>().join(", ");
+            return Err(Error::Syntax(format!(".violation {name}: suppress {}: no linter of that name (one of {tools})", s.tool)));
+        };
+        let spec = spec.map_err(|e| Error::Syntax(format!(".violation {name}: suppress {}: {e}", s.tool)))?;
+        if let Some((language, family)) = self.policy_family()
+            && let Some(linter) = spec.requested().find(|&linter| !family.honours(linter))
+        {
+            return Err(Error::Syntax(format!(".violation {name}: suppress {}: {}; a {language} policy has none", s.tool, linter.detail())));
+        }
+        if let Some(c) = &s.over
+            && !cols.iter().any(|(n, _)| n == c)
+        {
+            return Err(Error::Syntax(format!(".violation {name}: no column {c}")));
+        }
+        Ok(())
+    }
+
+    /// The policy's `.language`, as the run reads it (the first `language` setting), and the family whose files it
+    /// reads: a code-rule language's, else a dialect label's (`tsx`). `None` for no `.language` or a name that is
+    /// neither.
+    fn policy_family(&self) -> Option<(&str, crate::code_rule_dsl::language::Family)> {
+        use crate::code_rule_dsl::language::{CodeRuleLanguage, Family, dialect_by_label};
+        let language = self.prog.settings.iter().find(|(key, _)| key == "language").map(|(_, text)| text.trim().trim_matches('"'))?;
+        let family = match CodeRuleLanguage::parse(language) {
+            Some(code_rule) => code_rule.family(),
+            None => Family::of(dialect_by_label(language)?),
+        };
+        Some((language, family))
     }
 
     /// The findings of the `.violation`s: `violation(policy, V, code, path, line)` for each row of V, at its first
@@ -5401,6 +5440,32 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
         Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
         Literal::Ast { document, node, matcher, captures } => Literal::Ast { document: name(document), node: name(node), matcher: matcher.clone(), captures: captures.iter().map(|(c, v)| (c.clone(), name(v))).collect() },
     }
+}
+
+/// The linters a `.violation`'s `suppress TOOL "rule", …` line may name: each tool, the key of the JSON rule's
+/// `suppress` that reads the same comments (`suppress::kinds`), and the key of the names it lists there. Ruff's and
+/// flake8's `# noqa` are one kind, Ruff's.
+pub const SUPPRESS_TOOLS: [(&str, &str, &str); 12] = [
+    ("ruff", "noqa", "codes"),
+    ("flake8", "noqa", "codes"),
+    ("noqa", "noqa", "codes"),
+    ("nosec", "nosec", "codes"),
+    ("eslint", "eslint", "rules"),
+    ("oxlint", "oxlint", "rules"),
+    ("biome", "biome", "rules"),
+    ("sqlfluff", "sqlfluff", "rules"),
+    ("clippy", "clippy", "lints"),
+    ("phpcs", "phpcs", "sniffs"),
+    ("phpstan", "phpstan", "identifiers"),
+    ("psalm", "psalm", "issues"),
+];
+
+/// The JSON rule's `suppress` a `suppress TOOL "rule", …` line stands for: the tool's kind of `SUPPRESS_TOOLS`,
+/// listing `names`, as `suppress::parse` reads it (the reason it refuses them); `None` for a tool not there.
+pub fn suppress_spec(tool: &str, names: &[&str]) -> Option<Result<crate::code_rule_dsl::suppress::Suppress, String>> {
+    let (_, kind, list) = SUPPRESS_TOOLS.iter().find(|(name, _, _)| *name == tool)?;
+    let spec = serde_json::json!({ *kind: { *list: names } });
+    Some(crate::code_rule_dsl::suppress::parse(&spec, "suppress").map_err(|e| e.reason))
 }
 
 pub const WORLD: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req"), ("module_target", "rr_module_req")];

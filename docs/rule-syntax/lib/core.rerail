@@ -527,6 +527,21 @@
 .functor ast_dump(n: node): symbol
 // @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
 .functor py_repr(s: symbol): symbol
+// Unicode case predicates, 1 for true and 0 for false, using Rust's character properties in the toolchain's
+// Unicode version, as Ruff does. No dependence on the regex crate's potentially older Unicode tables.
+// is_lowercase: every alphabetic character is lowercase ("_", "a1" true; "a日" false); is_uppercase is symmetric.
+// is_cased_lowercase: a lowercase character and no uppercase one ("a日" true, "_" false); uppercase is symmetric.
+.functor is_lowercase(s: symbol): number
+.functor is_uppercase(s: symbol): number
+.functor is_cased_lowercase(s: symbol): number
+.functor is_cased_uppercase(s: symbol): number
+// @py_parses(s) = 1 when Ruff's parser parses s as a Python module without a syntax error, else 0: Ruff's test of
+// whether a comment is code (eradicate's ERA001 parses the comment's text). Not CPython's verdict, which
+// syntax_error(d, l, msg) gives a document: syntax the target version lacks does not count here.
+.functor py_parses(s: symbol): number
+// @py_consecutive_names(s) = 1 when Ruff's trivia-skipping tokenizer finds consecutive identifier tokens, else 0.
+// ERA001 uses this prose fast path before accepting a continuation or a partial statement.
+.functor py_consecutive_names(s: symbol): number
 
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------

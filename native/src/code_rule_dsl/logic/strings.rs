@@ -601,6 +601,13 @@ pub fn node_subject_tests(prog: &mut Program) {
     }
 }
 
+/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
+/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
+fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
+    let vars: HashSet<&str> = head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+    holds && width == 2 && !head.neg && head.args == atom.args && vars.len() == head.args.len()
+}
+
 /// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
 /// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
 /// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
@@ -613,13 +620,6 @@ pub fn node_subject_tests(prog: &mut Program) {
 ///
 /// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
 /// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
-/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
-/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
-fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
-    let vars: HashSet<&str> = head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
-    holds && width == 2 && !head.neg && head.args == atom.args && vars.len() == head.args.len()
-}
-
 pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     if prog.decls.contains_key("text") {
         node_subject_tests(prog);

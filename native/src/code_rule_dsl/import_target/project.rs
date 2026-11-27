@@ -10,7 +10,8 @@
 //! - `tsconfig_for(path, dir)`: a document's nearest `tsconfig.json`, else `jsconfig.json`.
 //! - `npm_ignored(path)`: each file under a `package.json` (its nearest) that npm leaves out of that package:
 //!   eslint-plugin-n's `getNpmignore(path).match`, as `package_manifest::Manifest::publishes` reads the package's
-//!   `files` and `main`, else its folder's `.npmignore`, else its `.gitignore`. A file under no package has no row.
+//!   `files` and `main`, else its folder's `.npmignore`, else its `.gitignore`. A file under no package, or under one
+//!   whose `package.json` does not parse, has no row.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use std::sync::Arc;
 use super::fs::{HeldFiles, View};
 use super::json::Json;
 use crate::code_rule_dsl::facts::repository::{ProjectReader, Tree};
+use crate::code_rule_dsl::package_manifest::Manifest;
 
 /// The reader ECMAScript's adapter registers.
 pub const READER: ProjectReader = ProjectReader { relations: RELATIONS, rows };
@@ -75,7 +77,7 @@ fn configurations(tree: &Tree<'_>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<V
     for (dir, file) in &configs {
         let Some(options) = chains.of(&view.absolute(file)) else { continue };
         let option = |key: &str| options.iter().find(|(k, _)| k == key).map(|(_, v)| v);
-        let base = option("baseUrl").and_then(Json::as_str).and_then(|url| view.relative(url)).map_or_else(|| dir.clone(), str::to_owned);
+        let base = option("baseUrl").and_then(Json::as_str).map(|url| view.relative(url).unwrap_or(url).to_owned()).unwrap_or_else(|| dir.clone());
         tsconfig.push(vec![dir.clone(), base]);
         for (pattern, targets) in option("paths").and_then(Json::entries).into_iter().flatten() {
             for target in targets.as_array().into_iter().flatten().filter_map(Json::as_str) {
@@ -89,23 +91,28 @@ fn configurations(tree: &Tree<'_>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<V
 
 /// `npm_ignored`.
 fn npm_ignored(tree: &Tree<'_>) -> Vec<Vec<String>> {
-    use crate::code_rule_dsl::package_manifest::Manifest;
-    let read = |dir: &str, name: &str| std::fs::read_to_string(tree.root.join(dir).join(name)).ok();
-    let manifests: BTreeMap<String, Manifest> = tree
+    let manifests: BTreeMap<String, Option<Manifest>> = tree
         .packages
-        .keys()
+        .iter()
         // Every package.json, read or not: npm's nearest manifest decides, and one it cannot read decides nothing
-        // (`publishes` is None) rather than handing its files to the package above (review F9).
-        .map(|dir| {
-            let bytes = std::fs::read(tree.root.join(dir).join("package.json")).unwrap_or_default();
-            (dir.clone(), Manifest::parse(dir.clone(), &bytes).with_ignore_files(read(dir, ".npmignore"), read(dir, ".gitignore")))
-        })
+        // (`None`) rather than handing its files to the package above (review F9).
+        .map(|(dir, json)| (dir.clone(), manifest(tree.root, dir, json.as_ref())))
         .collect();
     tree.files
         .iter()
-        .filter(|path| nearest(&manifests, path).is_some_and(|(_, m)| m.publishes(path) == Some(false)))
+        .filter(|path| nearest(&manifests, path).and_then(|(_, m)| m.as_ref()).is_some_and(|m| m.publishes(path) == Some(false)))
         .map(|path| vec![path.clone()])
         .collect()
+}
+
+/// The package in `dir` with its folder's `.npmignore` and `.gitignore`; `None` where its package.json (`json`) does
+/// not parse to an object, so that neither it nor its folder's ignore files decide which files npm leaves out (review
+/// F10).
+fn manifest(root: &std::path::Path, dir: &str, json: Option<&serde_json::Value>) -> Option<Manifest> {
+    let Some(serde_json::Value::Object(_)) = json else { return None };
+    let read = |name: &str| std::fs::read_to_string(root.join(dir).join(name)).ok();
+    let bytes = std::fs::read(root.join(dir).join("package.json")).unwrap_or_default();
+    Some(Manifest::parse(dir.to_owned(), &bytes).with_ignore_files(read(".npmignore"), read(".gitignore")))
 }
 
 #[cfg(test)]
@@ -174,6 +181,26 @@ mod tests {
         let ignored: Vec<&str> = ignored.iter().map(|r| r[0].as_str()).collect();
         assert!(ignored.contains(&"lib/test/a.js") && ignored.contains(&"cli/scripts/build.js"), "{ignored:?}");
         assert!(!ignored.iter().any(|p| ["lib/dist/a.js", "lib/package.json", "cli/index.js", "cli/package.json", "tools/x.js", "lib/sub/x.js"].contains(p)), "{ignored:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A package.json that does not parse decides nothing about which of its folder's files npm leaves out, its
+    /// folder's ignore files included (review F10): a file its `.gitignore` lists is not npm_ignored on that account,
+    /// where the same `.gitignore` beside a package.json that parses leaves it out.
+    #[test]
+    fn an_unparsed_package_json_leaves_its_folders_ignore_files_undecided() {
+        let (root, files, packages) = tree_of(&[
+            ("lib/package.json", r#"{"name": "lib"}"#),
+            ("lib/.gitignore", "dist\n"),
+            ("lib/dist/a.js", ""),
+            ("lib/sub/package.json", "{not json"),
+            ("lib/sub/.gitignore", "dist\n"),
+            ("lib/sub/dist/a.js", ""),
+        ]);
+        let ignored = npm_ignored(&Tree { root: &root, files: &files, docs: &[], packages: &packages });
+        let ignored: Vec<&str> = ignored.iter().map(|r| r[0].as_str()).collect();
+        assert!(ignored.contains(&"lib/dist/a.js"), "{ignored:?}");
+        assert!(!ignored.iter().any(|p| p.starts_with("lib/sub/")), "{ignored:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

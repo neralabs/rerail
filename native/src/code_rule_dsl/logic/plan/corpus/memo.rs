@@ -116,9 +116,9 @@ pub(in crate::code_rule_dsl) fn identities(
     phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
     base: &[u8; 32],
 ) -> Result<BTreeMap<String, [u8; 32]>, String> {
-    let fields = crate::code_rule_dsl::logic::plan::fields::Fields::of(local);
-    let setting = |r: &str| fields.as_ref().is_some_and(|f| crate::code_rule_dsl::typing::file_local::Setting::of(f.qualifiers_of(r)).is_some());
-    Ok(strata(local, rels)?.identities(options, phased, base, &setting))
+    // Guest requests do not pass through the per-document SettingsDigests stage. Their identity must
+    // therefore include setting-qualified phase exports here, rather than relying on a later salt.
+    Ok(strata(local, rels)?.identities(options, phased, base, &|_| false))
 }
 
 /// What a relation's memo identity is made of in a file-local program (`identities`): its strata's identity (a

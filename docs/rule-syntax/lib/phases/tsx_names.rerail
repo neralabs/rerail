@@ -2,21 +2,38 @@
 // over the same files as the program that reads it, in its language and dialect (a phase naming no `.language` takes
 // its reader's). It hands on symbols alone (decision 0665): a per-file rule reading them stays per-file.
 //   target_at(p, spec, t)  specifier spec in the file at path p names t: a workspace document's module, or a package
+//   package_at(p, spec)    specifier spec in the file at path p names a package (opaque: no node_modules reading)
+//   module_at(p, m)        the file at path p is module m (tsx/exports' `ts_module`)
 //   exports(m, x, q)       module m exports name x, which is symbol q, followed through re-exports
-//   module(m)              m is a workspace document's module (a target that is none is a package)
-// tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__exports` and `tsx_names__module`.
+// tsx/names.rerail reads them as `tsx_names__target_at`, `tsx_names__package_at`, `tsx_names__module_at` and
+// `tsx_names__exports`. A package is told by its specifier, not by its name: a root-level `redis.js` is the module
+// "redis" and `import … from "redis"` still names the package.
 
 #include "core.rerail"
 #include "tsx/exports.rerail"
 #include "tsx/project.rerail"  // tsconfig, tsconfig_for, tsconfig_path
 
 .phase tsx_names
-.export target_at, exports, module
+.export target_at, package_at, module_at, exports
+
+// ts_module_at(p, m): a file's module is its path without its extension, `src/util.ts` -> "src/util". Where files of
+// one stem sit side by side (`a.ts` and `a.js`, `index.mjs` and `index.cjs`), the one TypeScript resolves first
+// (`ts_ext_rank`) is the stem, and each other is its whole path, `src/a.js`: every file's module is its own.
+ts_module_at(p, s) :- ts_stem(p, s, k), !ts_outranked(s, k).
+ts_module_at(p, p) :- ts_stem(p, s, k), ts_outranked(s, k).
+ts_module_at(p, p) :- doc(_, p, ""), !ts_stem(p, _, _).
+.decl ts_stem(p: symbol, s: symbol, k: number)  // the file at path p is stem s and an extension of rank k
+ts_stem(p, s, k) :- doc(_, p, ""), s = @rx_replace(p, "\\.[cm]?[jt]sx?$", ""), s != p, ts_ext_rank(e, k), p = cat(s, e).
+.decl ts_outranked(s: symbol, k: number)  // a file of stem s has an extension of a rank before k
+ts_outranked(s, k) :- ts_stem(_, s, k), ts_stem(_, s, j), j < k.
+.decl ts_ext_rank(e: symbol, k: number)  // the order TypeScript tries a specifier's extensions
+ts_ext_rank(".ts", 1). ts_ext_rank(".tsx", 2). ts_ext_rank(".js", 3). ts_ext_rank(".jsx", 4). ts_ext_rank(".mts", 5).
+ts_ext_rank(".cts", 6). ts_ext_rank(".mjs", 7). ts_ext_rank(".cjs", 8).
 
 // target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
 // Resolution, in the order TypeScript tries it:
 //   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
-//   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
+//   "@/lib/x"         a tsconfig `paths` pattern rewrites it relative to the effective baseUrl
 //   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
 // So target(d, "./util", "src/util") and target(d, "react", "react").
 .decl target(d: number, spec: symbol, t: symbol)
@@ -35,24 +52,30 @@ target(d, s, t) :- spec_in(d, s), prefix(".", s), doc(d, p, _),
     base = @join(@dir(p), s), resolve_base(base, t).
 // tsconfig paths: find the tsconfig governing the file, substitute the `*` of a matching pattern into its target.
 target(d, s, t) :- spec_in(d, s), doc(d, p, _), tsconfig_for(p, dir),
-    tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(dir, sub), t).
+    tsconfig(dir, base), tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(base, sub), t).
 // Bare package: neither relative nor matched by a paths pattern. The package is opaque (no node_modules reading),
 // so symbols from it are just "react#useState" and rules match on those names.
-target(d, s, @package_of(s)) :- spec_in(d, s), !prefix(".", s), !path_mapped(d, s).
+target(d, s, @package_of(s)) :- package_spec(d, s).
+.decl package_spec(d: number, s: symbol)  // specifier s in document d names a package
+package_spec(d, s) :- spec_in(d, s), !prefix(".", s), !path_mapped(d, s).
 // path_mapped(d, s): some tsconfig paths pattern for d's tsconfig matches s, so s is not a package name.
 // Needed as its own relation so the bare-package rule can negate it.
 .decl path_mapped(d: number, s: symbol)
 path_mapped(d, s) :- spec_in(d, s), doc(d, p, _), tsconfig_for(p, dir),
     tsconfig_path(dir, pat, to), @glob_sub(pat, to, s) != "".
-// resolve_base(base, module): the first existing file among base's candidate names, as a module name.
-// TypeScript lets imports omit the extension and lets a directory stand for its index file.
+// resolve_base(base, module): the first existing file among base's candidate names, in the order TypeScript tries
+// them (`ts_ext`'s rank), as a module name: `./a` is `a.ts` where `a.js` is beside it.
 .decl resolve_base(base: symbol, t: symbol)  // base, base.ts, base.tsx, …, base/index.*
+resolve_base(b, m) :- resolve_candidate(b, m, k), !resolve_earlier(b, k).
 // Read backwards from the files that exist: b is a file's path with one candidate ending removed.
-resolve_base(b, m) :- doc(d, f, _), ts_module(d, m), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0,
+.decl resolve_candidate(b: symbol, m: symbol, k: number)
+resolve_candidate(b, m, r) :- doc(d, f, _), ts_module(d, m), ts_ext(ext, r), k = strlen(f) - strlen(ext), k >= 0,
     b = substr(f, 0, k), f = cat(b, ext).
-.decl ts_ext(e: symbol)
-ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
-ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
+.decl resolve_earlier(b: symbol, k: number)  // a candidate of b ranks before k
+resolve_earlier(b, k) :- resolve_candidate(b, _, k), resolve_candidate(b, _, j), j < k.
+.decl ts_ext(e: symbol, k: number)
+ts_ext("", 0). ts_ext(".ts", 1). ts_ext(".tsx", 2). ts_ext(".js", 3). ts_ext(".jsx", 4). ts_ext(".mts", 5).
+ts_ext("/index.ts", 6). ts_ext("/index.tsx", 7). ts_ext("/index.js", 8).
 // exports(m, x, q): module m exports x, which is symbol q.
 // Three ways a name gets exported, one rule each:
 //   export function f() {} / export const x = 1 / export default …  -> q is m's own symbol "m#f"
@@ -62,18 +85,15 @@ ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
 // the module that really defines the name.
 .decl exports(m: symbol, x: symbol, q: symbol)
 exports(m, x, @qname(m, x)) :- own_export(m, x).
-exports(m, x, q) :- export_from_in(d, s, y, x), ts_module(d, m), target(d, s, t), symbol(t, y, q).
+exports(m, x, q) :- export_from_in(d, s, y, x), ts_module(d, m), target(d, s, t), exports(t, y, q).
+// A package's name, re-exported: opaque, its own symbol (`export { useState } from "react"`: "react#useState").
+exports(m, x, @qname(t, y)) :- export_from_in(d, s, y, x), ts_module(d, m), package_spec(d, s), target(d, s, t).
 // `export *` never re-exports `default` (ECMAScript rule), hence x != "default".
 exports(m, x, q) :- star_export_in(d, s), ts_module(d, m), target(d, s, t), exports(t, x, q), x != "default".
-// symbol(t, x, q): name x of resolved target t is symbol q: a workspace module's export, else (a package) its name.
-// Only re-exported names are asked here (`exports` reads `symbol` for those alone); tsx/names.rerail asks the rest.
-.decl symbol(t: symbol, x: symbol, q: symbol)
-symbol(t, x, q) :- exports(t, x, q).
-symbol(t, y, @qname(t, y)) :- reexported(t, y), !module(t).
-.decl reexported(t: symbol, y: symbol)
-reexported(t, y) :- export_from_in(d, s, y, _), target(d, s, t).
 
 .decl target_at(p: symbol, spec: symbol, t: symbol)
 target_at(p, s, t) :- target(d, s, t), doc(d, p, _).
-.decl module(m: symbol)
-module(m) :- ts_module(_, m).
+.decl package_at(p: symbol, spec: symbol)
+package_at(p, s) :- package_spec(d, s), doc(d, p, _).
+.decl module_at(p: symbol, m: symbol)
+module_at(p, m) :- doc(_, p, ""), ts_module_at(p, m).

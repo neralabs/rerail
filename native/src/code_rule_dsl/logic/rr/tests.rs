@@ -653,7 +653,7 @@ fn violation_codes_suppressions_and_places_lower() {
         ".violation font(at: node, why: symbol) code \"@next/next/no-page-custom-font\"\n",
         "    \"{why} is discouraged.\"\n",
         "    suppress eslint \"@next/next/no-page-custom-font\"\n",
-        "    suppress phpcs \"A.B\", \"A.B.C\",\n        \"A.D\"\n",
+        "    suppress phpcs \"A.B.C\", \"A.B.C.D\",\n        \"A.D.E\"\n",
         "font(n, w) :- text(n, w).\n",
         ".violation SEC(at: span, c: symbol) code {c} in \"SEC\\d+\" \"{c}\"\n",
         "SEC(n, c) :- text(n, c).\n",
@@ -669,7 +669,7 @@ fn violation_codes_suppressions_and_places_lower() {
     assert!(p.rules.iter().any(|r| r.head.rel == "rr_place_missing" && r.head.args[1] == Term::Int(1)));
     let settings: Vec<String> = p.settings.iter().map(|(k, t)| format!("{k} {t}")).collect();
     assert!(settings.contains(&"suppress font eslint \"@next/next/no-page-custom-font\"".to_owned()), "{settings:?}");
-    assert!(settings.contains(&"suppress font phpcs \"A.B\", \"A.B.C\", \"A.D\"".to_owned()), "{settings:?}");
+    assert!(settings.contains(&"suppress font phpcs \"A.B.C\", \"A.B.C.D\", \"A.D.E\"".to_owned()), "{settings:?}");
     assert!(settings.contains(&"code_in SEC \"SEC\\\\d+\"".to_owned()), "{settings:?}");
     // The printed program reads back as itself.
     let printed = print(&p).unwrap();
@@ -677,6 +677,33 @@ fn violation_codes_suppressions_and_places_lower() {
     let sum = "len(n, k) :- node(_, n, _, _, _), k = sum strlen(x) - strlen(y) : { text(n, x), text(n, y) }.";
     let statements = syntax::Parser::new(sum).unwrap().statements().unwrap();
     assert!(format!("{statements:?}").contains("Agg { op: \"sum\", over: Some(Bin { op: \"-\""), "{statements:?}");
+}
+
+/// A `suppress` line names a linter whose comments the findings layer reads (`SUPPRESS_TOOLS`), and its `over` a
+/// column of its `.violation`: lowering refuses either, where the run would otherwise drop nothing.
+#[test]
+fn a_suppress_line_naming_no_linter_or_no_column_is_refused() {
+    let program = |line: &str| format!(".decl text(n: node, s: symbol)\n.input text\n.violation V(at: node, why: symbol) code \"X1\" \"{{why}}\"\n    {line}\nV(n, w) :- text(n, w).\n");
+    let unknown = parse(&program("suppress pylint \"X1\"")).expect_err("no linter is named pylint");
+    assert!(unknown.to_string().contains("suppress pylint: no linter of that name"), "{unknown}");
+    let column = parse(&program("suppress nosec \"B201\" over {call}")).expect_err("V has no column call");
+    assert!(column.to_string().contains(".violation V: no column call"), "{column}");
+    parse(&program("suppress nosec \"B201\" over {why}")).expect("a column V has");
+}
+
+/// A `suppress` line's names are names its linter's comments carry, as a JSON rule's `suppress` reads them
+/// (`suppress::parse`: Ruff's codes are uppercase letters, then digits), and its linter one whose comments the files of
+/// the policy's `.language` carry, as compiling a JSON rule checks: lowering refuses either, where the run would
+/// refuse the line or drop nothing.
+#[test]
+fn a_suppress_line_naming_a_bad_rule_or_a_linter_its_language_lacks_is_refused() {
+    let program = |language: &str, line: &str| format!(".policy \"t:suppress\" revision 1\n.language {language}\n.decl text(n: node, s: symbol)\n.input text\n.violation V(at: node, why: symbol) code \"X1\" \"{{why}}\"\n    {line}\nV(n, w) :- text(n, w).\n");
+    let lowercase = parse(&program("python", "suppress ruff \"t201\"")).expect_err("a noqa code is uppercase letters, then digits");
+    assert!(lowercase.to_string().contains(".violation V: suppress ruff: suppress/noqa/codes/0 must be a rule code"), "{lowercase}");
+    let foreign = parse(&program("python", "suppress eslint \"x\"")).expect_err("Python files carry no eslint-disable comments");
+    assert!(foreign.to_string().contains(".violation V: suppress eslint: eslint: eslint-disable comments are ESLint's; a python policy has none"), "{foreign}");
+    parse(&program("python", "suppress ruff \"T201\"")).expect("a Ruff code, in a Python policy");
+    parse(&program("typescript", "suppress eslint \"x\"")).expect("an ESLint rule, in a TypeScript policy");
 }
 
 /// Soufflé's built-ins run: `cat` of any arity, `max` and `min` of two, `to_number`, `%`, floats (`to_float`,
@@ -3431,6 +3458,123 @@ fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, Stri
     };
     let _ = std::fs::remove_dir_all(&dir);
     out
+}
+
+#[test]
+fn review_regressions_preserve_library_rule_results() {
+    let parameter_rule = std::fs::read_to_string(super::library().parent().unwrap().join("packs/typescript/typescript-eslint-parameter-properties.rerail")).unwrap();
+    let typed = format!("{parameter_rule}\n{}", r#"
+.decl hit(p: symbol)
+hit(p) :- parameter_properties(f, _), docof(f, d), doc(d, p, _).
+.test typed_fields
+    .given prefer_params
+    prefer_params().
+    .fixture "a.ts" `class A { member: string; constructor(member: string) { this.member = member; } }`
+    .fixture "b.ts" `class B { member: number; constructor(member: string) { this.member = member; } }`
+    .expect only hit("a.ts")
+.end
+"#);
+    let cases = [
+        ("review-typed-fields", typed),
+        ("review-module-terms", r#"
+#include "python/points-to-file.rerail"
+.decl terms(p: symbol, t: symbol)
+terms(p, t) :- kind(n, "module"), docof(n, d), doc(d, p, _), pt_tm(n, t).
+.decl defs(t: symbol)
+defs(t) :- kind(n, "function_definition"), pt_tm(n, t).
+.test distinct_domains
+    .fixture "pkg/__init__.py" `def cli(): pass`
+    .fixture "pkg/cli.py" `x = 1`
+    .expect only terms("pkg/__init__.py", "module:pkg")
+    .expect only terms("pkg/cli.py", "module:pkg.cli")
+    .expect only defs("pkg.cli")
+.end
+"#.to_owned()),
+        ("review-django-reexports", r#"
+#include "python/names.rerail"
+.decl dj_names__view_model(m: symbol, q: symbol, s: symbol) keyed
+.decl dj_names__deferred_task(m: symbol, f: symbol) keyed
+.decl models(q: symbol, s: symbol) cross_file
+models(q, s) :- dj_names__view_model(_, q, s).
+.decl tasks(f: symbol) cross_file
+tasks(f) :- dj_names__deferred_task(_, f).
+.test reexports
+    .fixture "models/__init__.py" `from .real import Order`
+    .fixture "models/real.py" `from django.db import models
+class Order(models.Model): pass`
+    .fixture "tasks/__init__.py" `from .base import Deferred`
+    .fixture "tasks/base.py" `from django.db import transaction
+class Deferred:
+    def delay(self):
+        transaction.on_commit(lambda: None)`
+    .fixture "views.py" `from models import Order
+from tasks import Deferred
+from celery import shared_task
+class View:
+    model = Order
+class QueryView:
+    queryset = Order.objects.all()
+@shared_task(base=Deferred)
+def job(): pass`
+    .expect only models("views.View", "models.real.Order")
+    .expect only models("views.QueryView", "models.real.Order")
+    .expect only tasks("views.job")
+.end
+"#.to_owned()),
+        ("review-stub-privacy", r#"
+#include "python/docstrings.rerail"
+.decl public(p: symbol)
+public(p) :- doc_public(f), kind(f, "function_definition"), docof(f, d), doc(d, p, _).
+.test stub_is_not_package_marker
+    .fixture "_stub/__init__.pyi" `x: int`
+    .fixture "_stub/m.py" `def f(): pass`
+    .fixture "_regular/__init__.py" `x = 1`
+    .fixture "_regular/m.py" `def f(): pass`
+    .expect only public("_stub/m.py")
+.end
+"#.to_owned()),
+        ("review-ts-modules", r#"
+.language typescript
+#include "tsx/names.rerail"
+.decl used(x: symbol, q: symbol)
+used(x, q) :- kind(n, "identifier"), text(n, x), sym_of(n, q), docof(n, d), doc(d, "main.ts", _).
+.decl module(p: symbol, m: symbol)
+module(p, m) :- doc(d, p, _), ts_module(d, m).
+.test a_package_is_told_by_its_specifier_not_its_name
+    .fixture "src/a.ts" `export const value = 1;`
+    .fixture "redis.ts" `export const local = 1;`
+    .fixture "main.ts" `import { value } from "./src/a"; import { createClient } from "redis"; value; createClient;`
+    .expect module("redis.ts", "redis")
+    .expect used("value", "src/a#value")
+    .expect used("createClient", "redis#createClient")
+.end
+"#.to_owned()),
+        ("review-js-modules", r#"
+.language javascript
+#include "tsx/names.rerail"
+.decl used(x: symbol, q: symbol)
+used(x, q) :- kind(n, "identifier"), text(n, x), sym_of(n, q), docof(n, d), doc(d, "main.js", _).
+.decl module(p: symbol, m: symbol)
+module(p, m) :- doc(d, p, _), ts_module(d, m).
+.test files_of_one_stem_are_modules_of_their_own
+    .fixture "lib/index.mjs" `export const value = 1;`
+    .fixture "lib/index.cjs" `export const other = 2;`
+    .fixture "main.js" `import { value, other } from "./lib/index.mjs"; value; other;`
+    .expect module("lib/index.mjs", "lib/index")
+    .expect module("lib/index.cjs", "lib/index.cjs")
+    .expect no module("lib/index.cjs", "lib/index")
+    .expect used("value", "lib/index#value")
+    .expect no used("other", "lib/index#other")
+.end
+"#.to_owned()),
+    ];
+    for (name, text) in cases {
+        let results = run_tests_of(name, &text);
+        assert!(!results.is_empty(), "{name}: no test was read");
+        for (case, result) in results {
+            assert_eq!(result, Ok(Vec::new()), "{name}/{case}");
+        }
+    }
 }
 
 /// A unit test (decision 0130): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads

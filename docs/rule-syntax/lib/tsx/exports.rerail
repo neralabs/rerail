@@ -3,11 +3,14 @@
 // tsx/names.rerail and by the phase `tsx_names` (phases/tsx_names.rerail), which resolves them across files.
 
 // ts_module(d, m): document d's module, the name its symbols are qualified by ("src/util#f"): the one core names, else
-// (core names none for TypeScript or JavaScript) its path without its extension, `src/util.ts` -> "src/util". Each
-// file's is its own: every workspace file's module was "" and resolution read every file's exports as one module's.
+// (core names none for TypeScript or JavaScript) the one `ts_module_at` gives its path. Each file's is its own: the
+// phase `tsx_names` names it (`module_at`), from the run's files, and tsx/names.rerail reads that by the file's path.
 .decl ts_module(d: number, m: symbol)
 ts_module(d, m) :- doc(d, _, m), m != "".
-ts_module(d, @rx_replace(p, "\\.[cm]?[jt]sx?$", "")) :- doc(d, p, "").
+ts_module(d, m) :- doc(d, p, ""), ts_module_at(p, m).
+// ts_module_at(p, m): the file at path p is module m: the phase `tsx_names` makes it, tsx/names.rerail reads it from
+// the phase's `module_at`.
+.decl ts_module_at(p: symbol, m: symbol) extensible
 
 // spec_name(n, x): a name in an import or export list, an identifier or (ES2022) a string, `{ "a-b" as c }`,
 // read as its value.

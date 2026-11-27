@@ -810,7 +810,10 @@ pt_scope_tm(f, cat(p, ":", q, "@", to_string(o), "+", to_string(l), "^", to_stri
     docof(f, d), doc(d, p, _).
 .decl pt_tm_scope(kind: symbol)
 pt_tm_scope("module"). pt_tm_scope("function_definition"). pt_tm_scope("class_definition").
-pt_tm(s, q) :- pt_scope_tm(s, q).
+// Module values and definitions inhabit different term domains: pkg.cli the module is not def cli in pkg.
+pt_tm(s, q) :- pt_scope_tm(s, q), !kind(s, "module").
+pt_tm(m, cat("module:", q)) :- pt_modname(m, q), q != "".
+pt_tm(m, cat("module-path:", p)) :- pt_modnode(d, m), doc(d, p, "").
 pt_tm(n, cat(r, "@", to_string(b - sb), "+", to_string(e - b), "^", to_string(c))) :- node(_, n, k, b, e), !pt_tm_def(k),
     k != "module", !host_node(n, _), nearest(n, s, pt_tm_scope), node(_, s, _, sb, _), pt_tm_root(s, r), pt_tm_same(n, c).
 // pt_tm_root(s, r): what the places in scope s are relative to: its file's path and its term, made once a scope.

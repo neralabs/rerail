@@ -45,7 +45,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
-pub use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
+pub use suppression::{finding_suppressed, names_rerail_ignore, rerail_ignores, suppresses};
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {

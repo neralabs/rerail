@@ -1404,8 +1404,9 @@ oracles and messages; the census counts 100.
 ## O73. Hand-written `.rr` constructs that lowering refuses
 
 Lowered now (decision 0046, reader section): `.violation` at a node, a span or a `@place`; `code "X"`,
-`code {c} in "re"`, `tag` and `suppress` lines (`suppress TOOL "rule", … [over {c}]`, and `fix [safe] F "title"`,
-kept as findings-layer settings and not applied yet); `match` captures, `match_all` and `match_group`,
+`code {c} in "re"`, `tag` and `suppress` lines (`suppress TOOL "rule", … [over {c}]`, applied after the run by the
+product's matchers, `rr_host::suppressions`; and `fix [safe] F "title"`, kept as a findings-layer setting and not
+applied yet); `match` captures, `match_all` and `match_group`,
 arithmetic, the string functions, Soufflé's `cat` (any arity)/`max`/`min`/`to_number`/`to_float`/`%`, floats;
 `@lower` as Unicode lowercase; `@dot("", b) = b`; `sum` (0 of nothing) and `join x by k sep "s"` (the distinct
 rows of its value and keys; no `sep` joins as they are; `""` of nothing), aggregates over terms, inside terms,

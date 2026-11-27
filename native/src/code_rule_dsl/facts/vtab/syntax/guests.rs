@@ -66,10 +66,20 @@ impl GuestRows {
                 return;
             }
         }
+        self.hosted(p, g, [key, tape, grammar], root, docs, host_nodes, string);
+    }
+
+    /// A guest made from its host's node (`Made::Host`): its `guest`, `sub_tape` and `parsed` rows, and with
+    /// `host_nodes` each of its nodes' host node (`host_nodes`).
+    #[allow(clippy::too_many_arguments)]
+    fn hosted(&mut self, p: &Projected, g: &Guest, [key, tape, grammar]: [i64; 3], root: Option<i64>, docs: &[Projected], host_nodes: bool, string: &mut dyn FnMut(&str) -> usize) {
         self.guest.push([key, i64::from(g.host), g.at, grammar]);
-        self.sub_tape.push([g.at, grammar, tape]);
+        // A program is asked for by its embedding as well as its grammar (`compiled-view`, `php`); an embedding that
+        // has its grammar's name is one name, and one row.
+        let names: [Option<i64>; 2] = [Some(grammar), g.embedding.map(|e| string(e) as i64).filter(|&e| e != grammar)];
+        self.sub_tape.extend(names.iter().flatten().map(|&n| [g.at, n, tape]));
         let Some(r) = root else { return };
-        self.parsed.push([g.at, grammar, r]);
+        self.parsed.extend(names.iter().flatten().map(|&n| [g.at, n, r]));
         // A decoded value stands at its node as a whole: its nodes have no host node of their own.
         if !host_nodes || matches!(g.place, Placement::At(_)) {
             return;
@@ -81,6 +91,12 @@ impl GuestRows {
         if at >= host.len() {
             return;
         }
+        self.host_nodes(p, g, host, at);
+    }
+
+    /// Each node of guest `p` (placed in its host as `g` says) beside the innermost node of `host` under `at` that
+    /// holds it.
+    fn host_nodes(&mut self, p: &Projected, g: &Guest, host: &Projected, at: u32) {
         for local in 0..p.len() {
             let [a, b] = g.place.bounds(p.span(local));
             let mut over = at;

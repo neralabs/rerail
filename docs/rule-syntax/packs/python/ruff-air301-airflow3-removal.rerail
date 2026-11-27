@@ -67,7 +67,7 @@ air301_callee(c, "dag") :- air_dag(c).
 air301_callee(c, "variable_get") :- air_call(c, q), match("airflow\\.sdk(\\..*)?\\.Variable\\.get", q).
 air301_callee(c, "task") :- air_call(c, q), (q = "airflow.decorators.task" ; q = "airflow.sdk.task").
 air301_callee(c, "authmgr") :- air_call(c, _), air301_authmgr(c).
-air301_callee(c, "handler") :- air_kind(c, "log", "TaskHandler"), !air301_authmgr(c).
+air301_callee(c, "handler") :- air_call(c, _), air_kind(c, "log", "TaskHandler"), !air301_authmgr(c).
 air301_callee(c, t) :- air_call(c, q), air_kind(c, "operators", "Operator"), !air301_authmgr(c),
     !air_kind(c, "log", "TaskHandler"), (t = "operator" ; air301_op_class(x, t), suffix(x, q)).
 air_kind_ask("log", "TaskHandler"). air_kind_ask("operators", "Operator").

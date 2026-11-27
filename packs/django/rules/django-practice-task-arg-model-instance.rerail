@@ -50,20 +50,7 @@ tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), asg(f, x, v, _), unparen(v, w),
     tam_instance_value(w).
 // A value the type program proves is a model instance: `made = make_order()`, `make_order()` itself.
-tam_instance(a) :- unparen(a, e), proven_type(e, t), tam_model_type(e, t, m), (dj_model_base(t) ;
-    py_names__ancestor(m, t, b), dj_model_base(b)).
-tam_instance(a) :- unparen(a, e), proven_type(e, t), tam_model_type(e, t, m), py_names__member_call(m, t, x, f),
-    x != "output_field", split_dot(f, fm, y), dj_field_module(fm), (suffix("Field", y) ; dj_relation_class(y)),
-    !tam_expression(m, t).
-// tam_model_type(e, t, m): e's proven type t is a class of the run of module m, a module e's file reads (python/django's
-// dj_model_named, for a type: the type program's facts cross files, 0677's points-to crossing).
-.decl tam_model_type(e: node, t: symbol, m: symbol)
-tam_model_type(e, t, m) :- unparen(_, e), proven_type(e, t), docof(e, d), doc(d, p, _), py_names__reads_at(p, m),
-    py_names__class(m, t).
-.decl tam_expression(m: symbol, t: symbol)
-tam_expression(m, t) :- tam_model_type(_, t, m), py_names__ancestor(m, t, b), (prefix("django.db.models.expressions.", b) ;
-    prefix("django.db.models.functions.", b) ; prefix("django.db.models.aggregates.", b) ;
-    prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
+tam_instance(a) :- unparen(a, e), proven_type(e, t), docof(e, d), dj_model_at(d, t).
 // A parameter annotated with a model class: `def notify(order: Order)`.
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _),
     text(nm, x), (m = t ; child(t, m, 0)), dj_model_named(m, _).

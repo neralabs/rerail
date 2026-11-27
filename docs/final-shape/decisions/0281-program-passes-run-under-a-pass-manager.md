@@ -349,9 +349,9 @@ step 3 replaces what is under the writer.
    reads the prepared program's version through `Placed` and `Fields`, so `Lowered`'s tree goes and the program
    crosses from tree to version at one encode, never back.
    - Done (slice 1): the prepared program's one image, made after the last pass that edits its tree and held beside
-     it (`Tree::beside`); the split's parts are views of it (`file_local::programs_over`); a program read from the
-     store is held beside its stored image. Read from the version: the declarations' widths and types (20 sites,
-     `Fields`), the relations read, the constants tested, `Own::constants`, the statistics (`Stats::of_schema` made a
+     it (`Tree::beside`); the split's parts are views of it (`file_local::programs_over`, since removed); a program
+     read from the store is held beside its stored image. Read from the version: the declarations' widths and types
+     (20 sites, `Fields`), the relations read, the constants tested, `Own::constants`, the statistics (`Stats::of_schema` made a
      second image of the program; `Stats::empty_of`), the cone digests, the documents check (`Needed`), the embed
      slice (a part of the version, `Version::part`), `decode_kept`; `remember` stores the version's image bytes
      (`program_text::store_version`) where it encoded the tree again. The guard
@@ -391,8 +391,9 @@ step 3 replaces what is under the writer.
      or of what every relation's place reads besides rules (inputs, facts, `.about` rows), splits whole. `assemble`
      and `crossing` read the version; `programs_of(version)` splits a version, and the loader opens the stored
      lowered program's image with no tree decoded (`program_text::load_image`; `load_version` and
-     `read_stored_version` removed). While the passes split the tree too, a debug build checks the version's split
-     is the tree's on every prepared program (`programs_over`). A cause's words are the first failure a split met, so
+     `read_stored_version` removed). While the passes split the tree too, a debug build checked the version's split
+     was the tree's on every prepared program (`programs_over`; removed with decision 0691's review, when it had no
+     caller left, so nothing checks the two agree now). A cause's words are the first failure a split met, so
      a split maintained from an earlier one can word one differently from a whole split ("reads cross-file r"
      against "reads r with no location"): which relations have a cause is compared, not the words. Test:
      `the_split_of_a_version_is_maintained_across_an_edit`.

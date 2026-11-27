@@ -131,6 +131,14 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // Python's `repr` of a string (`cpython::value::str_repr`), and an Ed25519 signature's check (`crypto`).
     ("py_repr", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
+    // Rust's Unicode character properties, in the toolchain's version (as Ruff reads them), not regex tables.
+    ("is_lowercase", &[Text], Number),
+    ("is_uppercase", &[Text], Number),
+    ("is_cased_lowercase", &[Text], Number),
+    ("is_cased_uppercase", &[Text], Number),
+    // 1 when Ruff's parser parses the text as a Python module without a syntax error, else 0 (`install_py_parses`).
+    ("py_parses", &[Text], Number),
+    ("py_consecutive_names", &[Text], Number),
 ];
 
 /// The function the native engine computes `.rerail`'s call `f` with: `f` itself when it is one of these, or its
@@ -259,116 +267,217 @@ pub fn install_py_repr(repr: fn(&str) -> String) {
     let _ = PY_REPR.set(repr);
 }
 
+/// Whether Ruff's parser parses a text as a Python module (`@py_parses`), registered at load by the crate that knows
+/// the language (`cpython::syntax::parses`): this crate is below it.
+static PY_PARSES: std::sync::OnceLock<fn(&str) -> bool> = std::sync::OnceLock::new();
+
+/// Registers `@py_parses`'s parser (once, at load).
+pub fn install_py_parses(parses: fn(&str) -> bool) {
+    let _ = PY_PARSES.set(parses);
+}
+
+/// Ruff's token-level prose test (`@py_consecutive_names`), installed by the language owner.
+static PY_CONSECUTIVE_NAMES: std::sync::OnceLock<fn(&str) -> bool> = std::sync::OnceLock::new();
+
+/// Registers `@py_consecutive_names`'s tokenizer predicate (once, at load).
+pub fn install_py_consecutive_names(consecutive: fn(&str) -> bool) {
+    let _ = PY_CONSECUTIVE_NAMES.set(consecutive);
+}
+
+/// A cased character exists and none has the opposite case, using Rust's Unicode character properties.
+fn cased(s: &str, has_case: fn(char) -> bool, opposite: fn(char) -> bool) -> bool {
+    let mut found = false;
+    for c in s.chars() {
+        if opposite(c) {
+            return false;
+        }
+        found = found || has_case(c);
+    }
+    found
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
-    let t = |i: usize| text[i];
-    let out = match name {
-        "qname" => Some(format!("{}#{}", t(0), t(1))),
-        "pkg_up" => Some(pkg_up(t(0), numbers[0])),
-        "head" => Some(t(0).split('.').next().unwrap_or("").to_owned()),
-        "str_between" => t(0).strip_prefix(t(1)).and_then(|rest| rest.strip_suffix(t(2))).map(str::to_owned),
-        "dir" => Some(t(0).rsplit_once('/').map_or("", |(d, _)| d).to_owned()),
-        "join" => Some(join(t(0), t(1))),
-        "glob_sub" => Some(glob_sub(t(0), t(1), t(2))),
-        "package_of" => Some(t(0).to_owned()),
-        "replace_all" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
-        "convert" => Some(convert(t(0), t(1), t(2))),
-        "slice" => Some(slice(t(0), numbers[0], numbers[1])),
-        "rx_group" => super::group(t(0), t(1), t(2)),
-        "str_cmp" => return Value::Integer(t(0).cmp(t(1)) as i64),
-        "git_commit" => return super::git::git_commit(t(0)),
-        "git_has" => return super::git::git_has(t(0), t(1)),
-        "git_tracked" => return super::git::git_tracked(t(0)),
-        "rr_add" => return numbers[0].checked_add(numbers[1]).map_or(Value::Null, Value::Integer),
-        "rr_sub" => return numbers[0].checked_sub(numbers[1]).map_or(Value::Null, Value::Integer),
-        "rr_mul" => return numbers[0].checked_mul(numbers[1]).map_or(Value::Null, Value::Integer),
-        "rr_div" => return numbers[0].checked_div(numbers[1]).map_or(Value::Null, Value::Integer),
-        "rr_max" => return Value::Integer(numbers[0].max(numbers[1])),
-        "rr_min" => return Value::Integer(numbers[0].min(numbers[1])),
+    match name {
+        "qname" | "pkg_up" | "head" | "dir" | "join" | "glob_sub" | "package_of" => text_value(eval_path(name, text, numbers)),
+        "replace_all" | "convert" | "slice" | "rx_group" | "rx_extract" | "rx_replace" | "str_between" => text_value(eval_pattern(name, text, numbers)),
+        "lower" | "sha256" | "json_str" | "str_concat" | "nfkc" | "py_repr" | "to_precision" => text_value(eval_format(name, text, numbers)),
+        "py_parses" | "py_consecutive_names" | "is_lowercase" | "is_uppercase" | "is_cased_lowercase" | "is_cased_uppercase" | "ed25519_ok" => eval_language(name, text),
+        "git_commit" | "git_has" | "git_tracked" | "semver_valid" | "semver_subset" | "count_matches" | "str_cmp" | "to_number" => eval_query(name, text),
+        "to_float" | "float_add" | "float_sub" | "float_mul" | "float_div" | "float_str" => eval_float(name, text, numbers),
+        "sql_instr" | "sql_substr" | "sql_substr2" | "sql_substr_bytes" | "sql_length" | "sql_trim" | "sql_trim2" | "sql_ltrim" | "sql_ltrim2" | "sql_rtrim2" | "sql_upper" | "sql_lower" | "sql_replace" | "sql_like" | "sql_cast_int" | "sql_char" => eval_sql(name, text, numbers),
+        _ => eval_number(name, text, numbers),
+    }
+}
+
+fn text_value(value: Option<String>) -> Value {
+    value.map_or(Value::Null, Value::Text)
+}
+
+fn eval_path(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
+    Some(match name {
+        "qname" => format!("{}#{}", text[0], text[1]),
+        "pkg_up" => pkg_up(text[0], numbers[0]),
+        "head" => text[0].split('.').next().unwrap_or("").to_owned(),
+        "dir" => text[0].rsplit_once('/').map_or("", |(d, _)| d).to_owned(),
+        "join" => join(text[0], text[1]),
+        "glob_sub" => glob_sub(text[0], text[1], text[2]),
+        "package_of" => text[0].to_owned(),
+        _ => return None,
+    })
+}
+
+fn eval_pattern(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
+    match name {
+        "replace_all" => with_regex(text[1], |re| re.replace_all(text[0], text[2]).into_owned()),
+        "convert" => Some(convert(text[0], text[1], text[2])),
+        "slice" => Some(slice(text[0], numbers[0], numbers[1])),
+        "rx_group" => super::group(text[0], text[1], text[2]),
+        "rx_extract" => with_regex(text[1], |re| re.captures(text[0])?.get(usize::try_from(numbers[0]).ok()?).map(|m| m.as_str().to_owned())).flatten(),
+        "rx_replace" => with_regex(text[1], |re| re.replace_all(text[0], text[2]).into_owned()),
+        "str_between" => text[0].strip_prefix(text[1]).and_then(|rest| rest.strip_suffix(text[2])).map(str::to_owned),
+        _ => None,
+    }
+}
+
+fn eval_format(name: &str, text: &[&str], numbers: &[i64]) -> Option<String> {
+    use sha2::Digest;
+    use unicode_normalization::UnicodeNormalization;
+    match name {
+        "lower" => Some(text[0].to_lowercase()),
+        "sha256" => Some(sha2::Sha256::digest(text[0].as_bytes()).iter().map(|b| format!("{b:02x}")).collect()),
+        "json_str" => Some(json_str(text[0])),
+        "str_concat" => Some(format!("{}{}", text[0], text[1])),
+        "nfkc" => Some(text[0].nfkc().collect()),
+        "py_repr" => PY_REPR.get().map(|repr| repr(text[0])),
+        "to_precision" => precision(text[0], numbers[0]),
+        _ => None,
+    }
+}
+
+fn precision(text: &str, digits: i64) -> Option<String> {
+    let f = text.trim().parse::<f64>().ok().filter(|f| !f.is_nan() && (1..=100).contains(&digits))?;
+    if f.is_infinite() {
+        Some(if f > 0.0 { "Infinity".to_owned() } else { "-Infinity".to_owned() })
+    } else {
+        TO_PRECISION.get().map(|to| to(f, digits as u32))
+    }
+}
+
+fn eval_language(name: &str, text: &[&str]) -> Value {
+    let result = match name {
+        "py_parses" => return PY_PARSES.get().map_or(Value::Null, |parses| Value::Integer(i64::from(parses(text[0])))),
+        "py_consecutive_names" => return PY_CONSECUTIVE_NAMES.get().map_or(Value::Null, |consecutive| Value::Integer(i64::from(consecutive(text[0])))),
+        "is_lowercase" => text[0].chars().all(|c| !c.is_alphabetic() || c.is_lowercase()),
+        "is_uppercase" => text[0].chars().all(|c| !c.is_alphabetic() || c.is_uppercase()),
+        "is_cased_lowercase" => cased(text[0], char::is_lowercase, char::is_uppercase),
+        "is_cased_uppercase" => cased(text[0], char::is_uppercase, char::is_lowercase),
+        "ed25519_ok" => crate::code_rule_dsl::logic::crypto::ed25519_ok(text[0], text[1], text[2]),
+        _ => return Value::Null,
+    };
+    Value::Integer(i64::from(result))
+}
+
+fn eval_query(name: &str, text: &[&str]) -> Value {
+    use crate::code_rule_dsl::semver::Range;
+    match name {
+        "git_commit" => super::git::git_commit(text[0]),
+        "git_has" => super::git::git_has(text[0], text[1]),
+        "git_tracked" => super::git::git_tracked(text[0]),
+        "semver_valid" => Value::Integer(i64::from(Range::parse(text[0]).is_some())),
+        "semver_subset" => Range::parse(text[0]).zip(Range::parse(text[1])).map_or(Value::Null, |(a, b)| Value::Integer(i64::from(a.is_subset_of(&b)))),
+        "count_matches" => with_regex(text[0], |re| Value::Integer(re.find_iter(text[1]).count() as i64)).unwrap_or(Value::Null),
+        "str_cmp" => Value::Integer(text[0].cmp(text[1]) as i64),
+        "to_number" => to_number(text[0]).map_or(Value::Null, Value::Integer),
+        _ => Value::Null,
+    }
+}
+
+fn eval_float(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    match name {
+        "to_float" => text[0].trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
+        "float_str" => Value::Text(float_of(numbers[0]).to_string()),
+        "float_add" | "float_sub" | "float_mul" | "float_div" => {
+            let f = float_arithmetic(name, float_of(numbers[0]), float_of(numbers[1]));
+            if f.is_nan() { Value::Null } else { Value::Integer(float_key(f)) }
+        }
+        _ => Value::Null,
+    }
+}
+
+fn float_arithmetic(name: &str, a: f64, b: f64) -> f64 {
+    match name {
+        "float_add" => a + b,
+        "float_sub" => a - b,
+        "float_mul" => a * b,
+        "float_div" => a / b,
+        _ => f64::NAN,
+    }
+}
+
+fn eval_number(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    let value = match name {
+        "rr_add" => numbers[0].checked_add(numbers[1]),
+        "rr_sub" => numbers[0].checked_sub(numbers[1]),
+        "rr_mul" => numbers[0].checked_mul(numbers[1]),
+        "rr_div" => numbers[0].checked_div(numbers[1]),
+        "rr_max" | "max" => Some(numbers[0].max(numbers[1])),
+        "rr_min" | "min" => Some(numbers[0].min(numbers[1])),
+        "mod" => numbers[0].checked_rem(numbers[1]),
+        _ => return eval_node(name, text, numbers),
+    };
+    value.map_or(Value::Null, Value::Integer)
+}
+
+fn eval_node(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    match name {
         "rr_place" => {
             let (p, l) = (numbers[0], numbers[1]);
             let place = (0..1i64 << 32).contains(&l).then(|| p.checked_mul(1 << 32).and_then(|x| x.checked_add(l)).and_then(|x| (-2i64).checked_sub(x))).flatten();
-            return Value::Integer(place.unwrap_or(-1));
+            Value::Integer(place.unwrap_or(-1))
         }
-        "rr_place_path" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n / (1 << 32))),
-        "rr_place_line" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n - n / (1 << 32) * (1 << 32))),
-        "rr_strlen" | "sql_length" => return Value::Integer(t(0).chars().count() as i64),
-        "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
-        "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),
-        "sql_substr2" => Some(sql_substr(t(0), numbers[0], None)),
-        // SQLite's substr of an empty blob is NULL.
-        "sql_substr_bytes" => (!t(0).is_empty()).then(|| sql_substr_bytes(t(0), numbers[0], numbers[1])),
-        "sql_trim" => Some(t(0).trim_matches(' ').to_owned()),
-        "sql_trim2" => Some(t(0).trim_matches(|c| t(1).contains(c)).to_owned()),
-        "sql_ltrim" => Some(t(0).trim_start_matches(' ').to_owned()),
-        "sql_ltrim2" => Some(t(0).trim_start_matches(|c| t(1).contains(c)).to_owned()),
-        "sql_rtrim2" => Some(t(0).trim_end_matches(|c| t(1).contains(c)).to_owned()),
-        "sql_upper" => Some(t(0).to_ascii_uppercase()),
-        "sql_lower" => Some(t(0).to_ascii_lowercase()),
-        "sql_replace" => Some(if t(1).is_empty() { t(0).to_owned() } else { t(0).replace(t(1), t(2)) }),
-        "sql_like" => return Value::Integer(i64::from(sql_like(t(1), t(0)))),
-        "sql_cast_int" => return Value::Integer(sql_cast_int(t(0))),
-        "sql_char" => Some(u32::try_from(numbers[0]).ok().and_then(char::from_u32).unwrap_or('\u{FFFD}').to_string()),
-        "rx_extract" => {
-            let group = usize::try_from(numbers[0]).ok();
-            return with_regex(t(1), |re| group.and_then(|g| re.captures(t(0))?.get(g).map(|m| Value::Text(m.as_str().to_owned())))).flatten().unwrap_or(Value::Null);
-        }
-        "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
-        "rr_to_string" => Some(numbers[0].to_string()),
-        "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
-        // Read through the run's binding of its batch (`node_read`), never by value alone.
-        "rr_node_text" | "rr_node_text_any" | "rr_node_value" => None,
-        "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
-        "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
-        "semver_subset" => {
-            use crate::code_rule_dsl::semver::Range;
-            return match (Range::parse(t(0)), Range::parse(t(1))) {
-                (Some(a), Some(b)) => Value::Integer(i64::from(a.is_subset_of(&b))),
-                _ => Value::Null,
-            };
-        }
-        // No value where no language registered it (`install_py_repr`).
-        "py_repr" => PY_REPR.get().map(|repr| repr(t(0))),
-        "ed25519_ok" => return Value::Integer(i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(t(0), t(1), t(2)))),
-        "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
-        "float_add" | "float_sub" | "float_mul" | "float_div" => {
-            let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));
-            let f = match name {
-                "float_add" => a + b,
-                "float_sub" => a - b,
-                "float_mul" => a * b,
-                _ => a / b,
-            };
-            return if f.is_nan() { Value::Null } else { Value::Integer(float_key(f)) };
-        }
-        "float_str" => Some(float_of(numbers[0]).to_string()),
-        "count_matches" => return with_regex(t(0), |re| Value::Integer(re.find_iter(t(1)).count() as i64)).unwrap_or(Value::Null),
-        "to_number" => return to_number(t(0)).map_or(Value::Null, Value::Integer),
-        "max" => return Value::Integer(numbers[0].max(numbers[1])),
-        "min" => return Value::Integer(numbers[0].min(numbers[1])),
-        "mod" => return numbers[0].checked_rem(numbers[1]).map_or(Value::Null, Value::Integer),
-        "lower" => Some(t(0).to_lowercase()),
-        "sha256" => {
-            use sha2::Digest;
-            Some(sha2::Sha256::digest(t(0).as_bytes()).iter().map(|b| format!("{b:02x}")).collect())
-        }
-        "json_str" => Some(json_str(t(0))),
-        "str_concat" => Some(format!("{}{}", t(0), t(1))),
-        // A numeral past the doubles (`2e999`) is Infinity, which toPrecision prints as such.
-        // No value where no language registered its formatting (`install_to_precision`).
-        "to_precision" => t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan() && (1..=100).contains(&numbers[0])).and_then(|f| {
-            if f.is_infinite() {
-                Some(if f > 0.0 { "Infinity".to_owned() } else { "-Infinity".to_owned() })
-            } else {
-                TO_PRECISION.get().map(|to| to(f, numbers[0] as u32))
-            }
-        }),
-        "nfkc" => {
-            use unicode_normalization::UnicodeNormalization;
-            Some(t(0).nfkc().collect())
-        }
+        "rr_place_path" => (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n / (1 << 32))),
+        "rr_place_line" => (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n - n / (1 << 32) * (1 << 32))),
+        "rr_strlen" => Value::Integer(text[0].chars().count() as i64),
+        "rr_substr" => Value::Text(substr(text[0], numbers[0], numbers[1])),
+        "rr_to_string" => Value::Text(numbers[0].to_string()),
+        "zero_pad" => Value::Text(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
+        _ => Value::Null,
+    }
+}
+
+fn eval_sql(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+    match name {
+        "sql_instr" => Value::Integer(text[0].find(text[1]).map_or(0, |at| text[0][..at].chars().count() as i64 + 1)),
+        "sql_length" => Value::Integer(text[0].chars().count() as i64),
+        "sql_like" => Value::Integer(i64::from(sql_like(text[1], text[0]))),
+        "sql_cast_int" => Value::Integer(sql_cast_int(text[0])),
+        "sql_char" => Value::Text(u32::try_from(numbers[0]).ok().and_then(char::from_u32).unwrap_or('\u{FFFD}').to_string()),
+        "sql_substr" | "sql_substr2" | "sql_substr_bytes" => text_value(eval_sql_substr(name, text[0], numbers)),
+        _ => text_value(eval_sql_text(name, text)),
+    }
+}
+
+fn eval_sql_substr(name: &str, text: &str, numbers: &[i64]) -> Option<String> {
+    match name {
+        "sql_substr" => Some(sql_substr(text, numbers[0], Some(numbers[1]))),
+        "sql_substr2" => Some(sql_substr(text, numbers[0], None)),
+        "sql_substr_bytes" => (!text.is_empty()).then(|| sql_substr_bytes(text, numbers[0], numbers[1])),
         _ => None,
-    };
-    out.map_or(Value::Null, Value::Text)
+    }
+}
+
+fn eval_sql_text(name: &str, text: &[&str]) -> Option<String> {
+    Some(match name {
+        "sql_trim" => text[0].trim_matches(' ').to_owned(),
+        "sql_trim2" => text[0].trim_matches(|c| text[1].contains(c)).to_owned(),
+        "sql_ltrim" => text[0].trim_start_matches(' ').to_owned(),
+        "sql_ltrim2" => text[0].trim_start_matches(|c| text[1].contains(c)).to_owned(),
+        "sql_rtrim2" => text[0].trim_end_matches(|c| text[1].contains(c)).to_owned(),
+        "sql_upper" => text[0].to_ascii_uppercase(),
+        "sql_lower" => text[0].to_ascii_lowercase(),
+        "sql_replace" => if text[1].is_empty() { text[0].to_owned() } else { text[0].replace(text[1], text[2]) },
+        _ => return None,
+    })
 }
 
 /// SQLite's `substr(x, y, z)` over characters (`z` none for `substr(x, y)`): `y` from 1, or from the end where

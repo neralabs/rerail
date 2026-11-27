@@ -9,7 +9,6 @@ data-layer ma_branch_aware
 data-layer pos_allow_broken
 data-layer pos_bypass
 data-layer static_tests
-data-layer violation
 data-layer vmi_backed
 data-layer:alone annotations
 data-layer:alone CONN301

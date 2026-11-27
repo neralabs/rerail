@@ -78,12 +78,10 @@ doc_public(o) :- doc_def(o, "nested_class"), doc_parent(o, p), kind(p, "class_de
 doc_public(o) :- doc_def(o, "method"), doc_parent(o, p), doc_public(p), doc_name(o, nm, x),
     (!prefix("_", x) ; dunder(nm, x)), !doc_accessor(o, x).
 // doc_pkg_dir(d, dir): dir is the file's directory or one above it, and it and every directory between hold an
-// `__init__.py` or `__init__.pyi` (a path relative to the scanned root).
+// `__init__.py` (Ruff's package marker; an `__init__.pyi` alone is not one).
 .decl doc_pkg_dir(d: number, dir: symbol)
 doc_pkg_dir(d, r) :- doc(d, p, _), contains("/", p), r = @replace_all(p, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
-doc_pkg_dir(d, r) :- doc(d, p, _), contains("/", p), r = @replace_all(p, "/[^/]*$", ""), file(cat(r, "/__init__.pyi")).
 doc_pkg_dir(d, r) :- doc_pkg_dir(d, c), contains("/", c), r = @replace_all(c, "/[^/]*$", ""), file(cat(r, "/__init__.py")).
-doc_pkg_dir(d, r) :- doc_pkg_dir(d, c), contains("/", c), r = @replace_all(c, "/[^/]*$", ""), file(cat(r, "/__init__.pyi")).
 // doc_mod_seg(d, x): a segment of d's package path: the file's stem, and each package directory's name.
 .decl doc_mod_seg(d: number, x: symbol)
 doc_mod_seg(d, x) :- doc(d, p, _), x = @replace_all(p, "^.*/|\\.[^.]*$", "").
