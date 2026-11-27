@@ -547,6 +547,7 @@ describe("derived audit history", () => {
   ] as const)("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current (%s)", async (_, damaged, named) => {
     const path = await temporaryDatabase();
     let damagedAudit = "";
+    let undamaged = { violations_json: "", rule_revisions_json: "" };
     const created = new Database(path);
     try {
       for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) created.exec(statement);
@@ -575,6 +576,9 @@ describe("derived audit history", () => {
       // An ongoing audit with violations and rules is the one damaged.
       damagedAudit = baseline.prepare(`SELECT audit_id FROM audits WHERE audit_id NOT IN ('before-0', 'before-3', 'before-4')
         AND json_array_length(violations_json) > 0 AND json_array_length(rule_revisions_json) > 0 ORDER BY audit_id LIMIT 1`).pluck().get() as string;
+      // Seeds that gave no such audit would damage none, and the case would test nothing.
+      expect(damagedAudit).toMatch(/^before-\d+$/u);
+      undamaged = baseline.prepare("SELECT violations_json, rule_revisions_json FROM audits WHERE audit_id = ?").get(damagedAudit) as typeof undamaged;
       for (const [column, value] of Object.entries(damaged ?? {})) damage(baseline, { table: "audits", column, value, where: `audit_id = '${damagedAudit}'` });
     } finally {
       baseline.close();
@@ -589,6 +593,14 @@ describe("derived audit history", () => {
         .toEqual(named === undefined ? [] : [[true, true]]);
       // The writer the open returns checks every later write.
       expect(database.$client.pragma("ignore_check_constraints", { simple: true })).toBe(0);
+      // What the damaged audit gave: nothing of the list the open named, and each distinct item of a list it did not, so
+      // an item that is no object costs only itself.
+      const read = (query: string, value: string): unknown[] => database.$client.prepare(query).all(value);
+      expect(read("SELECT rule_id, violation_key FROM audit_violations WHERE audit_id = ? ORDER BY 1, 2", damagedAudit))
+        .toEqual(named === "violations_json" ? [] : read(`SELECT DISTINCT json_extract(value, '$.ruleId') AS rule_id, ${KEY("value")} AS violation_key
+          FROM json_each(?) ORDER BY 1, 2`, undamaged.violations_json));
+      expect(read("SELECT rule_id FROM audit_rule_set_uses JOIN audit_rule_set_rules USING (rule_set_id) WHERE audit_id = ? ORDER BY 1", damagedAudit))
+        .toEqual(named === "rule_revisions_json" ? [] : read("SELECT json_extract(value, '$.ruleId') AS rule_id FROM json_each(?) ORDER BY 1", undamaged.rule_revisions_json));
       // The oracle reads every audit's lists whole, so the damaged audit goes first, with what was derived from it: every
       // other audit's history is what reading every audit gives.
       if (damaged !== undefined) database.$client.prepare("DELETE FROM audits WHERE audit_id = ?").run(damagedAudit);
