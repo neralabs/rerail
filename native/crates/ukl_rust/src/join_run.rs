@@ -782,7 +782,8 @@ impl St<'_> {
     }
 
     /// The candidates of keys `kv`: [lo, hi) and how they are walked (0 rows, 1 an index's entries, 2 a parent's
-    /// children by their next siblings, 3 a node's numbered ancestors).
+    /// children by their next siblings, 3 a node's numbered ancestors, 4 a node's subtree, rows [lo, hi) of one
+    /// document walked on its tape).
     unsafe fn probe(&self, kv: &[i64; 8]) -> Walk {
         let s = self.s;
         if s.nkeys == 0 {
@@ -803,7 +804,7 @@ impl St<'_> {
                 let u = doc(d, e).up(l);
                 return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
             }
-            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 0, tag: 0 };
+            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 4, tag: 0 };
         }
         if s.v_parent == 2 {
             return self.by_own(kv);
@@ -872,9 +873,13 @@ impl St<'_> {
         // (`clif_view_child_next`).
         let parent = if how == 2 { dd.tape.parent(x) } else { 0 };
         let end = if how == 2 && parent != rerail_reads::views::NO_ROW { dd.tape.end_of(parent) } else { 0 };
+        // A climb's ancestors' ids, their granules found from the last one's (`Doc::low_near`): one granule or its
+        // parents, not each bisected again.
+        let mut hint = 0u32;
         loop {
             let r = first.wrapping_add(i);
-            self.last.set((r, Some(Row::View(dd.at_node(k, i, x)))));
+            let at = if how == 3 { dd.at_node_low(i, x, dd.low_near(i, &mut hint)) } else { dd.at_node(k, i, x) };
+            self.last.set((r, Some(Row::View(at))));
             if !f(r) {
                 return;
             }
@@ -895,6 +900,29 @@ impl St<'_> {
         }
     }
 
+    /// A subtree's walk (`how` 4, a `has` axis's or containment's by its ancestor, `probe`): `node` rows [lo, hi) of
+    /// one document, each candidate's row given to `f` until it returns false: its document found once, each tape
+    /// node the numbering's next (`Numbering::nodes_from`, one select for the walk), each id's granule from the last
+    /// one's (`Doc::low_near`), and each row kept as the stage's last (`row`), so its reads select nothing.
+    unsafe fn walk_subtree(&self, lo: u32, hi: u32, mut f: impl FnMut(u32) -> bool) {
+        let d = self.s.v_dir;
+        let a = dir_doc_of_row(view_block(d), (*d).at, 0, lo, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[0];
+        let dd = doc(d, e);
+        let mut nodes = dd.n.nodes_from(0, lo.wrapping_sub(first));
+        let mut hint = 0u32;
+        for r in lo..hi {
+            let i = r.wrapping_sub(first);
+            let x = nodes.next();
+            self.last.set((r, Some(Row::View(dd.at_node_low(i, x, dd.low_near(i, &mut hint))))));
+            if !f(r) {
+                return;
+            }
+        }
+    }
+
     /// The candidates of keys `kv`, in their walk's order: each one's row, place, and whether its keys are known to
     /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's, each one's key known
     /// by the walk's previous place of the tag where its mark says `MARK_SAME` (that place is the walk's last of the
@@ -904,6 +932,12 @@ impl St<'_> {
         let known = self.parent_known(w.how);
         if (w.how == 2 || w.how == 3) && q != NONE {
             self.walk_tape(w.how, q, |r| f(r, r, known));
+            return;
+        }
+        if w.how == 4 {
+            if q < w.hi {
+                self.walk_subtree(q, w.hi, |r| f(r, r, known));
+            }
             return;
         }
         // The walk's last place of the tag: none (0), its key `kv` (1), another (2).
