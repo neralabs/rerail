@@ -367,6 +367,44 @@ describe("The runtime's audit control polling", () => {
       await runtime.dispose();
     }
   }, 20_000);
+
+  // Two runtimes opened one session while another process held the write lock: both claims waited, and the second,
+  // refused once the lock was given back, stayed its runtime's, so that runtime's close interrupted the owner's scans.
+  it("lets go of a claim refused once the write lock is given back, says so, and leaves the owner's scans to it", async () => {
+    const { runtime: owner, databasePath, root } = await idleRuntime(["warm"]);
+    const second = new RerailRuntime({
+      storageRoot: join(root, "second"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(catalog(), options),
+    });
+    const other = new SqliteAuditControlStore(databasePath);
+    const holder = new Database(databasePath);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      holder.exec("BEGIN IMMEDIATE");
+      for (const runtime of [owner, second])
+        await runtime.ingest({ kind: "session-start", eventId: "start-shared", session: { host: "claude-code", sessionId: "shared", cwd: root } });
+      holder.exec("ROLLBACK");
+      // Both claims are made in one pass of this thread once the record writer's wait finds the lock free.
+      await vi.waitFor(() => expect(ownerRow(databasePath, "shared")).toMatchObject({ active: 1 }), { timeout: 10_000, interval: 20 });
+      const queued = await other.requestAudit("shared", { scope: "repository" });
+      const closing = second.closeSession("shared");
+      expect(other.listAuditRequests("shared").find(request => request.id === queued.id)?.status).toBe("queued");
+      await closing;
+      await vi.waitFor(() => {
+        expect(other.listAuditRequests("shared").find(request => request.id === queued.id)?.status).toBe("completed");
+      }, { timeout: 10_000, interval: 50 });
+      expect(stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("session shared"))).toEqual([
+        "rerail: record write failed: Rerail session shared is already owned by a live runtime\n",
+        "rerail: the claim on session shared was not made, so this process does not own it\n",
+      ]);
+    } finally {
+      if (holder.inTransaction) holder.exec("ROLLBACK");
+      holder.close();
+      other.close();
+      await second.dispose();
+      await owner.dispose();
+    }
+  }, 30_000);
 });
 
 describe.runIf(process.platform === "win32")("A session in a Windows folder outside Git spelt otherwise than the disk stores it", () => {

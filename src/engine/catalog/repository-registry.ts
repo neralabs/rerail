@@ -27,6 +27,7 @@ import {
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
+import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -185,15 +186,48 @@ const adoptionChecked = new Set<RepositoryKey>();
 /**
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
  * recorded for another clone id (a re-clone) is recorded again and loses its own settings. A clone-keyed repository
- * adopts the checkout's remote once per process.
+ * adopts the checkout's remote once per process. Given the database's record writer, `records`, a checkout recorded
+ * with the same clone id is only seen again, which never waits for another process's write lock ({@link seenCheckout}),
+ * but for that adoption: the first time a process sees a remote on a clone-keyed checkout, it writes on `db`, which
+ * waits for the lock as before.
  */
-export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
+export function recordCheckout(
+  db: RerailDatabase,
+  workspace: string,
+  now = Date.now(),
+  records?: RecordWriter,
+): CheckoutContext & { readonly cloneId: string } {
   refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace, located => refusedCheckoutCloneId(db, located));
   const checkoutPath = physicalPath(location.workspaceRoot);
-  // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
-  const repositoryKey = db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  const repositoryKey = (records === undefined ? undefined : seenCheckout(db, records, { location, checkoutPath, cloneId, now }))
+    // `db` itself, not the transaction's handle, so a line `listedRow` writes names the file; both run on its one connection.
+    ?? db.transaction(() => recordCheckoutRow(db, location, checkoutPath, cloneId, now), { behavior: "immediate" });
   return adoptRemoteOnce(db, contextOf(location, checkoutPath, repositoryKey, cloneId), location, now);
+}
+
+/** A checkout as `recordCheckout` resolved it, and when it was seen. */
+interface SeenAt {
+  readonly location: RepositoryIdentityLocation;
+  readonly checkoutPath: string;
+  readonly cloneId: string;
+  readonly now: number;
+}
+
+/**
+ * The repository of the checkout recorded at `checkoutPath` for `cloneId`, read as the database holds it now, with no
+ * lock; its record (`recordCheckoutRow`, the statements of `recordCheckout`'s transaction, which here only move its
+ * seen time) is a record write: made at once when the write lock is free, else kept until another process gives the
+ * lock back, so a session's start in a checkout Rerail knows never waits for the lock on the daemon's thread. Made
+ * later, it records the checkout again if it was forgotten meanwhile. Undefined, nothing written, for a checkout
+ * recorded under another clone id or not at all, which takes the transaction: its repository comes from its write.
+ */
+function seenCheckout(db: FileReader, records: RecordWriter, seen: SeenAt): RepositoryKey | undefined {
+  const recorded = db.select({ cloneId: checkouts.cloneId, repositoryKey: checkouts.repositoryKey }).from(checkouts)
+    .where(eq(checkouts.checkoutPath, seen.checkoutPath)).get();
+  if (recorded?.cloneId !== seen.cloneId) return undefined;
+  records.write(database => { recordCheckoutRow(database, seen.location, seen.checkoutPath, seen.cloneId, seen.now); });
+  return recorded.repositoryKey;
 }
 
 /**
@@ -1357,8 +1391,24 @@ export async function pruneCheckouts(
   const answered = (): void => { unanswered.looking = undefined; };
   void looking.then(answered, answered);
   const gone = await unlessAborted(looking, signal);
-  if (gone === undefined || gone.length === 0 || signal?.aborted === true) return [];
+  if (gone === undefined || gone.length === 0 || !await seenTimesMade(db.$client.name, signal)) return [];
   return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
+}
+
+/**
+ * True once this process's record writes to the database at `path` are made, waiting off the thread while another
+ * process holds the write lock; false once `signal` aborts first. A session that starts in a checkout meanwhile keeps
+ * its seen time waiting there ({@link recordCheckout}): the forget after this reads it, so a worktree made again at a
+ * removed one's path while the pass looked stays.
+ */
+async function seenTimesMade(path: string, signal: AbortSignal | undefined): Promise<boolean> {
+  const records = openRecordWriter(path);
+  try {
+    await unlessAborted(records.settled(), signal);
+  } finally {
+    records.close();
+  }
+  return signal?.aborted !== true;
 }
 
 /** {@link unlistedByTheirClones} of `rows`, their folders looked at one by one; none once `signal` aborts. */

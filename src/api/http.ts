@@ -306,7 +306,8 @@ export function createRerailApi(
         404: jsonContent(errorSchema, "Not found"),
         409: jsonContent(errorSchema, "Conflict"),
         503: jsonContent(errorSchema, "A dependency the operation needs, such as the native kernel, is unavailable; "
-          + "or not-on-disk: the write was made but could not be confirmed on the disk"),
+          + "or not-on-disk: the write was made but could not be confirmed on the disk; "
+          + "or database-busy: another process held the database's write lock for 5 s, and the write was not made"),
       },
     });
     app.openapi(route, async (context: Context) => {
