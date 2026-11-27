@@ -280,6 +280,18 @@ fn rr_files() -> Vec<PathBuf> {
     out
 }
 
+/// The engine's phase programs (`native/src/code_rule_dsl/typing/programs`). One that includes library files is a
+/// program of the library's (`python/py-names-handed` is a part of `py_names`', which gives what it reads): checked
+/// as one, its parts in it.
+/// One that includes none reads the engine's own inputs in a dialect of its own (`git-inventory`, `workload`,
+/// `calls_rust`): no program of the library's, and not checked here.
+fn phase_programs() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    files(&repo().join("native/src/code_rule_dsl/typing/programs"), "rerail", &mut out);
+    out.retain(|p| std::fs::read_to_string(p).unwrap().lines().any(|l| l.starts_with("#include ")));
+    out
+}
+
 fn short(p: &Path) -> String {
     p.strip_prefix(rule_syntax()).unwrap_or(p).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
 }
@@ -303,9 +315,10 @@ fn rule_syntax_files_pass_check_rr() {
     }
     let mut problems = Vec::new();
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
-    let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
+    let phases = phase_programs();
+    let seeds: Vec<_> = rr_files().into_iter().chain(phases.iter().cloned()).map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().map(|f| {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().chain(phases.iter().cloned()).map(|f| {
         let program = program(&f).unwrap().0;
         (f, program)
     }).collect();
@@ -317,7 +330,7 @@ fn rule_syntax_files_pass_check_rr() {
     let lib_dir = library().canonical().unwrap();
     let parts: BTreeSet<PathBuf> = programs
         .iter()
-        .filter(|(f, _)| f.canonical().unwrap().starts_with(&lib_dir))
+        .filter(|(f, _)| f.canonical().unwrap().starts_with(&lib_dir) || phases.contains(f))
         // A program's own file is its last (`rr::program`: includes first).
         .flat_map(|(_, program)| program.iter().rev().skip(1).filter_map(|(p, _)| p.canonical().ok()).collect::<Vec<_>>())
         .collect();
