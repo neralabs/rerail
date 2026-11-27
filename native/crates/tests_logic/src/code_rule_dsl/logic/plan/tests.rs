@@ -2030,6 +2030,44 @@ seen(r, k) :- rd(i, d, r), seen_at(i, u), def(d, "f", u, k).
     assert_eq!(got, stored, "the max relation stored");
 }
 
+/// The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a keyed start (`st`, as `wstart`) read by three
+/// rules beside the same driver atom (`nm(n, x)`, as `nameref`), one negating another's head, gives the rows it gives
+/// stored (`RERAIL_SHAPE_PER_NAME=off`).
+#[test]
+fn a_start_its_readers_read_beside_one_driver_gives_the_rows_it_gives_stored() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, s: node)
+.layout st key(n)
+st(n, s) :- nm(n, _), near(n, s).
+.decl a(n: node, x: number, s: node)
+a(n, x, s) :- nm(n, x), st(n, s).
+.decl b(n: node, x: number, s: node)
+b(n, x, s) :- st(n, s), node(_, s, "module", _, _), nm(n, x), x > 10.
+.decl c(n: node, x: number, s: node)
+c(n, x, s) :- st(n, s), nm(n, x), !b(n, x, s).
+.decl seen(x: number, w: symbol)
+seen(x, "a") :- a(_, x, _).
+seen(x, "b") :- b(_, x, _).
+seen(x, "c") :- c(_, x, _).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
+}
+
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
 /// `child(p, c, _)` does.
 #[test]

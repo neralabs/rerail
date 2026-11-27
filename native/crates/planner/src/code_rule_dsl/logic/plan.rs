@@ -6698,6 +6698,19 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 None => inlined,
             };
+            // The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a chain its readers read beside one
+            // driver atom made once a driver row, in a relation of that row; corpus runs only, as inlining.
+            let forked = if corpus {
+                body::pass("plan.fork", "one pass a name", inlined.as_ref().unwrap_or(&normal_v), keeps::fork::fork).map_err(Error::Plan)?
+            } else { None };
+            let inlined = match forked {
+                Some((done, v)) => {
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
+                    inlined_names.extend(done);
+                    Some(v)
+                }
+                None => inlined,
+            };
             // Relations computed for every node that rules only negate, computed for the keys those rules reach
             // (decision 0048); in a corpus run only (kept plans), so T's golden plans are unchanged.
             let mut demanded_names = Vec::new();
