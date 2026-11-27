@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { rerailSuppressionGaps } from "../../../../conformance/pack-validation.js";
 import { rerailProofFailures } from "../../../../conformance/rerail-pack-rules.js";
 import { readRepositoryLintConfig } from "../../../../src/engine/catalog/lint-config/repository-lint-config.js";
 import { declaredPackRuleConfigs } from "../../../../src/engine/catalog/packs-file/pack-config.js";
@@ -78,6 +79,7 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
     expect(configureBundledCodeRule(catalog, RULE, { option: "multi", option2: "consistent" })).toMatchObject({ ok: true });
     expect(configureBundledCodeRule(catalog, RULE, { option: "sometimes" })).toEqual({ ok: false, reason: "config.option: is not one of the option's enum values" });
     expect(configureBundledCodeRule(catalog, RULE, { ceiling: 3 })).toEqual({ ok: false, reason: "config.ceiling: `ceiling` is not an option this rule declares" });
+    expect(configureBundledCodeRule(catalog, RULE, { toString: true })).toEqual({ ok: false, reason: "config.toString: `toString` is not an option this rule declares" });
     const declared = { kind: "repository", path: "packs/rr-curly", config: { option: "multi" } } as const;
     expect(declaredPackRuleConfigs(catalog, declared, "rr-curly", ".rerail/packs.json")).toEqual([{ ruleId: RULE, config: { option: "multi" } }]);
     // ESLint's options for curly map onto the port's, through the names its `suppress eslint "curly"` line honours.
@@ -121,5 +123,38 @@ describe("a pack's .rerail rule with options, fixes and suppression comments", {
       ["MISSING_BRACES", "EXTRA_BRACES"].flatMap(violation => ["eslint", "oxlint", "biome"].map(tool =>
         `${RULE}: ${violation} sets suppress ${tool}, whose comments are not ruff's; a port honours only the comments of the tool it ports`)),
     );
+  });
+});
+
+describe("check 4 on a .rerail port's suppress lines", { timeout: CHILD_TIMEOUT }, () => {
+  let read: RerailDescription | undefined;
+  /** The engine's reading of curly, read once, by the first test that asks. */
+  const curly = (): RerailDescription => (read ??= describeRerailRules([RULE_FILE])[0] as RerailDescription);
+  /** The rule curly reads as, with `violations` in place of its own. */
+  const withViolations = (language: string, violations: RerailDescription["violations"]): RerailDescription => ({ ...curly(), language, violations });
+  const line = (tool: string, ...rules: string[]) => ({ tool, rules });
+
+  it("finds no gap in curly's eslint, oxlint and biome lines on each violation", () => {
+    expect(rerailSuppressionGaps(curly(), "eslint", "curly")).toEqual({ unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] });
+  });
+
+  it("names a violation without its tool's rule, and one with ESLint's comments without Oxlint's", () => {
+    const described = withViolations("typescript", [
+      { name: "A", suppress: [line("eslint", "curly")], fixes: [] },
+      { name: "B", suppress: [line("eslint", "curly"), line("oxlint", "curly")], fixes: [] },
+      { name: "C", suppress: [], fixes: [] },
+    ]);
+    expect(rerailSuppressionGaps(described, "eslint", "curly")).toMatchObject({ unsuppressed: ["C"], oxlintApart: ["A"] });
+  });
+
+  it("reads Ruff's and flake8's lines as noqa codes, and a PHP_CodeSniffer sniff's message codes as its sniff", () => {
+    const ruff = withViolations("python", [
+      { name: "X", suppress: [line("ruff", "E501")], fixes: [] },
+      { name: "Y", suppress: [line("noqa", "E501")], fixes: [] },
+      { name: "Z", suppress: [line("flake8", "W291")], fixes: [] },
+    ]);
+    expect(rerailSuppressionGaps(ruff, "ruff", "E501").unsuppressed).toEqual(["Z"]);
+    const phpcs = withViolations("php", [{ name: "L", suppress: [line("phpcs", "Generic.Files.LineLength.TooLong")], fixes: [] }]);
+    expect(rerailSuppressionGaps(phpcs, "phpcs", "Generic.Files.LineLength").unsuppressed).toEqual([]);
   });
 });

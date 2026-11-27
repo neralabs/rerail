@@ -37,8 +37,8 @@ pub struct Edit {
     holes: Vec<(String, Cell)>,
 }
 
-/// A finding's policy, violation and `at`, as its JSON holds them.
-type FindingKey = (String, String, String);
+/// A finding's policy, violation, path and `at`, as its JSON holds them: a node's value names it within its file.
+type FindingKey = (String, String, String, String);
 
 /// An edit, with the violation's other columns by name, which tell findings at one place apart.
 type ColumnsEdit = (Vec<(String, Value)>, Edit);
@@ -56,6 +56,14 @@ fn json_of(row: &Row<'_>, c: usize) -> Value {
         output::Value::Int(n) => json!(n),
         output::Value::Node(_) => json!(row.raw(c)),
         output::Value::Null => Value::Null,
+    }
+}
+
+/// The path of the file a row's node or place `at` column `c` names; "" for no file's (a tool call's id, a guest's).
+fn path_of(row: &Row<'_>, c: usize) -> String {
+    match row.get(c) {
+        output::Value::Node(Node::Of { path: Some(path), .. } | Node::Place { path, .. }) => path.to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -101,14 +109,15 @@ impl Edits {
             holes: holes.iter().enumerate().map(|(k, hole)| (hole.clone(), cell_of(row, at + columns.len() + 1 + k))).collect(),
         };
         let others = columns.iter().enumerate().skip(1).map(|(k, name)| (name.clone(), json_of(row, at + k))).collect();
-        let key = (policy.to_owned(), violation.to_owned(), json_of(row, at).to_string());
+        let key = (policy.to_owned(), violation.to_owned(), path_of(row, at), json_of(row, at).to_string());
         self.by_at.entry(key).or_default().push((others, edit));
     }
 
     /// The fixes that may fix finding `d` (`tools::diagnostic`'s JSON), in order: each rule's edits, one each, where
     /// every edit of the rule has one row for the finding.
     pub fn of(&self, d: &Value) -> Vec<Vec<&Edit>> {
-        let key = (d["policy"].as_str().unwrap_or_default().to_owned(), d["clause"].as_str().unwrap_or_default().to_owned(), d["at"].to_string());
+        let text = |key: &str| d[key].as_str().unwrap_or_default().to_owned();
+        let key = (text("policy"), text("clause"), text("path"), d["at"].to_string());
         let agrees = |others: &[(String, Value)]| others.iter().all(|(name, value)| d["parameters"].get(name).is_none_or(|given| given.is_null() || given == value));
         let mut rules: Vec<((i64, i64), Vec<&Edit>)> = Vec::new();
         for (_, edit) in self.by_at.get(&key).into_iter().flatten().filter(|(others, _)| agrees(others)) {

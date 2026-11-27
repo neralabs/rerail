@@ -245,12 +245,6 @@ export const rulePackPackageSchema = z.looseObject({
    * scripts, the pack list and the conformance checks read it through `isPrivatePack` in scripts/release/packs.mjs.
    */
   private: z.boolean().optional(),
-  /**
-   * `core`: the first core release whose engine runs the pack's rules written in `.rerail` as written (decision 0720),
-   * when that is later than the one that first reads a `.rerail` rule. The release scripts raise the core range to it
-   * once core is at it (`statedCore` in scripts/release/core.mjs); the core itself never reads it.
-   */
-  rerail: z.strictObject({ core: z.string().regex(/^\d+\.\d+\.\d+$/u, "must be a release version, <major>.<minor>.<patch>") }).optional(),
 });
 export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 

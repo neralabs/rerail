@@ -836,8 +836,8 @@ conformance check (`npm run test:conformance`), not here.
      `conformance.json`, `divergences.json`, `upstream` or `candidates`.
    - Once core is at the release that first reads what the pack ships (`heldOff`, a language added since 0.1.0, a rule
      written in `.rerail`, `dimensions`, the core `rerail.core` states), the core range leaves every older core out.
-   - `rerail.core`, where the pack's `.rerail` rules declare options, offer fixes or name linters' comments, is 0.2.3
-     (`RERAIL_RULE_FEATURES_SINCE`) or later.
+   - `rerail`, where present, is `{ "core": "<major>.<minor>.<patch>" }`; `rerail.core`, where the pack's `.rerail` rules
+     declare options, offer fixes or name linters' comments, is 0.2.3 (`RERAIL_RULE_FEATURES_SINCE`) or later.
    - Some way to satisfy `license` names exactly Apache-2.0 plus, per `licenses/<project>/UPSTREAM.md`, one way to
      satisfy the SPDX expression its `License:` line records. An `OR` there lets the package elect either side
      (`MIT OR Apache-2.0` with `Apache-2.0 AND MIT`); an `AND` must be named whole.

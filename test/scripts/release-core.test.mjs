@@ -642,6 +642,8 @@ describe("statedCore", () => {
     expect(statedCore({ rerail: { core: "0.2.3" } })).toBe("0.2.3");
     expect(statedCore({ peerDependencies: { "@neralabs/rerail": ">=0.2.1-0" } })).toBeUndefined();
     expect(statedCore(undefined)).toBeUndefined();
+    // A value check 5 refuses states nothing, so no range is raised to it.
+    expect(statedCore({ rerail: { core: "0.2" } })).toBeUndefined();
   });
 });
 

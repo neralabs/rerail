@@ -71,7 +71,8 @@ export function configureBundledCodeRule(ruleCatalog: RuleCatalog, ruleId: strin
 function configuredRerail(rule: RerailRule, config: RuleConfig): ConfiguredCodeRule {
   try {
     for (const [name, value] of Object.entries(config)) {
-      const declaration = rule.options[name];
+      // Only the rule's own declarations: `toString` is no option of a rule that declares none.
+      const declaration = Object.hasOwn(rule.options, name) ? rule.options[name] : undefined;
       if (declaration === undefined) throw new CodeRuleOptionError(["config", name], `\`${name}\` is not an option this rule declares`);
       checkCodeRuleOptionValue(declaration, value, ["config", name]);
     }

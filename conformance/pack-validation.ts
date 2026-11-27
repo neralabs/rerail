@@ -1179,9 +1179,30 @@ function checkLinterSuppressions({ fail }: Validation, { port, document, gaps, o
     fail("ports", `${port.id}: ${document} carries suppress.biome without suppress.eslint (clause ${gaps.biomeAlone.join(", ")}); a port names the Biome rules the same as the ESLint rule it names`, owner);
 }
 
-/** The violations of the port's document at `path`: a `.rerail` rule's as the engine read it (`described`), else a JSON document's. */
-function portViolations(path: string, described: RerailDescription | undefined): SuppressingViolation[] | undefined {
-  return described === undefined ? jsonSuppressingViolations(readFileSync(path, "utf8")) : rerailSuppressingViolations(described);
+/** No gap: a port of a tool whose comments no port must honour. */
+const NO_GAPS: SuppressionGaps = { unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] };
+
+/**
+ * The suppression gaps (`suppressionGaps`) of a `.rerail` port of `tool`'s `rule`, from the engine's reading of its
+ * file (`described`): each violation's `suppress` lines read as a JSON port's `violation.suppress`, under the key
+ * each line's tool stands for.
+ */
+export function rerailSuppressionGaps(described: RerailDescription, tool: string, rule: string): SuppressionGaps {
+  const suppression = suppressionOf(tool);
+  return suppression === undefined ? NO_GAPS : suppressionGaps(rerailSuppressingViolations(described), suppression, tool, rule);
+}
+
+/**
+ * A port's suppression gaps: a `.rerail` rule's, as the engine read it (`described`), else those of its JSON document
+ * at `path`; undefined for a document that does not read as one (check 1 reports it).
+ */
+function portGaps(path: string, port: Port, described: RerailDescription | undefined): SuppressionGaps | undefined {
+  const { tool, rule } = port.upstream;
+  if (described !== undefined) return rerailSuppressionGaps(described, tool, rule);
+  const suppression = suppressionOf(tool);
+  if (suppression === undefined) return NO_GAPS;
+  const violations = jsonSuppressingViolations(readFileSync(path, "utf8"));
+  return violations === undefined ? undefined : suppressionGaps(violations, suppression, tool, rule);
 }
 
 /**
@@ -1191,14 +1212,9 @@ function portViolations(path: string, described: RerailDescription | undefined):
 function checkPortSuppression(validation: Validation, port: Port, exempt: boolean, owner: string | undefined, described: RerailDescription | undefined): void {
   const path = join(validation.directory, port.policy);
   if (!existsSync(path)) return;
-  const { tool, rule } = port.upstream;
-  const suppression = suppressionOf(tool);
-  const violations = suppression === undefined ? [] : portViolations(path, described);
-  if (violations === undefined) return;
-  const gaps = suppression === undefined
-    ? { unsuppressed: [], oxlintApart: [], biomeMissing: { clauses: [], rules: [] }, biomeAlone: [] }
-    : suppressionGaps(violations, suppression, tool, rule);
-  const found: PortSuppression = { port, document: documentPath(port.policy), suppression, gaps, owner };
+  const gaps = portGaps(path, port, described);
+  if (gaps === undefined) return;
+  const found: PortSuppression = { port, document: documentPath(port.policy), suppression: suppressionOf(port.upstream.tool), gaps, owner };
   checkSuppressionExemption(validation, found, exempt);
   checkLinterSuppressions(validation, found);
 }
@@ -1297,6 +1313,16 @@ export function rerailFeaturesCoreFailure(stated: string | undefined, described:
   return `package.json: rerail.core is ${stated ?? "not set"}, and Rerail runs the options, fixes and linters' comments of ${using.join(", ")} from ${RERAIL_RULE_FEATURES_SINCE}; set rerail.core to ${RERAIL_RULE_FEATURES_SINCE} or later`;
 }
 
+/** package.json's `rerail`, which core never reads: the core the pack's `.rerail` rules need, a release version. */
+const rerailFieldSchema = z.strictObject({ core: z.string().regex(/^\d+\.\d+\.\d+$/u, "must be a release version, <major>.<minor>.<patch>") });
+
+/** Why package.json's `rerail` is malformed (`rerailFieldSchema`), or undefined; a pack without one is not. */
+function rerailFieldFailure(manifest: PackPackage): string | undefined {
+  const field: unknown = manifest["rerail"];
+  const parsed = field === undefined ? undefined : rerailFieldSchema.safeParse(field);
+  return parsed === undefined || parsed.success ? undefined : `package.json: rerail: ${z.prettifyError(parsed.error)}`;
+}
+
 /** The engine's reading of each rule of the pack written in `.rerail`, by its id. */
 function rerailDescriptions(compiled: ReadonlyMap<string, Compiled>): ReadonlyMap<string, RerailDescription> {
   return new Map([...compiled].flatMap(([id, result]) => (result.kind === "rerail" ? [[id, result.described] as const] : [])));
@@ -1319,6 +1345,7 @@ function checkCoreRange({ directory, options, fail }: Validation, manifest: Pack
     dimensionsRangeFailure(range, dimensionedRules(pack), coreVersion),
     statedCoreRangeFailure(range, stated, coreVersion),
     rerailFeaturesCoreFailure(stated, rerailDescriptions(compiled)),
+    rerailFieldFailure(manifest),
   ];
   for (const failure of failures) if (failure !== undefined) fail("package", failure);
 }

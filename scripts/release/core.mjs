@@ -336,7 +336,8 @@ export const RERAIL_RULE_FEATURES_SINCE = "0.2.3";
  */
 export function statedCore(packageJson) {
   const core = packageJson?.rerail?.core;
-  return typeof core === "string" ? core : undefined;
+  // Any other value is the pack validation's check 5 failure, and states nothing here.
+  return typeof core === "string" && /^\d+\.\d+\.\d+$/u.test(core) ? core : undefined;
 }
 
 /**

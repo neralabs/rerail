@@ -392,6 +392,14 @@ precedence = "override"
 SPDX-FileCopyrightText = "OpenJS Foundation and other contributors, <www.openjsf.org>"
 SPDX-License-Identifier = "MIT"
 
+# A copy of docs/rule-syntax/packs/javascript/eslint-curly.rerail, the .rerail translation of ESLint's curly, in the
+# fixture pack that proves a .rerail rule's options, fixes and suppress lines (fixtures/packs/rr-curly/README.md)
+[[annotations]]
+path = "fixtures/packs/rr-curly/rules/eslint-curly.rerail"
+precedence = "override"
+SPDX-FileCopyrightText = ["OpenJS Foundation and other contributors, <www.openjsf.org>", "2026 Nera Software Inc."]
+SPDX-License-Identifier = "Apache-2.0 AND MIT"
+
 # typescript-eslint v8.71.2 and v8.72.0's no-extraneous-class test, recorded verbatim for the nightly report's case diff test
 [[annotations]]
 path = "fixtures/host/upstream-watch/typescript-eslint-*.txt"

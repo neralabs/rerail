@@ -819,6 +819,11 @@ describe("validatePack", () => {
         { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: its .options.strict.default: is required"] },
       ],
       [
+        "a package.json whose rerail.core is no release version",
+        directory => editJson(join(directory, "package.json"), manifest => ({ ...manifest, rerail: { core: "0.2" } })),
+        { package: [expect.stringMatching(/^package\.json: rerail: .*must be a release version, <major>\.<minor>\.<patch>/su)] },
+      ],
+      [
         "a rule with no .test block",
         editRule(ASSERT, text => text.slice(0, text.indexOf(".test "))),
         { proof: ["rr-sample-assert: has no .test block; a rule written in .rerail proves itself with at least one"] },
