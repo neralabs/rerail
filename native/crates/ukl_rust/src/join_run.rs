@@ -3872,6 +3872,9 @@ impl Prog {
             }
             PK_DEDUP_SCATTER => dedup_scatter_range(b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
+            // A program's tail's growth of a map that did not grow (`omask` all ones, `Batch::lattice_tail`): no
+            // thread has a place to move, so the range is skipped whole rather than thread by thread.
+            PK_LAT_REHASH if lat().omask == NONE => {}
             PK_LAT_CLEAR => lat_clear_range(b.la, b.lt, b.h, lat(), t0, t1),
             PK_SUM if t0 == 0 && t1 > 0 => sum_one(j.p as *const SumP),
             PK_ROUND if t0 == 0 && t1 > 0 => round_one(j.p as *const RoundP, self.ctl),

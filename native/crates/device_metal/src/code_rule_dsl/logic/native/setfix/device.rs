@@ -3908,13 +3908,15 @@ impl LiveHead {
         self.mapped - self.len
     }
 
-    /// Its live indexes' buckets: its bound's keys' (at most `LIVE_BUCKETS`), at least its rows mapped's. Where its
-    /// whole bound is mapped (a CPU device's, `mj::rooms_mapped` none), at least the rows it held when the program
-    /// began and its first room: a bound of a head of no reach (decision 0659's made texts) is millions of rows, and
-    /// each round's build of each index wrote an offset a bucket (`ix_offs_range`).
+    /// Its live indexes' buckets: four a row of its rows mapped, or where its whole bound is mapped (a CPU device's,
+    /// `mj::rooms_mapped` none) of the rows it held when the program began and its first room; at most its bound's
+    /// keys and `LIVE_BUCKETS`, at least its rows'. Each round's build of each index writes an offset a bucket
+    /// (`ix_offs_range`): a bound's (`LIVE_BUCKETS` wherever it is past them, every head's since its bound is
+    /// `REACH_BYTES` of rows at least) was 65536 offsets a round for a head of a few hundred rows. Its rows grow past
+    /// them in later rounds, each bucket's more (a reader checks each row's key).
     fn buckets(&self) -> usize {
         let rows = if self.mapped < self.bound { self.mapped } else { (self.len + self.room).min(self.bound) };
-        self.bound.min(LIVE_BUCKETS).max(rows).next_power_of_two().max(1)
+        (4 * rows).min(self.bound).min(LIVE_BUCKETS).max(rows).next_power_of_two().max(1)
     }
 
     /// Its live indexes' rows and buckets where they are not its bound's (`DevRel::mapped`): `rows` the relation's.

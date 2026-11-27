@@ -3119,6 +3119,7 @@ impl Batch {
             }
             job.p = Some(lat_bytes(&p).to_vec());
             job.lat = Some((h, true));
+            job.lat_tail = true;
             (job.count, job.clear, job.lattice) = (0, 0, [most, most / 2]);
             job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
             job.own.push(hb);
@@ -3592,6 +3593,10 @@ impl Batch {
                 None => (pa + at[h.block].expect("its places' block") + h.mask.0, 1),
             }),
         }).collect();
+        // A tail's growth of a lattice head's map: its items as its params' `n` needs (the places of the map a park grew
+        // it to, 0 where it did not grow), not every place its map could have. A park growing one head's map ran
+        // every head's two phases at its most places, each thread finding nothing to do (`omask` all ones).
+        let tails: Vec<Option<(u64, u32)>> = jobs.iter().zip(&placed).map(|(j, at)| j.lat_tail.then(|| (pa + at[4].unwrap_or(0) + std::mem::offset_of!(LatParams, n) as u64, 0))).collect();
         let job_phase = |prog: &mut Program, kinds: &[(JobKind, u32, fn(&Job) -> usize)]| {
             let mut items = Vec::new();
             let mut segs = Vec::new();
@@ -3603,7 +3608,7 @@ impl Batch {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
                         // else all of them (`per` 0).
-                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE)));
+                        let word = j.rows_word().filter(|_| ROWS_ITEMS.contains(&what)).or_else(|| clears[i].filter(|_| matches!(what, PK_DEDUP_CLEAR | PK_LAT_CLEAR | PK_LAT_MERGE))).or_else(|| tails[i].filter(|_| matches!(what, PK_LAT_HCLEAR | PK_LAT_REHASH)));
                         let (count, per, plus) = match word {
                             Some((count, plus)) => (count, rerail_accel_gpu::gpu::join::GROUP as u32, plus),
                             None => (0, 0, 0),
@@ -4824,12 +4829,17 @@ impl Kit {
                     let b = params.contents().cast::<u8>().add(*at as usize);
                     match g {
                         Some(g) => {
+                            // Its two phases' threads (`lat_tail`): the new map's places.
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(g.places as u32);
                             b.add(std::mem::offset_of!(LatParams, hmask)).cast::<u32>().write_unaligned((g.places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned((g.old_places - 1) as u32);
                             b.add(std::mem::offset_of!(LatParams, h_at)).cast::<u64>().write_unaligned(g.at);
                             b.add(std::mem::offset_of!(LatParams, h0_at)).cast::<u64>().write_unaligned(g.old_at);
                         }
-                        None => b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX),
+                        None => {
+                            b.add(std::mem::offset_of!(LatParams, n)).cast::<u32>().write_unaligned(0);
+                            b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX);
+                        }
                     }
                 }
             }
@@ -5642,6 +5652,9 @@ struct Job {
     presorted: bool,
     /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
     lattice: [usize; 2],
+    /// A program's tail's growth of a lattice head's map (`Batch::lattice_tail`): its items as many as its params'
+    /// `n` needs, the places of the map a park grew it to, else 0.
+    lat_tail: bool,
     /// A copy's rows written: its destination's address, and its rows from and to.
     span: Option<(u64, usize, usize)>,
     /// A copy's or a fold's rows' count on the device, and the threads past it its grids take (`Job::rows_word`).
@@ -5750,6 +5763,7 @@ impl Job {
             key_bits: 0,
             presorted: false,
             lattice: [0; 2],
+            lat_tail: false,
             span: None,
             rows: None,
             rows_from: 0,
