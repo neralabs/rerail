@@ -6656,7 +6656,8 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     let mut headers: Vec<lower::Module> = Vec::with_capacity(plan.len());
     for m in &plan {
         let statements: from_tape::Statements = m.files.lines().filter(|f| !f.is_empty()).flat_map(|f| no_includes(read(Path::new(f)).unwrap().0)).collect();
-        let bare: from_tape::Statements = statements.iter().filter(|s| !s.has_body()).collect();
+        // The header: what has no body, but a rule's join shapes (`.shape`), which go with their rules.
+        let bare: from_tape::Statements = statements.iter().filter(|s| !s.has_body() && !matches!(s.what(), Some(from_tape::S::Setting { key: "shape", .. }))).collect();
         let scope: Vec<&lower::Module> = m.scope.split(',').filter(|k| !k.is_empty()).map(|k| &headers[at[k]]).collect();
         let name = m.files.lines().next().unwrap_or_default().to_owned();
         let header = lower::lower_module_in_written(bare, &scope).unwrap_or_else(|e| panic!("{name}: its header alone: {e}"));
