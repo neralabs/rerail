@@ -5,12 +5,16 @@
 .scope include "**/*"
 
 // Ruff RSE102 (flake8-raise): `raise E()` with empty parentheses. `raise E` instantiates the class itself. A
-// callee that is a def in the file is a factory and keeps its call. A callee that is neither a class in the
-// file nor a builtin is judged by its name: a lowercase one (`_` prefix aside) is taken for a function, and so
-// is `ctypes.WinError`. Only the raised value is checked, not the `from` cause. Reported at the `()`.
+// callee that is a def in the file is a factory and keeps its call; a class or a builtin is reported. A dotted
+// callee `A.B.f` is followed through the file's classes, as Ruff's lookup_attribute. A callee that is neither is
+// judged by its name: a lowercase one (`_` prefix aside) is taken for a function, and so is `ctypes.WinError`. A
+// name the raise's scope declares `global` or `nonlocal` is neither (Ruff binds it to the declaration). Only the
+// raised value is checked, not the `from` cause. Reported at the `()`.
 //   raise TypeError()          ← RSE102
 //   raise future.Exception()   ← RSE102: looks like a class
+//   raise A.B.error()          ← RSE102: `error` is a class in class B of class A
 //   raise return_error()       not reported: a def
+//   raise A.Make()             not reported: `Make` is a def in class A
 //   raise AttributeError("m")  not reported: arguments
 #include "python/bugbear.rerail"
 
@@ -25,8 +29,57 @@ factory(f) :- callee_kind(f, "def").
 factory(f) :- !callee_kind(f, "def"), !callee_kind(f, "class"), leaf_name(f, x), !kind(f, "subscript"),
     match("_?[a-z].*", x).
 factory(f) :- !callee_kind(f, "def"), !callee_kind(f, "class"), sym_of(f, "ctypes.WinError").
-// callee_kind(f, k): name f is bound to a def or a class in the file, or is a builtin (taken as a class).
+// callee_kind(f, k): name f is bound to a def or a class in the file, or is a builtin (taken as a class); or f is
+// `o.a` where o is a class of the file and a's last binding in its body is a def or a class.
 .decl callee_kind(f: node, k: symbol)
-callee_kind(f, "def") :- kind(f, "identifier"), ref_site(f, s), site_form(s, "def").
-callee_kind(f, "class") :- kind(f, "identifier"), ref_site(f, s), site_form(s, "class").
-callee_kind(f, "class") :- builtin_ref(f, _).
+callee_kind(f, "def") :- kind(f, "identifier"), !declared(f), ref_site(f, s), site_form(s, "def").
+callee_kind(f, "class") :- kind(f, "identifier"), !declared(f), ref_site(f, s), site_form(s, "class").
+callee_kind(f, "class") :- builtin_ref(f, _), !declared(f).
+callee_kind(f, k) :- kind(f, "attribute"), attr_of(f, o0, a), unparen(o0, o), callee_class(o, c),
+    class_member(c, a, m), site_form(m, k), (k = "def" ; k = "class").
+// callee_class(o, c): expression o names class c: a name bound to it, or `p.a` with a the last binding in p's body.
+.decl callee_class(o: node, c: node)
+callee_class(o, c) :- kind(o, "identifier"), !declared(o), ref_site(o, c), kind(c, "class_definition").
+callee_class(o, c) :- kind(o, "attribute"), attr_of(o, p0, a), unparen(p0, p), callee_class(p, d),
+    class_member(d, a, c), kind(c, "class_definition").
+// class_member(c, a, m): m is the last binding of a in class c's body (Ruff's scope.get: later ones shadow).
+.decl class_member(c: node, a: symbol, m: node)
+class_member(c, a, m) :- kind(c, "class_definition"), binding(c, a, _, _), m = max k : { binding(c, a, k, _) },
+    binding(c, a, m, _).
+// declared(f): name f's own scope declares it `global` or `nonlocal`.
+.decl declared(f: node)
+declared(f) :- kind(f, "identifier"), text(f, x), nearest(f, s, scope), decl(s, x, _).
+
+// Ruff 0.17.6: RSE102 at lines 7, 8, 10, 16 and 21. Before: at 6, 9 and 15 (a def through classes, a global class
+// with a lowercase name), not at 7, 16 and 21 (a class through classes, a global or nonlocal uppercase name).
+.test dotted_callees_and_declared_names exactly
+    .fixture "a.py" ```
+        class A:
+            class B:
+                def Foo(self): pass
+                class bar(Exception): pass
+            B2 = B
+        raise A.B.Foo()
+        raise A.B.bar()
+        raise A.B2.Foo()
+        raise (A.B).Foo()
+        raise A.Missing()
+        class lowc(Exception): pass
+        def Upfn(): pass
+        def uses_global():
+            global lowc, Upfn
+            raise lowc()
+            raise Upfn()
+        def outer():
+            def Fn(): pass
+            def inner():
+                nonlocal Fn
+                raise Fn()
+            return inner
+        ```
+    .expect RSE102 at "a.py":7
+    .expect RSE102 at "a.py":8
+    .expect RSE102 at "a.py":10
+    .expect RSE102 at "a.py":16
+    .expect RSE102 at "a.py":21
+.end
