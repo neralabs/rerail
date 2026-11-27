@@ -474,7 +474,7 @@ fn rust_is_current() {
 /// code.
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let run = c.program.block_programs[0].run(text.as_bytes());
-    let lx = rerail_python_aot::lex(text.as_bytes());
+    let lx = rerail_python_aot::lex(&rerail_python_aot::padded(text.as_bytes()), text.len());
     let refused = run.totals.first().is_some_and(|&t| t != 0);
     // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
     // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
@@ -488,14 +488,24 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     if refused {
         return None;
     }
-    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    // The interpreter's tokens as its tier 2 reads them (`stream::tokens`): a string's records split in its pieces,
+    // which tier 1 as Rust writes (decision 0698). A piece after a string's first is its kind alone there, as the lean
+    // lexer's pieces are no tokens of code: the interpreter's give the words of their bytes, which its tier 2 takes
+    // but no lookahead of its reads (it reads the records).
+    let Some(tokens) = rerail_compiler::stream::tokens(&c.program, text.as_bytes(), &run) else { return Some("the interpreter's string with no closer".into()) };
+    let (starts, lasts, codes): (Vec<u32>, Vec<u32>, Vec<u32>) = tokens.iter().fold((Vec::new(), Vec::new(), Vec::new()), |mut v, &(s, l, c, piece)| {
+        v.0.push(s);
+        v.1.push(l);
+        v.2.push(if piece { c & 0xff } else { c });
+        v
+    });
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
     // by where they start.
     let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
     recs.sort_by_key(|r| r.start);
     let n = starts.len().max(recs.len());
     for k in 0..n {
-        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let theirs = (starts.get(k), lasts.get(k), codes.get(k));
         let rec = recs.get(k);
         let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
@@ -510,7 +520,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
 /// format's, read as `image_text` reads an image's code table.
 fn aot_text(text: &str) -> Result<String, u32> {
     use rerail_tape_format::{CLASS_SHIFT, CODE_EXTRA, KIND_BITS, TAIL_FROM_START};
-    let t = rerail_python_aot::parse(text.as_bytes())?;
+    let t = rerail_python_aot::parse(&rerail_python_aot::padded(text.as_bytes()), text.len())?;
     let cell = |column: &[u8], width: u8, i: usize| -> u32 {
         let w = usize::from(width & 0x7f);
         let b = &column[i * w..i * w + w];

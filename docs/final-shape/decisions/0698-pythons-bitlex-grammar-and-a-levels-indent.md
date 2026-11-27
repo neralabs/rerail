@@ -537,3 +537,37 @@ statements and blocks end.
 
     A test has a line break straight before a closer, in code and in an interpolation; it fails where the gap reads
     the count after the token.
+87. **Tier 1 as Rust reads a string reader's strings in its one pass, and writes their pieces as records.** A grammar
+    with `read R { … }` is lexed in one pass of the token loop (`bitlex_lex_rust/reader.rs`), as JSON's and rr's
+    are, and as the lean lexer's `string` reads a string, from stop to stop of stage 1's masks:
+    - The string's arm reads its prefix's flags at its quote and its triple, then its text to its closer or an
+      interpolation's `{`. Its stops are the quotes, the escape, and in a format string the braces.
+    - It writes each piece: the opener (its record, from the prefix to the quote), a triple's two more quotes, the
+      text, each escape by its check (else `\`), `{{` and `}}`, the closer or the interpolation's `{`. The first is
+      the loop's record, with its marks; the others are written after it, of their kind alone. A pause (stage 1 has
+      not made the blocks) writes nothing, and the token is read again.
+    - The reader's state is in the loop: the template open (its quote, its flags, its code's bracket level), the
+      templates around it (`nest`), every template's frames (`max`), and where the interpolation's code began.
+    - At a template's level 0, its `}`, its spec's `:` and its conversion's `!x` are the reader's rows, picked
+      before the rows' pick. The tail's `}` record has no word and no marks, and the gap is the next token's, as the
+      interpreter resumes it. A token of code in a template counts its brackets, as the walk does.
+    - Each refusal is tested in the arm where its place is: the opener, the fill and the text over each segment,
+      an escape, a raw string's backslashes, a `}` alone, the code since the `{` (to the file's end too), an end,
+      an empty one, the spec and its start, the bounds. A refusal by a mask first lets stage 1 make the blocks after;
+      a count's is the file's.
+    - The count of brackets (`depth`) goes up at the interpolation's `{` and down at its `}` in the arms.
+
+    A piece is no token of code, as the lean lexer's (`IOpen`, `Text`) are not: a lookahead counts no
+    interpolation's `{` as a bracket, and no `,` of a string's text. The interpreter's parts carry the words of
+    their bytes, which its tier 2 takes and no lookahead of its reads, because it reads the records.
+
+    Tier 2 as Rust reads the pieces as records: it no longer splits a string (`split_0`, `resume_1` and their masks
+    go). The interpreter's token stream is `stream::tokens`, which is `run_seen`'s split of the records, the parts'
+    codes the records' pass's. The tests compare tier 1's records with it, a piece after the first by its kind.
+    Tier 1 reads the source padded, as rr's: `parse(buf, n)`, `lex(buf, n)`, `padded`.
+
+    Three things the writer reads generically:
+    - A row's token test reads its kind's `in KIND` assumptions, as its run does. The integer's float test is
+      `dot | exp_l`, not the walk's `number`.
+    - A row's start reads a string reader's regions as none: its arms read them.
+    - The regions are numbered for the counts' reads, but the loop opens none.

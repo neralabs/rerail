@@ -339,92 +339,6 @@ const ANON: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::STAR, 0, k
 /// A word's leaf's kind where `aug_op` takes it (the lean parser's `anon()`); 0: none of its words.
 const AUG_OP: [u16; 91] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, k::PLUS_EQ, k::MINUS_EQ, k::STAR_EQ, k::SLASH_EQ, k::AT_EQ, k::SLASH_SLASH_EQ, k::PERCENT_EQ, k::STAR_STAR_EQ, k::GT_GT_EQ, k::LT_LT_EQ, k::AMP_EQ, k::CARET_EQ, k::BAR_EQ, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-/// `check escape_sequence`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,
-/// to the source's end), or none.
-fn check_escape_sequence(b: &[u8]) -> Option<usize> {
-let mut j = 0usize;
-if !matches!(b.get(j), Some(0x5c)) {
-return None;
-}
-j += 1;
-if matches!(b.get(j), Some(0x75)) {
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-} else if matches!(b.get(j), Some(0x55)) {
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-} else if matches!(b.get(j), Some(0x78)) {
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39 | 0x41..=0x46 | 0x61..=0x66)) {
-return None;
-}
-j += 1;
-} else if matches!(b.get(j), Some(0x30..=0x39)) {
-j += 1;
-if matches!(b.get(j), Some(0x30..=0x39)) {
-j += 1;
-if matches!(b.get(j), Some(0x30..=0x39)) {
-j += 1;
-}
-}
-} else if matches!(b.get(j), Some(0x0a | 0x22 | 0x27 | 0x5c | 0x61..=0x62 | 0x66 | 0x6e | 0x72 | 0x74 | 0x76)) {
-j += 1;
-} else {
-return None;
-}
-Some(j)
-}
-
 /// The word of a piece of record kind `kind`, its bytes `b`: its kind's keywords'.
 fn word_in(kind: u32, b: &[u8]) -> u32 {
     match kind {
@@ -480,51 +394,12 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 16, 0, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 4, 7, 6, 8, 9, 10, 11, 1, 2, 3, 14, 12, 15, 13];
 
-
 /// An extra's node kind: a later extra kind's by its bit, else the first's.
 fn extra_kind(code: u32) -> u16 {
     k::COMMENT
 }
 
-
 type R<X = ()> = Result<X, u32>;
-
-/// Mask `x`'s first bit at or after byte `from`, a word at a time.
-fn first_bit(x: &[u64], from: usize) -> Option<usize> {
-    let mut q = from / 64;
-    let mut w = x.get(q)? & (!0u64 << (from % 64));
-    while w == 0 {
-        q += 1;
-        w = *x.get(q)?;
-    }
-    Some(64 * q + w.trailing_zeros() as usize)
-}
-
-/// The first byte in `from..to` where one of the masks `xs` holds, a word of their union at a time: the words up to
-/// `to` read, and no more, as the lean lexer's string reader looks no further than its quote.
-#[inline(always)]
-fn first_of<const N: usize>(xs: [&[u64]; N], from: usize, to: usize) -> Option<usize> {
-    let len = xs.iter().map(|x| x.len()).max().unwrap_or(0);
-    if from >= to || from / 64 >= len {
-        return None;
-    }
-    let (mut q, last) = (from / 64, ((to - 1) / 64).min(len - 1));
-    let word = |q: usize| xs.iter().fold(0u64, |a, x| a | x.get(q).copied().unwrap_or(0));
-    let mut w = word(q) & (!0u64 << (from % 64));
-    while w == 0 {
-        if q == last {
-            return None;
-        }
-        q += 1;
-        w = word(q);
-    }
-    Some(64 * q + w.trailing_zeros() as usize).filter(|&p| p < to)
-}
-
-/// Whether mask `x` holds at byte `i`.
-fn bit(x: &[u64], i: usize) -> bool {
-    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
-}
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
@@ -545,16 +420,9 @@ pub struct P<'a, L: Layout> {
     recs: &'a [crate::tier1::Rec],
     /// The comments (the extras), apart from the tokens, as the lean parser's `comments`.
     xs: &'a [crate::tier1::Rec],
-    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
-    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record.
     i: usize,
-    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as
-    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;
-    /// the token is piece `k`.
-    sub: Vec<(u32, u32, u32)>,
-    k: usize,
     /// The comments: the first not yet written (`pend`), the first after the token's start (`xi`), and where that one
     /// starts (`next_x`, `u32::MAX` past the last), as the lean parser's `comment` and `next_comment`.
     pend: usize,
@@ -592,36 +460,27 @@ pub struct P<'a, L: Layout> {
 #[allow(dead_code)]
 impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
-        let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
+        let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8).classes(SUPERS), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8).classes(SUPERS), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, strings: 0, indent: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
     }
 
-    /// At record `i`: split it where tier 2 reads its region in parts.
+    /// At record `i`: its code read, no mark known there yet.
     #[inline(always)]
     fn arrive(&mut self) -> R {
         self.known = 0;
-        if self.i < self.n {
-            self.split(self.i)?;
-        }
         self.cur = if self.i < self.n { self.code_at(self.i) } else { END_CODE };
         Ok(())
     }
 
-    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.
-    fn piece(&mut self, s: usize, l: usize, kind: u32) {
-        let word = word_in(kind, &self.src[s..=l]);
-        self.sub.push((s as u32, l as u32, kind | word << 8));
-    }
-
-    /// Record `j`'s code, its first and its last byte: the piece's at the token.
+    /// Record `j`'s code.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
+        self.recs[j].code
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -652,42 +511,6 @@ impl<'a, L: Layout> P<'a, L> {
         if j == 0 { self.n } else { j - 1 }
     }
 
-
-    /// The `k`th record before the token (`here`, the token `i`), the comments among them by where they start: whether a
-    /// comment, and its index; none before the file's first.
-    fn back(&self, here: usize, k: usize) -> Option<(bool, usize)> {
-        debug_assert_eq!(here, self.i);
-        let (mut t, mut x) = (here, self.xi);
-        let mut got = None;
-        for _ in 0..k {
-            got = if x > 0 && (t == 0 || self.xs[x - 1].start > self.recs[t - 1].start) {
-                x -= 1;
-                Some((true, x))
-            } else if t > 0 {
-                t -= 1;
-                Some((false, t))
-            } else {
-                return None;
-            };
-        }
-        got
-    }
-
-
-    /// The first comment since the grammar token before the token (`here`, the token `i`): the comments between.
-    fn since_comments(&self, here: usize) -> usize {
-        debug_assert_eq!(here, self.i);
-        if here == 0 {
-            return 0;
-        }
-        let mut x = self.xi;
-        while x > 0 && self.xs[x - 1].start > self.recs[here - 1].start {
-            x -= 1;
-        }
-        x
-    }
-
-
     #[inline(always)]
     fn word(&self) -> u32 {
         self.cur >> 8 & 0xff
@@ -695,7 +518,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word_at(&self, j: usize) -> u32 {
-        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
+        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)
     }
 
     /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
@@ -706,7 +529,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn kind_at(&self, j: usize) -> u32 {
-        if j < self.n { self.code_at(j) & 0xff } else { NO_KIND }
+        self.recs.get(j).map_or(NO_KIND, |r| r.code & 0xff)
     }
 
     /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes;
@@ -724,18 +547,14 @@ impl<'a, L: Layout> P<'a, L> {
         crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
     }
 
-
     #[inline(always)]
     fn start(&self) -> u32 {
         if self.i >= self.n {
             self.src.len() as u32
-        } else if self.k < self.sub.len() {
-            self.sub[self.k].0
         } else {
             self.recs[self.i].start
         }
     }
-
 
     #[cold]
     fn refuse<X>(&self) -> R<X> {
@@ -787,21 +606,6 @@ impl<'a, L: Layout> P<'a, L> {
     fn take(&mut self) -> R<(u32, u32)> {
         self.taken = 0;
         self.marked = false;
-        if self.k < self.sub.len() {
-            let (s, l, _) = self.sub[self.k];
-            self.k += 1;
-            if self.k < self.sub.len() {
-                self.known = 0;
-                self.cur = self.sub[self.k].2;
-                self.last_end = l + 1;
-                return Ok((s, l + 1));
-            }
-            self.sub.clear();
-            self.k = 0;
-            self.advance(l as usize + 1)?;
-            self.last_end = l + 1;
-            return Ok((s, l + 1));
-        }
         let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
@@ -950,40 +754,6 @@ impl<'a, L: Layout> P<'a, L> {
         let at = at as usize;
         self.w.plain_wrap(at, 0x3f << 10 | SLOT, u32::from(field) << 10, u32::from(kind));
         self.levels.push(std::mem::replace(&mut self.top, (at as u32, at as u32 + 1)));
-        Ok(())
-    }
-
-
-    /// The node made last at this level and the nodes inside it read again: `way` gives each
-    /// kind's (`Some(Some(K))` read as `K`, `Some(None)` gone and its children in its place,
-    /// `None` kept as it is with every node inside it; `u16::MAX - 1` refuses), `field` each
-    /// field's new one, and `root` the node's own way (`u16::MAX`: its kind's).
-    fn reread(&mut self, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>, field: fn(u16) -> u16) -> R {
-        let at = self.top.1;
-        if at == NONE {
-            return self.refuse();
-        }
-        let at = at as usize;
-        let n = self.w.plain_size(at) as usize;
-        if at + n != self.w.len() {
-            return self.refuse();
-        }
-        // A leaf gone (no extra, kept as it is; no dead node held in it): nothing to read again, the tape one node
-        // shorter (`drop`'s, at a list's separator).
-        if n == 1 && root == Some(None) && self.w.plain_key(at) >> 16 & 1 == 0 {
-            self.w.plain_truncate(at);
-            return Ok(());
-        }
-        // The nodes as they are, then written again in preorder.
-        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.plain_key(i), self.w.plain_start(i), self.w.plain_end(i), self.w.plain_size(i) as usize)).collect();
-        self.w.plain_truncate(at);
-        let mut i = 0;
-        while i < nodes.len() {
-            i = self.reread_node(&nodes, i, root, way, field)?;
-        }
-        if self.w.len() == at + 1 || at < self.w.len() {
-            self.set_made(at as u32);
-        }
         Ok(())
     }
 
@@ -4288,202 +4058,13 @@ impl<L: Layout> P<'_, L> {
     }
 
 
-    /// `string_start`'s region (`read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn split_0(&mut self, j: usize) -> R {
-        let s = self.recs[j].start as usize;
-        let o = first_bit(&self.m.rd0_open_last, s).unwrap_or(s);
-        self.sub.clear();
-        self.k = 0;
-        self.sub.push((s as u32, o as u32, self.recs[j].code));
-        let s = o;
-        let m = self.m;
-        let mut at = s + 1;
-        loop {
-            let Some(c) = first_bit(&m.rd0_close, at) else {
-                return self.refuse();
-            };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
-            // parts' starts, to the closer.
-            let first = first_of([&m.rd0_part0, &m.esc, &m.esc_ib], at, c);
-            let mut part: Option<(usize, u8, usize)> = None;
-            // `quote2`
-            if let Some(e) = first.filter(|&e| bit(&m.rd0_part0, e)) {
-                if part.is_none_or(|q| (e, 2, 0) < q) {
-                    part = Some((e, 2, 0));
-                }
-            }
-            // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.esc, e)) {
-                if part.is_none_or(|q| (e, 1, 1) < q) {
-                    part = Some((e, 1, 1));
-                }
-            }
-            // `escape_interpolation`
-            if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 2) < q) {
-                    part = Some((e, 2, 2));
-                }
-            }
-            let to = part.map_or(c, |q| q.0);
-            if to > at {
-                self.piece(at, to - 1, 8);
-            }
-            match part {
-                Some((e, _, i)) => {
-                    let (l, kind) = match i {
-                        0 => (e + 1, 5),
-                        // `escape_sequence` by its check, else `\`
-                        1 => match check_escape_sequence(&self.src[e..]) {
-                            Some(n) => (e + n - 1, 9),
-                            None => (e, 11),
-                        },
-                        2 => (e + 1, 10),
-                        _ => unreachable!(),
-                    };
-                    self.piece(e, l, kind);
-                    at = l + 1;
-                }
-                None => {
-                    let (l, kind) = if bit(&m.rd0_closes0, c) {
-                        (c + 2, 6)
-                    } else if bit(&m.rd0_closes1, c) {
-                        (c + 0, 6)
-                    } else if bit(&m.i_at, c) {
-                        (c + 0, 7)
-                    } else if bit(&m.o_s1, s) {
-                        // `s1`
-                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_d1, s) {
-                        // `d1`
-                        (c + 0, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_s3, s) {
-                        // `s3`
-                        (c + 2, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_d3, s) {
-                        // `d3`
-                        (c + 2, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fs1, s) {
-                        // `fs1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fd1, s) {
-                        // `fd1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else if bit(&m.o_fs3, s) {
-                        // `fs3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    } else {
-                        // `fd3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
-                    };
-                    self.piece(c, l, kind);
-                    if bit(&m.i_open, c) {
-                        self.strings += 1;
-                    }
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    /// `interp_end`'s region (`read ts1 | td1 | ts3 | td3 parts`), at byte `s`, no record of its own: the string's parts after its template's `}`: its opener's byte, each part, each run of the bytes between, its closer.
-    fn resume_1(&mut self, s: usize) -> R {
-        self.sub.clear();
-        self.k = 0;
-        self.piece(s, s, 3);
-        let m = self.m;
-        let mut at = s + 1;
-        loop {
-            let Some(c) = first_bit(&m.rd1_close, at) else {
-                return self.refuse();
-            };
-            // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
-            // parts' starts, to the closer.
-            let first = first_of([&m.esc, &m.esc_ib], at, c);
-            let mut part: Option<(usize, u8, usize)> = None;
-            // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.esc, e)) {
-                if part.is_none_or(|q| (e, 1, 0) < q) {
-                    part = Some((e, 1, 0));
-                }
-            }
-            // `escape_interpolation`
-            if let Some(e) = first.filter(|&e| bit(&m.esc_ib, e)) {
-                if part.is_none_or(|q| (e, 2, 1) < q) {
-                    part = Some((e, 2, 1));
-                }
-            }
-            let to = part.map_or(c, |q| q.0);
-            if to > at {
-                self.piece(at, to - 1, 8);
-            }
-            match part {
-                Some((e, _, i)) => {
-                    let (l, kind) = match i {
-                        // `escape_sequence` by its check, else `\`
-                        0 => match check_escape_sequence(&self.src[e..]) {
-                            Some(n) => (e + n - 1, 9),
-                            None => (e, 11),
-                        },
-                        1 => (e + 1, 10),
-                        _ => unreachable!(),
-                    };
-                    self.piece(e, l, kind);
-                    at = l + 1;
-                }
-                None => {
-                    let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 2, 6)
-                    } else if bit(&m.rd1_closes1, c) {
-                        (c + 0, 6)
-                    } else if bit(&m.i_at, c) {
-                        (c + 0, 7)
-                    } else if bit(&m.o_ts1, s) {
-                        // `ts1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, 4)
-                    } else if bit(&m.o_td1, s) {
-                        // `td1`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 0 }, 4)
-                    } else if bit(&m.o_ts3, s) {
-                        // `ts3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, 4)
-                    } else {
-                        // `td3`
-                        (if bit(&m.i_open, c) { c + 0 } else { c + 2 }, 4)
-                    };
-                    self.piece(c, l, kind);
-                    if !(bit(&m.i_open, c)) {
-                        self.strings = self.strings.saturating_sub(1);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    /// Past the token, to the next grammar token's record, or the string's parts a template's `}` resumes, at the record before the next (decision 0600).
+    /// Past the token, to the next grammar token's record.
     #[inline(always)]
     fn advance(&mut self, from: usize) -> R {
-        if self.strings > 0 && let Some(p) = first_of([&self.m.rd1_open], from, (if self.i + 1 < self.n { self.recs[self.i + 1].start } else { u32::MAX }).min(self.next_x) as usize) {
-            self.known = 0;
-            self.resume_1(p)?;
-            self.cur = self.code_at(self.i);
-            return Ok(());
-        }
         // The next token, the comments before it passed.
         self.i += 1;
         self.pass_comments();
         self.arrive()
-    }
-
-    /// Record `j` split where its first byte opens a region tier 2 reads in parts.
-    #[inline(always)]
-    fn split(&mut self, j: usize) -> R {
-        let s = self.recs[j].start as usize;
-        if bit(&self.m.rd0_open, s) {
-            return self.split_0(j);
-        }
-        let _ = s;
-        Ok(())
     }
 
 }
@@ -4674,7 +4255,7 @@ fn in_slot(no: u32, kind: u16) -> bool {
     matches!((no, kind), (1, 3) | (1, 4) | (1, 5) | (1, 6) | (1, 7) | (1, 8) | (1, 9) | (1, 10) | (1, 20) | (1, 70) | (1, 90) | (1, 91) | (1, 92) | (1, 93) | (1, 94) | (1, 95) | (1, 96) | (1, 97) | (1, 98) | (1, 100) | (1, 102) | (1, 103) | (1, 105) | (1, 106) | (1, 107) | (1, 108) | (1, 109) | (1, 111) | (1, 112) | (1, 113) | (1, 114) | (1, 117) | (1, 16390) | (1, 16409) | (2, 3) | (2, 4) | (2, 5) | (2, 6) | (2, 7) | (2, 8) | (2, 9) | (2, 10) | (2, 20) | (2, 70) | (2, 92) | (2, 93) | (2, 100) | (2, 102) | (2, 103) | (2, 105) | (2, 106) | (2, 107) | (2, 108) | (2, 109) | (2, 111) | (2, 112) | (2, 113) | (2, 114) | (2, 117) | (2, 16390) | (2, 16409) | (3, 3) | (3, 76) | (3, 80) | (3, 81) | (3, 102) | (3, 103) | (4, 3) | (4, 73) | (4, 74) | (4, 75) | (4, 76) | (4, 77) | (4, 78) | (4, 79))
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), finished by `finish` (the
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code), finished by `finish` (the
 /// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.
 pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {
     // Where tier 1 sends the file to tree-sitter.

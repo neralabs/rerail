@@ -23,9 +23,11 @@ use ::bitlex::syntax::{Arg, Expr, Gram, PartLen, Region, Stmt, TokenRule, TokenT
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-// Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
+// Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodules are found beside it.
 #[path = "bitlex_lex_rust/bytes.rs"]
 mod bytes;
+#[path = "bitlex_lex_rust/reader.rs"]
+mod reader;
 
 /// What the generator reads: the lexer's statements and the compiler's tables.
 pub struct Input<'a> {
@@ -540,13 +542,31 @@ fn is_last_byte(e: &Expr, defs: &HashMap<String, Expr>, pre: usize) -> bool {
     })
 }
 
-/// The regions tier 2 reads in parts, in the order their tokens are declared: one a kind.
+/// The kinds of the grammar's string readers (`read R { … }`, decision 0698): tier 1 reads their tokens in pieces, as
+/// the lean lexer's `string` pushes them, and tier 2 reads the pieces as records.
+pub fn string_reader_kinds(stmts: &[Stmt]) -> Vec<String> {
+    stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Rounds { regions: Some(rg), .. } => Some(rg.readers.iter().flat_map(|rd| rd.kinds.iter().cloned()).collect::<Vec<_>>()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+/// The regions tier 2 reads in parts, in the order their tokens are declared: one a kind. A string reader's are not
+/// (`string_reader_kinds`): tier 1 gives their pieces.
 pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
     let mut out: Vec<Reader> = Vec::new();
     let mut starts: HashMap<String, Vec<Expr>> = HashMap::new();
     let mut all = Vec::new();
+    let owned = string_reader_kinds(stmts);
     for s in stmts {
         let Stmt::Token { kind, start, rule: Some(TokenRule::ReadParts(rs, parts)), .. } = s else { continue };
+        if rs.iter().all(|r| owned.contains(&r.kind)) {
+            continue;
+        }
         starts.entry(kind.clone()).or_default().push(start.clone());
         if out.iter().any(|r| r.kind == *kind) {
             continue;
@@ -1167,6 +1187,12 @@ struct Gen<'a> {
     /// Whether the token loop writes the regions' masks as the walk makes them (`lw_…`): every region a row reads,
     /// none with an `else` form, in the loop of the blocks (not the one pass).
     walk_writes: bool,
+    /// The string readers' kinds (`read R { … }`): read by the reader's arms, no region's code (`reader`).
+    reader_kinds: Vec<String>,
+    /// The string readers.
+    readers: Vec<::bitlex::syntax::StringReader>,
+    /// Their interpolation's level: its brackets, its bound, its nest (`RegionLevel`).
+    reader_level: Option<::bitlex::syntax::RegionLevel>,
     /// A count the token loop keeps reads the regions: its region tokens keep their closer (`close`, `region_scan`).
     region_counts: bool,
 }
@@ -2082,7 +2108,7 @@ impl Gen<'_> {
                         let from = comment.unwrap_or(j);
                         let why = text[from..j].to_owned();
                         text.replace_range(from..j + line.len(), "");
-                        let _ = write!(tests, "{}            refused |= w_{} != 0;\n", indent(&why, "        "), x.name);
+                        let _ = writeln!(tests, "{}            refused |= w_{} != 0;", indent(&why, "        "), x.name);
                     }
                 }
             }
@@ -2248,7 +2274,10 @@ impl Gen<'_> {
         }
         Ok(match e {
             Expr::Name(n) => {
-                if let Some(k) = self.opens.as_ref().and_then(|opens| opens.iter().position(|(kind, _, _)| *n == format!("o_{kind}") || *n == format!("f_{kind}"))) {
+                if self.reader_kinds.iter().any(|k| *n == format!("o_{k}") || *n == format!("f_{k}")) {
+                    // A string reader's region: its arms read it, picked at its own token's start or its template's level 0.
+                    Some("false".to_owned())
+                } else if let Some(k) = self.opens.as_ref().and_then(|opens| opens.iter().position(|(kind, _, _)| *n == format!("o_{kind}") || *n == format!("f_{kind}"))) {
                     Some(format!("open == {k}"))
                 } else if self.kinds.iter().any(|r| *n == format!("o_{}", r.kind) || *n == format!("f_{}", r.kind) || r.empty.as_ref().is_some_and(|(e, _)| e == n)) {
                     // A region's mask where the loop numbers no regions (`opens`: a region opens no token of its own
@@ -4730,6 +4759,9 @@ impl Gen<'_> {
     fn regions(&mut self, rg: &::bitlex::syntax::Regions) -> Result<(), String> {
         let ks = &rg.kinds;
         self.kinds = ks.clone();
+        self.readers = rg.readers.clone();
+        self.reader_level = if rg.readers.is_empty() { None } else { rg.level.clone() };
+        self.reader_kinds = rg.readers.iter().flat_map(|rd| rd.kinds.iter().cloned()).collect();
         self.hidden = rg.hidden.clone();
         let mut opens = Vec::new();
         let mut closers = Vec::new();
@@ -5254,11 +5286,17 @@ impl Gen<'_> {
         // One pass (decision 0619): stage 1 makes the blocks as the token loop comes to need them, where the loop keeps
         // nothing over a token but its records and counts (no template's string, no fill kept over regions, no region
         // read in parts for tier 2), and the file is read from its first byte (no `prefix`).
+        // A string reader's kinds (`read R { … }`, decision 0698) are its arms', which the loop reads as the lean lexer's
+        // `string` does: their templates and parts are no region's.
+        let owned = |k: &str| self.reader_kinds.iter().any(|q| q == k);
         let fused = skip.is_some()
             && self.prefix.is_none()
             && x.assumed_ends.is_empty()
-            && self.kinds.iter().all(|r| !r.resumes && r.or.is_none() && r.after.is_empty())
-            && !x.stmts.iter().any(|s| matches!(s, Stmt::Token { rule: Some(TokenRule::ReadParts(..)), .. }));
+            && self.kinds.iter().all(|r| owned(&r.kind) || !r.resumes && r.or.is_none() && r.after.is_empty())
+            && !x.stmts.iter().any(|s| matches!(s, Stmt::Token { rule: Some(TokenRule::ReadParts(rs, _)), .. } if !rs.iter().all(|r| owned(&r.kind))));
+        if !self.reader_kinds.is_empty() && !fused {
+            return Err("tier 1 as Rust: a string reader in a loop that is not one pass is not written".into());
+        }
         // The loop writes the regions' masks where it reads every region, as the walk makes them (`lw_…`).
         let read: Vec<&str> = x
             .stmts
@@ -5409,7 +5447,9 @@ impl Gen<'_> {
             self.find_loop_fills(&rows, &exprs)?;
         }
         let mut refuse = Vec::new();
-        for (why, e, at) in escapes.iter().filter(|(_, e, _)| !covered.contains(&(*e as *const Expr))) {
+        // A string reader's refusals are its arms' (`reader_refusals`), where they read its strings as the lean lexer does.
+        let reader_whys: Vec<String> = self.readers.iter().flat_map(|rd| rd.escapes.iter().cloned()).collect();
+        for (why, e, at) in escapes.iter().filter(|(why, e, _)| !covered.contains(&(*e as *const Expr)) && !reader_whys.iter().any(|w| w == why)) {
             let line = self.in_scope(at, e, |g| {
                 if !g.regional(e) {
                     // At the file's last byte alone: once, after the pass.
@@ -5689,14 +5729,55 @@ impl Gen<'_> {
         // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
         // the pairs mask `k_F`; `pair M`), one byte (`one`).
         let mut row_shapes: Vec<Option<String>> = Vec::new();
+        // A string reader's rows (decision 0698): its string's, its tail's, its spec's, its conversion's, read by its arms.
+        let reader_code = if self.readers.is_empty() {
+            None
+        } else {
+            let mut own: Vec<String> = Vec::new();
+            for rd in &self.readers {
+                if let Some(i) = &rd.interpolation {
+                    own.push(i.close_kind.clone());
+                    own.extend(i.spec.iter().map(|x| x.0.clone()));
+                    own.extend(i.conversion.iter().map(|x| x.0.clone()));
+                }
+            }
+            let mut rr: Vec<(usize, String, Expr)> = Vec::new();
+            for (row, s) in &rows {
+                let Stmt::Token { kind, start, rule, .. } = s else { continue };
+                let read = match rule {
+                    Some(TokenRule::ReadParts(rs, _) | TokenRule::Read(rs)) => rs.iter().all(|r| self.reader_kinds.contains(&r.kind)),
+                    _ => false,
+                };
+                if read || own.contains(kind) {
+                    rr.push((*row, kind.clone(), start.clone()));
+                }
+            }
+            let rc = self.reader_code(&rr, &scan_regional, &pair_fns)?;
+            pair_fns.push_str(&rc.fns);
+            Some(rc)
+        };
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
                 continue;
             }
-            let mut st = match self.at_start(start)? {
-                Some(t) => t,
-                None => format!("bit(&{}, s)", self.val(start)?),
+            let reader_row = reader_code.as_ref().and_then(|rc| rc.rows.iter().find(|r| r.0 == *row)).map(|r| (r.1.clone(), r.2.clone()));
+            let picked = reader_code.as_ref().is_some_and(|rc| rc.picked.contains(row));
+            if reader_code.as_ref().is_some_and(|rc| rc.skip.contains(row)) {
+                continue;
+            }
+            let start = match &reader_code {
+                Some(rc) if rc.head.0 == *row => &rc.head.1,
+                _ => start,
+            };
+            let mut st = if picked {
+                // Picked at its template's level 0 (`rd_pick`), never by its first byte.
+                "false".to_owned()
+            } else {
+                match self.at_start(start)? {
+                    Some(t) => t,
+                    None => format!("bit(&{}, s)", self.val(start)?),
+                }
             };
             // The at-starts assumptions the prover did not prove, checked in a test build where the
             // loop first reads them: at the first row whose start reads the mask, the rows before
@@ -5726,11 +5807,16 @@ impl Gen<'_> {
                     region_scans.push_str(&self.region_scan(name, up, down, *max, &rs, &closes)?);
                 }
             }
+            // A reader's arm counts at its own `{` and `}`.
+            if reader_row.is_some() {
+                region_scans.clear();
+            }
             // Its closer kept (`close`) where the count reads it.
             let scan_close = region_scans.contains("close)");
             let k = self.kind_of(*row);
             let mut open_k: Option<String> = None;
             let (how, l) = match rule {
+                _ if reader_row.is_some() => reader_row.clone().expect("a reader row"),
                 Some(TokenRule::Run(r)) => {
                     // Its run as its kind's assumptions read it (`in KIND`, decision 0607).
                     let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
@@ -5931,11 +6017,14 @@ impl Gen<'_> {
                 }
             }
             let mut hits = String::new();
+            // Its kind's assumptions (`in KIND`, decision 0607), over its token's bytes.
+            let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
             for (tk, after, test, v, least, bit) in &tests {
                 if tk != kind {
                     continue;
                 }
-                let v = self.row_val(v, rule)?;
+                let v = if these.is_empty() || !self.regional(v) { v.clone() } else { simplify_all(substitute(v, &these, &self.defs)) };
+                let v = self.row_val(&v, rule)?;
                 let holds = match test {
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
@@ -6072,7 +6161,7 @@ impl Gen<'_> {
             // one's, which a close at its template keeps open, as the lean lexer's string reader
             // goes on after the template's code; then the loop on past it, as after a record.
             let resume = match rule {
-                Some(TokenRule::ReadParts(rs, _)) if rs.iter().all(|r| r.resumes) => {
+                Some(TokenRule::ReadParts(rs, _)) if rs.iter().all(|r| r.resumes) && reader_row.is_none() => {
                     let again = match rs.first().and_then(|r| r.or.clone()) {
                         // Closed at its quote: the string ended, and no template is open (`template`).
                         Some((c2, _)) if self.level.is_some() => format!("if !bit(&{}, close) {{\n                        (template, level, held) = if depth > 0 {{\n                            depth -= 1;\n                            frames[depth]\n                        }} else {{\n                            (usize::MAX, 0, None)\n                        }};\n                    }}", self.val(&c2)?),
@@ -6109,7 +6198,16 @@ impl Gen<'_> {
             };
             row_ids.push((kind.clone(), extra, bits, sb, self.kind_of(*row)));
             row_shapes.push(row_shape);
-            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
+            // A template's code's brackets, in a token of code whose bytes may hold one.
+            if let Some(rc) = &reader_code
+                && reader_row.is_none()
+                && !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..)))
+                && (0..256).any(|i| (sb[i] || tail[i]) && rc.level_bytes[i])
+            {
+                scans.push_str(&rc.level);
+            }
+            let sb = if picked { [false; 256] } else { sb };
+            row_arms.push(RowArm { resume, word, open: open_k.is_some(), row: *row, first: sb, tail, starts: first_tests, start: if picked { Expr::Empty } else { start.clone() }, check, body: format!("{{\n            // `{kind}`: {how}\n{decl}            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra_is}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -6270,12 +6368,14 @@ impl Gen<'_> {
                 tests_of(&mut token_code, &mut token_read, &mut unread, test, *bit);
             }
         }
-        if let Some((o, c, _)) = &self.level {
+        if let Some((o, c, _)) = &self.level
+            && reader_code.is_none()
+        {
             // The level before the token (a tail opens at 0), then the token's own bracket: the walk's, whose `deep` refuses a file it cannot count.
             let _ = write!(open_code, "        // The level of the template's code before the token: a tail opens only at 0.\n        let flat = level == 0;\n        if template != usize::MAX {{\n            if bit(&{o}, s) {{\n                level = level.saturating_add(1);\n            }} else if !flat && bit(&{c}, s) {{\n                level -= 1;\n            }}\n        }}\n");
         }
         open_code.push_str(GROUP_LINE);
-        if self.opens.is_some() && !picks.fused {
+        if self.opens.is_some() && !picks.fused && reader_code.is_none() {
             let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n", picks.open);
         }
         let mut span_decl = String::new();
@@ -6931,6 +7031,36 @@ impl Gen<'_> {
             },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
+        }
+        // A string reader's (decision 0698): its state, its pick at a template's level 0, the pieces after its record.
+        if let Some(rc) = &reader_code {
+            let mut rd = rc.pick.clone();
+            for (i, arm) in row_arms.iter().enumerate() {
+                rd = rd.replace(&reader::arm_of(arm.row), &i.to_string());
+            }
+            for (from, to) in [
+                ("    // The blocks of 64 bytes, and in each the bytes `skip` does not hold", format!("{}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold", rc.decl)),
+                ("        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word)", format!("{rd}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word)")),
+                ("            unsafe { out.add(len).write(rec) };\n            len += 1;\n", "            unsafe { out.add(len).write(rec) };\n            // A string's record is its first piece, its others after it (`more`), to its last byte (`rd_end`).\n            len += 1 + more;\n            more = 0;\n".to_owned()),
+                ("        } else {\n            let tested = pending | hits;\n", "        } else if rd_bare {\n            // A string's tail: its gap is the next token's.\n            marks = 0;\n        } else {\n            let tested = pending | hits;\n".to_owned()),
+                ("        from_record = s + 1;\n", "        if !rd_bare {\n            from_record = s + 1;\n        }\n".to_owned()),
+                ("code: kind | word << 8 | marks << 16 };\n", "code: kind | if rd_bare { 0 } else { word << 8 } | marks << 16 };\n        rd_bare = false;\n".to_owned()),
+                ("        at = l + 1;\n        if at >= base + 64 {", "        at = if rd_end != usize::MAX { rd_end } else { l } + 1;\n        rd_end = usize::MAX;\n        if at >= base + 64 {".to_owned()),
+                ("    let _ = (from, from_record, before, pending);\n", format!("{}    let _ = (from, from_record, before, pending);\n", rc.end)),
+            ] {
+                if !out.contains(from) {
+                    return Err(format!("tier 1 as Rust: a string reader's loop: no `{}`", from.trim()));
+                }
+                out = out.replacen(from, &to, 1);
+            }
+            // At a template's level 0, its `}`, its spec, its conversion are the reader's: the rows' pick only elsewhere.
+            let anchor = "            };\n            match row {\n";
+            let (Some(e), Some(p)) = (out.find(anchor), out.find("            let row = match ")) else { return Err("tier 1 as Rust: a string reader's loop: no rows' pick".into()) };
+            if p > e {
+                return Err("tier 1 as Rust: a string reader's loop: the rows' pick after its arms".into());
+            }
+            out.replace_range(e..e + anchor.len(), "            } };\n            match row {\n");
+            out.insert_str(p + "            let row = ".len(), "if rd_pick != usize::MAX { rd_pick } else { ");
         }
         if from_bytes.is_some() {
             out = out.replacen(&alone_text, "", 1);
@@ -8081,7 +8211,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_memo: Default::default(), region_gen: 0, opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false, region_counts: false }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), level: None, deep: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), ends: None, fill_proofs: Default::default(), region_memo: Default::default(), region_gen: 0, opener_at: [[true; 256]; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), passes: Vec::new(), open_pass: None, lane_passes: HashSet::new(), in_lane: false, walk_writes: false, region_counts: false, reader_kinds: Vec::new(), readers: Vec::new(), reader_level: None }.source()
 }
 
 /// `code` with no test build's checks (decision 0655 step 3): each `#[cfg(feature = "test-hooks")]` assert and the

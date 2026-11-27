@@ -397,6 +397,61 @@ pub fn split_reader(r: &crate::records::Records, b: u8) -> Option<&crate::record
     }
 }
 
+/// The tokens `run` reads, in order, each its first byte, its last and its code: tier 1's records, each one a region
+/// tier 2 splits (`Split::Tier2`, decision 0323) its parts (`records::read_parts`) with their codes (`records::pass`),
+/// the first with the record's marks; and a string's parts going on at its template's `}` (decision 0600), before
+/// the next record. As `run_seen` takes them; `None` where a region has no closer. A writer that splits the regions
+/// in tier 1 (a string reader's, decision 0698) writes these as its records. Each its first byte, its last, its code,
+/// and whether it is a part after its region's first.
+pub fn tokens(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Option<Vec<(u32, u32, u32, bool)>> {
+    let none: Vec<u32> = Vec::new();
+    let starts: &[u32] = program.words.iter().map(|&w| split(w)).find(|&(o, _, _)| o == TOKEN).map_or(&none, |(_, _, x)| &tier1.positions[usize::from(x)]);
+    let records = program.block_programs.first().and_then(|b| b.records.as_ref());
+    let lasts: &[u32] = records.map_or(&none, |r| &tier1.positions[usize::from(r.lasts)]);
+    let late = records.filter(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)).map(|r| (r, crate::records::WordTable::new(&r.words).expect("verified: the words fit a table")));
+    let resumers: Vec<u16> = records.map(|r| r.readers.iter().filter(|rd| rd.resumes).flat_map(|rd| rd.arms.iter().map(|a| a.opener)).collect()).unwrap_or_default();
+    let count = starts.len().min(lasts.len());
+    let mut out = Vec::with_capacity(count);
+    let mut parts: std::collections::VecDeque<(u32, u32, u32, bool)> = std::collections::VecDeque::new();
+    let (mut strings, mut next, mut rec_end) = (0usize, 0usize, 0u32);
+    loop {
+        if let Some(t) = parts.pop_front() {
+            out.push(t);
+            rec_end = t.1 + 1;
+            continue;
+        }
+        let resume = if strings == 0 { None } else { resumers.iter().filter_map(|&o| crate::records::first_bit(&tier1.outputs, o, rec_end as usize)).min().filter(|&p| next == count || (p as u32) < starts[next]) };
+        let (start, last, code) = match resume {
+            Some(p) => (p as u32, p as u32 + 1, 0),
+            None if next == count => break,
+            None => {
+                next += 1;
+                (starts[next - 1], lasts[next - 1], tier1.codes.get(next - 1).copied().unwrap_or(0))
+            }
+        };
+        rec_end = last + 1;
+        if let Some((r, rd, table)) = late.as_ref().and_then(|(r, t)| Some((*r, split_reader(r, bytes.get(start as usize).copied()?)?, t))) {
+            let opens = rd.arms.first().is_some_and(|a| tier1.outputs.get(usize::from(a.opener)).and_then(|w| w.get(start as usize / 64)).is_some_and(|w| w >> (start % 64) & 1 == 1));
+            if opens && rec_end > start + 1 {
+                let tokens = crate::records::read_parts(rd, start as usize, &tier1.outputs)?;
+                let template = tokens.last().is_some_and(|&(c, _)| rd.arms.iter().any(|a| a.template.is_some_and(|t| crate::records::first_bit(&tier1.outputs, t, c) == Some(c))));
+                if rd.resumes && !template {
+                    strings = strings.saturating_sub(1);
+                } else if !rd.resumes && template {
+                    strings += 1;
+                }
+                let (s, l): (Vec<u32>, Vec<u32>) = tokens.iter().map(|&(a, b)| (a as u32, b as u32)).unzip();
+                let (codes, _) = crate::records::pass(r, table, bytes, &s, &l, &tier1.outputs);
+                let low = (1u32 << crate::records::MARK_SHIFT) - 1;
+                parts.extend(s.iter().zip(&l).zip(&codes).enumerate().map(|(i, ((&a, &b), &c))| (a, b, if i == 0 { c & low | code & !low } else { c }, i > 0)));
+                continue;
+            }
+        }
+        out.push((start, last, code, false));
+    }
+    Some(out)
+}
+
 pub fn run(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun) -> Result<Vec<Node>, Refused> {
     run_seen(program, bytes, tier1, &mut |_| {})
 }

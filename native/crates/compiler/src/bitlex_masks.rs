@@ -5610,10 +5610,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     _ => None,
                 };
-                let open_last = match low.token_open_last.get(&kind).copied() {
-                    Some(v) => Some(mask_of(low, v, &mut mark_masks)),
-                    None => None,
-                };
+                let open_last = low.token_open_last.get(&kind).copied().map(|v| mask_of(low, v, &mut mark_masks));
                 let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes, nest, open_last };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
