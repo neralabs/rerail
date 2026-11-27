@@ -656,6 +656,62 @@ pub fn nearest_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, 
     fill(out, n, &mut done, &mut top, &mut end);
 }
 
+/// `nearest_all`'s answer with the path to it: each node's nearest strict ancestor among the set's nodes that `keep`
+/// keeps into `near`, and into `child` that ancestor's child that holds the node strictly below it (`NONE`: the node
+/// is the ancestor's child itself, or has no ancestor). With it `nearest(n, a, S), field(a, F, p), within(n, p)` is
+/// one read of `n`: `p` is `child[n]`, `F` its field. As `nearest_all`, between two events (a match, the end of an
+/// open one, a child of the innermost open one begun) the answers are one pair, written as runs; the open matches are
+/// a stack of each one with its child open now, a few a document. No parent is read.
+pub fn nearest_child_all<T: Tape>(t: &T, set: &CodeSet, keep: impl Fn(usize) -> bool, near: &mut [u32], child: &mut [u32]) {
+    let n = t.len();
+    assert!(near.len() >= n && child.len() >= n, "nearest_child_all: {} and {} answers for {n} nodes", near.len(), child.len());
+    /// An open match: its id, its subtree's end, its child open now (`NONE` before the first) and that child's end.
+    struct Open {
+        at: u32,
+        end: usize,
+        child: u32,
+        child_end: usize,
+    }
+    let mut open: Vec<Open> = Vec::new();
+    let mut done = 0usize;
+    let fill = |near: &mut [u32], child: &mut [u32], open: &mut Vec<Open>, done: &mut usize, upto: usize| {
+        while *done < upto {
+            while open.last().is_some_and(|o| o.end <= *done) {
+                open.pop();
+            }
+            let Some(o) = open.last_mut() else {
+                near[*done..upto].fill(NONE);
+                child[*done..upto].fill(NONE);
+                *done = upto;
+                return;
+            };
+            // The innermost match's children lie one after another from its own id on: its next one begins here.
+            if o.child == NONE || o.child_end <= *done {
+                (o.child, o.child_end) = (*done as u32, t.subtree_end(*done));
+                near[*done] = o.at;
+                child[*done] = NONE;
+                *done += 1;
+                continue;
+            }
+            let lim = o.child_end.min(upto);
+            near[*done..lim].fill(o.at);
+            child[*done..lim].fill(o.child);
+            *done = lim;
+        }
+    };
+    t.match_groups(set, |base, mut m| {
+        while m != 0 {
+            let s = base + m.trailing_zeros() as usize;
+            m &= m - 1;
+            if keep(s) {
+                fill(near, child, &mut open, &mut done, s + 1);
+                open.push(Open { at: s as u32, end: t.subtree_end(s), child: NONE, child_end: 0 });
+            }
+        }
+    });
+    fill(near, child, &mut open, &mut done, n);
+}
+
 // ---- every format ------------------------------------------------------------------------------------------
 
 /// A document's tape in whichever format it is held. A 16z reader keeps the blocks it decoded, so it is one
@@ -853,6 +909,69 @@ pub(crate) mod tests {
                 assert_eq!(got, q.map_or(NONE, |a| a as u32), "node {i}, set {k}");
             }
             assert_eq!(out.len(), t.len());
+        }
+    }
+
+    /// A tree of a few hundred nodes, up to eight levels, of four codes (kinds 1 to 4, fields 0 to 3): each node's
+    /// children 0 to 3 of them, drawn from a fixed sequence, so members of a set nest in members.
+    fn deep() -> (Vec<(u32, u64, u64, usize)>, CodeTable) {
+        let entry = |kind: u16, field: u16| Entry { kind, field, flags: 0, alias: None, classes: Vec::new() };
+        let table = CodeTable::new(vec![entry(1, 0), entry(2, 1), entry(3, 2), entry(4, 3)]);
+        let mut seed = 7u64;
+        let mut next = move |m: u64| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) % m
+        };
+        fn grow(nodes: &mut Vec<(u32, u64, u64, usize)>, depth: u32, next: &mut dyn FnMut(u64) -> u64) {
+            let at = nodes.len();
+            let code = next(4) as u32;
+            nodes.push((code, at as u64 * 10, 0, 0));
+            if depth < 8 && nodes.len() < 400 {
+                for _ in 0..next(4) {
+                    grow(nodes, depth + 1, next);
+                }
+            }
+            let size = nodes.len() - at;
+            nodes[at].2 = nodes.len() as u64 * 10;
+            nodes[at].3 = size;
+        }
+        let mut nodes = Vec::new();
+        while nodes.len() < 300 {
+            nodes.clear();
+            grow(&mut nodes, 0, &mut next);
+        }
+        (nodes, table)
+    }
+
+    /// `nearest_child_all` gives each node's nearest kept ancestor in the set and that ancestor's child it lies
+    /// strictly below, as climbing its parents does: on the sample and on a deeper tree whose members nest.
+    #[test]
+    fn nearest_child_all_is_the_climb() {
+        for (nodes, table) in [sample(), deep()] {
+            let t = Plain(&nodes, &table);
+            let mut nested = 0;
+            for k in 0..table.len() as u32 {
+                for keep_all in [true, false] {
+                    let set = table.set(|e| e == table.entry(k) || e.kind % 3 == 0);
+                    let set = set.view();
+                    let keep = |i: usize| keep_all || i % 5 != 2;
+                    let (mut near, mut child) = (vec![0; t.len()], vec![0; t.len()]);
+                    nearest_child_all(&t, &set, keep, &mut near, &mut child);
+                    let mut alone = vec![0; t.len()];
+                    nearest_all(&t, &set, keep, &mut alone);
+                    assert_eq!(near, alone, "set {k}: the nearest ones are nearest_all's");
+                    for i in 0..t.len() {
+                        let (mut below, mut q) = (i, t.parent(i));
+                        while let Some(a) = q.filter(|&a| !(set.contains(t.code(a)) && keep(a))) {
+                            (below, q) = (a, t.parent(a));
+                        }
+                        let want = q.map_or((NONE, NONE), |a| (a as u32, if below == i { NONE } else { below as u32 }));
+                        assert_eq!((near[i], child[i]), want, "node {i}, set {k}, keep all {keep_all}");
+                        nested += usize::from(want.0 != NONE && near[want.0 as usize] != NONE);
+                    }
+                }
+            }
+            assert!(nodes.len() < 100 || nested > 100, "members nest in members: {nested}");
         }
     }
 
