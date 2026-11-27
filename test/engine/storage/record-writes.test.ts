@@ -570,6 +570,25 @@ describe("record writes while another process holds the write lock", () => {
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("already owned by a live runtime"));
   }, 30_000);
 
+  // Dropped as it was asked, the claim was lost before its runtime held it, so nobody could be told: it is refused at
+  // once instead, and the session's open fails, as it did when the lock stayed held.
+  it("refuse a session's owner claim at once when no more writes may wait", async () => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    sessions.openSession(session, 1_000);
+    holderHere(path);
+    const writer = (await recordWrites()).openRecordWriter(path);
+    closers.push(() => writer.close());
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    writer.write(() => undefined, 64 * 1024 * 1024);
+    writer.write(() => undefined, 1);
+
+    expect(thrown(() => controls.registerOwner(session.sessionId, "background"))).toMatchObject({
+      message: expect.stringContaining("write lock stayed held past what may wait"),
+    });
+  }, 30_000);
+
   // The lock wait learns that the lock is free by taking it and giving it back on a connection of its thread's own.
   // Before, the owner claim's one try for the session's row, its waiting time spent, met that take as a holder and failed
   // with the lock's error though no other connection held the lock: as the lock was given back, a session's open failed
@@ -723,20 +742,25 @@ describe("record writes while another process holds the write lock", () => {
   }, 30_000);
 
   // The audit controls take a use of the record writer at their first claim or release and give it back at their close,
-  // so the last store's close still makes what waits, or reports it, and closes the writer's connection.
+  // so the last store's close still makes what waits, or reports it, and closes the writer's connection. The claim lost
+  // there is told to its runtime, which would hold it otherwise.
   it("are reported lost at the last store's close, a session's owner claim among them, once asked longer ago than the bound", async () => {
     const { path, sessions, audits } = await stores();
     const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
     const holder = holderHere(path);
     const clock = boundClock();
     sessions.openSession(session, 1_000);
-    controls.registerOwner(session.sessionId, "background");
+    const lost = vi.fn();
+    const claim = controls.registerOwner(session.sessionId, "background", undefined, lost);
     clock.pastTheBound();
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
 
     expect(msOf(() => { controls.close(); audits.close(); sessions.close(); })).toBeLessThan(1_000);
 
-    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("2 records not written"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("1 records not written"));
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/^rerail: session held-session was not claimed.*write lock stayed held/u));
+    expect(lost).toHaveBeenCalledWith(claim);
     holder.exec("COMMIT");
   }, 30_000);
 

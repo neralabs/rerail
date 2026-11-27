@@ -2749,15 +2749,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
    * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
    * meanwhile registers as before, and is refused while this one owns it. It is taken only once the claim is made: an
-   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record.
+   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record. A claim kept
+   * for the write lock and not made is let go (`#claimNotMade`).
    */
   #registerOwner(sessionId: string): PolicyOwnerClaim {
     const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
     const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
       ? kept
-      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId);
+      : this.#controls.registerOwner(sessionId, this.#ownerDelivery(), this.#ownerLockId, lost => { this.#claimNotMade(sessionId, lost); });
     this.#suspendedSessions?.take(sessionId);
     return claim;
+  }
+
+  /**
+   * The session's claim, kept for the write lock, was not made: refused once the lock was given back, as when another
+   * runtime claimed the session first, or dropped. The session is no longer this runtime's to scan, release or
+   * interrupt, which would act on a claim the database does not hold.
+   */
+  #claimNotMade(sessionId: string, claim: PolicyOwnerClaim): void {
+    const state = this.#sessions.get(sessionId);
+    if (state?.ownerClaim?.token === claim.token) state.ownerClaim = undefined;
   }
 
   /** How this runtime delivers the steers of the sessions it claims: in the background when it can, else at the next event. */
@@ -3762,7 +3773,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #startingCheckout(session: AdapterSession): StartingCheckout {
     // A folder that does not exist fails here (ENOENT), before anything is recorded or created for it.
     const cwd = checkoutRealpath(session.cwd);
-    // A checkout recorded already is only seen again, a record write that never waits here for another process's lock.
+    // A checkout recorded already is only seen again, a record write that never waits here for another process's lock,
+    // but for the first adoption of a remote its clone-keyed repository gained (`recordCheckout`).
     const known = recordCheckout(this.#catalogs.database, cwd, Date.now(), this.#checkoutRecords);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);

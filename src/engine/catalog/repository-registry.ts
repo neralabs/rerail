@@ -186,7 +186,9 @@ const adoptionChecked = new Set<RepositoryKey>();
  * Record the checkout `workspace` is in, creating its clone id, repository and checkout rows as needed. A path
  * recorded for another clone id (a re-clone) is recorded again and loses its own settings. A clone-keyed repository
  * adopts the checkout's remote once per process. Given the database's record writer, `records`, a checkout recorded
- * with the same clone id is only seen again, which never waits for another process's write lock ({@link seenCheckout}).
+ * with the same clone id is only seen again, which never waits for another process's write lock ({@link seenCheckout}),
+ * but for that adoption: the first time a process sees a remote on a clone-keyed checkout, it writes on `db`, which
+ * waits for the lock as before.
  */
 export function recordCheckout(
   db: RerailDatabase,

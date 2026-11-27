@@ -9,8 +9,9 @@
  * (`waitForWriteLock`) finds the lock given back. One writer per database file in a process, whatever store calls it, so
  * writes commit in the order they were made: an audit never lands before the session row it names.
  *
- * What a waiting write cannot have: a caller that needs its result or its failure. A write made at once throws as
- * before; one made later reports its failure on stderr, as `CodeRuleEnforcer` reports a record it could not make.
+ * What a waiting write cannot have: a caller that needs its result. A write made at once throws as before; one made
+ * later reports its failure on stderr, as `CodeRuleEnforcer` reports a record it could not make, or to the `lost` its
+ * caller gave, as the session owner claim does.
  * A read of what this process recorded makes the waiting writes first (`flushRecordWrites`), as does a write on another
  * connection that must not commit ahead of them (`requireRecordWritesMade`). A thread waits for a waiting write no
  * longer than `BUSY_TIMEOUT_MS` from when the write was asked, as the write itself waited before, so the reads, the
@@ -27,12 +28,16 @@ const { SqliteError } = Database;
 /** One record write: its statements, run on the writer's connection inside one immediate transaction. */
 export type RecordWrite = (database: RerailDatabase) => void;
 
+/** Why a write kept for the lock was not made, told to who asked for it (`RecordWriter.write`). */
+export type RecordWriteLost = (error: unknown) => void;
+
 export interface RecordWriter {
   /**
    * Makes `write` now when the write lock is free and no write waits, throwing what it throws; otherwise keeps it, in
-   * order, until the lock is given back. `bytes`, about what it holds in memory, bounds what may wait.
+   * order, until the lock is given back. `bytes`, about what it holds in memory, bounds what may wait. With `lost`, a
+   * write that cannot be kept throws, and one kept and not made, failed or dropped, is told to `lost`, not stderr.
    */
-  write(write: RecordWrite, bytes?: number): void;
+  write(write: RecordWrite, bytes?: number, lost?: RecordWriteLost): void;
   /**
    * `write`, unless no write waits and `unchanged`, a read of what is on disk, says it would change nothing: a write of
    * no effect takes no write lock. `write` checks again itself, since it may be made later.
@@ -65,12 +70,14 @@ export interface RecordWriter {
  */
 const MAX_WAITING_WRITES = 10_000;
 const MAX_WAITING_BYTES = 64 * 1024 * 1024;
+const LOCK_STAYED_HELD = "the database's write lock stayed held past what may wait";
 
 /** A write that waits for the lock: until when a thread may wait for it (`BUSY_TIMEOUT_MS` from when it was asked). */
 interface WaitingWrite {
   readonly write: RecordWrite;
   readonly bytes: number;
   readonly deadline: number;
+  readonly lost: RecordWriteLost | undefined;
 }
 
 /** Every writer of this process by database file, with how many stores use it. */
@@ -160,7 +167,7 @@ class FileRecordWriter {
       if (closed) throw new TypeError("The database connection is not open");
     };
     return {
-      write: (write, bytes = 0) => { open(); this.#write(write, bytes); },
+      write: (write, bytes = 0, lost) => { open(); this.#write(write, bytes, lost); },
       writeUnless: (unchanged, write, bytes = 0) => {
         open();
         if (this.#waiting.length === 0 && unchanged()) return;
@@ -189,9 +196,9 @@ class FileRecordWriter {
     return this.#database;
   }
 
-  #write(write: RecordWrite, bytes: number): void {
+  #write(write: RecordWrite, bytes: number, lost?: RecordWriteLost): void {
     if (this.#writeNow(write)) return;
-    this.#keep(write, bytes);
+    this.#keep(write, bytes, lost);
   }
 
   /** Made now only behind no waiting write, so writes commit in the order they were asked for. */
@@ -228,15 +235,17 @@ class FileRecordWriter {
   /**
    * Keeps `write` until the lock is given back, or drops it past what may wait. Once one is dropped behind waiting writes,
    * every later one is dropped too until those are made (`#settle`): a write made without one asked before it, such as
-   * the removal of a steer receipt's kept file after the receipt's record, would lose what the dropped one held.
+   * the removal of a steer receipt's kept file after the receipt's record, would lose what the dropped one held. A
+   * write with `lost` is refused by a throw, its caller still there to hear it.
    */
-  #keep(write: RecordWrite, bytes: number): void {
+  #keep(write: RecordWrite, bytes: number, lost: RecordWriteLost | undefined): void {
     if (this.#refusing || this.#waiting.length >= MAX_WAITING_WRITES || this.#waitingBytes + bytes > MAX_WAITING_BYTES) {
-      this.#dropped += 1;
       this.#refusing = this.#waiting.length > 0;
+      if (lost !== undefined) throw new Error(LOCK_STAYED_HELD);
+      this.#dropped += 1;
       return;
     }
-    this.#waiting.push({ write, bytes, deadline: performance.now() + BUSY_TIMEOUT_MS });
+    this.#waiting.push({ write, bytes, deadline: performance.now() + BUSY_TIMEOUT_MS, lost });
     this.#waitingBytes += bytes;
     this.#awaitLock();
   }
@@ -269,7 +278,7 @@ class FileRecordWriter {
   /** Makes the waiting writes in order until one meets the lock again, which waits on; reports each that fails. */
   #makeWaiting(): void {
     while (this.#waiting.length > 0) {
-      if (!this.#makeReported(this.#waiting[0]!.write)) {
+      if (!this.#makeReported(this.#waiting[0]!)) {
         this.#awaitLock();
         return;
       }
@@ -299,19 +308,29 @@ class FileRecordWriter {
     for (const settle of this.#settled.splice(0)) settle();
   }
 
-  /** As `#makeNow`, a failure other than the lock reported rather than thrown: its caller has moved on. */
-  #makeReported(write: RecordWrite): boolean {
+  /**
+   * As `#makeNow`, a failure other than the lock reported rather than thrown: its caller has moved on. It is told to
+   * the write's `lost`, else on stderr.
+   */
+  #makeReported(waiting: WaitingWrite): boolean {
     try {
-      return this.#makeNow(write);
+      return this.#makeNow(waiting.write);
     } catch (error) {
-      process.stderr.write(`rerail: record write failed: ${messageOf(error)}\n`);
+      if (waiting.lost === undefined) process.stderr.write(`rerail: record write failed: ${messageOf(error)}\n`);
+      else waiting.lost(error);
       return true;
     }
   }
 
+  /** A kept write that will not be made: told to its `lost`, else counted for `#reportDropped`'s line. */
+  #drop(waiting: WaitingWrite): void {
+    if (waiting.lost === undefined) this.#dropped += 1;
+    else waiting.lost(new Error(LOCK_STAYED_HELD));
+  }
+
   #reportDropped(): void {
     if (this.#dropped === 0) return;
-    process.stderr.write(`rerail: ${String(this.#dropped)} records not written: the database's write lock stayed held past what may wait\n`);
+    process.stderr.write(`rerail: ${String(this.#dropped)} records not written: ${LOCK_STAYED_HELD}\n`);
     this.#dropped = 0;
   }
 
@@ -338,7 +357,7 @@ class FileRecordWriter {
    */
   #makeWaitingOnThisThread(): void {
     this.#makeOnThisThread();
-    this.#dropped += this.#waiting.splice(0).length;
+    for (const waiting of this.#waiting.splice(0)) this.#drop(waiting);
     this.#waitingBytes = 0;
     this.#settle();
   }
@@ -352,7 +371,7 @@ class FileRecordWriter {
     const waitMs = Math.max(0, Math.ceil(this.#waiting[0]!.deadline - performance.now()));
     client.pragma(`busy_timeout = ${String(waitMs)}`);
     try {
-      while (this.#waiting.length > 0 && this.#makeReported(this.#waiting[0]!.write)) this.#shiftWaiting();
+      while (this.#waiting.length > 0 && this.#makeReported(this.#waiting[0]!)) this.#shiftWaiting();
     } finally {
       client.pragma("busy_timeout = 0");
     }

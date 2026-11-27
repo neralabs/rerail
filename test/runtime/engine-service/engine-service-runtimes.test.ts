@@ -54,13 +54,16 @@ vi.mock("node:fs/promises", async importOriginal => {
 
 /** Each wait for a write lock begun, with its signal, and whether a quiet session's open for a scan began it. */
 const lockWaits = vi.hoisted(() => [] as Array<{ signal: AbortSignal | undefined; resume: boolean }>);
+/** While `held` is set, a wait for the write lock begins only once it settles: one that has not seen the lock given back. */
+const lockWaitGate = vi.hoisted(() => ({ held: undefined as Promise<void> | undefined }));
 vi.mock("../../../src/engine/storage/write-lock-wait.js", async importOriginal => {
   const actual = await importOriginal<{ waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => Promise<boolean> }>();
   return {
     ...actual,
     waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => {
       lockWaits.push({ signal, resume: new Error().stack?.includes("retryResume") === true });
-      return actual.waitForWriteLock(path, signal, since);
+      const held = lockWaitGate.held;
+      return held === undefined ? actual.waitForWriteLock(path, signal, since) : held.then(() => actual.waitForWriteLock(path, signal, since));
     },
   };
 });
@@ -917,6 +920,50 @@ describe("the engine service's idle close", () => {
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
       sessions.close();
+    }
+  }, 30_000);
+
+  // Before, the open read the claim the suspension kept only from the database, which did not have it yet, and asked
+  // for a second one behind it: the first was made once the lock was free and the second refused, so the runtime held a
+  // claim the database lacked, never ran the session's scans, and refused every later open of the session.
+  it("keeps the claim of a session suspended and opened again while the claim waits for the write lock, and runs its scans", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, prompt, turnEnd, live, databasePath } = await idleService({ createAuditor: create, needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const scanned = async (): Promise<void> => {
+      const request = await controls.requestAudit("b", { scope: "repository" });
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("b").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+    };
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      // The lock is free, and the record writer's wait has not seen it: the session's claim still waits.
+      writer.exec("ROLLBACK");
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      await prompt("b", "back");
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(live("b")).toBe(true), { timeout: 10_000, interval: 20 });
+      await scanned();
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      await prompt("b", "again");
+      await scanned();
+      expect(scans).toEqual(["repository", "repository"]);
+    } finally {
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
     }
   }, 30_000);
 

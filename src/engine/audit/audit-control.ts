@@ -191,6 +191,21 @@ function askedOnce<K, V>(answer: (key: K) => V): (key: K) => V {
 const claimsHereWithoutLock = new Set<string>();
 
 /**
+ * The tokens of the claims this process asked for (`registerOwner`) that wait in its record writer for the lock: each
+ * leaves once made or not made. A session reopened meanwhile keeps its claim by them (`holdsOwner`), whatever runtime
+ * of this process reopens it, where a second claim, behind the first, would be refused once both were made.
+ */
+const claimsWaiting = new Set<string>();
+
+/** A kept claim that was not made: said with its session, and no longer this process's. */
+function claimNotMade(sessionId: string, token: string, error: unknown): void {
+  claimsWaiting.delete(token);
+  claimsHereWithoutLock.delete(token);
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: session ${sessionId} was not claimed, so this process does not own it: ${reason}\n`);
+}
+
+/**
  * Whether the runtime that wrote `owner` has ended, so the session it holds is no one's: the process the row names is
  * gone; or the row was written under an engine service's lock that is free now (`ownerLockFreed`), however that service
  * ended and whatever process holds its pid; or, written under none, it names this process but this process did not
@@ -459,14 +474,23 @@ export class SqliteAuditControlStore {
    * claim is a record write (`openRecordWriter`), so it never waits on this thread for another process's write lock: made
    * now when the lock is free and no write waits, throwing as it fails; else kept behind this process's waiting writes,
    * the session's row among them, and made once the lock is given back, so the session opens at once all the same. A
-   * live runtime's claim is refused at once as the database holds it now, and again as the claim is made, where a kept
-   * claim's refusal is reported on stderr.
+   * live runtime's claim is refused at once as the database holds it now, and again as the claim is made. A kept claim
+   * not made, refused or dropped, is said on stderr with its session and told to `lost`, so its runtime lets it go.
    */
-  registerOwner(sessionId: string, delivery: "background" | "next-event", lockId?: string | undefined): PolicyOwnerClaim {
+  registerOwner(
+    sessionId: string,
+    delivery: "background" | "next-event",
+    lockId?: string | undefined,
+    lost?: (claim: PolicyOwnerClaim) => void,
+  ): PolicyOwnerClaim {
     const token = ownerToken(lockId);
     const held = ownerRow(this.#database, sessionId);
     if (held?.active && processIsLive(held.processId)) throw alreadyOwned(sessionId);
+    // Made at once or kept: only a kept claim waits.
+    let decided = false;
     this.#recordWriter().write(database => {
+      decided = true;
+      claimsWaiting.delete(token);
       requireSession(database, sessionId);
       const owner = this.#owner(sessionId, database);
       if (owner?.active) throw alreadyOwned(sessionId);
@@ -476,7 +500,11 @@ export class SqliteAuditControlStore {
       // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
       // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
       database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
+    }, 0, error => {
+      claimNotMade(sessionId, token, error);
+      lost?.({ token });
     });
+    if (!decided) claimsWaiting.add(token);
     if (lockId === undefined) claimsHereWithoutLock.add(token);
     return { token };
   }
@@ -493,9 +521,11 @@ export class SqliteAuditControlStore {
   }
   /**
    * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
-   * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
+   * takes back without interrupting the scans queued for it. False once its owner was released or replaced. A claim
+   * still waiting for the lock in this process holds it: made, it is the owner row; not made, its runtime is told.
    */
   holdsOwner(sessionId: string, claim: PolicyOwnerClaim): boolean {
+    if (claimsWaiting.has(claim.token)) return true;
     const owner = this.#owner(sessionId);
     return owner?.active === true && owner.token === claim.token && owner.processId === process.pid;
   }
