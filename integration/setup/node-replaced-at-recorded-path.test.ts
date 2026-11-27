@@ -82,7 +82,7 @@ interface Place {
 async function place(): Promise<Place> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-node-replaced-")));
   folders.push(root);
-  // A home with a space, as C:\Users\John Smith: the step's path is quoted in every shell.
+  // A home whose folder name holds a space: the step's path is quoted in every shell.
   const [user, repo] = [join(root, "John Smith"), join(root, "app")];
   const home = join(user, ".rerail");
   await Promise.all([home, repo, join(root, "system")].map(folder => mkdir(folder, { recursive: true })));
