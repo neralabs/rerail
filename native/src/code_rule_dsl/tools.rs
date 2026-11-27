@@ -272,14 +272,20 @@ pub fn run_rr(
 /// The findings of the run whose outputs are in `dir`, as the CLI reports them: every finding relation's rows
 /// (`rr::lower::findings`), each as its JSON object.
 pub fn diagnostics(dir: &std::path::Path) -> Result<Vec<serde_json::Value>, String> {
+    reported(dir, std::path::Path::new(""), &super::rr_host::suppressions::Suppressions::default()).map(|(kept, _)| kept)
+}
+
+/// [`diagnostics`], split in those the linters' comments their `suppress` lines name keep and those they drop (the
+/// findings layer's stage, `rr_host::suppressions`), over the files under `root`.
+fn reported(dir: &std::path::Path, root: &std::path::Path, suppressions: &super::rr_host::suppressions::Suppressions) -> Result<(Vec<serde_json::Value>, Vec<serde_json::Value>), String> {
     let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(dir).map_err(|e| e.to_string())?;
-    let mut all = Vec::new();
-    for rel in outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)) {
-        for row in outputs.rows(rel) {
-            all.push(diagnostic(&row)?);
-        }
+    let rows: Vec<_> = outputs.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| outputs.rows(rel)).collect();
+    let (mut kept, mut dropped) = (Vec::new(), Vec::new());
+    for (row, suppressed) in rows.iter().zip(suppressions.suppressed(root, &rows)) {
+        let into = if suppressed { &mut dropped } else { &mut kept };
+        into.push(diagnostic(row)?);
     }
-    Ok(all)
+    Ok((kept, dropped))
 }
 
 /// A finding's row as its JSON object: `policy`, `clause`, `code`, `path`, `line`, `at`, `tag` (`null` for none),
@@ -316,7 +322,8 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
     Ok(serde_json::Value::Object(finding))
 }
 
-/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
+/// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`). Its findings are those
+/// its `.violation`s' `suppress` lines keep (`rr_host::suppressions`).
 pub fn run_program(
     program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
@@ -324,38 +331,15 @@ pub fn run_program(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
-    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
-    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
-    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
-    // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
-    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
-    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
-    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
-        vec![(None, out.to_path_buf())]
-    } else {
-        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
-    };
-    let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
-    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
-    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
-    for (dialect, dir) in &runs {
-        let mut options = with_reuse(options);
-        if let Some(dialect) = dialect {
-            options["dialect"] = serde_json::json!(dialect);
-        }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
-        rows.extend(diagnostics(dir)?);
-        files_read += report.files;
-        nodes += report.nodes;
-        phases.extend(report.phases);
-    }
+    let metadata = super::logic::rr::metadata(&program).map_err(|e| e.to_string())?;
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    suppressions.add(program.settings.iter().map(|(key, text)| (key.as_str(), text.as_str())))?;
+    let (rows, reports) = program_runs(&program, root, out, options, &suppressions)?;
+    let phases: Vec<_> = reports.iter().flat_map(|report| &report.phases).collect();
     Ok(
-        serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
+        serde_json::json!({"diagnostics": rows,
+                         "files": reports.iter().map(|report| report.files).sum::<usize>(),
+                         "nodes": reports.iter().map(|report| report.nodes).sum::<usize>(),
                          "metadata": metadata,
                          "programInputs": files.iter().map(|file| serde_json::json!({
                              "path": file.path,
@@ -366,6 +350,40 @@ pub fn run_program(
                              "peakRssMB": rss, "submittedStatements": statements
                          })).collect::<Vec<_>>()}),
     )
+}
+
+/// `program`'s runs (`run_program`): its findings, less those `suppressions` drop, and each run's report.
+fn program_runs(
+    program: &super::logic::front::Program,
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+    suppressions: &super::rr_host::suppressions::Suppressions,
+) -> Result<(Vec<serde_json::Value>, Vec<super::logic::plan::corpus::Report>), String> {
+    use super::{logic::plan::corpus, typing::file_local::Binding};
+    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
+    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
+    // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
+    // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
+    let dialects = corpus::run_dialects(root, program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
+    let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
+        vec![(None, out.to_path_buf())]
+    } else {
+        dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { out.to_path_buf() } else { out.join(label) })).collect()
+    };
+    let (mut rows, mut reports) = (Vec::new(), Vec::new());
+    // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    for (dialect, dir) in &runs {
+        let mut options = with_reuse(options);
+        if let Some(dialect) = dialect {
+            options["dialect"] = serde_json::json!(dialect);
+        }
+        reports.push(corpus::run_read(program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?);
+        rows.extend(reported(dir, root, suppressions)?.0);
+    }
+    Ok((rows, reports))
 }
 
 /// Several `.rerail` policies over one repository (O105): each runs over the documents of the language it names
@@ -390,24 +408,7 @@ pub fn run_policies(
     }
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
-    // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
-    // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
-    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
-    #[cfg(test)]
-    let alone = pack_split_tests::ALONE.with(std::cell::Cell::get);
-    #[cfg(not(test))]
-    let alone = false;
-    let packed = !alone && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
-    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
-    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
-    let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
-    for group in groups.iter().filter(|g| g.members.len() > 1) {
-        if let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? {
-            for (&k, found) in group.members.iter().zip(each) {
-                done[k] = Some(found);
-            }
-        }
-    }
+    let mut done = packed(paths, root, out, options)?;
     for (k, path) in paths.iter().enumerate() {
         let (found, run) = match done[k].take() {
             Some(found) => found,
@@ -421,6 +422,52 @@ pub fn run_policies(
         runs.push(run);
     }
     Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
+}
+
+/// The batch's policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated
+/// once (decisions 0051, 0089), each policy's findings split back by its id, less those its `suppress` lines drop
+/// (`unsuppressed`). Each member's findings and run's record, by its index in `paths`; `None` for a policy that runs
+/// alone. `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+fn packed(paths: &[std::path::PathBuf], root: &std::path::Path, out: &std::path::Path, options: &serde_json::Value) -> Result<Vec<Option<KeyedRow>>, String> {
+    #[cfg(test)]
+    let alone = pack_split_tests::ALONE.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let alone = false;
+    let packed = !alone && std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
+    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
+    let mut done: Vec<Option<KeyedRow>> = paths.iter().map(|_| None).collect();
+    for group in groups.iter().filter(|g| g.members.len() > 1) {
+        let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? else { continue };
+        for ((&k, (found, run)), metadata) in group.members.iter().zip(each).zip(&group.metadata) {
+            done[k] = unsuppressed(found, &out.join(k.to_string()), root, metadata)?.map(|found| (found, run));
+        }
+    }
+    Ok(done)
+}
+
+/// A pack member's findings (`run_pack`'s, in their order) less those the linters' comments its `suppress` lines
+/// name drop (`rr_host::suppressions`), read again from its own outputs in `own`. `None` where a line does not read:
+/// the policy then runs alone, and meets its error there.
+fn unsuppressed(found: Vec<serde_json::Value>, own: &std::path::Path, root: &std::path::Path, metadata: &serde_json::Value) -> Result<Option<Vec<serde_json::Value>>, String> {
+    // Its settings as its record holds them (`rr::metadata`): `[key, text]` pairs.
+    let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
+    let mut suppressions = super::rr_host::suppressions::Suppressions::default();
+    if suppressions.add(settings.iter().copied()).is_err() {
+        return Ok(None);
+    }
+    if suppressions.is_empty() {
+        return Ok(Some(found));
+    }
+    let (_, mut dropped) = reported(own, root, &suppressions)?;
+    let kept = found.into_iter().filter(|finding| match dropped.iter().position(|d| d == finding) {
+        Some(at) => {
+            dropped.swap_remove(at);
+            false
+        }
+        None => true,
+    });
+    Ok(Some(kept.collect()))
 }
 
 /// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
