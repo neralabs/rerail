@@ -1641,6 +1641,30 @@ mod settings_tests {
         assert!(!not.facts.contains_key("env"));
     }
 
+    /// `parsed(r, "compiled-view", p)` reaches a Blade template's compiled program, and `nearest` reads PHP's kinds
+    /// over it: the closure's return is found, the template's own is not. The run found nothing: no embedder builds
+    /// that program (the template's parse derives it), and its `parsed` rows named its grammar, `php`, alone.
+    /// bladestan-if-always-true, bladestan-identical-always-true and complexity-cyclomatic-blade read it so.
+    #[test]
+    fn run_policies_finds_nearest_over_a_blade_templates_compiled_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name).display().to_string();
+        std::fs::create_dir_all(at("root")).unwrap();
+        std::fs::write(at("root/a.blade.php"), "@php $f = function ($v) { return $v; }; @endphp\n@php return 1; @endphp\n").unwrap();
+        std::fs::write(
+            at("p.rerail"),
+            ".policy \"t:blade-nearest\" revision 1\n.language blade\n.decl fn_kind(k: symbol)\nfn_kind(\"anonymous_function\"). fn_kind(\"program\").\n\
+             .violation Ret(at: node) code \"ret\" \"a return in a closure\"\n\
+             Ret(n) :- kind(r, \"document\"), parsed(r, \"compiled-view\", p), within(n, p), kind(n, \"return_statement\"), nearest(n, f, fn_kind), kind(f, \"anonymous_function\").\n",
+        )
+        .unwrap();
+        let args = ["run-policies", &at("root"), &at("out"), &at("p.rerail")].map(str::to_owned);
+        let out = super::cli_in(&args, &mut Default::default()).unwrap_or_else(|e| panic!("the policy runs: {e}"));
+        let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(report["runs"][0]["files"], 1, "{report:#}");
+        assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(1), "{report:#}");
+    }
+
     #[test]
     fn the_command_lines_runs_keep_their_outputs_with_or_without_options() {
         use serde_json::json;
