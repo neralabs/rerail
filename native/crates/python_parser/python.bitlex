@@ -70,88 +70,67 @@ class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '?' '`' '\\' 0x7f
 
 # --- Regions -----------------------------------------------------------------------------------
 
-# A string, read as the lean lexer's `string` reads one (`read string`): its prefix's letters, one or two starting a
-# word (three or more are not read yet), say how it reads: raw (`raw_q`, at its quote), bytes, format, template. Its
-# quote, one or three. A backslash keeps a quote from closing it, raw or not: a raw string closes as any does, so it
-# is a region of its quotes' kind, and `in_raw` says which strings are raw. A format string (`format`) closes at its
-# quote or at an interpolation's `{` (an `{` alone: `{{` is text, the pairs read from a run's first). After the
-# interpolation's code, its tail opens at the `}` and goes on as the kind of string the interpolation is in. A format
-# spec runs from its `:` to the byte before the `}`, in an interpolation's code only, and there at its bracket level
-# zero: `{a[1:2]}` has no spec, and `{ {k: v} }`'s first `}` is the dict's. An f-string in an interpolation's code
-# opens one of its own, four deep, as the lean lexer's stack of strings does; the outer one goes on after it ends.
-# The reader makes the walk's kinds of each (`s1`, `d3`, `fs1`, its tails `ts1`, `spec`) and their unions (`o_str`,
-# `f_str`, `o_f`, `f_f`, `o_t`, `f_t`).
+# A string, read as the lean lexer's `string` reads one (`read string`), each clause one of its decisions: its prefix's
+# letters, one or two starting a word (three or more are not read yet), say how it reads: raw (`raw_q`, at its quote),
+# bytes, format, template. Its quote, one or three; a triple's two more quotes are a piece of their own (`quote2`). A
+# backslash keeps a quote from closing it, raw or not: a raw string closes as any does, and reads no escape. A format
+# string closes at its quote or at an interpolation's `{` (an `{` alone: `{{` is text, the pairs read from a run's
+# first). After the interpolation's code, its `}` goes on as the kind of string the interpolation is in. A conversion
+# (`!r`) and a format spec (from its `:` to the `}`) are at the code's bracket level zero only: `{a[1:2]}` has no spec,
+# and `{ {k: v} }`'s first `}` is the dict's. An f-string in an interpolation's code opens one of its own, four deep, as
+# the lean lexer's stack of strings does; the outer one goes on after it ends. What it does not read is refused, each
+# where the lean lexer would read it (`refuse`). The reader makes the walk's kinds of each (`s1`, `d3`, `fs1`, its tails
+# `ts1`, `spec`) and their unions (`o_str`, `f_str`, `o_f`, `f_f`, `o_t`, `f_t`), its pieces' masks, and its tokens
+# (`token string_start`, below).
+# An interpolation's `=` before its end, but `==`, `!=`, `<=`, `>=` (`{x=}`: the lean parser keeps the `=` and the `}`).
+mask eq_end     = eq & ~prev(eq | bang | lt_gt)
 regions hidden {
   cmt = hash .. lf outside
   read string {
     prefix pfx max 2 after word
     flags raw = raw_l, bytes = bytes_l, format = f_l, template = t_l
     quotes sq | dq triple
-    escape bslash
-    interpolation format lbrace .. rbrace spec colon level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep
+    start quote2
+    text str_text
+    escape escape_sequence = bslash check else '\\' unless raw
+    braces escape_interpolation
+    close string_end
+    interpolation format interp_open = lbrace .. interp_end = rbrace level opens to closes max 7 nest 4 depth i_d0 i_d1 else i_deep
+    conversion type_conversion = bang conv_l
+    spec spec_text = colon
+    refuse "a template string" at open if template
+    refuse "a string open at the end of the file" at fill ~next(~empty)
+    refuse "a line break in a one-line string that no backslash escapes" at fill unless triple lf & ~escaped(bslash)
+    refuse "a carriage return in a string" at fill cr
+    # A triple opened by four quotes or more (but the empty triple's six), or closed by four or more not after a
+    # backslash: the lean lexer closes at the first three.
+    refuse "a triple-quoted string opened by four quotes or more" at open if triple next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
+    refuse "a triple-quoted string closed by four quotes or more" at text if triple ~escaped(bslash) & Q & next(Q3_c)
+    refuse "a `\\N{…}` escape" at escape next(nn_l)
+    # In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
+    refuse "a `\\N`, `\\u` or `\\U` in a bytes string" at escape if bytes next(bytes_esc)
+    # A raw string whose bytes are only backslashes and what they step over: the lean lexer's string then ends at its
+    # first backslash. Not read yet.
+    refuse "a raw string of backslashes only" at raw backslashes quote | bslash | lf
+    refuse "an empty interpolation" at end empty
+    refuse "an empty format spec" at spec start next(rbrace)
+    refuse "a `}` alone in an f-string's text" at brace alone
+    refuse "a comment in an interpolation" at code hash
+    refuse "past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation" at deep
+    refuse "a `{` or a line break in a format spec" at spec lbrace | lf
+    refuse "an interpolation's `=`" at end prev(eq_end) | prev(blank) & prev(eq_end, 2)
   }
 }
-# A raw f-string's tails too: from its opener to the next f-string's that is not raw.
-mask in_raw     = fill(raw_q & o_str, ~f_str) | f_t & fill(raw_q & o_f, o_f & ~raw_q)
 mask code       = ~hidden & ~o_cmt & ~o_str & ~o_t & ~o_spec
 
 # --- Strings -----------------------------------------------------------------------------------
 
-# A string's bytes after its opener; a triple's two quotes after its first are its opener's too.
-mask t_open     = o_s3 | o_d3 | o_fs3 | o_fd3
-mask t_more     = prev(t_open) | prev(t_open, 2)
-mask s_body     = f_str & ~o_str & ~o_t & ~t_more
-mask body       = s_body & ~in_raw
-mask r_body     = s_body & in_raw
-escape "a template string" when o_str & template_q
 escape "a string prefix of three letters or more" when code & pw & next(pfx) & next(pfx, 2) & (next(quote, 3) | next(pfx, 3) & next(quote, 4))
-escape "a string open at the end of the file" when f_str & ~next(~empty)
-escape "a line break in a one-line string that no backslash escapes" when (f_s1 | f_d1 | f_fs1 | f_fd1 | f_ts1 | f_td1) & lf & ~escaped(bslash)
-escape "a carriage return in a string" when f_str & cr
-# A triple opened by four quotes or more (but the empty triple's six), or closed by four or more
-# not after a backslash: the lean lexer closes at the first three.
-escape "a triple-quoted string opened by four quotes or more" when t_open & next(quote, 3) & ~(next(quote, 4) & next(quote, 5) & ~next(quote, 6))
-escape "a triple-quoted string closed by four quotes or more" when (body | r_body) & ~escaped(bslash) & (f_s3 & sq & next(sq3_c) | f_d3 & dq & next(dq3_c) | (f_fs3 | f_ts3) & sq & next(sq3_c) | (f_fd3 | f_td3) & dq & next(dq3_c))
-# An escape: a backslash no backslash escapes, and what it escapes (lean's `escape`).
-mask esc        = body & bslash & ~escaped(bslash)
-escape "a `\\N{…}` escape" when esc & next(nn_l)
-# In a bytes string, `\N`, `\u` and `\U` are text: not read yet.
-escape "a `\\N`, `\\u` or `\\U` in a bytes string" when esc & next(bytes_esc) & fill(bytes_q, ~f_str)
 # An escape, read at its backslash as the lean lexer's `escape` reads it: by its grammar, each choice at the byte
 # after the backslash (`check`). Where it matches no escape the backslash is a `\` of its own (`else`).
 check escape_sequence = '\\' (u_l hex hex hex hex | uu_l hex hex hex hex hex hex hex hex | x_l hex hex
                         | digit [digit [digit]] | esc_one)
-# A raw string whose bytes are only backslashes and what they step over: the lean lexer's string
-# then ends at its first backslash. Not read yet.
-mask r_plain    = r_body & ~bslash & ~(escaped(bslash) & (quote | bslash | lf))
-# Its body's bytes from the first to the first plain one: where that reaches its last, none is.
-mask r_none     = fill(r_body & ~prev(r_body) & ~r_plain, r_plain | ~r_body)
-escape "a raw string of backslashes only" when r_none & r_body & ~next(r_body) & ~r_plain
 escape "a backslash" when code & bslash
-
-# --- F-strings ---------------------------------------------------------------------------------
-
-# An f-string's text (its own and its tails'); the `{` an f-string or a tail closes at, and the
-# interpolation's code after it, up to its tail.
-mask fb         = f_f & ~o_f & ~t_more | f_t & ~o_t
-mask i_at       = i_open & prev(f_f | f_t)
-mask icode      = fill(prev(i_at), o_t | o_spec)
-# `{{` and `}}` in the text: one brace each (lean's `escape_interpolation`), paired from the
-# first of each run of the text's braces (a tail's `}` opener is no text's).
-mask lb_t       = fb & lbrace
-mask rb_t       = fb & rbrace
-mask esc_ib     = lb_t & next(lb_t) & ~escaped(lb_t) | rb_t & next(rb_t) & ~escaped(rb_t)
-# `!r`, `!s`, `!a` before the interpolation's end or spec.
-mask conv_at    = code & bang & next(conv_l) & next(o_t | o_spec, 2)
-escape "an empty interpolation" when (o_t | o_spec) & prev(i_at)
-escape "an empty format spec" when o_spec & next(rbrace)
-escape "a `}` alone in an f-string's text" when fb & rbrace & ~esc_ib & ~prev(esc_ib)
-escape "a comment in an interpolation" when icode & hash
-escape "past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation" when i_deep
-escape "a `{` or a line break in a format spec" when f_spec & (lbrace | lf)
-# `{x=}`: the lean parser keeps the `=` and the `}`. Not read yet.
-mask eq_end     = icode & eq & ~prev(eq | bang | lt_gt)
-escape "an interpolation's `=`" when (o_t | o_spec | conv_at) & (prev(eq_end) | prev(blank) & prev(eq_end, 2))
 escape "a byte above 0x7f outside a comment" when code & high
 # A line's indentation: the blanks after its line break. A tab or a form feed counts as tree-sitter's
 # scanner counts it, not read yet.
@@ -216,33 +195,11 @@ token comment   = start hash & o_cmt read cmt
 
 # A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer. It starts at its
 # prefix's first letter, or at its quote where it has none, as the lean lexer's `token` reads a string's prefix
-# before a name; its first piece runs through its quote.
+# before a name; its first piece runs through its quote. Its reader writes its tokens (`read string`): the string's
+# in parts, an interpolation's tail (`interp_end`, its `}` and the string's text after it), the format spec's
+# (`spec_text`, its `:` and its text) and the conversion's (`type_conversion`).
 mask str_at     = (p1 | p2) & code | o_str & ~prev(p1) & ~prev(p2, 2)
-# One reader of every kind of string, each read from its quote; a raw string's body has no
-# escapes (`esc` is a plain string's). An f-string's regions are resumed by its tails; the
-# plain ones have no second closer.
-token string_start = start str_at prefix pfx max 2 read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts {
-                    quote2 = prev(t_open) bytes 2
-                    escape_sequence = esc check else '\\'
-                    escape_interpolation = esc_ib bytes 2
-                  } else str_text closes {
-                    string_end = prev(f_s3 | f_d3 | f_fs3 | f_fd3) & quote bytes 3
-                    string_end = prev(f_s1 | f_d1 | f_fs1 | f_fd1) & quote bytes 1
-                    interp_open = i_at bytes 1
-                  }
-# An interpolation's tail: its `}` (or a spec's `:`, its text and its `}`), then the string's
-# text as above.
-token interp_end = start o_ts1 | o_td1 | o_ts3 | o_td3 read ts1 | td1 | ts3 | td3 parts {
-                    escape_sequence = esc check else '\\'
-                    escape_interpolation = esc_ib bytes 2
-                  } else str_text closes {
-                    string_end = prev(f_ts3 | f_td3) & quote bytes 3
-                    string_end = prev(f_ts1 | f_td1) & quote bytes 1
-                    interp_open = i_at bytes 1
-                  }
-# A format spec: its `:` and its text, one token.
-token spec_text = start o_spec read spec
-token type_conversion = start conv_at run prev(conv_at)
+token string_start = start str_at read string
 
 keywords identifier {
   "False" "None" "True" "and" "as" "assert" "break" "class" "continue" "def" "del" "elif" "else"

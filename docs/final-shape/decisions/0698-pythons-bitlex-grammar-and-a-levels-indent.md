@@ -505,3 +505,21 @@ statements and blocks end.
       the prefix, which lies in the outer template's code. It is renumbered to an output with the readers' other
       masks and printed as `recopen K O`.
     - Tier 1 as Rust reads the region from its opener (`first_bit(&o_K, s)`) and the record from the token's start.
+85. **The string reader writes a string's pieces, tokens and refusals.** Its clauses now say all that the lean
+    lexer's `string` decides, so a writer that reads strings as the lean lexer does reads them from one statement:
+    - `start K`: a triple's two more quotes, a piece. `text K`: the text. `close K`: the closing quotes.
+    - `escape K = E check else L unless F`: an escape read by `check K`, else an `L`; none in a raw string.
+    - `braces K`: `{{` and `}}`.
+    - `interpolation F K = O .. J = C level …`, `conversion K = B L`, `spec K = S`.
+    - `refuse "W" at A [if F | unless F] [X]`: what is not read, where `A` is: the opener, the fill, the text, an
+      escape, a raw string of backslashes only, a brace alone, an interpolation's code, its end, an empty one, its
+      spec, the spec's start, past the level's bounds. `X` is a mask of the bytes alone. A name `Q…` in it is each
+      quote's.
+
+    Bitlex (`string_reader`) writes what the grammar wrote, as text it reads after the regions: the pieces' masks
+    (`in_raw`, `t_open`, `s_body`, `body`, `esc`, `fb`, `i_at`, `icode`, `esc_ib`, `conv_at`) and an escape of each
+    refusal. `token K = start E read R` writes the four tokens (the string's in parts, the tail's, the spec's, the
+    conversion's) in its place, in the grammar's order of rows. Tier 2 as Rust is the same as before, word for word.
+    Two masks are now read as their bytes say, with the same answers:
+    - `conv_at`'s `code & !` is `~hidden & !`;
+    - an interpolation's `=` is `eq & ~prev(eq | bang | lt_gt)`, not inside `icode`, at the byte before its end.
