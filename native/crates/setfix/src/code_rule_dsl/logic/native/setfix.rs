@@ -3874,19 +3874,50 @@ pub fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
 /// comma-separated (empty for a SQL probe); the counts restart.
 /// Per probe (spec order), its join steps' (in, out) binding counts since the last call (empty for a SQL probe); the
 /// counts restart.
+/// The design's S5: step `i` is a min or max of column `c` over a group, bound to slot `out`, and step `i + 1`
+/// joins the same relation back at it: positive, keyed by the group's keys and `c` at `out`, its rows tested by
+/// all of the group's tests. That step's rows are then the group's rows at the extreme, which step `i` read
+/// already: it binds them from those rows, with no probe of its own. `RERAIL_SHAPE_LATEST=off` turns it off.
+fn back_at_extreme(j: &JoinRule, i: usize) -> bool {
+    let (Some(Step::Scalar { src, keys, tests, col: Some(c), kind, out, bag, bound, .. }), Some(Step::Atom { src: s2, neg: false, keys: k2, tests: t2, .. })) = (j.steps.get(i), j.steps.get(i + 1)) else { return false };
+    if !matches!(kind, ScalarKind::Max | ScalarKind::Min) || (bound.is_none() && bag.is_some()) {
+        return false;
+    }
+    if std::env::var("RERAIL_SHAPE_LATEST").is_ok_and(|v| v == "off") {
+        return false;
+    }
+    let same = match (src, s2) {
+        (Src::In(r1, x1), Src::In(r2, x2)) => Arc::ptr_eq(j.src_in(r1, x1).0, j.src_in(r2, x2).0),
+        (Src::Full(a), Src::Full(b)) => a == b,
+        _ => false,
+    };
+    let key_eq = |a: &Key, b: &Key| match (a, b) {
+        (Key::Slot(x), Key::Slot(y)) => x == y,
+        (Key::Const(x), Key::Const(y)) => x == y,
+        _ => false,
+    };
+    same && k2.iter().any(|(kc, k)| kc == c && matches!(k, Key::Slot(o) if o == out))
+        && keys.iter().all(|(kc, k)| k2.iter().any(|(c2, k2)| c2 == kc && key_eq(k, k2)))
+        && tests.iter().all(|t| t2.iter().any(|u| u == t))
+}
+
 pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
-    let mut generic = 0u64;
+    let (mut generic, mut latest) = (0u64, 0u64);
     let out = comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => {
             let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
-            generic += c.iter().map(|(_, b)| b).sum::<u64>();
+            // A min or max joined back at its extreme (the design's S5): the join back's rows are the fused step's.
+            let back: u64 = (0..j.steps.len()).filter(|&i| back_at_extreme(j, i)).map(|i| c.get(i + 1).map_or(0, |x| x.1)).sum();
+            latest += back;
+            generic += c.iter().map(|(_, b)| b).sum::<u64>() - back;
             j.plan_counts(&c).into_iter().map(|(a, b)| (a as i64, b as i64)).collect()
         }
         Body::Sql(_) | Body::Unplanned => Vec::new(),
     }).collect();
+    forms::account("latest", name, latest, 0, 0);
     // The rows the generic joins' steps made since the last call (their out bindings), under the component's form.
     let form = comp.form.as_ref().map(|f| f.name()).or_else(|| comp.waiting.as_ref().map(|(f, _)| f.name())).unwrap_or("");
     forms::account(form, name, 0, 0, generic);
@@ -8835,6 +8866,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         return Ok(0);
     }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
+                     /// Per step, `Some` where a min or max is joined back at its extreme by the next step (the design's
+                     /// S5, `back_at_extreme`): the ids of its group's rows at the extreme, which that step's rows are.
+                     extreme: Vec<Option<Vector<u32>>>,
                      key: Vector<i64>, row: Vector<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
                      /// The run's cap on a derived relation's rows (decision 0462, `width::Limits`).
                      cap: usize,
@@ -9057,6 +9091,32 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
     }
     /// Enters step `i` (past the last, the head's row): profiled, its time is charged to it until it returns.
     #[inline(always)]
+    /// Per step, an empty list where `back_at_extreme` holds of it.
+    fn extremes(j: &JoinRule) -> Vec<Option<Vector<u32>>> {
+        (0..j.steps.len()).map(|i| back_at_extreme(j, i).then(Vector::new)).collect()
+    }
+    /// Step `i + 1` of a min or max joined back at its extreme (`back_at_extreme`), from step `i`'s rows at it: each
+    /// that its keys and tests hold of binds its columns, as its own probe would have, its counts as its own.
+    fn at_extreme<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64], rows: cands::Rows<'a>) {
+        let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
+        let _ = store;
+        let Some(Step::Atom { keys, binds, tests, .. }) = j.steps.get(i + 1) else { return };
+        let ids = cx.extreme[i].take().unwrap_or_default();
+        // Entering step `i + 1`, as `enter` counts it.
+        cx.work += 1;
+        { let c = &cx.counts[i][1]; c.set(c.get() + 1); }
+        if let Some(c) = cx.counts.get(i + 1) { c[0].set(c[0].get() + 1); }
+        if i + 1 > cx.deep { cx.deep = i + 1; }
+        for &id in ids.iter() {
+            let row = rows.row(id);
+            if keys.iter().all(|&(c, k)| row.at(c) == match k { Key::Slot(s) => slots[s], Key::Const(v) => v }) && tests.iter().all(|&(a, b)| row.at(a) == row.at(b)) {
+                for &(c, s) in binds.iter() { slots[s] = row.at(c); }
+                go(cx, i + 2, slots);
+                if cx.error.is_some() || cx.stop { break; }
+            }
+        }
+        cx.extreme[i] = Some(ids);
+    }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         let Some(clock) = cx.clock.as_mut() else { return enter(cx, i, slots) };
         let was = clock.to(i);
@@ -9314,6 +9374,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
                 let mut best: Option<i64> = None;
                 let mut inspected = 0;
+                // Joined back at the extreme (`back_at_extreme`): the rows at it, kept as they are read.
+                let mut at = cx.extreme[i].take();
+                if let Some(a) = &mut at { a.clear(); }
                 cands.any(|id| {
                     inspected += 1;
                     if rows.dead(id) { return false; }
@@ -9326,13 +9389,20 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                             (false, true) => v > limit,
                             (false, false) => v >= limit,
                         };
-                        if inside && best.is_none_or(|b| if max { v > b } else { v < b }) { best = Some(v); }
+                        if inside && best.is_none_or(|b| if max { v > b } else { v < b }) {
+                            best = Some(v);
+                            if let Some(a) = &mut at { a.clear(); }
+                        }
+                        if inside && best == Some(v) && let Some(a) = &mut at { a.push(id); }
                     }
                     false
                 });
                 charge(Unit::Value, inspected);
+                let fused = at.is_some();
+                cx.extreme[i] = at;
                 let Some(v) = best else { return };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                if fused { return at_extreme(cx, i, slots, rows); }
                 go(cx, i + 1, slots);
             }
             Step::Scalar { src, keys, tests, col, kind, out, bind, bag, bound: None } => {
@@ -9344,6 +9414,31 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     if *bind { slots[*out] = n } else if slots[*out] != n { return }
                     go(cx, i + 1, slots);
                     return;
+                }
+                // Joined back at the extreme (`back_at_extreme`, no memo then): the group read once, its rows at the
+                // extreme kept for the next step.
+                if let Some(mut at) = cx.extreme[i].take() {
+                    let Some(c) = *col else { cx.extreme[i] = Some(at); return };
+                    let max = *kind == ScalarKind::Max;
+                    at.clear();
+                    let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None, false);
+                    let (mut best, mut inspected): (Option<i64>, u64) = (None, 0);
+                    cands.any(|id| {
+                        inspected += 1;
+                        if rows.dead(id) { return false; }
+                        let row = rows.row(id);
+                        if keys.iter().all(|&(k, v)| row.at(k) == val(slots, v)) && tests.iter().all(|&(a, b)| row.at(a) == row.at(b)) {
+                            let v = row.at(c);
+                            if best.is_none_or(|b| if max { v > b } else { v < b }) { best = Some(v); at.clear(); }
+                            if best == Some(v) { at.push(id); }
+                        }
+                        false
+                    });
+                    charge(Unit::Value, inspected);
+                    cx.extreme[i] = Some(at);
+                    let Some(v) = best else { return };
+                    if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                    return at_extreme(cx, i, slots, rows);
                 }
                 let walked = std::cell::Cell::new(0u64);
                 let build = |value: Option<usize>| {
@@ -9672,7 +9767,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                                       factor, screen, screening: Default::default(), failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
-                                      left0: None, clock: StepClock::start(j.steps.len()) };
+                                      left0: None, clock: StepClock::start(j.steps.len()), extreme: extremes(j) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
                     let (n, skipped, work, error) = (w.n, w.skipped, w.work, w.error.take());
@@ -9871,7 +9966,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
-                       clock: StepClock::start(j.steps.len()) };
+                       clock: StepClock::start(j.steps.len()), extreme: extremes(j) };
     if cx.collect.is_none() { cx.cut_from = tail(j); }
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }

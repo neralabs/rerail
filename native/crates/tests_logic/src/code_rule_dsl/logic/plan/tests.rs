@@ -1948,6 +1948,38 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
     assert_eq!(got[1], [["f", "0", "function"]]);
 }
 
+/// The design's S5: a max joined back at its maximum, bounded or not, is one step on the group (`back_at_extreme`):
+/// the rows at the maximum, ties included, the same as the max and its join back as two steps
+/// (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_joined_back_at_its_maximum_gives_the_rows_there() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl seen(r: number, k: symbol)
+seen(r, k) :- node(d, _, "identifier", r, _), u = max t : { def(d, "f", t, _), t < r }, def(d, "f", u, k).
+.decl latest(k: symbol)
+latest(k) :- node(d, _, "module", _, _), u = max t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.decl earliest(k: symbol)
+earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.output seen, latest, earliest
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let got = corpus_outputs("latest-joined-back", &src, program, &["seen", "latest", "earliest"]);
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    assert_eq!(got[1], [["assign"]]);
+    assert_eq!(got[2], [["function"], ["tie"]]);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let two_steps = corpus_outputs("latest-joined-back-off", &src, program, &["seen", "latest", "earliest"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, two_steps, "the max and its join back as two steps");
+}
+
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
 /// `child(p, c, _)` does.
 #[test]
