@@ -16,9 +16,9 @@ pub type Listed = Option<(Kind, Stat)>;
 /// CPU (an M3 Max), and the corpus's read and hash took 11 s of threads' time in `open`; two at once keep the one
 /// thread's wall time, the reads and hashes still on every core. Linux's lookups do not contend so.
 #[cfg(target_os = "macos")]
-const LOOKUPS_AT_ONCE: usize = 2;
+const LOOKUPS_AT_ONCE: Option<usize> = Some(2);
 #[cfg(not(target_os = "macos"))]
-const LOOKUPS_AT_ONCE: usize = usize::MAX;
+const LOOKUPS_AT_ONCE: Option<usize> = None;
 
 /// The machine's path lookups in flight (`lookup`).
 #[derive(Default)]
@@ -29,13 +29,13 @@ pub struct Lookups {
 
 /// `f`, a path lookup, run when fewer than `LOOKUPS_AT_ONCE` are: every `open` of a path the observer and its reads make.
 pub fn lookup<T>(f: impl FnOnce() -> T) -> T {
-    if LOOKUPS_AT_ONCE == usize::MAX {
+    let Some(most) = LOOKUPS_AT_ONCE else {
         return f();
-    }
+    };
     let gate = rerail_prof::code_rule_dsl::logic::profile::machine::<Lookups>();
     {
         let mut running = gate.running.lock().unwrap_or_else(|e| e.into_inner());
-        while *running >= LOOKUPS_AT_ONCE {
+        while *running >= most {
             running = gate.freed.wait(running).unwrap_or_else(|e| e.into_inner());
         }
         *running += 1;
