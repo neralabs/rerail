@@ -132,8 +132,9 @@ describe("a checkout's saved scan settings whose stored text does not read", () 
   }, 20_000);
 
   // The scan settings save takes the write lock on the caller's thread, where the rule settings save waits for it in the
-  // record writer: beside a lock held past SQLite's 5 s wait it fails, and the damaged row still reads as the defaults.
-  it("stay the defaults when a save over them meets another program's write lock past SQLite's wait, and the same save is made once it is given back", async () => {
+  // record writer. Its transaction reads the saved row before it writes, and SQLite answers such a transaction's write
+  // with the lock held at once, with no busy wait: the save fails, and the damaged row still reads as the defaults.
+  it("stay the defaults when a save over them meets another program's write lock, which fails it at once, and the same save is made once that is given back", async () => {
     const { path, controls } = await fixture();
     controls.updateSettings("a", { mode: "log" });
     const left = cutShort(path, "audit_settings", "settings_json");
