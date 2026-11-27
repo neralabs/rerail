@@ -140,6 +140,16 @@ impl<'w, V: Vals> IntFrom<'w, V> {
         &self.c
     }
 
+    /// `DICT`'s distinct values, sorted (empty for any other encoding).
+    pub fn dict(&self) -> &'w [i64] {
+        self.dict
+    }
+
+    /// Its values, read where they lie.
+    pub fn vals(&self) -> &V {
+        &self.v
+    }
+
     fn body_words(&self) -> usize {
         params_of(self.c.tag) + if self.c.tag == CONST { 0 } else { self.c.data_words + self.c.runs_words }
     }

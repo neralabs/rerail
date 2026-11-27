@@ -136,9 +136,9 @@ structure! {
         pub base_block: u32,
         pub pad_far: u32,
         /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): a directory of a `Span<u8>` a
-        /// column, each that column's `blocks::sketch` in its kept form (`Sketch::encode`), of the state the layer
-        /// ends (the state below's sketch with the layer's rows added and its kills taken), each written by an item of
-        /// its own (`layer_write::sketch`). Empty for any other.
+        /// column, each that column's sketch in its kept form (what its `SketchW` settles), of the state the layer
+        /// ends (the state below's sketch with the layer's rows added and its kills taken), each settled by an item of
+        /// its own (`layer_write::sketch_change`). Empty for any other.
         pub sketches: Span<u8>,
     }
 }

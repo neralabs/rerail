@@ -130,9 +130,10 @@ impl Directory {
     /// relations, `Relation::try_continue_far`).
     pub fn make_room(&mut self, kind: u32, body: usize, room: usize) -> BlockId {
         self.sweep();
-        // Free-listed: its freeze gives back what lies past the body's used length (an operation's work, past the
-        // facts it wrote), whole pages to the OS, when nothing was made past the body.
-        let b = Block::anon(kind, BODY_AT + body + room + rerail_blocks::block::PAGE).with_free_list();
+        // Trimmed: its freeze gives back what lies past the body's used length (an operation's work, past the facts it
+        // wrote), whole pages to the OS. No free list: an out block's claims are exact, from its top (L4), so a phase
+        // writing it takes no host bookkeeping.
+        let b = Block::anon(kind, BODY_AT + body + room + rerail_blocks::block::PAGE).trimmed();
         self.adopt_new(b, body, None)
     }
 

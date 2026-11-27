@@ -15,6 +15,11 @@
 //! A layer's rows are written in the trace's canonical order, each once (its writer made them a set change): so a
 //! freeze here sorts and deduplicates nothing.
 //!
+//! **Its claims are exact** (*Flat Views and Lifecycles* L4): an operation's out block keeps no free list and hands
+//! out nothing zeroed (`Block::try_claim`): each structure here writes its own state over its exact room (a
+//! directory its empty entries, a column's words their clear bits), and a final form settled from a working one is
+//! claimed at its need (`Block::try_settle`: a sketch's kept bytes, from its `SketchW`).
+//!
 //! **The twins' rules hold here** (the twins' crate doc): nothing outlives a call or comes from outside it: no
 //! `static`, thread-local, `Once`/`Lazy` cell or lock, no thread's scratch (a call is given its own `Scratch`), no
 //! file, environment, process or time. `check_delta_exec_shape.py` checks this module with the twins, and its clippy
@@ -101,8 +106,7 @@ pub fn sketch_change(pin: &mut BlockPin, rel: &Relation, c: usize, below: Option
     for v in removed {
         s.remove(v);
     }
-    let n = s.encoded_len();
-    sketch_with(pin, rel, c, n, |to| s.encode_into(to))
+    settle_sketch(pin, rel, c, &s)
 }
 
 /// Lays out the freeze's directories of an open layer `rel` of `spec`: a range a column (`stat`), the index directory
@@ -113,14 +117,16 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, sketched: bool
     let block = pin.block();
     let a = rel.arity as usize;
     let room = ADDED_INDEXES.max(spec.nkeys());
-    let (Some(sp), Some(ixp)) = (block.try_alloc_t::<ColStats>(a.max(1)), block.try_alloc_t::<Index>(room)) else { return false };
+    // Each directory's entries start empty, written so here (an index's entry of no columns, a sketch's empty span);
+    // a column's range is written below.
+    let (Some(sp), Some(ixp)) = (block.try_claim_t::<ColStats>(a.max(1)), block.try_claim_clear_t::<Index>(room)) else { return false };
     let sk = if sketched {
-        let Some(p) = block.try_alloc_t::<Span<u8>>(a.max(1)) else { return false };
+        let Some(p) = block.try_claim_clear_t::<Span<u8>>(a.max(1)) else { return false };
         Some(p)
     } else {
         None
     };
-    // SAFETY: each chunk just allocated in `rel`'s block, which the pin holds to write; a column's range starts empty.
+    // SAFETY: each claim just made in `rel`'s block, which the pin holds to write; a column's range starts empty.
     unsafe {
         for c in 0..a {
             *sp.add(c) = ColStats { min: i64::MAX, max: i64::MIN };
@@ -188,9 +194,9 @@ pub fn encode_open(pin: &mut BlockPin, rel: &Relation, encoding: u32, arity: usi
     Some(block.offset_of(p))
 }
 
-/// Column `c` of the encoded rows at `at` (`encode_open`'s), from the layer's rows `rows` where they lie. False when
-/// the block has no room.
-pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, c: usize, rows: &dyn RowsIn) -> bool {
+/// Column `c` of the encoded rows at `at` (`encode_open`'s), from the layer's rows `rows` where they lie, its
+/// temporaries (a Dict column's distinct values) from `scratch`. False when the block has no room.
+pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, c: usize, rows: &dyn RowsIn, scratch: &Scratch) -> bool {
     check_open(pin, rel);
     let block = pin.block();
     // SAFETY: laid out at `at` by `encode_open` in the block the pin holds to write; column `c` is this call's alone.
@@ -198,7 +204,7 @@ pub fn encode_col(pin: &mut BlockPin, rel: &Relation, encoding: u32, at: usize, 
         if encoding == ENC_RANGED {
             crate::ranged::writer::write_col(block, &*block.ptr::<crate::ranged::Columns>(at), c, rows)
         } else {
-            crate::packed::writer::write_col(block, &*block.ptr::<crate::packed::Packed>(at), c, rows, encoding == ENC_DICT)
+            crate::packed::writer::write_col(block, &*block.ptr::<crate::packed::Packed>(at), c, rows, encoding == ENC_DICT, scratch)
         }
     }
 }
@@ -226,26 +232,18 @@ pub fn seal(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, n: u32) {
     rel.flags.fetch_or(FROZEN, Release);
 }
 
-/// Column `c`'s statistics, in its kept form (`Sketch::encode`), into its entry of the layer's sketches' directory
-/// (`open`'s, `sketched`): a chunk of the block of its own. False when the block has no room.
-pub fn sketch(pin: &mut BlockPin, rel: &Relation, c: usize, kept: &[u8]) -> bool {
-    // copy: derived: a column's statistics, computed by its writer, written once where the layer keeps them
-    sketch_with(pin, rel, c, kept.len(), |to| to.copy_from_slice(kept))
-}
-
-/// Column `c`'s kept sketch of `n` bytes, written by `write` into its chunk of the block, where it lies.
-fn sketch_with(pin: &mut BlockPin, rel: &Relation, c: usize, n: usize, write: impl FnOnce(&mut [u8])) -> bool {
+/// Column `c`'s sketch `s` (its working form, in the phase's scratch), settled as its kept bytes into an exact claim
+/// of the block, its span set in its entry of the layer's sketches' directory (`open`'s, `sketched`). False when the
+/// block has no room.
+fn settle_sketch(pin: &mut BlockPin, rel: &Relation, c: usize, s: &rerail_delta_core::sketch::SketchW<'_>) -> bool {
     let block = pin.block();
     assert!(block.holds(std::ptr::from_ref(rel)) && pin.writes(), "a layer of a block pinned to write");
     let dir = sketches(rel);
     assert!(c < dir.len() && dir[c].is_empty(), "column {c}'s sketch, written once");
-    let Some(p) = block.try_alloc_t::<u8>(n.max(1)) else { return false };
-    // SAFETY: `p` holds `n` bytes, just allocated in the block the pin holds to write; entry `c` of the directory is
-    // this call's alone.
-    unsafe {
-        write(std::slice::from_raw_parts_mut(p, n));
-        Span::set(&dir[c], p, n);
-    }
+    let Some(kept) = block.try_settle(s) else { return false };
+    // SAFETY: the kept bytes just settled in the block the pin holds to write; entry `c` of the directory is this
+    // call's alone.
+    unsafe { Span::set(&dir[c], kept.as_ptr().cast_mut(), kept.len()) };
     true
 }
 

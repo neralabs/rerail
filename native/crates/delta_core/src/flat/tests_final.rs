@@ -205,3 +205,22 @@ fn an_out_arena_too_small_for_a_need_says_so() {
     assert_eq!(f.part, 5);
     assert!(f.wanted as usize >= plan.need().bytes);
 }
+
+#[test]
+fn a_sketch_settles_as_its_kept_bytes() {
+    use crate::sketch::{SketchW, WORK_BYTES, reading};
+    let mut work = vec![0u64; WORK_BYTES / 8 + 1];
+    let bytes = unsafe { core::slice::from_raw_parts_mut(work.as_mut_ptr().cast::<u8>(), WORK_BYTES) };
+    let mut s = SketchW::over(bytes).unwrap();
+    for v in 0..5000i64 {
+        s.add(v * 7919 % 3001);
+    }
+    let mut a = buf();
+    let (at, len) = settle_alone(&mut a, &s);
+    assert_eq!(len, s.encoded_len().next_multiple_of(8), "its need is its kept bytes, to the grain");
+    let mut want = vec![0u8; s.encoded_len()];
+    s.encode_into(&mut want);
+    assert_eq!(&a.0[at..at + want.len()], &want[..], "settled, they are the bytes it encodes");
+    let r = reading(&a.0[at..at + want.len()]).unwrap();
+    assert_eq!((r.rows, r.ndv), (5000, 3001));
+}

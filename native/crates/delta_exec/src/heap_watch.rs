@@ -10,14 +10,9 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::{Cell, RefCell};
 
-/// The twins that still take the heap, and through what: this list only shrinks. A twin not on it that allocates
-/// fails the run. A phase that takes room in its out block takes it through the block's allocator, whose bookkeeping
-/// for a free-listed block (`ledger::Ledger`: free lists, live bits, under a lock) and bump top (`block::Extent`) are
-/// host memory, not the block's bytes.
-const NOT_YET: &[(&str, &str)] = &[
-    ("consolidate", "the block allocator's host bookkeeping"),
-    ("merge", "the block allocator's host bookkeeping"),
-];
+// No twin takes the heap: every one that allocated is gone from the list that named them (*Flat Views and
+// Lifecycles* step 5: an out block keeps no free list, so its claims take no host bookkeeping, and its writers
+// claim exactly, writing their own state). An allocation in any twin's phase fails the run.
 
 struct Watch;
 
@@ -95,7 +90,6 @@ pub fn during<R>(on: bool, what: &str, f: impl FnOnce() -> R) -> R {
                 let text: String = seen.iter().map(|s| format!("HEAP_AUDIT {what}: {} (in {test})\n", s.replace('\n', " | "))).collect();
                 std::io::stderr().lock().write_all(text.as_bytes()).expect("stderr");
             }
-            None if NOT_YET.iter().any(|(op, _)| what.split(' ').next() == Some(op)) => {}
             None => panic!("{what}: a twin's phase allocated on the heap ({} places):\n{}", seen.len(), seen.join("\n---\n")),
         }
     }

@@ -631,11 +631,13 @@ fn encoded<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile, perms: bool) {
         let (sb, pin, scratch) = c.split(SRC, OUT, O::SCRATCH);
         let src = O::src(sb, table, params);
         let added = Added { src: &src, addsrc: &addsrc[..n_add] };
-        let ok = if perms {
-            Scratch::lend(scratch, |s| layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, s))
-        } else {
-            layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added)
-        };
+        let ok = Scratch::lend(scratch, |s| {
+            if perms {
+                layer_write::encode_perm(pin, rows, head.enc as usize, x, &added, s)
+            } else {
+                layer_write::encode_col(pin, rows, head.shape.encoding, head.enc as usize, x, &added, s)
+            }
+        });
         assert!(ok, "room for the layer's encoded rows");
     }
 }
@@ -947,7 +949,7 @@ fn nidx<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
 
 /// The layer's statistics, a column an item: its sketch of the state the layer ends, the state below's with its rows
 /// added and its kills taken (O§10: "a delta's sketch is added to and taken from"), in its kept form, into its entry
-/// (`layer_write::sketch`).
+/// (`layer_write::sketch_change`).
 fn sketch<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     if refused_so_far::<O>(c) {
         return;

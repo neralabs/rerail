@@ -116,9 +116,10 @@ pub mod writer {
     /// each column's range descriptors, empty until written. `None` when the block has no room.
     pub fn lay_out(block: &Block, arity: usize, n: usize) -> Option<*mut Columns> {
         let nranges = n.div_ceil(RANGE);
-        let root: *mut Columns = block.try_alloc_t(1)?;
-        let rc: *mut RangedCol = block.try_alloc_t(arity.max(1))?;
-        // SAFETY: just allocated in `block`, open, zero.
+        // Exact claims, each descriptor's clear state written over it, then its fields.
+        let root: *mut Columns = block.try_claim_clear_t(1)?;
+        let rc: *mut RangedCol = block.try_claim_clear_t(arity.max(1))?;
+        // SAFETY: just claimed in `block`, open, clear.
         unsafe {
             (*root).arity = arity as u32;
             (*root).n = n as u32;
@@ -126,7 +127,7 @@ pub mod writer {
                 let col = rc.add(c);
                 (*col).n = n as u32;
                 (*col).parts = 1;
-                let ic: *mut IntCol = block.try_alloc_t(nranges.max(1))?;
+                let ic: *mut IntCol = block.try_claim_clear_t(nranges.max(1))?;
                 Span::set(&raw mut (*col).ranges, ic, nranges);
             }
             Span::set(&raw mut (*root).cols, rc, arity);
@@ -164,7 +165,7 @@ pub mod writer {
             let v = Range { rows, c, at: r * RANGE, n: RANGE.min(n - r * RANGE) };
             let ch = crate::col::choose_serial(&v);
             // SAFETY: range `r`'s descriptor, of column `c`: this call's alone.
-            if !unsafe { crate::packed::writer::put(block, ranges.add(r), &ch, &v) } {
+            if !unsafe { crate::packed::writer::put(block, ranges.add(r), &ch, &v, &[]) } {
                 return false;
             }
         }

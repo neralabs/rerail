@@ -21,6 +21,8 @@ pod!(u8, u16, u32, u64, u128, i16, i32, i64, i128, f32, f64, usize, ());
 // written through a shared reference, which Rust allows only by interior mutability.
 pod!(AtomicU16, AtomicU32, AtomicU64, AtomicI16, AtomicI32, AtomicI64);
 unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
+// A run of them: a final form that is its bytes alone (a sketch's kept bytes, `flat::Settle`).
+unsafe impl<T: Pod> Pod for [T] {}
 
 /// A run of `n` `T`s at byte `at` of `bytes`, read in place. Panics, naming the run, past the bytes or misaligned.
 #[inline]

@@ -803,7 +803,7 @@ impl<'a> SketchW<'a> {
         n
     }
 
-    /// Its kept bytes, written into `to` (exactly `encoded_len` long).
+    /// Its kept bytes, written into `to` (exactly `encoded_len` long). Settled into an exact claim, it is `Settle`'s.
     pub fn encode_into(&self, to: &mut [u8]) {
         let mut at = 0;
         self.emit(&mut |b| {
@@ -811,5 +811,22 @@ impl<'a> SketchW<'a> {
             at += 1;
         });
         assert_eq!(at, to.len(), "a sketch's kept bytes written whole");
+    }
+}
+
+/// A sketch's final form is its kept bytes (*Flat Views and Lifecycles* §3): `SketchW` is its working form, worked in
+/// a phase's scratch, and settled exactly where its layer keeps it.
+impl crate::flat::Settle for SketchW<'_> {
+    type Final = [u8];
+
+    fn need(&self) -> crate::flat::Need {
+        crate::flat::Need::none().and::<u8>(self.encoded_len())
+    }
+
+    fn settle<'d>(&self, room: &mut crate::flat::Room<'d>) -> &'d [u8] {
+        let n = self.encoded_len();
+        let to = room.take_with::<u8>(n, 0);
+        self.encode_into(to);
+        to
     }
 }

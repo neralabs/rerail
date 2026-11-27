@@ -179,11 +179,37 @@ impl crate::col::Vals for JobVals<'_> {
     }
 }
 
+/// A column's parts with their encodings: one, or two when split. Held inline (a twin's phase plans a column without
+/// the heap).
+#[derive(Clone, Copy)]
+struct Parts<'s> {
+    at: [(Part<'s>, Choice); 2],
+    n: usize,
+}
+
+impl<'s> Parts<'s> {
+    fn one(p: (Part<'s>, Choice)) -> Parts<'s> {
+        Parts { at: [p, p], n: 1 }
+    }
+
+    fn two(a: (Part<'s>, Choice), b: (Part<'s>, Choice)) -> Parts<'s> {
+        Parts { at: [a, b], n: 2 }
+    }
+}
+
+impl<'s> std::ops::Deref for Parts<'s> {
+    type Target = [(Part<'s>, Choice)];
+
+    fn deref(&self) -> &[(Part<'s>, Choice)] {
+        &self.at[..self.n]
+    }
+}
+
 /// A column planned: its form (`PCol`'s `split` and `rel`) and its parts with their encodings (one, or two when split).
 struct ColPlan<'s> {
     split: u32,
     rel: bool,
-    parts: Vec<(Part<'s>, Choice)>,
+    parts: Parts<'s>,
     /// Its greatest value, `None` with no rows: found as its form is chosen, so a kept entry records its atoms'
     /// greatest without reading them again (`Prepared::col_max`).
     max: Option<i64>,
@@ -216,46 +242,52 @@ fn form_of(form: Form, x: i64, b: i64) -> i64 {
 /// and column 0's read once where they lie (decision 0353 step 8; `col::Stats` is `choose`'s).
 fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_rel: Rel, par: bool) -> ColPlan<'s> {
     use crate::col::{Stats, Vals};
+    use rerail_delta_core::flat::encode::{Pieces, Serial};
+    const FORMS: [Form; 6] = [Form::Whole, Form::Hi, Form::Lo, Form::RelWhole, Form::RelHi, Form::RelLo];
     let rel = may_rel != Rel::Never && c > 0;
-    let forms: &[Form] = if rel { &[Form::Whole, Form::Hi, Form::Lo, Form::RelWhole, Form::RelHi, Form::RelLo] } else { &[Form::Whole, Form::Hi, Form::Lo] };
+    let nf = if rel { 6 } else { 3 };
     let x = Part { src, order, n, c, form: Form::Whole };
+    if n == 0 {
+        let pick = if par { choose(&x) } else { crate::col::choose_serial(&x) };
+        return ColPlan { split: 0, rel: false, parts: Parts::one((x, pick)), max: None };
+    }
     let b = Part { src, order, n, c: 0, form: Form::Whole };
     let read = |i: usize| (x.at(i), if rel { b.at(i) } else { 0 });
-    let ends: Vec<(i64, i64)> = if n == 0 {
-        vec![(0, 0); forms.len()]
-    } else {
-        let ((x0, b0), (x1, b1)) = (read(0), read(n - 1));
-        forms.iter().map(|&f| (form_of(f, x0, b0), form_of(f, x1, b1))).collect()
-    };
-    // Each piece: every form's statistics, and whether a difference from column 0 wraps.
-    let pieces = crate::col::over_pieces(par, n, |r| {
+    let ((x0, b0), (x1, b1)) = (read(0), read(n - 1));
+    let ends = FORMS.map(|f| (form_of(f, x0, b0), form_of(f, x1, b1)));
+    // Each piece: every form's statistics (the first `nf` of them read), and whether a difference from column 0
+    // wraps; the pieces joined in order.
+    let piece = |r: std::ops::Range<usize>| {
         let before = (r.start > 0).then(|| read(r.start - 1));
-        let mut st: Vec<Stats> = forms.iter().zip(&ends).map(|(&f, &(first, last))| Stats::piece(first, last, n, before.map(|(x, b)| form_of(f, x, b)))).collect();
+        let mut k = 0;
+        let mut st = FORMS.map(|f| {
+            let (first, last) = ends[k];
+            k += 1;
+            Stats::piece(first, last, n, before.map(|(x, b)| form_of(f, x, b)))
+        });
         let mut wraps = false;
         for i in r {
             let (x, b) = read(i);
-            for (k, &f) in forms.iter().enumerate() {
+            for (k, &f) in FORMS[..nf].iter().enumerate() {
                 st[k].push(i, form_of(f, x, b));
             }
             wraps |= rel && x.checked_sub(b).is_none();
         }
         (st, wraps)
-    });
-    let mut joined: Option<Vec<Stats>> = None;
-    let mut wraps = false;
-    for (st, w) in pieces {
-        wraps |= w;
-        joined = Some(match joined {
-            None => st,
-            Some(j) => j.into_iter().zip(st).map(|(a, b)| a.join(b)).collect(),
+    };
+    let join = |(a, wa): ([Stats; 6], bool), (b, wb): ([Stats; 6], bool)| {
+        let mut k = 0;
+        let j = a.map(|s| {
+            k += 1;
+            s.join(b[k - 1])
         });
-    }
-    let stats = joined.unwrap_or_default();
-    let pick = |v: &Part<'s>| if par { choose(v) } else { crate::col::choose_serial(v) };
-    let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: forms[k] }, stats.get(k).map_or_else(|| pick(&x), |s| s.choice(n))) };
-    let (lo, hi) = stats.first().map_or((0, 0), |s| s.range());
-    let max = (n > 0).then_some(hi);
-    let whole = ColPlan { split: 0, rel: false, parts: vec![part(0)], max };
+        (j, wa | wb)
+    };
+    let (stats, wraps) = if par { crate::col::Par.fold(n, piece, join) } else { Serial.fold(n, piece, join) };
+    let part = |k: usize| -> (Part<'s>, Choice) { (Part { src, order, n, c, form: FORMS[k] }, stats[k].choice(n)) };
+    let (lo, hi) = stats[0].range();
+    let max = Some(hi);
+    let whole = ColPlan { split: 0, rel: false, parts: Parts::one(part(0)), max };
     if n < 2 || (hi as i128 - lo as i128) < 1 << ID_SPLIT {
         return whole;
     }
@@ -266,14 +298,14 @@ fn plan_col<'s>(src: Src<'s>, order: Option<&'s [u32]>, n: usize, c: usize, may_
             best = cand;
         }
     };
-    take(ColPlan { split: s, rel: false, parts: vec![part(1), part(2)], max });
+    take(ColPlan { split: s, rel: false, parts: Parts::two(part(1), part(2)), max });
     if rel {
         // A searched column keeps its order less a constant only where no difference wraps; the split parts' never
         // do (each part is under 2^46).
         if may_rel == Rel::Any || !wraps {
-            take(ColPlan { split: 0, rel: true, parts: vec![part(3)], max });
+            take(ColPlan { split: 0, rel: true, parts: Parts::one(part(3)), max });
         }
-        take(ColPlan { split: s, rel: true, parts: vec![part(4), part(5)], max });
+        take(ColPlan { split: s, rel: true, parts: Parts::two(part(4), part(5)), max });
     }
     best
 }
@@ -314,7 +346,8 @@ fn plan_perm<'s>(scratch: &'s Scratch, src: Src<'s>, order: Option<&'s [u32]>, n
     }
     let (kv, st, pm) = (&*kv, &*st, &*pm);
     let pick = |j: usize| if par { choose([kv, st, pm][j]) } else { crate::col::choose_serial([kv, st, pm][j]) };
-    let [ck, cs, cp]: [Choice; 3] = each(par && n >= PAR_MIN, 3, pick).try_into().unwrap();
+    // One after another inside a twin's item (no heap); the three at once on the host's cores past `PAR_MIN`.
+    let [ck, cs, cp]: [Choice; 3] = if par && n >= PAR_MIN { each(true, 3, pick).try_into().unwrap() } else { [pick(0), pick(1), pick(2)] };
     IxPlan { col: c as u32, parts: [(kv, ck), (st, cs), (pm, cp)] }
 }
 
@@ -705,10 +738,11 @@ pub mod writer {
     /// (its rows lie in that order), a column descriptor a column and an index descriptor for each column of
     /// `perms`, each empty until written. `None` when the block has no room.
     pub fn lay_out(block: &Block, arity: usize, n: usize, okey: &[u16], perms: &[u16]) -> Option<*mut Packed> {
-        let p: *mut Packed = block.try_alloc_t(1)?;
-        let cp: *mut PCol = block.try_alloc_t(arity.max(1))?;
-        let ip: *mut PIndex = block.try_alloc_t(perms.len().max(1))?;
-        // SAFETY: just allocated in `block`, open, zero; the descriptors' spans set to their chunks.
+        // Exact claims, each descriptor's clear state (empty spans, no columns) written over it, then its fields.
+        let p: *mut Packed = block.try_claim_clear_t(1)?;
+        let cp: *mut PCol = block.try_claim_clear_t(arity.max(1))?;
+        let ip: *mut PIndex = block.try_claim_clear_t(perms.len().max(1))?;
+        // SAFETY: just claimed in `block`, open, clear; the descriptors' spans set to their chunks.
         unsafe {
             (*p).arity = arity as u32;
             (*p).n = n as u32;
@@ -726,43 +760,51 @@ pub mod writer {
         Some(p)
     }
 
-    /// Lays `c`'s encoding out at `this` in `block`, its words allocated there, and writes `v` into them.
+    /// Lays `c`'s encoding out at `this` in `block`, its words an exact claim there (their clear bits written over
+    /// them, as its writers OR theirs in), and writes `v` into them, one pass (the floor's `encode::write`; `dict`
+    /// is `DICT`'s distinct values, sorted, empty for any other encoding).
     ///
     /// # Safety
-    /// `this` is zeroed memory of `block` (open), written by this call alone.
-    pub(crate) unsafe fn put<V: crate::col::Vals + ?Sized>(block: &Block, this: *mut IntCol, ch: &Choice, v: &V) -> bool {
+    /// `this` is a clear descriptor in `block` (open), written by this call alone.
+    pub(crate) unsafe fn put<V: crate::col::Vals + ?Sized>(block: &Block, this: *mut IntCol, ch: &Choice, v: &V, dict: &[i64]) -> bool {
         let words = ch.data_words + ch.runs_words;
-        let Some(w) = block.try_alloc_t::<u64>(words.max(1)) else { return false };
-        // SAFETY: `w` holds `words` zeroed words, just allocated; `this` is the caller's.
+        let Some(w) = block.try_claim_clear_t::<u64>(words.max(1)) else { return false };
+        // SAFETY: `w` holds `words` clear words, just claimed; `this` is the caller's.
         let (d, r) = unsafe { IntCol::lay_out_at(this, w, ch) };
-        crate::col::write_serial(ch, v, d, r);
+        rerail_delta_core::flat::encode::write(ch, v, d, r, dict);
         true
     }
 
     /// Column `c` of `p` (laid out by `lay_out` in `block`), from `rows`: planned as `pack` plans it (`plan_col`:
-    /// whole or split, relative to column 0 where it may be, the smallest), or, `dict`, whole, by
-    /// `col::choose_for_reads` (`DICT` where it is smallest). False when the block has no room.
+    /// whole or split, relative to column 0 where it may be, the smallest), or, `dict`, whole, as the floor's
+    /// `IntFrom` plans a column read at random (`DICT` where it is smallest, its distinct values counted in
+    /// `scratch`'s arena; past its room, without `DICT`). False when the block has no room.
     ///
     /// # Safety
     /// `p` lies in `block`, open, laid out by `lay_out`; column `c` is written by this call alone.
-    pub unsafe fn write_col(block: &Block, p: &Packed, c: usize, rows: &dyn RowsIn, dict: bool) -> bool {
+    pub unsafe fn write_col(block: &Block, p: &Packed, c: usize, rows: &dyn RowsIn, dict: bool, scratch: &Scratch) -> bool {
+        use rerail_delta_core::flat::IntFrom;
         let n = p.n as usize;
         let src = Src::Rows(rows);
         let lead = &p.okey[..p.nokey as usize];
-        let plan = if dict {
-            let v = Part { src, order: None, n, c, form: Form::Whole };
-            ColPlan { split: 0, rel: false, parts: vec![(v, crate::col::choose_for_reads_serial(&v))], max: None }
-        } else {
-            plan_col(src, None, n, c, rel_to(lead, c), false)
-        };
         // SAFETY: column `c`'s descriptor, this call's alone (the caller's contract).
         let pc = unsafe { p.cols.as_ptr().cast_mut().add(c) };
+        if dict {
+            let v = Part { src, order: None, n, c, form: Form::Whole };
+            let f = match IntFrom::plan(v, scratch.arena(), 0) {
+                Ok(f) => f,
+                Err(_) => IntFrom::plan(v, None, 0).expect("a plan without a work arena takes no room"),
+            };
+            // SAFETY: as below, the column whole.
+            return unsafe { put(block, &raw mut (*pc).hi, f.choice(), f.vals(), f.dict()) };
+        }
+        let plan = plan_col(src, None, n, c, rel_to(lead, c), false);
         unsafe {
             (*pc).split = plan.split;
             (*pc).rel = u32::from(plan.rel);
             for (k, (v, ch)) in plan.parts.iter().enumerate() {
                 let at = if k == 0 { &raw mut (*pc).hi } else { &raw mut (*pc).lo };
-                if !put(block, at, ch, v) {
+                if !put(block, at, ch, v, &[]) {
                     return false;
                 }
             }
@@ -780,7 +822,7 @@ pub mod writer {
         let c = unsafe { (*ix).col } as usize;
         let plan = plan_perm(scratch, Src::Rows(rows), None, p.n as usize, c, false);
         let [(k, kc), (s, sc), (m, mc)] = &plan.parts;
-        unsafe { put(block, &raw mut (*ix).keys, kc, *k) && put(block, &raw mut (*ix).starts, sc, *s) && put(block, &raw mut (*ix).perm, mc, *m) }
+        unsafe { put(block, &raw mut (*ix).keys, kc, *k, &[]) && put(block, &raw mut (*ix).starts, sc, *s, &[]) && put(block, &raw mut (*ix).perm, mc, *m, &[]) }
     }
 }
 

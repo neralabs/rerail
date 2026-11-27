@@ -80,8 +80,8 @@ impl<'d> Room<'d> {
 
 /// A working form's final form, settled exactly.
 pub trait Settle {
-    /// The final form's descriptor in its destination.
-    type Final: Pod;
+    /// The final form's descriptor in its destination (or the form itself, when it is a run of values: `[u8]`).
+    type Final: Pod + ?Sized;
 
     /// Its exact bytes, from the working form alone.
     fn need(&self) -> Need;
@@ -93,12 +93,30 @@ pub trait Settle {
 
 impl<'r> Arena<'r> {
     /// `s`'s final form, settled into an exact claim of this arena (an out block's: L4, exact claims only).
-    pub fn settle<S: Settle>(&self, part: u32, s: &S) -> Result<&S::Final, Full> {
+    pub fn settle<S: Settle + ?Sized>(&self, part: u32, s: &S) -> Result<&S::Final, Full> {
         let need = s.need();
         let at = self.claim_at(part, need.bytes, GRAIN)?;
-        let mut room = Room { region: self.region(), start: at, at, end: at + need.bytes };
-        let f = s.settle(&mut room);
-        room.finish();
-        Ok(f)
+        Ok(settle_in(self.region(), at, s))
     }
+}
+
+fn settle_in<'d, S: Settle + ?Sized>(region: &'d Region<'d>, at: usize, s: &S) -> &'d S::Final {
+    let need = s.need();
+    assert!(at.is_multiple_of(GRAIN) && at + need.bytes <= region.len(), "a settle's claim of {} bytes at {at}, in its region and aligned", need.bytes);
+    let mut room = Room { region, start: at, at, end: at + need.bytes };
+    let f = s.settle(&mut room);
+    room.finish();
+    f
+}
+
+/// `s`'s final form, settled into the exact claim at `at` of the memory `base..base + len`, which its own allocator
+/// made (an out block's: `rerail_blocks::block::Block::try_settle`): where it lies.
+///
+/// # Safety
+/// `base..base + len` is writable memory, 8-byte aligned, that outlives every use of the result; `at..at +
+/// s.need().bytes` lies in it, claimed for this call alone.
+pub unsafe fn settle_into<S: Settle + ?Sized>(base: *mut u8, len: usize, at: usize, s: &S) -> *const S::Final {
+    // SAFETY: the caller's.
+    let region = unsafe { Region::from_raw(base, len) };
+    core::ptr::from_ref(settle_in(&region, at, s))
 }

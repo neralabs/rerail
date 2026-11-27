@@ -92,6 +92,13 @@ def m0(failures: list) -> None:
     hits(CHANGE, strip_rust(CHANGE.read_text()), r"\bfn body\b", "change::body (O1)", failures)
 
 
+# *Flat Views and Lifecycles* L4, L5: an out block takes exact claims and keeps no free list, so a twin, and the
+# blocks code it calls to write a layer, never reaches the block allocator's host bookkeeping (its ledger, its free
+# lists) or a heap room (`maps::Room`, `default_room`): what an operation computes on is its blocks' bytes alone.
+ALLOCATOR = r"\b[Ll]edger\b|\bfree_chunk\w*|\bwith_free_list\b|\bhas_free_list\b|\bRoom\b|\bdefault_room\b|\brun_room\b"
+ALLOCATOR_WHY = "the block allocator's host bookkeeping or a heap room (an out block's claims are exact, L4)"
+
+
 def b1(failures: list) -> None:
     """B1, operations on blocks (Operations §2–§4, §13). A twin is phases over tiles of independent items, a function of
     its pinned slots, the blocks its descriptor table reaches, and its params alone (Operations §3). The twins' crate
@@ -130,6 +137,7 @@ def b1(failures: list) -> None:
         (r"\bunsafe\b", "unsafe"),
         (r"\bTwinFn\b", "a twin as one function (a twin is phases over tiles)"),
         (r"\bchange::", "blocks' change code (a twin's change is its own phases)"),
+        (ALLOCATOR, ALLOCATOR_WHY),
     ]
     for path in sorted((TWINS / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())
@@ -636,6 +644,8 @@ def reach(failures: list) -> None:
         (r"\bMutex\b|\bRwLock\b|\bCondvar\b", "a lock"),
         (r"scratch::with\b", "a thread's scratch"),
         (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world"),
+        (ALLOCATOR, ALLOCATOR_WHY),
+        (r"\btry_alloc\w*|\balloc_t\b", "a claim the block's allocator zeroes or lists (an out block's claims are exact: try_claim, try_settle)"),
     ):
         hits(lw, code, pattern, why, failures)
     def rules(p):

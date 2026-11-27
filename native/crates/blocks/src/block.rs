@@ -121,8 +121,9 @@ pub struct Block {
     dirty: bool,
     /// It keeps a free list (decision 0342, its lists in its ledger): false for a bump block.
     listed: bool,
-    /// It kept a free list until its freeze: its reservation past its length is released then.
-    was_free_listed: bool,
+    /// Its reservation past its length is released at its freeze: a block that kept a free list until then, or an
+    /// operation's out block (`trimmed`), which takes exact claims from its top and keeps no list.
+    trims: bool,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -222,7 +223,7 @@ impl Block {
             backing,
             dirty,
             listed: false,
-            was_free_listed: false,
+            trims: false,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: std::sync::Mutex::new(None),
         }
@@ -235,6 +236,14 @@ impl Block {
             self.listed = true;
             self.ledger.track(self.used());
         }
+        self
+    }
+
+    /// This block, its reservation past its length released at its freeze, with no free list: an operation's out
+    /// block (*Flat Views and Lifecycles* L4), whose claims are exact and taken from its top, so nothing in it is ever
+    /// given back but the tail, and its ledger tracks nothing of its chunks (no host bookkeeping as it is written).
+    pub fn trimmed(mut self) -> Block {
+        self.trims = true;
         self
     }
 
@@ -547,6 +556,35 @@ impl Block {
         shrunk
     }
 
+    /// `bytes` at `align` from the front, exact, as they lie (*Flat Views and Lifecycles* L4): an out block's claim,
+    /// over which its structure writes its own state. Never zeroed as it is handed out, in a dirty block too. `None`
+    /// when the block cannot hold them.
+    pub fn try_claim(&self, bytes: usize, align: usize) -> Option<usize> {
+        self.alloc_filled(bytes, align, false)
+    }
+
+    /// `n` `T`s, claimed as `try_claim` claims (aligned to at least 8), as they lie.
+    pub fn try_claim_t<T>(&self, n: usize) -> Option<*mut T> {
+        self.try_claim(n * size_of::<T>(), align_of::<T>().max(8)).map(|at| self.ptr(at))
+    }
+
+    /// `try_claim_t` of a structure whose clear state is all zero bits (a count, an empty span), that state written
+    /// over its exact room by the structure itself.
+    pub fn try_claim_clear_t<T>(&self, n: usize) -> Option<*mut T> {
+        let p = self.try_claim_t::<T>(n)?;
+        // SAFETY: the claim just made, `n` `T`s, which nothing else holds.
+        unsafe { p.cast::<u8>().write_bytes(0, n * size_of::<T>()) };
+        Some(p)
+    }
+
+    /// `s`'s final form, settled into an exact claim of the block (`flat::Settle`; L4): where it lies. `None` when
+    /// the block cannot hold its need.
+    pub fn try_settle<S: crate::flat::Settle + ?Sized>(&self, s: &S) -> Option<&S::Final> {
+        let at = self.try_claim(s.need().bytes, 8)?;
+        // SAFETY: the block's memory, open and writable, lives as long as `self`; the claim is this call's alone.
+        Some(unsafe { &*crate::flat::settle_into(self.base, self.reserved, at, s) })
+    }
+
     /// `n` zeroed `T`s, or `None` when the block cannot hold them.
     pub fn try_alloc_t<T>(&self, n: usize) -> Option<*mut T> {
         self.try_alloc(n * size_of::<T>(), align_of::<T>().max(8)).map(|at| self.ptr(at))
@@ -643,7 +681,7 @@ impl Block {
             if let Some((_, l)) = self.gpu.lock().unwrap().as_ref() {
                 keep = keep.max(*l);
             }
-            if self.was_free_listed && keep < self.reserved {
+            if self.trims && keep < self.reserved {
                 unsafe { crate::mem::release(self.base.add(keep), self.reserved - keep) };
                 self.reserved = keep;
                 self.ledger.resized(keep);
@@ -670,7 +708,7 @@ impl Block {
         self.ledger.untrack_list();
         self.listed = false;
         self.ext.free.store(0, Relaxed);
-        self.was_free_listed = true;
+        self.trims = true;
     }
 
     /// Seals a block whose state is written later, by someone else (a deferrable slab, decision 0295 §1): its length
@@ -1006,6 +1044,62 @@ pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// Memory that held earlier bytes (a recycled slab's): every byte `0xab`.
+    struct Dirty(*mut u8, std::alloc::Layout);
+
+    // SAFETY: its memory is its own.
+    unsafe impl Send for Dirty {}
+    // SAFETY: as above.
+    unsafe impl Sync for Dirty {}
+
+    impl Backing for Dirty {
+        fn base(&self) -> *mut u8 {
+            self.0
+        }
+        fn len(&self) -> usize {
+            self.1.size()
+        }
+    }
+
+    impl Drop for Dirty {
+        fn drop(&mut self) {
+            // SAFETY: allocated with this layout.
+            unsafe { std::alloc::dealloc(self.0, self.1) };
+        }
+    }
+
+    /// *Flat Views and Lifecycles* L4: an out block's claims are exact and handed out as they lie, in a dirty block
+    /// too (nothing zeroes them, nor counts a zeroing); a structure whose clear state is zero writes it over its exact
+    /// room; a final form settles into a claim of its need exactly.
+    #[test]
+    fn an_out_blocks_claims_are_exact_and_never_zeroed() {
+        use rerail_delta_core::sketch::{SketchW, WORK_BYTES, reading};
+        let layout = std::alloc::Layout::from_size_align(1 << 20, PAGE).unwrap();
+        // SAFETY: a non-zero size.
+        let base = unsafe { std::alloc::alloc(layout) };
+        unsafe { base.write_bytes(0xab, 1 << 20) };
+        let b = Block::over(kind::FACTS, Box::new(Dirty(base, layout))).trimmed();
+        let before = zeroed_bytes();
+        let p: *mut u64 = b.try_claim_t(100).unwrap();
+        assert!((0..100).all(|i| unsafe { *p.add(i) } == 0xabab_abab_abab_abab), "a claim is handed out as it lies");
+        let q: *mut u32 = b.try_claim_clear_t(100).unwrap();
+        assert!((0..100).all(|i| unsafe { *q.add(i) } == 0), "a clear claim's structure wrote its zero state");
+        assert_eq!(unsafe { *q.add(100).cast::<u8>() }, 0xab, "and nothing past it");
+        assert_eq!(zeroed_bytes(), before, "no claim was zeroed by the allocator");
+        let mut work = vec![0u64; WORK_BYTES / 8 + 1];
+        let bytes = unsafe { std::slice::from_raw_parts_mut(work.as_mut_ptr().cast::<u8>(), WORK_BYTES) };
+        let mut s = SketchW::over(bytes).unwrap();
+        for v in 0..1000 {
+            s.add(v % 37);
+        }
+        let used = b.used();
+        let kept = b.try_settle(&s).unwrap();
+        assert_eq!(b.used() - used.next_multiple_of(8), s.encoded_len().next_multiple_of(8), "a settle claims its need exactly");
+        assert_eq!(kept.len(), s.encoded_len());
+        let r = reading(kept).expect("its kept bytes read");
+        assert_eq!((r.rows, r.ndv), (1000, 37));
+    }
 
     /// The descriptors this process has open.
     fn open_descriptors() -> usize {

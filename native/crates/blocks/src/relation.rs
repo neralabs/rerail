@@ -96,10 +96,14 @@ impl Spec {
 
 /// `RelationW::try_create` of `cols`: the descriptor and both row sets' column directories, in one chunk of `block`.
 pub fn try_create_cols<'b>(block: &'b Block, cols: Cols<'_>, base: Option<&Relation>) -> Option<&'b Relation> {
-    let at = block.try_alloc_chunk(Relation::descriptor_bytes(cols.widths.len()), 64)?;
+    // A chunk as it lies (in a dirty block too: nothing zeroes it as it is handed out), the descriptor's clear state
+    // written over it whole, then its fields.
+    let bytes = Relation::descriptor_bytes(cols.widths.len());
+    let at = block.try_alloc_chunk_any(bytes, 64)?;
     let p: *mut Relation = block.ptr(at);
     let dirs: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
     unsafe {
+        block.ptr::<u8>(at).write_bytes(0, bytes);
         (*p).arity = cols.widths.len() as u32;
         (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
         (*p).base_rows = base.map_or(0, |b| {
@@ -1111,8 +1115,9 @@ fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], 
         let mask = (cap - 1) as u64;
         // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
         let bucket: &mut [u32] = scratch.take(live);
-        let bp: *mut u32 = block.alloc_t(cap + 1);
-        let rp: *mut u32 = block.alloc_t(live.max(1));
+        // Exact claims: the buckets' counts start at zero, written so; every row is written below.
+        let bp: *mut u32 = block.try_claim_clear_t(cap + 1).expect("room in the block for an index's buckets");
+        let rp: *mut u32 = block.try_claim_t(live.max(1)).expect("room in the block for an index's rows");
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
         for (j, b) in bucket.iter_mut().enumerate() {
             *b = (key_hash(&kv(j)[..nk]) & mask) as u32;

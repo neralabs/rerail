@@ -43,7 +43,7 @@ pub use finals::{BloomFrom, Csr, CsrFrom, IntFrom, IntTable, Sorted, SortedFrom,
 pub use grow::{Grow, GrowHead};
 pub use map::{Claimed, Least, Map, MapHead, Stamped, StampedHead, Word};
 pub use pool::{Chain, ChainHead, Link, Pool, PoolHead};
-pub use settle::{Need, Room, Settle};
+pub use settle::{Need, Room, Settle, settle_into};
 pub use stack::Stack;
 pub use rel::{BitSpan, Rel, RelSpan};
 
