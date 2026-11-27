@@ -17,6 +17,8 @@ import { LEFT_RUN, PROCESS_SLOTS, type RrRunEnd, type RrRunSlots } from "./rr-ru
 export interface RrClaim {
   /** The rule files to run (absolute). */
   readonly policies: readonly string[];
+  /** The repository's option values, by rule file, for the rules it sets any for (`rrRunOptions`). */
+  readonly options: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** Called once, with how the run ended; `left` when the owner left the run before it ended. */
   settle(end: RrRunEnd): void;
 }
@@ -143,9 +145,12 @@ export class RrRunQueue {
   #request(running: Running): RrRun | undefined {
     running.started = true;
     this.#claim(running);
-    const policies = [...new Set([...running.claims.values()].flatMap(claim => claim.policies))].sort();
+    const claims = [...running.claims.values()];
+    const policies = [...new Set(claims.flatMap(claim => claim.policies))].sort();
     if (policies.length === 0) return undefined;
-    return { root: this.#root, policies, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
+    // Every session of the checkout reads one repository's settings, so a rule's values are the same in each claim.
+    const options = Object.assign({}, ...claims.map(claim => claim.options)) as Record<string, Readonly<Record<string, unknown>>>;
+    return { root: this.#root, policies, options, deadlineMs: this.#timing.deadlineMs, signal: running.controller.signal };
   }
 }
 

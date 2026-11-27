@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, matchesGlob, relative, resolve, sep } from "
 import {
   describeRerailRules,
   loadNativeBinding,
+  RERAIL_SUPPRESS_KEYS,
   runRerailPolicies,
   unsupportedRerailRule,
   type RerailDescription,
@@ -61,13 +62,47 @@ export function includedPackFiles(directory: string, rows: Iterable<RrDescriptio
   return included;
 }
 
+/** The upstream tool and rule a pack rule ports (its conformance.json port entry). */
+export interface RerailPort {
+  readonly tool: string;
+  readonly rule: string;
+}
+
+/** The JSON suppress keys whose comments a port of each upstream tool honours (`RERAIL_SUPPRESS_KEYS` maps a line's tool to one). */
+const PORT_SUPPRESS_KEYS: Readonly<Record<string, readonly string[]>> = {
+  ruff: ["noqa"], bandit: ["nosec"], clippy: ["clippy"], phpstan: ["phpstan"], psalm: ["psalm"], phpcs: ["phpcs"], sqlfluff: ["sqlfluff"],
+};
+
+/** The keys of the comments a port of `tool` honours: ESLint's family's are ESLint's, Oxlint's and Biome's. */
+function portSuppressKeys(tool: string): readonly string[] {
+  if (tool === "eslint" || tool === "typescript-eslint" || tool.startsWith("eslint-plugin-")) return ["eslint", "oxlint", "biome"];
+  return PORT_SUPPRESS_KEYS[tool] ?? [];
+}
+
 /**
- * Check 2 on a listed `.rerail` rule: a pack's own rule has no upstream tool whose comments it honours, so it sets no
- * `suppress`, and it carries at least one `.test` block. Its examples are asked for with every rule's.
+ * Check 2's failures for the `suppress` lines of a listed `.rerail` rule: a rule that ports no tool (no port entry in
+ * conformance.json, `port` undefined) has no upstream tool whose comments it honours, so it sets none, and a port
+ * sets only those of the tool it ports.
  */
-export function rerailProofFailures(id: string, described: RerailDescription): string[] {
+function suppressFailures(id: string, described: RerailDescription, port: RerailPort | undefined): string[] {
+  const lines = described.violations.flatMap(violation => violation.suppress.map(line => ({ violation: violation.name, tool: line.tool })));
+  if (port === undefined) {
+    return lines.length === 0 ? [] : [`${id}: a violation sets suppress, and the rule ports no tool: give it a port entry in conformance.json, or drop the suppress lines`];
+  }
+  const honoured = portSuppressKeys(port.tool);
+  return lines
+    .filter(line => !honoured.includes(RERAIL_SUPPRESS_KEYS[line.tool] ?? ""))
+    .map(line => `${id}: ${line.violation} sets suppress ${line.tool}, whose comments are not ${port.tool}'s; a port honours only the comments of the tool it ports`);
+}
+
+/**
+ * Check 2 on a listed `.rerail` rule: it sets `suppress` lines only as a port of the tool whose comments they are
+ * (`port`, its conformance.json entry), and it carries at least one `.test` block. Its examples are asked for with
+ * every rule's.
+ */
+export function rerailProofFailures(id: string, described: RerailDescription, port: RerailPort | undefined): string[] {
   return [
-    ...(described.suppresses ? [`${id}: a violation sets suppress; a pack's own rule has no upstream tool's comments to honour`] : []),
+    ...suppressFailures(id, described, port),
     ...(described.tests === 0 ? [`${id}: has no .test block; a rule written in .rerail proves itself with at least one`] : []),
   ];
 }

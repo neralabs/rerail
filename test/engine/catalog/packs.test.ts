@@ -14,7 +14,7 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, statedCoreRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { coreFloor, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
@@ -798,9 +798,25 @@ describe("validatePack", () => {
         { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: block mode is not supported yet for a .rerail rule; use steer or log"] },
       ],
       [
-        "a rule that sets suppress",
+        "a rule that sets suppress and ports no tool",
         editRule(ASSERT, text => text.replace('runs with -O."\n', 'runs with -O."\n    suppress nosec "B101"\n')),
-        { proof: ["rr-sample-assert: a violation sets suppress; a pack's own rule has no upstream tool's comments to honour"] },
+        {
+          proof: ["rr-sample-assert: a violation sets suppress, and the rule ports no tool: give it a port entry in conformance.json, or drop the suppress lines"],
+          package: ["package.json: rerail.core is not set, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"],
+        },
+      ],
+      [
+        "a rule that declares options, in a pack that states an older core",
+        directory => {
+          editRule(ASSERT, text => text.replace(".mode steer\n", '.mode steer\n.options {"strict": {"type": "boolean", "default": false}}\n'))(directory);
+          editJson(join(directory, "package.json"), manifest => ({ ...manifest, rerail: { core: "0.2.1" } }));
+        },
+        { package: ["package.json: rerail.core is 0.2.1, and Rerail runs the options, fixes and linters' comments of rr-sample-assert from 0.2.3; set rerail.core to 0.2.3 or later"] },
+      ],
+      [
+        "a rule whose .options does not read as a define's",
+        editRule(ASSERT, text => text.replace(".mode steer\n", '.mode steer\n.options {"strict": {"type": "boolean"}}\n')),
+        { rules: ["rr-sample-assert: rules/rr-sample-assert.rerail cannot ship in a pack yet: its .options.strict.default: is required"] },
       ],
       [
         "a rule with no .test block",
@@ -1132,6 +1148,25 @@ describe("ruleKeyRangeFailure", () => {
   it("names the keys and the range to raise to", () => {
     expect(ruleKeyRangeFailure(">=0.1.0-0", ["filePath", "stored"], since)).toBe(
       `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no ast rule using \`filePath\` or \`stored\`; raise it to >=${since}-0`,
+    );
+  });
+});
+
+// A pack whose .rerail rules need engine work newer than the release that first reads one states that core, rerail.core
+// (decision 0720): the same hazard once core is at it.
+describe("statedCoreRangeFailure", () => {
+  it.each([
+    ["a core before the stated one passes the old range", ">=0.2.1-0", "0.2.3", "0.2.2", false],
+    ["the stated release fails a range admitting older cores", ">=0.2.1-0", "0.2.3", "0.2.3", true],
+    ["a range starting at its prereleases passes", ">=0.2.3-0", "0.2.3", "0.2.4", false],
+    ["a pack that states no core passes", ">=0.2.1-0", undefined, "0.2.4", false],
+  ])("%s", (_, range, stated, core, fails) => {
+    expect(statedCoreRangeFailure(range, stated, core) !== undefined).toBe(fails);
+  });
+
+  it("names the stated core and the range to raise to", () => {
+    expect(statedCoreRangeFailure(">=0.2.1-0", "0.2.3", "0.2.3")).toBe(
+      "package.json: the core range >=0.2.1-0 admits Rerail older than 0.2.3, which rerail.core says its rules need; raise it to >=0.2.3-0",
     );
   });
 });

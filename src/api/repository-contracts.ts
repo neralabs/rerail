@@ -6,7 +6,7 @@ import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { INACTIVE_CODE_RULE_CODES, READS_LEFT_OUT_TOKEN_CODE } from "../engine/code-rule/code-rule-compile.js";
 import { codeRuleLanguageNotSupported } from "../engine/code-rule/code-rule-language-support.js";
-import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
+import { codeRuleOptionDeclarationSchema, codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-rule-schema.js";
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
@@ -129,13 +129,15 @@ export const rerailRuleBodySchema = z.object({
   language: z.string().nullable(),
   scope: z.object({ include: z.array(z.string()), exclude: z.array(z.string()) }).strict(),
   codes: z.array(z.string()).describe("The violation codes the rule reports."),
+  options: z.record(z.string(), codeRuleOptionDeclarationSchema)
+    .describe("The options the file's .options declares, by name: a setting's config gives them values, as a JSON rule's."),
   source: z.string().describe("The text of the rule's .rerail file."),
-}).strict().describe("A rule written in .rerail, which a rule pack ships. It takes no options, and only its pack holds it.");
+}).strict().describe("A rule written in .rerail, which a rule pack ships. Only its pack holds it.");
 
 /** `rule` as the API returns it: everything but where the file and its includes are on this computer. */
 function rerailRuleBody(rule: RerailRule): z.infer<typeof rerailRuleBodySchema> {
-  const { id, revision, mode, description, language, scope, codes, source } = rule;
-  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], source };
+  const { id, revision, mode, description, language, scope, codes, options, source } = rule;
+  return { id, revision, mode, description, language, scope: { include: [...scope.include], exclude: [...scope.exclude] }, codes: [...codes], options: { ...options }, source };
 }
 
 /**

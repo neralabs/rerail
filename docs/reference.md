@@ -861,6 +861,10 @@ run at different times from JSON rules.
   not ignore), leaving out the folders Rerail's own walks never enter (`node_modules`, `dist`, `.git`, `.venv` and the
   like). It reads no file Git ignores, even where the repository's audits are set not to follow `.gitignore`.
   Findings in a checkout nested in this one are left to that checkout's own rules.
+- **Options and fixes.** A rule runs with the values the repository's settings give the options its `.options`
+  declares, and its defaults for the rest; rules that run with the same options share one run, and each other set of
+  options takes a run of its own in the same process. A finding of a rule that offers a fix carries it, and its steer shows it as a suggested fix, as a JSON
+  rule's does.
 
 #### Command reference
 

@@ -29,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, dimensionedRules, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, dimensionedRules, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, statedCore } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog, rerailRuleHeader } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -200,13 +200,15 @@ const packFloors = new Map();
 /**
  * The oldest core release that loads pack `id` as the checkout holds it; undefined when every core does. The newer of
  * two floors: the oldest release from which every released core accepts all its rules, as those cores check them
- * (acceptedFloor), and, for the cores before 0.1.5, which can't check, the maps' floor (coreFloor in core.mjs).
+ * (acceptedFloor), and, for the cores before 0.1.5, which can't check, the maps' floor and the core its package.json
+ * states (coreFloor and statedCore in core.mjs).
  */
 function packFloor(id) {
   if (packFloors.has(id)) return packFloors.get(id);
   const directory = `packs/${id}`;
   const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
-  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)), rerailRules(packJson), dimensionedRules(packJson));
+  const stated = statedCore(JSON.parse(readText(`${directory}/package.json`)));
+  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)), rerailRules(packJson), dimensionedRules(packJson), stated);
   const byVersion = coreRefusalsByVersion();
   const checked = acceptedFloor([...byVersion.keys()], (version) => byVersion.get(version)[id] ?? [], JSON.parse(readText("package.json")).version);
   for (const { version, rules } of checked.refusals) console.log(`${id}: core ${version} refuses ${rules.length} rule(s): ${rules.join(", ")}`);

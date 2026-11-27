@@ -24,10 +24,75 @@ fn described(path: &Path) -> Result<Value, String> {
         "scope": scope(&program, &header),
         "codes": codes(&program, &header.id).map_err(|e| format!("{}: {e}", path.display()))?,
         "tests": tests(path)?,
-        "suppresses": program.settings.iter().any(|(key, _)| key == "suppress"),
-        "fixes": program.settings.iter().any(|(key, _)| key == "fix"),
+        "violations": violations(&program, &header.id),
+        "options": options(&program.settings).map_err(|e| format!("{}: {e}", path.display()))?,
         "files": read_files(path, &files)?,
     }))
+}
+
+/// The policy's `.violation`s, each once in the order its `violation` rules come (`finding_of`), with the `suppress`
+/// and `fix` lines lowering kept as settings of the findings layer (`suppress V tool "rule", … [over {c}]`,
+/// `fix V [safe] F "title"`): `{name, suppress: [{tool, rules}], fixes: [F]}`.
+fn violations(program: &Program, policy: &str) -> Vec<Value> {
+    let mut names: Vec<&str> = Vec::new();
+    let clauses = program.rules.iter().map(|rule| &rule.head).filter(|head| finding_of(head, policy)).filter_map(|head| match head.args.get(1) {
+        Some(Term::Str(clause)) => Some(clause.as_str()),
+        _ => None,
+    });
+    for clause in clauses {
+        if !names.contains(&clause) {
+            names.push(clause);
+        }
+    }
+    let lines = |key: &'static str| program.settings.iter().filter(move |(k, _)| k == key).filter_map(|(_, text)| tokens(text).ok());
+    names
+        .into_iter()
+        .map(|name| {
+            let suppress: Vec<Value> = lines("suppress").filter_map(|line| suppress_line(name, &line)).collect();
+            let fixes: Vec<Value> = lines("fix").filter_map(|line| fix_line(name, &line)).collect();
+            json!({"name": name, "suppress": suppress, "fixes": fixes})
+        })
+        .collect()
+}
+
+/// A `suppress V tool "rule", … [over {c}]` setting's tool and rules, where it is violation `name`'s.
+fn suppress_line(name: &str, line: &[(Tok<'_>, usize, usize)]) -> Option<Value> {
+    let [(Tok::Id(v), ..), (Tok::Id(tool), ..), rest @ ..] = line else { return None };
+    let texts = rest.iter().take_while(|(tok, ..)| !matches!(tok, Tok::Id("over")));
+    let rules: Vec<String> = texts
+        .filter_map(|(tok, ..)| match tok {
+            Tok::Str(rule) => Some(rule.to_string()),
+            _ => None,
+        })
+        .collect();
+    (*v == name).then(|| json!({"tool": tool, "rules": rules}))
+}
+
+/// A `fix V [safe] F "title"` setting's fix relation F, where it is violation `name`'s.
+fn fix_line(name: &str, line: &[(Tok<'_>, usize, usize)]) -> Option<Value> {
+    let [(Tok::Id(v), ..), rest @ ..] = line else { return None };
+    let fix = rest.iter().rev().find_map(|(tok, ..)| match tok {
+        Tok::Id(f) => Some(*f),
+        _ => None,
+    })?;
+    (*v == name).then(|| json!(fix))
+}
+
+/// The options the policy's `.options` declare (one JSON object of declarations each), together, or `null` for none.
+/// A run's own settings (`run::RUN_SETTINGS`) share the object a run's option values come in, so no option takes the
+/// name of one.
+fn options(settings: &[(String, String)]) -> Result<Value, String> {
+    let mut declared = serde_json::Map::new();
+    for (_, text) in settings.iter().filter(|(key, _)| key == "options") {
+        let Value::Object(each) = serde_json::from_str::<Value>(text).map_err(|e| format!("`.options`: {e}"))? else {
+            return Err("`.options` is a JSON object of declarations".to_owned());
+        };
+        declared.extend(each);
+    }
+    if let Some(name) = declared.keys().find(|name| super::run::RUN_SETTINGS.contains(&name.as_str())) {
+        return Err(format!("`.options` declares {name}, the name of a run's own setting; give the option another name"));
+    }
+    Ok(if declared.is_empty() { Value::Null } else { Value::Object(declared) })
 }
 
 /// The file read and checked as `check-rr` checks it (its reader, then its types): the error otherwise, naming the

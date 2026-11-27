@@ -11,6 +11,7 @@ function rule(scope: Partial<RerailRuleEntry["scope"]>): RerailRuleEntry {
     scope: { include: [], exclude: [], text: [], ...scope },
     language: "python",
     files: [],
+    config: null,
     provenance: {
       ruleId: "rr-scoped", revision: 1, payloadHash: "hash", source: { kind: "pack", id: "rr", packId: "rr" },
       repositoryKey: "repository", checkoutPath: "/repo", placement: [],

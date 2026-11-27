@@ -1,9 +1,10 @@
 //! The addon's `.rerail` entry points: `CodeRuleDslRuntime.describeRr` (what each rule file states, checked, nothing
-//! run) and `runRr` (the policies over a corpus root, each finding with its span). The product calls them in a child
-//! process of its own (`src/engine/rr/rr-runner.ts`): the run path's thread pool and store are the process's.
+//! run) and `runRr` (the policies over a corpus root, each finding with its span and fix). The product calls them in a
+//! child process of its own (`src/engine/rr/rr-runner.ts`): the run path's thread pool and store are the process's.
 
 mod describe;
 mod findings;
+mod fixes;
 mod run;
 mod spans;
 #[cfg(test)]
@@ -18,7 +19,7 @@ use napi_derive::napi;
 #[napi]
 impl CodeRuleDslRuntime {
     /// Each `.rerail` file of `paths_json` (a JSON array of paths) read with its includes and checked, nothing run:
-    /// `[{path, ok: true, id, revision, description, mode, language, scope, codes, tests, suppresses, fixes, files}]`,
+    /// `[{path, ok: true, id, revision, description, mode, language, scope, codes, tests, violations, options, files}]`,
     /// or `{path, ok: false, error}` for a file that does not read or check.
     #[napi(catch_unwind)]
     pub fn describe_rr(paths_json: String) -> Result<String> {
@@ -26,8 +27,8 @@ impl CodeRuleDslRuntime {
         serde_json::to_string(&describe::describe(&paths)).map_err(json_error)
     }
 
-    /// The policies of `request_json` (`{root, policies, out, inputFiles?}`) run over the corpus at `root`, off the
-    /// JavaScript thread: `{findings, failures, files}` as JSON.
+    /// The policies of `request_json` (`{root, policies, out, inputFiles?, options?}`) run over the corpus at `root`,
+    /// off the JavaScript thread: `{findings, failures, files}` as JSON.
     #[napi]
     pub fn run_rr(request_json: String) -> AsyncTask<RrRunTask> {
         AsyncTask::new(RrRunTask { request: request_json })

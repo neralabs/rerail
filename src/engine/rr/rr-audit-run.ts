@@ -9,7 +9,7 @@ import type { AuditFailure, RepositoryAuditRuleProvenance } from "../audit/audit
 import { folderContains } from "../catalog/repository-model.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import type { RerailRuleEntry } from "../code-rule/code-rule-dsl-catalog.js";
-import type { RrRun } from "./rr-runner.js";
+import { rrRunOptions, type RrRun } from "./rr-runner.js";
 import { leftRun, PROCESS_SLOTS, type RrRunEnd, type RrRunSlots } from "./rr-run-slots.js";
 import { unchangedRules } from "./rr-rule-files.js";
 import { insideAny } from "./rr-rule-scope.js";
@@ -80,7 +80,7 @@ export class RrAuditRun {
     this.#rules = rules;
     this.#changed = failures;
     if (rules.length === 0) return undefined;
-    return { root: this.#request.root, policies: rules.map(rule => rule.path), signal: this.#controller.signal };
+    return { root: this.#request.root, policies: rules.map(rule => rule.path), options: rrRunOptions(rules), signal: this.#controller.signal };
   }
 
   /** Kills the run: the audit it belongs to ended without it. */

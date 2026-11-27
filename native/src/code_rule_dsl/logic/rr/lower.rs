@@ -33,7 +33,8 @@
 //!   `code "X"`, or the `code {c}` column. `suppress TOOL "rule", … [over {c}]`, `code {c} in "re"` and
 //!   `fix [safe] F "title"` are kept as the settings `suppress V …`, `code_in V …` and `fix V …` for the findings
 //!   layer, which applies them;
-//! - a rule ending in `=> edits` defines a fix, and fixes are not run: it is left out;
+//! - a rule ending in `=> edits` defines a fix: each `replace` edit of a fix a `.violation` offers is an output
+//!   relation joined with V's rows (`fixes`, decision 0720), and the rule itself is not run;
 //! - `.input r(IO=…, filename="…")` is an input, its parameters kept as the setting `input`;
 //! - core.rerail is the prelude (`rr::program` reads it before every file): the program keeps the core relations it reads
 //!   (a relation read and not declared takes its declaration there); `next_sibling`, `precedes`, `earlier` and
@@ -66,6 +67,7 @@ use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, 
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
 pub mod findings;
+pub mod fixes;
 
 /// The text tests: their `.rerail` names and the engine's.
 pub const TESTS: [(&str, &str); 11] = [
@@ -424,139 +426,200 @@ pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<
     lower_module_seeded(statements, &seeds(scope))
 }
 
-/// `lower_module_in`, in a scope seeded already.
-pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
-    let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
-    let written: BTreeMap<String, Vec<String>> = statements
+/// A clause as read: its heads, its body, its edits (a fix's rule ends in `=> edits`) and its line.
+type ReadClause = (Vec<Head>, Vec<Lit>, Vec<STerm>, usize);
+
+/// What reading a module's statements leaves for lowering its rules: its clauses in order, its `.shape` directives
+/// with their lines, and the heads of the last rule read, which a `.shape` binds to (O-join-shape-directives).
+#[derive(Default)]
+struct ReadStatements {
+    clauses: Vec<ReadClause>,
+    shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)>,
+    last_heads: Option<Vec<String>>,
+}
+
+impl ReadStatements {
+    /// `.shape text` at `line`, bound to each head of the rule just before it.
+    fn shape(&mut self, text: &str, line: usize) -> Result<(), Error> {
+        let Some(heads) = &self.last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
+        for h in heads {
+            self.shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
+        }
+        Ok(())
+    }
+}
+
+/// An error of the statement at `line`, as its message names it: a syntax error says its line.
+fn at_line(line: usize) -> impl Fn(Error) -> Error {
+    move |e| match e {
+        Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
+        e => e,
+    }
+}
+
+/// The column types of the relations `statements` declare, as written, once their terms type in the scope `seeds`.
+fn written_types(statements: &[Statement], seeds: &Seeds) -> Result<BTreeMap<String, Vec<String>>, Error> {
+    let _typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
+    let written = statements
         .iter()
         .filter_map(|(item, _)| match item {
             Item::Decl { name, cols, .. } => Some((name.clone(), cols.iter().map(|(_, t)| t.clone()).collect())),
             _ => None,
         })
         .collect();
-    super::tape_type::check_in(&statements, &seeds.given)?;
-    drop(typing);
-    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
+    super::tape_type::check_in(statements, &seeds.given)?;
+    Ok(written)
+}
+
+/// `lower_module_in`, in a scope seeded already.
+pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
+    let written = written_types(&statements, seeds)?;
     let declares_docof = statements.iter().any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == "docof"));
     let mut l = seeds.l.clone();
     let seeded = seeds.seeded.clone();
-    let mut clauses = Vec::new();
-    // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
-    let mut last_heads: Option<Vec<String>> = None;
-    let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
-    for (item, line) in statements {
-        let at = |e: Error| match e {
-            Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
-            e => e,
-        };
-        match item {
-            Item::Include(path) => return Err(Error::Syntax(format!("line {line}: #include {path:?} not resolved"))),
-            Item::Decl { name, cols, tail } => l.decl(name, cols, &tail).map_err(at)?,
-            Item::Edit { .. } | Item::Functor { .. } | Item::Type { .. } => {}
-            // `.input r(IO=json, filename="…")`: r is an input whose rows come from that file (or artifact), kept
-            // as the setting `input r(IO=…)` for the runner; without them r is empty.
-            Item::Io { output, names, params } => {
-                for (name, text) in params {
-                    l.prog.settings.push((if output { "output" } else { "input" }.to_owned(), format!("{name}({text})")));
-                }
-                if output { &mut l.prog.outputs } else { &mut l.prog.inputs }.extend(names)
-            }
-            Item::Lattice { name, base, ops } => {
-                let Some((_, STerm::Call { name: lub, functor: true, .. })) = ops.iter().find(|(op, _)| op == "Lub") else {
-                    return Err(at(Error::Syntax(format!(".lattice {name} has no `Lub -> @f`"))));
-                };
-                l.lattices.insert(name, (ty(&base), lub.clone()));
-            }
-            Item::Pragma(words) => match words.as_slice() {
-                [magic, relations] if magic == "magic-transform" => {
-                    l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
-                }
-                // `.pragma "cross-rounds" "k"` (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
-                [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
-                    return Err(at(Error::Syntax(format!(".pragma \"{key}\": bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)"))));
-                }
-                // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
-                [key, rels] if key == "cross-memo" => {
-                    l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
-                }
-                _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
-            },
-            Item::Policy(document) => l.prog.policies.push(document),
-            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
-            // its own (`rr::testing`).
-            Item::Test { .. } | Item::Fixtures { .. } => {}
-            Item::Setting { key, text } if key == "shape" => {
-                let Some(heads) = &last_heads else { return Err(Error::Syntax(format!("line {line}: `.shape {text}` follows no rule"))) };
-                for h in heads {
-                    shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
-                }
-            }
-            Item::Setting { key, text } => l.prog.settings.push((key, text)),
-            Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
-            Item::Clause { heads, body, edits } => {
-                if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
-                    for (rel, row) in rows {
-                        l.prog.facts.entry(rel).or_default().push(row.into());
-                    }
-                    last_heads = None;
-                    continue;
-                }
-                last_heads = edits.is_empty().then(|| heads.iter().map(|h| h.rel.clone()).collect());
-                clauses.push((heads, body, edits, line));
-            }
-        }
-    }
-    drop(reading);
+    let read = l.read_statements(statements)?;
     let stated: BTreeSet<String> = l.prog.inputs.iter().filter(|r| !seeded.inputs.contains(*r)).cloned().collect();
     let rules = crate::code_rule_dsl::logic::profile::span(|| "lower the rules".to_owned());
-    l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.facts.keys().cloned()).collect();
-    let mut own_deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (heads, body, ..) in &clauses {
-        let mut rels = BTreeSet::new();
-        lit_rels(body, &mut rels);
-        for h in heads {
-            own_deps.entry(h.rel.clone()).or_default().extend(rels.iter().cloned());
-        }
-    }
-    for (rel, reads) in &own_deps {
-        l.deps.entry(rel.clone()).or_default().extend(reads.iter().cloned());
-    }
+    let own_deps = l.own_deps(&read.clauses);
     // The demands the text states (a printed program's): its own declarations, as read, and those its includes
     // stated. A demand an include's lowering made is not one: this module makes its own.
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
     l.printed_demands.extend(seeds.printed.iter().cloned());
-    for (heads, body, edits, line) in clauses {
-        // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
-        if !edits.is_empty() {
-            continue;
-        }
-        l.clause(&heads, &body).map_err(|e| match e {
-            Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
-            e => e,
-        })?;
+    // A rule ending in `=> edits` defines a fix: its edits become rows of the fix's own relations (`fixes`).
+    let (fixes, clauses): (Vec<ReadClause>, Vec<ReadClause>) = read.clauses.into_iter().partition(|(_, _, edits, _)| !edits.is_empty());
+    for (heads, body, _, line) in clauses {
+        l.clause(&heads, &body).map_err(at_line(line))?;
     }
-    // Each directive names what its rules read: a relation of their body, and the variables it waits for.
-    for (shape, line) in shapes {
-        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
-        let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
-        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
-        let missing = match &shape.wait {
-            _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
-            ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
-            ShapeWait::Bound(vars) => vars.iter().find(|v| !rules.iter().any(|r| r.body.iter().any(|x| x.vars().contains(*v)))).map(|v| format!("no rule of `{}` has the variable `{v}`", shape.head)),
-            _ => None,
-        };
-        if let Some(why) = missing {
-            return Err(Error::Syntax(format!("line {line}: `.shape {}`: {why}", shape.text)));
-        }
-        l.prog.shapes.push(shape);
-    }
+    l.fix_outputs(&fixes);
+    l.check_shapes(read.shapes)?;
     drop(rules);
     let places = l.unseed(seeded);
     l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
     Ok(Module { l, written, docof, places })
+}
+
+impl Lowerer {
+    /// A module's statements read in order: declarations, settings and violations taken, and its clauses kept for
+    /// `lower_module_seeded` to lower once every declaration is read.
+    fn read_statements(&mut self, statements: Vec<Statement>) -> Result<ReadStatements, Error> {
+        let _reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
+        let mut read = ReadStatements::default();
+        for (item, line) in statements {
+            self.statement(item, line, &mut read)?;
+        }
+        Ok(read)
+    }
+
+    /// One statement, at `line`.
+    fn statement(&mut self, item: Item, line: usize, read: &mut ReadStatements) -> Result<(), Error> {
+        let at = at_line(line);
+        match item {
+            Item::Include(path) => return Err(Error::Syntax(format!("line {line}: #include {path:?} not resolved"))),
+            Item::Decl { name, cols, tail } => self.decl(name, cols, &tail).map_err(at)?,
+            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
+            // its own (`rr::testing`).
+            Item::Edit { .. } | Item::Functor { .. } | Item::Type { .. } | Item::Test { .. } | Item::Fixtures { .. } => {}
+            Item::Io { output, names, params } => self.io(output, names, params),
+            Item::Lattice { name, base, ops } => self.lattice(name, &base, &ops).map_err(at)?,
+            Item::Pragma(words) => self.pragma(&words).map_err(at)?,
+            Item::Policy(document) => self.prog.policies.push(document),
+            Item::Setting { key, text } if key == "shape" => read.shape(&text, line)?,
+            Item::Setting { key, text } => self.prog.settings.push((key, text)),
+            Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => self.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
+            Item::Clause { heads, body, edits } => self.read_clause(heads, body, edits, line, read),
+        }
+        Ok(())
+    }
+
+    /// `.input r(IO=json, filename="…")`: r is an input whose rows come from that file (or artifact), kept as the
+    /// setting `input r(IO=…)` for the runner; without them r is empty. `.output` likewise.
+    fn io(&mut self, output: bool, names: Vec<String>, params: Vec<(String, String)>) {
+        for (name, text) in params {
+            self.prog.settings.push((if output { "output" } else { "input" }.to_owned(), format!("{name}({text})")));
+        }
+        if output { &mut self.prog.outputs } else { &mut self.prog.inputs }.extend(names)
+    }
+
+    /// `.lattice name<base> { Lub -> @f }`.
+    fn lattice(&mut self, name: String, base: &str, ops: &[(String, STerm)]) -> Result<(), Error> {
+        let Some((_, STerm::Call { name: lub, functor: true, .. })) = ops.iter().find(|(op, _)| op == "Lub") else {
+            return Err(Error::Syntax(format!(".lattice {name} has no `Lub -> @f`")));
+        };
+        self.lattices.insert(name, (ty(base), lub.clone()));
+        Ok(())
+    }
+
+    /// `.pragma "…" "…"`.
+    fn pragma(&mut self, words: &[String]) -> Result<(), Error> {
+        match words {
+            [magic, relations] if magic == "magic-transform" => {
+                self.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
+            }
+            // `.pragma "cross-rounds" "k"` (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
+            [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
+                return Err(Error::Syntax(format!(".pragma \"{key}\": bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9)")));
+            }
+            // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
+            [key, rels] if key == "cross-memo" => {
+                self.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
+            }
+            _ => return not_yet(format!(".pragma {words:?}")),
+        }
+        Ok(())
+    }
+
+    /// A clause read: a fact's rows taken, any other rule kept for lowering (`ReadStatements::clauses`).
+    fn read_clause(&mut self, heads: Vec<Head>, body: Vec<Lit>, edits: Vec<STerm>, line: usize, read: &mut ReadStatements) {
+        if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
+            for (rel, row) in rows {
+                self.prog.facts.entry(rel).or_default().push(row.into());
+            }
+            read.last_heads = None;
+            return;
+        }
+        read.last_heads = edits.is_empty().then(|| heads.iter().map(|h| h.rel.clone()).collect());
+        read.clauses.push((heads, body, edits, line));
+    }
+
+    /// The relations the module derives (`derived`), and what each one's rules read, over every clause; each derived
+    /// relation's reads joined into `deps` too.
+    fn own_deps(&mut self, clauses: &[ReadClause]) -> BTreeMap<String, BTreeSet<String>> {
+        self.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(self.prog.facts.keys().cloned()).collect();
+        let mut own_deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for (heads, body, ..) in clauses {
+            let mut rels = BTreeSet::new();
+            lit_rels(body, &mut rels);
+            for h in heads {
+                own_deps.entry(h.rel.clone()).or_default().extend(rels.iter().cloned());
+            }
+        }
+        for (rel, reads) in &own_deps {
+            self.deps.entry(rel.clone()).or_default().extend(reads.iter().cloned());
+        }
+        own_deps
+    }
+
+    /// Each `.shape` directive names what its rules read: a relation of their body, and the variables it waits for.
+    fn check_shapes(&mut self, shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)>) -> Result<(), Error> {
+        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        for (shape, line) in shapes {
+            let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = self.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
+            let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
+            let missing = match &shape.wait {
+                _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
+                ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),
+                ShapeWait::Bound(vars) => vars.iter().find(|v| !rules.iter().any(|r| r.body.iter().any(|x| x.vars().contains(*v)))).map(|v| format!("no rule of `{}` has the variable `{v}`", shape.head)),
+                _ => None,
+            };
+            if let Some(why) = missing {
+                return Err(Error::Syntax(format!("line {line}: `.shape {}`: {why}", shape.text)));
+            }
+            self.prog.shapes.push(shape);
+        }
+        Ok(())
+    }
 }
 
 /// A module's parts as its image keeps them (decision 0246 §6): its program, and what lowering's whole-program half

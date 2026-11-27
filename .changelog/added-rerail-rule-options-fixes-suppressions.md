@@ -1,0 +1,1 @@
+A rule pack's rules written in `.rerail` can now take options, offer fixes and honour the suppression comments of the tool they port, as JSON rules do: settings, a pack's `config` and your ESLint or other linter config give them option values, and a finding's fix shows in its steer. Such a pack needs Rerail 0.2.3.

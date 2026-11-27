@@ -25,6 +25,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CodeRuleDslDocument, CodeRuleDslOptionDeclaration } from "../../code-rule/code-rule.js";
 import type { CodeRuleDslSuppress } from "../../code-rule/code-rule-semantic.js";
+import { RERAIL_SUPPRESS_KEYS, type RerailRule } from "../rerail-rules/rerail-rule.js";
 import type { RuleCatalog, RuleConfig } from "../repository-model.js";
 import type { RulePackRule } from "../rule-packs.js";
 import { stableJsonText } from "../../stable-json.js";
@@ -214,21 +215,35 @@ function declaredOptions(document: CodeRuleDslDocument): Declared {
   return declared;
 }
 
-/** Pack rule `rule`, a code rule, as a port. */
-function portOf(rule: RulePackRule, document: CodeRuleDslDocument): Port {
-  const written = document.clauses.flatMap(clause => (clause.violation?.suppress === undefined ? [] : [clause.violation.suppress]));
-  const names = (kind: SuppressKind): string[] => [...new Set(written.flatMap(suppress => SUPPRESS_NAMES[kind](suppress) ?? []))];
+/** Pack rule `rule` as a port: the names it honours per kind (`names`), the options it declares and its scope. */
+function portWith(rule: RulePackRule, names: (kind: SuppressKind) => string[], declared: Declared, scope: Port["scope"]): Port {
   return {
     ruleId: rule.id,
     suppress: {
       eslint: names("eslint"), noqa: names("noqa"), nosec: names("nosec"), oxlint: names("oxlint"), biome: names("biome"),
       phpstan: names("phpstan"), psalm: names("psalm"), phpcs: names("phpcs"), clippy: names("clippy"), sqlfluff: names("sqlfluff"),
     },
-    declared: declaredOptions(document),
+    declared,
     startsOn: rule.on,
     ...(rule.heldOff === undefined ? {} : { heldOff: rule.heldOff }),
-    ...(document.scope === undefined ? {} : { scope: { include: document.scope.include, exclude: document.scope.exclude } }),
+    ...(scope === undefined ? {} : { scope }),
   };
+}
+
+/** Pack rule `rule`, a JSON code rule, as a port. */
+function portOf(rule: RulePackRule, document: CodeRuleDslDocument): Port {
+  const written = document.clauses.flatMap(clause => (clause.violation?.suppress === undefined ? [] : [clause.violation.suppress]));
+  const names = (kind: SuppressKind): string[] => [...new Set(written.flatMap(suppress => SUPPRESS_NAMES[kind](suppress) ?? []))];
+  const scope = document.scope === undefined ? undefined : { include: document.scope.include, exclude: document.scope.exclude };
+  return portWith(rule, names, declaredOptions(document), scope);
+}
+
+/** Pack rule `rule`, written in `.rerail`, as a port: its violations' `suppress` lines and its `.options`. A scope with no include takes any file. */
+function rerailPortOf(rule: RulePackRule, document: RerailRule): Port {
+  const lines = document.violations.flatMap(violation => violation.suppress);
+  const names = (kind: SuppressKind): string[] => [...new Set(lines.filter(line => RERAIL_SUPPRESS_KEYS[line.tool] === kind).flatMap(line => line.rules))];
+  const include = document.scope.include.length === 0 ? ["**/*"] : document.scope.include;
+  return portWith(rule, names, document.options, { include, exclude: document.scope.exclude });
 }
 
 /** The code rules of packs `packIds` as ports, each once; a conversation rule is no port. */
@@ -236,6 +251,7 @@ export function portsOf(ruleCatalog: RuleCatalog, packIds: readonly string[]): P
   const rules = new Map(packIds.flatMap(packId => ruleCatalog.packs.get(packId)?.rules ?? []).map(rule => [rule.id, rule]));
   return [...rules.values()].flatMap(rule => {
     const document = ruleCatalog.documents.get(rule.id);
+    if (document?.kind === "rerail") return [rerailPortOf(rule, document.rule)];
     return document?.kind === "code" ? [portOf(rule, document.rule)] : [];
   });
 }

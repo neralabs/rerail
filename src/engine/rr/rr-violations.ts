@@ -22,7 +22,10 @@ function violationId(finding: RrFinding): string {
   return `sha256:${createHash("sha256").update(source).digest("hex")}`;
 }
 
-/** `finding` as a violation of `rule`; undefined where the rule's placement does not put it on at the finding's path. */
+/**
+ * `finding` as a violation of `rule`, with the fix its first applicable `fix` line makes, as a JSON rule's violation
+ * carries one; undefined where the rule's placement does not put it on at the finding's path.
+ */
 function violationOf(finding: RrFinding, rule: RerailRuleEntry): CodeRuleViolation | undefined {
   const mode = modeAt(rule.placement, finding.path);
   if (mode === undefined) return undefined;
@@ -37,6 +40,7 @@ function violationOf(finding: RrFinding, rule: RerailRuleEntry): CodeRuleViolati
     ...(finding.span === null ? {} : { span: finding.span }),
     captures: {},
     variables: {},
+    ...(finding.fix === null ? {} : { fix: finding.fix }),
   };
 }
 

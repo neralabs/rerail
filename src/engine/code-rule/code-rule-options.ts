@@ -276,19 +276,38 @@ function codeRuleDefines(document: unknown): Array<[Path, JsonObject]> {
   );
 }
 
+/** The declarations of one `options` object (a define's, or a `.rerail` rule's `.options`) at `path`, into `declared`. */
+function readDeclarations(options: unknown, path: Path, declared: Map<string, CodeRuleDslOptionDeclaration>): void {
+  if (!isObject(options)) fail(path, "must be an object");
+  for (const [name, value] of Object.entries(options as JsonObject)) {
+    const optionPath = [...path, name];
+    if (!isCodeRuleOptionName(name)) fail(optionPath, "an option's name starts with a letter or _ and holds letters, digits, _, - and .");
+    if (declared.has(name)) fail(optionPath, `option \`${name}\` is already declared by another define`);
+    declared.set(name, readDeclaration(value, optionPath));
+  }
+}
+
 function optionDeclarations(defines: Array<[Path, JsonObject]>): Map<string, CodeRuleDslOptionDeclaration> {
   const declared = new Map<string, CodeRuleDslOptionDeclaration>();
   for (const [path, define] of defines) {
-    if (define.options === undefined) continue;
-    if (!isObject(define.options)) fail([...path, "options"], "must be an object");
-    for (const [name, value] of Object.entries(define.options as JsonObject)) {
-      const optionPath = [...path, "options", name];
-      if (!isCodeRuleOptionName(name)) fail(optionPath, "an option's name starts with a letter or _ and holds letters, digits, _, - and .");
-      if (declared.has(name)) fail(optionPath, `option \`${name}\` is already declared by another define`);
-      declared.set(name, readDeclaration(value, optionPath));
-    }
+    if (define.options !== undefined) readDeclarations(define.options, [...path, "options"], declared);
   }
   return declared;
+}
+
+/**
+ * The declarations an `options` object holds, each read and checked as a define's are (`.rerail` rules state theirs in
+ * one `.options`). Throws a `CodeRuleOptionError` for an invalid declaration.
+ */
+export function codeRuleOptionDeclarations(options: unknown): ReadonlyMap<string, CodeRuleDslOptionDeclaration> {
+  const declared = new Map<string, CodeRuleDslOptionDeclaration>();
+  readDeclarations(options, ["options"], declared);
+  return declared;
+}
+
+/** Checks `value` against `declaration`, as a `config` value is checked. Throws a `CodeRuleOptionError` at `path`. */
+export function checkCodeRuleOptionValue(declaration: CodeRuleDslOptionDeclaration, value: unknown, path: Path): void {
+  checkValue(declaration, value, path);
 }
 
 /** The names of the options a document (as written) declares. Throws a `CodeRuleOptionError` for an invalid declaration. */

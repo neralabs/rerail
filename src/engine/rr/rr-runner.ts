@@ -20,9 +20,16 @@ export interface RrRun {
   policies: string[];
   /** Root-relative files the run reads alone; omitted: the whole checkout. */
   inputFiles?: string[];
+  /** Option values by policy (as in `policies`); a policy not named runs with the defaults its `.options` declares. */
+  options?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** This run's deadline, in place of the default; `RERAIL_RR_DEADLINE_MS`, when set, still wins (`rrBudgets`). */
   deadlineMs?: number;
   signal?: AbortSignal;
+}
+
+/** The option values of the `rules` a repository sets any for, by rule file: a run's `options`. */
+export function rrRunOptions(rules: readonly { readonly path: string; readonly config: Readonly<Record<string, unknown>> | null }[]): Record<string, Readonly<Record<string, unknown>>> {
+  return Object.fromEntries(rules.flatMap(rule => (rule.config === null ? [] : [[rule.path, rule.config]])));
 }
 
 export type RrRunOutcome =
@@ -94,7 +101,12 @@ export function describeRerailPoliciesSync(paths: string[]): RrDescription[] {
 
 /** The run's request for the child, with absolute paths, writing into the child's temporary directory `out`. */
 function runRequest(run: RrRun): (out: string) => { kind: "run"; run: RrRunRequest } {
-  const request = { root: resolve(run.root), policies: run.policies.map(path => resolve(path)), ...(run.inputFiles === undefined ? {} : { inputFiles: run.inputFiles }) };
+  const options = Object.entries(run.options ?? {}).map(([path, values]) => [resolve(path), { ...values }] as const);
+  const request = {
+    root: resolve(run.root), policies: run.policies.map(path => resolve(path)),
+    ...(run.inputFiles === undefined ? {} : { inputFiles: run.inputFiles }),
+    ...(options.length === 0 ? {} : { options: Object.fromEntries(options) }),
+  };
   return out => ({ kind: "run", run: { ...request, out } });
 }
 

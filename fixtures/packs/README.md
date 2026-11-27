@@ -19,6 +19,11 @@ Small packs in the [pack format](../../docs/pack-format.md) that tests read, not
   catalog and checks 1, 2, 3, 5 and 8 refuse in a `.rerail` rule (`test/engine/catalog/packs.test.ts`,
   `test/engine/catalog/rerail-rules/rerail-pack-rules.test.ts`); sessions and audits run it
   (`integration/rerail-pack-rules.test.ts`).
+- `rr-curly/` ships `eslint-curly`, the translation of ESLint's curly written in `.rerail`, with the options it reads
+  declared in `.options`, its fixes and its ESLint, Oxlint and Biome `suppress` lines, and a copy of the translations'
+  `tsx/statements.rerail` as the pack's own library file. It proves a `.rerail` rule's options, fixes and suppression
+  comments through the catalog, settings, set-up's lint config, the runner and check 2
+  (`test/engine/catalog/rerail-rules/rerail-rule-options-fixes.test.ts`, decision 0720).
 - `sample-php/` is the conformance runner's sample (`conformance/languages/runner.ts`, run by
   `test/engine/code-rule/language-conformance.test.ts`): two ports scored against PHP_CodeSniffer's expected findings on
   authored fixtures, and on real-code samples the test writes beside it.

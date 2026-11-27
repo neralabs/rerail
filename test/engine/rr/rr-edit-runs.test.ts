@@ -35,6 +35,7 @@ function rule(id: string, placement: CodeRulePlacement): RerailRuleEntry {
     scope: { include: ["**/*.py"], exclude: [], text: [] },
     language: "python",
     files: [],
+    config: null,
     provenance: {
       ruleId: id, revision: 1, payloadHash: `hash-${id}`, source: { kind: "pack", id: "rr-sample", packId: "rr-sample" },
       repositoryKey: "repository", checkoutPath: root, placement: [],
@@ -45,7 +46,7 @@ function rule(id: string, placement: CodeRulePlacement): RerailRuleEntry {
 /** A finding of `policy` on `path` over the bytes `[startByte, endByte)` of line `line` (0-based). */
 function finding(policy: string, path: string, line: number, startByte: number, endByte: number): RrFinding {
   return {
-    policy, clause: "Found", code: "F001", message: `found by ${policy}`, path, line: line + 1, tag: null, parameters: {},
+    policy, clause: "Found", code: "F001", message: `found by ${policy}`, path, line: line + 1, tag: null, parameters: {}, fix: null,
     span: { startByte, endByte, startLine: line, startColumn: 0, endLine: line, endColumn: endByte - startByte },
   };
 }

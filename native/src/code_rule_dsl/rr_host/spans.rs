@@ -53,15 +53,30 @@ impl FileSpans {
         self.projected.extra.as_ref().map(|extra| extra.lines())
     }
 
-    /// Node or position `low`'s span, where it starts on line `line`.
-    fn at(&self, low: u32, line: i64) -> Option<Span> {
+    /// Node or position `value`'s bytes (`doc << 32 | low`); none where the run may have withheld the position.
+    pub fn range(&self, value: i64) -> Option<[u32; 2]> {
         let p = &self.projected;
-        let local = p.local_of(low).filter(|&local| local < p.locs())?;
+        let local = p.local_of((value & 0xffff_ffff) as u32).filter(|&local| local < p.locs())?;
         if local >= p.len() && self.errors {
             return None;
         }
-        let [start, end] = p.span(local);
-        (i64::from(self.lines()?.line(start)) == line).then(|| self.facts.lines.span(start as usize, end as usize))
+        Some(p.span(local))
+    }
+
+    /// The file's text.
+    pub fn source(&self) -> &str {
+        &self.facts.source
+    }
+
+    /// The span of the file's bytes from `start` to `end`.
+    pub fn bytes(&self, start: usize, end: usize) -> Span {
+        self.facts.lines.span(start, end)
+    }
+
+    /// Node or position `low`'s span, where it starts on line `line`.
+    fn at(&self, low: u32, line: i64) -> Option<Span> {
+        let [start, end] = self.range(i64::from(low))?;
+        (i64::from(self.lines()?.line(start)) == line).then(|| self.bytes(start as usize, end as usize))
     }
 
     /// Line `line`'s text, before its terminator; the file's start for line 0.

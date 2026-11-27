@@ -374,10 +374,13 @@ export type RrDescription =
       codes: string[];
       /** How many `.test` blocks it holds. */
       tests: number;
-      /** Whether a `.violation` carries a `suppress` line. */
-      suppresses: boolean;
-      /** Whether a `.violation` carries a `fix` line. */
-      fixes: boolean;
+      /**
+       * Each `.violation`, in the order the file and its includes state them: its name, its `suppress` lines (the
+       * linter's comments that silence it: the tool and its rule names) and the fix relations its `fix` lines offer.
+       */
+      violations: { name: string; suppress: { tool: string; rules: string[] }[]; fixes: string[] }[];
+      /** The options its `.options` declares, as written (option name to declaration), or null when it declares none. */
+      options: Record<string, unknown> | null;
       /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
       files: { path: string; sha256: string }[];
     }
@@ -390,6 +393,8 @@ export interface RrRunRequest {
   out: string;
   /** Root-relative files the run reads alone; omitted: the whole corpus. */
   inputFiles?: string[];
+  /** Option values by policy (its absolute path, as in `policies`): a policy not named runs with its declared defaults. */
+  options?: Record<string, Record<string, unknown>>;
 }
 
 /** A finding of a `.rerail` run. `span` has `CodeRuleViolation.span`'s bases; null only for a finding in no file. */
@@ -403,6 +408,8 @@ export interface RrFinding {
   span: CodeRuleSourceSpan | null;
   tag: string | null;
   parameters: Record<string, string>;
+  /** The finding's first fix whose edits all apply, as one replacement: `text` replaces `span`. Null for none. */
+  fix: { span: CodeRuleSourceSpan; text: string } | null;
 }
 
 /** A `runRr` result. A failure's `policy` is the path of the policy whose run failed; the others ran without it. */
