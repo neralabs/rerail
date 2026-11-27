@@ -30,7 +30,7 @@ LIBS = [
     ("python/imports", "datalog", "What each import binds and loads, the import-time module graph, and module exports."),
     ("python/calls", "datalog", "Call targets and call chains: which function a call can reach, with unknown targets kept as unknown, joined from the typing program's answers; and the call syntax helpers."),
     ("python/types", "datalog", "What class each expression may hold: type_of, proven_type, possible_type and their open sides, joined from the typing program's answers."),
-    ("typing/python", "program", "The Python typing program: points-to, call targets, method lookup through bases, and types, in .rerail. The engine runs it before the rules, file by file and then in bounded cross-file rounds.", "typing/programs/calls.rerail"),
+    ("typing/python", "program", "The Python typing program, the analysis phase's: points-to, call targets, method lookup through bases, and types, keyed by terms and symbols (decision 0677). These are its cross-file rules; python/points-to-file holds the per-file ones. The engine runs them as the phase points_to, and as the program calls_p3.", "lib/python/points-to-solve.rerail"),
     ("python/ast", "datalog", "Python as CPython's ast sees it: Name and context, frames with decorators inside the def, parameters by kind, assignments, constants, qualified names, and visit order."),
     ("python/flow", "datalog", "Statement order within a body, and blocks that always raise. Tree arithmetic only."),
     ("data-layer/signing", "datalog", "The data-layer repository's signed allowlists and ratchet baselines, verified in Datalog: the signed bytes rebuilt with join, checked with @ed25519_ok."),

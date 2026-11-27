@@ -473,8 +473,13 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
     let rs: Vec<&Rule> = rules.iter().filter(|r| comp.contains(&r.head.rel) && r.atoms.iter().any(|a| comp.contains(&a.rel))).collect();
     let rels: Vec<&str> = comp.iter().collect();
     let cols: Vec<Vector<usize>> = rels.iter().map(|r| types(r).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect()).collect();
+    // A relation with no node column (a cross-file stratum, keyed by symbols: decision 0677) is measured by an index
+    // alone: a column it holds the same at each step (any of its columns, its key), and an index that climbs or falls
+    // beside it. No tree order without a node.
+    let nodeless = cols.iter().any(|v| v.is_empty());
+    let cols: Vec<Vector<usize>> = if nodeless { rels.iter().zip(cols).map(|(r, c)| if c.is_empty() { (0..types(r).len()).collect() } else { c }).collect() } else { cols };
     if cols.iter().any(|v| v.is_empty()) {
-        return Err("a relation with no node column".into());
+        return Err("a relation with no column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
     // The measures to try: one node column of each relation, every choice. Stopped at the bound as it is multiplied:
@@ -551,6 +556,10 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
             Some("climbs") => Order::Climbs,
             Some(_) => Order::Falls,
         };
+        if nodeless && !matches!(order, Order::Climbs | Order::Falls) {
+            *why.entry("no index step".into()).or_default() += 1;
+            continue;
+        }
         if matches!(order, Order::Climbs | Order::Falls) {
             // The index is the measure: every relation of the component steps it (a self-recursion, one relation).
             if index.len() != comp.len() {
@@ -561,7 +570,9 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
         }
         return Ok(Measure { order, col: m, rank });
     }
-    Err(why.into_iter().max_by_key(|(_, n)| *n).map_or_else(|| "no measure".to_owned(), |(w, _)| w))
+    let why = why.into_iter().max_by_key(|(_, n)| *n).map_or_else(|| "no measure".to_owned(), |(w, _)| w);
+    // A relation with no node column is proved by an index step alone: what else failed says why there was none.
+    Err(if nodeless { format!("a relation with no node column, and no index step: {why}") } else { why })
 }
 
 /// Each relation's rank: after every relation whose rows at the same node it reads (`eq`: read → readers). `None` on

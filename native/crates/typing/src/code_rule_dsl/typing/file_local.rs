@@ -189,7 +189,7 @@ mod on_version;
 pub use on_version::FileLocal;
 pub use on_version::reads_a_node;
 mod node_crossings;
-pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, strict_nodes};
+pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked};
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -435,7 +435,7 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     programs.causes = split.causes.clone();
     programs.crossings = split.crossings.clone();
     crossings_under(&programs.program, &mut programs.nodes, &programs.causes);
-    nodes_checked(&programs.nodes, strict_nodes())?;
+    nodes_checked(&programs.nodes)?;
     Ok(programs)
 }
 
@@ -485,8 +485,8 @@ pub fn assemble(
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
     positions_checked(&positions, strict_positions())?;
-    // No node id crosses into the cross part (decision 0677): found here, reported (and refused under
-    // `RERAIL_STRICT_NODES`) where the program is split from its source (`programs_of`), by the causes found there.
+    // No node id crosses into the cross part (decision 0677): found here, refused where the program is split from its
+    // source (`programs_of`), named by the causes found there.
     let nodes = {
         let _step = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part's node ids (decision 0677)".into());
         node_crossings(&version, &f, &versions.cross, &local)

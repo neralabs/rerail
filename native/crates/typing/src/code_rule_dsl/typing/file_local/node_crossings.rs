@@ -347,56 +347,27 @@ fn column_name(f: &Fields<'_>, rel: &str, c: usize) -> String {
     f.columns(rel).and_then(|cols| cols.get(c).map(|(n, _)| format!("{rel}.{n}"))).unwrap_or_else(|| format!("{rel}'s column {c}"))
 }
 
-/// `RERAIL_STRICT_NODES=1`: a program whose cross-file part holds a node id is refused (decision 0677). Read where a
-/// split is made, once per program version (no process-global state, decision 0442).
-pub fn strict_nodes() -> bool {
-    std::env::var("RERAIL_STRICT_NODES").is_ok_and(|v| !matches!(v.as_str(), "" | "0"))
-}
-
-/// The cross-file part's node crossings (`node_crossings`) refused under `strict`, else reported in one line, by the
-/// crossing each is under: once per program version, as its split is made once. `RERAIL_NODE_CROSSINGS=FILE`
-/// appends each one's name (`NodeCrossing::named`) and its crossing's to FILE, a line each, for the pack test's list
-/// of offenders.
-pub fn nodes_checked(crossings: &[NodeCrossing], strict: bool) -> Result<(), String> {
+/// The cross-file part's node crossings (`node_crossings`), refused (decision 0677), whatever made them: a rule as
+/// written, a pass of the split's (factorize's parts, a pair cache), or a setting the split did not know. Each is
+/// named with its rule and the crossing it is in the cross-file part under. Checked once per program version, as its
+/// split is made once.
+pub fn nodes_checked(crossings: &[NodeCrossing]) -> Result<(), String> {
     if crossings.is_empty() {
         return Ok(());
     }
-    if let Some(path) = std::env::var_os("RERAIL_NODE_CROSSINGS") {
-        use std::io::Write as _;
-        let lines: String = crossings.iter().map(|c| format!("{} {}\n", c.named(), c.under.as_deref().unwrap_or("-"))).collect();
-        if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            // One write of every line: the runs of a batch append to one file at once.
-            let _ = file.write_all(lines.as_bytes());
-        }
-    }
-    if strict {
-        let shown: Vec<String> = crossings
-            .iter()
-            .map(|c| {
-                let under = c.under.as_ref().map_or_else(String::new, |u| format!(" (in the cross-file part under {u})"));
-                let chain: String = c.chain.iter().map(|l| format!("\n      cross-file because {l}")).collect();
-                super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}{chain}", c.why))
-            })
-            .collect();
-        return Err(format!(
-            "RERAIL_STRICT_NODES: {} relation(s) of the cross-file part hold or read a node id (decision 0677). Key each by a \
-             symbol (a module, a qualified name), a path, a document key or a value, relating the file's nodes to it in the \
-             file's own rules; or keep the rule per file:\n{}",
-            crossings.len(),
-            shown.join("\n")
-        ));
-    }
-    let mut by: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for c in crossings {
-        by.entry(c.under.clone().unwrap_or_default()).or_default().insert(c.named());
-    }
-    let line: Vec<String> = by
-        .into_iter()
-        .map(|(under, names)| match under.as_str() {
-            "" => names.into_iter().collect::<Vec<_>>().join(", "),
-            _ => format!("{} under {under}", names.len()),
+    let shown: Vec<String> = crossings
+        .iter()
+        .map(|c| {
+            let under = c.under.as_ref().map_or_else(String::new, |u| format!(" (in the cross-file part under {u})"));
+            let chain: String = c.chain.iter().map(|l| format!("\n      cross-file because {l}")).collect();
+            super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}{chain}", c.why))
         })
         .collect();
-    eprintln!("rerail: the cross-file part holds node ids, which every edit of their file moves (decision 0677): {}", line.join("; "));
-    Ok(())
+    Err(format!(
+        "{} relation(s) of the cross-file part hold or read a node id (decision 0677). Key each by a symbol (a module, a \
+         qualified name), a path, a document key or a value, relating the file's nodes to it in the file's own rules; or \
+         keep the rule per file:\n{}",
+        crossings.len(),
+        shown.join("\n")
+    ))
 }
