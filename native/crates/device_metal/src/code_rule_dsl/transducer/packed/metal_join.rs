@@ -1383,7 +1383,8 @@ impl DevBytes {
 /// the phase again (decision 0603's fewer reruns). Where it cannot grow (an allocation of its first bytes), the run
 /// runs again in a batch whose arena is as big as its jobs wanted, or on the host past the device's text arena.
 pub(in crate::code_rule_dsl) struct Arena {
-    reserved: Arc<rerail_device::device::Reserved>,
+    /// Held as a block's memory is (`held_reserve`): the work that binds it keeps it until that work completes.
+    reserved: Arc<HeldReserve>,
     cap: std::cell::Cell<usize>,
     /// Its texts kept one value a content (`Arena::canonical`, decision 0659), or none.
     canon: Option<Canon>,
@@ -1397,7 +1398,25 @@ pub(in crate::code_rule_dsl) struct Arena {
 /// compare texts. Its header: [places - 1, texts, full, 0]; its places after. Address space mapped as it fills, as the
 /// arena's is, and grown between launches by the host (`Arena::grow`), its texts placed again.
 struct Canon {
-    reserved: Arc<rerail_device::device::Reserved>,
+    reserved: Arc<HeldReserve>,
+}
+
+/// Address space of `len` bytes, `mapped` of them mapped first (`rerail_device::device::reserve`), held by a ledger
+/// over the whole reservation (`Tracked`), as the device pool's leases are: a kernel binds it as a block's memory, and
+/// what drops it while work that binds it is queued keeps it until that work completes (decision 0491 step 2).
+fn held_reserve(len: usize, mapped: usize) -> Result<HeldReserve, Error> {
+    let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
+    held_reserve_on(device, len, mapped, true)
+}
+
+/// Address space a kernel binds, held by a ledger over all of it (`held_reserve`).
+type HeldReserve = rerail_blocks::ledger::Tracked<rerail_device::device::Reserved>;
+
+/// `held_reserve` on `device`, host-read or not (`rerail_device::device::reserve`).
+fn held_reserve_on(device: &rerail_device::device::Device, len: usize, mapped: usize, host_reads: bool) -> Result<HeldReserve, Error> {
+    let r = rerail_device::device::reserve(device, len, mapped, host_reads).map_err(|_| Error::BackendCapacity)?;
+    let base = r.buffer().contents().cast::<u8>();
+    Ok(rerail_blocks::ledger::Tracked::new(r, base, len))
 }
 
 /// A canonical table's places to start with, and its header's bytes.
@@ -1446,8 +1465,7 @@ fn text_arena_max() -> usize {
 impl Arena {
     pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
         let cap = cap.clamp(16, u32::MAX as usize / 2);
-        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let reserved = rerail_device::device::reserve(device, 16 + cap.max(text_arena_max()), 16 + cap, true).map_err(|_| Error::BackendCapacity)?;
+        let reserved = held_reserve(16 + cap.max(text_arena_max()), 16 + cap)?;
         let arena = Arena { reserved: Arc::new(reserved), cap: std::cell::Cell::new(cap), canon: None };
         arena.header(0, 0);
         arena.header(1, cap as u32);
@@ -1458,10 +1476,9 @@ impl Arena {
     /// heads keep made texts.
     pub(in crate::code_rule_dsl) fn canonical(cap: usize) -> Result<Arena, Error> {
         let mut arena = Arena::new(cap)?;
-        let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // At most a place a text of four bytes or more (its length is four), twice over.
         let most = (text_arena_max() / 2).next_power_of_two().max(CANON_START);
-        let reserved = rerail_device::device::reserve(device, CANON_HEADER + 4 * most, CANON_HEADER + 4 * CANON_START, true).map_err(|_| Error::BackendCapacity)?;
+        let reserved = held_reserve(CANON_HEADER + 4 * most, CANON_HEADER + 4 * CANON_START)?;
         let canon = Canon { reserved: Arc::new(reserved) };
         // SAFETY: its first places' bytes, mapped; nothing uses the table yet.
         unsafe { std::ptr::write_bytes(canon.words(), 0, CANON_HEADER / 4 + CANON_START) };
@@ -1716,7 +1733,7 @@ pub(in crate::code_rule_dsl) struct Batch {
     reserve_arena: bool,
     /// Whether the host reads its arena's placed tables (`arena_reserved`'s): on Metal a wrapped arena then.
     host_reads: bool,
-    reserved: Option<std::sync::Arc<rerail_device::device::Reserved>>,
+    reserved: Option<std::sync::Arc<HeldReserve>>,
 }
 
 /// A relation a batch's kernels write (`Batch::written`).
@@ -3160,12 +3177,12 @@ impl Batch {
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
                 let Some(room) = &mut sort_room else { return Held::new(bytes).map_err(|_| Error::BackendCapacity) };
-                let mut r = rerail_device::device::reserve(device, bytes, now.min(bytes), false).map_err(|_| Error::BackendCapacity)?;
+                let mut r = held_reserve_on(device, bytes, now.min(bytes), false)?;
                 // One that cannot grow at its address (`Reserved::grows_in_place`: macOS 15's Metal, without sparse
                 // buffers, wraps it again elsewhere): its bytes whole, as before rooms were mapped as reached, so the
                 // rooms' growth maps nothing of it (`Kit::grow_rooms`), and the sort's addresses stay.
                 if !r.grows_in_place() {
-                    r = rerail_device::device::reserve(device, bytes, bytes, false).map_err(|_| Error::BackendCapacity)?;
+                    r = held_reserve_on(device, bytes, bytes, false)?;
                 }
                 let r = std::sync::Arc::new(r);
                 if hist {
@@ -3381,7 +3398,7 @@ impl Batch {
                     return Err(Error::BackendCapacity);
                 }
                 let held = if self.reserve_arena {
-                    let mut r = rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?;
+                    let mut r = held_reserve_on(device, ARENA_MAX, room, self.host_reads)?;
                     // A reservation that cannot grow (`Reserved::grows`: a backend with no reservation) is an allocation
                     // of its first pages: those are the floor too, so a program past them runs again in one as large as
                     // its claims wanted. Before, the floor was dropped wherever mapping commits memory: on the M3
@@ -3392,7 +3409,7 @@ impl Batch {
                         if room > ARENA_MAX {
                             return Err(Error::BackendCapacity);
                         }
-                        r = rerail_device::device::reserve(device, ARENA_MAX, room, self.host_reads).map_err(|_| Error::BackendCapacity)?;
+                        r = held_reserve_on(device, ARENA_MAX, room, self.host_reads)?;
                     }
                     let r = std::sync::Arc::new(r);
                     self.reserved = Some(r.clone());
@@ -4144,7 +4161,7 @@ struct Kit {
     /// The arena: its counts and placed tables (decision 0603 step 5), held by their places too; where it is address
     /// space mapped as its claims reach it (`Batch::arena_reserved`), that.
     counts: std::rc::Rc<Held>,
-    reserved: Option<std::sync::Arc<rerail_device::device::Reserved>>,
+    reserved: Option<std::sync::Arc<HeldReserve>>,
     /// Each phase's first item, its items and its segments (`Program::phases`).
     phase_items: Vec<[u32; 4]>,
     format: u32,
@@ -4243,9 +4260,9 @@ struct LiveIx {
 /// index's rows at most, mapped for its other indexes' rows (`fixed`) and its live ones' as mapped (`live`, of
 /// `Rooms::live_ix`).
 struct SortRoom {
-    reserved: Vec<std::sync::Arc<rerail_device::device::Reserved>>,
+    reserved: Vec<std::sync::Arc<HeldReserve>>,
     /// Its histograms (`sort_hist_bytes` of its rows).
-    hist: Option<std::sync::Arc<rerail_device::device::Reserved>>,
+    hist: Option<std::sync::Arc<HeldReserve>>,
     fixed: usize,
     live: Vec<usize>,
 }
