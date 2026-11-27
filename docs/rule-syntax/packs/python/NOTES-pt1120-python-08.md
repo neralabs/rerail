@@ -3,8 +3,8 @@
 Six rules on #1120's line, checked with `translations:check` (ptcheck, engine `rerail-engine-1120`) against their
 JSON originals, and each differing key against Ruff 0.17.6 (`ruff check --select <CODE> --no-cache`) on a fleet
 box. Final: SLOT000, SLOT001, SLOT002 `same`; TD002, TD003, TD004 `different` by one key each, the original right,
-fixed only by a change to an existing library (below). Every rule stays per file: no relation is declared
-`cross_file`, and a run of all six under `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and
+fixed only by a change to an existing library (below; applied since, now `same`). Every rule stays per file: no
+relation is declared `cross_file`, and a run of all six under `RERAIL_STRICT_CROSSINGS`, `RERAIL_STRICT_NODES` and
 `RERAIL_STRICT_POSITIONS` (each with `RERAIL_SHOW_CROSSINGS=1`) passed and printed nothing.
 
 New library: `lib/python/slots-bases.rerail` (SLOT000 and SLOT001 share it): `slots_unsub` (Ruff's
@@ -91,7 +91,7 @@ class A(namedtuple("A", "x"), \
 Library change proposed: misc2-slots' `slots_base` should leave out `line_continuation` as it leaves out
 `comment` (`!kind(x, "line_continuation")`); SLOT002's `slot002_ok` clause for it would then go.
 
-## TD002 / TD003 / TD004 missing author / link / colon: different (original right)
+## TD002 / TD003 / TD004 missing author / link / colon: different (original right); since, same
 
 One key each: fixtures `ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3`, `# TODO→ arrow`. Ruff takes the
 first word as a run of Unicode alphanumerics (`char::is_alphanumeric`), so `→` (a symbol) ends it and `TODO` is a

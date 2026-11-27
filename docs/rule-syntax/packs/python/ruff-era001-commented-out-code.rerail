@@ -61,6 +61,9 @@ era_run(d, l0, l + 1) :- era_run(d, l0, l), era_cline(d, l + 1, _).
 .decl era_block(d: number, l0: number, e: number)
 era_block(d, l0, e) :- era_run(d, l0, _), e = max l : { era_run(d, l0, l), era_cline(d, l, "# ///") }.
 
+// The fixture's last line is `#`, U+00A0 (a no-break space, not an ordinary space) and `x = 1`: not ERA001, unlike
+// line 3. Ruff's comment_contains_code trims only `#` and is_python_whitespace (space, tab, form feed), as era_line
+// does, so the U+00A0 reaches the parser, which rejects the line.
 .test comments_are_parsed_not_guessed exactly
     .fixture "app/comments.py" ```
         # SIM103 (but not fixable)

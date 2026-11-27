@@ -105,10 +105,13 @@ New library: `lib/python/python-10.rerail` (UP006, UP007): typing names inside s
 - Ruff's range starts at the callee's end, so the finding's line is the line the callee ends on: the rule reports
   at the callee's last name (it was at the argument list, a line later in that probe).
 
-## UP012 unnecessary-encode-utf8: follows Ruff, one difference left (Ruff right, engine gap)
+## UP012 unnecessary-encode-utf8: follows Ruff
 
 - A parenthesised callee: `("a".encode)()` and `(("a").encode)(encoding="utf8")` are UP012.
-- Left: pyupgrade/UP012.py:86, `x: '"foo".encode("utf-8")'`. Ruff checks the call inside the string annotation. The
-  engine parses the string and the call is there, but its strings have no `value` row (decoded text), so
-  python/ast's `plain_str`, and with it upgrade-format's `str_lit` and `utf8_only_arg`, hold for none of them
-  (`str_part` does). Engine change needed: stamp `value` on the strings of a parsed fragment as on the file's own.
+- In the batch: pyupgrade/UP012.py:86, `x: '"foo".encode("utf-8")'`, original only. Ruff checks the call inside the
+  string annotation; the engine parsed the string, but its strings had no `value` row, so python/ast's `plain_str`,
+  and with it upgrade-format's `str_lit` and `utf8_only_arg`, held for none of them.
+- Fixed since (rule fixes on #1120's line): parsed Python guests keep their tapes, so their strings have `value`
+  rows, and `encode_on` also takes calls in a type string (`annotation(c)`). The rule's `.test` checks ASCII,
+  non-ASCII and f-string receivers there against Ruff 0.17.6, with Literal values and ordinary strings not
+  reported. `translations:check`: `same` (fixtures 51 shared findings).

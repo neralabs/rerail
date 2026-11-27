@@ -6,8 +6,8 @@
   {
     "id": "ruff-era001-commented-out-code",
     "status": "different",
-    "reason": "Ruff and the JSON do not report prose comments such as `# SIM103 (but not fixable)` or `# (See: http://example.test/revision)`. The translation's bounded regex grammar accepts 22 such fixture lines and 24 sample lines as Python. Exact parity needs a demand-driven native `py_parses(symbol)` relation using Ruff's Python parser.",
-    "right": "original",
+    "reason": "The translation uses Ruff's Python parser (`py_parses`) and its trivia-skipping tokenizer (`py_consecutive_names`) instead of the old bounded regex grammar, so the prose comments it accepted (`# SIM103 (but not fixable)`, `# (See: http://example.test/revision)`) are gone: fixtures 82 shared findings, none on one side only. Its 238 samples-python findings equal Ruff 0.17.6's exactly. The 6 translation-only keys are the quoted-attribute annotation comment `'month'. Eg: \"Title must be unique for pub_date year\"` in six Django samples (fields/__init__.py:150), which Ruff reports and the JSON original misses.",
+    "right": "translation",
     "counts": {
       "examples": {
         "originalOnly": 0,
@@ -15,11 +15,11 @@
       },
       "fixtures": {
         "originalOnly": 0,
-        "translationOnly": 22
+        "translationOnly": 0
       },
       "samples-python": {
         "originalOnly": 0,
-        "translationOnly": 24
+        "translationOnly": 6
       }
     }
   },
@@ -49,23 +49,7 @@
   },
   {
     "id": "ruff-fly002-static-join-to-f-string",
-    "status": "different",
-    "reason": "Ruff and the JSON inspect expressions parsed from string annotations, including `x: \"''.join([a, b])\"`. The translation's ordinary tree relations do not receive those guest calls; explicitly demanding `parsed_in` and replacing child aggregates with an index walk still yielded no guest findings.",
-    "right": "original",
-    "counts": {
-      "examples": {
-        "originalOnly": 0,
-        "translationOnly": 0
-      },
-      "fixtures": {
-        "originalOnly": 4,
-        "translationOnly": 0
-      },
-      "samples-python": {
-        "originalOnly": 0,
-        "translationOnly": 0
-      }
-    }
+    "status": "same"
   },
   {
     "id": "ruff-icn001-unconventional-import-alias",

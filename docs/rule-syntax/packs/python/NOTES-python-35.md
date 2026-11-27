@@ -13,22 +13,21 @@ Library/core changes: none.
 
 ## ruff-era001-commented-out-code
 
-Followed Ruff. The hand-written parse approximation now accepts three Python forms the JSON and Ruff report:
-PEP 701 f-strings such as `# x = f"{d["k"]}"`, PEP 695 function type parameters such as
+Followed Ruff. The batch's hand-written parse approximation was extended to three Python forms the JSON and Ruff
+report: PEP 701 f-strings such as `# x = f"{d["k"]}"`, PEP 695 function type parameters such as
 `# def f[T](x: T) -> T: return x`, and `# lazy import os`.
 
-Ruff's final decision is whether the stripped comment parses as a Python module. That remains inexact without the
-native parser relation already requested by the original batch:
+Ruff's final decision is whether the stripped comment parses as a Python module. The batch's bounded regex grammar
+approximated that and accepted prose such as `# SIM103 (but not fixable)` and `# (See: http://example.test/revision)`
+(22 fixture and 24 sample lines, original right). Fixed since (rule fixes on #1120's line): the rule asks Ruff's own
+parser through the native `@py_parses`, and Ruff's trivia-skipping tokenizer through `@py_consecutive_names` for the
+two-names-in-a-row prose test; no regex grammar or word scan is left. The prefix trim is Python whitespace only
+(space, tab, form feed), and the issue-hash filter takes Unicode digits, as Ruff's. `translations:check`: fixtures
+82 shared findings, none on one side only; samples-python 232 shared and 6 translation-only, the quoted-attribute
+annotation comment `'month'. Eg: "Title must be unique for pub_date year"` in six Django samples. Ruff 0.17.6 over
+samples-python reports exactly the translation's 238 findings, so the 6 are translation right.
 
-```rerail
-.decl py_parses(s: symbol) // s parses as a Python module under Ruff's parser
-```
-
-It should be demand-driven and cached once per distinct symbol. Then `era_parses` can replace its bounded regex
-grammar with `py_parses(l)`. A representative false positive of the approximation is prose such as
-`# (See: http://example.test/revision)`, which Ruff does not report.
-
-Library changes: none. Engine gap: `py_parses` above.
+Library changes: none.
 
 ## ruff-fast001-fast-api-redundant-response-model
 
@@ -50,16 +49,10 @@ this rule keeps the exact Unicode form locally because existing library files ar
 ## ruff-fly002-static-join-to-f-string
 
 Followed Ruff for source trees. Ruff also runs expression rules inside parsed string annotations, so
-`x: "''.join([a, b])"` is FLY002. The engine's file-tree scan does not expose those guest calls to this rule;
-explicitly demanding `parsed_in(c, _)` and replacing the child aggregates with an index walk still produced no
-guest findings.
-
-Engine gap: expression rules need a generic relation that exposes guest expressions to ordinary tree relations,
-for example:
-
-```rerail
-.decl guest_expr(e: node) // every expression in a parsed annotation guest tree, demand-driven
-```
+`x: "''.join([a, b])"` is FLY002. In the batch the engine's matchers did not run over guest trees, so the rule saw
+none of those calls (4 fixture keys, original right). Fixed since (rule fixes on #1120's line): the engine's AST
+matchers read parsed Python guests, and `static_join` also takes calls in a type string (`annotation(c)`), not
+Literal values or ordinary strings. `translations:check`: `same` (fixtures 19, samples-python 9 shared findings).
 
 Library changes: none.
 

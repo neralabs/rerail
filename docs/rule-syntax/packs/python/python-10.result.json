@@ -5,26 +5,16 @@
   {
     "id": "ruff-up006-non-pep585-annotation",
     "status": "different",
-    "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. Ruff also reports flake8_pyi/PYI036.pyi:82, `Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`: in a deferred annotation inside a function Ruff resolves the name to the module's typing.Type although the function rebinds it (also with a parameter or `List = list`, NOTES-python-10.md); the original follows Ruff, the translation follows Python's scoping.",
-    "right": "neither",
+    "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. flake8_pyi/PYI036.pyi:82 (`Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`) is reported by both now: python/upgrade's sym_at and python-10's str_sym read a forward reference (a typing-only deferred annotation, or a string type) through the module's binding first, as Ruff's resolve_load does (PEP 563).",
+    "right": "translation",
     "counts": {
       "examples": { "originalOnly": 0, "translationOnly": 0 },
-      "fixtures": { "originalOnly": 1, "translationOnly": 3 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 3 },
       "samples-python": { "originalOnly": 0, "translationOnly": 0 }
     }
   },
   { "id": "ruff-up007-non-pep604-annotation-union", "status": "same" },
   { "id": "ruff-up010-unnecessary-future-import", "status": "same" },
   { "id": "ruff-up011-lru-cache-without-parameters", "status": "same" },
-  {
-    "id": "ruff-up012-unnecessary-encode-utf8",
-    "status": "different",
-    "reason": "pyupgrade/UP012.py:86, `x: '\"foo\".encode(\"utf-8\")'`: Ruff checks the call inside the string annotation, as the original does. The engine parses the string and the call is in the parsed tree, but strings of a parsed fragment have no `value` row, so python/ast's plain_str (and upgrade-format's str_lit and utf8_only_arg) hold for none of them. Engine gap: stamp `value` on parsed fragments' strings.",
-    "right": "original",
-    "counts": {
-      "examples": { "originalOnly": 0, "translationOnly": 0 },
-      "fixtures": { "originalOnly": 1, "translationOnly": 0 },
-      "samples-python": { "originalOnly": 0, "translationOnly": 0 }
-    }
-  }
+  { "id": "ruff-up012-unnecessary-encode-utf8", "status": "same" }
 ]

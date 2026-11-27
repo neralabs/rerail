@@ -6,7 +6,7 @@ agreed with the original on each, so each was a translation defect, fixed below,
 match (N812, below).
 
 Final ptcheck (exit 0): N801, N803, N804, N805, N806, N807, N811 `same` on examples, fixtures and samples-python;
-N812 `different` by that one fixtures key, original-only.
+N812 `different` by that one fixtures key, original-only. Since fixed (below): all eight `same`.
 
 New library: `lib/python/python-19.rerail`, used by all eight rules. It holds what `lib/python/naming.rerail` gets
 wrong for them; each part is a proposed change to naming.rerail, which the rules can switch back to once it lands.
@@ -118,9 +118,14 @@ Unicode case; the one-character test is `match(".", x)` on the normalised name (
 Baseline: fixtures 5 original-only, `N812-normalized-alias-and-ignored-names.py:3, 5, 8, 14, 15`. Fixed by the
 normalised names and Unicode case, except line 15.
 
-Engine gap, line 15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 `ʕ` a `Lo` letter (no
-case); Ruff's Rust std has Unicode 17, so `ʕx` is not lowercase and Ruff reports it. The engine's regexes use
-regex-syntax 0.8.12, whose tables are Unicode 16.0, where `ʕ` is `Ll` and in `\p{Lowercase}`, so `pep8_lower("ʕx")`
-holds. No rule-level fix short of special-casing the character. Needed: the engine's regex Unicode tables at the
-version of the tools it mirrors (regex-syntax with Unicode 17), or a functor `.functor is_lowercase(s: symbol):
-number` backed by Rust std's `char::is_lowercase`.
+Engine gap in the batch, line 15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 `ʕ` a `Lo`
+letter (no case); Ruff's Rust std has Unicode 17, so `ʕx` is not lowercase and Ruff reports it. The engine's
+regexes use regex-syntax 0.8.12, whose tables are Unicode 16.0, where `ʕ` is `Ll` and in `\p{Lowercase}`, so
+`pep8_lower("ʕx")` held.
+
+Fixed since (rule fixes on #1120's line): core's numeric `@is_lowercase`, `@is_uppercase`, `@is_cased_lowercase`
+and `@is_cased_uppercase` follow Rust std's `char` case properties, as Ruff's `ruff_python_stdlib::str` does, and
+python-19's `pep8_lower`, `pep8_cased_lower`, `pep8_cased_upper` and `pep8_capwords` use them instead of regex
+Unicode classes. The rule's `.test` checks NFKC aliases (`Lower`, U+02E4 to U+0295, Japanese, titlecase) against
+Ruff 0.17.6. `translations:check`: N812 `same` (fixtures 33, samples-python 4 shared findings), and all 15 N8xx
+rules in that run `same`.
