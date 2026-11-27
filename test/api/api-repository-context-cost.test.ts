@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, realpathSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -20,11 +20,18 @@ vi.mock("node:fs", async importOriginal => {
       if (reads.counting && parameters[1]?.bigint === true) reads.stamps += 1;
       return original.statSync(...parameters);
     }) as typeof original.statSync,
+    lstatSync: ((...parameters: Parameters<typeof original.lstatSync>) => {
+      if (reads.counting) reads.looked.push(String(parameters[0]));
+      return original.lstatSync(...parameters);
+    }) as typeof original.lstatSync,
   };
 });
 
-/** Git locations placed, remotes read, processes started and files stamped (one `stat` in `bigint`) while `counting` is on. */
-const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0, stamps: 0 }));
+/**
+ * Git locations placed, remotes read, processes started, files stamped (one `stat` in `bigint`) and paths looked at
+ * (`lstat`) while `counting` is on.
+ */
+const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0, stamps: 0, looked: [] as string[] }));
 vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
   return {
@@ -37,17 +44,33 @@ vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
       if (reads.counting) reads.remotes += 1;
       return original.readRemoteAddress(...parameters);
     },
+    readRemoteAnswer: (...parameters: Parameters<typeof original.readRemoteAnswer>) => {
+      if (reads.counting) reads.remotes += 1;
+      return original.readRemoteAnswer(...parameters);
+    },
   };
 });
+
+/**
+ * While `remotes` is on, each Git asked for a checkout's remote (`ls-remote --get-url origin`, `remote`) is a process
+ * that ends as a Git that could not start ends, with no answer (on Linux the loader's exit 127); `failed` counts them.
+ */
+const noAnswer = vi.hoisted(() => ({ remotes: false, failed: 0 }));
 vi.mock("../../src/engine/child-process.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/child-process.js")>("../../src/engine/child-process.js");
+  const remoteAsk = (args: unknown): boolean => {
+    const asked = ` ${Array.isArray(args) ? args.join(" ") : ""}`;
+    return noAnswer.remotes && (asked.endsWith(" ls-remote --get-url origin") || asked.endsWith(" remote"));
+  };
   const spawn = ((...parameters: Parameters<typeof original.spawn>) => {
     if (reads.counting) reads.starts += 1;
     return original.spawn(...parameters);
   }) as typeof original.spawn;
   const spawnSync = ((...parameters: Parameters<typeof original.spawnSync>) => {
     if (reads.counting) reads.starts += 1;
-    return original.spawnSync(...parameters);
+    if (!remoteAsk(parameters[1])) return original.spawnSync(...parameters);
+    noAnswer.failed += 1;
+    return original.spawnSync(process.execPath, ["-e", "process.exit(127)"], { encoding: "utf8" });
   }) as typeof original.spawnSync;
   return { ...original, spawn, spawnSync };
 });
@@ -479,5 +502,80 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     expect(twice()).toEqual([readAgain, kept]);
     loopInPlace(file); // A file that cannot even be looked at.
     expect(twice()).toEqual([readAgain, kept]);
+  });
+
+  it("asks Git again at the next read after a remote read Git gave no answer to, and keeps the answer Git then gives", async () => {
+    const { root, api, first, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    noAnswer.remotes = true;
+    try {
+      expect(resolveCheckout(checkout)?.repositoryKey).toBeUndefined();
+    } finally {
+      noAnswer.remotes = false;
+    }
+    expect(noAnswer.failed).toBeGreaterThan(0);
+
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 1, stamps: 0 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0, stamps: 0 });
+    expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
+  });
+});
+
+describe("a folder of a checkout made a repository of its own, while the daemon runs", () => {
+  const OTHER = "git@github.com:acme/other.git";
+
+  /** Two known repositories, each recorded at a clone of its own, `app` (acme/app) and `other` (acme/other), and the daemon's own resolver. */
+  async function twoRepositories() {
+    const { root, stores, db, app } = await daemonStores();
+    const top = cloneAt(join(root, "app"), "git@github.com:acme/app.git");
+    const first = recordCheckout(db, top).repositoryKey;
+    const second = recordCheckout(db, cloneAt(join(root, "other"), OTHER)).repositoryKey;
+    return { top, api: app, first, second, resolveCheckout: stores.checkouts() };
+  }
+
+  /** Folders of `top` the daemon reads, and how each is then made a repository of its own whose remote is acme/other. */
+  const layouts: Record<string, (top: string) => { readonly read: string; readonly make: () => void }> = {
+    "the folder read, by `git init`": top => {
+      const read = join(top, "tools");
+      mkdirSync(read);
+      return { read, make: () => cloneAt(read, OTHER) };
+    },
+    "a folder between the one read and the top level, by `git init`": top => {
+      const read = join(top, "tools", "src", "lib");
+      mkdirSync(read, { recursive: true });
+      return { read, make: () => cloneAt(join(top, "tools"), OTHER) };
+    },
+    "the folder read, whose empty `.git` folder Git passed over, by `git init` filling it in place": top => {
+      const read = join(top, "tools");
+      mkdirSync(join(read, ".git"), { recursive: true });
+      return { read, make: () => cloneAt(read, OTHER) };
+    },
+  };
+  for (const [layout, prepare] of Object.entries(layouts)) {
+    it(`names the new repository at the next read once ${layout} makes it one`, async () => {
+      const { top, api, first, second } = await twoRepositories();
+      const { read, make } = prepare(top);
+      expect(await namedRepositories(api, read)).toEqual(allNaming(first));
+
+      make();
+
+      expect(await namedRepositories(api, read)).toEqual(allNaming(second));
+    });
+  }
+
+  it("keeps an unchanged folder's location: its next read starts no process, places nothing, and looks at one `.git` entry per folder below the top level", async () => {
+    const { top, first, resolveCheckout } = await twoRepositories();
+    const names = Array.from({ length: 10 }, (_, index) => `level${index + 1}`);
+    for (const depth of [1, 3, 10]) {
+      const folder = join(top, ...names.slice(0, depth));
+      mkdirSync(folder, { recursive: true });
+      expect(resolveCheckout(folder)?.repositoryKey, folder).toBe(first);
+      Object.assign(reads, { placements: 0, starts: 0, looked: [], counting: true });
+      const again = resolveCheckout(folder)?.repositoryKey;
+      reads.counting = false;
+      const gitEntries = reads.looked.filter(path => basename(path) === ".git").length;
+      expect({ again, placements: reads.placements, starts: reads.starts, gitEntries }, folder)
+        .toEqual({ again: first, placements: 0, starts: 0, gitEntries: depth });
+    }
   });
 });

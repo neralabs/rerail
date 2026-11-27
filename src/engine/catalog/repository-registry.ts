@@ -18,7 +18,7 @@ import {
   normalizeRemoteAddress,
   outsideGit,
   readCloneIdAt,
-  readRemoteAddress,
+  readRemoteAnswer,
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
@@ -26,6 +26,7 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { placementInputs } from "./checkouts/git-placement.js";
+import { foldersBelowTop, noneBecameRepository, type FolderBelowTop } from "./checkouts/folders-below-top.js";
 import { configFilesText, remoteConfigFiles } from "./checkouts/kept-remote.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
 import { nameOnce, storedArray, storedItems, type StoredListLog } from "../storage/stored-list.js";
@@ -73,12 +74,20 @@ function repositoryByKeyOrAlias(db: FileReader, key: RepositoryKey): StoredRow |
  * places in a repository, a bare repository or a folder inside a `.git`, is keyed by that repository's remote.
  */
 function remoteKeyOf(location: RepositoryIdentityLocation): RepositoryKey | undefined {
-  if (!location.git && outsideGit(location.workspaceRoot)) return undefined;
+  return remoteKeyAnswer(location).key;
+}
+
+/**
+ * {@link remoteKeyOf}, and whether Git answered every question it was asked for it ({@link readRemoteAnswer}): a folder
+ * outside Git, for which no Git is asked, did; where no Git is found, none did.
+ */
+function remoteKeyAnswer(location: RepositoryIdentityLocation): { readonly key: RepositoryKey | undefined; readonly answered: boolean } {
+  if (!location.git && outsideGit(location.workspaceRoot)) return { key: undefined, answered: true };
   try {
-    const remote = readRemoteAddress(location.workspaceRoot);
-    return remote === undefined ? undefined : normalizeRemoteAddress(remote.url);
+    const { remote, answered } = readRemoteAnswer(location.workspaceRoot);
+    return { key: remote === undefined ? undefined : normalizeRemoteAddress(remote.url), answered };
   } catch (error) {
-    if (error instanceof GitUnavailableError) return undefined;
+    if (error instanceof GitUnavailableError) return { key: undefined, answered: false };
     throw error;
   }
 }
@@ -424,15 +433,17 @@ interface KeptRemote {
 /**
  * A location the resolver or a session's rule checks (`CheckoutCatalogs`) read for a workspace, with what was there then:
  * the clone id at its identity path, the identity of its top level's `.git` ({@link folderIdentity}; undefined where it
- * could not be read), and the checkout's remote once the resolver read it ({@link keptRemoteKey}); a location read
- * afresh ({@link locationNow}) has none. Each workspace keeps its own, so a second folder of a checkout reads the remote
- * at its first read, which {@link readRemoteAddress} answers from Git's kept answer while the clone's config files read
- * the same.
+ * could not be read), the folders Git's search passed between the workspace and that top level (`below`), and the
+ * checkout's remote once the resolver read it from Git's answer ({@link keptRemoteKey}); a location read afresh
+ * ({@link locationNow}) has none. Each workspace keeps its own, so a second folder of a checkout reads the remote at its
+ * first read, which {@link readRemoteAnswer} answers from Git's kept answer while the clone's config files read the same.
  */
 export interface KeptLocation {
   readonly location: RepositoryIdentityLocation;
   readonly cloneId: string | undefined;
   readonly gitEntry: string | undefined;
+  /** The folders between the workspace and its top level ({@link foldersBelowTop}); undefined where they could not be read. */
+  readonly below: readonly FolderBelowTop[] | undefined;
   remote?: KeptRemote;
 }
 
@@ -450,37 +461,45 @@ function remoteFilesOf(location: RepositoryIdentityLocation): readonly string[] 
  * `kept`'s remote key, kept while the config files it is read from hold what they held when it was read
  * ({@link configFilesText}: their text, or what the file system says of one whose text cannot be read), so no Git
  * runs; `git remote set-url` rewrites the common `config`, and the next lookup reads the remote again
- * ({@link remoteKeyOf}).
+ * ({@link remoteKeyOf}). A read a Git gave no answer to is kept by nothing, so the next lookup asks Git again.
  */
 function keptRemoteKey(kept: KeptLocation): RepositoryKey | undefined {
   const files = kept.remote?.files ?? remoteFilesOf(kept.location);
   // Read before Git is asked: a config written between the two reads as changed at the next lookup.
   const text = configFilesText(files);
   if (kept.remote?.text === text) return kept.remote.key;
-  kept.remote = { key: remoteKeyOf(kept.location), files, text };
-  return kept.remote.key;
+  const { key, answered } = remoteKeyAnswer(kept.location);
+  if (answered) kept.remote = { key, files, text };
+  else delete kept.remote;
+  return key;
 }
 
 /**
- * Whether `kept` still places its workspace. A main checkout whose id file is in its own `.git` keeps it there, and
- * the same id is the same clone. A linked worktree's is in its clone's common Git folder, a submodule's in its parent's
- * `.git/modules`, a `--separate-git-dir` clone's in the folder it names, each of which outlives the working tree, and a
- * folder without an id tells nothing by it: for those the `.git` at the top level must be the same entry too, as a
- * checkout made again at the path makes a new one.
+ * Whether `kept` still places its workspace. No folder between the workspace and its top level may have become a place
+ * where Git's search ends ({@link noneBecameRepository}): `git init` in a subfolder makes it a repository of its own. A
+ * main checkout whose id file is in its own `.git` keeps it there, and the same id is the same clone. A linked
+ * worktree's is in its clone's common Git folder, a submodule's in its parent's `.git/modules`, a `--separate-git-dir`
+ * clone's in the folder it names, each of which outlives the working tree, and a folder without an id tells nothing by
+ * it: for those the `.git` at the top level must be the same entry too, as a checkout made again at the path makes a
+ * new one.
  */
 export function stillPlaces(kept: KeptLocation): boolean {
   const { location } = kept;
-  if (readCloneIdAt(location.identityPath) !== kept.cloneId) return false;
+  if (readCloneIdAt(location.identityPath) !== kept.cloneId || !noneBecameRepository(kept.below)) return false;
   const ownGitFolder = join(location.workspaceRoot, ".git");
   if (location.main && kept.cloneId !== undefined && dirname(location.identityPath) === ownGitFolder) return true;
   return folderIdentity(ownGitFolder) === kept.gitEntry;
 }
 
-/** `workspace`'s location read afresh, with the clone id there and the identity of its top level's `.git`. */
+/**
+ * `workspace`'s location read afresh, with the clone id there, the identity of its top level's `.git`, and the folders
+ * between the two as Git's search reads them ({@link foldersBelowTop}).
+ */
 export function locationNow(workspace: string): KeptLocation {
   const location = repositoryIdentityLocation(workspace);
   const gitEntry = location.git ? folderIdentity(join(location.workspaceRoot, ".git")) : undefined;
-  return { location, cloneId: readCloneIdAt(location.identityPath), gitEntry };
+  const below = location.git ? foldersBelowTop(workspace, location.workspaceRoot) : [];
+  return { location, cloneId: readCloneIdAt(location.identityPath), gitEntry, below };
 }
 
 /** {@link locationNow}, kept in `located` when it is in Git. */
@@ -494,10 +513,11 @@ function locatedAfresh(located: Map<string, KeptLocation>, workspace: string): K
 /**
  * A `lookupCheckout` for many workspaces over one connection, as the daemon answers per request: each workspace's Git
  * location is kept while the clone there is the one it was read with ({@link stillPlaces}), and read afresh, its remote
- * too, once another checkout takes its path; a folder outside Git is located again each time, so a later `git init` is
- * seen. A checkout's remote is kept while its repository's config files read the same ({@link keptRemoteKey}), so a
- * remote changed in place names its repository at the next lookup. The database is read on every call, so adoption
- * and new records show at once.
+ * too, once another checkout takes its path or a folder between the workspace and its top level becomes a repository of
+ * its own; a folder outside Git is located again each time, so a later `git init` is seen. A checkout's remote is kept
+ * while its repository's config files read the same and Git answered its read ({@link keptRemoteKey}), so a remote
+ * changed in place names its repository at the next lookup. The database is read on every call, so adoption and new
+ * records show at once.
  */
 export function createCheckoutResolver(db: FileReader): (workspace: string) => CheckoutContext | undefined {
   const located = new Map<string, KeptLocation>();

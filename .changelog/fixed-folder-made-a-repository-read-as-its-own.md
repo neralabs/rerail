@@ -1,0 +1,1 @@
+A folder inside a checkout that becomes a repository of its own while the daemon runs (`git init`, a clone or a submodule made there) is read as the new repository at its next read: the dashboard, the status line and a session started there no longer name the outer repository until the daemon restarts.

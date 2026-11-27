@@ -109,6 +109,11 @@ function isEntry(looked: Looked): looked is Stats {
   return looked !== undefined && looked !== "none";
 }
 
+/** Whether `folder` holds no `.git` entry, by one lstat: false where one is there, and where the lstat cannot tell. */
+export function holdsNoGitEntry(folder: string): boolean {
+  return look(join(folder, ".git")) === "none";
+}
+
 function isFolder(looked: Looked): looked is Stats {
   return isEntry(looked) && looked.isDirectory();
 }

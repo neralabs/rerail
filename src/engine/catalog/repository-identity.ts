@@ -939,9 +939,24 @@ export type { RemoteAddress } from "./checkouts/kept-remote.js";
  * before that, as in a process that has made no engine read, each call asks Git.
  */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
+  return readRemoteAnswer(root).remote;
+}
+
+/** A checkout's remote as {@link readRemoteAddress} reads it, and whether Git answered every question asked for it. */
+export interface RemoteAnswer {
+  readonly remote: RemoteAddress | undefined;
+  /**
+   * False where a Git asked gave no answer (it could not start, ran past its time limit, was killed or failed otherwise):
+   * `remote` is then no answer of Git's, "no remote" included, and nothing keeps it.
+   */
+  readonly answered: boolean;
+}
+
+/** {@link readRemoteAddress}, saying whether Git answered ({@link RemoteAnswer}); a kept answer is one Git gave. */
+export function readRemoteAnswer(root: string): RemoteAnswer {
   const source = remoteSource(root);
   const kept = keptRemote(source);
-  if (kept !== undefined) return kept.remote;
+  if (kept !== undefined) return { remote: kept.remote, answered: true };
   const answers: GitResult[] = [];
   for (let step = remoteStep(answers); "ask" in step; step = remoteStep(answers)) answers.push(runGit(root, step.ask));
   return answeredRemote(source, answers);
@@ -988,14 +1003,16 @@ function soleRemoteStep(names: GitResult, url: GitResult | undefined): RemoteSte
 }
 
 /**
- * The remote the answers give, kept under the source's facts only when Git answered every question: a Git that failed
- * answers no remote, as before, and is asked again next time.
+ * The remote the answers give, and whether Git answered every question: each of these asks Git answers with exit 0, its
+ * "no remote" too (`ls-remote --get-url` gives the name back, `git remote` lists none). Kept under the source's facts
+ * only when Git answered: a Git that failed answers no remote, as before, says so, and is asked again next time.
  */
-function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAddress | undefined {
+function answeredRemote(source: RemoteSource | undefined, answers: readonly GitResult[]): RemoteAnswer {
   const step = remoteStep(answers);
   const remote = "remote" in step ? step.remote : undefined;
-  if (source !== undefined && answers.every(answer => answer.status === 0)) keepRemote(source, remote);
-  return remote;
+  const answered = answers.every(answer => answer.status === 0);
+  if (source !== undefined && answered) keepRemote(source, remote);
+  return { remote, answered };
 }
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 const SCP_FORM = /^(?:[^@/]+@)?([^:/]+):(.*)$/;
