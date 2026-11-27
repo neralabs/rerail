@@ -37,15 +37,15 @@ pub struct Derived {
     named: OnceLock<Cells<[u32; 2]>>,
     /// Each node's place in `visit_index`'s order, by local id.
     visits: OnceLock<Cells<u32>>,
-    /// Each node's `tree_digest` atom, by local id.
-    digests: OnceLock<Cells<u32>>,
+    /// Each node's `tree_digest` hash, its 32 bytes, by local id.
+    digests: OnceLock<Cells<[u8; 32]>>,
 }
 
 impl Derived {
-    /// The columns made so far, as the view entry's runs take them: `[gaps before, gaps after, visits, digests]`, and
-    /// `named`.
-    pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 4], Option<&Cells<[u32; 2]>>) {
-        ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get(), self.digests.get()], self.named.get())
+    /// The columns made so far, as the view entry's runs take them: `[gaps before, gaps after, visits]`, `named`
+    /// and the digests.
+    pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 3], Option<&Cells<[u32; 2]>>, Option<&Cells<[u8; 32]>>) {
+        ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get()], self.named.get(), self.digests.get())
     }
 }
 
@@ -432,7 +432,7 @@ pub(super) fn derive(batch: &Batch, doc: usize) {
             }
         }
         if wants(DIGEST) {
-            TreeDigest::atoms(&at);
+            TreeDigest::hashes(&at);
         }
     }
     if wants(NAMED) {
@@ -464,11 +464,6 @@ pub(super) fn strings(batch: &Batch, wants: &dyn Fn(&str) -> bool, each: &mut dy
         let source = p.facts.source.as_str();
         for g in &gaps {
             g.walk(p, &mut |_, a, b| each(if a < b { &source[a as usize..b as usize] } else { "" }));
-        }
-    }
-    if batch.shape == Shape::Core && wants(DIGEST) {
-        for d in 0..batch.docs.len() {
-            TreeDigest::hexes(&At { batch, doc: d }, &mut |_, h| each(h));
         }
     }
 }
@@ -832,37 +827,34 @@ impl TapeRows for VisitIndex {
 }
 
 /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of each node's subtree (`core_rr::digests`), of the
-/// nodes of a document with a grammar that parsed (a withheld one numbers none). A row a node (`Item::Node`); a hash
-/// is of the whole subtree, which the tape holds no digest of: each node's is kept as its atom, 4 bytes a node,
-/// interned on the document's first read (`// copy: derived`). Made as rows it was 6.8 MB of each chunk's block of
-/// sources at the M3's 300-file peak (ab200).
+/// nodes of a document with a grammar that parsed (a withheld one numbers none). A row a node (`Item::Node`); `h` is
+/// the hash's 64-bit value (`core_rr::digest_value`), a number, no text. A hash is of the whole subtree, which the
+/// tape holds no digest of: each node's 32 bytes are a derived column of the projection's block, 32 bytes a node,
+/// made on the document's first read, and read in place by the row and by `@tree_digest_hex` (the 64 hex digits, a
+/// text made only where a rule asks a node's). They were the nodes' atoms, interned on the first read: every node's
+/// 64 digits, 9,484 of the 15,048 hex atoms of the Python pack over 10 files, for PYI062's few Literal members. Made
+/// as rows it was 6.8 MB of each chunk's block of sources at the M3's 300-file peak (ab200).
 pub(super) struct TreeDigest;
 
 impl TreeDigest {
-    /// Each node of the projection of `at` (by local id, in order) with its digest's symbol; none for a document
-    /// with no grammar, or withheld.
-    fn hexes(at: &At, each: &mut dyn FnMut(u32, &str)) {
-        let Some(dialect) = at.batch.dialects.get(at.batch.docs.tag(at.doc)) else { return };
-        if at.batch.docs.withheld(at.doc) {
-            return;
-        }
-        let p = at.p();
-        let (hash, _) = super::core_rr::digests(p.f(), dialect, true, false);
-        let mut text = [0u8; 64];
-        for (local, id, _) in p.node_ids() {
-            each(local, super::core_rr::hex_into(&hash[id as usize], &mut text));
-        }
-    }
-
-    /// Each node's digest's atom, by local id: made on the document's first read of a row.
-    fn atoms<'a>(at: &'a At) -> &'a Cells<u32> {
+    /// Each node's hash, by local id: made on the document's first read; zero for a document with no grammar, or
+    /// withheld.
+    pub(super) fn hashes<'a>(at: &'a At) -> &'a Cells<[u8; 32]> {
         let p = at.p();
         p.derived.digests.get_or_init(|| {
-            // Every node's 64 digits in one buffer, each a slice of it.
-            let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
-            Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
-            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
-            interned(at, &texts, "a document's digests")
+            let len = p.len() as usize;
+            let dialect = at.batch.dialects.get(at.batch.docs.tag(at.doc)).filter(|_| !at.batch.docs.withheld(at.doc));
+            // copy: derived (the subtrees' hashes: the tape holds the nodes, not their digests)
+            Cells::build(p.block(), len.max(1), |out: &mut [[u8; 32]]| {
+                if let Some(dialect) = dialect {
+                    let (hash, _) = super::core_rr::digests(p.f(), dialect, true, false);
+                    for (local, id, _) in p.node_ids() {
+                        out[local as usize] = hash[id as usize];
+                    }
+                }
+                len.max(1)
+            })
+            .expect("a projection's block holds a view's digests")
         })
     }
 }
@@ -890,7 +882,7 @@ impl TapeRows for TreeDigest {
     fn doc(&self, _: &At) {}
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
-        out[1] = i64::from(Self::atoms(at)[k as usize]);
+        out[1] = super::core_rr::digest_value(&Self::hashes(at)[k as usize]);
     }
 }
 

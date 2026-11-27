@@ -61,6 +61,13 @@ impl Adapter for Sql {
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
     const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    // Node paths' tables (decision 0722): the slots generated into `sql_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("sql_paths.rs"),
+        lists: &["program"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     /// A `block` (`BEGIN … END`) starts at its `BEGIN`, which is no statement.
     const BODY_KINDS: &'static [&'static str] = &[];

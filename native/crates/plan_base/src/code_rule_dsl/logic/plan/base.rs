@@ -276,15 +276,19 @@ pub fn string(s: &str) -> Expr {
     Expr::Value(Value_::Text(s.to_owned()))
 }
 
-/// A relation's column types as the store keeps its rows: `s` where it declares a symbol, whatever the engine holds
-/// the column as (over atoms, an integer). The store maps a forked process's symbols by them (decision 0170); rows of
-/// another width than declared keep the engine's types.
+/// A relation's column types as the store keeps its rows: `s` where it declares a symbol, `p` a node path (decision
+/// 0722: an atom in its high 32 bits), whatever the engine holds the column as (over atoms, an integer). The store maps
+/// a forked process's symbols by them (decision 0170); rows of another width than declared keep the engine's types.
 pub fn stored_types(f: Fields<'_>, rel: &str, engine: Vec<u8>) -> Vec<u8> {
     let declared = f.types(rel);
     if declared.len() != engine.len() {
         return engine;
     }
-    declared.iter().map(|t| if *t == "sym" { b's' } else { b'i' }).collect()
+    declared.iter().map(|t| match *t {
+        "sym" => b's',
+        "node_path" => b'p',
+        _ => b'i',
+    }).collect()
 }
 
 /// How a digest reads a relation's cells (decision 0212): an atom column (`b's'`, as frames type it) by its atoms'
@@ -295,38 +299,47 @@ pub fn stored_types(f: Fields<'_>, rel: &str, engine: Vec<u8>) -> Vec<u8> {
 pub struct Cells<'a> {
     atoms: Option<&'a crate::content_store::atoms::Atoms>,
     atom: Vector<usize>,
+    /// The node path columns (`b'p'`): their high 32 bits an atom, keyed so too, the steps below as they are.
+    path: Vector<usize>,
     width: usize,
 }
 
 impl<'a> Cells<'a> {
-    /// The cells of rows of column `types` (`b's'` an atom), whose atoms are `atoms`'.
+    /// The cells of rows of column `types` (`b's'` an atom, `b'p'` a node path), whose atoms are `atoms`'.
     pub fn new(atoms: &'a crate::content_store::atoms::Atoms, types: &[u8]) -> Self {
-        let atom: Vector<usize> = types.iter().enumerate().filter(|(_, t)| **t == b's').map(|(c, _)| c).collect();
-        Cells { atoms: (!atom.is_empty()).then_some(atoms), atom, width: types.len() }
+        let of = |want: u8| -> Vector<usize> { types.iter().enumerate().filter(|(_, t)| **t == want).map(|(c, _)| c).collect() };
+        let (atom, path) = (of(b's'), of(b'p'));
+        Cells { atoms: (!atom.is_empty() || !path.is_empty()).then_some(atoms), atom, path, width: types.len() }
     }
 
     /// The cells of rows of `width` columns that hold no atom.
     pub fn plain(width: usize) -> Self {
-        Cells { atoms: None, atom: rerail_blocks::vector::Vector::new(), width }
+        Cells { atoms: None, atom: rerail_blocks::vector::Vector::new(), path: rerail_blocks::vector::Vector::new(), width }
     }
 
     pub fn width(&self) -> usize {
         self.width
     }
 
-    /// `rows` (whole rows) with each atom cell replaced by its content key.
+    /// `rows` (whole rows) with each atom cell replaced by its content key, and each node path's atom so (its
+    /// content key, its steps mixed in).
     pub fn key(&self, rows: &mut [i64]) {
         let Some(atoms) = self.atoms else { return };
         let w = self.width.max(1);
-        let mut cells: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(rows.len() / w * self.atom.len());
+        let mut cells: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(rows.len() / w * (self.atom.len() + self.path.len()));
         for row in rows.chunks_exact(w) {
             cells.extend(self.atom.iter().map(|&c| row[c]));
+            cells.extend(self.path.iter().map(|&c| row[c] >> 32));
         }
         atoms.content_keys(&mut cells);
         let mut it = cells.into_iter();
         for row in rows.chunks_exact_mut(w) {
             for &c in &self.atom {
                 row[c] = it.next().expect("a key per atom cell");
+            }
+            for &c in &self.path {
+                let key = it.next().expect("a key per node path cell");
+                row[c] = key.rotate_left(32) ^ (row[c] & 0xffff_ffff);
             }
         }
     }

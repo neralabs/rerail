@@ -5572,11 +5572,36 @@ pub fn held(conn: impl Scoped, table: &str) -> Option<Arc<InRel>> {
 /// A native relation of `conn`'s run as the caller reads an output: each live row, its columns `text` gives as the
 /// symbols' text (what `sym_text` gives in SQL), the others as integers. `None`: the run holds no such relation. The
 /// rows are read where the engine holds them: an output is not written to a table to be read back.
-pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Option<Vec<Vec<Value>>>> {
+/// How an output's column is shown (`output_rows`, `source_rows`): an integer as it is, a symbol by its text, a node
+/// path by its text (`path_tables::path_text`, decision 0722).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shown {
+    Int,
+    Text,
+    Path,
+}
+
+/// Column value `v`, shown as `how` says, the symbols' texts read in `syms`.
+fn shown(syms: &Interner, how: Shown, v: i64, at: &str) -> Result<Value> {
+    let text = |v: i64| -> Result<String> {
+        if !syms.known(v)? {
+            return Err(err(format!("{at}no symbol {v}")));
+        }
+        Ok(syms.name(v))
+    };
+    Ok(match how {
+        Shown::Int => Value::Integer(v),
+        Shown::Text => Value::Text(text(v)?),
+        Shown::Path => Value::Text(rerail_lang::code_rule_dsl::path_tables::path_text(&text(v >> 32)?, v)),
+    })
+}
+
+pub fn output_rows(conn: &Connection, table: &str, how: &[Shown]) -> Result<Option<Vec<Vec<Value>>>> {
     let Some(rel) = held(conn, table) else { return Ok(None) };
     let syms = symbols(conn)?;
     let syms = syms.read().unwrap();
     let mut out = Vec::with_capacity(rel.rows());
+    let at = format!("{table}: ");
     for id in 0..rel.len() {
         if is_dead(&rel.dead, id as u32) {
             continue;
@@ -5584,14 +5609,7 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
         let row = rel.values(id);
         let mut vals = Vec::with_capacity(row.len());
         for (c, &v) in row.iter().enumerate() {
-            vals.push(if text.get(c).copied().unwrap_or(false) {
-                if !syms.known(v)? {
-                    return Err(err(format!("{table}: no symbol {v}")));
-                }
-                Value::Text(syms.name(v))
-            } else {
-                Value::Integer(v)
-            });
+            vals.push(shown(&syms, how.get(c).copied().unwrap_or(Shown::Int), v, &at)?);
         }
         out.push(vals);
     }
@@ -5600,7 +5618,7 @@ pub fn output_rows(conn: &Connection, table: &str, text: &[bool]) -> Result<Opti
 
 /// The rows of `src`, an input bound on `conn`, as an output is read (`output_rows`): its columns `text` gives as the
 /// symbols' text, the others as integers. An input the run hands on as an output is read where it is bound.
-pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vtab::Source, text: &[bool]) -> Result<Vec<Vec<Value>>> {
+pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vtab::Source, how: &[Shown]) -> Result<Vec<Vec<Value>>> {
     let syms = symbols(conn)?;
     let syms = syms.read().unwrap();
     let k = src.columns().len();
@@ -5608,15 +5626,7 @@ pub fn source_rows(conn: &Connection, src: &dyn crate::code_rule_dsl::facts::vta
     for row in 0..src.len() {
         let mut vals = Vec::with_capacity(k);
         for c in 0..k {
-            let v = src.value(row, c);
-            vals.push(if text.get(c).copied().unwrap_or(false) {
-                if !syms.known(v)? {
-                    return Err(err(format!("no symbol {v}")));
-                }
-                Value::Text(syms.name(v))
-            } else {
-                Value::Integer(v)
-            });
+            vals.push(shown(&syms, how.get(c).copied().unwrap_or(Shown::Int), src.value(row, c), "")?);
         }
         out.push(vals);
     }

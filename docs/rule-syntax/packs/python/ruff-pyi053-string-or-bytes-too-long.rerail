@@ -21,8 +21,8 @@ PYI053(s) :- long_literal(s), in_stub(s), !in_annotation(s), !stmt_string(s), !d
 long_literal(s) :- (plain_str(s, v) ; string_form(s, "bytes"), str(s, v)), !inside_concat(s), @slice(v, 50, 51) != "".
 long_literal(s) :- fstring(s), kind(s, "string"), !inside_concat(s), fstring_body(s, v), @slice(v, 50, 51) != "".
 .decl fstring_body(s: node, v: symbol)  // an f-string's text inside its quotes
-fstring_body(s, v) :- child(s, a, 0), kind(a, "string_start"), text(a, q0), child(s, z, _), kind(z, "string_end"),
-    text(z, q1), text(s, t), v = @slice(t, strlen(q0), 0 - strlen(q1)).
+fstring_body(s, v) :- child(s, a, 0), kind(a, "string_start"), child(s, z, _), kind(z, "string_end"),
+    text(s, t), v = @slice(t, @text_len(a), 0 - @text_len(z)).
 .decl inside_concat(s: node)
 inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
 // in_annotation(s): a type context, or inside a Literal or Annotated that is in one.

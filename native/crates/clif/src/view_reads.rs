@@ -58,7 +58,8 @@ pub struct ViewDoc {
     /// The tape's rows' derived columns (`tape_rows`), each made on a program's first read of its relation, empty
     /// before: each row's gap's atom of `structural_before` and `structural_after` (u32s, by row); `rr_token_named`'s
     /// parent and place among its parent's tape children (`[u32; 2]`s, by row); each node's place in `visit_index`'s
-    /// order and its `tree_digest` atom (u32s, by local id).
+    /// order (u32s, by local id); each node's `tree_digest` hash (32 bytes each, by local id: its value the first 8,
+    /// big-endian).
     pub gaps: [Run; 2],
     pub named: Run,
     pub visits: Run,

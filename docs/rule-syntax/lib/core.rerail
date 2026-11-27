@@ -32,6 +32,10 @@
 .type match <: number
 .type token <: number
 .type place = node | line | match | token
+// A node's name across files (decision 0722): its granule's key, an atom, in the high 32 bits, its steps from there
+// below. The one value made from a node that may cross into the cross-file part (0677 as amended); the store maps its
+// atom as a symbol's (column type `p`).
+.type node_path <: number
 
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
@@ -608,8 +612,29 @@
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rerail does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
-// @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
-.functor tree_digest(n: node): symbol
+// @tree_digest(n): a structural tree digest, as a 64-bit number: equal subtrees, equal numbers, for comparing and
+// joining. It does not reproduce CPython AST identity or dump bytes.
+.functor tree_digest(n: node): number
+// @tree_digest_hex(n): the same digest's 32 bytes as 64 hex digits (the number's 16 are its first), for a key or a
+// signature over its text: a text made only for the nodes a rule asks.
+.functor tree_digest_hex(n: node): symbol
+// @text_len(n): the length in characters of n's text, a node's, a token's or a span's (a line, `src_line`): what
+// strlen(t) of `text(n, t)` is, counted where the source holds it, so no text is made: a width check, a literal's
+// digits, a prefix's dots.
+.functor text_len(n: place): number
+// @indent(n): how many spaces, tabs and form feeds n's text starts with, counted where the source holds it: a line's
+// text before column k is whitespace when @indent(line) >= k (its whitespace is a byte a character).
+.functor indent(n: place): number
+// @node_path(n): n's node path (decision 0722), the same in every run while its granule's key and its steps hold;
+// @path_node(p): the node p names, in the per-file part of p's document (another document's gives none);
+// @path_unit(p): the path of p's granule itself (a definition or a statement of a container).
+.functor node_path(n: node): node_path
+.functor path_node(p: node_path): node
+.functor path_unit(p: node_path): node_path
+// @path_spelling(p): p spelled, `pkg/mod.py::C.run/body.if#0.then.return` (a message's {p}; decision 0722 §4).
+// @path_file(p): the file p names (a message's {p.file}).
+.functor path_spelling(p: node_path): symbol
+.functor path_file(p: node_path): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for

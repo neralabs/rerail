@@ -1833,6 +1833,8 @@ fn text_of_a_bound_node_is_read_in_place() {
         (".decl t_call(n: node)\nt_call(n) :- kind(n, \"call\").\nout(t) :- t_call(n), text(n, t).", 1),
         (".decl t_name(x: symbol)\nt_name(x) :- kind(n, \"identifier\"), text(n, x).\n.decl t_used(n: node)\nt_used(n) :- kind(n, \"call\"), field(n, \"function\", f), text(f, x), t_name(x).\nout(t) :- t_used(n), text(n, t).", 2),
         ("out(\"x\") :- text(n, \"x\"), kind(n, \"identifier\").", 1),
+        // A column a rule fills with the empty value (FAST002's `fast_param` of an unannotated parameter).
+        (".decl t_ann(p: node, a: loc)\nt_ann(p, a) :- kind(p, \"typed_parameter\"), field(p, \"type\", a).\nt_ann(p, a) :- kind(p, \"identifier\"), unset(a).\nout(t) :- t_ann(_, a), text(a, t).", 1),
         ("out(t) :- text(n, t).", 0),
         // A document's source and its lines are read off the source too (row 7); a match's span is not.
         ("out(t) :- document_line(_, s), place_text(s, t).", 1),
@@ -2047,6 +2049,10 @@ fn text_only_for_the_nodes_read() {
             Some(TextNodes { fields: BTreeSet::from(["name".to_owned()]), parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
         // A span's text (a document's source): no node's.
         ("out(t) :- document_source(_, sp), place_text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
+        // A comment's node (ERA001's `era_line`): the comment nodes, by kind.
+        ("out(t) :- comment(c, _), text(c, t).".to_owned(), Some(TextNodes { relations: BTreeSet::from(["comment".to_owned()]), ..TextNodes::default() })),
+        // A regex capture's text (UP009's `coding`): the capture's match, no node's.
+        ("out(x) :- document_line(_, sp), match(\"#.*coding[:=](?<xs>[-\\\\w.]+)[\\\\s\\\\S]*\", sp), match_text(xs, x).".to_owned(), Some(TextNodes::default())),
         // One of its rules narrowing nothing: every node.
         (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- child(_, n, 0).\nout(t) :- pn(n), text(n, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
@@ -2061,7 +2067,7 @@ fn text_only_for_the_nodes_read() {
 
 /// `TextNodes` read as a dialect's codes (`NodesOf`, what the node walk tests) is `TextNodes::reads`, by names, over
 /// every node of documents in several languages, for sets of kinds, fields, parents' kinds and fields, ERROR among
-/// the kinds, and constants.
+/// the kinds, constants, and the comment nodes (`relations`).
 #[test]
 fn nodes_read_as_codes_are_the_nodes_read_by_name() {
     use crate::code_rule_dsl::lines::LineTable;
@@ -2072,13 +2078,14 @@ fn nodes_read_as_codes_are_the_nodes_read_by_name() {
         TextNodes { fields: set(&["name", "function", "alias"]), ..TextNodes::default() },
         TextNodes { parents: set(&["binary_operator", "binary_expression", "list_splat_pattern"]), parent_fields: set(&["module_name", "body"]), ..TextNodes::default() },
         TextNodes { kinds: set(&["string"]), fields: set(&["value"]), parents: set(&["call"]), values: set(&["self", "x"]), ..TextNodes::default() },
+        TextNodes { relations: set(&["comment"]), ..TextNodes::default() },
         TextNodes::default(),
     ];
     let cases: &[(&str, &str)] = &[
-        ("python", "import os as o\ndef f(self, *a, b=2):\n    return o.g(a | b, self.x) + (1 +\n"),
+        ("python", "# c\nimport os as o  # o\ndef f(self, *a, b=2):\n    return o.g(a | b, self.x) + (1 +\n"),
         ("python", "class C(B):\n    @d(x)\n    def m(self): return [y for y in self.x if y]\n"),
         ("typescript", "import { a } from 'b';\nfunction g(n: number) { return a(n) + 1; }\n"),
-        ("rust", "fn main() { let x = S { a: 1 }; println!(\"{x}\"); }\n"),
+        ("rust", "// c\nfn main() { /* b */ let x = S { a: 1 }; println!(\"{x}\"); }\n"),
     ];
     for &(label, source) in cases {
         let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
@@ -4776,8 +4783,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
         if !batch.docs.withheld(d) {
             let (hash, _) = super::core_rr::digests(f, dialect, true, false);
             for (_, id, n) in p.node_ids() {
-                let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
-                want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
+                want.entry(DIGEST).or_default().insert(vec![n, super::core_rr::digest_value(&hash[id as usize])]);
             }
             let (mut order, mut keys) = (Vec::new(), vec![u32::MAX; p.len() as usize]);
             super::tree::visit_order(p, dialect, true, &mut |l, i| {

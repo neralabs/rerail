@@ -6992,7 +6992,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             .iter()
             .enumerate()
             .map(|(i, t)| match *t {
-                "node" | "int" | "flat" | "min" | "max" => Ok(format!("c{i} INTEGER")),
+                // A node path (decision 0722) is a 64-bit word.
+                "node" | "int" | "flat" | "min" | "max" | "node_path" => Ok(format!("c{i} INTEGER")),
                 "sym" if atoms => Ok(format!("c{i} INTEGER")),
                 "sym" => Ok(format!("c{i} TEXT")),
                 _ => Err(Error::Plan(format!("{rel}: no SQL type for {t}"))),
@@ -9010,7 +9011,12 @@ fn decoded_outputs_within(
             let cols: Vec<String> = domains
                 .iter()
                 .enumerate()
-                .map(|(i, d)| if *d == lower::Domain::Name { text(&format!("c{i}")) } else { format!("c{i}") })
+                .map(|(i, d)| match d {
+                    lower::Domain::Name => text(&format!("c{i}")),
+                    // A node path's text (`path_tables::path_text`): its base atom's text, a tab, `/`, its steps.
+                    lower::Domain::Path => format!("{} || char(9) || '/' || printf('%x', c{i} & 4294967295)", text(&format!("(c{i} >> 32)"))),
+                    _ => format!("c{i}"),
+                })
                 .collect();
             format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(rel))
         } else {
@@ -9045,14 +9051,14 @@ fn decoded_outputs_within(
                 .iter()
                 .map(|d| match d {
                     lower::Domain::Node => output::col::NODE,
-                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field => output::col::TEXT,
+                    lower::Domain::Name | lower::Domain::Kind | lower::Domain::Field | lower::Domain::Path => output::col::TEXT,
                     _ => output::col::INT,
                 })
                 .collect()
         } else {
             declared
                 .as_ref()
-                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" => output::col::INT, _ => output::col::TEXT }).collect())
+                .map(|cols| cols.iter().map(|t| match t.as_str() { "node" => output::col::NODE, "number" | "int" | "unsigned" | "node_path" => output::col::INT, _ => output::col::TEXT }).collect())
                 .unwrap_or_default()
         };
         let text_domain = |i: usize| types.get(i).is_none_or(|&t| t == output::col::TEXT);
@@ -9074,7 +9080,14 @@ fn decoded_outputs_within(
                 other => return Err(Error::Plan(format!("{rel}: {other:?} in integer column {i}"))),
             })
         };
-        let text_cols: Vec<bool> = domains.iter().map(|d| *d == lower::Domain::Name).collect();
+        let text_cols: Vec<super::native::component::Shown> = domains
+            .iter()
+            .map(|d| match d {
+                lower::Domain::Name => super::native::component::Shown::Text,
+                lower::Domain::Path => super::native::component::Shown::Path,
+                _ => super::native::component::Shown::Int,
+            })
+            .collect();
         let held = if native.contains(rel) && findings_form {
             super::native::component::finding_rows(db)?.map(|rows| rows.into_iter().map(|(c, p, at)| vec![SqlValue::Text(c), SqlValue::Text(p), SqlValue::Integer(at)]).collect())
         } else if native.contains(rel) {

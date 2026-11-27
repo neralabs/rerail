@@ -2783,10 +2783,14 @@ impl Lowerer {
             if let Some(x) = tm_var(&self.prog, l) {
                 match r {
                     _ if tm_var(&self.prog, r).is_some() => equal = Some((x.to_owned(), tm_var(&self.prog, r).expect("a variable").to_owned())),
-                    // A computed value: a number from arithmetic and the functions of numbers, else a symbol.
+                    // A computed value: a number from arithmetic and the functions of numbers (those the catalogue
+                    // says return one: `@text_len`, `@semver_valid`, …), else a symbol.
                     Tm::Int(_) => typed.push((x.to_owned(), "int".to_owned())),
                     _ if let Some((f, _)) = tm_call(&self.prog, r) => {
-                        let number = matches!(f, "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches") || f.starts_with("float_") && f != "float_str";
+                        use crate::code_rule_dsl::logic::strings::functions::{Kind, native_call};
+                        let number = matches!(f, "add" | "sub" | "mul" | "div" | "mod" | "max" | "min" | "strlen" | "to_number" | "to_float" | "count_matches")
+                            || f.starts_with("float_") && f != "float_str"
+                            || native_call(f).is_some_and(|(_, _, ret)| matches!(ret, Kind::Number));
                         typed.push((x.to_owned(), if number { "int" } else { "sym" }.to_owned()));
                     }
                     Tm::Str(_) | Tm::StrAtom(_) => typed.push((x.to_owned(), "sym".to_owned())),
@@ -3683,14 +3687,15 @@ impl Lowerer {
                     self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel)));
                 }
             }
-            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
+            // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`, the digest's 64-bit
+            // value (a number; `@tree_digest_hex(n)`, a node read, spells all 64 digits).
             T::Call { name, functor: true, args } if name == "tree_digest" && args.len() == 1 => {
                 self.hoist(&args[0], base, sub, out, true);
                 let s = place(self, sub, "digest");
                 out.push(LitAt::Op(n, s));
                 if !self.prog.has_input("tree_digest") {
                     self.prog.fields().add_input("tree_digest");
-                    self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "sym")]);
+                    self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "int")]);
                 }
             }
             T::Call { args, .. } => args.iter().for_each(|x| self.hoist(x, base, sub, out, true)),

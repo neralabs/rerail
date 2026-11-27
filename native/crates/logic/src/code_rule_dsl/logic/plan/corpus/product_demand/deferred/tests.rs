@@ -321,6 +321,35 @@ ctor(c) :- kind(c, "call"), field(c, "function", f), node(d, c, _, _, _), visit_
         assert!(requested(", marked(i)"), "marked narrows the aliases");
     }
 
+    /// A reader that names the key only in a view every node has (UP032's `fmt_str(c, s), text(s, t)`, `t` read past
+    /// the request) asks for every node: the join is left as written, and no request makes the view a row a node
+    /// (`text` of every node, each an atom). A constant or another read narrows it.
+    #[test]
+    fn a_reader_naming_the_key_only_in_an_every_node_view_leaves_the_join_as_written() {
+        let requested = |narrow: &str| {
+            let v = parse(&format!(r#"
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl line(n: node, l: number)
+.decl marked(n: node)
+.input kind, field, text, line, marked
+.decl fmt(c: node, s: node)
+fmt(c, s) :- kind(c, "call"), field(c, "function", f), field(f, "object", s).
+.decl width(s: node, w: number)
+width(s, strlen(t)) :- fmt(_, s), text(s, t){narrow}.
+.output width
+"#));
+            let (made, _) = rewritten(&v);
+            F::columns_of(&*made, &format!("{DEFERRED_PAIRS}fmt")).is_some()
+        };
+        assert!(!requested(""), "text(s, t) holds of every node");
+        assert!(!requested(", line(s, _)"), "and line(s, _)");
+        assert!(!requested(", s < 6917529027641081856"), "with the node range's test");
+        assert!(requested(", kind(s, \"string\")"), "a kind narrows it");
+        assert!(requested(", marked(s)"), "another read narrows it");
+    }
+
     /// A join of a file's nodes with a constant (ASYNC115/116's `async_sleep_call`) is a lookup in the constant, made in
     /// each file: left as written, it makes no request, factor or pair cache that holds the file's nodes in the
     /// cross-file part (decision 0677). Driven by its readers, its keys were a table of every file's values there.

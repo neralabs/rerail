@@ -41,6 +41,8 @@ const FACT_STORE: &[&str] = &[
     // bookkeeping its capacity check reads in one row, as `store_state` is.
     "store_bytes",
     "guest_keys",
+    // The sum of the bytes of the files the rows above and the kept facts' name (the disk budget's, kept by triggers).
+    "store_bytes",
     "push_pending",
     "rows",
     "git_alias",

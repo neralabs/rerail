@@ -3022,8 +3022,10 @@ pub(super) struct Crossing {
     pub(super) projected: BTreeSet<String>,
 }
 
-/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`):
-/// a read of the long-text nodes' binding (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from.
+/// Whether rule `r` reads a node's text or value by a function (`syntax::NODE_READS`, `t = @rr_node_text_any(v)`), in
+/// its body or its head (`len(n, @text_len(n)) :- …`): a read of the long-text nodes' binding
+/// (`syntax::LONG_TEXT_NODES`), which holds the batch the node is read from. Read in the head alone, the binding was
+/// never made and the read answered nothing.
 pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
     fn calls(v: &Version, t: TermRef<'_>) -> bool {
         match t {
@@ -3031,10 +3033,11 @@ pub fn reads_a_node(v: &Version, r: RuleRef<'_>) -> bool {
             _ => false,
         }
     }
-    r.body().any(|l| match l.view() {
-        L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
-        _ => false,
-    })
+    r.head().args().any(|t| calls(v, t))
+        || r.body().any(|l| match l.view() {
+            L::Cmp { l, r, .. } => calls(v, l) || calls(v, r),
+            _ => false,
+        })
 }
 
 pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>, views: &BTreeSet<String>) -> Crossing {

@@ -48,6 +48,13 @@ impl Adapter for Css {
     const STRIPS_BOM: bool = false;
     /// tree-sitter-css's comments, which walks pass over.
     const COMMENT_KINDS: &'static [&'static str] = &["comment", "js_comment"];
+    // Node paths' tables (decision 0722): the slots generated into `css_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("css_paths.rs"),
+        lists: &["stylesheet", "block"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;

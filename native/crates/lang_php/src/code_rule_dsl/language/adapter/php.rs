@@ -16,6 +16,13 @@ impl Adapter for Php {
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = false;
     const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    // Node paths' tables (decision 0722): the slots generated into `php_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("php_paths.rs"),
+        lists: &["program", "compound_statement", "declaration_list", "switch_block"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &["php_tag"];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;

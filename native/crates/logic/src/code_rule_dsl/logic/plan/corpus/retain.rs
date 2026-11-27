@@ -1960,7 +1960,9 @@ pub(in crate::code_rule_dsl) fn strata_kept(store: &ContentStore, progs: &[&Plac
 /// A relation's column types, as frames store them.
 pub(super) fn types_of(prog: &Placed, domains: &lower::Domains, rel: &str) -> Vec<u8> {
     let types = prog.fields().ok().and_then(|f| f.columns(rel)).map(|cs| cs.into_iter().map(|(_, t)| t).collect::<Vec<_>>()).unwrap_or_default();
-    lower::atom_columns(&types, domains, rel).into_iter().map(|atom| if atom { b's' } else { b'i' }).collect()
+    // A node path (decision 0722) is `p`: its high 32 bits an atom, mapped as a name's.
+    let paths = lower::path_columns(domains, rel);
+    lower::atom_columns(&types, domains, rel).into_iter().enumerate().map(|(c, atom)| if atom { b's' } else if paths.get(c) == Some(&true) { b'p' } else { b'i' }).collect()
 }
 
 /// The column types a frame keeps relation `rel`'s rows under, held by the engine as `engine`: its declaration's
@@ -1974,7 +1976,7 @@ pub(super) fn frame_types(prog: &Placed, domains: &lower::Domains, rel: &str, en
 /// A kept relation's column types as the engine holds them: a corpus program's symbols are atoms, in integer columns
 /// (O13), which its frame types `s` (`frame_types`).
 pub(super) fn engine_types(stored: Vec<u8>) -> Vec<u8> {
-    stored.into_iter().map(|t| if t == b's' { b'i' } else { t }).collect()
+    stored.into_iter().map(|t| if matches!(t, b's' | b'p') { b'i' } else { t }).collect()
 }
 
 /// Each relation's location columns, as the split found them (`Split::locations`).

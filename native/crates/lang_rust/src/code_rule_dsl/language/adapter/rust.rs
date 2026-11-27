@@ -60,6 +60,13 @@ impl Adapter for Rust {
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
     const COMMENT_KINDS: &'static [&'static str] = &["line_comment", "block_comment"];
+    // Node paths' tables (decision 0722): the slots generated into `rust_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("rust_paths.rs"),
+        lists: &["source_file", "block", "declaration_list", "field_declaration_list", "match_block"],
+        labels: &[("function_item", "fn"), ("expression_statement", "expr")],
+    };
     /// A `shebang` is passed over by its `#!` text, as in every grammar.
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     /// A `block` starts at its `{` or label, never at its first statement.

@@ -45,6 +45,13 @@ impl Adapter for Java {
     const STRIPS_BOM: bool = false;
     /// tree-sitter-java's comments, which walks pass over.
     const COMMENT_KINDS: &'static [&'static str] = &["line_comment", "block_comment"];
+    // Node paths' tables (decision 0722): the slots generated into `java_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("java_paths.rs"),
+        lists: &["program", "block", "class_body", "interface_body", "constructor_body"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     /// A `block` starts at its `{`, never at its first statement.
     const BODY_KINDS: &'static [&'static str] = &[];

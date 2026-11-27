@@ -1022,6 +1022,12 @@ pub fn hex(h: &[u8; 32]) -> String {
     hex_into(h, &mut [0; 64]).to_owned()
 }
 
+/// A digest's 64-bit value, `@tree_digest`'s: its first 8 bytes, big-endian, so the number's 16 hex digits are the
+/// first of its 64 (`@tree_digest_hex`).
+pub fn digest_value(h: &[u8; 32]) -> i64 {
+    i64::from_be_bytes(h[..8].try_into().expect("8 bytes"))
+}
+
 /// A digest's symbol written into `out`, no allocation: its 32 bytes in hex.
 pub fn hex_into<'a>(h: &[u8; 32], out: &'a mut [u8; 64]) -> &'a str {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";

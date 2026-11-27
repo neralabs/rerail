@@ -47,6 +47,9 @@ pub mod col {
     pub const NODE: u8 = 1;
     /// An integer, shown as it is.
     pub const INT: u8 = 2;
+    /// A node path (decision 0722) in a memo entry's rows: its base's string, by its index in the image, in the high
+    /// 32 bits, its steps below; read back as this process's atom of the string, the steps as they are.
+    pub const PATH: u8 = 3;
 }
 
 /// A node or int column's value that is none (SQL's NULL), shown `None`: a value no node or place takes.
