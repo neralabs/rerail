@@ -513,29 +513,53 @@ fn run_pack(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<Option<Vec<KeyedRow>>, String> {
-    use super::{logic::plan::corpus, typing::file_local::Binding};
     use crate::code_rule_dsl::logic::plan::output;
     let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
-    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
     let dir = out.join(format!("pack-{}", group.members[0]));
     crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
         format!("{} policies: {}", texts.len(), group.ids.join(", "))
     });
-    // The members' `suppress` lines, from their settings as their records hold them (`rr::metadata`). A line that
-    // does not read is its policy's error, which it meets running alone.
+    let Some(suppressions) = pack_suppressions(group) else { return Ok(None) };
+    let Some((files, outputs)) = run_pack_dialects(&texts, group, root, &dir, options)? else { return Ok(None) };
+    let Some((each, rows)) = pack_member_rows(group, &outputs, &suppressions, root)? else { return Ok(None) };
+    let flags = outputs[0].images().last().map_or(0, output::Image::flags);
+    let mut done = Vec::with_capacity(group.members.len());
+    for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
+        write_member_outputs(&out.join(k.to_string()), flags, &outputs, &rows)?;
+        let run = serde_json::json!({"path": paths[k].display().to_string(), "files": files, "metadata": metadata, "together": group.members.len()});
+        done.push((found, run));
+    }
+    Ok(Some(done))
+}
+
+/// The pack members' `suppress` lines, from their settings as their records hold them (`rr::metadata`). `None` when
+/// one does not read: that is its policy's error, which it meets running alone.
+fn pack_suppressions(group: &PolicyGroup) -> Option<super::rr_host::suppressions::Suppressions> {
     let mut suppressions = super::rr_host::suppressions::Suppressions::default();
     for metadata in &group.metadata {
         let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
-        if suppressions.add(settings.iter().copied()).is_err() {
-            return Ok(None);
-        }
+        suppressions.add(settings.iter().copied()).ok()?;
     }
-    // Each dialect's run and its directory, its language the dialect's (the `dialect` option, as `run_program` runs
-    // a policy alone): one run as written where the language has one dialect.
+    Some(suppressions)
+}
+
+/// A pack's runs, one per dialect, each into its directory under `dir` (`run_pack`), its language the dialect's (the
+/// `dialect` option, as `run_program` runs a policy alone): one run as written where the language has one dialect.
+/// The files read and each run's outputs; `None` when a run fails.
+fn run_pack_dialects(
+    texts: &[&str],
+    group: &PolicyGroup,
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<Option<PackRuns>, String> {
+    use super::{logic::plan::corpus, typing::file_local::Binding};
+    use crate::code_rule_dsl::logic::plan::output;
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if group.dialects.is_empty() {
-        vec![(None, dir.clone())]
+        vec![(None, dir.to_path_buf())]
     } else {
-        group.dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { dir.clone() } else { dir.join(label) })).collect()
+        group.dialects.iter().enumerate().map(|(i, label)| (Some(*label), if i == 0 { dir.to_path_buf() } else { dir.join(label) })).collect()
     };
     let mut files = 0;
     let mut outputs = Vec::with_capacity(runs.len());
@@ -544,19 +568,36 @@ fn run_pack(
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let Ok(report) = corpus::run_with_options(&texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
+        let Ok(report) = corpus::run_with_options(texts, root, None, dir, "program", binding, 1 << 18, &Default::default(), &options) else {
             return Ok(None);
         };
         files += report.files;
         outputs.push(output::Outputs::open(dir).map_err(|e| e.to_string())?);
     }
+    Ok(Some((files, outputs)))
+}
+
+/// The files a pack's runs read, and each run's outputs (`run_pack_dialects`).
+type PackRuns = (usize, Vec<crate::code_rule_dsl::logic::plan::output::Outputs>);
+
+/// Each pack member's rows of each finding relation (`run_pack`).
+type MemberRows<'o> = Vec<std::collections::BTreeMap<String, Vec<crate::code_rule_dsl::logic::plan::output::Row<'o>>>>;
+/// Each pack member's findings, and its rows.
+type MemberFindings<'o> = (Vec<Vec<serde_json::Value>>, MemberRows<'o>);
+
+/// Each member's findings and rows of each finding relation, by the policy each row names (its first column), every
+/// dialect's, less those the linters' comments drop. `None` when a finding names no member.
+fn pack_member_rows<'o>(
+    group: &PolicyGroup,
+    outputs: &'o [crate::code_rule_dsl::logic::plan::output::Outputs],
+    suppressions: &super::rr_host::suppressions::Suppressions,
+    root: &std::path::Path,
+) -> Result<Option<MemberFindings<'o>>, String> {
+    use crate::code_rule_dsl::logic::plan::output;
     let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
-    // Each member's rows of each finding relation, by the policy each row names (its first column), every dialect's,
-    // less those the linters' comments drop.
-    type Rows<'a> = Vec<output::Row<'a>>;
-    let mut rows: Vec<std::collections::BTreeMap<String, Rows<'_>>> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
-    for run in &outputs {
-        let found: Vec<(&str, output::Row<'_>)> = run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| run.rows(rel).into_iter().map(move |row| (rel, row))).collect();
+    let mut rows: MemberRows<'o> = group.members.iter().map(|_| std::collections::BTreeMap::new()).collect();
+    for run in outputs {
+        let found: Vec<(&str, output::Row<'o>)> = run.names().into_iter().filter(|r| super::logic::rr::is_diagnostic(r)).flat_map(|rel| run.rows(rel).into_iter().map(move |row| (rel, row))).collect();
         let dropped = suppressions.suppressed(root, &found.iter().map(|(_, row)| *row).collect::<Vec<_>>());
         for ((rel, row), dropped) in found.into_iter().zip(dropped) {
             let Some(at) = row.get(0).text().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
@@ -567,22 +608,25 @@ fn run_pack(
             rows[at].entry(rel.to_owned()).or_default().push(row);
         }
     }
-    let flags = outputs[0].images().last().map_or(0, output::Image::flags);
-    let mut done = Vec::with_capacity(group.members.len());
-    for (((&k, found), rows), metadata) in group.members.iter().zip(each).zip(rows).zip(&group.metadata) {
-        let own = out.join(k.to_string());
-        std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
-        // Its own outputs, a base of its findings alone (decision 0239).
-        let mut image = output::Builder::new(flags, false);
-        for (rel, rows) in &rows {
-            let types = outputs.iter().find_map(|o| o.get(rel).map(|r| r.types().to_vec())).unwrap_or_default();
-            image.rows_of(rel, &types, rows);
-        }
-        output::write(&own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))?;
-        let run = serde_json::json!({"path": paths[k].display().to_string(), "files": files, "metadata": metadata, "together": group.members.len()});
-        done.push((found, run));
+    Ok(Some((each, rows)))
+}
+
+/// A pack member's own outputs in `own`, a base of its findings alone (decision 0239): its `rows` of each relation,
+/// typed as the pack's `outputs` hold them.
+fn write_member_outputs(
+    own: &std::path::Path,
+    flags: u64,
+    outputs: &[crate::code_rule_dsl::logic::plan::output::Outputs],
+    rows: &std::collections::BTreeMap<String, Vec<crate::code_rule_dsl::logic::plan::output::Row<'_>>>,
+) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::plan::output;
+    std::fs::create_dir_all(own).map_err(|e| format!("{}: {e}", own.display()))?;
+    let mut image = output::Builder::new(flags, false);
+    for (rel, rows) in rows {
+        let types = outputs.iter().find_map(|o| o.get(rel).map(|r| r.types().to_vec())).unwrap_or_default();
+        image.rows_of(rel, &types, rows);
     }
-    Ok(Some(done))
+    output::write(own, &image.finish()).map_err(|e| format!("{}: {e}", own.display()))
 }
 
 /// `policies` ((name, source, format `json`/`yaml`)) lowered with no store and dumped as `rir`:
