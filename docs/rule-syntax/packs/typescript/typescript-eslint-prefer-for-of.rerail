@@ -34,7 +34,7 @@ length_of(m, o) :- kind(m, "member_expression"), field(m, "property", p), text(p
 length_of(m, o) :- kind(m, "subscript_expression"), field(m, "index", i), named(i, "length"), field(m, "object", o).
 // pfo_in_chain(e): e is in an optional chain that runs up to it, so ESTree wraps it in a ChainExpression: `a?.length`,
 // `a?.b.length`, `a?.b!.length`, `f?.().length`. Parentheses close a chain: `(a?.b).length` and `f(a?.b).length`
-// are plain members. (tsx/ts-a's in_chain is another reading, for `delete`.)
+// are plain members. With tsx/ts-a's in_chain's clauses (the last three), as when the two shared its name.
 .decl pfo_in_chain(e: node)
 pfo_in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression") ; kind(e, "call_expression")),
     child(e, q, _), kind(q, "optional_chain").
@@ -42,6 +42,9 @@ pfo_in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression
     pfo_in_chain(o).
 pfo_in_chain(e) :- kind(e, "call_expression"), field(e, "function", o), pfo_in_chain(o).
 pfo_in_chain(e) :- kind(e, "non_null_expression"), child(e, o, 0), pfo_in_chain(o).
+pfo_in_chain(x) :- optional_on(x, _).
+pfo_in_chain(x) :- (field(x, "object", o) ; field(x, "function", o)), kind(o, k), chain_kind(k), pfo_in_chain(o).
+pfo_in_chain(x) :- kind(x, "non_null_expression"), child(x, o, 0), kind(o, k), chain_kind(k), pfo_in_chain(o).
 // index_decl(d, id, x): `let i = 0` or `var i = 0`, one declarator, a plain name.
 .decl index_decl(d: node, id: node, x: symbol)
 index_decl(d, id, x) :- (kind(d, "variable_declaration") ; kind(d, "lexical_declaration"), var_decl(d, k), k != "const"),
