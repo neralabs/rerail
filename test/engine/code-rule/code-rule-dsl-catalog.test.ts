@@ -541,11 +541,17 @@ describe("checkout code-rule catalog of a checkout replaced at its path while it
     const other = cloneAt(join(base, "other"));
     const otherKey = setUpTestRepository(other, { library: [{ kind: "code", rule: rule("test:other") }] }, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
-    const catalog = catalogs.catalog(replaced);
-    const ruleIds = (): string[] => catalog.snapshot().codeRules.map(({ id }) => id);
-    expect(ruleIds()).toEqual(["test:replaced"]);
-    removeFolderSync(replaced);
-    return { base, databasePath, replaced, replacedKey, other, otherKey, catalogs, catalog, ruleIds };
+    try {
+      const catalog = catalogs.catalog(replaced);
+      const ruleIds = (): string[] => catalog.snapshot().codeRules.map(({ id }) => id);
+      expect(ruleIds()).toEqual(["test:replaced"]);
+      removeFolderSync(replaced);
+      return { base, databasePath, replaced, replacedKey, other, otherKey, catalogs, catalog, ruleIds };
+    } catch (error) {
+      // The caller closes them only once this returns; an open database keeps Windows from removing the temp folder.
+      catalogs.close();
+      throw error;
+    }
   }
 
   for (const [name, layout] of Object.entries(layouts)) {
@@ -575,6 +581,37 @@ describe("checkout code-rule catalog of a checkout replaced at its path while it
       const added = join(base, "added");
       gitIn(other, "worktree", "add", "-q", "-b", "added", added);
       expect(catalogs.refreshAll([replaced, added])).toEqual(new Map([[replaced, "unrecorded"], [added, "ok"]]));
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  // Its rules read while the folder is gone, as an event between the command that removes it and the one that adds the
+  // worktree reads them: no row there is the folder's own then.
+  it("records another started clone's worktree added at the path of a checkout read while it was gone", () => {
+    const { replaced, other, otherKey, catalogs, catalog } = replacedAndOther(layouts["a main checkout"]!);
+    try {
+      catalog.refresh();
+      expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      gitIn(other, "worktree", "add", "-q", "-b", "side", replaced);
+
+      expect(catalogs.refreshAll([replaced]).get(replaced)).toBe("ok");
+      expect(catalogs.checkout(replaced)?.repositoryKey).toBe(otherKey);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("takes the row of a linked worktree added again at its path by its own clone, read while it was gone", () => {
+    const { base, replaced, replacedKey, catalogs, catalog } = replacedAndOther(layouts["a linked worktree"]!);
+    try {
+      catalog.refresh();
+      expect(catalogs.eligibility(replaced)).toBe("unrecorded");
+      gitIn(join(base, "app"), "worktree", "prune");
+      gitIn(join(base, "app"), "worktree", "add", "-q", "-b", "again", replaced);
+
+      expect(catalogs.refreshAll([replaced]).get(replaced)).toBe("ok");
+      expect(catalogs.checkout(replaced)?.repositoryKey).toBe(replacedKey);
     } finally {
       catalogs.close();
     }

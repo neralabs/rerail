@@ -746,8 +746,11 @@ interface CheckoutEntry {
   heldAheadFor?: Set<object> | undefined;
   /** The folder's location as last read, and what was there then ({@link KeptLocation}). */
   location: KeptLocation | undefined;
-  /** The clone id of the row last weighed against `location`, and whether that row is the folder's own (`isOwnRow`). */
-  weighed?: { readonly cloneId: string; readonly own: boolean } | undefined;
+  /**
+   * The clone id of the row last weighed, the location it was weighed against, and whether that row is the folder's own
+   * (`isOwnRow`).
+   */
+  weighed?: { readonly cloneId: string; readonly placed: KeptLocation; readonly own: boolean } | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
   status: RepositoryStatus | undefined;
@@ -824,12 +827,19 @@ export class CheckoutCatalogs {
   /**
    * `refresh` of every one of `roots`, the recorded ones read in one statement: what a session that knows every worktree
    * of its repository asks at every event. Returns each root's eligibility. A folder is asked about only where its row
-   * changed since the last read; whether it is still the clone recorded is read when its rules are (`#signature`).
+   * changed since the last read (`ownRow`); whether it is still the clone recorded is read when its rules are
+   * (`#signature`), and at the next read once `placeAgain` named it.
    */
   refreshAll(roots: Iterable<string>): Map<string, CheckoutEligibility> {
     const entries = [...roots].map(root => this.#entry(root, false));
     this.#read(entries, false);
     return new Map(entries.map(entry => [entry.root, entry.eligibility]));
+  }
+
+  /** Has the next read of `root` weigh its row against its folder as it is then (`ownRow`), as a read of its rules does. */
+  placeAgain(root: string): void {
+    const entry = this.#entries.get(root);
+    if (entry !== undefined) entry.weighed = undefined;
   }
 
   /**
@@ -1009,8 +1019,8 @@ export class CheckoutCatalogs {
 
   /** Records `entry` when it is a worktree of a started clone (`recordStartedWorktree`) by `registries`; whether it did. */
   #recordWorktree(entry: CheckoutEntry, registries: WorktreeRegistryPass): boolean {
-    // A folder outside Git may become a checkout, so only a Git location is kept.
-    const kept = entry.location ?? locationNow(entry.root);
+    // A folder outside Git may become a checkout, so a location outside Git is read afresh and only a Git one is kept.
+    const kept = entry.location?.location.git === true ? entry.location : locationNow(entry.root);
     if (kept.location.git) entry.location = kept;
     return recordStartedWorktree(this.database, entry.root, kept.location, registries);
   }
@@ -1065,14 +1075,16 @@ function ownRows(entries: readonly CheckoutEntry[], rows: ReadonlyMap<string, Re
 
 /**
  * Whether the row recorded at `entry`'s root with clone id `cloneId` is its folder's own ({@link isOwnRow}). A row with
- * the clone id last weighed keeps that answer unless `placeAgain`, so a read of many recorded checkouts asks their
- * folders nothing; a row written since, and every row when `placeAgain`, is weighed against the folder as it is now.
+ * the clone id last weighed keeps that answer while the entry keeps the location it was weighed against, unless
+ * `placeAgain`, so a read of many recorded checkouts asks their folders nothing; a row written since, a location read
+ * since (`#recordWorktree`), and every row when `placeAgain`, is weighed against the folder as it is now.
  */
 function ownRow(entry: CheckoutEntry, cloneId: string, placeAgain: boolean): boolean {
   const { weighed } = entry;
-  if (!placeAgain && weighed?.cloneId === cloneId) return weighed.own;
-  const own = isOwnRow(cloneId, placedNow(entry));
-  entry.weighed = { cloneId, own };
+  if (!placeAgain && weighed?.cloneId === cloneId && weighed.placed === entry.location) return weighed.own;
+  const placed = placedNow(entry);
+  const own = isOwnRow(cloneId, placed);
+  entry.weighed = { cloneId, placed, own };
   return own;
 }
 
