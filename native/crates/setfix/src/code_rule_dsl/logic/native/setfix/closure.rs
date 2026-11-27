@@ -71,6 +71,9 @@ pub(super) struct Closure {
     /// The walk is inner (`Line::Inner`, the design's S4): no stratum reads it but its ends, so the rows it climbs
     /// through are this run's scratch, never pushed to its relation (which keeps only its seeds).
     inner: bool,
+    /// An inner keyed walk's seeds' rows, collected by the seed loop and never written to its relation (the design's
+    /// S4: the start joined in the climb, `folds_seeds`).
+    folded: Option<Vector<i64>>,
 }
 
 /// Whether two row tests ask the same: the same source by the same index, the same keys.
@@ -317,6 +320,14 @@ impl Closure {
     pub(super) fn is_keyed(&self) -> bool {
         !self.keyed.is_empty()
     }
+    /// The walk whose seeds the climb takes itself: an inner keyed walk's (`Form::seeds`).
+    pub(super) fn folds_seeds(&self) -> Option<usize> {
+        (self.inner && self.is_keyed()).then_some(self.w)
+    }
+    /// The seeds' rows the seed loop collected for `folds_seeds`.
+    pub(super) fn take_seeds(&mut self, rows: Vector<i64>) {
+        self.folded = Some(rows);
+    }
 }
 
 /// The component's closure, when it has the shape (see the module's comment). `RERAIL_CLOSURE_FORM=off` turns it off.
@@ -360,7 +371,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false });
+        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None });
     }
     // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -394,7 +405,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let all: Vec<usize> = (0..k).collect();
     let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi) })
+    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -478,7 +489,15 @@ pub(super) struct Prepared {
 /// runs semi-naive from the seeds.
 pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
     if !cl.keyed.is_empty() {
-        return keyed(cl, store, syms);
+        let got = keyed(cl, store, syms);
+        // Not run as the climb: the seeds it took are its relation's after all, for semi-naive to start from.
+        if got.is_none() && let Some(rows) = &cl.folded {
+            let rel = &mut store.rels[cl.w];
+            for row in rows.chunks(rel.k) {
+                rel.push(row);
+            }
+        }
+        return got;
     }
     let h = prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
@@ -552,11 +571,16 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
         }
     }
     // An inner walk's rows (`Closure::inner`): its seeds and every row climbed, each once, in this run's scratch.
+    // Its seeds taken in the climb (`folded`): each new one starts it, beside any rows its relation started with.
     let mut scratch: Option<(hashbrown::HashTable<u32>, Vector<i64>)> = cl.inner.then(|| {
         let (mut seen, mut all) = (hashbrown::HashTable::new(), Vector::new());
-        for row in frontier.chunks(k) {
-            seen_insert(&mut seen, &mut all, k, row);
+        let mut start: Vector<i64> = Vector::new();
+        for row in frontier.chunks(k).chain(cl.folded.iter().flat_map(|f| f.chunks(k))) {
+            if seen_insert(&mut seen, &mut all, k, row) {
+                start.extend_from_slice(row);
+            }
         }
+        frontier = start;
         (seen, all)
     });
     let (mut rows, mut depths) = (0usize, 0usize);

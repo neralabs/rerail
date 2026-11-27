@@ -12,6 +12,7 @@
 //! it. A form's rows are the rules' rows: the tests run each shape against the generic evaluation, its switch off.
 use super::{Component, Store, closure};
 use rerail_accel::{Kernel, Output};
+use rerail_blocks::vector::Vector;
 
 /// What a form did, for the run's report: nodes reached, rows made, and which way.
 pub(super) struct Ran {
@@ -37,6 +38,13 @@ pub(super) trait Form: Send {
     fn prepare(&mut self, store: &mut Store, syms: &mut super::Interner) -> Option<Vec<Kernel>>;
     /// The launches' outputs in (one a launch, in order); the rows out, into the component's relations.
     fn finish(&mut self, outs: Vec<Output>, store: &mut Store) -> Option<Ran>;
+    /// The relation whose seeds the form takes itself (the design's S4: the start joined in the climb), never written
+    /// to it: the seed loop collects their rows and hands them over (`take_seeds`) before `prepare`.
+    fn seeds(&self) -> Option<usize> {
+        None
+    }
+    /// The seeds' rows of relation `seeds()`, collected (`k` values a row).
+    fn take_seeds(&mut self, _rows: Vector<i64>) {}
 }
 
 /// The executors, in the order they are tried.
@@ -93,6 +101,12 @@ impl Form for ClosureForm {
     }
     fn finish(&mut self, outs: Vec<Output>, store: &mut Store) -> Option<Ran> {
         closure::finish(&self.cl, self.prep.take()?, outs, store)
+    }
+    fn seeds(&self) -> Option<usize> {
+        self.cl.folds_seeds()
+    }
+    fn take_seeds(&mut self, rows: Vector<i64>) {
+        self.cl.take_seeds(rows);
     }
 }
 

@@ -3068,10 +3068,20 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         let store = &mut *guard;
         let syms = &mut cursor;
         let mut cut_at: Option<(usize, Option<Rows0>, CutReport)> = None;
+        // The relation whose seeds the form takes itself (the design's S4, the start joined in the climb): their rows
+        // collected here, never written to it, and handed to the form.
+        let folds = cl.seeds();
+        let mut folded: Vector<i64> = Vector::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
             if pi < start { continue; }
             runs += 1;
+            if folds == Some(p.head) {
+                let n = run_join_collect(j, store, syms, &[], &mut folded)?;
+                visits += n;
+                per[pi].1 += n;
+                continue;
+            }
             let mut limited = Limited::of(p, j, if pi == start { resume_left.take() } else { None });
             let n = run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut())?;
             visits += n;
@@ -3096,6 +3106,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // a push puts them, where they were written: the closure's dedup tests find them before any index has them.
         for (r, f) in fresh.iter_mut().enumerate() {
             store.rels[r].push_fresh(std::mem::take(f), true);
+        }
+        if folds.is_some() {
+            cl.take_seeds(std::mem::take(&mut folded));
         }
         form_name = cl.name();
         let prep = forms::framed(form_name, &name, &mut || cl.prepare(store, syms));

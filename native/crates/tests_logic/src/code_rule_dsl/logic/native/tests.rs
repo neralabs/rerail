@@ -649,12 +649,11 @@ fn a_walks_readers_are_answered_in_its_climb() {
     let (keyed, report) = rows(false, false);
     assert_eq!(keyed, semi, "the climb answers its readers with semi-naive's rows");
     assert_eq!(waves(&report), 1, "the climb and its readers run in one wave: {report}");
-    // The walk inner (the design's S4): its ends the same, its rows climbed in scratch, its relation its seeds alone.
+    // The walk inner (the design's S4): its ends the same; its start joined in the climb and its rows climbed in
+    // scratch, so its relation wrote none.
     let (inner, report) = rows(false, true);
     assert_eq!((&inner.0, &inner.1), (&semi.0, &semi.1), "an inner walk's ends are semi-naive's");
-    let mut seeds: Vec<(i64, i64, i64)> = starts.to_vec();
-    seeds.sort();
-    assert_eq!(inner.2, seeds, "an inner walk's relation keeps its seeds alone");
+    assert!(inner.2.is_empty(), "an inner walk's relation wrote none: {:?}", inner.2);
     assert_eq!(waves(&report), 1, "{report}");
 }
 
