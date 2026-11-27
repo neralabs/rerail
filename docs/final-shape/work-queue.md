@@ -12351,3 +12351,16 @@ Fixes the merge needed:
 Checked: tsc --noEmit; vitest on the registry, repository identity, catalog/checkouts, walk-session-paths,
 older-node-step and api-repository-context-cost (all pass). main's integration/daemon/remote-changed-in-place starts
 the built daemon (`dist/cli/daemon-entry.js`), which this worktree has not built: not run. No Metal or farm runs.
+
+### Q596. Roll-up 168 (sync-integration-hub-tape 8b2dff3647 onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's three commits: callable per-file relations in the corpus run (`.callable R PATTERN` keeps
+R out of the files' made rows; the cross part's cone asks for it by its bound columns, answered in the files' held
+state), the run naming the files' relations it could call with the spike's measurement, and decision 0725 (the spike).
+
+Conflicts, resolved by invariant:
+- decisions/README.md: both sides' rows; 0725 is new to the hub, no number taken twice.
+
+Checked under Relax: tests-rr callable (4, and the feeder's measurement ignored), rerail-logic calls (10),
+tests-corpus phases::tests (23) and base_tests (54); corpus.rs keeps c7ddc0ec8e's cone-output rule beside the
+feeder's change. Relax has no clippy: none run. No Metal or farm runs.

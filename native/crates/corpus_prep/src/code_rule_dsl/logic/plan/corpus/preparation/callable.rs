@@ -186,6 +186,99 @@ fn request_body(v: &Version, lits: &[LitRef<'_>], call: usize, rel: &str) -> (Ve
     ((0..lits.len()).filter(|&i| keep[i]).collect(), bound)
 }
 
+/// A per-file relation the cross part could call (the feedback's first version): every reader binds `bound`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate {
+    pub rel: String,
+    /// The columns every reader binds before its read, column 0 first.
+    pub bound: Vec<usize>,
+    pub width: usize,
+    /// The rules that read it.
+    pub readers: usize,
+    /// Why `.callable` would refuse it as it stands (a node column), where it would.
+    pub refused: Option<String>,
+}
+
+impl Candidate {
+    /// Its pattern (`bbbf`).
+    pub fn pattern(&self) -> String {
+        (0..self.width).map(|c| if self.bound.contains(&c) { 'b' } else { 'f' }).collect()
+    }
+}
+
+/// The relations of `v` its files make (`file_local`) that the cross part reads (`exports`), each assessed as a
+/// callable: a [`Candidate`] where column 0 is its file's (`located`), it is not an output, every reader is a rule
+/// of the cross part reading it positively and binding column 0 and every column of the pattern before the read (as
+/// a request binds them, `request_body`), and at least one column is left free; otherwise why not. A node column is
+/// named, not a reason: it is what `.callable` refuses today.
+pub fn candidates(v: &Version, file_local: &BTreeSet<String>, exports: &[String], located: &dyn Fn(&str) -> bool) -> Vec<(String, Result<Candidate, String>)> {
+    let outputs: BTreeSet<&str> = v.outputs().map(|a| v.text(a)).collect();
+    exports.iter().map(|rel| (rel.clone(), assessed(v, rel, file_local, &outputs, located))).collect()
+}
+
+fn assessed(v: &Version, rel: &str, file_local: &BTreeSet<String>, outputs: &BTreeSet<&str>, located: &dyn Fn(&str) -> bool) -> Result<Candidate, String> {
+    if outputs.contains(rel) {
+        return Err("an output".to_owned());
+    }
+    if !file_local.contains(rel) {
+        return Err("not made by its files alone".to_owned());
+    }
+    if !located(rel) {
+        return Err("column 0 is not its file's location".to_owned());
+    }
+    let decl = v.decl_of(rel).ok_or_else(|| "not declared".to_owned())?;
+    let cols: Vec<(String, String)> = decl.cols().map(|(n, t)| (v.text(n).to_owned(), v.text(t).to_owned())).collect();
+    let mut bound: Option<BTreeSet<usize>> = None;
+    let mut readers = 0;
+    for r in v.rules() {
+        let lits: Vec<LitRef<'_>> = r.body().collect();
+        let mut reads = false;
+        for (i, l) in lits.iter().enumerate() {
+            let Lit::Atom(a) = l.view() else { continue };
+            if v.rel_name(a.rel()) != rel {
+                continue;
+            }
+            reads = true;
+            let head = v.rel_name(r.head().rel());
+            if a.neg() {
+                return Err(format!("negated in {head}'s rule"));
+            }
+            if file_local.contains(head) {
+                return Err(format!("read by {head}, a file's relation"));
+            }
+            let (_, vars) = request_body(v, &lits, i, rel);
+            let here: BTreeSet<usize> = a
+                .args()
+                .enumerate()
+                .filter(|(_, t)| !matches!(t, TermRef::Wild | TermRef::Top))
+                .filter(|(_, t)| {
+                    let mut vs = VarSet::new();
+                    term_vars(*t, &mut vs);
+                    vs.is_subset(&vars)
+                })
+                .map(|(k, _)| k)
+                .collect();
+            if !here.contains(&0) {
+                return Err(format!("{head}'s rule reads it with its file unbound"));
+            }
+            bound = Some(match bound {
+                None => here,
+                Some(b) => b.intersection(&here).copied().collect(),
+            });
+        }
+        readers += usize::from(reads);
+    }
+    let bound = bound.ok_or_else(|| "no rule reads it".to_owned())?;
+    if bound.len() == 1 {
+        return Err("its readers bind only its file".to_owned());
+    }
+    if bound.len() == cols.len() {
+        return Err("its readers bind every column (a test, not a call)".to_owned());
+    }
+    let refused = cols.iter().find(|(_, t)| t == "node").map(|(n, _)| format!("column `{n}` is a node"));
+    Ok(Candidate { rel: rel.to_owned(), bound: bound.into_iter().collect(), width: cols.len(), readers, refused })
+}
+
 /// `v` split into its caller and its callees (module docs); `None` where it declares no callable.
 pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
     let callables = declared(v)?;
