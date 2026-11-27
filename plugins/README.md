@@ -16,5 +16,8 @@ holds no hooks, MCP servers, scripts or binaries. Set-up stays the installer and
 The Release pull request moves every plugin's pins with core's version (`PLUGIN_PINS` in `scripts/release/core.mjs`);
 publish each new plugin version only once that release is on npm ([docs/release.md](../docs/release.md)).
 
+`orca/` is an editor plugin, not an installer: Orca's syntax highlighting for `.rerail` rule files, a data plugin with
+no code and no pins ([orca/README.md](orca/README.md)).
+
 The plugin manifests at the repository root (`.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/plugin.json`) are a
 different thing: they ship in the npm package and point each agent's hooks at the installed package.

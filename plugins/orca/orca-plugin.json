@@ -1,0 +1,23 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "execution": "data",
+  "id": "rerail-syntax",
+  "publisher": "neralabs",
+  "name": "Rerail rule files",
+  "version": "0.1.0",
+  "description": "Syntax highlighting for Rerail's .rerail rule files.",
+  "engines": { "orca": ">=1.4.245" },
+  "contributes": {
+    "syntaxes": [
+      {
+        "id": "rerail",
+        "title": "Rerail",
+        "scopeName": "source.rerail",
+        "path": "syntaxes/rerail.tmLanguage.json",
+        "configuration": "syntaxes/language-configuration.json",
+        "extensions": [".rerail"]
+      }
+    ]
+  }
+}
