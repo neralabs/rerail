@@ -379,16 +379,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
         let k_t94 = (cur[8] | cur[9]);
         let k_m_dot = cur[2];
         let k_m_hash = cur[10];
-        let k_t93 = ((((cur[11] | cur[12]) | cur[13]) | cur[14]) | cur[15]);
-        let k_t92 = ((cur[11] | cur[12]) | cur[13]);
-        let k_m_lbrace = cur[14];
-        let k_m_rbrace = cur[15];
-        let k_t81 = (!(!0u64 & valid(n, base as isize + 1)) & lv);
-        let k_m_cr = cur[16];
-        let k_t89 = (cur[14] | cur[0]);
-        let k_m_ws = cur[17];
-        let k_t72_a = cur[18];
-        let k_t76 = (cur[18] & (!(!0u64 & valid(n, base as isize - 1)) & lv));
+        let k_m_rbrace = cur[11];
+        let k_t89 = (cur[12] | cur[0]);
+        let k_m_ws = cur[13];
+        let k_t72_a = cur[14];
+        let k_t76 = (cur[14] & (!(!0u64 & valid(n, base as isize - 1)) & lv));
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
@@ -649,156 +644,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                                 more += 1;
                             }
                         }
-                        let mut t0 = o1;
-                        // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
-                        let mut at = t0;
-                        let (c, cl, opened) = loop {
-                            let Some(p) = (if fl & 0x04 != 0 { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
-                                // A string open at the file's end.
-                                refused = true;
-                                break 'tokens;
-                            };
-                            if ((p < n && (src[p] == b'\\'))) {
-                                if fl & 0x01 != 0 {
-                                    // A raw string reads no escape: its backslash keeps a quote or a backslash after it from closing it or escaping.
-                                    at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))) || ((p + 1 < n && (src[p + 1] == b'\\'))));
-                                    continue;
-                                }
-                                if t0 < p {
-                                    {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                                }
-                            if ((p + 1 < n && (src[p + 1] == b'N'))) {
-                                // a `\N{…}` escape
-                                refused = true;
-                                break 'tokens;
-                            }
-                            if fl & 0x02 != 0 && ((p + 1 < n && matches!(src[p + 1], b'N' | b'u' | b'U'))) {
-                                // a `\N`, `\u` or `\U` in a bytes string
-                                refused = true;
-                                break 'tokens;
-                            }
-                                // By its check, else a `\` of one byte (the lean lexer's `backslash`): a quote after it is text.
-                                match check_escape_sequence(&src[p..]) {
-                                    Some(k) => {
-                                        {
-                                let (a, z) = (p, p + k - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 9 }) };
-                                more += 1;
-                            }
-                                        at = p + k;
-                                        t0 = at;
-                                    }
-                                    None => {
-                                        {
-                                let (a, z) = (p, p);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 11 }) };
-                                more += 1;
-                            }
-                                        t0 = p + 1;
-                                        at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))));
-                                    }
-                                }
-                                continue;
-                            }
-                            if ((p < n && (src[p] == b'{'))) || ((p < n && (src[p] == b'}'))) {
-                                let open = ((p < n && (src[p] == b'{')));
-                                let r = if open { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_lbrace(src, n, p, esc) }) } else { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) };
-                                if !open {
-                                if (r + 1 - p) % 2 == 1 {
-                                // a `}` alone in an f-string's text
-                                refused = true;
-                                break 'tokens;
-                                }
-                                }
-                                if t0 < p {
-                                    {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                                }
-                                for i in 0..(r + 1 - p) / 2 {
-                                    {
-                                let (a, z) = (p + 2 * i, p + 2 * i + 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 10 }) };
-                                more += 1;
-                            }
-                                }
-                                if open && (r + 1 - p) % 2 == 1 {
-                                    break (r, r, true);
-                                }
-                                at = r + 1;
-                                t0 = at;
-                                continue;
-                            }
-                            // A quote: its own closes it (a triple's, the last three of a run); another is text.
-                            if !(match qi { 0 => ((p < n && (src[p] == b'\''))), _ => ((p < n && (src[p] == b'"'))) }) {
-                                at = p + 1;
-                                continue;
-                            }
-                            if fl & 0x80 != 0 && !(match qi { 0 => ((((((p < n && (src[p] == b'\'')) && (p + 1 < n && (src[p + 1] == b'\''))) && (p + 2 < n && (src[p + 2] == b'\''))) && (p < n && !(p + 3 < n && (src[p + 3] == b'\'')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))), _ => ((((((p < n && (src[p] == b'"')) && (p + 1 < n && (src[p + 1] == b'"'))) && (p + 2 < n && (src[p + 2] == b'"'))) && (p < n && !(p + 3 < n && (src[p + 3] == b'"')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))) }) {
-                                at = p + 1;
-                                continue;
-                            }
-                            if t0 < p {
-                                {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                            }
-                            break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
-                        };
-                        if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t81(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a string open at the end of the file
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x80 == 0 && wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t82(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a line break in a one-line string that no backslash escapes
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_m_cr(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a carriage return in a string
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x80 != 0 && (match qi { 0 => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t84(src, n, p, esc, upto(p, c - 1)) }).is_some(), _ => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t85(src, n, p, esc, upto(p, c - 1)) }).is_some() }) {
-                            // a triple-quoted string closed by four quotes or more
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x01 != 0 && o1 < c && !wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t91(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a raw string of backslashes only
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if opened {
-                            {
-                                let (a, z) = (c, c);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 7 }) };
-                                more += 1;
-                            }
-                        } else {
-                            {
-                                let (a, z) = (c, cl);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 6 }) };
-                                more += 1;
-                            }
-                        }
+                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).
+                let Some((c, cl, opened)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
+                    refused = true;
+                    break 'tokens;
+                };
                         if opened {
                             if rd_on && rd_depth + 1 >= 4 || rd_total == 7 {
                             // past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation
@@ -848,156 +698,11 @@ unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {
                             refused = true;
                             break 'tokens;
                         }
-                        let mut t0 = o1;
-                        // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
-                        let mut at = t0;
-                        let (c, cl, opened) = loop {
-                            let Some(p) = (if fl & 0x04 != 0 { bfirst_bit(n, base, k_t93, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { bfirst_bit(n, base, k_t92, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
-                                // A string open at the file's end.
-                                refused = true;
-                                break 'tokens;
-                            };
-                            if ((p < n && (src[p] == b'\\'))) {
-                                if fl & 0x01 != 0 {
-                                    // A raw string reads no escape: its backslash keeps a quote or a backslash after it from closing it or escaping.
-                                    at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))) || ((p + 1 < n && (src[p + 1] == b'\\'))));
-                                    continue;
-                                }
-                                if t0 < p {
-                                    {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                                }
-                            if ((p + 1 < n && (src[p + 1] == b'N'))) {
-                                // a `\N{…}` escape
-                                refused = true;
-                                break 'tokens;
-                            }
-                            if fl & 0x02 != 0 && ((p + 1 < n && matches!(src[p + 1], b'N' | b'u' | b'U'))) {
-                                // a `\N`, `\u` or `\U` in a bytes string
-                                refused = true;
-                                break 'tokens;
-                            }
-                                // By its check, else a `\` of one byte (the lean lexer's `backslash`): a quote after it is text.
-                                match check_escape_sequence(&src[p..]) {
-                                    Some(k) => {
-                                        {
-                                let (a, z) = (p, p + k - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 9 }) };
-                                more += 1;
-                            }
-                                        at = p + k;
-                                        t0 = at;
-                                    }
-                                    None => {
-                                        {
-                                let (a, z) = (p, p);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 11 }) };
-                                more += 1;
-                            }
-                                        t0 = p + 1;
-                                        at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))));
-                                    }
-                                }
-                                continue;
-                            }
-                            if ((p < n && (src[p] == b'{'))) || ((p < n && (src[p] == b'}'))) {
-                                let open = ((p < n && (src[p] == b'{')));
-                                let r = if open { brun_last(n, base, k_m_lbrace, p, |p: isize, esc: &mut u64| unsafe { w_m_lbrace(src, n, p, esc) }) } else { brun_last(n, base, k_m_rbrace, p, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) };
-                                if !open {
-                                if (r + 1 - p) % 2 == 1 {
-                                // a `}` alone in an f-string's text
-                                refused = true;
-                                break 'tokens;
-                                }
-                                }
-                                if t0 < p {
-                                    {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                                }
-                                for i in 0..(r + 1 - p) / 2 {
-                                    {
-                                let (a, z) = (p + 2 * i, p + 2 * i + 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 10 }) };
-                                more += 1;
-                            }
-                                }
-                                if open && (r + 1 - p) % 2 == 1 {
-                                    break (r, r, true);
-                                }
-                                at = r + 1;
-                                t0 = at;
-                                continue;
-                            }
-                            // A quote: its own closes it (a triple's, the last three of a run); another is text.
-                            if !(match qi { 0 => ((p < n && (src[p] == b'\''))), _ => ((p < n && (src[p] == b'"'))) }) {
-                                at = p + 1;
-                                continue;
-                            }
-                            if fl & 0x80 != 0 && !(match qi { 0 => ((((((p < n && (src[p] == b'\'')) && (p + 1 < n && (src[p + 1] == b'\''))) && (p + 2 < n && (src[p + 2] == b'\''))) && (p < n && !(p + 3 < n && (src[p + 3] == b'\'')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))), _ => ((((((p < n && (src[p] == b'"')) && (p + 1 < n && (src[p + 1] == b'"'))) && (p + 2 < n && (src[p + 2] == b'"'))) && (p < n && !(p + 3 < n && (src[p + 3] == b'"')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))) }) {
-                                at = p + 1;
-                                continue;
-                            }
-                            if t0 < p {
-                                {
-                                let (a, z) = (t0, p - 1);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 8 }) };
-                                more += 1;
-                            }
-                            }
-                            break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
-                        };
-                        if bfirst_in(n, base, k_t81, seg, c - 1, |p: isize, esc: &mut u64| unsafe { w_t81(src, n, p, esc) }).is_some() {
-                            // a string open at the end of the file
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x80 == 0 && wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t82(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a line break in a one-line string that no backslash escapes
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if bfirst_in(n, base, k_m_cr, seg, c - 1, |p: isize, esc: &mut u64| unsafe { w_m_cr(src, n, p, esc) }).is_some() {
-                            // a carriage return in a string
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x80 != 0 && (match qi { 0 => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t84(src, n, p, esc, upto(p, c - 1)) }).is_some(), _ => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t85(src, n, p, esc, upto(p, c - 1)) }).is_some() }) {
-                            // a triple-quoted string closed by four quotes or more
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if fl & 0x01 != 0 && o1 < c && !wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t91(src, n, p, esc, upto(p, c - 1)) }).is_some() {
-                            // a raw string of backslashes only
-                            refused = true;
-                            break 'tokens;
-                        }
-                        if opened {
-                            {
-                                let (a, z) = (c, c);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 7 }) };
-                                more += 1;
-                            }
-                        } else {
-                            {
-                                let (a, z) = (c, cl);
-                                // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
-                                unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: 6 }) };
-                                more += 1;
-                            }
-                        }
+                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).
+                let Some((c, cl, opened)) = (unsafe { string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [8, 9, 11, 10, 6, 7]) }) else {
+                    refused = true;
+                    break 'tokens;
+                };
                         c_depth = c_depth.saturating_sub(1);
                         // The interpolation's code ended at its `}`; a `{` after it begins the next's.
                         rd_code = usize::MAX;
@@ -1575,122 +1280,6 @@ unsafe fn w_t1(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     (unsafe { cls_sq(src, n, p) } | unsafe { cls_dq(src, n, p) })
 }
 
-/// Class `bslash`'s bits in the 64 bytes from `p`: none past the file or before it.
-#[inline(always)]
-unsafe fn cls_bslash(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
-    let b = s::eq_mask(v, 0x5c);
-    padded(b, q, p)
-}
-
-/// Class `lbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
-#[inline(always)]
-unsafe fn cls_lbrace(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
-    let b = s::eq_mask(v, 0x7b);
-    padded(b, q, p)
-}
-
-/// Class `rbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
-#[inline(always)]
-unsafe fn cls_rbrace(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
-    let b = s::eq_mask(v, 0x7d);
-    padded(b, q, p)
-}
-
-/// `t93`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t93(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((((unsafe { cls_sq(src, n, p) } | unsafe { cls_dq(src, n, p) }) | unsafe { cls_bslash(src, n, p) }) | unsafe { cls_lbrace(src, n, p) }) | unsafe { cls_rbrace(src, n, p) })
-}
-
-/// `t92`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t92(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    ((unsafe { cls_sq(src, n, p) } | unsafe { cls_dq(src, n, p) }) | unsafe { cls_bslash(src, n, p) })
-}
-
-/// `m_lbrace`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_lbrace(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    unsafe { cls_lbrace(src, n, p) }
-}
-
-/// `m_rbrace`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_rbrace(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    unsafe { cls_rbrace(src, n, p) }
-}
-
-/// `t81`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_t81(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    (!(!0u64 & valid(n, (p + 1))) & valid(n, p))
-}
-
-/// `t81`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t81(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (live & (!(!0u64 & valid(n, (p + 1))) & valid(n, p)))
-}
-
-/// `t82`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t82(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    ((live & unsafe { cls_lf(src, n, p) }) & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p)))
-}
-
-/// Class `cr`'s bits in the 64 bytes from `p`: none past the file or before it.
-#[inline(always)]
-unsafe fn cls_cr(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
-    let b = s::eq_mask(v, 0x0d);
-    padded(b, q, p)
-}
-
-/// `m_cr`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_cr(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    unsafe { cls_cr(src, n, p) }
-}
-
-/// `m_cr`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_m_cr(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (live & unsafe { cls_cr(src, n, p) })
-}
-
-/// `t84`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t84(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (((live & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p))) & unsafe { cls_sq(src, n, p) }) & (((((unsafe { cls_sq(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 63) & (unsafe { cls_sq(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 63)) & (unsafe { cls_sq(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x27)) << 63)) & (!(unsafe { cls_sq(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x27)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x27)) << 63) & valid(n, (p + 1)))) & (!(escaped_step(unsafe { cls_bslash(src, n, p) }, esc) >> 1 | *esc << 63) & valid(n, (p + 1)))))
-}
-
-/// `t85`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t85(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    (((live & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p))) & unsafe { cls_dq(src, n, p) }) & (((((unsafe { cls_dq(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & (unsafe { cls_dq(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & (unsafe { cls_dq(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & (!(unsafe { cls_dq(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63) & valid(n, (p + 1)))) & (!(escaped_step(unsafe { cls_bslash(src, n, p) }, esc) >> 1 | *esc << 63) & valid(n, (p + 1)))))
-}
-
-/// `t91`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn l_t91(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
-    ((live & (!unsafe { cls_bslash(src, n, p) } & valid(n, p))) & (!{ let a = escaped_step(unsafe { cls_bslash(src, n, p) }, esc); if a == 0 { 0 } else { a & ((unsafe { cls_quote(src, n, p) } | unsafe { cls_bslash(src, n, p) }) | unsafe { cls_lf(src, n, p) }) } } & valid(n, p)))
-}
-
 /// Class `hash`'s bits in the 64 bytes from `p`: none past the file or before it.
 #[inline(always)]
 unsafe fn cls_hash(src: &[u8], n: usize, p: isize) -> u64 {
@@ -1706,11 +1295,42 @@ unsafe fn w_m_hash(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     unsafe { cls_hash(src, n, p) }
 }
 
+/// Class `rbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
+#[inline(always)]
+unsafe fn cls_rbrace(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
+    let b = s::eq_mask(v, 0x7d);
+    padded(b, q, p)
+}
+
+/// `m_rbrace`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_rbrace(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    unsafe { cls_rbrace(src, n, p) }
+}
+
+/// Class `lbrace`'s bits in the 64 bytes from `p`: none past the file or before it.
+#[inline(always)]
+unsafe fn cls_lbrace(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
+    let b = s::eq_mask(v, 0x7b);
+    padded(b, q, p)
+}
+
 /// `t89`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
 #[inline(always)]
 #[allow(unused_variables)]
 unsafe fn w_t89(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
     (unsafe { cls_lbrace(src, n, p) } | unsafe { cls_lf(src, n, p) })
+}
+
+/// Class `bslash`'s bits in the 64 bytes from `p`: none past the file or before it.
+#[inline(always)]
+unsafe fn cls_bslash(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
+    let b = s::eq_mask(v, 0x5c);
+    padded(b, q, p)
 }
 
 /// Class `tab_ff`'s bits in the 64 bytes from `p`: none past the file or before it.
@@ -1757,10 +1377,81 @@ unsafe fn l_m_hash(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> 
     (live & unsafe { cls_hash(src, n, p) })
 }
 
-/// The classes the block's words read (`lf`, `word`, `dot`, `sign`, `exp_l`, `digit`, `pfx`, `quote`, `opens`, `closes`, `hash`, `sq`, `dq`, `bslash`, `lbrace`, `rbrace`, `cr`, `ws`, `tab_ff`), each's bits in the block at `base`, a byte of the file: one load, and one
+/// `t93`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t93(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((((unsafe { cls_sq(src, n, p) } | unsafe { cls_dq(src, n, p) }) | unsafe { cls_bslash(src, n, p) }) | unsafe { cls_lbrace(src, n, p) }) | unsafe { cls_rbrace(src, n, p) })
+}
+
+/// `t92`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_t92(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    ((unsafe { cls_sq(src, n, p) } | unsafe { cls_dq(src, n, p) }) | unsafe { cls_bslash(src, n, p) })
+}
+
+/// `m_lbrace`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn w_m_lbrace(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
+    unsafe { cls_lbrace(src, n, p) }
+}
+
+/// `t81`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_t81(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    (live & (!(!0u64 & valid(n, (p + 1))) & valid(n, p)))
+}
+
+/// `t82`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_t82(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    ((live & unsafe { cls_lf(src, n, p) }) & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p)))
+}
+
+/// Class `cr`'s bits in the 64 bytes from `p`: none past the file or before it.
+#[inline(always)]
+unsafe fn cls_cr(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window(src, n, p) }) else { return 0 };
+    let b = s::eq_mask(v, 0x0d);
+    padded(b, q, p)
+}
+
+/// `m_cr`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_m_cr(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    (live & unsafe { cls_cr(src, n, p) })
+}
+
+/// `t84`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_t84(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    (((live & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p))) & unsafe { cls_sq(src, n, p) }) & (((((unsafe { cls_sq(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 63) & (unsafe { cls_sq(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 63)) & (unsafe { cls_sq(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x27)) << 63)) & (!(unsafe { cls_sq(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x27)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x27)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x27)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x27)) << 63) & valid(n, (p + 1)))) & (!(escaped_step(unsafe { cls_bslash(src, n, p) }, esc) >> 1 | *esc << 63) & valid(n, (p + 1)))))
+}
+
+/// `t85`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_t85(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    (((live & (!escaped_step(unsafe { cls_bslash(src, n, p) }, esc) & valid(n, p))) & unsafe { cls_dq(src, n, p) }) & (((((unsafe { cls_dq(src, n, p) } >> 1 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 63) & (unsafe { cls_dq(src, n, p) } >> 2 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 62 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 63)) & (unsafe { cls_dq(src, n, p) } >> 3 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 61 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 62 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 63)) & (!(unsafe { cls_dq(src, n, p) } >> 4 | u64::from(p + 64 < n as isize && matches!(unsafe { *src.get_unchecked((p + 64) as usize) }, 0x22)) << 60 | u64::from(p + 65 < n as isize && matches!(unsafe { *src.get_unchecked((p + 65) as usize) }, 0x22)) << 61 | u64::from(p + 66 < n as isize && matches!(unsafe { *src.get_unchecked((p + 66) as usize) }, 0x22)) << 62 | u64::from(p + 67 < n as isize && matches!(unsafe { *src.get_unchecked((p + 67) as usize) }, 0x22)) << 63) & valid(n, (p + 1)))) & (!(escaped_step(unsafe { cls_bslash(src, n, p) }, esc) >> 1 | *esc << 63) & valid(n, (p + 1)))))
+}
+
+/// `t91`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.
+#[inline(always)]
+#[allow(unused_variables)]
+unsafe fn l_t91(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {
+    ((live & (!unsafe { cls_bslash(src, n, p) } & valid(n, p))) & (!{ let a = escaped_step(unsafe { cls_bslash(src, n, p) }, esc); if a == 0 { 0 } else { a & ((unsafe { cls_quote(src, n, p) } | unsafe { cls_bslash(src, n, p) }) | unsafe { cls_lf(src, n, p) }) } } & valid(n, p)))
+}
+
+/// The classes the block's words read (`lf`, `word`, `dot`, `sign`, `exp_l`, `digit`, `pfx`, `quote`, `opens`, `closes`, `hash`, `rbrace`, `lbrace`, `ws`, `tab_ff`), each's bits in the block at `base`, a byte of the file: one load, and one
 /// classify a pair of nibble tables, as the lean lexer's `Window`. None past the file.
 #[inline(always)]
-unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 19] {
+unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 15] {
     let block: &[u8; 64] = src[base..base + 64].try_into().expect("the padded source");
     let lv = valid(n, base as isize);
     // The block's load and its tables (safe: `std::simd`'s operations).
@@ -1770,8 +1461,161 @@ unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; 19] {
         let c1 = s::classify(v, &LO_1, &HI_1);
         let c2 = s::classify(v, &LO_2, &HI_2);
         let c4 = s::classify(v, &LO_4, &HI_4);
-        [s::eq_mask(v, 0x0a) & lv, s::to_bitmask(s::test(c0, s::splat(0x78))) & lv, s::eq_mask(v, 0x2e) & lv, s::to_bitmask(s::test(c2, s::splat(0x80))) & lv, s::to_bitmask(s::test(c4, s::splat(0x08))) & lv, s::to_bitmask(s::test(c0, s::splat(0x08))) & lv, s::to_bitmask(s::test(c1, s::splat(0xc0))) & lv, s::to_bitmask(s::test(c0, s::splat(0x80))) & lv, s::to_bitmask(s::test(c1, s::splat(0x03))) & lv, s::to_bitmask(s::test(c1, s::splat(0x0c))) & lv, s::eq_mask(v, 0x23) & lv, s::eq_mask(v, 0x27) & lv, s::eq_mask(v, 0x22) & lv, s::eq_mask(v, 0x5c) & lv, s::eq_mask(v, 0x7b) & lv, s::eq_mask(v, 0x7d) & lv, s::eq_mask(v, 0x0d) & lv, s::to_bitmask(s::test(c0, s::splat(0x06))) & lv, s::to_bitmask(s::test(c1, s::splat(0x20))) & lv]
+        [s::eq_mask(v, 0x0a) & lv, s::to_bitmask(s::test(c0, s::splat(0x78))) & lv, s::eq_mask(v, 0x2e) & lv, s::to_bitmask(s::test(c2, s::splat(0x80))) & lv, s::to_bitmask(s::test(c4, s::splat(0x08))) & lv, s::to_bitmask(s::test(c0, s::splat(0x08))) & lv, s::to_bitmask(s::test(c1, s::splat(0xc0))) & lv, s::to_bitmask(s::test(c0, s::splat(0x80))) & lv, s::to_bitmask(s::test(c1, s::splat(0x03))) & lv, s::to_bitmask(s::test(c1, s::splat(0x0c))) & lv, s::eq_mask(v, 0x23) & lv, s::eq_mask(v, 0x7d) & lv, s::eq_mask(v, 0x7b) & lv, s::to_bitmask(s::test(c0, s::splat(0x06))) & lv, s::to_bitmask(s::test(c1, s::splat(0x20))) & lv]
     }
+}
+
+
+/// String reader `string`'s text from its byte `o1` to its closer or an interpolation's `{`, from stop to stop (the lean
+/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after
+/// record `len` (`more` of them), each of its kind in `kinds` (0 its text, 1 an escape, 2 a lone escape, 3 a brace pair, 4 its closer, 5 an interpolation's `{`). The closer's first and last byte, and whether it is
+/// a `{`; none where the file is refused.
+#[inline(always)]
+unsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {
+    let mut more = *more_io;
+    let mut t0 = o1;
+    // Its text, from stop to stop (the lean lexer's `string_stop`): its quote, its escape, an interpolation's braces.
+    let mut at = t0;
+    let (c, cl, opened) = loop {
+        let Some(p) = (if fl & 0x04 != 0 { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t93(src, n, p, esc) }) } else { wfirst_bit(n, at, |p: isize, esc: &mut u64| unsafe { w_t92(src, n, p, esc) }) }) else {
+            // A string open at the file's end.
+            return None;
+        };
+        if ((p < n && (src[p] == b'\\'))) {
+            if fl & 0x01 != 0 {
+                // A raw string reads no escape: its backslash keeps a quote or a backslash after it from closing it or escaping.
+                at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))) || ((p + 1 < n && (src[p + 1] == b'\\'))));
+                continue;
+            }
+            if t0 < p {
+                {
+            let (a, z) = (t0, p - 1);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[0] }) };
+            more += 1;
+        }
+            }
+        if ((p + 1 < n && (src[p + 1] == b'N'))) {
+            // a `\N{…}` escape
+            return None;
+        }
+        if fl & 0x02 != 0 && ((p + 1 < n && matches!(src[p + 1], b'N' | b'u' | b'U'))) {
+            // a `\N`, `\u` or `\U` in a bytes string
+            return None;
+        }
+            // By its check, else a `\` of one byte (the lean lexer's `backslash`): a quote after it is text.
+            match check_escape_sequence(&src[p..]) {
+                Some(k) => {
+                    {
+            let (a, z) = (p, p + k - 1);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[1] }) };
+            more += 1;
+        }
+                    at = p + k;
+                    t0 = at;
+                }
+                None => {
+                    {
+            let (a, z) = (p, p);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[2] }) };
+            more += 1;
+        }
+                    t0 = p + 1;
+                    at = p + 1 + usize::from((((p + 1 < n && (src[p + 1] == b'\'')) || (p + 1 < n && (src[p + 1] == b'"')))));
+                }
+            }
+            continue;
+        }
+        if ((p < n && (src[p] == b'{'))) || ((p < n && (src[p] == b'}'))) {
+            let open = ((p < n && (src[p] == b'{')));
+            let r = if open { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_lbrace(src, n, p, esc) }) } else { wrun_last(n, p, |p: isize, esc: &mut u64| unsafe { w_m_rbrace(src, n, p, esc) }) };
+            if !open {
+            if (r + 1 - p) % 2 == 1 {
+            // a `}` alone in an f-string's text
+            return None;
+            }
+            }
+            if t0 < p {
+                {
+            let (a, z) = (t0, p - 1);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[0] }) };
+            more += 1;
+        }
+            }
+            for i in 0..(r + 1 - p) / 2 {
+                {
+            let (a, z) = (p + 2 * i, p + 2 * i + 1);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[3] }) };
+            more += 1;
+        }
+            }
+            if open && (r + 1 - p) % 2 == 1 {
+                break (r, r, true);
+            }
+            at = r + 1;
+            t0 = at;
+            continue;
+        }
+        // A quote: its own closes it (a triple's, the last three of a run); another is text.
+        if !(match qi { 0 => ((p < n && (src[p] == b'\''))), _ => ((p < n && (src[p] == b'"'))) }) {
+            at = p + 1;
+            continue;
+        }
+        if fl & 0x80 != 0 && !(match qi { 0 => ((((((p < n && (src[p] == b'\'')) && (p + 1 < n && (src[p + 1] == b'\''))) && (p + 2 < n && (src[p + 2] == b'\''))) && (p < n && !(p + 3 < n && (src[p + 3] == b'\'')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))), _ => ((((((p < n && (src[p] == b'"')) && (p + 1 < n && (src[p + 1] == b'"'))) && (p + 2 < n && (src[p + 2] == b'"'))) && (p < n && !(p + 3 < n && (src[p + 3] == b'"')))) && (p < n && !{ let mut k2 = p; let mut odd = false; while k2 > 0 && (k2 - 1 < n && (src[k2 - 1] == b'\\')) { odd = !odd; k2 -= 1; } odd }))) }) {
+            at = p + 1;
+            continue;
+        }
+        if t0 < p {
+            {
+            let (a, z) = (t0, p - 1);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[0] }) };
+            more += 1;
+        }
+        }
+        break (p, if fl & 0x80 != 0 { p + 2 } else { p }, false);
+    };
+    if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t81(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+        // a string open at the end of the file
+        return None;
+    }
+    if fl & 0x80 == 0 && wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_t82(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+        // a line break in a one-line string that no backslash escapes
+        return None;
+    }
+    if wfirst_in(n, seg, c - 1, |p: isize, esc: &mut u64| unsafe { l_m_cr(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+        // a carriage return in a string
+        return None;
+    }
+    if fl & 0x80 != 0 && (match qi { 0 => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t84(src, n, p, esc, upto(p, c - 1)) }).is_some(), _ => wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t85(src, n, p, esc, upto(p, c - 1)) }).is_some() }) {
+        // a triple-quoted string closed by four quotes or more
+        return None;
+    }
+    if fl & 0x01 != 0 && o1 < c && !wfirst_in(n, o1, c - 1, |p: isize, esc: &mut u64| unsafe { l_t91(src, n, p, esc, upto(p, c - 1)) }).is_some() {
+        // a raw string of backslashes only
+        return None;
+    }
+    if opened {
+        {
+            let (a, z) = (c, c);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[5] }) };
+            more += 1;
+        }
+    } else {
+        {
+            let (a, z) = (c, cl);
+            // SAFETY: room for a record a byte: the piece's first byte is after the record before's last.
+            unsafe { out.add(len + 1 + more).write(Rec { start: a as u32, last: z as u32, code: kinds[4] }) };
+            more += 1;
+        }
+    }
+    *more_io = more;
+    Some((c, cl, opened))
 }
 
 /// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.

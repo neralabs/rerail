@@ -9514,7 +9514,12 @@ impl Gen<'_> {
                     None => branches_t.clone(),
                 };
                 for (i, t) in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, gap_t, &acc_after].into_iter().enumerate() {
-                    let t = bytes::strip_pauses(&pairs_read(t));
+                    // A string's text: each arm's call of the one function (`string_text`).
+                    let t = match &reader_code {
+                        Some(rc) => reader::place_texts(t, &|k| rc.texts.get(k).cloned()),
+                        None => t.clone(),
+                    };
+                    let t = bytes::strip_pauses(&pairs_read(&t));
                     let t = if keep_scans { t } else { bytes::strip_scans(&t) };
                     let t = if i == 1 && lean_rows.is_some() { by.rewrite_windows(&t)? } else { by.rewrite(&t)? };
                     let t = bytes::fuse_tests(&t, &by.escapes);
@@ -9566,6 +9571,14 @@ impl Gen<'_> {
                     let t = if k == 1 { by.rewrite(&t)? } else { by.rewrite_windows(&t)? };
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the string reader still reads".into());
+                    }
+                    pieces.push(t);
+                }
+                // The string's text, once (`string_text`): of the bytes, as the reader's state.
+                if let Some(rc) = &reader_code {
+                    let t = by.rewrite_windows(&bytes::strip_pauses(&rc.text_fn))?;
+                    if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") || uses(&t, "base") {
+                        return Err("a pause or a block the string's text still reads".into());
                     }
                     pieces.push(t);
                 }
@@ -9783,8 +9796,12 @@ impl Gen<'_> {
         if fused {
             out.push_str("\nrerail_simd8::kernel! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
         }
-        if let Some((_, _, code, _)) = &from_bytes {
+        if let Some((p, _, code, _)) = &from_bytes {
             out.push_str(code);
+            if let Some(f) = p.get(13) {
+                out.push('\n');
+                out.push_str(f);
+            }
             for (f, two) in &pair_rows {
                 if !out.contains(&format!("k_{f} >>")) {
                     continue;
@@ -10007,6 +10024,10 @@ impl Gen<'_> {
         if from_bytes.is_none() {
             let exprs: Vec<(String, Expr)> = self.nodes.iter().filter_map(|n| n.expr.clone().filter(|e| !self.regional(e)).map(|e| (n.name.clone(), e))).collect();
             out = interleave::bit_reads(&out, self.x.stmts, &exprs, &row_starts, &row_firsts);
+        }
+        // A string's text in place where the loop reads stage 1's masks: its markers gone.
+        if reader_code.is_some() {
+            out = reader::place_texts(&out, &|_| None);
         }
         Ok(out)
     }

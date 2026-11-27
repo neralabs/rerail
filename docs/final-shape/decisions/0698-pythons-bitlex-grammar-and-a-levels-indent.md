@@ -606,3 +606,10 @@ statements and blocks end.
     one byte. In Python's tier 1, the block's masks go from 63 to 19 and its classes from 30 to 19: what is left is
     what the runs read (a word's, a number's, the dots', a brace run's), the string reader's stops and refusals, the
     bracket count's search of a token's bytes and the two indentation escapes.
+
+90. **A string's text is read once, by one function each of its arms calls.** As the lean lexer's `string` loop,
+    the reader's text from stop to stop is one function (`string_text`): from its first byte to its closer or an
+    interpolation's `{`, its pieces written after the string's record, each of the kind its caller gives, and `None`
+    where the file is refused. The string's arm and a tail's (`}` at a template's level 0) call it. It reads the bytes
+    through windows, as the reader's state does. Where the loop reads stage 1's masks, each arm reads the text in
+    place still: that form pauses for stage 1's blocks, which a function cannot.

@@ -35,6 +35,40 @@ pub(super) struct ReaderCode {
     pub head: (usize, Expr),
     /// After the token loop: what holds to the file's end.
     pub end: String,
+    /// The string's text from stop to stop, once (`string_text`, the lean lexer's `string`'s loop): a function of the
+    /// pieces' kinds that each arm calls (`texts`, by the marker's number), where the loop reads the bytes. Elsewhere
+    /// each arm reads it in place, between its markers (`TEXT`).
+    pub text_fn: String,
+    pub texts: Vec<String>,
+}
+
+/// The marker lines around an arm's text in place (`ReaderCode::texts`): its number between them.
+pub(super) const TEXT: &str = "\u{0}text ";
+pub(super) const TEXT_END: &str = "\u{0}text end\u{0}";
+
+/// `t` with each arm's text in place between its markers (`TEXT`) given by `each` of its number (`None`: the text
+/// itself), the marker lines gone.
+pub(super) fn place_texts(t: &str, each: &dyn Fn(usize) -> Option<String>) -> String {
+    let mut out = String::new();
+    let mut skipping = false;
+    for line in t.split_inclusive('\n') {
+        let l = line.trim();
+        if l == TEXT_END {
+            skipping = false;
+            continue;
+        }
+        if let Some(k) = l.strip_prefix(TEXT).and_then(|r| r.strip_suffix('\u{0}')).and_then(|r| r.parse::<usize>().ok()) {
+            if let Some(call) = each(k) {
+                out.push_str(&call);
+                skipping = true;
+            }
+            continue;
+        }
+        if !skipping {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 const PAUSE: &str = "wait = (2 * made - b).min(nw);\n                    continue 'pass;";
@@ -242,6 +276,42 @@ impl Gen<'_> {
             let _ = writeln!(t, "                {close}");
             t
         };
+        // The text once (`string_text`), of the kinds its caller gives: a refusal its `None`. Each arm's text in place
+        // between its markers, and its call of the function.
+        let kinds: [String; 7] = std::array::from_fn(|i| if head_k[i].is_empty() || i == 6 { String::new() } else { format!("kinds[{i}]") });
+        let mut text_fn = String::new();
+        {
+            let t = text(&kinds);
+            let lines: Vec<&str> = t.lines().collect();
+            let mut b = String::new();
+            let mut i = 0;
+            while i < lines.len() {
+                let l = lines[i];
+                let d = l.strip_prefix("            ").unwrap_or(l);
+                if l.trim() == "refused = true;" && lines.get(i + 1).is_some_and(|x| x.trim() == "break 'tokens;") {
+                    let pad = &d[..d.len() - d.trim_start().len()];
+                    let _ = writeln!(b, "{pad}return None;");
+                    i += 2;
+                    continue;
+                }
+                let _ = writeln!(b, "{d}");
+                i += 1;
+            }
+            let shown: Vec<String> = [(0, "its text"), (1, "an escape"), (2, "a lone escape"), (3, "a brace pair"), (4, "its closer"), (5, "an interpolation's `{`")].iter().filter(|(i, _)| !kinds[*i].is_empty()).map(|(i, w)| format!("{i} {w}")).collect();
+            let _ = write!(
+                text_fn,
+                "/// String reader `{}`'s text from its byte `o1` to its closer or an interpolation's `{{`, from stop to stop (the lean\n/// lexer's `string`'s loop), the string's quote `qi`, its flags `fl`, its region from `seg`: its pieces written after\n/// record `len` (`more` of them), each of its kind in `kinds` ({}). The closer's first and last byte, and whether it is\n/// a `{{`; none where the file is refused.\n#[inline(always)]\nunsafe fn string_text(src: &[u8], n: usize, out: *mut Rec, len: usize, more_io: &mut usize, qi: u8, fl: u8, seg: usize, o1: usize, kinds: [u32; 6]) -> Option<(usize, usize, bool)> {{\n    let mut more = *more_io;\n    let mut t0 = o1;\n{b}    *more_io = more;\n    Some((c, cl, opened))\n}}\n\n",
+                rd.name,
+                shown.join(", ")
+            );
+        }
+        let mut texts: Vec<String> = Vec::new();
+        let mut marked = |k: &[String; 7]| -> String {
+            let i = texts.len();
+            let ks: Vec<String> = (0..6).map(|j| if k[j].is_empty() { "0".to_owned() } else { k[j].clone() }).collect();
+            texts.push(format!("                // Its text, from stop to stop (`string_text`, the lean lexer's `string`'s loop).\n                let Some((c, cl, opened)) = (unsafe {{ string_text(src, n, out, len, &mut more, qi, fl, seg, o1, [{}]) }}) else {{\n                    refused = true;\n                    break 'tokens;\n                }};\n", ks.join(", ")));
+            format!("{TEXT}{i}\u{0}\n                let mut t0 = o1;\n{}{TEXT_END}\n", text(k))
+        };
         // The counts at an interpolation's `{` and a tail's `}` (`i_at`, `o_t`: the reader's masks of them).
         let mut up = String::new();
         let mut down = String::new();
@@ -278,8 +348,7 @@ impl Gen<'_> {
             if !head_k[6].is_empty() {
                 let _ = write!(h, "                // A triple's two more quotes.\n                if fl & {TRIPLE} != 0 {{\n                    {}\n                }}\n", put("q + 1", "q + 2", &head_k[6]));
             }
-            h.push_str("                let mut t0 = o1;\n");
-            h.push_str(&text(&head_k));
+            h.push_str(&marked(&head_k));
             h.push_str(&open);
             h.push_str("                rd_end = cl;\n                q\n            }");
             rows_out.push((head_row, format!("read {}, as the lean lexer's `string` reads one", rd.name), h));
@@ -307,8 +376,7 @@ impl Gen<'_> {
                 let _ = write!(h, "{{\n                more = 0;\n                // Its `}}`, then the string's text as the template's string reads it.\n                let (qi, fl, seg, o1) = (rd_q, rd_fl, s, s + 1);\n");
                 h.push_str(&pause_at("s + 1"));
                 end(&mut h, true);
-                h.push_str("                let mut t0 = o1;\n");
-                h.push_str(&text(tk));
+                h.push_str(&marked(tk));
                 let _ = write!(h, "{down}                // The interpolation's code ended at its `}}`; a `{{` after it begins the next's.\n                rd_code = usize::MAX;\n                if opened {{\n                    rd_open = c;\n                    rd_code = c + 1;\n{up}                }} else {{\n                    // The string ended: the template around it is open again.\n                    (rd_on, rd_q, rd_fl, rd_level) = if rd_depth > 0 {{\n                        rd_depth -= 1;\n                        let (q, f, v) = rd_around[rd_depth];\n                        (true, q, f, v)\n                    }} else {{\n                        (false, 0, 0, 0)\n                    }};\n                    rd_total = rd_total.saturating_sub(1);\n                }}\n                rd_end = cl;\n                rd_bare = true;\n                s\n            }}");
                 rows_out.push((row, format!("`{}`, read {}'s, at its template's level 0", i.close, rd.name), h));
                 picked.push(row);
@@ -370,7 +438,7 @@ impl Gen<'_> {
                 let _ = write!(end, "    // {}\n    if rd_code != usize::MAX && rd_code < n && any_in(&{m}, rd_code, n - 1) {{\n        refused = true;\n    }}\n", r.why);
             }
         }
-        Ok(ReaderCode { decl, pick, rows: rows_out, picked, level, level_bytes, fns: new_fns, end, skip, head: (head_row, head_start) })
+        Ok(ReaderCode { decl, pick, rows: rows_out, picked, level, level_bytes, fns: new_fns, end, skip, head: (head_row, head_start), text_fn, texts })
     }
 }
 
