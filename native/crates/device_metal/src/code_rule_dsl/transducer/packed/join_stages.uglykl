@@ -307,6 +307,14 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     uint64_t la = e->lines;
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
+    // By its own id (`Stage::v_parent` 2, `join_run::St::by_own`): its id checked, its one row (a `child` row: the
+    // root has none), the other keys checked on it (`matches`); as the host's probe by a node's own id.
+    if (s->v_parent == 2u) {
+        uint32_t k = s->r_view - 1u;
+        if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key || (k == 1u && l == 0u)) return;
+        *lo = e->rows[k] + l - k; *hi = *lo + 1u; *how = 0u;
+        return;
+    }
     uint32_t first = e->rows[1];
     // The root's children where a numbered node's parent is left out (`ViewDoc::parented` 0): its document's rows,
     // which `matches` tests; else its numbered tape children, as any parent's.
@@ -318,30 +326,20 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     *lo = first + c; *hi = NONE; *how = 2u;
 }
 
-// The `node` or `child` view probed by its id (`Stage::v_parent` 2, `join_run::St::by_own`): the id's document and
-// numbered node (`clif_view_number`), its id checked (as a parent's, `by_parent`), and its one row there; none where no
-// node has the id (a `child` row: the root has none). The other keys are checked on it (`matches`).
-UKL_INLINE void by_own(StageP s, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi) {
-    UKL_GLOBAL const ViewDir* d = s->v_dir;
-    *lo = 0u; *hi = 0u;
-    uint32_t i = 0u;
-    while (i < s->nkeys && i < 8u && s->key_rcol[i] != 1u) i++;
-    if (i >= s->nkeys || i >= 8u) return;
-    int64_t key = kv[i];
-    if (key < 0 || d->ndocs == 0u) return;
-    uint32_t a = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
-    if (a == NONE) return;
-    UKL_GLOBAL const ViewRow* e = &view_rows(d)[a];
-    UKL_GLOBAL const uint8_t* ch = view_block(d);
-    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
-    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
-    uint64_t la = e->lines;
-    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
-    if (l == NONE) return;
-    uint32_t k = s->r_view - 1u;
-    if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key || (k == 1u && l == 0u)) return;
-    *lo = e->rows[k] + l - k;
-    *hi = *lo + 1u;
+// The key a view's walk is probed by: its parent's id (`child`'s column 0, `Stage::v_parent` 1, the stage's first
+// key) or a node's own (column 1, `v_parent` 2). Each key is read at a constant index: an index into the private keys
+// computed at run time moves them to the stack, which the M1's back end miscompiled (the has and child walks read
+// nothing).
+UKL_INLINE int64_t walk_key(StageP s, UKL_PRIVATE const int64_t* kv) {
+    int64_t key = kv[0];
+    if (s->v_parent != 2u || s->key_rcol[0] == 1u) return key;
+    bool found = false;
+    for (uint32_t i = 1u; i < 8u; i++) {
+        bool hit = !found && i < s->nkeys && s->key_rcol[i] == 1u;
+        key = hit ? kv[i] : key;
+        found = found || hit;
+    }
+    return key;
 }
 
 // The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
@@ -425,8 +423,7 @@ UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVA
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
     if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
-    if (s->v_parent == 2u) { by_own(s, kv, lo, hi); *how = 0u; return; }
-    if (s->v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
+    if (s->v_parent != 0u) { by_parent(s, walk_key(s, kv), lo, hi, how); return; }
     *how = 1u;
     group_of(R, s->r_at, s->r_index, kv, s->nkeys, lo, hi);
 }
@@ -1845,8 +1842,8 @@ UKL_INLINE uint32_t scan_cand(StageP s, Longs L, RelB R, UKL_PRIVATE int64_t* kv
     if (s->nkeys == 0u || s->v_parent == 1u || s->v_has != 0u) return r < rows ? s->r_from + r : NONE;
     // A node's own row (`by_own`): its one candidate.
     if (s->v_parent == 2u) {
-        uint32_t lo, hi;
-        by_own(s, kv, &lo, &hi);
+        uint32_t lo = 0u, hi = 0u, how = 0u;
+        by_parent(s, walk_key(s, kv), &lo, &hi, &how);
         return r < hi - lo ? lo + r : NONE;
     }
     uint32_t lo, hi;
