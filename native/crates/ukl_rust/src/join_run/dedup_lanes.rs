@@ -195,10 +195,19 @@ where
     }
 }
 
+/// Each lane's key's tag (`mark_tag`): its hash's high 32 bits but `MARK_SAME`'s.
+#[inline(always)]
+fn tag_lanes<const N: usize>(h: U<N>) -> R<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    (h >> U::splat(32)).cast::<u32>() & sr(!MARK_SAME)
+}
+
 /// `ix_key`'s of a view's rows `t0..t1` at `N` lanes: each document found once and its rows walked in order
 /// (`reads::Rows`: each one's tape node the next of its numbering's, not selected again), `N` rows' keys hashed an
 /// operation. A placed view's rows past its directory's (its tail relation's) are `ix_hash`'s.
-pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -217,7 +226,7 @@ where
         let first = (*e).rows[k as usize];
         let stop = if a + 1 < ndocs { (*rows.add(a as usize + 1)).rows[k as usize].min(lim) } else { lim };
         if stop <= t {
-            *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, bf, p, t));
+            ix_key_tag(bb, bf, out, tags, p, kb, eb, t);
             t += 1;
             continue;
         }
@@ -238,17 +247,19 @@ where
             }
             let keys: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
             core::ptr::copy_nonoverlapping(keys.as_ptr(), out.add((eb + t) as usize), n as usize);
+            let tg: [u32; N] = tag_lanes(h).to_array();
+            core::ptr::copy_nonoverlapping(tg.as_ptr(), tags.add((eb + t) as usize), n as usize);
             t += n;
         }
     }
     for t in lim.max(t0)..t1 {
-        *out.add((eb + t) as usize) = kb.wrapping_add(ix_hash(bb, bf, p, t));
+        ix_key_tag(bb, bf, out, tags, p, kb, eb, t);
     }
 }
 
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, as `ix_key`'s.
-pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -265,6 +276,8 @@ where
         }
         let k: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
         core::ptr::copy_nonoverlapping(k.as_ptr(), out.add((eb + t) as usize), n as usize);
+        let tg: [u32; N] = tag_lanes(h).to_array();
+        core::ptr::copy_nonoverlapping(tg.as_ptr(), tags.add((eb + t) as usize), n as usize);
         t += n;
     }
 }

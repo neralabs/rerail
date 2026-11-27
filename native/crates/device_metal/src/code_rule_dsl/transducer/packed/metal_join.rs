@@ -422,7 +422,9 @@ pub(in crate::code_rule_dsl) fn run_view_format() -> u32 {
 /// M3, an indirect dispatch of a pipeline that makes calls (a call stack) hung the GPU at its second group, even when
 /// every thread returned first (decision 0641). Inlined, the phase runs indirectly, as on every backend.
 fn program_pipes(format: u32) -> Result<[Arc<rerail_accel_gpu::gpu::join::Pipe>; 3], String> {
-    let metal = rerail_device::device::is_metal();
+    // Metal's text where its kernels are made for Metal: on the host (`on_host`, the CPU device's on a Mac), the one
+    // `join_run` was written from, as `pipeline` makes the host's kernels apart (its key's "host").
+    let metal = rerail_device::device::is_metal() && !rerail_accel::gpu::shared::is_on_host();
     let source = || program_source(metal, format);
     let name = format!("joinprog{format}");
     Ok([pipeline(&name, "join_grid", source)?, pipeline(&name, "join_phase", source)?, pipeline(&name, "join_chain", source)?])
@@ -3518,7 +3520,7 @@ impl Batch {
         let fixed = ix_rows - level_live.iter().map(|l| l.1).sum::<usize>();
         let rows_now = fixed + level_live.iter().map(|l| prog.rooms.live_ix[l.0].rows.get() as usize).sum::<usize>();
         let mut sort_room = (!level_live.is_empty()).then(|| SortRoom { reserved: Vec::new(), hist: None, fixed, live: level_live.iter().map(|l| l.0).collect() });
-        let sort = if ix_rows > 0 {
+        let (sort, ix_tags) = if ix_rows > 0 {
             let device = rerail_accel_gpu::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
             let tiles = ix_rows.div_ceil(SORT_TILE).max(1);
             let mut one = |bytes: usize, now: usize, hist: bool| -> Result<Held, Error> {
@@ -3540,9 +3542,12 @@ impl Batch {
             };
             let (a, b) = ([one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?], [one(4 * ix_rows, 4 * rows_now, false)?, one(4 * ix_rows, 4 * rows_now, false)?]);
             let hist = one(4 * (256 * tiles + 1), sort_hist_bytes(rows_now), true)?;
-            Some((a, b, hist, tiles))
+            // Each row's key's tag (decision 0671's marks), by row from its index's first (`eb`): its key pass writes it
+            // from the hash it takes, and its marks read it there, no row read again for its hash.
+            let tags = one(4 * ix_rows, 4 * rows_now, false)?;
+            (Some((a, b, hist, tiles)), Some(tags))
         } else {
-            None
+            (None, None)
         };
         // Every index's buckets in one span; whole bytes, as the sort's passes are a byte each.
         let bits = (usize::BITS - buckets.saturating_sub(1).leading_zeros()).max(8).div_ceil(8) * 8;
@@ -3572,6 +3577,7 @@ impl Batch {
                 (d.at.kb, d.at.eb) = (kb as u32, eb as u32);
                 (d.h, d.s) = (address(&a[0].buffer)?, address(&a[1].buffer)?);
                 (d.v, d.vc) = (address(&f[0].buffer)?, address(&f[1].buffer)?);
+                d.o = address(&ix_tags.as_ref().expect("an index's tags beside its sort").buffer)?;
                 kb += j.buckets;
                 eb += j.count;
             }
@@ -3746,6 +3752,7 @@ impl Batch {
         if let Some((a, b, hist, _)) = sort {
             prog.hold.extend(a.into_iter().chain(b).chain([hist]));
         }
+        prog.hold.extend(ix_tags);
         Ok(())
     }
 

@@ -1818,30 +1818,26 @@ unsafe fn ix_hash64(bb: *const u8, bf: *const u8, p: &IxP, t: u32) -> u64 {
     h
 }
 
-/// Row `t`'s key hash, masked to the index's places.
-unsafe fn ix_hash(bb: *const u8, bf: *const u8, p: &IxP, t: u32) -> u32 {
-    (ix_hash64(bb, bf, p, t) & p.mask) as u32
+/// Row `t`'s key (its hash masked to the index's places, from `kb`) at `eb + t` of `out`, and its tag (`mark_tag`) at
+/// `eb + t` of `tags`, for its marks (`ix_mark_range`).
+unsafe fn ix_key_tag(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t: u32) {
+    let h = ix_hash64(bb, bf, p, t);
+    *out.add((eb + t) as usize) = kb.wrapping_add((h & p.mask) as u32);
+    *tags.add((eb + t) as usize) = mark_tag(h);
 }
 
 /// `MARK_REACH` (decision 0671): the places before one a builder looks back over for its tag.
 const MARK_REACH: u32 = 8;
 
-/// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag, and `MARK_SAME` where its bucket's previous
-/// place of the tag, among the `MARK_REACH` before it, holds its key. Its marks after its rows' room (`n`).
-unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
+/// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag (`tags`, by row from `eb`, its key pass's),
+/// and `MARK_SAME` where its bucket's previous place of the tag, among the `MARK_REACH` before it, holds its key. Its
+/// marks after its rows' room (`n`).
+unsafe fn ix_mark_range(bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, tags: *const u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     let row = |u: u32| (*rows.add(u as usize)).wrapping_sub(p.from);
-    // The tags of the places a place looks back over and its own, each place's computed once (`at[u % 2R]` place
-    // `u`'s, where `of` says so).
-    const RING: u32 = 2 * MARK_REACH;
-    let (mut at, mut of) = ([0u32; RING as usize], [NONE; RING as usize]);
-    let mut tag = |u: u32| {
-        let k = (u % RING) as usize;
-        if of[k] != u {
-            (at[k], of[k]) = (mark_tag(ix_hash64(bb, bf, p, row(u))), u);
-        }
-        at[k]
-    };
+    // Place `u`'s tag, its row's as its key's pass wrote it (`ix_key_tag`, at the level's `eb` + its row): no row is
+    // read again for its hash, only a pair's whose tags agree, for their keys.
+    let tag = |u: u32| *tags.add((eb + row(u)) as usize);
     for t in t0..t1 {
         let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
         let rt = row(t);
@@ -2606,7 +2602,7 @@ unsafe fn rows_copy_range(src: *const u8, dst: *mut u8, totals: *const u32, c: &
     }
 }
 
-unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
+unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, tags: *mut u32, p: &IxP, bf: *const u8, kb: u32, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(ix_rows(bb, p));
     if t0 >= t1 {
         return;
@@ -2623,10 +2619,10 @@ unsafe fn ix_key_range(bb: *const u8, out: *mut u32, places: *mut u32, p: &IxP, 
         *places.add((eb + t) as usize) = eb + t;
     }
     if p.kind == 0 {
-        dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, bf, out, p, kb, eb, t0, t1);
+        dedup_lanes::ix_keys_lanes::<{ stage_lanes::LANES }>(bb, bf, out, tags, p, kb, eb, t0, t1);
         return;
     }
-    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, bf, out, p, kb, eb, t0, t1);
+    dedup_lanes::ix_keys_view_lanes::<{ stage_lanes::LANES }>(bb, bf, out, tags, p, kb, eb, t0, t1);
 }
 
 /// `ix_place_one` of sorted places `t0..t1`: each one's row, the place it came from less `eb`, past the relation's
@@ -3833,10 +3829,10 @@ impl Prog {
         let lat = || &*(j.p as *const LatP);
         match kind {
             PK_COPY => rows_copy_range(b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), far(j.rf, b.l), t0, t1),
-            PK_IX_KEY => ix_key_range(b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
+            PK_IX_KEY => ix_key_range(b.l as *const u8, b.h, j.s_ as *mut u32, j.o as *mut u32, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
             PK_IX_PLACE => ix_place_range(b.l as *const u8, j.vc as *const u32, j.counters, &*(j.p as *const IxP), b.eb, t0, t1),
             PK_IX_OFFS => ix_offs_range(b.l as *const u8, b.v as *const u32, j.a, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
-            PK_IX_MARK => ix_mark_range(b.l as *const u8, b.v as *const u32, j.a, j.counters, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
+            PK_IX_MARK => ix_mark_range(b.l as *const u8, b.v as *const u32, j.a, j.counters, j.o as *const u32, &*(j.p as *const IxP), far(j.rf, b.l), b.kb, b.eb, t0, t1),
             // Threads [t0, t1) clear places 4 t0 to 4 t1, within those the rows use (`dedup_mask`).
             PK_DEDUP_CLEAR => {
                 let end = dedup_mask(j.totals, &*j.dd) as u64 + 1;
