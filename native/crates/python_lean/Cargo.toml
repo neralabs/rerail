@@ -15,6 +15,9 @@ rerail-tape-format = { path = "../tape_format" }
 # Which non-ASCII characters an identifier may hold (XID), as tree-sitter-python's `identifier` reads them.
 unicode-ident = "=1.0.27"
 
+# The lexer of strata's vectors: std::simd's interface on stable (decision 0698, item 93).
+rerail-simd = { path = "../simd" }
+
 [dependencies.rerail-simd8]
 path = "../simd8"
 

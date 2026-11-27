@@ -197,12 +197,12 @@ impl Lexed {
 
 /// A string's delimiter and how its text is read.
 #[derive(Clone, Copy)]
-struct Quote {
-    quote: u8,
-    triple: bool,
-    raw: bool,
-    bytes: bool,
-    format: bool,
+pub(crate) struct Quote {
+    pub(crate) quote: u8,
+    pub(crate) triple: bool,
+    pub(crate) raw: bool,
+    pub(crate) bytes: bool,
+    pub(crate) format: bool,
 }
 
 struct Lexer<'s> {
@@ -228,7 +228,7 @@ struct Lexer<'s> {
     metavariables: bool,
 }
 
-const MAX_NESTING: u32 = 64;
+pub(crate) const MAX_NESTING: u32 = 64;
 
 pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
     lex_joined(src, &[])
@@ -321,7 +321,7 @@ rerail_simd8::keyword_switch!(
 
 /// The word `src[i..end]`'s kind and soft keyword: one probe of the keyword switch.
 #[inline(always)]
-fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
+pub(crate) fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
     match WORDS.find(src, i, end) as usize {
         0 => (T::Name, 0),
         code => {
@@ -363,14 +363,10 @@ impl<'s> Lexer<'s> {
         Refusal::Lex(at as u32)
     }
 
-    /// The width of a zero-width-space-like character tree-sitter-python takes as a blank (U+FEFF,
-    /// U+2060, U+200B), or 0.
+    /// The width of an odd blank at `i` (`odd_blank_at`).
     #[inline(always)]
     fn odd_blank(&self, i: usize) -> usize {
-        match (self.at(i), self.at(i + 1), self.at(i + 2)) {
-            (0xef, 0xbb, 0xbf) | (0xe2, 0x81, 0xa0) | (0xe2, 0x80, 0x8b) => 3,
-            _ => 0,
-        }
+        odd_blank_at(self.src, i)
     }
 
     /// The scanner's look from `p`: whether a line ended, the next line's indent `L`, the first
@@ -574,25 +570,9 @@ impl<'s> Lexer<'s> {
             }
     }
 
-    /// Whether a string starts at `i`: its prefix's length and how it reads.
+    /// Whether a string starts at `i` (`string_prefix_at`).
     fn string_prefix(&self, i: usize) -> Option<(usize, Quote)> {
-        let mut j = i;
-        let (mut raw, mut bytes, mut format) = (false, false, false);
-        loop {
-            match self.at(j) {
-                b'r' | b'R' => raw = true,
-                b'b' | b'B' => bytes = true,
-                b'f' | b'F' | b't' | b'T' => format = true,
-                b'u' | b'U' => {}
-                // A backtick too: the scanner reads Python 2's repr quotes as a string's.
-                b'\'' | b'"' | b'`' => break,
-                _ => return None,
-            }
-            j += 1;
-        }
-        let quote = self.at(j);
-        let triple = self.at(j + 1) == quote && self.at(j + 2) == quote;
-        Some((j - i, Quote { quote, triple, raw, bytes, format }))
+        string_prefix_at(self.src, i)
     }
 
     /// The token at `i` (not a blank, not an extra), and those of a string it starts.
@@ -676,128 +656,13 @@ impl<'s> Lexer<'s> {
         Ok(j)
     }
 
-    /// A number at `i`: tree-sitter-python's `integer` or `float`, the longest.
+    /// A number at `i` (`number_at`).
     fn number(&self, i: usize) -> (T, usize) {
-        let at = |k: usize| self.at(k);
-        let digits = |mut k: usize, ok: &dyn Fn(u8) -> bool| -> usize {
-            // `/_?[0-9]+/+` and `/[0-9]+_?/+` alike: digits with single underscores between.
-            while ok(at(k)) || (at(k) == b'_' && ok(at(k + 1))) {
-                k += 1;
-            }
-            k
-        };
-        let dec = |c: u8| c.is_ascii_digit();
-        if at(i) == b'0' && matches!(at(i + 1), b'x' | b'X' | b'o' | b'O' | b'b' | b'B') {
-            let ok: &dyn Fn(u8) -> bool = match at(i + 1) {
-                b'x' | b'X' => &|c: u8| c.is_ascii_hexdigit(),
-                b'o' | b'O' => &|c: u8| (b'0'..=b'7').contains(&c),
-                _ => &|c: u8| c == b'0' || c == b'1',
-            };
-            let start = if at(i + 2) == b'_' { i + 3 } else { i + 2 };
-            if ok(at(start)) {
-                let mut k = digits(start, ok);
-                if matches!(at(k), b'l' | b'L') {
-                    k += 1;
-                }
-                return (T::Int, k);
-            }
-            return (T::Int, i + 1);
-        }
-        // Decimal: digits (a trailing `_` allowed), a fraction, an exponent, a suffix.
-        let int_digits = |mut k: usize| -> usize {
-            while dec(at(k)) {
-                k += 1;
-                while dec(at(k)) {
-                    k += 1;
-                }
-                if at(k) == b'_' {
-                    k += 1;
-                }
-            }
-            k
-        };
-        let mut k = int_digits(i);
-        let mut float = false;
-        if at(k) == b'.' && (k > i || dec(at(k + 1))) {
-            float = true;
-            k = int_digits(k + 1);
-        }
-        if matches!(at(k), b'e' | b'E') {
-            let mut e = k + 1;
-            if matches!(at(e), b'+' | b'-') {
-                e += 1;
-            }
-            if dec(at(e)) {
-                float = true;
-                k = int_digits(e);
-            }
-        }
-        if float {
-            if matches!(at(k), b'j' | b'J' | b'l' | b'L') {
-                k += 1;
-            }
-            (T::Float, k)
-        } else {
-            if matches!(at(k), b'j' | b'J' | b'l' | b'L') {
-                k += 1;
-            }
-            (T::Int, k)
-        }
+        number_at(self.src, i)
     }
 
     fn operator(&self, i: usize) -> Result<(T, usize), Refusal> {
-        let (a, b, c) = (self.at(i), self.at(i + 1), self.at(i + 2));
-        Ok(match (a, b, c) {
-            (b'*', b'*', b'=') => (T::PowEq, 3),
-            (b'/', b'/', b'=') => (T::DSlashEq, 3),
-            (b'>', b'>', b'=') => (T::RShiftEq, 3),
-            (b'<', b'<', b'=') => (T::LShiftEq, 3),
-            (b'.', b'.', b'.') => (T::Ellipsis, 3),
-            (b'*', b'*', _) => (T::Pow, 2),
-            (b'/', b'/', _) => (T::DSlash, 2),
-            (b'>', b'>', _) => (T::RShift, 2),
-            (b'<', b'<', _) => (T::LShift, 2),
-            (b'<', b'=', _) => (T::Le, 2),
-            (b'>', b'=', _) => (T::Ge, 2),
-            (b'=', b'=', _) => (T::EqEq, 2),
-            (b'!', b'=', _) => (T::Ne, 2),
-            (b'<', b'>', _) => (T::LtGt, 2),
-            (b'-', b'>', _) => (T::Arrow, 2),
-            (b':', b'=', _) => (T::Walrus, 2),
-            (b'+', b'=', _) => (T::PlusEq, 2),
-            (b'-', b'=', _) => (T::MinusEq, 2),
-            (b'*', b'=', _) => (T::StarEq, 2),
-            (b'/', b'=', _) => (T::SlashEq, 2),
-            (b'@', b'=', _) => (T::AtEq, 2),
-            (b'%', b'=', _) => (T::PercentEq, 2),
-            (b'&', b'=', _) => (T::AmpEq, 2),
-            (b'^', b'=', _) => (T::CaretEq, 2),
-            (b'|', b'=', _) => (T::PipeEq, 2),
-            (b'(', ..) => (T::LParen, 1),
-            (b')', ..) => (T::RParen, 1),
-            (b'[', ..) => (T::LBracket, 1),
-            (b']', ..) => (T::RBracket, 1),
-            (b'{', ..) => (T::LBrace, 1),
-            (b'}', ..) => (T::RBrace, 1),
-            (b',', ..) => (T::Comma, 1),
-            (b':', ..) => (T::Colon, 1),
-            (b';', ..) => (T::Semi, 1),
-            (b'.', ..) => (T::Dot, 1),
-            (b'=', ..) => (T::Eq, 1),
-            (b'@', ..) => (T::At, 1),
-            (b'+', ..) => (T::Plus, 1),
-            (b'-', ..) => (T::Minus, 1),
-            (b'*', ..) => (T::Star, 1),
-            (b'/', ..) => (T::Slash, 1),
-            (b'%', ..) => (T::Percent, 1),
-            (b'&', ..) => (T::Amp, 1),
-            (b'|', ..) => (T::Pipe, 1),
-            (b'^', ..) => (T::Caret, 1),
-            (b'~', ..) => (T::Tilde, 1),
-            (b'<', ..) => (T::Lt, 1),
-            (b'>', ..) => (T::Gt, 1),
-            _ => return Err(self.refuse(i)),
-        })
+        operator_at(self.src, i).ok_or_else(|| self.refuse(i))
     }
 
     /// A string from `i`: its start (prefix and quotes), text, escapes, interpolations, end.
@@ -904,42 +769,9 @@ impl<'s> Lexer<'s> {
         }
     }
 
-    /// An escape sequence's end, where one starts at `s` (tree-sitter-python's `escape_sequence`).
+    /// An escape sequence's end (`escape_at`).
     fn escape(&self, s: usize) -> Option<usize> {
-        let at = |k: usize| self.at(k);
-        let hex = |from: usize, n: usize| (from..from + n).all(|k| at(k).is_ascii_hexdigit());
-        let c = at(s + 1);
-        Some(match c {
-            b'u' if hex(s + 2, 4) => s + 6,
-            b'U' if hex(s + 2, 8) => s + 10,
-            b'x' if hex(s + 2, 2) => s + 4,
-            b'0'..=b'9' => {
-                let mut k = s + 2;
-                while k < s + 4 && at(k).is_ascii_digit() {
-                    k += 1;
-                }
-                k
-            }
-            b'\r' => {
-                if at(s + 2) == b'\n' {
-                    s + 3
-                } else {
-                    s + 2
-                }
-            }
-            b'\n' | b'\'' | b'"' | b'a' | b'b' | b'f' | b'r' | b'n' | b't' | b'v' | b'\\' => s + 2,
-            b'N' if at(s + 2) == b'{' => {
-                let mut k = s + 3;
-                while k < self.src.len() && at(k) != b'}' {
-                    k += 1;
-                }
-                if k == s + 3 || k >= self.src.len() {
-                    return None;
-                }
-                k + 1
-            }
-            _ => return None,
-        })
+        escape_at(self.src, s)
     }
 
     /// An interpolation from its `{` at `s`: its expression's tokens, then `=`, `!x`, a format
@@ -1027,6 +859,203 @@ impl<'s> Lexer<'s> {
             i = self.interpolation(s)?;
         }
     }
+}
+
+/// The width of a zero-width-space-like character tree-sitter-python takes as a blank (U+FEFF,
+/// U+2060, U+200B), or 0.
+#[inline(always)]
+pub(crate) fn odd_blank_at(src: &[u8], i: usize) -> usize {
+    let at = |k: usize| src.get(k).copied().unwrap_or(0);
+    match (at(i), at(i + 1), at(i + 2)) {
+        (0xef, 0xbb, 0xbf) | (0xe2, 0x81, 0xa0) | (0xe2, 0x80, 0x8b) => 3,
+        _ => 0,
+    }
+}
+
+/// Whether a string starts at `i`: its prefix's length and how it reads.
+pub(crate) fn string_prefix_at(src: &[u8], i: usize) -> Option<(usize, Quote)> {
+    let at = |k: usize| src.get(k).copied().unwrap_or(0);
+    let mut j = i;
+    let (mut raw, mut bytes, mut format) = (false, false, false);
+    loop {
+        match at(j) {
+            b'r' | b'R' => raw = true,
+            b'b' | b'B' => bytes = true,
+            b'f' | b'F' | b't' | b'T' => format = true,
+            b'u' | b'U' => {}
+            // A backtick too: the scanner reads Python 2's repr quotes as a string's.
+            b'\'' | b'"' | b'`' => break,
+            _ => return None,
+        }
+        j += 1;
+    }
+    let quote = at(j);
+    let triple = at(j + 1) == quote && at(j + 2) == quote;
+    Some((j - i, Quote { quote, triple, raw, bytes, format }))
+}
+
+/// A number at `i`: tree-sitter-python's `integer` or `float`, the longest.
+pub(crate) fn number_at(src: &[u8], i: usize) -> (T, usize) {
+    let at = |k: usize| src.get(k).copied().unwrap_or(0);
+    let digits = |mut k: usize, ok: &dyn Fn(u8) -> bool| -> usize {
+        // `/_?[0-9]+/+` and `/[0-9]+_?/+` alike: digits with single underscores between.
+        while ok(at(k)) || (at(k) == b'_' && ok(at(k + 1))) {
+            k += 1;
+        }
+        k
+    };
+    let dec = |c: u8| c.is_ascii_digit();
+    if at(i) == b'0' && matches!(at(i + 1), b'x' | b'X' | b'o' | b'O' | b'b' | b'B') {
+        let ok: &dyn Fn(u8) -> bool = match at(i + 1) {
+            b'x' | b'X' => &|c: u8| c.is_ascii_hexdigit(),
+            b'o' | b'O' => &|c: u8| (b'0'..=b'7').contains(&c),
+            _ => &|c: u8| c == b'0' || c == b'1',
+        };
+        let start = if at(i + 2) == b'_' { i + 3 } else { i + 2 };
+        if ok(at(start)) {
+            let mut k = digits(start, ok);
+            if matches!(at(k), b'l' | b'L') {
+                k += 1;
+            }
+            return (T::Int, k);
+        }
+        return (T::Int, i + 1);
+    }
+    // Decimal: digits (a trailing `_` allowed), a fraction, an exponent, a suffix.
+    let int_digits = |mut k: usize| -> usize {
+        while dec(at(k)) {
+            k += 1;
+            while dec(at(k)) {
+                k += 1;
+            }
+            if at(k) == b'_' {
+                k += 1;
+            }
+        }
+        k
+    };
+    let mut k = int_digits(i);
+    let mut float = false;
+    if at(k) == b'.' && (k > i || dec(at(k + 1))) {
+        float = true;
+        k = int_digits(k + 1);
+    }
+    if matches!(at(k), b'e' | b'E') {
+        let mut e = k + 1;
+        if matches!(at(e), b'+' | b'-') {
+            e += 1;
+        }
+        if dec(at(e)) {
+            float = true;
+            k = int_digits(e);
+        }
+    }
+    if float {
+        if matches!(at(k), b'j' | b'J' | b'l' | b'L') {
+            k += 1;
+        }
+        (T::Float, k)
+    } else {
+        if matches!(at(k), b'j' | b'J' | b'l' | b'L') {
+            k += 1;
+        }
+        (T::Int, k)
+    }
+}
+
+/// The operator or punctuation at `i` and its length.
+pub(crate) fn operator_at(src: &[u8], i: usize) -> Option<(T, usize)> {
+    let at = |k: usize| src.get(k).copied().unwrap_or(0);
+    let (a, b, c) = (at(i), at(i + 1), at(i + 2));
+    Some(match (a, b, c) {
+        (b'*', b'*', b'=') => (T::PowEq, 3),
+        (b'/', b'/', b'=') => (T::DSlashEq, 3),
+        (b'>', b'>', b'=') => (T::RShiftEq, 3),
+        (b'<', b'<', b'=') => (T::LShiftEq, 3),
+        (b'.', b'.', b'.') => (T::Ellipsis, 3),
+        (b'*', b'*', _) => (T::Pow, 2),
+        (b'/', b'/', _) => (T::DSlash, 2),
+        (b'>', b'>', _) => (T::RShift, 2),
+        (b'<', b'<', _) => (T::LShift, 2),
+        (b'<', b'=', _) => (T::Le, 2),
+        (b'>', b'=', _) => (T::Ge, 2),
+        (b'=', b'=', _) => (T::EqEq, 2),
+        (b'!', b'=', _) => (T::Ne, 2),
+        (b'<', b'>', _) => (T::LtGt, 2),
+        (b'-', b'>', _) => (T::Arrow, 2),
+        (b':', b'=', _) => (T::Walrus, 2),
+        (b'+', b'=', _) => (T::PlusEq, 2),
+        (b'-', b'=', _) => (T::MinusEq, 2),
+        (b'*', b'=', _) => (T::StarEq, 2),
+        (b'/', b'=', _) => (T::SlashEq, 2),
+        (b'@', b'=', _) => (T::AtEq, 2),
+        (b'%', b'=', _) => (T::PercentEq, 2),
+        (b'&', b'=', _) => (T::AmpEq, 2),
+        (b'^', b'=', _) => (T::CaretEq, 2),
+        (b'|', b'=', _) => (T::PipeEq, 2),
+        (b'(', ..) => (T::LParen, 1),
+        (b')', ..) => (T::RParen, 1),
+        (b'[', ..) => (T::LBracket, 1),
+        (b']', ..) => (T::RBracket, 1),
+        (b'{', ..) => (T::LBrace, 1),
+        (b'}', ..) => (T::RBrace, 1),
+        (b',', ..) => (T::Comma, 1),
+        (b':', ..) => (T::Colon, 1),
+        (b';', ..) => (T::Semi, 1),
+        (b'.', ..) => (T::Dot, 1),
+        (b'=', ..) => (T::Eq, 1),
+        (b'@', ..) => (T::At, 1),
+        (b'+', ..) => (T::Plus, 1),
+        (b'-', ..) => (T::Minus, 1),
+        (b'*', ..) => (T::Star, 1),
+        (b'/', ..) => (T::Slash, 1),
+        (b'%', ..) => (T::Percent, 1),
+        (b'&', ..) => (T::Amp, 1),
+        (b'|', ..) => (T::Pipe, 1),
+        (b'^', ..) => (T::Caret, 1),
+        (b'~', ..) => (T::Tilde, 1),
+        (b'<', ..) => (T::Lt, 1),
+        (b'>', ..) => (T::Gt, 1),
+        _ => return None,
+    })
+}
+
+/// An escape sequence's end, where one starts at `s` (tree-sitter-python's `escape_sequence`).
+pub(crate) fn escape_at(src: &[u8], s: usize) -> Option<usize> {
+    let at = |k: usize| src.get(k).copied().unwrap_or(0);
+    let hex = |from: usize, n: usize| (from..from + n).all(|k| at(k).is_ascii_hexdigit());
+    let c = at(s + 1);
+    Some(match c {
+        b'u' if hex(s + 2, 4) => s + 6,
+        b'U' if hex(s + 2, 8) => s + 10,
+        b'x' if hex(s + 2, 2) => s + 4,
+        b'0'..=b'9' => {
+            let mut k = s + 2;
+            while k < s + 4 && at(k).is_ascii_digit() {
+                k += 1;
+            }
+            k
+        }
+        b'\r' => {
+            if at(s + 2) == b'\n' {
+                s + 3
+            } else {
+                s + 2
+            }
+        }
+        b'\n' | b'\'' | b'"' | b'a' | b'b' | b'f' | b'r' | b'n' | b't' | b'v' | b'\\' => s + 2,
+        b'N' if at(s + 2) == b'{' => {
+            let mut k = s + 3;
+            while k < src.len() && at(k) != b'}' {
+                k += 1;
+            }
+            if k == s + 3 || k >= src.len() {
+                return None;
+            }
+            k + 1
+        }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

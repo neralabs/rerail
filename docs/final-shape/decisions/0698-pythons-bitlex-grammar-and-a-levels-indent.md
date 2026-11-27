@@ -633,3 +633,13 @@ statements and blocks end.
     - **A nested f-string bails:** the file is refused (to tree-sitter). It is a spike; the rare path is not decided.
     - **The bracket depth's bound (31) is a rule:** a file past it is refused, as now.
     - **The strata are made with bit operations,** the regions' openers and their terminators included.
+
+94. **The strata spike, as built** (`rerail-python-lean`'s `strata`, beside the lean lexer; its own tests, and
+    `examples/compare_strata` over a directory of files).
+    - **Its output is the lean lexer's** (`Lexed`), compared token by token and extra by extra. Both read numbers,
+      operators, escapes and string prefixes with the same functions (moved out of the lean lexer's methods).
+    - **The bracket depth is clamped at 0 as the lean lexer's counter is:** a block's prefix sum less its prefix
+      minimum where that is below 0, both on `std::simd`'s interface. The walk reads it as one bit of `depth0`.
+    - **An f-string's escaped braces (`{{`, `}}`) are stepped a pair at a time** at the text's stops, not found by
+      an odd-run mask: a run of `}` can start inside an interior (`f"{x}}}"`), where an odd-run's parity is wrong.
+    - **`\N{…}` in an f-string is refused**, as a nested f-string is: the name's braces are not an interpolation's.

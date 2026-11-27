@@ -21,6 +21,7 @@
 mod block;
 mod lex;
 mod parse;
+pub mod strata;
 
 pub use lex::Refusal;
 
