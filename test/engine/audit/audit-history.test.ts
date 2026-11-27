@@ -36,12 +36,18 @@ function openSaying(path: string): { database: RerailDatabase; said: string[] } 
   }
 }
 
-/** What an open of `path` wrote on this thread's stderr when a step after every step of this build failed it. */
-function saidByFailedOpen(path: string): string[] {
+/**
+ * What an open of `path` wrote on this thread's stderr when a step right after this build's `step` failed it. Failing
+ * there, it skips the later steps and the DDL, which a second whole upgrade would add to the case's time.
+ */
+function saidByFailedOpen(path: string, step: string): string[] {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   try {
+    const after = RERAIL_MIGRATIONS.findIndex(migration => migration.id === step) + 1;
+    expect(after).toBeGreaterThan(0);
     const fails: Migration = { id: "a-later-step-fails", up() { throw new Error("a later step failed"); } };
-    expect(() => openRerailDatabase(path, { migrations: [...RERAIL_MIGRATIONS, fails] })).toThrow("a later step failed");
+    const migrations = [...RERAIL_MIGRATIONS.slice(0, after), fails, ...RERAIL_MIGRATIONS.slice(after)];
+    expect(() => openRerailDatabase(path, { migrations })).toThrow("a later step failed");
     return stderr.mock.calls.map(([chunk]) => String(chunk));
   } finally {
     stderr.mockRestore();
@@ -523,7 +529,7 @@ describe("derived audit history", () => {
     }
 
     // An open that fails after the step leaves it unrecorded, so it names nothing; the next open runs the step again.
-    expect(saidByFailedOpen(path)).toEqual([]);
+    expect(saidByFailedOpen(path, "audits-origin")).toEqual([]);
     const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
@@ -598,7 +604,7 @@ describe("derived audit history", () => {
       baseline.close();
     }
 
-    expect(saidByFailedOpen(path)).toEqual([]);
+    expect(saidByFailedOpen(path, "audit-history-derived-tables")).toEqual([]);
     const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
