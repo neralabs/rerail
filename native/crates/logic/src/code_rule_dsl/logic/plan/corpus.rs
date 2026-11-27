@@ -8776,7 +8776,11 @@ fn run_observed_within(
         let located = |r: &str| split.locations.get(r).is_some_and(|l| l.contains(&0));
         let mut by: Vec<(usize, String, std::result::Result<preparation::callable::Candidate, String>)> = preparation::callable::candidates(&lowered.version, &split.file_local, &split.exports, &located).into_iter().map(|(r, c)| (totals.rows(&r).unwrap_or(0), r, c)).collect();
         by.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| format!("{} {} by {} ({n} rows, {} readers{})", c.rel, c.pattern(), if c.by_file { "file" } else { "key" }, c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default()))).take(12).collect();
+        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| {
+            // The keys' distinct values, column by column (the rows a key is at least rows / the largest).
+            let keys: Vec<String> = c.bound.iter().filter(|&&k| !(c.by_file && k == 0)).map(|&k| totals.ndv(&c.rel, k).map_or_else(|| format!("c{k} ?"), |d| format!("c{k} {d}"))).collect();
+            format!("{} {} by {} ({n} rows; distinct {}; {} readers{})", c.rel, c.pattern(), if c.by_file { "file" } else { "key" }, keys.join(", "), c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default())
+        })).take(12).collect();
         let not: Vec<String> = by.iter().filter_map(|(n, r, c)| c.as_ref().err().map(|why| format!("{r} ({n} rows): {why}"))).take(8).collect();
         format!("{} of {} exports: {}; the largest not: {}", by.iter().filter(|b| b.2.is_ok()).count(), split.exports.len(), shown.join(", "), not.join("; "))
     });
@@ -10695,6 +10699,15 @@ impl Totals {
             let m = &self.sketches[t.sketch as usize];
             (m.ndv().round() as i64, m.sq().round() as i64)
         }
+    }
+    /// `rel`'s column `c`'s distinct values over the chunks, if it was measured (its sketch's estimate past its few).
+    fn ndv(&self, rel: &str, c: usize) -> Option<i64> {
+        let (r, col) = (self.names.find(rel)? as u32, self.names.find(&format!("c{c}"))? as u32);
+        if let Some(&at) = self.val_at.get(&[r, col]) {
+            let t = &self.vals[at as usize];
+            return self.live(t).then(|| self.moments(t).0);
+        }
+        self.cols.get(&[r, col]).filter(|v| v[4] == i64::from(self.born(r))).map(|v| v[1])
     }
     /// `rel`'s rows measured, if it was.
     fn rows(&self, rel: &str) -> Option<usize> {

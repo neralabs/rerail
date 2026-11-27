@@ -96,3 +96,12 @@ file's rows of a cross-read relation R on as `R_at(d, ..)`, its document in fron
 A call routed by key needs what the spike does not have: each file's keys, so that a request is sent to the files
 that can answer it. The rows here are the exports' rows, not what readers ask for: how many of the keys a run asks
 for is not measured.
+
+**Rows a key**, by the run's totals of each candidate's bound columns (the same PostHog run, 49.2 s user CPU): the
+largest of `points_to`'s have about one row a key. `pt_at_at` 118,867 rows, 117,008 distinct terms; `pt_chk_at` the
+same; `pt_vopen_l_8_at` 79,319 and 77,604; `pt_btype_l_0_at` 50,764 and 50,122; `pt_callee_t_at` 27,335 and 27,382.
+The most rows a key: `pt_qn_t_at`, 38,077 rows over 4,720 keys (8 a key); `pt_look_t_at`, 93,224 over 11,396 values
+of one of its two key columns (8 a key at most). The policies' `violation`: 461,298 rows, 461,298 keys. A file's
+keys handed on for routing would be as many rows as these exports are: the exports are already keyed summaries
+(decision 0677), and no export of these programs is the generated corpus's shape, many rows a key.
+
