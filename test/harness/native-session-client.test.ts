@@ -17,7 +17,7 @@ import { join, resolve } from "node:path";
 import superjson from "superjson";
 import { z } from "zod";
 import type { AdapterDelivery } from "../../src/engine/index.js";
-import type { DaemonLaunchOptions } from "../../src/runtime/index.js";
+import { AutostartOffError, type DaemonLaunchOptions } from "../../src/runtime/index.js";
 import { createNativeSession, NativeSessionClient } from "../../src/harness/native-session-client.js";
 import { CodeRuleBridge, codeRuleSchema, defaultRerailDatabasePath } from "../../src/engine/index.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, MUTATION_ENTRY_TYPE, SqliteSessionReader } from "../../src/runtime/index.js";
@@ -25,9 +25,12 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { withAutostartOn } from "../support/environment/autostart.js";
 import { withExperiments } from "../support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
+// The attach starts or replaces a daemon only with autostart on, as a person's shell has it.
+withAutostartOn();
 
 const delivery = (content: string, ruleIds: readonly string[] = []): AdapterDelivery => ({
   sessionId: "session", requested: "steer", mechanism: "native-queue", content, ruleIds, rules: ruleIds.map(id => ({ id, state: "steered" })),
@@ -165,6 +168,21 @@ describe("pi session routing", () => {
     expect(nativeBoundary.startDaemonForPackage).toHaveBeenCalledOnce();
     expect(initialized[0]).toEqual(expect.objectContaining({ host: "pi", operation: "initialize" }));
     await active[0]?.close();
+  });
+
+  // A person who runs the daemon themselves: the attach looks it up as a hook's session start does, and starts none.
+  it.each(["omp", "pi"] as const)("under RERAIL_AUTOSTART=0, starts no daemon for a %s session where none runs, and fails with the error a session's start answers", async host => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-attach-autostart-off-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    nativeBoundary.isMainRerailBuild.mockReturnValue(true);
+    const active: NativeSessionClient[] = [];
+
+    await expect(createNativeSession(piHost(active), {}, { ...piSession, host }, false, {})).rejects.toBeInstanceOf(AutostartOffError);
+
+    expect(nativeBoundary.startDaemonForPackage).not.toHaveBeenCalled();
+    expect(active).toEqual([]);
   });
 
   it("keeps a checkout's pi session in-process and starts no daemon", async () => {

@@ -6,6 +6,7 @@
  */
 export {
   AUTOSTART_CLAIM_FILE,
+  AutostartOffError,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,

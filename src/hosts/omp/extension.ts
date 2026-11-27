@@ -308,6 +308,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       reportDropped: count => presentation.dropped(count),
       // With no runtime left, the footer follows the failing session, so it can say what is being dropped.
       failed: ctx => { if (remote === undefined) presentation.start(ctx); },
+      say: (ctx, line) => ctx.ui.notify(line, "info"),
       recorder: sessionId => remote !== undefined && activeSession?.sessionId === sessionId ? remote : undefined,
     });
     const attach = (ctx: ExtensionContext): Promise<void> => {

@@ -14,6 +14,7 @@ import {
   defaultEngineSocketPath,
   parsePublicHosts,
   RerailDaemon,
+  relaunchArguments,
   type RerailDaemonOptions,
 } from "../../src/daemon/daemon.js";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
@@ -994,6 +995,53 @@ describe("Rerail daemon", () => {
     } finally {
       await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
     }
+  });
+
+  /** `count` distinct ports free a moment ago on loopback: each held at once, then all let go. */
+  async function freePorts(count: number): Promise<number[]> {
+    const servers = Array.from({ length: count }, () => createServer());
+    await Promise.all(servers.map(async server => await new Promise<void>((resolveListening) => server.listen(0, "127.0.0.1", () => resolveListening()))));
+    const ports = servers.map(server => (server.address() as { port: number }).port);
+    await Promise.all(servers.map(async server => await new Promise<void>((resolveClosed) => server.close(() => resolveClosed()))));
+    return ports;
+  }
+
+  // A daemon started in place of another (a hook's replacement, its own restart) tries the port that one held first, so
+  // a dashboard link shown for it still answers, whether it was asked for any port or named none; where another program
+  // took that port in between, it goes on as it would without one, and its start does not fail.
+  it.each([
+    ["any free port", 0, "a free one"],
+    ["no port", undefined, "the remembered one"],
+  ])("asked for %s in place of another daemon, comes back on that daemon's port, and goes on to %s where that port is held", async (_asked, port, _then) => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    process.env.RERAIL_HOME = join(root, "home");
+    const portFile = join(root, "daemon-port.json");
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, ...(port === undefined ? {} : { port }) };
+    const [old = 0, remembered = 0] = await freePorts(2);
+    await writeFile(portFile, `${JSON.stringify({ port: remembered })}\n`);
+
+    const back = await RerailDaemon.start({ ...options, preferredPort: old });
+    daemons.push(back);
+    expect(back.port).toBe(old);
+    await back.close();
+
+    const blocker = createServer();
+    await new Promise<void>((resolveListening) => blocker.listen(old, "127.0.0.1", () => resolveListening()));
+    try {
+      const moved = await RerailDaemon.start({ ...options, preferredPort: old });
+      daemons.push(moved);
+      expect(moved.port).not.toBe(old);
+      if (port === undefined) expect(moved.port).toBe(remembered);
+    } finally {
+      await new Promise<void>((resolveClosed) => blocker.close(() => resolveClosed()));
+    }
+  });
+
+  it("restarts itself trying first the port it listens on, in place of any it was given to try", () => {
+    const entry = "/package/dist/daemon/daemon-entry.js";
+    expect(relaunchArguments([entry, "--port", "0", "--state-file", "/home/daemon.json"], 41234))
+      .toEqual([entry, "--port", "0", "--state-file", "/home/daemon.json", "--prefer-port", "41234"]);
+    expect(relaunchArguments([entry, "--prefer-port", "4737", "--port", "0"], 41234)).toEqual([entry, "--port", "0", "--prefer-port", "41234"]);
   });
 
   // A port below 1024 is refused (EACCES) to an unprivileged process on most systems, as a port Windows reserved is.

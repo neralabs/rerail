@@ -238,6 +238,17 @@ describe("rerail start --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(environment.pages.at(-1)).toEqual({ repoRoot: setup.repo, repositoryKey, page: "rules", open: false, daemon: "running" });
   });
 
+  // OMP's and Pi's `/rerail-start` shows this step: a link no daemon serves would refuse the connection.
+  it("ends on the line saying no daemon runs, in place of the link, where RERAIL_AUTOSTART left it none", async () => {
+    const setup = await fixture();
+    await runSetup({ lane: "agent", say: () => {} }, request(setup, fakeSetupEnvironment(), { answer: "start", repo: setup.repo, packs: TYPESCRIPT }));
+    const environment = fakeSetupEnvironment({ notRunning: "The Rerail daemon is not running." });
+
+    const step = await startRerailStep(setup.repo, { databasePath: setup.databasePath, environment });
+    expect(step).toMatchObject({ step: "done", question: null });
+    expect(step.screen.split("\n").at(-1)).toBe("  The Rerail daemon is not running.");
+  });
+
   it("takes `--relay`, as `/rerail-start` passes it, and answers in JSON", async () => {
     const setup = await fixture();
     const home = join(setup.root, "home");

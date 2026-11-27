@@ -49,9 +49,12 @@ import type { HostCommandContext } from "../../../src/harness/index.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withAutostartOn } from "../../support/environment/autostart.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
+// The attach starts or replaces a daemon only with autostart on, as a person's shell has it.
+withAutostartOn();
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
 // build alone can pass the 5 s default, whichever test happens to pay the cold start.

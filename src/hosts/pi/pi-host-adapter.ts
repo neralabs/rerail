@@ -120,6 +120,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     initialize,
     sessionId: context => context.sessionManager.getSessionId(),
     appendEntry: (customType, data) => pi.appendEntry(customType, data),
+    say: (context, line) => context.ui.notify(line, "info"),
     ...runtime.attachGaps,
   });
   /** The session an event of Pi's goes to: none while the session Pi is in is failing to attach, though the runtime of a session Pi left survived. */

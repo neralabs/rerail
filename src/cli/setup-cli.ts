@@ -32,6 +32,8 @@ import {
   accessTokenKept,
   AUTOSTART_CLAIM_FILE,
   autostartOff,
+  AutostartOffError,
+  autostartOffLine,
   browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -43,6 +45,7 @@ import {
   MACHINE_WITHOUT_ENGINE,
   mainInstanceHolderRuns,
   openDashboard,
+  OtherDaemonKeptError,
   START_LOCK_DIR,
   startDaemon,
   startDaemonForPackage,
@@ -1048,9 +1051,20 @@ async function dashboardDaemon(context: SetupContext, port: number | undefined, 
   const lookup = await lookupDaemon(context.home);
   const kept = await KEPT_DAEMON[daemon](lookup, packageRoot, port);
   if (kept !== undefined) return kept;
-  if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
+  if (autostartOff()) throw keptByAutostart(lookup);
   const stopped = await stoppedPort(context.home, lookup);
   return await startActiveDaemon(context.home, packageRoot, port ?? stopped);
+}
+
+/**
+ * Why `RERAIL_AUTOSTART` left a dashboard link with no daemon to keep, by what `lookup` found: none runs
+ * (`AutostartOffError`), or one runs the link may not keep (`OtherDaemonKeptError`), each of which a session's start
+ * says in its own line (`autostartOffLine`); a daemon that does not answer gets a plain error, as a start would refuse it.
+ */
+function keptByAutostart(lookup: DaemonLookup): Error {
+  const why = `RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`;
+  if (lookup.status === "absent") return new AutostartOffError(why);
+  return foundRunning(lookup) ? new OtherDaemonKeptError(why) : new Error(why);
 }
 
 /**
@@ -1257,8 +1271,7 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
         origin = (await dashboardDaemon(context, port, daemon)).url;
       } catch (error) {
         // Rerail may be on already; the link works once a session brings the daemon up.
-        const reason = `the dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
-        return { url: pageUrl(`http://127.0.0.1:${port ?? DEFAULT_DAEMON_PORT}/`, scope, page), browserOpened: false, noBrowserReason: reason };
+        return linkWithoutDaemon(pageUrl(`http://127.0.0.1:${port ?? DEFAULT_DAEMON_PORT}/`, scope, page), error);
       }
       const url = pageUrl(origin, scope, page);
       if (!open) return { url, browserOpened: false, linkOnly: true };
@@ -1268,6 +1281,16 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       return { url, browserOpened: true };
     },
   };
+}
+
+/**
+ * The link set-up shows where no daemon could be had (`error` says why), `url` on the port one started for it would
+ * take, and when `RERAIL_AUTOSTART` kept it from a daemon, the line a session's start says then ({@link DashboardLink}).
+ */
+function linkWithoutDaemon(url: string, error: unknown): DashboardLink {
+  const reason = `the dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
+  const notRunning = autostartOffLine(error);
+  return { url, browserOpened: false, noBrowserReason: reason, ...(notRunning === undefined ? {} : { notRunning }) };
 }
 
 /** What a set-up run carries into every answer it prints, so the next run acts on the same database, port, scope, coding agents and lane. */

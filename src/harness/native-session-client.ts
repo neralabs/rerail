@@ -4,7 +4,14 @@ import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../engine/adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
-import { daemonAccessHeaders, daemonFetch, startDaemonForPackage } from "../runtime/daemon-control.js";
+import {
+  autostartOff,
+  daemonAccessHeaders,
+  daemonFetch,
+  sessionDaemonAutostartOff,
+  startDaemonForPackage,
+  type RunningDaemon,
+} from "../runtime/daemon-control.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
@@ -138,14 +145,7 @@ export async function createNativeSession<Context>(
     if (current !== undefined) await host.close();
     return "host";
   }
-  const { daemon } = await startDaemonForPackage({
-    home: defaultRerailHome(),
-    packageRoot: PACKAGE_ROOT,
-  }, {
-    dev: false,
-    port: 0,
-    cwd: session.cwd,
-  });
+  const daemon = await attachedDaemon(session.cwd);
   const instance = {
     workspaceRoot: daemon.health.workspaceRoot,
     url: new URL(daemon.state.url),
@@ -193,6 +193,17 @@ export async function createNativeSession<Context>(
     throw error;
   }
   return "attached";
+}
+
+/**
+ * The daemon a session attaches to: this package's, started where none runs on any free port, and in place of another
+ * package's, on the port that one had when it can be had ({@link startDaemonForPackage}). Under `RERAIL_AUTOSTART=0` it
+ * is only looked up, as a hook's session start looks it up, and none started or replaced: the attach then fails with
+ * the error the extension answers with the hooks' line (`autostartOffLine`).
+ */
+async function attachedDaemon(cwd: string): Promise<RunningDaemon> {
+  if (autostartOff()) return await sessionDaemonAutostartOff();
+  return (await startDaemonForPackage({ home: defaultRerailHome(), packageRoot: PACKAGE_ROOT }, { dev: false, port: 0, cwd })).daemon;
 }
 
 type StreamedOrExplicitOperation = "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close";
