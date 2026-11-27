@@ -619,3 +619,9 @@ statements and blocks end.
     comment before it. In Python's tier 1 that is the regions' state the string reader takes the place of
     (`template`, `held`, `opened`, `level`, `frames`, `depth`, `close`). The reader's own flag that an interpolation's
     `{` ended the text is `to_code`, apart from the regions' `opened`.
+
+92. **F-strings in a lexer of strata** (the user's choices, for the strata design under review: tier 1 as masks
+    built stratum by stratum, comments and strings, bracket depth, significant line breaks, then tokens). An
+    f-string's interiors are lexed recursively, by the same strata as code, where the interior is determined
+    reliably. A nested f-string (an f-string opened inside an interior) is a rare path, and may refuse the file to
+    tree-sitter: nested f-strings are not common.
