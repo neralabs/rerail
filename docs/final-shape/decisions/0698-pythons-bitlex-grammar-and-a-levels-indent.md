@@ -457,3 +457,5 @@ statements and blocks end.
     `check ellipsis = '.' '.' '.'`, in place of the run over `ell`. A pairs triple, as the lean lexer's table has it,
     cannot hold `...`: a triple's first two bytes must be a pair, and Python's `..` is two tokens. Four dots or more
     are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.
+80. **The loop skips a class.** `skip ws`, as rr's, Kotlin's and JSON's, in place of `skip code & (blank | lf)`.
+    Between tokens the loop is always in code: a region's bytes are its token's.

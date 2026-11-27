@@ -244,33 +244,38 @@ Some(j)
 }
 
 /// The classes' nibble tables, pair 0 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_0: [u8; 16] = [0x36, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x7c, 0x3d, 0x38, 0x88, 0x09, 0x09, 0x08, 0x18];
-static HI_0: [u8; 16] = [0x01, 0x00, 0x42, 0x04, 0x08, 0x90, 0x08, 0xa0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_0: [u8; 16] = [0x6a, 0x78, 0xf8, 0x78, 0x78, 0x78, 0x78, 0xf8, 0x78, 0x7d, 0x74, 0x10, 0x15, 0x15, 0x10, 0x30];
+static HI_0: [u8; 16] = [0x05, 0x00, 0x82, 0x08, 0x10, 0x20, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The classes' nibble tables, pair 1 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_1: [u8; 16] = [0x08, 0x08, 0xec, 0x08, 0x48, 0x48, 0x28, 0x0c, 0x08, 0x19, 0x08, 0x08, 0x18, 0x0a, 0x08, 0x08];
-static HI_1: [u8; 16] = [0x10, 0x00, 0x05, 0x00, 0x20, 0xc2, 0x20, 0xc2, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08];
+static LO_1: [u8; 16] = [0x10, 0x10, 0xd0, 0x10, 0x90, 0x90, 0x50, 0x10, 0x11, 0x34, 0x10, 0x12, 0x30, 0x18, 0x10, 0x10];
+static HI_1: [u8; 16] = [0x20, 0x00, 0x05, 0x00, 0x40, 0x8a, 0x40, 0x8a, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10];
 
 /// The classes' nibble tables, pair 2 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_2: [u8; 16] = [0x40, 0xd0, 0xe1, 0xe0, 0xc4, 0xc0, 0xc2, 0x40, 0x40, 0x40, 0x00, 0x00, 0x08, 0x00, 0x08, 0x00];
-static HI_2: [u8; 16] = [0x00, 0x00, 0x00, 0x48, 0x83, 0x04, 0x93, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_2: [u8; 16] = [0x00, 0x20, 0x43, 0x40, 0x08, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x80, 0x10, 0x80, 0x10, 0x00];
+static HI_2: [u8; 16] = [0x00, 0x00, 0x80, 0x10, 0x06, 0x09, 0x26, 0x49, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The classes' nibble tables, pair 3 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_3: [u8; 16] = [0x00, 0x08, 0x1a, 0x00, 0x10, 0x40, 0x18, 0x02, 0x00, 0x00, 0x01, 0x80, 0x04, 0x80, 0x28, 0x00];
-static HI_3: [u8; 16] = [0x01, 0x00, 0x82, 0x00, 0x20, 0x44, 0x08, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_3: [u8; 16] = [0x20, 0x68, 0x7a, 0x60, 0x70, 0x60, 0x78, 0x22, 0xa0, 0x20, 0x01, 0x00, 0x04, 0x00, 0x08, 0x00];
+static HI_3: [u8; 16] = [0x01, 0x00, 0x02, 0x20, 0x40, 0x84, 0x48, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The classes' nibble tables, pair 4 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_4: [u8; 16] = [0x20, 0x08, 0x00, 0x00, 0x00, 0x0c, 0x08, 0x00, 0x09, 0x08, 0x18, 0xd8, 0x98, 0xd8, 0xd8, 0x0a];
-static HI_4: [u8; 16] = [0x00, 0x00, 0x08, 0x10, 0x26, 0x41, 0x06, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_4: [u8; 16] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x04];
+static HI_4: [u8; 16] = [0x00, 0x00, 0x00, 0x00, 0x0d, 0x02, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The classes' nibble tables, pair 5 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_5: [u8; 16] = [0x23, 0x03, 0x03, 0x03, 0x07, 0x03, 0x03, 0x03, 0x03, 0x02, 0x02, 0x03, 0x12, 0x02, 0x03, 0x0b];
-static HI_5: [u8; 16] = [0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x20, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_5: [u8; 16] = [0x04, 0x01, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x01, 0x03, 0x1b, 0x13, 0x1b, 0x1b, 0x01];
+static HI_5: [u8; 16] = [0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+/// The classes' nibble tables, pair 6 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
+static LO_6: [u8; 16] = [0x23, 0x03, 0x03, 0x03, 0x07, 0x03, 0x03, 0x03, 0x03, 0x02, 0x02, 0x03, 0x12, 0x02, 0x03, 0x0b];
+static HI_6: [u8; 16] = [0x01, 0x02, 0x04, 0x08, 0x00, 0x10, 0x20, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.
 struct Stage1 {
     m_blank: Vec<u64>,
     m_lf: Vec<u64>,
+    m_ws: Vec<u64>,
     m_hash: Vec<u64>,
     m_word: Vec<u64>,
     m_alpha: Vec<u64>,
@@ -343,17 +348,17 @@ struct Stage1 {
     t86: Vec<u64>,
     t85: Vec<u64>,
     t87: Vec<u64>,
+    t92: Vec<u64>,
     t93: Vec<u64>,
     t94: Vec<u64>,
     t95: Vec<u64>,
     t96: Vec<u64>,
     t97: Vec<u64>,
-    t98: Vec<u64>,
+    t99: Vec<u64>,
     t100: Vec<u64>,
     t101: Vec<u64>,
     t102: Vec<u64>,
     t103: Vec<u64>,
-    t104: Vec<u64>,
     fw_rd0_close: Vec<u64>,
     fw_rd1_close: Vec<u64>,
     refused: bool,
@@ -486,6 +491,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut r_t86 = [0u64; RING];
     let mut m_blank = vec![0u64; nw];
     let mut m_lf = vec![0u64; nw];
+    let mut m_ws = vec![0u64; nw];
     let mut m_hash = vec![0u64; nw];
     let mut m_word = vec![0u64; nw];
     let mut m_alpha = vec![0u64; nw];
@@ -558,17 +564,17 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut t86 = vec![0u64; nw];
     let mut t85 = vec![0u64; nw];
     let mut t87 = vec![0u64; nw];
+    let mut t92 = vec![0u64; nw];
     let mut t93 = vec![0u64; nw];
     let mut t94 = vec![0u64; nw];
     let mut t95 = vec![0u64; nw];
     let mut t96 = vec![0u64; nw];
     let mut t97 = vec![0u64; nw];
-    let mut t98 = vec![0u64; nw];
+    let mut t99 = vec![0u64; nw];
     let mut t100 = vec![0u64; nw];
     let mut t101 = vec![0u64; nw];
     let mut t102 = vec![0u64; nw];
     let mut t103 = vec![0u64; nw];
-    let mut t104 = vec![0u64; nw];
     let mut fw_rd0_close = vec![0u64; nw];
     let mut fw_rd1_close = vec![0u64; nw];
     let mut lv_1 = 0u64;
@@ -590,6 +596,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let c3 = unsafe { S::classify(v, &LO_3, &HI_3) };
             let c4 = unsafe { S::classify(v, &LO_4, &HI_4) };
             let c5 = unsafe { S::classify(v, &LO_5, &HI_5) };
+            let c6 = unsafe { S::classify(v, &LO_6, &HI_6) };
             // class blank
             let v_m_blank = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) & lv };
             if q < nw {
@@ -601,6 +608,11 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 m_lf[q] = v_m_lf;
             }
+            // class ws
+            let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x06))) & lv };
+            if q < nw {
+                m_ws[q] = v_m_ws;
+            }
             // class hash
             let v_m_hash = unsafe { S::eq_mask(v, 0x23) & lv };
             if q < nw {
@@ -608,20 +620,20 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             }
             p_m_word = v_m_word;
             // class word
-            v_m_word = unsafe { S::to_bitmask(S::test(c0, S::splat(0x3c))) & lv };
+            v_m_word = unsafe { S::to_bitmask(S::test(c0, S::splat(0x78))) & lv };
             r_m_word[q % RING] = v_m_word;
             if q < nw {
                 m_word[q] = v_m_word;
             }
             p_m_alpha = v_m_alpha;
             // class alpha
-            v_m_alpha = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) & lv };
+            v_m_alpha = unsafe { S::to_bitmask(S::test(c0, S::splat(0x70))) & lv };
             if q < nw {
                 m_alpha[q] = v_m_alpha;
             }
             p_m_digit = v_m_digit;
             // class digit
-            v_m_digit = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) & lv };
+            v_m_digit = unsafe { S::to_bitmask(S::test(c0, S::splat(0x08))) & lv };
             if q < nw {
                 m_digit[q] = v_m_digit;
             }
@@ -634,19 +646,19 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             }
             p_m_opens = v_m_opens;
             // class opens
-            v_m_opens = unsafe { S::to_bitmask(S::test(c0, S::splat(0xc0))) & lv };
+            v_m_opens = unsafe { S::to_bitmask(S::test(c1, S::splat(0x03))) & lv };
             if q < nw {
                 m_opens[q] = v_m_opens;
             }
             p_m_closes = v_m_closes;
             // class closes
-            v_m_closes = unsafe { S::to_bitmask(S::test(c1, S::splat(0x03))) & lv };
+            v_m_closes = unsafe { S::to_bitmask(S::test(c1, S::splat(0x0c))) & lv };
             if q < nw {
                 m_closes[q] = v_m_closes;
             }
             p_m_quote = v_m_quote;
             // class quote
-            v_m_quote = unsafe { S::to_bitmask(S::test(c1, S::splat(0x04))) & lv };
+            v_m_quote = unsafe { S::to_bitmask(S::test(c0, S::splat(0x80))) & lv };
             if q < nw {
                 m_quote[q] = v_m_quote;
             }
@@ -656,12 +668,12 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_bslash[q] = v_m_bslash;
             }
             // class high
-            let v_m_high = unsafe { S::to_bitmask(S::test(c1, S::splat(0x08))) & lv };
+            let v_m_high = unsafe { S::to_bitmask(S::test(c1, S::splat(0x10))) & lv };
             if q < nw {
                 m_high[q] = v_m_high;
             }
             // class tab_ff
-            let v_m_tab_ff = unsafe { S::to_bitmask(S::test(c1, S::splat(0x10))) & lv };
+            let v_m_tab_ff = unsafe { S::to_bitmask(S::test(c1, S::splat(0x20))) & lv };
             p_m_sq = v_m_sq;
             // class sq
             v_m_sq = unsafe { S::eq_mask(v, 0x27) & lv };
@@ -681,19 +693,19 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             }
             p_m_pfx = v_m_pfx;
             // class pfx
-            v_m_pfx = unsafe { S::to_bitmask(S::test(c1, S::splat(0x60))) & lv };
+            v_m_pfx = unsafe { S::to_bitmask(S::test(c1, S::splat(0xc0))) & lv };
             p_m_raw_l = v_m_raw_l;
             // class raw_l
-            v_m_raw_l = unsafe { S::to_bitmask(S::test(c1, S::splat(0x80))) & lv };
+            v_m_raw_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x01))) & lv };
             p_m_bytes_l = v_m_bytes_l;
             // class bytes_l
-            v_m_bytes_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x01))) & lv };
+            v_m_bytes_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x02))) & lv };
             p_m_f_l = v_m_f_l;
             // class f_l
-            v_m_f_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x02))) & lv };
+            v_m_f_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x04))) & lv };
             p_m_t_l = v_m_t_l;
             // class t_l
-            v_m_t_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x04))) & lv };
+            v_m_t_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x08))) & lv };
             p_m_lbrace = v_m_lbrace;
             // class lbrace
             v_m_lbrace = unsafe { S::eq_mask(v, 0x7b) & lv };
@@ -724,10 +736,10 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_eq[q] = v_m_eq;
             }
             // class lt_gt
-            let v_m_lt_gt = unsafe { S::to_bitmask(S::test(c2, S::splat(0x08))) & lv };
+            let v_m_lt_gt = unsafe { S::to_bitmask(S::test(c2, S::splat(0x10))) & lv };
             p_m_conv_l = v_m_conv_l;
             // class conv_l
-            v_m_conv_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x30))) & lv };
+            v_m_conv_l = unsafe { S::to_bitmask(S::test(c2, S::splat(0x60))) & lv };
             if q < nw {
                 m_conv_l[q] = v_m_conv_l;
             }
@@ -737,7 +749,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_esc_one[q] = v_m_esc_one;
             }
             // class hex
-            let v_m_hex = unsafe { S::to_bitmask(S::test(c2, S::splat(0xc0))) & lv };
+            let v_m_hex = unsafe { S::to_bitmask(S::test(c3, S::splat(0x60))) & lv };
             if q < nw {
                 m_hex[q] = v_m_hex;
             }
@@ -762,13 +774,13 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_nn_l[q] = v_m_nn_l;
             }
             // class bytes_esc
-            let v_m_bytes_esc = unsafe { S::to_bitmask(S::test(c3, S::splat(0x60))) & lv };
+            let v_m_bytes_esc = unsafe { S::to_bitmask(S::test(c4, S::splat(0x03))) & lv };
             if q < nw {
                 m_bytes_esc[q] = v_m_bytes_esc;
             }
             p_m_sign = v_m_sign;
             // class sign
-            v_m_sign = unsafe { S::to_bitmask(S::test(c3, S::splat(0x80))) & lv };
+            v_m_sign = unsafe { S::to_bitmask(S::test(c2, S::splat(0x80))) & lv };
             if q < nw {
                 m_sign[q] = v_m_sign;
             }
@@ -779,27 +791,27 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_zero[q] = v_m_zero;
             }
             // class x_any
-            let v_m_x_any = unsafe { S::to_bitmask(S::test(c4, S::splat(0x01))) & lv };
+            let v_m_x_any = unsafe { S::to_bitmask(S::test(c3, S::splat(0x80))) & lv };
             // class o_any
-            let v_m_o_any = unsafe { S::to_bitmask(S::test(c4, S::splat(0x02))) & lv };
+            let v_m_o_any = unsafe { S::to_bitmask(S::test(c4, S::splat(0x04))) & lv };
             // class b_any
-            let v_m_b_any = unsafe { S::to_bitmask(S::test(c2, S::splat(0x01))) & lv };
+            let v_m_b_any = unsafe { S::to_bitmask(S::test(c2, S::splat(0x02))) & lv };
             p_m_exp_l = v_m_exp_l;
             // class exp_l
-            v_m_exp_l = unsafe { S::to_bitmask(S::test(c4, S::splat(0x04))) & lv };
+            v_m_exp_l = unsafe { S::to_bitmask(S::test(c4, S::splat(0x08))) & lv };
             r_m_exp_l[q % RING] = v_m_exp_l;
             if q < nw {
                 m_exp_l[q] = v_m_exp_l;
             }
             p_m_punct = v_m_punct;
             // class punct
-            v_m_punct = unsafe { S::to_bitmask(S::test(c4, S::splat(0xf8))) & lv };
+            v_m_punct = unsafe { S::to_bitmask(S::test(c5, S::splat(0x1f))) & lv };
             r_m_punct[q % RING] = v_m_punct;
             if q < nw {
                 m_punct[q] = v_m_punct;
             }
             // class junk
-            let v_m_junk = unsafe { S::to_bitmask(S::test(c5, S::splat(0x3f))) & lv };
+            let v_m_junk = unsafe { S::to_bitmask(S::test(c6, S::splat(0x3f))) & lv };
             if q < nw {
                 m_junk[q] = v_m_junk;
             }
@@ -1167,69 +1179,69 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 t87[q] = v_t87;
             }
             // ((((((sq_c | dq_c) | sq3_c) | dq3_c) | t13) | t15) | t17) | t19
-            let v_t90 = (((((((p_m_sq_c | p_m_dq_c) | v_m_sq3_c) | v_m_dq3_c) | (p_m_sq_c | v_m_i_open)) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
+            let v_t89 = (((((((p_m_sq_c | p_m_dq_c) | v_m_sq3_c) | v_m_dq3_c) | (p_m_sq_c | v_m_i_open)) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
             if q < nw {
-                fw_rd0_close[q] = v_t90;
+                fw_rd0_close[q] = v_t89;
             }
             // (((sq_c | i_open) | (dq_c | i_open)) | (sq3_c | i_open)) | (dq3_c | i_open)
-            let v_t92 = ((((p_m_sq_c | v_m_i_open) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
+            let v_t91 = ((((p_m_sq_c | v_m_i_open) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
             if q < nw {
-                fw_rd1_close[q] = v_t92;
+                fw_rd1_close[q] = v_t91;
             }
             // sq_c | sq3_c
-            let v_t93 = (p_m_sq_c | v_m_sq3_c);
+            let v_t92 = (p_m_sq_c | v_m_sq3_c);
+            if q < nw {
+                t92[q] = v_t92;
+            }
+            // dq_c | dq3_c
+            let v_t93 = (p_m_dq_c | v_m_dq3_c);
             if q < nw {
                 t93[q] = v_t93;
             }
-            // dq_c | dq3_c
-            let v_t94 = (p_m_dq_c | v_m_dq3_c);
+            // (alpha & ~p1) & ~p2
+            let v_t94 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
             if q < nw {
                 t94[q] = v_t94;
             }
-            // (alpha & ~p1) & ~p2
-            let v_t95 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
+            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
+            let v_t95 = p_m_zero & (p_t43 >> 1 | v_t43 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t95[q] = v_t95;
             }
-            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
-            let v_t96 = p_m_zero & (p_t43 >> 1 | v_t43 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
+            let v_t96 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t43 >> 1 | v_t43 << 63)) & lv);
             if q < nw {
                 t96[q] = v_t96;
             }
-            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
-            let v_t97 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t43 >> 1 | v_t43 << 63)) & lv);
+            // (dot & next(digit)) & ~prev(word)
+            let v_t97 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t97[q] = v_t97;
             }
-            // (dot & next(digit)) & ~prev(word)
-            let v_t98 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
-            if q < nw {
-                t98[q] = v_t98;
-            }
             // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
-            let v_t100 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+            let v_t99 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+            if q < nw {
+                t99[q] = v_t99;
+            }
+            // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
+            let v_t100 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t100[q] = v_t100;
             }
-            // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
-            let v_t101 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            // p1 | p2
+            let v_t101 = (v_m_p1 | v_m_p2);
             if q < nw {
                 t101[q] = v_t101;
             }
-            // p1 | p2
-            let v_t102 = (v_m_p1 | v_m_p2);
+            // prev(p2)
+            let v_t102 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
             if q < nw {
                 t102[q] = v_t102;
             }
-            // prev(p2)
-            let v_t103 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
+            // next(conv_l)
+            let v_t103 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
             if q < nw {
                 t103[q] = v_t103;
-            }
-            // next(conv_l)
-            let v_t104 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
-            if q < nw {
-                t104[q] = v_t104;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -1249,6 +1261,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     Stage1 {
         m_blank,
         m_lf,
+        m_ws,
         m_hash,
         m_word,
         m_alpha,
@@ -1321,17 +1334,17 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         t86,
         t85,
         t87,
+        t92,
         t93,
         t94,
         t95,
         t96,
         t97,
-        t98,
+        t99,
         t100,
         t101,
         t102,
         t103,
-        t104,
         fw_rd0_close,
         fw_rd1_close,
         refused,
@@ -1353,7 +1366,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_blank, m_lf, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t39, t43, m_num_run, t45, t46, m_two_start, m_two_start_three, t50, t61, t62, t66, t67, t68, t77, t84, t86, t85, t87, t93, t94, t95, t96, t97, t98, t100, t101, t102, t103, t104, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
+    let Stage1 { m_blank, m_lf, m_ws, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t39, t43, m_num_run, t45, t46, m_two_start, m_two_start_three, t50, t61, t62, t66, t67, t68, t77, t84, t86, t85, t87, t92, t93, t94, t95, t96, t97, t99, t100, t101, t102, t103, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
     // regions hidden { … }: the first opener not hidden opens its region, to its closer.
     let mut m_hidden = vec![0u64; nw];
     // `i_deep`: a frame past the level's bound, a template past its nest, or a close with a template's frame on top.
@@ -2257,24 +2270,21 @@ pub fn lex(src: &[u8]) -> Lexed {
     refused |= any(&m_i_deep);
     // an interpolation's `=`
     refused |= any(&t78);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t88, t89, t91, t99, t105).
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t88, t90, t98, t104).
     let mut t88 = vec![0u64; nw];
-    let mut t89 = vec![0u64; nw];
-    let mut t91 = vec![0u64; nw];
-    let mut t99 = vec![0u64; nw];
-    let mut t105 = vec![0u64; nw];
+    let mut t90 = vec![0u64; nw];
+    let mut t98 = vec![0u64; nw];
+    let mut t104 = vec![0u64; nw];
     {
         for i in 0..nw {
             let w_t88 = m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i]);
             t88[i] = w_t88;
-            let w_t89 = m_code[i] & (m_blank[i] | m_lf[i]);
-            t89[i] = w_t89;
-            let w_t91 = m_esc[i] & (!m_e_any[i] & lv[i]);
-            t91[i] = w_t91;
-            let w_t99 = (m_dot[i] & m_number[i] | m_exp_l[i] & m_number[i] & (!m_based_n[i] & lv[i]));
-            t99[i] = w_t99;
-            let w_t105 = prev(&m_conv_at, i, 1);
-            t105[i] = w_t105;
+            let w_t90 = m_esc[i] & (!m_e_any[i] & lv[i]);
+            t90[i] = w_t90;
+            let w_t98 = (m_dot[i] & m_number[i] | m_exp_l[i] & m_number[i] & (!m_based_n[i] & lv[i]));
+            t98[i] = w_t98;
+            let w_t104 = prev(&m_conv_at, i, 1);
+            t104[i] = w_t104;
         }
     }
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
@@ -2373,7 +2383,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut b = at / 64;
     'tokens: while b < nw {
         let base = b * 64;
-        let mut firsts = !t89[b] & (!0u64 << at.saturating_sub(base));
+        let mut firsts = !m_ws[b] & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
         let s = base + firsts.trailing_zeros() as usize;
         if s >= n {
@@ -2401,8 +2411,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 6 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
-                bit(&t100, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
+                bit(&t99, s)
             } {
                     3
                 } else if bit(&m_conv_at, s) {
@@ -2428,8 +2438,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 9 | 10 | 11 | 12 | 13 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
-                bit(&t100, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
+                bit(&t99, s)
             } {
                     3
                 } else {
@@ -2448,30 +2458,30 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `.`
-                15 => if bit(&t98, s) {
+                15 => if bit(&t97, s) {
                     2
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
-                bit(&t100, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
+                bit(&t99, s)
             } {
                     3
-                } else if bit(&t101, s) {
+                } else if bit(&t100, s) {
                     4
                 } else {
                     usize::MAX
                 },
                 // `0`
-                16 => if bit(&t96, s) {
+                16 => if bit(&t95, s) {
                     1
-                } else if bit(&t97, s) {
+                } else if bit(&t96, s) {
                     2
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                17 => if bit(&t97, s) {
+                17 => if bit(&t96, s) {
                     2
                 } else {
                     usize::MAX
@@ -2482,23 +2492,23 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
-                bit(&t100, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
+                bit(&t99, s)
             } {
                     3
                 } else {
                     usize::MAX
                 },
                 // `ACDEGHIJKLMNOPQSVWXYZ_acdeghijklmnopqsvwxyz`
-                19 | 20 | 21 => if bit(&t95, s) {
+                19 | 20 | 21 => if bit(&t94, s) {
                     0
                 } else {
                     usize::MAX
                 },
                 // `BFRTUbfrtu`
-                22 | 23 => if bit(&t95, s) {
+                22 | 23 => if bit(&t94, s) {
                     0
-                } else if bit(&t102, s) {
+                } else if bit(&t101, s) {
                     6
                 } else {
                     usize::MAX
@@ -2515,8 +2525,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t100, s), "assume p_start at byte {s}");
-                bit(&t100, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
+                bit(&t99, s)
             } {
                     3
                 } else {
@@ -2562,7 +2572,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         l
                     };
                     let l = l.max(s);
-                    if count_in(&t99, s, l) >= 1 {
+                    if count_in(&t98, s, l) >= 1 {
                         hits |= 1 << 6;
                     }
                     // a string prefix of three letters or more
@@ -2635,7 +2645,7 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 6 => {
                     // `str_prefix`: run prev(p2)
-                    let l = run_last(&t103, s);
+                    let l = run_last(&t102, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
                     if bit(&t66, s) {
@@ -2677,7 +2687,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t92, s, s);
                             last
                         };
                             set(&mut lw_o_s1, s, s + 1);
@@ -2726,7 +2736,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t94, s, s);
+                            put(&mut fw_rd1_close, &t93, s, s);
                             last
                         };
                             set(&mut lw_o_d1, s, s + 1);
@@ -2780,7 +2790,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t92, s, s);
                             last
                         };
                             set(&mut lw_o_s3, s, s + 1);
@@ -2834,7 +2844,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t94, s, s);
+                            put(&mut fw_rd1_close, &t93, s, s);
                             last
                         };
                             set(&mut lw_o_d3, s, s + 1);
@@ -2896,7 +2906,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t92, s, s);
                             last
                         }
                         };
@@ -2959,7 +2969,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t94, s, s);
+                            put(&mut fw_rd1_close, &t93, s, s);
                             last
                         }
                         };
@@ -3027,7 +3037,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t92, s, s);
                             last
                         }
                         };
@@ -3095,7 +3105,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t94, s, s);
+                            put(&mut fw_rd1_close, &t93, s, s);
                             last
                         }
                         };
@@ -3433,7 +3443,7 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 20 => {
                     // `type_conversion`: run prev(conv_at)
-                    let l = run_last(&t105, s);
+                    let l = run_last(&t104, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
                     if any_in(&t66, s + 1, l) {
@@ -3601,7 +3611,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             rd0_part0: fw_rd0_part0,
             e_any: m_e_any,
             e_last: m_e_last,
-            rd0_part2: t91,
+            rd0_part2: t90,
             esc_ib: m_esc_ib,
             rd0_closes0: fw_rd0_closes0,
             rd0_closes1: fw_rd0_closes1,

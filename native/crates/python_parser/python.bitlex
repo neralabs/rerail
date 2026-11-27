@@ -11,6 +11,8 @@ lexer python
 
 class blank     = ' ' '\t' 0x0c '\r'
 class lf        = '\n'
+# What the loop skips between tokens: blanks and line breaks (a line break's marks are below).
+class ws        = ' ' '\t' 0x0c '\r' '\n'
 class hash      = '#'
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
@@ -290,7 +292,7 @@ keywords identifier {
 }
 keywords punct { "(" ")" "[" "]" "{" "}" "," ":" ";" "." "=" "+" "-" "*" "/" "%" "&" "|" "^" "~" "<" ">" "@" "!" "**" "//" "==" "!=" "<=" ">=" "<<" ">>" "->" "+=" "-=" "*=" "/=" "%=" "&=" "|=" "^=" "@=" ":=" "<>" "**=" "//=" "<<=" ">>=" } required
 
-skip code & (blank | lf)
+skip ws
 mask bad_first  = code & junk
 assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
 token bad       = start bad_first pair empty
