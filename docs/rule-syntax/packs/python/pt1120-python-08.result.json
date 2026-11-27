@@ -1,0 +1,74 @@
+[
+  {
+    "id": "ruff-slot000-no-slots-in-str-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-slot001-no-slots-in-tuple-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-slot002-no-slots-in-namedtuple-subclass",
+    "status": "same"
+  },
+  {
+    "id": "ruff-td002-missing-todo-author",
+    "status": "different",
+    "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-td003-missing-todo-link",
+    "status": "different",
+    "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "ruff-td004-missing-todo-colon",
+    "status": "different",
+    "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
+    "right": "original",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]

@@ -1,4 +1,4 @@
-.policy "ruff-slot002-no-slots-in-namedtuple-subclass" revision 2
+.policy "ruff-slot002-no-slots-in-namedtuple-subclass" revision 3
 .description "Define __slots__ in classes that subclass a namedtuple or a call-style NamedTuple; without it every instance carries its own attribute dict and uses more memory."
 .language python
 .mode steer
@@ -11,6 +11,9 @@
 //       pass
 //   class Good(namedtuple("foo", ["str", "int"]), Enum):     not reported
 //       pass
+//   class Bad2(namedtuple("A", "x"), \                       ← SLOT002: a `\` line continuation is no base
+//              object):
+//       pass
 #include "python/misc2-slots.rerail"
 
 .violation SLOT002(at: node) code "SLOT002"
@@ -22,3 +25,5 @@ slot002_call(b) :- kind(b, "call"), field(b, "function", f), (sym_of(f, "collect
 .decl slot002_ok(b: node)
 slot002_ok(b) :- slot002_call(b).
 slot002_ok(b) :- slots_base(_, b), sym_of(b, "builtins.object").
+// misc2-slots' slots_base keeps tree-sitter's `line_continuation` extra among the bases.
+slot002_ok(b) :- slots_base(_, b), kind(b, "line_continuation").

@@ -1,0 +1,53 @@
+// python/pt1120-python-08: how Ruff's flake8-slots rules read a class's base, beyond misc2-slots (SLOT000, SLOT001).
+//
+// Interface
+//   slots_unsub(b, e)          e is base b with one subscript taken off (`Tuple[int]`'s `Tuple`), or b itself;
+//                              Ruff's map_subscript takes one level only: `Tuple[int][0]` gives `Tuple[int]`
+//   slots_tp_builtin(c, e, x)  e, a name x read in class c's bases, is c's own type parameter x (python/scopes'
+//                              tp_ref), yet Ruff reads it as the builtin x
+//
+// Ruff (0.17) asks whether a name is a builtin from the scope the class statement sits in, at the moment it reaches
+// the statement: before it enters the class's type-parameter scope, so `class A[tuple](tuple)` subclasses the builtin
+// tuple. Only bindings visible there hide the builtin: one of an enclosing scope that comes before the class in its
+// body, every binding of a scope outside the nearest enclosing def (a def's body is visited after its module), or an
+// enclosing definition's own type parameter x. Once `builtins` is imported (anywhere in the file, as the original
+// reads it) Ruff resolves through the name's recorded binding instead, the type parameter, and it is no builtin.
+// typing's `Tuple` is always resolved through the recorded binding, so `class C[Tuple](Tuple)` is no Tuple subclass.
+//
+//   class A[tuple](tuple): ...                  slots_tp_builtin(<A>, <tuple>, "tuple"): SLOT001
+//   class B[str](str): ...                      slots_tp_builtin(<B>, <str>, "str"): SLOT000
+//   class C[tuple](tuple): ...                  slots_tp_builtin too: the module's binding comes after the class
+//   tuple = list
+//   def f():
+//       tuple = list
+//       class D[tuple](tuple): ...              nothing: f binds tuple before the class
+//   class E(Tuple[int][0]): ...                 slots_unsub(<Tuple[int][0]>, <Tuple[int]>): no Tuple subclass
+#include "python/misc2-slots.rerail"
+
+.decl slots_unsub(b: node, e: node)
+slots_unsub(b, b) :- slots_base(_, b).
+slots_unsub(b, e) :- slots_base(_, b), kind(b, "subscript"), field(b, "value", v), unparen(v, e).
+
+.decl slots_tp_builtin(c: node, e: node, x: symbol)
+slots_tp_builtin(c, e, x) :- slots_tpb_name(c, e, x), docof(c, d), !slots_tpb_builtins(d), !slots_tpb_bound(c, x).
+// slots_tpb_name(c, e, x): e, a base of class c (one subscript off), is the name x of a builtin that c declares as a
+// type parameter too.
+.decl slots_tpb_name(c: node, e: node, x: symbol)
+slots_tpb_name(c, e, x) :- slots_base(c, b), slots_unsub(b, e), kind(e, "identifier"), text(e, x), builtin(x),
+    tp_name(c, x).
+.decl slots_tpb_class(c: node, x: symbol)
+slots_tpb_class(c, x) :- slots_tpb_name(c, _, x).
+// slots_tpb_scope(c, s): the scopes Ruff's lookup visits from c's statement: the one it sits in, then the enclosing
+// defs and the module (class bodies other than the first are skipped, as python/scopes' walk).
+.decl slots_tpb_scope(c: node, s: node)
+slots_tpb_scope(c, s) :- slots_tpb_class(c, _), nearest(c, s, scope).
+slots_tpb_scope(c, p) :- slots_tpb_scope(c, s), nearest(s, p, fscope).
+// slots_tpb_bound(c, x): a binding of x visible from c's statement when Ruff reaches it.
+.decl slots_tpb_bound(c: node, x: symbol)
+slots_tpb_bound(c, x) :- slots_tpb_class(c, x), slots_tpb_scope(c, s), tp_name(s, x).
+slots_tpb_bound(c, x) :- slots_tpb_class(c, x), slots_tpb_scope(c, s), binding(s, x, site, _), site < c.
+slots_tpb_bound(c, x) :- slots_tpb_class(c, x), slots_tpb_scope(c, s), binding(s, x, _, _),
+    within(c, f), kind(f, "function_definition"), within(f, s).
+// slots_tpb_builtins(d): document d imports the builtins module, or a name of it.
+.decl slots_tpb_builtins(d: number)
+slots_tpb_builtins(d) :- import_alias(i, _, m, _, _), (m = "builtins" ; prefix("builtins.", m)), docof(i, d).
