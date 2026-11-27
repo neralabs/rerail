@@ -46,12 +46,19 @@ tier 2's form from its loop's text (`run`), appended to the tier:
   places, the byte refused, the nodes then), in pass 1 and in each composition (`fold`): a summary holds a refusal a
   level it closes. As lanes, each held every level below it again: in a nest 1,023 deep in chunks of a record, a
   summary of the scan held 513 lanes, its round 2.8 GB of levels, the test 5.2 GB for a 4 KB file. Folded, a
-  summary holds at most 4 lanes and 3 entries a record it spans; the tests' peak is 224 MB.
+  summary holds at most 4 lanes and a few entries a record it spans.
 - **The depth is a prefix sum** of each record's opener and closer (`depths`), a fact of the bytes, so a lane's depth
   is the file's and the loop's `DEPTH` test is the serial one. A chunk deeper than `DEPTH` is past a refusal.
-- **Pass 3** (`entries`) composes the summaries by Hillis and Steele's scan, as tier 1's `entries`: a lane goes on in
-  the next range's lanes entered at its place whose closed levels are the ones it leaves open (`then`). The lanes
-  carry their nodes, so the scan gives each chunk its first node number with its state.
+- **Pass 3** (`entries`) is Blelloch's work-efficient scan: the summaries' tree up (`tree`, a node the composition of
+  two below: a lane goes on in the next range's lanes entered at its place whose closed levels are the ones it leaves
+  open, `then`), then the states down it (the root's the file's start; a left child's its parent's, a right child's
+  its parent's through its left sibling's summary, `apply`). The lanes carry their nodes, so the scan gives each chunk
+  its first node number with its state. Hillis and Steele's scan, first, made every chunk's prefix a summary in every
+  round: in the 1,023-deep nest its last rounds held the square of the chunks, 148 MB for a 4 KB file.
+- **A state holds what its range reads** (`keep`): the places of as many innermost levels as a lane of its summary
+  closes below its start, and as many innermost frames as a lane closes and then writes into, not the whole nest; a
+  node's children read no more of it. Pass 2 places the levels at their depths. A whole nest a chunk was the chunks
+  times the depth: 12.8 MB for that file, gigabytes at `DEPTH` in a large one.
 
 The helpers that write (`open`, `leaf`, `leaf_in`, `token`, `close`, `string`, `value_primitive`) are generic over
 `Out`. The serial walk calls them with the cursor, as before.
@@ -127,8 +134,9 @@ scan round, each chunk a thread or a group.
 objects and arrays, nests 40, 1,023 and 1,025 deep, empty levels, and the closer, separator and value refusals), in
 chunks of 1, 2, 3 and 16 records, 11,972 chunks, every pass in a random order. Each chunk's state from pass 3
 (place, record, depth, levels' places, nodes before, the file's end) is the serial walk's there, and the walk chunk
-after chunk ends as `parse` does. Every summary each scan round makes holds at most 8 lanes and 4 entries a record it
-spans (4 and 3 in the cases). `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
+after chunk ends as `parse` does. Every summary of the scan's tree holds at most 8 lanes and 4 entries a record it
+spans plus 8 a lane, and the states at most 4 levels and frames a record (the tree's summaries 4 lanes and 6 entries a
+record in the cases). The tests peak at 27 and 15 MB (were 5.2 GB). `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
 text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
 records, every pass in order and in two random orders (270 tapes, 13,800 chunks), gives the serial walk's tape byte for byte, and
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. `typed_records_are_the_records_split_by_type`: 390 files in chunks of

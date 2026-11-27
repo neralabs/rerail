@@ -231,12 +231,15 @@ fn trees() -> Vec<Vec<u8>> {
 /// Two states the same: the place, the next record, the depth, the levels' places, the nodes before, the file's end
 /// (the last token's end is not read at a list's cycle place, where every chunk starts).
 fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
-    a.end == b.end && a.nodes == b.nodes && a.prev_start == b.prev_start && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && a.ret == b.ret && a.frames == b.frames))
+    // Pass 3's states hold the innermost levels and frames their chunk reads: the serial walk's innermost ones.
+    let inner = |x: &[u8], y: &[u8]| x.len() <= y.len() && x == &y[y.len() - x.len()..];
+    let inner_frames = |x: &[crate::middle::Frame], y: &[crate::middle::Frame]| x.len() <= y.len() && x == &y[y.len() - x.len()..];
+    a.end == b.end && a.nodes == b.nodes && a.prev_start == b.prev_start && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && inner(&a.ret, &b.ret) && inner_frames(&a.frames, &b.frames)))
 }
 
 #[test]
 fn tier2_entries_are_the_serial_walks() {
-    let (mut chunks, mut most, mut composed, mut per_record) = (0, 0, 0, 0);
+    let (mut chunks, mut most, mut composed, mut per_record, mut states) = (0, 0, 0, 0, 0);
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
@@ -257,30 +260,31 @@ fn tier2_entries_are_the_serial_walks() {
             let want = crate::middle::serial_entries(&buf, &lx, size);
             assert_eq!(want.last().and_then(|a| a.end), Some(parsed), "file {k}: the chunks walked one after another are the serial walk");
             assert_eq!(got.len(), want.len());
+            // The states hold what their chunk reads, not the nest: at most as many levels and frames as records.
+            let held: usize = got.iter().flatten().map(|a| a.ret.len() + a.frames.len()).sum();
+            states = states.max(held / (lx.count + 1));
+            assert!(held <= 4 * (lx.count + 1) + 2 * got.len(), "file {k}, chunks of {size}: the states hold {held} levels and frames for {} records", lx.count);
             for (c, (g, w)) in got.iter().zip(&want).enumerate() {
                 let g = g.as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no lane meets chunk {c}'s entry"));
                 assert!(same_state(g, w), "file {k}, chunks of {size}, chunk {c}: {g:?}, the serial walk's {w:?}");
             }
             chunks += sums.len();
             most = most.max(sums.iter().map(|s| s.lanes.len()).max().unwrap_or(0));
-            // Every summary a scan round makes stays as long as the records it spans: a few lanes, each holding a few
-            // entries a record (its levels, frames and refusals), never the square of the levels it closes.
-            let mut acc = sums.clone();
-            let mut d = 1;
-            while d < acc.len() {
-                acc = (0..acc.len()).map(|c| if c < d { acc[c].clone() } else { crate::middle::compose(&acc[c - d], &acc[c]) }).collect();
-                for x in &acc {
+            // Every summary of the scan's tree stays as long as the records it spans: a few lanes, each holding a few
+            // entries a record (its levels, frames and refusals) and a few of its own, never the square of the levels
+            // it closes.
+            for level in crate::middle::tree(&sums, &order) {
+                for x in &level {
                     let held: usize = x.lanes.iter().map(|l| l.kc.len() + l.p.len() + l.pf.len() + l.touch.len() + l.refuse.len()).sum();
                     let span = x.end - x.start;
                     composed = composed.max(x.lanes.len());
                     per_record = per_record.max(held / (span + 1));
-                    assert!(x.lanes.len() <= 8 && held <= 4 * (span + 1), "file {k}, chunks of {size}: a summary of {span} records holds {} lanes and {held} entries", x.lanes.len());
+                    assert!(x.lanes.len() <= 8 && held <= 4 * (span + 1) + 8 * x.lanes.len(), "file {k}, chunks of {size}: a summary of {span} records holds {} lanes and {held} entries", x.lanes.len());
                 }
-                d *= 2;
             }
         }
     }
-    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record", all.len());
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record; the states {states} levels and frames a record", all.len());
 }
 
 /// Pass 2: each chunk's nodes written from its state, every pass's chunks (and every scan round's) in order and in two

@@ -391,18 +391,29 @@ pub struct Lane {
 /// not their square.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Refusal {
-    pub level: usize,
+    pub level: u32,
     pub places: u32,
     pub err: u32,
     pub nodes: u32,
-    pub last_start: Option<u64>,
+    /// `NO_START`: no node yet.
+    pub last_start: u32,
+}
+
+/// A refusal's `last_start` where the walk wrote no node before it.
+pub const NO_START: u32 = u32::MAX;
+
+impl Refusal {
+    fn start(&self) -> Option<u64> {
+        (self.last_start != NO_START).then_some(u64::from(self.last_start))
+    }
 }
 
 impl Lane {
-    /// A lane from where its walk stopped: its frames from what `sh` kept (none where the file ends in it).
+    /// A lane from where its walk stopped: its frames from what `sh` kept (where the file ends in it, only how many of
+    /// its entry's it closes: what its state must hold, `keep`).
     fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow) -> Lane {
         let (fkc, touch, pf) = if end.is_some() {
-            (0, vec![Touch::default()], Vec::new())
+            (sh.closed, vec![Touch::default(); sh.closed + 1], Vec::new())
         } else {
             let mut touch = sh.touch;
             touch.resize(sh.closed + 1, Touch::default());
@@ -413,7 +424,7 @@ impl Lane {
 
     /// The lane ended where refusal `x` holds, after `a`.
     fn refused(a: &Lane, x: &Refusal) -> Lane {
-        Lane { st0: a.st0, kc: a.kc.clone(), p: Vec::new(), exit: Entry::default(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), fkc: 0, touch: vec![Touch::default()], pf: Vec::new(), last_start: x.last_start.or(a.last_start), refuse: a.refuse.clone() }
+        Lane { st0: a.st0, kc: a.kc.clone(), p: Vec::new(), exit: Entry::default(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), fkc: 0, touch: vec![Touch::default()], pf: Vec::new(), last_start: x.start().or(a.last_start), refuse: a.refuse.clone() }
     }
 }
 
@@ -470,7 +481,7 @@ fn fold(mut lanes: Vec<Lane>) -> Vec<Lane> {
         if let (Some(Err(err)), Some(j)) = (l.end, l.kc.len().checked_sub(1)) {
             if let Some(m) = kept.iter_mut().find(|m| m.st0 == l.st0 && m.kc.len() > j && m.kc[..j] == l.kc[..j] && m.kc[j] != l.kc[j]) {
                 m.refuse.extend_from_slice(&l.refuse);
-                m.refuse.push(Refusal { level: j, places: 1 << l.kc[j], err, nodes: l.nodes, last_start: l.last_start });
+                m.refuse.push(Refusal { level: j as u32, places: 1 << l.kc[j], err, nodes: l.nodes, last_start: l.last_start.map_or(NO_START, |s| s as u32) });
                 continue;
             }
         }
@@ -497,7 +508,7 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     let mut r = 0;
     for j in 0..m {
         let place = a.p[a.p.len() - 1 - j];
-        while r < b.refuse.len() && b.refuse[r].level == j {
+        while r < b.refuse.len() && b.refuse[r].level as usize == j {
             if b.refuse[r].places >> place & 1 != 0 {
                 return Some(Lane::refused(a, &b.refuse[r]));
             }
@@ -509,7 +520,7 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     }
     // The rest, closed below `a`'s entry: refusals at the levels they are of the two.
     let mut refuse = a.refuse.clone();
-    refuse.extend(b.refuse[r..].iter().map(|x| Refusal { level: a.kc.len() + x.level - m, nodes: a.nodes + x.nodes, last_start: x.last_start.or(a.last_start), ..*x }));
+    refuse.extend(b.refuse[r..].iter().map(|x| Refusal { level: (a.kc.len() + x.level as usize - m) as u32, nodes: a.nodes + x.nodes, last_start: x.start().or(a.last_start).map_or(NO_START, |s| s as u32), ..*x }));
     let mut kc = a.kc.clone();
     kc.extend_from_slice(&b.kc[m..]);
     let mut p = a.p[..a.p.len() - m].to_vec();
@@ -556,7 +567,9 @@ pub fn compose(a: &Summary, b: &Summary) -> Summary {
     Summary { lanes: fold(lanes), start: a.start, end: b.end }
 }
 
-/// The walk's state at a range's start: its place, the levels' places, the nodes before it; or the file's end.
+/// The walk's state at a range's start: its place, the levels' places, the nodes before it; or the file's end. Its
+/// levels and frames are the innermost ones, as many as the range reads (`keep`): the places of the levels below
+/// `entry.depth`, the frames of the open nodes inside, outermost first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct At {
     pub entry: Entry,
@@ -587,10 +600,10 @@ pub fn apply(s: &Summary, a: &At) -> Option<At> {
         let mut r = 0;
         for j in 0..l.kc.len() {
             let place = a.ret[d - 1 - j];
-            while r < l.refuse.len() && l.refuse[r].level == j {
+            while r < l.refuse.len() && l.refuse[r].level as usize == j {
                 let x = &l.refuse[r];
                 if x.places >> place & 1 != 0 {
-                    return Some(At { entry: Entry::default(), ret: Vec::new(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), frames: Vec::new(), prev_start: x.last_start.unwrap_or(a.prev_start) });
+                    return Some(At { entry: Entry::default(), ret: Vec::new(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), frames: Vec::new(), prev_start: x.start().unwrap_or(a.prev_start) });
                 }
                 r += 1;
             }
@@ -618,12 +631,58 @@ pub fn apply(s: &Summary, a: &At) -> Option<At> {
     Some(At { entry: l.exit, ret, nodes: a.nodes + l.nodes, end: l.end, frames, prev_start: l.last_start.unwrap_or(a.prev_start) })
 }
 
-/// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by a prefix scan of their compositions: round
-/// `r` composes each chunk's summary after the one `2^r` chunks before it (Hillis and Steele's, as tier 1's
-/// `entries`), each chunk on its own in a round.
+/// Pass 3's up-sweep: the summaries' tree, level 0 the chunks', each next level's node the composition of two of
+/// the level below (the last alone where they are odd), each level's nodes in `order`'s order. Each level holds as
+/// much as the records it spans, so the tree holds that times its height: never a prefix of every chunk.
+pub fn tree(sums: &[Summary], order: Order<'_>) -> Vec<Vec<Summary>> {
+    let mut levels: Vec<Vec<Summary>> = vec![sums.to_vec()];
+    while levels[levels.len() - 1].len() > 1 {
+        let low = &levels[levels.len() - 1];
+        let up = each(low.len().div_ceil(2), order, |i| if 2 * i + 1 < low.len() { compose(&low[2 * i], &low[2 * i + 1]) } else { low[2 * i].clone() });
+        levels.push(up);
+    }
+    levels
+}
+
+/// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by Blelloch's
+/// work-efficient scan: the summaries' tree up (`tree`), then the states down it, the root's the file's start, a
+/// node's left child's its own and its right child's its state through its left child's summary (`apply`). Each
+/// level's nodes in `order`'s order. No prefix of the chunks is made as a summary, only as the state it leaves.
 pub fn entries(sums: &[Summary], order: Order<'_>) -> Vec<Option<At>> {
-    let acc = scan(sums.to_vec(), order, compose);
-    each(acc.len() + 1, order, |c| if c == 0 { Some(At::start()) } else { apply(&acc[c - 1], &At::start()) })
+    if sums.is_empty() {
+        return vec![Some(At::start())];
+    }
+    let levels = tree(sums, order);
+    let top = levels.len() - 1;
+    let end = apply(&levels[top][0], &At::start());
+    let mut states: Vec<Option<At>> = vec![Some(At::start())];
+    for r in (0..top).rev() {
+        let (low, up) = (&levels[r], &states);
+        states = each(low.len(), order, |c| {
+            let parent = up[c / 2].as_ref()?;
+            let at = if c % 2 == 0 { parent.clone() } else { apply(&low[c - 1], parent)? };
+            Some(keep(at, &low[c]))
+        });
+    }
+    states.push(end);
+    states
+}
+
+/// State `a` as range `s` reads it: its innermost levels' places, as many as a lane of `s` closes below its start, and
+/// its innermost frames, as many as a lane closes and the one it then writes into. A node's children read no more of
+/// its state than it does (a left child's lanes close no more than its parent's; a right child's levels are the left
+/// child's, or the parent's), so each state holds what its range reads, not the whole nest.
+fn keep(mut a: At, s: &Summary) -> At {
+    if a.end.is_some() {
+        return a;
+    }
+    let levels = s.lanes.iter().map(|l| l.kc.len()).max().unwrap_or(0);
+    let frames = s.lanes.iter().map(|l| l.fkc + 1).max().unwrap_or(0);
+    let cut = a.ret.len().saturating_sub(levels);
+    a.ret.drain(..cut);
+    let cut = a.frames.len().saturating_sub(frames);
+    a.frames.drain(..cut);
+    a
 }
 
 /// Every chunk's summary (pass 1), of chunks of about `size` records, in `order`.
@@ -670,7 +729,9 @@ pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<
 /// chunk's state from pass 3; no other chunk writes this one's nodes.
 pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, at: &At, stop: usize, count: bool) -> Stop {
     let mut ret = std::boxed::Box::new([0u8; DEPTH]);
-    ret[..at.ret.len()].copy_from_slice(&at.ret);
+    // The levels it holds, at their depths.
+    let base = at.entry.depth - at.ret.len();
+    ret[base..at.entry.depth].copy_from_slice(&at.ret);
     // The frames' room: those open at its entry, and as many as a chunk opens at most.
     let mut buf: Vec<u8> = Vec::with_capacity(((DEPTH + 1) * 3 + 1 + at.frames.len()) * 24);
     let frames: Vec<(u32, u32, u32, u64)> = at.frames.iter().map(|f| (f.node, f.kids, f.last, f.start)).collect();
