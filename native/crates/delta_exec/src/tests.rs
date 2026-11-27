@@ -381,7 +381,7 @@ fn k0_doc(fx: &Fx, d: &D, module: i64) -> crate::k0::K0Doc {
 /// `k0_pass`'s rows over `docs`, one call, by relation: each `(row, diff)`, sorted.
 fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>, crate::kform::Refused> {
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
-    let d = crate::k0::Docs::of(&mut fx.dir, docs).map_err(|why| crate::kform::Refused { module: -1, rule: -1, why })?;
+    let d = crate::k0::DocsIn::of(&mut fx.dir, docs).map_err(|why| crate::kform::Refused { module: -1, rule: -1, why })?;
     let ran = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, None, 1, &runs, None);
     d.release(&mut fx.dir);
     let got = runs
@@ -396,13 +396,29 @@ fn k0_rows(fx: &mut Fx, docs: &[crate::k0::K0Doc]) -> Result<Vec<Vec<Vec<i64>>>,
     ran.map(|_| got)
 }
 
-/// One `k0_pass` launch over 20 documents (two docs blocks, chained by reference): its rows are those of each
+/// A document of more statements than control's first room: `count` grows control within its reservation and runs
+/// again (its capacity bound), and every statement is placed, a `k_rule` row each, as when read in four parts.
+#[test]
+fn k0_pass_grows_control_past_its_first_room() {
+    let mut fx = Fx::new();
+    let src = |from: usize, to: usize| (from..to).map(|i| format!("e({i}).\n")).collect::<String>();
+    let big = fx.doc(&src(0, 300), "big.rerail");
+    let parts: Vec<D> = (0..4).map(|k| fx.doc(&src(75 * k, 75 * (k + 1)), &format!("part{k}.rerail"))).collect();
+    let big = [k0_doc(&fx, &big, 1)];
+    let one = k0_rows(&mut fx, &big).unwrap();
+    assert_eq!(one[0].len(), 300, "a k_rule row a statement");
+    let parts: Vec<crate::k0::K0Doc> = parts.iter().map(|d| k0_doc(&fx, d, 1)).collect();
+    let four = k0_rows(&mut fx, &parts).unwrap();
+    assert_eq!(one[0].len(), four[0].len());
+}
+
+/// One `k0_pass` launch over 20 documents (their blocks past one block's references, bound by holders): its rows are those of each
 /// document read alone, its phases launched once each, and a refusal names its own document.
 #[test]
 fn one_k0_pass_launch_reads_every_document() {
     let mut fx = Fx::new();
     let docs: Vec<D> = (0..20).map(|i| fx.doc(&format!("e({i}, {}).\np(x) :- e(x, _), !q(x).\n", i + 1), &format!("m{i}.rerail"))).collect();
-    assert!(docs.len() > rerail_delta_twins::k0::DOCS_PER_BLOCK, "past one docs block");
+    assert!(3 * docs.len() > rerail_blocks::gens::MAX_REFS, "past one block's references");
     let all: Vec<crate::k0::K0Doc> = docs.iter().enumerate().map(|(i, d)| k0_doc(&fx, d, i as i64 + 1)).collect();
     let one = k0_rows(&mut fx, &all).unwrap();
     assert_eq!(fx.dir.launches(), 4, "count, scan, place, keep: one launch");
@@ -435,7 +451,7 @@ fn k0_pass_keeps_each_documents_sizes_and_a_gone_one_takes_its_entry() {
     let cache = crate::cache::OpCache::new(&mut fx.dir).0;
     let runs: Vec<crate::dir::BlockId> = (0..RELATIONS.len()).map(|k| Trace::new(&crate::kform::shape(k)).unwrap().open(&mut fx.dir, 4096)).collect();
     let pass = |fx: &mut Fx, docs: &[crate::k0::K0Doc], gone: &[i64]| {
-        let d = crate::k0::Docs::of(&mut fx.dir, docs).unwrap();
+        let d = crate::k0::DocsIn::of(&mut fx.dir, docs).unwrap();
         let g = crate::drop::Parts::write(&mut fx.dir, gone.len(), |put| gone.iter().copied().for_each(put)).unwrap();
         let n = crate::k0::k0_pass(&fx.reg, &fx.k0, &mut fx.dir, fx.atoms.0, &d, Some(&g), 1, &runs, Some(cache)).unwrap();
         d.release(&mut fx.dir);

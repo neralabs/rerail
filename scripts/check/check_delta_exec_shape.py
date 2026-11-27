@@ -531,8 +531,12 @@ def b6(failures: list) -> None:
         failures.append("l1.rs: k0_pass called at more than one place (one launch reads every changed tape)")
     if not re.search(r"pub fn k0_pass\([^)]*docs: &DocsIn,", k0):
         failures.append("k0.rs: k0_pass does not take every document of the run (one launch, its docs blocks)")
-    if len(re.findall(r"\brun_cpu\(", strip_rust(k0))) != 1:
+    if len(re.findall(r"\brun_cpu\([^;]*ops\.k0_pass\b", strip_rust(k0))) != 1:
         failures.append("k0.rs: k0_pass launched at more than one place")
+    # B6, only operations: the documents' entries are `docs_of`'s (the selection joined with the blobs' rows where they
+    # lie); the host binds the blocks it lists, and reads no tape for a launch's room.
+    if "run_cpu(reg, dir, ops.docs_of" not in k0 or re.search(r"files::nodes|\bnodes:\s*usize", strip_rust(k0)):
+        failures.append("k0.rs: a launch's documents are written, or its room counted, on the host (docs_of's; count grows control)")
     files = (CRATE / "src/files.rs").read_text()
     if not re.search(r"pub struct BlobRows \{[^}]*\brows: Trace\b[^}]*\}", files) or re.search(r"pub struct BlobRows \{[^}]*HashMap", files):
         failures.append("files.rs: the blobs are not rows in a trace, as the store's objects are (P§12 item 1)")
@@ -569,8 +573,8 @@ def b6(failures: list) -> None:
     l1_code = strip_rust(l1)
     delta = l1_code[l1_code.find("fn delta("):l1_code.find("fn run(")]
     hits(l1, delta, r"\bBTree\w*|\bHash(Map|Set)\b|\bVec\b|vec!|collect::<|\.collect\(\)|want_rows\(", "a set or list of L1's delta's own (read the want in place; write the parts and docs blocks as found)", failures)
-    if "self.select(cx" not in delta or "docs_written(cx" not in delta:
-        failures.append("l1.rs: L1's delta does not select by its operation and bind its docs blocks as it reads the rows")
+    if "self.select(cx" not in delta or "DocsIn::of_rows(cx.reg" not in delta or re.search(r"docs\.push\(|blobs\.get\(", delta):
+        failures.append("l1.rs: L1's delta does not select by its operation and make its documents by docs_of")
     # Step 5 (0686): demand is the want trace; a want is named (`WantRows`: each row, and whether it holds one), its
     # change written into the trace's runs as found. The boot's run holds no set: its productions are every relation
     # at l0's key (`AtKey`), and the one document it names answered once (a flag).

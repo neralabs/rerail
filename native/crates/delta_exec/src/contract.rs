@@ -236,6 +236,7 @@ impl<'t, P> In<'t, P> {
 /// A state per input port of `P` and per global: the plain function's inputs.
 pub struct At<'t, P> {
     ports: Vec<View<'t>>,
+    heads: Vec<Option<BlockId>>,
     globals: Vec<Global>,
     of: PhantomData<fn() -> P>,
 }
@@ -244,6 +245,11 @@ impl<'t, P> At<'t, P> {
     /// Input port `p`'s state.
     pub fn port(&self, p: PortIn<P>) -> &View<'t> {
         &self.ports[p.0]
+    }
+
+    /// The head input port `p`'s state is at.
+    pub fn head(&self, p: PortIn<P>) -> Option<BlockId> {
+        self.heads[p.0]
     }
 
     /// Global `g` at its state.
@@ -744,7 +750,7 @@ pub fn apply<O: DeltaOp>(op: &O, cx: &mut Cx<'_>, ins: &[(&Trace, Option<BlockId
             let l = cx.dir.read("the reference's inputs", &heads)?;
             let table = l.table();
             let views = ins.iter().map(|(t, h)| t.state(&table, *h)).collect::<Result<Vec<_>, _>>()?;
-            op.run(cx, &At { ports: views, globals: globals.to_vec(), of: PhantomData }, &mut out)?;
+            op.run(cx, &At { ports: views, heads: ins.iter().map(|p| p.1).collect(), globals: globals.to_vec(), of: PhantomData }, &mut out)?;
         }
         let mut over = false;
         for (k, &r) in out.runs.iter().enumerate() {

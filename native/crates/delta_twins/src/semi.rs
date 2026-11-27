@@ -228,7 +228,10 @@ pub const R_RUNS: usize = 2;
 
 /// Each change of the state by the rows given, by key: a given row the state holds
 /// as it is changes nothing; else the state's rows of its key go (−1) and it comes (+1).
-fn replaced<'t>(s: Option<&View<'t>>, given: &Runs<'_>, arity: usize, key: usize, f: &mut dyn FnMut(i32, Option<(&View<'t>, RowId)>, usize)) {
+/// A change of `replaced`: its sign, the state's row it retracts (none: the given row it adds), and the given row.
+type Replaced<'f, 't> = dyn FnMut(i32, Option<(&View<'t>, RowId)>, usize) + 'f;
+
+fn replaced<'t>(s: Option<&View<'t>>, given: &Runs<'_>, arity: usize, key: usize, f: &mut Replaced<'_, 't>) {
     let cols: [ColumnIndex; MAX_COLS] = core::array::from_fn(|k| ColumnIndex::new(k as u16));
     let mut k = [0i64; MAX_COLS];
     for i in (0..given.len()).filter(|&i| given.diff(i) > 0) {

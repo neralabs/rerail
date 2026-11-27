@@ -32,10 +32,10 @@ use crate::drop::{DropOps, Parts, drop_parts};
 use crate::semi::{self, SemiOps, Side};
 use crate::trace::open_runs;
 use rerail_blocks::layer::Runs;
-use crate::files::{BlobId, BlobRows, DocIds};
-use crate::k0::{Docs, DocsIn, K0Doc, K0Ops, k0_pass};
+use crate::files::{BlobId, DocIds};
+use crate::k0::{DocsIn, K0Ops, RowCols, k0_pass};
 use crate::kform::{self, RELATIONS};
-use rerail_blocks::bistate::{Bistate, ColumnIndex, Read, RowId};
+use rerail_blocks::bistate::{Bistate, Read};
 use rerail_blocks::layer::{ColType, Shape};
 use rerail_blocks::relation::View;
 
@@ -107,44 +107,11 @@ pub struct L1 {
     pub semis: SemiOps,
 }
 
-fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
-    Read::get(v, id, ColumnIndex::new(c))
-}
-
-/// The document of tape row `id` of `tape`, its blobs where `blobs` has them.
-fn doc_at(blobs: &BlobRows, dir: &Directory, tape: &View<'_>, id: RowId) -> Result<K0Doc, String> {
-    let blob = |at: u16| {
-        let w: [i64; 4] = core::array::from_fn(|k| cell(tape, id, at + k as u16));
-        blobs.get(dir, &BlobId::of_words(&w))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string())
-    };
-    Ok(K0Doc { module: cell(tape, id, 0), src: blob(TAPE_SOURCE as u16)?, tape: blob(TAPE_TAPE as u16)?, syms: blob(TAPE_SYMS as u16)?.block })
-}
-
-fn live<'v>(v: &'v View<'_>) -> impl Iterator<Item = RowId> + 'v {
-    (0..Read::end(v).get()).map(RowId::new).filter(|&id| Read::live(v, id))
-}
-
-/// A run's documents, each `push` writes into its docs blocks as it is found, then sealed; on an error, let go.
-fn docs_written(cx: &mut Cx<'_>, push: impl FnOnce(&mut Docs, &mut Cx<'_>) -> Result<(), String>) -> Result<DocsIn, String> {
-    let mut docs = Docs::default();
-    match push(&mut docs, cx) {
-        Ok(()) => docs.finish(cx.dir),
-        Err(e) => {
-            docs.release(cx.dir);
-            Err(e)
-        }
-    }
-}
-
 /// The want rows' key column (`contract::want_shape`: `(port, key)`, partitioned by key): L1's is a document.
 const WANT_KEY: usize = 1;
 
-/// The document of tape port row `row` (read where the selection wrote it), its blobs where `blobs` has them: the
-/// blocks a `k0_pass` launch binds for it.
-fn doc_of(blobs: &BlobRows, dir: &Directory, row: &[i64; TAPE_ARITY]) -> Result<K0Doc, String> {
-    let blob = |at: usize| blobs.get(dir, &BlobId::of_words(&row[at..at + 4]))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string());
-    Ok(K0Doc { module: row[0], src: blob(TAPE_SOURCE)?, tape: blob(TAPE_TAPE)?, syms: blob(TAPE_SYMS)?.block })
-}
+/// Where a tape port row's module and its blobs lie: `k0::DocsIn::of_rows`'s columns.
+const DOC_COLS: RowCols = RowCols { module: 0, source: TAPE_SOURCE, tape: TAPE_TAPE, syms: TAPE_SYMS };
 
 /// The tape port's arity (`tape_shape`).
 pub const TAPE_ARITY: usize = 15;
@@ -191,21 +158,10 @@ impl DeltaOp for L1 {
         }
         let atoms = ins.global(L1Ports::ATOMS).block;
         let sel = self.select(cx, ins, want, asks)?;
-        // The documents read: the selection's added rows, each one's blocks bound into the run's docs blocks.
-        let docs = docs_written(cx, |docs, cx| {
-            let n = Runs::new(cx.dir.read("L1's selection", &[sel.rows])?.block(0)).len();
-            for i in 0..n {
-                let row = {
-                    let l = cx.dir.read("L1's selection", &[sel.rows])?;
-                    let r = Runs::new(l.block(0));
-                    (r.diff(i) > 0).then(|| core::array::from_fn::<i64, TAPE_ARITY, _>(|c| r.get(i, c)))
-                };
-                if let Some(row) = row {
-                    docs.push(cx.dir, &doc_of(cx.blobs, cx.dir, &row)?)?;
-                }
-            }
-            Ok(())
-        });
+        // The documents read: the selection's added rows, joined with the blobs' rows by `docs_of`; the directory binds
+        // the blocks they name.
+        let docs = Runs::new(cx.dir.read("L1's selection", &[sel.rows])?.block(0)).len();
+        let docs = DocsIn::of_rows(cx.reg, &self.ops, cx.dir, sel.rows, docs, DOC_COLS, cx.blobs.head());
         let docs = match docs {
             Ok(d) => d,
             Err(e) => {
@@ -220,14 +176,23 @@ impl DeltaOp for L1 {
     }
 
     fn run(&self, cx: &mut Cx<'_>, ins: &At<'_, L1Ports>, out: &mut Out<L1Ports>) -> Result<(), String> {
-        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
-        let mut work = Work::default();
-        let docs = docs_written(cx, |docs, cx| {
-            for id in live(tape) {
-                docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape, id)?)?;
+        // Every document of the tape port: its state's rows, from ∅ (`change_rows`, cold), read whole.
+        let atoms = ins.global(L1Ports::ATOMS).block;
+        let a = Side { before: None, after: ins.head(L1Ports::TAPE), arity: TAPE_ARITY, col: 0 };
+        let n = Read::end(ins.port(L1Ports::TAPE)).get() as usize;
+        let rows = open_runs(cx.dir, &tape_shape().encode()?, n);
+        let none = match Parts::open(cx.dir, 0) {
+            Ok(p) => p,
+            Err(e) => {
+                cx.dir.release(rows);
+                return Err(e);
             }
-            Ok(())
-        })?;
+        };
+        let docs = semi::select(cx.reg, &self.semis, cx.dir, &a, None, semi::How::RETRACTED, rows, none).and_then(|()| DocsIn::of_rows(cx.reg, &self.ops, cx.dir, rows, n, DOC_COLS, cx.blobs.head()));
+        cx.dir.release(rows);
+        cx.dir.release(none);
+        let docs = docs?;
+        let mut work = Work::default();
         let ran = self.pass(cx, atoms, &docs, None, out, None, &mut work);
         docs.release(cx.dir);
         ran

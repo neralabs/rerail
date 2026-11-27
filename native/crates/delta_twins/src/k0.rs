@@ -10,9 +10,9 @@
 //! to the same rows: P2, run over `l0`'s own tape, gives P2.
 //!
 //! `k0_pass` (*0686: Operations* §10: read tapes, facts · write facts · rw control · emit) is the walk as an
-//! operation over every document of a run at once (one launch): its documents are a docs block's, which refers to
-//! each one's source, tape and symbols blocks (and to the next docs block, past `DOCS_PER_BLOCK`), so the launch reads
-//! them all where they lie. A statement of any document is an item, in three phases (emit, shape 11: output in order,
+//! operation over every document of a run at once (one launch): its documents are a docs block's entries, the blocks
+//! they name bound to the launch by reference, so the launch reads them all where they lie. `docs_of` writes those
+//! entries: the selection's rows joined with the blobs' rows, read where they lie. A statement of any document is an item, in three phases (emit, shape 11: output in order,
 //! no atomics): `count` walks each statement and counts its rows by relation, and writes the first refusal by
 //! document and node order into control; `scan` turns the counts into each statement's places, claimed at once in
 //! each relation's δ runs block; `place` walks each statement again and writes its rows at its places, with the run's
@@ -22,7 +22,10 @@ use crate::intern as syms;
 use crate::tape::Reads;
 use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::atoms::find_in;
-use rerail_blocks::gens::{BODY_AT, MAX_REFS, Table, set_word, word, words, words_mut};
+use rerail_blocks::bistate::{ColumnIndex, Read};
+use rerail_blocks::gens::{BODY_AT, Table, set_word, word, words, words_mut};
+use rerail_blocks::layer::Runs;
+use rerail_blocks::relation::View;
 use rerail_blocks::layer::{runs_claim_in, runs_set_in};
 use rerail_blocks::maps::hash_bytes;
 use rerail_rr_syntax::tape::{FIELD_NAMES, Kind};
@@ -177,18 +180,16 @@ const R: usize = 8;
 /// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
 pub const CACHE: usize = RUNS + R;
 
-/// A docs block's words, at `BODY_AT`: its body's length, its documents' count, the next docs block (`NO_NEXT`:
-/// none); then each document's: its module, its source's, its tape's and its symbols' blocks, where its source and
-/// its tape lie in theirs.
+/// A docs block's words, at `BODY_AT`: its body's length, its documents' count, the first document a blob of which no
+/// blobs' row names (`NO_DOC`: none; `docs_of`'s); then each document's: its module, its source's, its tape's and its
+/// symbols' blocks, where its source and its tape lie in theirs. The blocks they name are bound to the launch by
+/// reference, not by the docs block (it refers to at most `MAX_REFS`).
 const DOCS_LEN_AT: usize = BODY_AT;
 const DOCS_N_AT: usize = BODY_AT + 8;
-const DOCS_NEXT_AT: usize = BODY_AT + 16;
+const DOCS_MISSING_AT: usize = BODY_AT + 16;
 const DOCS_AT: usize = BODY_AT + 24;
 const DOC_WORDS: usize = 8;
-pub const NO_NEXT: u32 = u32::MAX;
-/// The documents a docs block refers to: three references each (its source's, its tape's and its symbols' blocks),
-/// and one to the next docs block.
-pub const DOCS_PER_BLOCK: usize = (MAX_REFS - 1) / 3;
+pub const NO_DOC: i64 = i64::MIN;
 
 /// One document of a docs block.
 #[derive(Clone, Copy, Debug)]
@@ -206,28 +207,29 @@ pub fn docs_bytes(n: usize) -> usize {
     DOCS_AT - BODY_AT + 8 * DOC_WORDS * n
 }
 
-/// A docs block opened by the host (its room `docs_bytes(DOCS_PER_BLOCK)`): no document yet, and the next docs block.
-/// Its documents are written where they lie as they are found (`put_doc`), then it is sealed (`seal_docs`).
-pub fn open_docs(bytes: &mut [u8], next: u32) {
+/// A docs block opened (its room `docs_bytes(n)`): no document yet, none missing. Its documents are written where they
+/// lie as they are found (`put_doc`), then it is sealed (`seal_docs`).
+pub fn open_docs(bytes: &mut [u8]) {
     set_word::<u64>(bytes, DOCS_LEN_AT, docs_bytes(0) as u64);
     set_word::<u64>(bytes, DOCS_N_AT, 0);
-    set_word::<u64>(bytes, DOCS_NEXT_AT, u64::from(next));
+    set_word::<i64>(bytes, DOCS_MISSING_AT, NO_DOC);
 }
 
 /// Document `d` at place `i` of an open docs block.
 pub fn put_doc(bytes: &mut [u8], i: usize, d: &DocAt) {
-    assert!(i < DOCS_PER_BLOCK, "a docs block's references");
     let w = [d.module as u64, u64::from(d.source), u64::from(d.tape), u64::from(d.syms), d.src.0, d.src.1, d.at.0, d.at.1];
     for (k, x) in w.into_iter().enumerate() {
         set_word::<u64>(bytes, DOCS_AT + 8 * (DOC_WORDS * i + k), x);
     }
 }
 
-/// A docs block's next docs block (`NO_NEXT`: none), and its module at place `i` (sealed: its `n` documents).
-pub fn docs_next(bytes: &[u8]) -> u32 {
-    word::<u64>(bytes, DOCS_NEXT_AT) as u32
+/// The first document a blob of which no blobs' row names (`docs_of`'s), if any.
+pub fn docs_missing(bytes: &[u8]) -> Option<i64> {
+    let d = word::<i64>(bytes, DOCS_MISSING_AT);
+    (d != NO_DOC).then_some(d)
 }
 
+/// A sealed docs block's documents' count, and its module at place `i`.
 pub fn docs_n(bytes: &[u8]) -> usize {
     word::<u64>(bytes, DOCS_N_AT) as usize
 }
@@ -250,27 +252,18 @@ struct Doc<'t> {
     n: usize,
 }
 
-/// The launch's documents, in the docs blocks' order, each read through the descriptor table where it lies, one at a
+/// The launch's documents, in the docs block's order, each read through the descriptor table where it lies, one at a
 /// time.
-fn docs_of<'c, 't>(table: &'c Table<'t>, first: u32) -> impl Iterator<Item = Doc<'t>> + 'c {
-    let (mut at, mut i) = (Some(first), 0usize);
-    core::iter::from_fn(move || {
-        loop {
-            let b = table.block(at?).expect("a docs block, reached by reference");
-            if i < word::<u64>(b, DOCS_N_AT) as usize {
-                let w = |k: usize| word::<u64>(b, DOCS_AT + 8 * (DOC_WORDS * i + k));
-                let source = table.block(w(1) as u32).expect("a source's block, reached by reference");
-                let tape = table.block(w(2) as u32).expect("a tape's block, reached by reference");
-                let src = core::str::from_utf8(&source[w(4) as usize..(w(4) + w(5)) as usize]).expect("a source the file layer checked is UTF-8");
-                let t = Reads::in_place(&tape[w(6) as usize..(w(6) + w(7)) as usize], src).expect("a tape the parser wrote");
-                let syms = table.block(w(3) as u32).expect("a symbols block, reached by reference");
-                let (n, module) = (statements(&t).count(), w(0) as i64);
-                i += 1;
-                return Some(Doc { module, t, syms, n });
-            }
-            let next = word::<u64>(b, DOCS_NEXT_AT) as u32;
-            (at, i) = ((next != NO_NEXT).then_some(next), 0);
-        }
+fn docs_of<'c, 't>(table: &'c Table<'t>, at: u32) -> impl Iterator<Item = Doc<'t>> + 'c {
+    let b = table.block(at).expect("a docs block, a slot");
+    (0..word::<u64>(b, DOCS_N_AT) as usize).map(move |i| {
+        let w = |k: usize| word::<u64>(b, DOCS_AT + 8 * (DOC_WORDS * i + k));
+        let source = table.block(w(1) as u32).expect("a source's block, reached by reference");
+        let tape = table.block(w(2) as u32).expect("a tape's block, reached by reference");
+        let src = core::str::from_utf8(&source[w(4) as usize..(w(4) + w(5)) as usize]).expect("a source the file layer checked is UTF-8");
+        let t = Reads::in_place(&tape[w(6) as usize..(w(6) + w(7)) as usize], src).expect("a tape the parser wrote");
+        let syms = table.block(w(3) as u32).expect("a symbols block, reached by reference");
+        Doc { module: w(0) as i64, n: statements(&t).count(), t, syms }
     })
 }
 
@@ -307,9 +300,14 @@ const PLACES: usize = ENDS + 4 * R;
 /// A relation whose places could not be claimed (its runs block too small: the driver runs again).
 const UNCLAIMED: u32 = u32::MAX;
 
-/// Control's body bytes for documents of `n` nodes in all (at most `n` statements).
+/// Control's body bytes for `n` statements' places.
 pub fn control_bytes(n: usize) -> usize {
     PLACES - BODY_AT + 4 * R * n.max(1)
+}
+
+/// Where control's places end for `n` statements (`count` grows control to it).
+fn control_end(n: usize) -> usize {
+    PLACES + 4 * R * n.max(1)
 }
 
 /// Control laid out before a run: no refusal, no row placed.
@@ -342,6 +340,10 @@ fn statement_items(c: &Ctx<'_, '_, '_>) -> u32 {
 /// `count`: each statement's rows by relation; a refusal, the first by document and node order, into control.
 fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
     let (p, table) = launch(c);
+    // Its statements' places, past control's room: the room they need recorded, and the phase run again grown.
+    if !c.reach(CONTROL, control_end(tile.items().end)) {
+        return;
+    }
     let ([atoms], [control]) = c.views([ATOMS], [CONTROL]);
     // Each statement's counts written to its places' words as it is walked.
     let at = PLACES;
@@ -467,3 +469,65 @@ pub const K0_PASS: &[TwinPhase] = &[
     TwinPhase { name: "place", items: statement_items, run: place, again: None },
     TwinPhase { name: "keep", items: |_| 1, run: keep, again: None },
 ];
+
+crate::params! {
+    /// `docs_of`: the blobs' rows' head, and where a selection row's module and its source's, tape's and symbols'
+    /// blob ids lie (four words each).
+    pub struct DocsOfP {
+        pub blobs: u64,
+        pub module: u32,
+        pub source: u32,
+        pub tape: u32,
+        pub syms: u32,
+    }
+}
+
+/// `docs_of`'s slots: the selection's rows (read: a runs block, its +1 rows the documents read), the blobs' rows' head
+/// (read; its layers below by reference), the docs block (write) and the blocks its documents name (write: a parts
+/// block, `drop::parts`, each `(block << 32) | the furthest offset referred to`, sorted, each once).
+pub const D_ROWS: usize = 0;
+pub const D_BLOBS: usize = 1;
+pub const D_DOCS: usize = 2;
+pub const D_BLOCKS: usize = 3;
+
+/// The blobs' rows' arity (`files::blobs_shape`: the name's four words, block, at, len).
+const BLOB_ARITY: usize = 7;
+
+/// Blob `w`'s place, as the blobs' rows at `s` name it: (block, at, len).
+fn blob_at(s: &View<'_>, w: [i64; 4]) -> Option<(u32, u64, u64)> {
+    let cols = [0, 1, 2, 3].map(ColumnIndex::new);
+    let id = Read::matching(s, &cols, &w).next()?;
+    let c = |k: u16| Read::get(s, id, ColumnIndex::new(k));
+    Some((c(4) as u32, c(5) as u64, c(6) as u64))
+}
+
+/// `docs_of`'s one item: each +1 row of the selection a document, its blobs found by their names where the blobs' rows
+/// lie, written into the docs block in the selection's order, and the blocks it names into the blocks' list.
+fn docs_of_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let p = <DocsOfP as crate::Params>::read(c.params);
+    let blobs = View::chain(c.table, Some(p.blobs as u32), BLOB_ARITY).expect("the blobs' rows, their layers reached by reference");
+    let ([rows], [docs, blocks]) = c.views([D_ROWS], [D_DOCS, D_BLOCKS]);
+    let rows = Runs::new(rows);
+    let words = |i: usize, at: u32| core::array::from_fn::<i64, 4, _>(|k| rows.get(i, at as usize + k));
+    let (mut n, mut nb) = (0usize, 0usize);
+    for i in (0..rows.len()).filter(|&i| rows.diff(i) > 0) {
+        let module = rows.get(i, p.module as usize);
+        let (Some(s), Some(t), Some(y)) = (blob_at(&blobs, words(i, p.source)), blob_at(&blobs, words(i, p.tape)), blob_at(&blobs, words(i, p.syms))) else {
+            if word::<i64>(docs, DOCS_MISSING_AT) == NO_DOC {
+                set_word::<i64>(docs, DOCS_MISSING_AT, module);
+            }
+            continue;
+        };
+        put_doc(docs, n, &DocAt { module, source: s.0, tape: t.0, syms: y.0, src: (s.1, s.2), at: (t.1, t.2) });
+        n += 1;
+        for (b, at) in [(s.0, s.1), (t.0, t.1), (y.0, BODY_AT as u64)] {
+            crate::drop::put_part(blocks, nb, (i64::from(b) << 32) | at as i64);
+            nb += 1;
+        }
+    }
+    seal_docs(docs, n);
+    crate::drop::seal_parts(blocks, nb);
+}
+
+/// `docs_of`: one item.
+pub const DOCS_OF: &[TwinPhase] = &[TwinPhase { name: "docs_of", items: |_| 1, run: docs_of_rows, again: None }];
