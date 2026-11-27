@@ -3514,6 +3514,7 @@ unsafe fn lex_on(src: &[u8]) -> Lexed {
     let n = src.len();
     let nw = n.div_ceil(64);
     // Each word's bits inside the file.
+    #[cfg(feature = "test-hooks")]
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
     // Stage 1, made as the token loop comes to its blocks (decision 0703): its state and its masks.

@@ -73,6 +73,17 @@ test builds only. Python's grammar did not compile under it:
 - **The seven escapes below are the reader's refusals**, each tested where its place is (`refuse … at …`). Python's
   product tier 1 has no whole-file pass: stage 1 and the walk are a test build's.
 
+## A lexer meant to run from the middle has no whole-file pass (2026-11-27)
+
+- `bitlex_lex_rust::middle::whole_file_passes` reads a generated tier 1's product build: it drops every item and
+  statement under `#[cfg(feature = "test-hooks")]`, takes the functions `lex` reaches, and names each whole-file
+  pass in them (`fill`, `escaped`, `any`, a whole-file `stage1_best`, a loop over every word or byte).
+- `the_lexers_meant_to_run_from_the_middle_have_no_whole_file_pass` holds it for rr, JSON, Kotlin and Python.
+  `a_whole_file_pass_is_found` checks it finds each form, and none under `test-hooks` or in an unreached function.
+- Its first finding: Kotlin's product build made the file's word bits (`lv`, over every word) that only its test
+  build reads. The generator's gate for `lv` now runs last in the chain (`interleave::lv_for_tests`) and asks the
+  product build's code through the same stripping (`middle::product_after`).
+
 ## Not yet (superseded at the merge above)
 
 The product build still walks the regions, for seven escapes tested over the file that read its

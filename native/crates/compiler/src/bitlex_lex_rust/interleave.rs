@@ -688,50 +688,19 @@ pub(super) fn code_pass_in_loop(text: &str) -> String {
     }
     let out: String = lines.concat();
     let out = out.replacen(lp, &format!("{pass}{lp}        code_pass!(b);\n"), 1);
-    // The file's word bits (`lv`), where only the test build reads them: its alone.
-    let lv = "    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n";
-    if out.matches(lv).count() == 1 && !product_reads(&out[out.find(lv).expect("one") + lv.len()..], &["lv[", "&lv)", "&lv,"]) {
-        return out.replacen(lv, &lv.replacen("\n    let lv", "\n    #[cfg(feature = \"test-hooks\")]\n    let lv", 1), 1);
-    }
     out
 }
 
-/// Whether a line of `text` up to its function's end reads one of `pats` outside a block or a statement the test build
-/// alone has (`#[cfg(feature = "test-hooks")]` before it).
-fn product_reads(text: &str, pats: &[&str]) -> bool {
-    let mut test_until: Option<String> = None;
-    let mut cfg = false;
-    for l in text.lines() {
-        if l == "}" {
-            return false;
-        }
-        if let Some(end) = &test_until {
-            if l == end {
-                test_until = None;
-            }
-            continue;
-        }
-        if cfg {
-            cfg = false;
-            let ind = &l[..l.len() - l.trim_start().len()];
-            if l.trim_end().ends_with('{') {
-                test_until = Some(format!("{ind}}}"));
-                // A `let … = {` closes at its `};`.
-                if l.trim_start().starts_with("let ") {
-                    test_until = Some(format!("{ind}}};"));
-                }
-            }
-            continue;
-        }
-        if l.trim() == "#[cfg(feature = \"test-hooks\")]" {
-            cfg = true;
-            continue;
-        }
-        if pats.iter().any(|p| code_of(l).contains(p)) {
-            return true;
-        }
+/// The file's word bits (`lv`, made over every word) a test build's alone, where the product reads none of them
+/// (`middle::product_after`: the test build's items and statements taken out): a lexer that runs from the middle
+/// makes no pass over the file before its token pass (`middle::whole_file_passes`).
+pub(super) fn lv_for_tests(out: String) -> String {
+    let lv = "    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n";
+    let read = super::middle::product_after(&out, "let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();");
+    if out.matches(lv).count() == 1 && read.is_some_and(|r| !["lv[", "&lv)", "&lv,", "&lv;"].iter().any(|p| r.contains(p))) {
+        return out.replacen(lv, &lv.replacen("\n    let lv", "\n    #[cfg(feature = \"test-hooks\")]\n    let lv", 1), 1);
     }
-    false
+    out
 }
 
 /// Stage 1 run only in a test build, where the product reads nothing of it (decision 0703 step 31): every field of
