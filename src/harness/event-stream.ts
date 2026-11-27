@@ -158,7 +158,7 @@ function daemonEventLoop(configuration: EngineRuntimeConfiguration & { workspace
         answered = facts;
         return deliveries;
       } catch (error) {
-        recordLostEvent(host, event.kind, error);
+        recordLostEvent(event.session?.host ?? host, event.kind, error);
         throw error;
       }
     },

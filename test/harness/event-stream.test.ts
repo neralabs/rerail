@@ -397,6 +397,35 @@ describe("rerail events in a main build", () => {
     expect(routing.launchAutostart).not.toHaveBeenCalled();
   });
 
+  // One stream may carry several sessions, each of its own coding agent.
+  it("writes an event no daemon took under its own session's coding agent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-events-agents-"));
+    cleanups.push(async () => await removeFolder(root));
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    cleanups.push(async () => { vi.unstubAllEnvs(); });
+    routing.isMainRerailBuild.mockReturnValue(true);
+    routing.daemonEngineEndpoint.mockRejectedValue(new Error("Rerail daemon exited with code 1 before it was ready"));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const [start] = sessionOfTen(root);
+    const codex = { kind: "user-prompt", eventId: "c:prompt", sessionId: "c", session: { host: "codex", sessionId: "c", cwd: root }, text: "go" };
+
+    await runRerailEventStream({
+      workspaceRoot: root,
+      storageRoot: join(root, "sessions"),
+      databasePath: join(root, "rerail.sqlite"),
+      input: Readable.from([RERAIL_EVENT_PROTOCOL_PREFACE, JSON.stringify({ event: start }), JSON.stringify({ event: codex })].map(line => `${line}\n`)),
+      output: new PassThrough(),
+    });
+
+    expect(readHookFailures(home, 0).failures.map(({ host, event }) => [host, event])).toEqual([
+      ["claude-code", "session-start"],
+      ["codex", "user-prompt"],
+    ]);
+  });
+
   // No event starts a daemon under RERAIL_AUTOSTART=0, so none waits for a start: each asks as on a session's start, and
   // finding no daemon is what the person asked for, which `rerail status` says itself.
   it("asks for the daemon at each event under RERAIL_AUTOSTART=0, starts none and records nothing", async () => {
