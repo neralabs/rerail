@@ -1879,7 +1879,9 @@ impl St<'_> {
     }
 }
 
-unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32) {
+/// A scan's candidate `r`'s count, its stage's counters added to the range's `acc` (`stage_count_range`'s: once a
+/// range, not an atomic add a row).
+unsafe fn scan_count_one(st: &St, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32, acc: &mut [u32; 17]) {
     let s = st.s;
     let counts = b.c;
     if r > s.nr {
@@ -1893,11 +1895,9 @@ unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &Scan
     if st.matches(id, kv, false) {
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
-            at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
+            acc[0] += 1;
             for m in 0..s.npassed.min(16) as usize {
-                if s.passed[m] == NONE || st.out_bit(v, s.passed[m]) {
-                    at(j.counters.add(s.counter as usize + 1 + m)).fetch_add(1, SeqCst);
-                }
+                acc[1 + m] += u32::from(s.passed[m] == NONE || st.out_bit(v, s.passed[m]));
             }
         }
         c = (s.last == NONE || st.out_bit(v, s.last)) as u32;
@@ -2450,8 +2450,14 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     }
     let (kv, cands) = st.scan_cands(j);
     fill_u32(b.c, t0.max(cands.n), t1, 0);
+    let mut acc = [0u32; 17];
     for r in t0..t1.min(cands.n) {
-        scan_count_one(st, j, b, &kv, &cands, r);
+        scan_count_one(st, b, &kv, &cands, r, &mut acc);
+    }
+    if s.counter != NONE {
+        for (m, &a) in acc.iter().enumerate().filter(|(_, a)| **a > 0) {
+            at(j.counters.add(s.counter as usize + m)).fetch_add(a, SeqCst);
+        }
     }
 }
 
