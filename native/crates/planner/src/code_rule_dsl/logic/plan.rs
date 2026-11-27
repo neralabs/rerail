@@ -2550,16 +2550,39 @@ impl<'a> Run<'a, '_> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let f = self.fields();
+        // A measurement aid (profiled): each stratum's rules, offered to the build ahead or left out, and why.
+        let traced = super::profile::on();
+        let label = || -> String { stratum_label(scc).chars().take(48).collect() };
+        let left = |why: &str, n: usize| {
+            if traced {
+                crate::code_rule_dsl::prof::count_named_args(format_args!("planner.seed_specs {why} @ {}", label()), n);
+            }
+        };
         if scc.iter().any(|r| f.lattice(r) || f.native(r).is_some() || f.gate(r)) {
+            let why = if scc.iter().any(|r| f.lattice(r)) { "left out, a lattice stratum" } else if scc.iter().any(|r| f.native(r).is_some()) { "left out, a native stratum" } else { "left out, a gate stratum" };
+            left(why, rules.len());
             return Vec::new();
         }
         let ri: BTreeMap<String, usize> = scc.iter().enumerate().map(|(i, r)| (r.to_owned(), i)).collect();
         let mut out = Vec::new();
         // One that joins a relation holding no rows derives nothing, and the stratum leaves it out (its rules over
         // empty relations): not planned here either, nor its relations' statistics made (`runnable`).
-        let seeds: Vec<RuleKey> = self.runnable(scc, rules).into_iter().filter(|&r| {
+        let runnable = self.runnable(scc, rules);
+        left("left out, not runnable (an input empty)", rules.len() - runnable.len());
+        let seeds: Vec<RuleKey> = runnable.into_iter().filter(|&r| {
             let b = versions.at(r);
-            recursive(&b, scc).is_empty() && (0..b.len()).filter_map(|i| b.atom(i)).all(|a| self.native_rels.contains(b.rel(a)))
+            if !recursive(&b, scc).is_empty() {
+                left("left out, recursive", 1);
+                return false;
+            }
+            if let Some(a) = (0..b.len()).filter_map(|i| b.atom(i)).find(|&a| !self.native_rels.contains(b.rel(a))) {
+                if traced {
+                    let rel: String = b.rel(a).chars().take(40).collect();
+                    crate::code_rule_dsl::prof::count_named_args(format_args!("planner.seed_specs left out, reads {rel} (not yet native) @ {}", label()), 1);
+                }
+                return false;
+            }
+            true
         }).collect();
         let vs = Arc::clone(&self.versions);
         let bodies: Vec<Body<'_>> = seeds.iter().map(|&r| vs.at(r)).collect();
@@ -2577,12 +2600,19 @@ impl<'a> Run<'a, '_> {
         plan_site("a level's seed joins");
         for b in &bodies {
             if self.model.late(pf, b, None, false).is_err() {
+                left("left out, late", 1);
                 continue;
             }
-            let Ok(((order, _, _), _)) = self.model.plan_rule_reused(pf, b, None) else { continue };
+            let Ok(((order, _, _), _)) = self.model.plan_rule_reused(pf, b, None) else {
+                left("left out, not planned", 1);
+                continue;
+            };
             // The level batch keys its pairs by the spec's digest, as the stratum's join does.
             if let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &self.native_rels) {
+                left("offered", 1);
                 out.push(spec);
+            } else {
+                left("left out, no join spec", 1);
             }
         }
         self.model.stats.solve(was);

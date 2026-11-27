@@ -2699,6 +2699,10 @@ pub struct Batch {
     /// for each of its dialect's kinds, made at the first lookup of one of them, and each kind's rows made at its own
     /// first lookup, over that tag's documents alone (Q183; decision 0494: a program's language stays unmade).
     kinds: Vec<(u8, OnceLock<Box<[OnceLock<KindRows>]>>)>,
+    /// The `node` view's rows by kind over the batch's own directory (`Batch::kind_table_over`), its offset in the
+    /// block: made the first time a stage probes the view by its kind on the device.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    kind_table: OnceLock<u64>,
     /// The `field` view's rows by field (decision 0706 E4), built ahead of the seed scans of a field (`field(_, #f, _)`)
     /// in one walk of every document's fielded nodes, when the run has seen a chunk's scans walk them for several
     /// fields (`Source::build_value_index`). None until then: a scan walks the field column (`filter_eq`).
@@ -4231,6 +4235,8 @@ impl Batch {
             dialects,
             offsets: made::Offsets::default(),
             kinds: (0..=u8::MAX).filter(|&t| tag_at[usize::from(t) + 1] > tag_at[usize::from(t)]).map(|t| (t, OnceLock::new())).collect(),
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            kind_table: OnceLock::new(),
             fields: OnceLock::new(),
             kind_bits: std::sync::Mutex::new(Vec::new()),
             bits_gen: std::sync::atomic::AtomicU32::new(1),
@@ -4942,6 +4948,66 @@ impl Batch {
         }
         x
     }
+    /// The `node` view's rows by kind over a views' directory of `batches` (the batch's own, or a layered one's: the
+    /// chunk's batch, then its values', `views_over`), as a stage probing the view by its kind reads them
+    /// (`rerail_reads::views::KindTable`, decision 0706 step 0): each batch's rows of each kind (`by_kind`, decision
+    /// 0700: made per kind once a batch, shared with its lookups; here every kind of its dialects, as a stage may
+    /// probe any), and a table naming each kind's runs of them, written into the first batch's block (every batch's:
+    /// a layered directory's are one block). A run's rows are its batch's own; the directory numbers them past the
+    /// batches before it (`row_base`, as `views_over` does). A table of where the lists lie, not a copy of them
+    /// (decision 0353: an index in its relation's block). Its offset in the block.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn kind_table_over(batches: &[&Batch]) -> u64 {
+        use rerail_clif::view_reads::{KindSeg, KindTable};
+        let block = &batches[0].block;
+        let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
+        // Each batch's rows of each kind, with the rows of the batches before it.
+        let mut runs: Vec<(i64, u32, &[u32])> = Vec::new();
+        let mut base = 0u32;
+        for b in batches {
+            debug_assert!(Arc::ptr_eq(&b.block, block), "a layered directory's batches share one block");
+            for &(tag, _) in &b.kinds {
+                let Some(dialect) = b.dialects.get(tag) else { continue };
+                for k in 0..dialect.canonical.len() {
+                    let kind = i64::from(tag) * stride + k as i64;
+                    let rows = b.by_kind(kind);
+                    if !rows.is_empty() {
+                        runs.push((kind, base, rows));
+                    }
+                }
+            }
+            base += b.nodes().total() as u32;
+        }
+        // The kinds, ascending, each with its runs in the directory's batches' order (a stable sort).
+        runs.sort_by_key(|r| r.0);
+        let (mut kinds, mut vstart, mut segs) = (Vec::new(), Vec::new(), Vec::new());
+        let mut v = 0u32;
+        for &(kind, row_base, rows) in &runs {
+            if kinds.last() != Some(&kind) {
+                kinds.push(kind);
+                vstart.push(v);
+            }
+            segs.push(KindSeg { v, row_base, at: block.offset_of(rows.as_ptr()) as u64 });
+            v += rows.len() as u32;
+        }
+        vstart.push(v);
+        let (pk, pv, ps, pt) = (block.alloc_t::<i64>(kinds.len().max(1)), block.alloc_t::<u32>(vstart.len()), block.alloc_t::<KindSeg>(segs.len().max(1)), block.alloc_t::<KindTable>(1));
+        // SAFETY: each just allocated in the block, as many as written.
+        unsafe {
+            // copy: derived (the table of where each kind's runs of the batches' lists lie, written once)
+            std::ptr::copy_nonoverlapping(kinds.as_ptr(), pk, kinds.len());
+            std::ptr::copy_nonoverlapping(vstart.as_ptr(), pv, vstart.len());
+            std::ptr::copy_nonoverlapping(segs.as_ptr(), ps, segs.len());
+            pt.write(KindTable { nkinds: kinds.len() as u32, nsegs: segs.len() as u32, kinds: block.offset_of(pk) as u64, vstart: block.offset_of(pv) as u64, segs: block.offset_of(ps) as u64 });
+        }
+        crate::code_rule_dsl::prof::count("views.kind_table.segments", segs.len());
+        block.offset_of(pt) as u64
+    }
+    /// The batch's own `kind_table_over`, made once.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn kind_table(&self) -> u64 {
+        *self.kind_table.get_or_init(|| Batch::kind_table_over(&[self]))
+    }
     /// The `node` view's rows whose `kind` (column 2) is `kind`, ascending (`KindRows`).
     fn by_kind(&self, kind: i64) -> &[u32] {
         let stride = i64::from(crate::code_rule_dsl::facts::core::KIND_STRIDE);
@@ -5268,6 +5334,12 @@ impl Source for Viewed {
         let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::IndexHome::new(self.len(), rerail_blocks::relation::ADDED_INDEXES)).clone()?;
         in_place.grows = Some(Arc::clone(&home));
         Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows: self.len(), in_place, home: home.part() })
+    }
+    /// The `node` view's rows by kind (`Batch::kind_table`), where the view is read in place.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn kind_table(&self) -> Option<crate::code_rule_dsl::facts::vtab::KindTableAt> {
+        let v = device_chunk::views_in_place(&self.batch).filter(|_| matches!(self.view, View::Node))?;
+        Some(crate::code_rule_dsl::facts::vtab::KindTableAt { at: self.batch.kind_table(), dirs: [v.host.dir, v.dir.unwrap_or(0)], dir_at: v.at as u64 })
     }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()

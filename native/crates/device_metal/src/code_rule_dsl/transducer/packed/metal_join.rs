@@ -1065,7 +1065,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
-    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
+    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 4 a view's own row by its id (`by_own`); 5 the
+    /// `node` view's rows of a kind, its batches' lists (`by_kind`); 0 an index.
     walk: u32,
     /// Its block's buffer, taken once the index has its room, and its builder's bind; the block is held by it. Its
     /// probes bind the block's wrap as it is when they are encoded (`DevRel::wrap`): a block grown past its wrap
@@ -1073,6 +1074,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     buffer: Held,
     /// The relation's columns it is by (`Batch::index`'s `cols`), to find it again (`Batch::again`).
     pub(in crate::code_rule_dsl) cols: Vec<usize>,
+    /// A walk by kind's table (`walk` 5, `by_kind`): its address where the stage reads the view's directory.
+    table: u64,
 }
 
 impl DevIndex {
@@ -1132,11 +1135,16 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
         stage.r_index = ix.index;
         // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
         // row by its id (4).
+        // The `node` view by its kind (5): its batches' lists, by its table (`KindTable`, in the directory's block).
         stage.v_parent = match ix.walk {
             1 => 1,
             4 => 2,
+            5 => 3,
             _ => 0,
         };
+        if ix.walk == 5 {
+            stage.v_set = ix.table;
+        }
         stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
     }
 }
@@ -2280,7 +2288,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
     }
 
     /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
@@ -2297,7 +2305,25 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
+    }
+
+    /// `rel`, the `node` view read in place, probed by its kind (column 2, with any others but its id: `by_own`'s): no
+    /// index of it is built, as a stage reads the kind's runs of its batches' lists (`KindTable` at `table`, in the
+    /// view's directory's block), the others checked on each (decision 0706 step 0). `None` for any other relation or
+    /// key.
+    /// `table` is the source's (`Source::kind_table`), read only where it is over the view's directory.
+    pub(in crate::code_rule_dsl) fn by_kind(&self, rel: &DevRel, cols: &[usize], table: Option<crate::code_rule_dsl::facts::vtab::KindTableAt>) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_NODE;
+        let Some(v) = &rel.view else { return Ok(None) };
+        if v.kind != 1 + VIEW_NODE || !cols.contains(&2) || cols.contains(&1) || rel.is_has() {
+            return Ok(None);
+        }
+        let Some(t) = table.filter(|t| v.dir != 0 && t.dirs.contains(&v.dir)) else { return Ok(None) };
+        // Its address where the stage reads the directory: the directory's, less its offset in the block.
+        let table = v.dir - t.dir_at + t.at;
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 5, buffer: bound(&home)?, cols: Vec::new(), table }))
     }
 
     /// A `has` axis probed by its columns (decision 0353 step 5): no index, each binding's rows walked on the tape
@@ -2313,7 +2339,7 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by none of its columns")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -2370,7 +2396,7 @@ impl Batch {
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new(), table: 0 });
             }
             // This batch's own build: read by its stages after it. One in the open submission is ordered before them
             // (a submission's launches run in order); one in a submission already committed is not, as another batch's
@@ -2389,7 +2415,7 @@ impl Batch {
                     drop(held);
                     let buffer = bound(&home)?;
                     self.queue_index(rel, cols, &room, &buffer)?;
-                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() });
+                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: true, walk: 0, buffer, cols: Vec::new(), table: 0 });
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
@@ -2402,7 +2428,7 @@ impl Batch {
                     Some(buffer) => Held::of_block(buffer, rerail_blocks::region::whole(&home.block), Box::new(home.clone())),
                     None => bound(&home)?,
                 };
-                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer, cols: Vec::new() });
+                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer, cols: Vec::new(), table: 0 });
             }
             // Another batch's, its work committed: taken, not built again. Building it again here took the block's room
             // twice (row 9 of 0353: two waves of a level each built [0,1], and the [0] after found no bytes left, and
@@ -2447,7 +2473,7 @@ impl Batch {
             // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
             // later stack, a park), as its control words then say.
             self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
-            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new(), table: 0 });
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2521,7 +2547,7 @@ impl Batch {
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
         self.building[held].encoded = true;
-        Ok(DevIndex { index: room.index as u32, rows: n, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() })
+        Ok(DevIndex { index: room.index as u32, rows: n, fresh: None, built: true, walk: 0, buffer, cols: Vec::new(), table: 0 })
     }
 
     /// Commits the open work as a submission of its own (`submit_open`), and opens the next pass with what was resident

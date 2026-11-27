@@ -3417,6 +3417,8 @@ pub struct Report {
     pub placed: u64,
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
+    /// Of those, the `node` view probed by its kind, its batches' lists read (`Batch::by_kind`), no index of it built.
+    pub kind_walks: u32,
     pub sorts: u32,
     pub sort_hits: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.

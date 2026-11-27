@@ -298,6 +298,35 @@ impl IdPages {
     }
 }
 
+/// The `node` view's rows by kind over a views' directory (decision 0706 step 0: `node` probed by its kind reads its
+/// batches' lists, no index of the view), in the directory's block beside it, self-relative: the directory's kinds,
+/// ascending (`kinds`, i64s), each kind's candidates `vstart[k]..vstart[k + 1]` (u32s, `nkinds + 1`), and the
+/// segments they lie in (`segs`, ascending by `v`): each one batch's rows of a kind (`KindRows`, decision 0700: the
+/// batch's own `node` rows, a u32 each), where its first candidate is (`v`), the rows of the directory's batches before
+/// that one (`row_base`: a layered directory numbers a batch's rows past them, `views_over`), and the run's first row
+/// (`at`, an offset in the block). A candidate `q`'s row: `row_base` plus its segment's row `q - v`. Offsets are in
+/// the block, which both executors read at their own base.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KindTable {
+    pub nkinds: u32,
+    pub nsegs: u32,
+    pub kinds: u64,
+    pub vstart: u64,
+    pub segs: u64,
+}
+const _: () = assert!(std::mem::size_of::<KindTable>() == 32);
+
+/// A segment of a `KindTable`.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KindSeg {
+    pub v: u32,
+    pub row_base: u32,
+    pub at: u64,
+}
+const _: () = assert!(std::mem::size_of::<KindSeg>() == 16);
+
 /// No document (`ViewDir::doc_of_key`).
 pub const NO_DOC: u32 = u32::MAX;
 

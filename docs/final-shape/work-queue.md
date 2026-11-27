@@ -12485,3 +12485,23 @@ not the feeder's kind 3.
 Checked under Relax: check of rerail-facts, rerail-setfix, rerail-tests-lang; rerail-setfix (150), tests-lang
 syntax (113), tests-corpus base_tests (55) and phases (23), tests-logic native (20), tests-rr tape_tests (21, two
 threads: four passed too but its peak passed the 12 GB cap), tape-format tape (17). No Metal, farm or clippy runs.
+
+### Q602. Roll-up 174 (django-bugs 0168f1c171 onto Pulling-it-all-together): what the merge chose
+
+django-bugs' two: decision 0706 step 0 (a stage probing the `node` view by its kind reads its batches' lists
+through a table in the directory's block, `KindTable`, no index of the view built; layered too, one table a
+directory), and a measurement aid (seed_specs counts each rule offered to the build ahead or left out, and why).
+
+Reconciled with the hub's decision 0700 (the node view's rows by kind made per kind, at its first lookup, 4 bytes a
+match) and the paged directory, by invariant:
+- The table's segments are the batches' per-kind lists themselves (`Batch::by_kind`, made once a batch and shared
+  with the CPU's lookups), every kind of the batches' dialects, as a stage may probe any. A segment holds the rows
+  of the directory's batches before its own (`KindSeg::row_base`, was `doc_base`): `views_over` numbers a batch's
+  rows past them, so a candidate's row is `row_base + list[q - v]`, in the uglykl and its Rust (join_program) alike.
+  The feeder's `view_rows(d)[doc_base + document].rows[0] + local` indexed the directory by document order, which
+  the paged directory no longer is, and needed the 12-byte `[document, local, node]` lists 0700 removed.
+- The join program's digests (`JOIN_PROGRAM`) are the merged source's.
+
+Checked under Relax: rerail-reads, rerail-ukl-rust, rerail-setfix (150), tests-lang syntax (113), the device
+crate's join_rust digests. Not run: node_probed_by_kind_reads_its_batches_lists, which runs on Metal (no local
+Metal, no farm). No clippy runs.
