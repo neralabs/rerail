@@ -356,6 +356,15 @@ them.
    call but a `prev` of one byte past the first byte (`replace_here`), so `fill(num_start, ~w)` in a name keeps the
    number before it (`xl_5 = fs_7`) under `assume … in simple_identifier num_start = empty`. Over an operator's bytes
    a stop that is no class is tested at each byte the pairs allow it (`l >= s + 2 && …src[s + 2]…`).
+41. **A fill a run keeps reads the terms at the byte before, as the lean lexer's number**: in a run read forward, a
+   byte after the first follows one of the run's bytes, and the run knows which terms held there (`last`). So a
+   fill's `X` there is, for each term, `X` given that term at the byte before (`in_run_test`): a `prev(Y)` of it is
+   decided by the bytes the term may hold at and what it states of the byte before it (`decide`), read of the ways
+   it may hold (`ways`, as the generator's `cubes`: the exponent's digits `ex` start at a digit, never at its sign).
+   The bytes at the byte itself are one class, what is left of the byte before a class of the term's bytes, and the
+   run's own class tests are of the run's bytes. `num_start` in a number's run is `last >> 5 & 1 == 1 &&
+   matches!(src[q], b'0'..=b'9')`, a digit after the exponent's sign, and its stop `matches!(src[q], b'+' | b'-' |
+   b'.')`; the run notes a sign as `matches!(src[q], b'+' | b'-')`.
 
 What stays: tier 1 computes two marks into the token's code, as the lean lexer does: `head_ctor`'s line break (its
 `nl`) and `real` (its real literal's kind, a count of a number's bytes). The lookahead of `as_split` and `is_split`

@@ -54,6 +54,8 @@ pub(super) struct Bytes<'a> {
     fwd_seen: Vec<(String, Vec<Expr>)>,
     /// Each run's fills kept as it reads (`run_fill`): `X`, `E` and the fill's value at the run's first byte.
     fwd_fills: Vec<Vec<(Expr, Expr, String)>>,
+    /// Each run's terms (`forward_run`'s), by its marker's number.
+    fwd_terms: Vec<Vec<Expr>>,
     fwd_id: Option<usize>,
     fwd_jumps: Vec<[bool; 256]>,
     pub(super) failed: std::collections::HashSet<String>,
@@ -115,7 +117,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), found: None, found_close: None, fwd_used: false, fwd_seen: Vec::new(), fwd_fills: Vec::new(), fwd_id: None, fwd_jumps: Vec::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None, partial: false, failed: Default::default(), wmemo: HashMap::new(), amemo: Default::default(), code_fn: false, tag: "", fwd: None, fwd_stops: Vec::new(), found: None, found_close: None, fwd_used: false, fwd_seen: Vec::new(), fwd_fills: Vec::new(), fwd_terms: Vec::new(), fwd_id: None, fwd_jumps: Vec::new() }
     }
 
     /// `code` with each read of the masks it has (`locals`) in the windows' form, no block's words (decision 0703): a
@@ -183,6 +185,249 @@ impl<'a> Bytes<'a> {
     }
 
     /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
+    /// `in_run`'s test of `e` at `q`, each term's branch as the lean lexer writes it: its bit at the byte before, the
+    /// bytes at `q` as one class, and what is left of the byte before as a class of the bytes the term may hold at.
+    fn in_run_test(&self, e: &Expr, terms: &[Expr]) -> Option<String> {
+        let mut branches = Vec::new();
+        let mut told = false;
+        for (k, t) in terms.iter().enumerate() {
+            let g = super::simplify_all(self.given(e, t, terms, 0));
+            if g != super::simplify_all(e.clone()) {
+                told = true;
+            }
+            if matches!(g, Expr::Empty) {
+                continue;
+            }
+            let mut fs = Vec::new();
+            factors(&g, &mut fs);
+            let mut here = [true; 256];
+            let mut parts = vec![format!("last >> {k} & 1 == 1")];
+            let own = self.own_bytes(t, 0);
+            for f in &fs {
+                if let Some(b) = self.byte_set(f, 0) {
+                    here = std::array::from_fn(|c| here[c] && b[c]);
+                    continue;
+                }
+                // The byte before, of the bytes the term holds at.
+                let before = match f {
+                    Expr::Call(p, a) if p == "prev" && let [Arg::E(y)] = a.as_slice() => self.byte_set(y, 0),
+                    Expr::Not(n) if let Expr::Call(p, a) = n.as_ref() && p == "prev" && let [Arg::E(y)] = a.as_slice() => self.byte_set(y, 0).map(|b| b.map(|x| !x)),
+                    _ => None,
+                };
+                match before {
+                    Some(b) => parts.push(class_test_in("q - 1", &b, &own)),
+                    None => parts.push(self.at(f, "q", 0).ok()?),
+                }
+            }
+            if (0..256).any(|c| !here[c]) {
+                parts.push(class_test("q", &here));
+            }
+            branches.push(format!("({})", parts.join(" && ")));
+        }
+        if !told {
+            return None;
+        }
+        Some(if branches.is_empty() { "false".to_owned() } else { branches.join(" || ") })
+    }
+
+    /// `e` at a byte of a run after its first, where the run's terms at the byte before are `last` (`forward_run`):
+    /// for each term that may hold there, `e` as that term reads the byte before (`given`), so `num_start` in a
+    /// number is "after the sign, a digit". `e` itself where no term tells it anything.
+    fn in_run(&self, e: &Expr, terms: &[Expr]) -> Expr {
+        let mut out: Option<Expr> = None;
+        let mut told = false;
+        for (k, t) in terms.iter().enumerate() {
+            let g = super::simplify_all(self.given(e, t, terms, 0));
+            if g != *e {
+                told = true;
+            }
+            if matches!(g, Expr::Empty) {
+                continue;
+            }
+            let term = Expr::And(Box::new(Expr::Name(format!("\u{0}last{k}"))), Box::new(g));
+            out = Some(match out {
+                None => term,
+                Some(o) => Expr::Or(Box::new(o), Box::new(term)),
+            });
+        }
+        if !told {
+            return e.clone();
+        }
+        out.unwrap_or(Expr::Empty)
+    }
+
+    /// `e` at a byte where term `t` held at the byte before: each `prev(Y)` of it decided where `t` tells `Y`.
+    fn given(&self, e: &Expr, t: &Expr, terms: &[Expr], depth: usize) -> Expr {
+        if depth > 32 {
+            return e.clone();
+        }
+        let r = |x: &Expr| Box::new(self.given(x, t, terms, depth + 1));
+        match e {
+            Expr::Call(f, args) if f == "prev" && let [Arg::E(y)] = args.as_slice() => match self.decide(y, t, 0) {
+                Some(true) => Expr::Not(Box::new(Expr::Empty)),
+                Some(false) => Expr::Empty,
+                None => e.clone(),
+            },
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) && let Some(d) = self.locals.get(n).or_else(|| self.defs.get(n)) => {
+                let d = d.clone();
+                let g = self.given(&d, t, terms, depth + 1);
+                if g == d { e.clone() } else { g }
+            }
+            Expr::Not(a) => Expr::Not(r(a)),
+            Expr::And(a, b) => Expr::And(r(a), r(b)),
+            Expr::Or(a, b) => Expr::Or(r(a), r(b)),
+            _ => e.clone(),
+        }
+    }
+
+    /// Whether `y` holds at a byte where term `t` holds, where `t` tells it: of the bytes `t` may hold at, and of what
+    /// `t` states of the byte before (`prev(W)`, `~prev(W)`).
+    fn decide(&self, y: &Expr, t: &Expr, depth: usize) -> Option<bool> {
+        if depth > 32 {
+            return None;
+        }
+        if let Some(b) = self.byte_set(y, 0) {
+            let own = self.own_bytes(t, 0);
+            if (0..256).all(|c| !own[c] || b[c]) {
+                return Some(true);
+            }
+            if (0..256).all(|c| !(own[c] && b[c])) {
+                return Some(false);
+            }
+            return None;
+        }
+        match y {
+            Expr::Name(n) if let Some(d) = self.locals.get(n).or_else(|| self.defs.get(n)) => self.decide(&d.clone(), t, depth + 1),
+            Expr::Not(a) => self.decide(a, t, depth + 1).map(|v| !v),
+            Expr::And(a, b) => match (self.decide(a, t, depth + 1), self.decide(b, t, depth + 1)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            },
+            Expr::Or(a, b) => match (self.decide(a, t, depth + 1), self.decide(b, t, depth + 1)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            // The byte before: what `t` states of it.
+            Expr::Call(f, args) if f == "prev" && let [Arg::E(z)] = args.as_slice() => {
+                let zb = self.byte_set(z, 0)?;
+                let mut facts = Vec::new();
+                factors(t, &mut facts);
+                for f in &facts {
+                    match f {
+                        Expr::Call(g, a) if g == "prev" && let [Arg::E(w)] = a.as_slice() => {
+                            let wb = self.own_bytes(w, 0);
+                            if (0..256).all(|c| !wb[c] || zb[c]) {
+                                return Some(true);
+                            }
+                            if (0..256).all(|c| !(wb[c] && zb[c])) {
+                                return Some(false);
+                            }
+                        }
+                        Expr::Not(n) if let Expr::Call(g, a) = n.as_ref()
+                            && g == "prev"
+                            && let [Arg::E(w)] = a.as_slice()
+                            && let Some(wb) = self.byte_set(w, 0)
+                            && (0..256).all(|c| !zb[c] || wb[c]) =>
+                        {
+                            return Some(false);
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// The bytes `e` may hold at, at its own byte, of its ways (`ways`).
+    fn own_bytes(&self, e: &Expr, depth: usize) -> [bool; 256] {
+        let mut out = [false; 256];
+        for w in self.ways(e, depth) {
+            let b = w.iter().find(|(o, _)| *o == 0).map_or([true; 256], |x| x.1);
+            for c in 0..256 {
+                out[c] |= b[c];
+            }
+        }
+        out
+    }
+
+    /// The ways `e` may hold (as the generator's `cubes`): each the bytes it needs at offsets from where it holds,
+    /// an offset not named any byte; a fill at its own byte its start's or its stop's complement's. At most 16 ways:
+    /// past that, one of no bytes named.
+    fn ways(&self, e: &Expr, depth: usize) -> Vec<Vec<(i64, [bool; 256])>> {
+        type Way = Vec<(i64, [bool; 256])>;
+        let any: Vec<Way> = vec![Vec::new()];
+        if depth > 48 {
+            return any;
+        }
+        if let Some(b) = self.byte_set(e, 0) {
+            return if b.iter().any(|&x| x) { vec![vec![(0, b)]] } else { Vec::new() };
+        }
+        let shift = |ws: Vec<Way>, d: i64| -> Vec<Way> { ws.into_iter().map(|w| w.into_iter().map(|(o, b)| (o + d, b)).collect()).collect() };
+        let ws = match e {
+            Expr::Empty => Vec::new(),
+            Expr::Name(n) => match self.locals.get(n).or_else(|| self.defs.get(n)) {
+                Some(d) => self.ways(&d.clone(), depth + 1),
+                None => any,
+            },
+            Expr::Or(a, b) => {
+                let mut v = self.ways(a, depth + 1);
+                v.extend(self.ways(b, depth + 1));
+                v
+            }
+            Expr::And(a, b) => {
+                let (x, y) = (self.ways(a, depth + 1), self.ways(b, depth + 1));
+                let mut v = Vec::new();
+                for p in &x {
+                    'q: for q in &y {
+                        let mut w = p.clone();
+                        for (o, bq) in q {
+                            match w.iter_mut().find(|(wo, _)| wo == o) {
+                                Some((_, bw)) => {
+                                    *bw = std::array::from_fn(|c| bw[c] && bq[c]);
+                                    if !bw.iter().any(|&c| c) {
+                                        continue 'q;
+                                    }
+                                }
+                                None => w.push((*o, *bq)),
+                            }
+                        }
+                        v.push(w);
+                    }
+                }
+                v
+            }
+            Expr::Call(f, args) if matches!(f.as_str(), "prev" | "next") => match Bytes::shift(f, args) {
+                Some((y, d)) => shift(self.ways(&y, depth + 1), d),
+                None => any,
+            },
+            Expr::Call(f, args) if f == "fill" && let [Arg::E(st), Arg::E(stop)] = args.as_slice() => {
+                let mut v: Vec<Way> = self.ways(st, depth + 1).into_iter().map(|w| w.into_iter().filter(|(o, _)| *o == 0).collect()).collect();
+                match self.byte_set(stop, 0) {
+                    Some(b) => v.push(vec![(0, b.map(|x| !x))]),
+                    None => v.push(Vec::new()),
+                }
+                v
+            }
+            _ => any,
+        };
+        if ws.len() > 16 {
+            // Too many apart: one, of the bytes at its own byte any of them may hold.
+            let mut b = [false; 256];
+            for w in &ws {
+                let o = w.iter().find(|(o, _)| *o == 0).map_or([true; 256], |x| x.1);
+                for c in 0..256 {
+                    b[c] |= o[c];
+                }
+            }
+            return vec![vec![(0, b)]];
+        }
+        ws
+    }
+
     /// Whether `e` holds at no byte of `c` after one of `c`: a factor none of `c`'s bytes, or `~prev(Y)` with `Y` at
     /// each of them.
     fn none_after(&self, e: &Expr, c: &[bool; 256]) -> bool {
@@ -1018,6 +1263,7 @@ impl<'a> Bytes<'a> {
         self.fwd_id = Some(self.fwd_seen.len());
         self.fwd_seen.push((s0.to_owned(), Vec::new()));
         self.fwd_fills.push(Vec::new());
+        self.fwd_terms.push(full.iter().map(|t| self.norm(t, 0)).collect());
         self.fwd_jumps = jumped;
         let marker = format!("{SEEN}{}\u{0}\n", self.fwd_seen.len() - 1);
         let pre = format!("{SEEN}pre{}\u{0}\n", self.fwd_seen.len() - 1);
@@ -1367,9 +1613,17 @@ impl<'a> Bytes<'a> {
         for (id, (s0, es)) in self.fwd_seen.iter().enumerate() {
             let marker = format!("{SEEN}{id}\u{0}\n");
             let mut notes = String::new();
+            // A byte of the run is of one of its terms' bytes.
+            let mut run = [false; 256];
+            for t in &self.fwd_terms[id] {
+                let o = self.own_bytes(t, 0);
+                for c in 0..256 {
+                    run[c] |= o[c];
+                }
+            }
             for (k, e) in es.iter().enumerate().filter(|(k, _)| *k < 32) {
                 let test = match self.byte_set(e, 0) {
-                    Some(b) => class_test("q", &b),
+                    Some(b) => class_test_in("q", &b, &run),
                     None => match self.at(e, "q", 0) {
                         Ok(t) => t,
                         Err(_) => continue,
@@ -1379,7 +1633,15 @@ impl<'a> Bytes<'a> {
             }
             let mut pre = String::new();
             for (k, (x, e, init)) in self.fwd_fills[id].iter().enumerate().filter(|(k, _)| *k < 32) {
-                let (Ok(xt), Ok(et)) = (self.at(x, "q", 0), self.at(e, "q", 0)) else { continue };
+                let xt = match self.in_run_test(x, &self.fwd_terms[id]) {
+                    Some(t) => Ok(t),
+                    None => self.at(x, "q", 0),
+                };
+                let et = match self.byte_set(e, 0) {
+                    Some(b) => Ok(class_test_in("q", &b, &run)),
+                    None => self.at(e, "q", 0),
+                };
+                let (Ok(xt), Ok(et)) = (xt, et) else { continue };
                 match init.trim() {
                     "false" => {}
                     "true" => {
@@ -2011,8 +2273,13 @@ pub(super) fn lit(x: u8) -> String {
 
 /// Whether `src[at]` is one of the bytes of `set`: of the fewer of the bytes it is and is not, by ranges.
 fn class_test(at: &str, set: &[bool; 256]) -> String {
-    let inn: Vec<u8> = (0..=255u8).filter(|&b| set[usize::from(b)]).collect();
-    let out: Vec<u8> = (0..=255u8).filter(|&b| !set[usize::from(b)]).collect();
+    class_test_in(at, set, &[true; 256])
+}
+
+/// `class_test` where `src[at]` is one of `within`.
+fn class_test_in(at: &str, set: &[bool; 256], within: &[bool; 256]) -> String {
+    let inn: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && set[usize::from(b)]).collect();
+    let out: Vec<u8> = (0..=255u8).filter(|&b| within[usize::from(b)] && !set[usize::from(b)]).collect();
     if out.is_empty() {
         return "true".to_owned();
     }
@@ -2960,5 +3227,16 @@ fn not(t: &str) -> String {
         "false" => "true".to_owned(),
         "true" => "false".to_owned(),
         _ => format!("!{t}"),
+    }
+}
+
+/// `e`'s factors: the operands of its `&`s.
+fn factors(e: &Expr, out: &mut Vec<Expr>) {
+    match e {
+        Expr::And(a, b) => {
+            factors(a, out);
+            factors(b, out);
+        }
+        e => out.push(e.clone()),
     }
 }

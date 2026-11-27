@@ -4767,16 +4767,16 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             if now == 0 && q > s {
                 break;
             }
-            if q > s && matches!(src[q], 0x00..=0x1f | b'!'..=b'-' | b'/' | b':' | b';' | b'=' | b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f) {
+            if q > s && matches!(src[q], b'+' | b'-') {
                 seen |= 1 << 0;
             }
             if q > s && src[q] == b'.' {
                 seen |= 1 << 1;
             }
             if q > s {
-                if ((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) {
+                if (last >> 5 & 1 == 1 && matches!(src[q], b'0'..=b'9')) {
                     fills |= 1 << 0;
-                } else if (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff)))) {
+                } else if matches!(src[q], b'+' | b'-' | b'.') {
                     fills &= !(1 << 0);
                 }
             }
@@ -4972,16 +4972,16 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Lexed {
             if now == 0 && q > s {
                 break;
             }
-            if q > s && matches!(src[q], 0x00..=0x1f | b'!'..=b'-' | b'/' | b':' | b';' | b'=' | b'@' | b'['..=b'^' | b'`' | b'{'..=0x7f) {
+            if q > s && matches!(src[q], b'+' | b'-') {
                 seen |= 1 << 0;
             }
             if q > s && src[q] == b'.' {
                 seen |= 1 << 1;
             }
             if q > s {
-                if ((((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) && (q < n && matches!(src[q], b'0'..=b'9'))) && (q < n && !(q >= 1 && ((q - 1 < n && matches!(src[q - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q - 1 < n && matches!(src[q - 1], 0x80..=0xff)))))) && (q < n && !(q >= 1 && ((q - 1 < n && (src[q - 1] == b'.')) && ((q - 1) < n && !((q - 1) >= 1 && (((q - 1) - 1) < n && (src[((q - 1) - 1)] == b'.')))))))) {
+                if (last >> 5 & 1 == 1 && matches!(src[q], b'0'..=b'9')) {
                     fills |= 1 << 0;
-                } else if (q < n && !((q < n && matches!(src[q], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) || (q < n && matches!(src[q], 0x80..=0xff)))) {
+                } else if matches!(src[q], b'+' | b'-' | b'.') {
                     fills &= !(1 << 0);
                 }
             }
