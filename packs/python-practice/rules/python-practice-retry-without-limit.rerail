@@ -1,0 +1,127 @@
+.policy "python-practice-retry-without-limit" revision 1
+.description "Give every tenacity, backoff, retrying or retry decorator a limit, an attempt count or a deadline; their defaults retry a permanent error forever."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A retry that never gives up turns a permanent failure (bad credentials, a 4xx, a
+// deleted row, a schema error) into an endless loop: a hung request, a stuck worker, a hot loop hammering the
+// dependency. This rule reads the retry libraries, whose unbounded default is a documented fact;
+// python-practice-retry-loop-without-limit reads hand-written loops. Names resolve through imports (`tenacity.retry`,
+// `from tenacity import retry as r`, `import retrying`), so a function of the run called `retry`, urllib3's `Retry`
+// and celery's `self.retry` are other names. Outside test code it reports:
+//   - tenacity (TenacityWithoutStop): `@retry`, `@retry(...)`, `retry(...)(f)`, `Retrying(...)` and
+//     `AsyncRetrying(...)` with no `stop=`. Tenacity's default is `stop_never` with `wait_none`: it retries forever,
+//     without waiting, on any exception. A `retry=` predicate alone does not bound it: it picks which errors to
+//     retry, not how often.
+//   - backoff (BackoffWithoutLimit): `@backoff.on_exception(...)` and `@backoff.on_predicate(...)` with neither
+//     `max_tries=` nor `max_time=` (`max_value=` caps the wait, not the attempts).
+//   - retrying (RetryingWithoutStop): `@retrying.retry`, `@retrying.retry(...)` and `retrying.Retrying(...)` with none
+//     of `stop_max_attempt_number=`, `stop_max_delay=`, `stop_func=` or `stop=`: its default never stops.
+//   - retry (RetryWithoutTries): the `retry` package's `@retry`, `@retry(...)` and `retry_call(...)` with no `tries`
+//     (keyword, or the second positional argument of retry(), the fifth of retry_call()): its default -1 is forever.
+//   @retry(wait=wait_exponential(max=10))                 reported: no stop
+//   @retry(stop=stop_after_attempt(3))                     not reported
+//   @backoff.on_exception(backoff.expo, IOError)           reported
+//   @backoff.on_exception(backoff.expo, IOError, max_time=60)   not reported
+//   @retrying.retry(wait_fixed=1000)                       reported
+// It leaves alone any limit argument, whatever its value (`stop=stop_never`, `max_tries=None`, `tries=-1` say the
+// forever is meant), keywords passed through `**kwargs` (they may hold the limit), tenacity Retrying's positional form
+// (`Retrying(sleep, stop)`), and test files.
+// Gaps: a tenacity `.retry_with(stop=...)` at the call site is not followed; a retry object built in one place and
+// configured in another is read where it is built.
+
+#include "lib/python_practice.rerail"
+#include "python/exceptions.rerail"
+
+.violation TenacityWithoutStop(at: node, what: symbol)
+    "Add a `stop=` to `{what}`, e.g. `stop=stop_after_attempt(5)`; without one tenacity retries forever. Pass `stop=stop_never` if forever is meant."
+TenacityWithoutStop(e, what) :- prl_tenacity(e, what), pp_live(e).
+.violation BackoffWithoutLimit(at: node, what: symbol)
+    "Add `max_tries=` or `max_time=` to `{what}`, e.g. `max_tries=5`; without one backoff retries forever. Pass `max_tries=None` if forever is meant."
+BackoffWithoutLimit(c, what) :- prl_backoff(c, what), pp_live(c).
+.violation RetryingWithoutStop(at: node, what: symbol)
+    "Add `stop_max_attempt_number=` or `stop_max_delay=` to `{what}`; without one retrying retries forever. Leave it if retrying until success is meant."
+RetryingWithoutStop(e, what) :- prl_retrying(e, what), pp_live(e).
+.violation RetryWithoutTries(at: node, what: symbol)
+    "Pass `tries=` to `{what}`, e.g. `tries=5`; its default -1 retries forever. Pass `tries=-1` if forever is meant."
+RetryWithoutTries(e, what) :- prl_retry_pkg(e, what), pp_live(e).
+
+// prl_at(c, p): p is "@" when call c is a decorator, else "".
+.decl prl_deco(c: node)
+prl_deco(c) :- decorator(_, e), unparen(e, c), kind(c, "call").
+.decl prl_at(c: node, p: symbol)
+prl_at(c, "@") :- prl_deco(c).
+prl_at(c, "") :- kind(c, "call"), !prl_deco(c).
+// prl_bare(m, q): bare decorator m (not a call) names q.
+.decl prl_bare(m: node, q: symbol)
+prl_bare(m, q) :- decorator(_, e), unparen(e, m), !kind(m, "call"), sym_of(m, q).
+// prl_lib_call(c, q, what): call c calls q; what is its text for the message, `@` added for a decorator.
+.decl prl_lib_call(c: node, q: symbol, what: symbol)
+prl_lib_call(c, q, cat(p, cat(x, "(...)"))) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), prl_at(c, p),
+    text(f, x), !pp_splat(c).
+
+// ---- tenacity ----------------------------------------------------------------------------------------------------
+.decl prl_tenacity_q(q: symbol)
+prl_tenacity_q("tenacity.retry"). prl_tenacity_q("tenacity.Retrying"). prl_tenacity_q("tenacity.AsyncRetrying").
+prl_tenacity_q("tenacity.asyncio.AsyncRetrying").
+.decl prl_tenacity(e: node, what: symbol)
+prl_tenacity(c, what) :- prl_lib_call(c, q, what), prl_tenacity_q(q), !kwarg(c, "stop", _), !exc_arg(c, 1, _).
+prl_tenacity(m, cat("@", x)) :- prl_bare(m, "tenacity.retry"), text(m, x).
+
+// ---- backoff -----------------------------------------------------------------------------------------------------
+.decl prl_backoff(c: node, what: symbol)
+prl_backoff(c, what) :- prl_lib_call(c, q, what), (q = "backoff.on_exception" ; q = "backoff.on_predicate"),
+    !kwarg(c, "max_tries", _), !kwarg(c, "max_time", _).
+
+// ---- retrying ----------------------------------------------------------------------------------------------------
+.decl prl_retrying_stop(k: symbol)
+prl_retrying_stop("stop_max_attempt_number"). prl_retrying_stop("stop_max_delay"). prl_retrying_stop("stop_func").
+prl_retrying_stop("stop").
+.decl prl_retrying_bounded(c: node)
+prl_retrying_bounded(c) :- kwarg(c, k, _), prl_retrying_stop(k).
+.decl prl_retrying(e: node, what: symbol)
+prl_retrying(c, what) :- prl_lib_call(c, q, what), (q = "retrying.retry" ; q = "retrying.Retrying"),
+    !prl_retrying_bounded(c), !exc_arg(c, 0, _).
+prl_retrying(m, cat("@", x)) :- prl_bare(m, "retrying.retry"), text(m, x).
+
+// ---- retry -------------------------------------------------------------------------------------------------------
+.decl prl_retry_pkg(e: node, what: symbol)
+prl_retry_pkg(c, what) :- prl_lib_call(c, q, what), (q = "retry.retry" ; q = "retry.api.retry"),
+    !kwarg(c, "tries", _), !exc_arg(c, 1, _).
+prl_retry_pkg(c, what) :- prl_lib_call(c, q, what), (q = "retry.retry_call" ; q = "retry.api.retry_call"),
+    !kwarg(c, "tries", _), !exc_arg(c, 4, _).
+prl_retry_pkg(m, cat("@", x)) :- prl_bare(m, q), (q = "retry.retry" ; q = "retry.api.retry"), text(m, x).
+
+// The cases, `upstream/python-practice/authored/python-practice-retry-without-limit/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/__init__.py"
+    .fixture "app/backoffs.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/backoffs.py"
+    .fixture "app/clients.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/clients.py"
+    .fixture "app/other_retries.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/other_retries.py"
+    .fixture "app/retry_packages.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/retry_packages.py"
+    .fixture "app/settings.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/app/settings.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-retry-without-limit/tests/test_clients.py"
+    .expect _ at "app/backoffs.py":8
+    .expect _ at "app/backoffs.py":13
+    .expect _ at "app/backoffs.py":18
+    .expect _ at "app/backoffs.py":27
+    .expect _ at "app/clients.py":14
+    .expect _ at "app/clients.py":19
+    .expect _ at "app/clients.py":24
+    .expect _ at "app/clients.py":29
+    .expect _ at "app/clients.py":34
+    .expect _ at "app/clients.py":40
+    .expect _ at "app/clients.py":46
+    .expect _ at "app/clients.py":51
+    .expect _ at "app/clients.py":57
+    .expect _ at "app/retry_packages.py":12
+    .expect _ at "app/retry_packages.py":17
+    .expect _ at "app/retry_packages.py":22
+    .expect _ at "app/retry_packages.py":27
+    .expect _ at "app/retry_packages.py":48
+    .expect _ at "app/retry_packages.py":53
+    .expect _ at "app/retry_packages.py":59
+    .expect _ at "app/retry_packages.py":84
+.end

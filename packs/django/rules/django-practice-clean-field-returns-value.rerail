@@ -122,15 +122,15 @@ cfr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
 .decl cfr_loop(k: symbol)
 cfr_loop("while_statement"). cfr_loop("for_statement"). cfr_loop("function_definition"). cfr_loop("class_definition").
 
-// The cases, `cases/django-practice-clean-field-returns-value/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-clean-field-returns-value/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "accounts/__init__.py" from "../cases/django-practice-clean-field-returns-value/accounts/__init__.py"
-    .fixture "accounts/base.py" from "../cases/django-practice-clean-field-returns-value/accounts/base.py"
-    .fixture "accounts/forms.py" from "../cases/django-practice-clean-field-returns-value/accounts/forms.py"
-    .fixture "accounts/models.py" from "../cases/django-practice-clean-field-returns-value/accounts/models.py"
-    .fixture "accounts/tests/__init__.py" from "../cases/django-practice-clean-field-returns-value/accounts/tests/__init__.py"
-    .fixture "accounts/tests/test_forms.py" from "../cases/django-practice-clean-field-returns-value/accounts/tests/test_forms.py"
+    .fixture "accounts/__init__.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/__init__.py"
+    .fixture "accounts/base.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/base.py"
+    .fixture "accounts/forms.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/forms.py"
+    .fixture "accounts/models.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/models.py"
+    .fixture "accounts/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/tests/__init__.py"
+    .fixture "accounts/tests/test_forms.py" from "../upstream/django-practice/authored/django-practice-clean-field-returns-value/accounts/tests/test_forms.py"
     .expect _ at "accounts/forms.py":24
     .expect _ at "accounts/forms.py":31
     .expect _ at "accounts/forms.py":34

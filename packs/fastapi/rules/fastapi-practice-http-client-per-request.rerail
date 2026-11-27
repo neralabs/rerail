@@ -1,0 +1,158 @@
+.policy "fastapi-practice-http-client-per-request" revision 1
+.description "Don't build an httpx or aiohttp client, or call their one-shot request functions, in a FastAPI route, dependency or middleware or a helper they call; reuse one client for the app."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. An `httpx.AsyncClient`, `httpx.Client` or `aiohttp.ClientSession` owns a
+// connection pool: building one per request pays DNS, TCP and TLS setup on every call, throws the keep-alive pool
+// away, and under load runs the process out of sockets. `httpx.get/post/...` and `aiohttp.request(...)` build such a
+// client per call (HTTPX's docs warn about them first). It reports, outside test code, the constructor call (bare, in
+// `with`/`async with`, or returned) of one of those classes (through imports; `httpx2`, and a subclass of the run,
+// included), or one of those per-call functions, when it sits in a def FastAPI calls per request (lib/fastapi's
+// fa_per_request: a route, a dependency, HTTP middleware; a dependency cached with `@lru_cache` is no start), or in a
+// workspace def such a function reaches through sync or awaited calls (python/calls, across files; a class's
+// `__init__` when the request path constructs the class). It reports each call once; in a helper, the message names
+// the helper and one per-request function that reaches it.
+//   routes.py:    @router.get("/a") async def a(url): async with httpx.AsyncClient() as c: ...   reported
+//   routes.py:    @router.get("/j") def j(url): return httpx.get(url).json()                    reported
+//   services.py:  async def fetch_json(url): async with aiohttp.ClientSession() as s: ...      reported, when a route
+//                                                                                              awaits fetch_json()
+// Left alone: clients built at module level, in the lifespan, or anywhere no per-request function reaches (CLI,
+// scripts, background work handed to `BackgroundTasks.add_task` or `create_task`, which is an argument, not a call);
+// a def decorated `@lru_cache`/`@cache`/`@alru_cache`, and anything reached only through one, even when the cached
+// def is itself a dependency (`Depends(get_client)`: the shared-client idiom); a constructor whose result is stored in
+// a module variable (`global _session; _session = aiohttp.ClientSession()`, a lazy shared pool) or on an attribute
+// outside `__init__` (`self._client = httpx.AsyncClient()`, `app.state.http = ...`); a client built with
+// `transport=`, `mounts=` or aiohttp's `connector=` (a one-off transport: an SSRF-pinning transport, a proxy, a unix
+// socket); code in a nested def or lambda that is never called; another library's `AsyncClient` (socketio) or
+// `TestClient`; test files.
+//   routes.py:    @router.get("/ok") async def ok(request): await request.app.state.http.get(url)   not reported
+//   clients.py:   @lru_cache def get_client(): return httpx.Client()                              not reported
+// Gaps: a helper is followed through every branch, so a constructor on a rare path (an error fallback) is reported;
+// a call of unknown target (python/calls' call_open: through containers, getattr, an instance attribute holding a
+// callable) is not followed; a class instantiated once but whose `__init__` a route also reaches is reported; a client
+// cached in a dict or other container is not recognised as shared; a client per websocket connection, reused for the
+// socket's lifetime, is reported; a client whose default headers carry a per-request credential (polar's SDK client
+// per customer session, a migration adapter built with the merchant's API key) is reported though sharing it needs
+// another design; two packages with one dotted name (polar's SDK and its generator template, both `polar`) both answer
+// an import, so the template's copy is reported too.
+
+#include "lib/fastapi.rerail"
+#include "python/calls.rerail"
+
+// The request path is walked over defs' symbols (decision 0691: no node crosses files): FastAPI's per-request defs
+// (lib/fastapi's fa_per_request) and python/calls' call targets by symbol, each def's calls stated in its own file
+// (hc_edge). A finding reads its constructor's def in its own file (pt_def) and names the per-request def that
+// reaches it by its path and line (hc_def_at, stated in that def's file).
+.violation ClientPerRequest(at: node, what: symbol, fx: symbol)
+    "`{what}(...)` builds an HTTP client and its connection pool on every request to `{fx}`. Reuse one app-wide client; keep this if the call needs its own transport, proxy or per-user credentials."
+ClientPerRequest(c, what, fx) :- hc_ctor(c, h, what), pt_def(h, hq), hc_start(hq), def_name(h, fx).
+.violation ClientReached(at: node, what: symbol, hx: symbol, fx: symbol, p: symbol, l: number)
+    "`{what}(...)` in `{hx}` builds an HTTP client on each request (`{fx}` at {p}:{l} reaches it). Reuse one app-wide client; keep this if it needs its own transport, proxy or per-user credentials."
+ClientReached(c, what, hx, fx, p, l) :- hc_ctor(c, h, what), pt_def(h, hq), !hc_start(hq), def_name(h, hx),
+    hc_first(hq, fq), hc_def_at(fq, fx, p, l).
+
+// ---- clients -----------------------------------------------------------------------------------------------------
+// hc_lib(q): an HTTP client class that owns a connection pool; hc_client(e): e names one, or a subclass of the run.
+.decl hc_lib(q: symbol)
+hc_lib("httpx.AsyncClient"). hc_lib("httpx.Client"). hc_lib("httpx._client.AsyncClient"). hc_lib("httpx._client.Client").
+hc_lib("httpx2.AsyncClient"). hc_lib("httpx2.Client").
+hc_lib("aiohttp.ClientSession"). hc_lib("aiohttp.client.ClientSession").
+// hc_per_call(q): a function that builds a client for one call and closes it (`httpx.get(url)`, `aiohttp.request(...)`).
+.decl hc_per_call(q: symbol)
+hc_per_call(cat(m, x)) :- (m = "httpx." ; m = "httpx2."), (x = "get" ; x = "post" ; x = "put" ; x = "patch" ;
+    x = "delete" ; x = "head" ; x = "options" ; x = "request" ; x = "stream").
+hc_per_call("aiohttp.request"). hc_per_call("aiohttp.client.request").
+.decl hc_client(e: node)
+hc_client(e) :- fa_names(e, b), hc_lib(b).
+// hc_custom_kw(k): a keyword that gives the client a transport of its own; such a client is left alone.
+.decl hc_custom_kw(k: symbol)
+hc_custom_kw("transport"). hc_custom_kw("mounts"). hc_custom_kw("connector").
+
+// hc_ctor(c, h, what): call c, in def h's frame (a lambda's calls are its def's) outside test code, builds a client
+// that is not kept as a shared one (hc_kept) and has no transport of its own; what is the callee as written.
+.decl hc_ctor(c: node, h: node, what: symbol)
+hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), hc_client(fn), owner(c, h),
+    !hc_custom(c), !hc_kept(c, h), docof(c, d), !fa_test_doc(d), text(fn, what).
+hc_ctor(c, h, what) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), hc_per_call(q), owner(c, h),
+    !hc_custom(c), docof(c, d), !fa_test_doc(d), text(fn, what).
+.decl hc_custom(c: node)
+hc_custom(c) :- call_arg(c, -1, k, _), hc_custom_kw(k).
+// hc_kept(c, h): what call c returns is stored for later requests: assigned to a name whose home scope is not h
+// (`global` or `nonlocal`), or to an attribute by a def other than `__init__` (a lazy `self._client`,
+// `app.state.http`). A client built so is shared; so is one a class builds when its instance is kept so
+// (`global _client; _client = PolarSelfClient(...)`).
+.decl hc_kept(c: node, h: node)
+hc_kept(c, h) :- owner(c, h), asg(t, _, r, _), fa_unwrap(r, c), t != h.
+hc_kept(c, h) :- owner(c, h), kind(s, "assignment"), field(s, "left", l), kind(l, "attribute"), field(s, "right", r),
+    fa_unwrap(r, c), !def_name(h, "__init__").
+
+// ---- the request path --------------------------------------------------------------------------------------------
+// hc_start(f): a def FastAPI calls per request, outside test code, and not cached (a cached dependency runs once).
+// hc_def_ok(f): a def outside test code and not cached, stated in its file.
+.decl hc_def_ok(f: symbol)
+hc_def_ok(fq) :- kind(f, "function_definition"), docof(f, d), !fa_test_doc(d), !hc_cached(f), pt_def(f, fq).
+.decl hc_start(f: symbol)
+hc_start(fq) :- fa_per_request(fq), hc_def_ok(fq).
+// hc_reach(f, h): per-request f runs def h: f itself, or through calls (sync or awaited), not through a cached def or a
+// call whose result is kept (hc_kept: a lazily built singleton).
+.decl hc_reach(f: symbol, h: symbol)
+hc_reach(f, f) :- hc_start(f).
+hc_reach(f, h) :- hc_reach(f, g), hc_edge(g, h), !hc_cached_q(h).
+// hc_edge(g, h): a call in def g's frame, whose result is not kept, may run def h. Stated in g's file.
+.decl hc_edge(g: symbol, h: symbol)
+hc_edge(gq, h) :- owner(c, g), call_target(c, h), !hc_kept(c, g), pt_def(g, gq).
+// hc_first(h, f): the least per-request f (by symbol) that reaches h.
+.decl hc_first(h: symbol, f: symbol)
+hc_first(h, f) :- hc_reach(f, h), !hc_later(h, f).
+.decl hc_later(h: symbol, f: symbol)
+hc_later(h, f) :- hc_reach(f, h), hc_reach(g, h), g < f.
+// hc_def_at(f, fx, p, l): def f is named fx, at line l of path p. Stated in its file.
+.decl hc_def_at(f: symbol, fx: symbol, p: symbol, l: number)
+hc_def_at(fq, fx, p, l) :- kind(f, "function_definition"), pt_def(f, fq), def_name(f, fx), docof(f, d), doc(d, p, _),
+    line(f, l).
+// hc_cached(g): g's result is cached across calls (`@functools.lru_cache`, `@functools.cache`, `@alru_cache`);
+// hc_cached_q(g): by its symbol.
+.decl hc_cached(g: node)
+hc_cached(g) :- decorator(g, e0), unparen(e0, e), sym_of(e, q), hc_cache_q(q).
+hc_cached(g) :- decorator(g, e0), unparen(e0, e), kind(e, "call"), field(e, "function", fn), sym_of(fn, q),
+    hc_cache_q(q).
+.decl hc_cached_q(g: symbol)
+hc_cached_q(gq) :- hc_cached(g), pt_def(g, gq).
+.decl hc_cache_q(q: symbol)
+hc_cache_q("functools.lru_cache"). hc_cache_q("functools.cache"). hc_cache_q("async_lru.alru_cache").
+
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/__init__.py"
+    .fixture "app/cli.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/cli.py"
+    .fixture "app/clients.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/clients.py"
+    .fixture "app/deps.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/deps.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/main.py"
+    .fixture "app/routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/routes.py"
+    .fixture "app/services.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/services.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/tests/test_routes.py"
+    .fixture "app/variants.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/variants.py"
+    .fixture "app/worker.py" from "../upstream/fastapi-practice/authored/fastapi-practice-http-client-per-request/app/worker.py"
+    .expect _ at "app/clients.py":27
+    .expect _ at "app/clients.py":32
+    .expect _ at "app/deps.py":7
+    .expect _ at "app/deps.py":16
+    .expect _ at "app/main.py":26
+    .expect _ at "app/main.py":40
+    .expect _ at "app/routes.py":29
+    .expect _ at "app/routes.py":35
+    .expect _ at "app/routes.py":44
+    .expect _ at "app/routes.py":54
+    .expect _ at "app/routes.py":166
+    .expect _ at "app/routes.py":171
+    .expect _ at "app/routes.py":178
+    .expect _ at "app/services.py":6
+    .expect _ at "app/services.py":16
+    .expect _ at "app/services.py":21
+    .expect _ at "app/variants.py":18
+    .expect _ at "app/variants.py":23
+    .expect _ at "app/variants.py":28
+.end

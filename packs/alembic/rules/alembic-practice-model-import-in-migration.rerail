@@ -1,0 +1,213 @@
+.policy "alembic-practice-model-import-in-migration" revision 1
+.description "Declare the tables an Alembic migration reads or writes inside the migration instead of importing the application's ORM models; their enums, types and constants are fine."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A migration must keep working "in perpetuity", but "your ORM models may have changed so
+// would no longer work in this migration once it's older" (zzzeek, sqlalchemy/alembic#679): the model follows today's
+// schema, so an old revision's query names columns that do not exist yet at that revision (a fresh install or CI from an
+// empty database breaks) or writes the wrong ones. The Alembic cookbook's data migrations declare the table with
+// `sa.table()`/`sa.column()`; django-migration-linter makes the Django equivalent an error (RUNPYTHON_MODEL_IMPORT).
+// Reported, in an Alembic revision outside test code (module level, upgrade(), downgrade() or a helper):
+//   from app.models.group import Group                    one finding per imported name that is a mapped class
+//   from app.models import User                           a re-export, followed to the class
+//   from app.models import user as m; db.query(m.User)    a model module imported whole: its first use of each model
+//                                                         (outside type annotations)
+// A mapped class is a class of the run that declares `__tablename__`, is a sqlmodel `table=True` class, subclasses
+// either (lib/alembic's al_model_q), or subclasses a declarative base (`class Base(DeclarativeBase)`, `Base = declarative_base()`,
+// Flask-SQLAlchemy's `db.Model` for a module-level `db = SQLAlchemy(...)`, all resolved through imports) without
+// `__abstract__ = True` (Netflix/dispatch names every table with a `declared_attr` on its base). A model imported only
+// for its table name (`User.__tablename__`, `User.__table__.name`) gets a message of its own: nothing queries its
+// columns, but the import still loads the application when the migration runs.
+// Left alone:
+//   from app.models.types import GUID, JSONDict           column types and TypeDecorators
+//   from app.models.user import UserRole, ADMIN_ROLES     enums and constants
+//   from app.models.base import Base, TimestampMixin      the declarative base and mixins (Base.metadata is schema-free)
+//   from app.models.hero import HeroBase                  a sqlmodel class without table=True (a pydantic schema)
+//   class Group(declarative_base()): __tablename__ = ...  a model declared in the migration: the safe pattern
+//   from migrations.shared.frozen import Permission       a model of a module under migrations/ or alembic/: frozen for
+//                                                         the migrations (superset's migrations/shared)
+//   `if TYPE_CHECKING:` imports, annotations, env.py, revisions in test trees.
+// Gaps: a model module bound to a local name (`m = importlib.import_module(...)`); a base assigned from
+// `declarative_base()` in the same module as its models (the base reference does not resolve); models from an
+// installed package.
+// Corpus (8 Alembic repositories): 13 matches, all read, all real; see the README's rule details.
+
+#include "lib/alembic.rerail"
+
+.violation ModelImport(at: node, x: symbol) "This migration imports {x}, an application ORM model that follows today's schema, not this revision's. Declare the table here with `sa.table()` and `sa.column()`. Enums, types and constants are fine."
+.violation ModelUse(at: node, x: symbol) "This migration uses {x}, an application ORM model that follows today's schema, not this revision's. Declare the table here with `sa.table()` and `sa.column()`. Enums, types and constants are fine."
+.violation ModelTableName(at: node, x: symbol) "This migration imports {x} only for its table name, which loads the application when the migration runs. Write the table name as a string instead; leave it if the app must load anyway."
+
+// ---- mapped classes ----------------------------------------------------------------------------------------------
+// Classes are read by symbol (decision 0677): each file states its classes, their ancestry (python/names' class_anc,
+// the phase py_names) and its declarative bases by qualified name; which classes are models, and which name a
+// migration's import denotes, is joined by symbol, and each finding reads its node in its own file.
+// mi_base(q): q is a declarative base: `class Base(DeclarativeBase)` or a module-level `Base = declarative_base()`.
+// Each file states its own (mi_base_at); the run's bases, by qualified name, span files on purpose (cross_file).
+.decl mi_decl_root(q: symbol)
+mi_decl_root("sqlalchemy.orm.DeclarativeBase"). mi_decl_root("sqlalchemy.orm.DeclarativeBaseNoMeta").
+mi_decl_root("sqlalchemy.orm.decl_api.DeclarativeBase").
+.decl mi_base_factory(q: symbol)
+mi_base_factory("sqlalchemy.orm.declarative_base"). mi_base_factory("sqlalchemy.ext.declarative.declarative_base").
+mi_base_factory("sqlalchemy.orm.decl_api.declarative_base").
+.decl mi_base_at(d: number, q: symbol)
+mi_base_at(d, q) :- class_def(k, q), class_base(k, r), mi_decl_root(r), docof(k, d).
+mi_base_at(d, q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
+    mi_base_factory(r), doc(d, _, m), q = @dot(m, x).
+// Flask-SQLAlchemy: `db = SQLAlchemy(...)` at module level makes `db.Model` a declarative base.
+mi_base_at(d, q) :- al_top_assign(d, x, v), unparen(v, c), kind(c, "call"), field(c, "function", f), sym_of(f, r),
+    prefix("flask_sqlalchemy.", r), suffix(".SQLAlchemy", r), doc(d, _, m), q = @dot(@dot(m, x), "Model").
+.decl mi_base(q: symbol) cross_file
+mi_base(q) :- mi_base_at(_, q).
+.decl mi_abstract(k: node)
+mi_abstract(k) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__abstract__"), field(a, "right", v),
+    unparen(v, u), kind(u, "true").
+// mi_frozen_doc(d): a migration, or a module under a migrations/ or alembic/ directory: a model declared there is the
+// migrations' own copy, frozen at the schema they expect.
+.decl mi_frozen_doc(d: number)
+mi_frozen_doc(d) :- al_migration_doc(d).
+mi_frozen_doc(d) :- doc(d, _, _), (path_part(d, "migrations") ; path_part(d, "alembic")).
+// mi_cls_at(d, q, x, a, p, top): class q, named x, of document d (path p) outside the migrations' own modules; a
+// "abstract" when it says `__abstract__ = True`; top "top" when it is defined at module level. mi_anc_at(d, q, b):
+// it inherits from b, at any depth (class_anc).
+.decl mi_cls_at(d: number, q: symbol, x: symbol, a: symbol, p: symbol, top: symbol)
+mi_cls_at(d, q, x, a, p, top) :- class_def(k, q), def_name(k, x), docof(k, d), !mi_frozen_doc(d), doc(d, p, _),
+    mi_abs(k, a), mi_top(k, top).
+.decl mi_abs(k: node, a: symbol)
+mi_abs(k, "abstract") :- class_def(k, _), mi_abstract(k).
+mi_abs(k, "concrete") :- class_def(k, _), !mi_abstract(k).
+.decl mi_top(k: node, top: symbol)
+mi_top(k, "top") :- class_def(k, _), nearest(k, s, scope), kind(s, "module").
+mi_top(k, "nested") :- class_def(k, _), nearest(k, s, scope), !kind(s, "module").
+.decl mi_anc_at(d: number, q: symbol, b: symbol)
+mi_anc_at(d, q, b) :- class_def(k, q), class_anc(k, b), docof(k, d), !mi_frozen_doc(d).
+// mi_model(d, q, x): class q of document d, named x, is a mapped class of the application: it names its table, or
+// inherits from one that does (al_model_q), or from a declarative base and is not abstract (mi_base).
+.decl mi_cls_anc_at(d: number, q: symbol, x: symbol, a: symbol, b: symbol)
+mi_cls_anc_at(d, q, x, a, b) :- mi_cls_at(d, q, x, a, _, _), mi_anc_at(d, q, b).
+.decl mi_model(d: number, q: symbol, x: symbol)
+mi_model(d, q, x) :- mi_cls_at(d, q, x, _, _, _), al_model_q(q).
+mi_model(d, q, x) :- mi_cls_anc_at(d, q, x, _, b), al_model_q(b).
+mi_model(d, q, x) :- mi_cls_anc_at(d, q, x, "concrete", b), mi_base(b).
+
+// ---- what a migration reads --------------------------------------------------------------------------------------
+.decl mi_doc(d: number)
+mi_doc(d) :- al_migration_doc(d), !al_test_doc(d).
+// mi_typing_only(a): a sits under `if TYPE_CHECKING:` or in an annotation, which never runs a query.
+.decl mi_typing_only(a: node)
+mi_typing_only(a) :- type_checking_block(b), within(a, b).
+mi_typing_only(a) :- kind(t, "type"), within(a, t).
+// mi_import(a, q0): alias a of a migration's `from m import y` names q0 = "m.y".
+.decl mi_import(a: node, q0: symbol)
+mi_import(a, q0) :- import_alias(_, a, m, y, _), y != "", docof(a, d), mi_doc(d), !mi_typing_only(a), q0 = @dot(m, y).
+// mi_attr(n, d, q0): attribute expression n of migration d (outside annotations) reads the qualified name q0.
+.decl mi_attr(n: node, d: number, q0: symbol)
+mi_attr(n, d, q0) :- kind(n, "attribute"), docof(n, d), mi_doc(d), !mi_typing_only(n), sym_of(n, q0).
+// mi_query_at(d, q0, q): migration d names q0, which denotes q: module m's export x for q0 = "m.x", followed through
+// re-exports (the phase py_names, read by a module d reads), or q0 itself where no module exports it.
+.decl mi_query(d: number, q0: symbol)
+mi_query(d, q0) :- mi_import(a, q0), docof(a, d).
+mi_query(d, q0) :- mi_attr(_, d, q0).
+.decl mi_exported(d: number, q0: symbol, q: symbol)
+mi_exported(d, q0, q) :- mi_query(d, q0), split_dot(q0, m, x), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__exports(m, x, q).
+.decl mi_is_exported(d: number, q0: symbol)
+mi_is_exported(d, q0) :- mi_exported(d, q0, _).
+.decl mi_query_at(d: number, q0: symbol, q: symbol)
+mi_query_at(d, q0, q) :- mi_exported(d, q0, q).
+mi_query_at(d, q0, q0) :- mi_query(d, q0), !mi_is_exported(d, q0).
+// mi_named(q0, q, x): the name q0 a migration reads denotes model q, named x: through re-exports to its qualname, or
+// (a module inside a namespace package, whose qualname lacks the package: Netflix/dispatch's `dispatch/feedback/` has
+// no __init__.py) a top-level class named y of the file whose path ends in m's path, for q0 = "m.y". It joins a
+// migration's names to the classes of other files, so it spans files on purpose (cross_file), by symbol and path.
+.decl mi_named(q0: symbol, q: symbol, x: symbol) cross_file
+mi_named(q0, q, x) :- mi_query_at(_, q0, q), mi_model(_, q, x).
+mi_named(q0, q, y) :- mi_query_at(_, q0, _), split_dot(q0, m, y), mi_cls_at(e, q, y, _, p, "top"), mi_model(e, q, y),
+    mp = @replace_all(m, "\\.", "/"), (suffix(cat("/", mp, ".py"), cat("/", p)) ;
+    suffix(cat("/", mp, "/__init__.py"), cat("/", p))).
+// `from m import X [as Y]`: one finding per imported name that resolves to a model; a model the migration uses only
+// for its table name gets ModelTableName.
+ModelImport(a, x) :- mi_import(a, q0), mi_named(q0, _, x), !mi_name_only(a, q0).
+ModelTableName(a, x) :- mi_import(a, q0), mi_named(q0, _, x), mi_name_only(a, q0).
+// mi_ref(a, q0, n): identifier n of the importing migration, outside import statements, names the imported q0.
+.decl mi_ref(a: node, q0: symbol, n: node)
+mi_ref(a, q0, n) :- mi_import(a, q0), docof(a, d), kind(n, "identifier"), docof(n, d), sym_of(n, q0), !mi_in_import(n).
+.decl mi_in_import(n: node)
+mi_in_import(n) :- (kind(s, "import_from_statement") ; kind(s, "import_statement")), within(n, s).
+// mi_name_use(n): n is read only for its table name: `n.__tablename__` or `n.__table__.name`.
+.decl mi_name_use(n: node)
+mi_name_use(n) :- attr_of(p, n, "__tablename__").
+mi_name_use(n) :- attr_of(p, n, "__table__"), attr_of(_, p, "name").
+.decl mi_full_use(a: node, q0: symbol)
+mi_full_use(a, q0) :- mi_ref(a, q0, n), !mi_name_use(n).
+.decl mi_name_only(a: node, q0: symbol)
+mi_name_only(a, q0) :- mi_ref(a, q0, n), mi_name_use(n), !mi_full_use(a, q0).
+// `m.X` where m names a model module: the first use of each model in the file. Each attribute is stated by its term
+// (al_term) and its rank among the file's such attributes (mi_rank, compared in the file: no position leaves it):
+// mi_attr_at(d, nt, i, q0), it reads q0; mi_obj_at(d, nt, w, oq), its object is an attribute (w "attr") or a name
+// (w "ident") that reads oq.
+.decl mi_attr_n(n: node, d: number)
+mi_attr_n(n, d) :- mi_attr(n, d, _).
+.decl mi_rank(n: node, d: number, i: number)
+mi_rank(n, d, i) :- mi_attr_n(n, d), i = count : { mi_attr_n(p, d), earlier(p, n) }.
+// mi_attr_node(n, d, nt, i): attribute n of migration d, of term nt and rank i, a finding reads back.
+.decl mi_attr_node(n: node, d: number, nt: symbol, i: number)
+mi_attr_node(n, d, nt, i) :- mi_rank(n, d, i), al_term(n, d, nt).
+.decl mi_attr_at(d: number, nt: symbol, i: number, q0: symbol)
+mi_attr_at(d, nt, i, q0) :- mi_attr(n, d, q0), mi_attr_node(n, d, nt, i).
+.decl mi_obj_at(d: number, nt: symbol, w: symbol, oq: symbol)
+mi_obj_at(d, nt, "attr", oq) :- mi_attr_node(n, d, nt, _), field(n, "object", o), mi_attr(o, _, oq).
+mi_obj_at(d, nt, "ident", oq) :- mi_attr_node(n, d, nt, _), field(n, "object", o), kind(o, "identifier"),
+    sym_of(o, oq).
+// mi_model_ref(d, nt): the attribute's object itself names a model (`User.Address` would be an attribute of a model,
+// not of a module).
+.decl mi_model_ref(d: number, nt: symbol)
+mi_model_ref(d, nt) :- mi_obj_at(d, nt, "attr", oq), mi_named(oq, _, _).
+mi_model_ref(d, nt) :- mi_obj_at(d, nt, "ident", oq), mi_model(_, oq, _).
+// mi_attr_use(d, nt, i, q, x): attribute nt (rank i) of migration d reads model q, named x, through a module.
+.decl mi_attr_use(d: number, nt: symbol, i: number, q: symbol, x: symbol)
+mi_attr_use(d, nt, i, q, x) :- mi_attr_at(d, nt, i, q0), mi_named(q0, q, x), !mi_model_ref(d, nt).
+ModelUse(n, x) :- mi_attr_node(n, d, nt, i), mi_attr_use(d, nt, i, q, x), i = min j : { mi_attr_use(d, _, j, q, _) }.
+
+// The cases, `upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/__init__.py"
+    .fixture "app/ext.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/ext.py"
+    .fixture "app/legacy.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/legacy.py"
+    .fixture "app/models/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/__init__.py"
+    .fixture "app/models/base.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/base.py"
+    .fixture "app/models/hero.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/hero.py"
+    .fixture "app/models/types.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/types.py"
+    .fixture "app/models/user.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/models/user.py"
+    .fixture "app/plugins/billing/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/plugins/billing/__init__.py"
+    .fixture "app/plugins/billing/models.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/plugins/billing/models.py"
+    .fixture "app/schemas.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/schemas.py"
+    .fixture "app/widgets.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/app/widgets.py"
+    .fixture "migrations/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/__init__.py"
+    .fixture "migrations/env.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/env.py"
+    .fixture "migrations/shared/__init__.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/shared/__init__.py"
+    .fixture "migrations/shared/frozen.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/shared/frozen.py"
+    .fixture "migrations/versions/m1_populate_slugs.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m1_populate_slugs.py"
+    .fixture "migrations/versions/m2_shapes.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m2_shapes.py"
+    .fixture "migrations/versions/m3_module_attr.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m3_module_attr.py"
+    .fixture "migrations/versions/m4_safe.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m4_safe.py"
+    .fixture "migrations/versions/m5_namespace.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m5_namespace.py"
+    .fixture "migrations/versions/m6_flask_and_table_name.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/migrations/versions/m6_flask_and_table_name.py"
+    .fixture "tests/migrations/versions/t1_imports.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/tests/migrations/versions/t1_imports.py"
+    .fixture "tests/test_users.py" from "../upstream/alembic-practice/authored/alembic-practice-model-import-in-migration/tests/test_users.py"
+    .expect _ at "migrations/versions/m1_populate_slugs.py":7
+    .expect _ at "migrations/versions/m1_populate_slugs.py":8
+    .expect _ at "migrations/versions/m2_shapes.py":8
+    .expect _ at "migrations/versions/m2_shapes.py":9
+    .expect _ at "migrations/versions/m2_shapes.py":11
+    .expect _ at "migrations/versions/m2_shapes.py":33
+    .expect _ at "migrations/versions/m3_module_attr.py":21
+    .expect _ at "migrations/versions/m3_module_attr.py":24
+    .expect _ at "migrations/versions/m5_namespace.py":6
+    .expect ModelImport at "migrations/versions/m6_flask_and_table_name.py":5
+    .expect ModelTableName at "migrations/versions/m6_flask_and_table_name.py":6
+    .expect ModelTableName at "migrations/versions/m6_flask_and_table_name.py":7
+    .expect ModelImport at "migrations/versions/m6_flask_and_table_name.py":8
+.end

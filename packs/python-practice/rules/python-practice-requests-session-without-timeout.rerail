@@ -1,0 +1,288 @@
+.policy "python-practice-requests-session-without-timeout" revision 1
+.description "Pass a timeout to every HTTP call on a requests Session; a Session has no default timeout, so a stalled server hangs the caller."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. requests has no default timeout, on a Session as on the module functions: a server
+// that accepts the connection and stops answering hangs the calling worker forever. Bandit B113 (the `python` pack's
+// bandit-b113-request-without-timeout, Ruff S113) reads only `requests.get(...)` and its siblings; this rule reads
+// the calls on a Session instance, which it binds across statements, methods and modules. Outside test code it
+// reports `.get/.post/.put/.patch/.delete/.head/.options/.request(...)` with no `timeout=` (SessionCallWithoutTimeout)
+// or with `timeout=None` (SessionCallTimeoutNone) on a receiver that holds a Session made by `requests.Session()`,
+// `requests.session()`, or a class of the run deriving from requests.Session. The receiver is bound through:
+//   - a local name: `s = requests.Session(); s.get(url)` (the last assignment before the read), `with
+//     requests.Session() as s: s.post(...)`, and a name copied from one (`other = s`); in a lambda or nested def,
+//     a name of the enclosing function (`lambda u: s.get(u)`), through the bindings that survive to its end;
+//   - `self.x`, set in any method of the class or of a base class (`self.session = requests.Session()` in
+//     `__init__`, read in another method or a subclass's), or a class attribute `session = requests.Session()`;
+//   - a module global, read in its module or imported (`from .net import session`, `net.session`);
+//   - a call of a function or method of the run that returns one (`make_session().get(url)`, `self._session =
+//     self._new_session()`), through its return value.
+//   s = requests.Session(); s.get(url)                    reported
+//   s = requests.Session(); s.get(url, timeout=(3.05, 27))  not reported
+//   s = requests.Session(); s.get(url, timeout=None)       reported (SessionCallTimeoutNone)
+//   s = TimeoutSession(); s.get(url)                       not reported: TimeoutSession.request sets one
+// It leaves alone a call with any `timeout=` but None (a variable too), a call passing `*args` or `**kwargs` (a
+// timeout may be inside), `request()` with a ninth positional argument (the timeout); a Session of a class of the
+// run that overrides `request()` or `send()` with a body that names `timeout` (the TimeoutSession idiom); a Session
+// whose `request` or `send` attribute (or the verb's own) is replaced on the same instance by a value that sets a
+// timeout, in the scope that creates it, through the same local, or the same `self.x` (`self.session.request =
+// functools.partial(self.session.request, timeout=10)`, a lambda passing `timeout=`, a wrapper factory or def of
+// the run whose body names `timeout`); a Session
+// on which `mount()` installs an adapter of a class of the run deriving from HTTPAdapter whose `send()` names
+// `timeout` (TimeoutHTTPAdapter), when the mount call's receiver binds to the same Session (in the factory, the
+// function, or any method of the class); `httpx.Client` (5 s default timeout); `requests.get(...)` (B113's);
+// receivers it cannot bind (a parameter, `self.x` set from a parameter, a dict of sessions); a call at module level,
+// outside every def and class (a script run by hand, whose hang is in front of its operator: zenodo-rdm
+// `scripts/new_api_flow.py`); example and documentation code (an `examples`, `example` or `docs` directory:
+// jupyterhub `examples/server-api/start-stop-server.py`); test files.
+//   self.session.request = functools.partial(self.session.request, timeout=10); self.session.get(url)  not reported
+// "Names a timeout" is read from the text of the override, the replacement or the adapter's send(): whether the
+// value it sets is finite is not decidable here, so `timeout=None` there is taken as set.
+// Gaps: a Session subclass whose `__init__` sets `self.timeout` is reported, rightly: requests never reads that
+// attribute. A mount of a timeout adapter through a helper (`configure(session)`) is not seen, so that session is
+// reported. Sessions passed as parameters (also annotated `requests.Session`), stored in containers, or read through
+// a property are not followed. `session.send(prepared)` is not read.
+
+#include "lib/python_practice.rerail"
+
+// A Session crosses files (a factory's return value, a module global, a base class's attribute), so its binding is
+// over symbols (decision 0677: no node crosses files). Each file states where the values it asks about come from, as
+// a source key (rst_flow): a Session made there (`o:` and the origin call's term), a call of a def (`r:` and the def's
+// symbol), a module global (`g:` and its qualified name), an attribute of a class's instances (`a:`, the class, `|`,
+// the attribute). The sources resolve to origins across files by those keys alone (rst_src); a finding reads its call
+// by its term, and names the origin by its path and line.
+.violation SessionCallWithoutTimeout(at: node, x: symbol, p: symbol, l: number)
+    "Pass `timeout=(connect, read)` to `{x}()`, e.g. `(3.05, 30)`, with the read timeout above the server's slowest normal answer; the Session from {p}:{l} never times out."
+SessionCallWithoutTimeout(c, x, p, l) :- rst_call(c, ct, x), !pp_kwarg(c, "timeout", _), !pp_splat(c),
+    !rst_pos_timeout(c), rst_first(ct, ot), rst_origin_at(ot, _, _, p, l).
+.violation SessionCallTimeoutNone(at: node, x: symbol, p: symbol, l: number)
+    "Replace `timeout=None` in `{x}()` with `(connect, read)`, e.g. `(3.05, 30)`, the read timeout above the server's slowest normal answer; None never times out."
+SessionCallTimeoutNone(c, x, p, l) :- rst_call(c, ct, x), pp_kwarg(c, "timeout", v), kind(v, "none"),
+    rst_first(ct, ot), rst_origin_at(ot, _, _, p, l).
+// rst_first(c, o): of the unsafe Sessions the call c's receiver may hold, the origin with the least term (a `min`
+// over symbols would order their ids).
+.decl rst_first(ct: symbol, ot: symbol)
+rst_first(ct, ot) :- rst_bad(ct, ot), !rst_later(ct, ot).
+.decl rst_later(ct: symbol, ot: symbol)
+rst_later(ct, ot) :- rst_bad(ct, ot), rst_bad(ct, pt), pt < ot.
+
+// ---- calls -------------------------------------------------------------------------------------------------------
+// rst_call(c, ct, x): c (term ct, callee text x), in a def, lambda or class body outside test and example code, is an
+// HTTP method call on a receiver. rst_site(c, v, s, r, a): its verb v, a source s of its receiver (whose term is r),
+// and the attribute a when the receiver is `self.a` (else "").
+.decl rst_call(c: node, ct: symbol, x: symbol)
+rst_call(c, ct, x) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, v), pp_http_verb(v), pp_live(c),
+    docof(c, d), !rst_example_doc(d), pp_frame(c, _), text(fn, x), pt_tm(c, ct).
+.decl rst_site(ct: symbol, v: symbol, s: symbol, rt: symbol, a: symbol)
+rst_site(ct, v, s, rt, a) :- rst_call(c, ct, _), field(c, "function", fn), attr_of(fn, r, v), rst_flow(r, s),
+    pt_tm(r, rt), attr_of(r, sv, a), kind(sv, "identifier"), text(sv, "self").
+rst_site(ct, v, s, rt, "") :- rst_call(c, ct, _), field(c, "function", fn), attr_of(fn, r, v), rst_flow(r, s),
+    pt_tm(r, rt), !rst_self_recv(r).
+.decl rst_self_recv(r: node)
+rst_self_recv(r) :- attr_of(r, sv, _), kind(sv, "identifier"), text(sv, "self").
+// rst_bad(c, o): the call c's receiver holds the Session made at o, which sets no timeout of its own (its class), has
+// no timeout adapter mounted, and no patch that sets a timeout covers this call on this instance.
+.decl rst_bad(ct: symbol, ot: symbol)
+rst_bad(ct, ot) :- rst_site(ct, v, s, rt, a), rst_src(s, ot), !rst_safe_origin(ot), !rst_adapted(ot),
+    !rst_cover_origin(ot, v), !rst_cover_local(rt, ot, v), !rst_cover_self(a, ot, v).
+.decl rst_example_doc(d: number)
+rst_example_doc(d) :- doc(d, _, _), (path_part(d, "examples") ; path_part(d, "example") ; path_part(d, "docs")).
+// rst_pos_timeout(c): `request(method, url, params, data, headers, cookies, files, auth, timeout, ...)`.
+.decl rst_pos_timeout(c: node)
+rst_pos_timeout(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "request"), posarg(c, 8, _).
+
+// ---- sessions ----------------------------------------------------------------------------------------------------
+.decl rst_session_q(q: symbol)
+rst_session_q("requests.Session"). rst_session_q("requests.session"). rst_session_q("requests.sessions.Session").
+rst_session_q("requests.sessions.session").
+// rst_origin(o, k): call o makes a new Session of class k: requests.Session(), or a class of the run deriving from
+// requests.Session (its ancestry read through python/names' phase, by the module the callee names).
+.decl rst_origin(o: node, k: symbol)
+rst_origin(o, "requests.Session") :- kind(o, "call"), field(o, "function", f), sym_of(f, q), rst_session_q(q).
+rst_origin(o, k) :- kind(o, "call"), field(o, "function", f), sym_of(f, k), docof(o, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__ancestor(m, k, b), (b = "requests.Session" ; b = "requests.sessions.Session").
+// rst_origin_at(o, k, sc, p, l): the call whose term is o makes a Session of class k, in the scope whose term is sc,
+// at line l of path p. Stated in its file.
+.decl rst_origin_at(ot: symbol, k: symbol, st: symbol, p: symbol, l: number)
+rst_origin_at(ot, k, st, p, l) :- rst_origin(o, k), pt_tm(o, ot), scope_node(o, sc), pt_tm(sc, st), docof(o, d),
+    doc(d, p, _), line(o, l).
+// rst_safe_origin(o): o's class sets a default timeout itself: its method request or send (its own or a run
+// ancestor's) names `timeout` in its body.
+.decl rst_safe_origin(ot: symbol)
+rst_safe_origin(ot) :- rst_origin_at(ot, k, _, _, _), (x = "request" ; x = "send"), mro_method_sym(k, x, f),
+    rst_timeout_def(f).
+// rst_timeout_def(f): def f names `timeout` in its body. Stated in f's file.
+.decl rst_timeout_def(f: symbol)
+rst_timeout_def(fq) :- kind(f, "function_definition"), text(f, t), contains("timeout", t), pt_def(f, fq).
+
+// ---- where a value comes from ------------------------------------------------------------------------------------
+// rst_need(e): the sources of expression e are asked for: the receiver of an HTTP verb, of mount() or of a patch, a
+// returned value, a value assigned to a module global or an attribute, a with item's value; and what those read.
+.decl rst_need(e: node)
+rst_need(r) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, v), (pp_http_verb(v) ; v = "mount").
+rst_need(pr) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, pr, m),
+    (m = "request" ; m = "send" ; pp_http_verb(m)).
+rst_need(v) :- kind(r, "return_statement"), child(r, v, 0).
+rst_need(r) :- kind(m, "module"), live_asg(m, _, r).
+rst_need(r) :- assigned_attr(_, "self", _, r).
+rst_need(r) :- kind(c, "class_definition"), asg(c, _, r, _).
+rst_need(v) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0).
+rst_need(m) :- rst_need(e), kind(e, "parenthesized_expression"), unparen(e, m).
+rst_need(r) :- rst_need(e), latest_assign(e, x, a), rasg(_, x, r, a).
+rst_need(r) :- rst_need(e), ast_name(e, x), expr_ctx(e, "load"), look(e, x, m), (kind(m, "module") ;
+    kind(m, "function_definition")), scope_node(e, s), s != m, live_asg(m, x, r).
+// rst_flow(e, s): asked-for expression e may hold a value from source s.
+.decl rst_flow(e: node, s: symbol)
+rst_flow(o, cat("o:", ot)) :- rst_need(o), rst_origin(o, _), pt_tm(o, ot).
+rst_flow(e, s) :- rst_need(e), kind(e, "parenthesized_expression"), unparen(e, m), rst_flow(m, s).
+// a call of a def of the run, which may return one
+rst_flow(c, cat("r:", g)) :- rst_need(c), kind(c, "call"), call_target(c, g).
+// a local name: its last assignment before the read, or `with … as x` around it
+rst_flow(e, s) :- rst_need(e), latest_assign(e, x, a), rasg(_, x, r, a), rst_flow(r, s).
+rst_flow(e, s) :- rst_need(e), ast_name(e, x), expr_ctx(e, "load"), rst_with(w, x, s), within(e, w),
+    scope_node(e, sc), scope_node(w, sc).
+// a module global, read in a function of its module, or imported from another; a name of an enclosing function,
+// read in a lambda or nested def (a closure)
+rst_flow(e, s) :- rst_need(e), ast_name(e, x), expr_ctx(e, "load"), look(e, x, m), (kind(m, "module") ;
+    kind(m, "function_definition")), scope_node(e, sc), sc != m, live_asg(m, x, r), rst_flow(r, s).
+rst_flow(e, cat("g:", q)) :- rst_need(e), (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q).
+// `self.x` in a method of class k
+rst_flow(e, cat(cat(cat("a:", k), "|"), a)) :- rst_need(e), attr_of(e, s, a), kind(s, "identifier"), text(s, "self"),
+    nearest(e, f, "function_definition"), nearest(f, c, scope), class_def(c, k).
+// rst_with(w, x, s): with statement w binds x to a value from s: `with requests.Session() as x:`.
+.decl rst_with(w: node, x: symbol, s: symbol)
+rst_with(w, x, s) :- kind(wi, "with_item"), field(wi, "value", ap), kind(ap, "as_pattern"), child(ap, v, 0),
+    rst_flow(v, s), field(ap, "alias", t), child(t, n, 0), kind(n, "identifier"), text(n, x),
+    nearest(wi, w, "with_statement").
+// rst_ret(g, s): def g returns a value from s. rst_glob(q, s): module global q (`pkg.mod.session`) is assigned a
+// value from s. rst_attr_src(k, a, s): instances of class k get attribute a from s: `self.a = …` in a method of k, or
+// a class attribute. Each is stated in its file.
+.decl rst_ret(g: symbol, s: symbol)
+rst_ret(gq, s) :- kind(r, "return_statement"), child(r, v, 0), pp_frame(r, g), rst_flow(v, s), pt_def(g, gq).
+.decl rst_glob(q: symbol, s: symbol)
+rst_glob(q, s) :- kind(m, "module"), live_asg(m, x, r), rst_flow(r, s), modname(m, mq), q = cat(cat(mq, "."), x).
+.decl rst_attr_src(k: symbol, a: symbol, s: symbol)
+rst_attr_src(k, a, s) :- assigned_attr(f, "self", a, r), nearest(f, c, scope), class_def(c, k), rst_flow(r, s).
+rst_attr_src(k, a, s) :- class_def(c, k), asg(c, a, r, _), rst_flow(r, s).
+// rst_src(s, o): source s may hold the Session made at the call whose term is o: through the returns of the defs, the
+// module globals and the attributes of a class or a base class of it.
+.decl rst_src(s: symbol, ot: symbol)
+rst_src(s, ot) :- rst_origin_at(ot, _, _, _, _), s = cat("o:", ot).
+rst_src(s, ot) :- rst_ret(g, s0), rst_src(s0, ot), s = cat("r:", g).
+rst_src(s, ot) :- rst_glob(q, s0), rst_src(s0, ot), s = cat("g:", q).
+rst_src(s, ot) :- rst_attr_of(k, a, ot), s = cat(cat(cat("a:", k), "|"), a).
+.decl rst_attr_of(k: symbol, a: symbol, ot: symbol)
+rst_attr_of(k, a, ot) :- rst_attr_src(k, a, s), rst_src(s, ot).
+rst_attr_of(k, a, ot) :- subclass(k, b), rst_attr_of(b, a, ot).
+
+// ---- adapters ----------------------------------------------------------------------------------------------------
+// rst_timeout_adapter(k): class k of the run derives from HTTPAdapter and its send() names `timeout`.
+.decl rst_timeout_adapter(k: symbol)
+rst_timeout_adapter(k) :- subclass(k, b), (b = "requests.adapters.HTTPAdapter" ; b = "requests.adapters.BaseAdapter"),
+    mro_method_sym(k, "send", f), rst_timeout_def(f).
+// rst_mount(s, k): `<r>.mount(prefix, adapter)`, r from source s, installs a new adapter of class k: built in the
+// call, or a local name bound to one (rst_adapter_cls).
+.decl rst_mount(s: symbol, k: symbol)
+rst_mount(s, k) :- rst_mount_arg(m, a), field(m, "function", fn), attr_of(fn, r, "mount"), rst_flow(r, s),
+    rst_adapter_cls(a, k).
+.decl rst_mount_arg(m: node, a: node)
+rst_mount_arg(m, a) :- kind(m, "call"), field(m, "function", fn), attr_of(fn, _, "mount"),
+    (posarg(m, 1, a0) ; pp_kwarg(m, "adapter", a0)), unparen(a0, a).
+.decl rst_adapter_need(e: node)
+rst_adapter_need(a) :- rst_mount_arg(_, a).
+rst_adapter_need(m) :- rst_adapter_need(e), latest_assign(e, x, a), rasg(_, x, r, a), unparen(r, m).
+.decl rst_adapter_cls(e: node, k: symbol)
+rst_adapter_cls(e, k) :- rst_adapter_need(e), kind(e, "call"), field(e, "function", f), sym_of(f, k).
+rst_adapter_cls(e, k) :- rst_adapter_need(e), latest_assign(e, x, a), rasg(_, x, r, a), unparen(r, m),
+    rst_adapter_cls(m, k).
+// rst_adapted(o): a timeout adapter is mounted on the Session made at o.
+.decl rst_adapted(ot: symbol)
+rst_adapted(ot) :- rst_mount(s, k), rst_timeout_adapter(k), rst_src(s, ot).
+
+// ---- patches -----------------------------------------------------------------------------------------------------
+// rst_patch(pr, m, w): `<pr>.m = v` replaces method m (request, send or a verb) on the instance pr holds with a value
+// that sets a timeout, when w holds (rst_witness): a partial or other call passing `timeout=` other than None, or a
+// lambda that names `timeout` (w ""); a call of a def of the run whose body names `timeout`, a wrapper factory (w
+// "t:" and the def's symbol); a def of the run whose body names it, by its qualified name (w "n:" and the name)
+// (`self.session.request = functools.partial(self.session.request, timeout=10)`).
+.decl rst_patch(pr: node, m: symbol, w: symbol)
+rst_patch(pr, m, w) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, pr, m),
+    (m = "request" ; m = "send" ; pp_http_verb(m)), field(a, "right", v0), unparen(v0, v), rst_sets_timeout(v, w).
+.decl rst_sets_timeout(v: node, w: symbol)
+rst_sets_timeout(v, "") :- pp_kwarg(v, "timeout", t), !kind(t, "none").
+rst_sets_timeout(v, cat("t:", g)) :- kind(v, "call"), !pp_kwarg(v, "timeout", _), call_target(v, g).
+rst_sets_timeout(v, "") :- kind(v, "lambda"), text(v, t), contains("timeout", t).
+rst_sets_timeout(v, cat("n:", q)) :- (kind(v, "identifier") ; kind(v, "attribute")), sym_of(v, q).
+.decl rst_witness(w: symbol)
+rst_witness("").
+rst_witness(w) :- rst_timeout_def(g), w = cat("t:", g).
+rst_witness(w) :- rst_timeout_q(q), w = cat("n:", q).
+// rst_timeout_q(q): the def whose qualified name is q names `timeout` in its body. Stated in its file.
+.decl rst_timeout_q(q: symbol)
+rst_timeout_q(q) :- kind(g, "function_definition"), qualname(g, q), text(g, t), contains("timeout", t).
+// rst_covers(m, v): replacing method m covers verb v. Replacing `request` or `send` covers every verb, since the verbs
+// call them; replacing `get` covers `get` only.
+.decl rst_covers(m: symbol, v: symbol)
+rst_covers(m, v) :- pp_http_verb(v), (m = "request" ; m = "send" ; m = v).
+// A patch covers a call only when it reaches the call's instance, not just the same origin (a factory's Session is a
+// new one per call): it is in the scope that creates the origin (the factory, or the module of a global:
+// rst_cover_origin), or its receiver is the call's receiver's text in the same scope (a local: rst_cover_local), or
+// both are the same `self.x` (rst_cover_self).
+.decl rst_scope_patch(s: symbol, m: symbol, w: symbol, st: symbol)
+rst_scope_patch(s, m, w, st) :- rst_patch(pr, m, w), rst_flow(pr, s), scope_node(pr, sc), pt_tm(sc, st).
+.decl rst_cover_origin(ot: symbol, v: symbol)
+rst_cover_origin(ot, v) :- rst_scope_patch(s, m, w, st), rst_witness(w), rst_src(s, ot), rst_origin_at(ot, _, st, _, _),
+    rst_covers(m, v).
+// rst_local_patch(r, s, m, w): a patch whose receiver (from s) is written as the call receiver whose term is r, in its
+// scope. Stated in their file.
+.decl rst_local_patch(rt: symbol, s: symbol, m: symbol, w: symbol)
+rst_local_patch(rt, s, m, w) :- rst_call(c, _, _), field(c, "function", fn), attr_of(fn, r, _), rst_patch(pr, m, w),
+    text(pr, t), text(r, t), scope_node(pr, sc), scope_node(r, sc), rst_flow(pr, s), pt_tm(r, rt).
+.decl rst_cover_local(rt: symbol, ot: symbol, v: symbol)
+rst_cover_local(rt, ot, v) :- rst_local_patch(rt, s, m, w), rst_witness(w), rst_src(s, ot), rst_covers(m, v).
+.decl rst_self_patch(a: symbol, s: symbol, m: symbol, w: symbol)
+rst_self_patch(a, s, m, w) :- rst_patch(pr, m, w), attr_of(pr, ps, a), kind(ps, "identifier"), text(ps, "self"),
+    rst_flow(pr, s).
+.decl rst_cover_self(a: symbol, ot: symbol, v: symbol)
+rst_cover_self(a, ot, v) :- rst_self_patch(a, s, m, w), rst_witness(w), rst_src(s, ot), rst_covers(m, v).
+
+// The cases, `upstream/python-practice/authored/python-practice-requests-session-without-timeout/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/__init__.py"
+    .fixture "app/clients.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/clients.py"
+    .fixture "app/locals.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/locals.py"
+    .fixture "app/net.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/net.py"
+    .fixture "app/patched.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/app/patched.py"
+    .fixture "examples/start_server.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/examples/start_server.py"
+    .fixture "scripts/smoke.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/scripts/smoke.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-requests-session-without-timeout/tests/test_clients.py"
+    .expect _ at "app/clients.py":14
+    .expect _ at "app/clients.py":22
+    .expect _ at "app/clients.py":39
+    .expect _ at "app/clients.py":46
+    .expect _ at "app/clients.py":66
+    .expect _ at "app/clients.py":70
+    .expect _ at "app/locals.py":21
+    .expect _ at "app/locals.py":26
+    .expect _ at "app/locals.py":31
+    .expect _ at "app/locals.py":36
+    .expect _ at "app/locals.py":40
+    .expect _ at "app/locals.py":46
+    .expect _ at "app/locals.py":51
+    .expect _ at "app/locals.py":55
+    .expect _ at "app/locals.py":61
+    .expect _ at "app/locals.py":67
+    .expect _ at "app/locals.py":72
+    .expect _ at "app/locals.py":77
+    .expect _ at "app/net.py":58
+    .expect _ at "app/patched.py":92
+    .expect _ at "app/patched.py":98
+    .expect _ at "app/patched.py":105
+    .expect _ at "app/patched.py":111
+    .expect _ at "app/patched.py":120
+    .expect _ at "app/patched.py":128
+    .expect _ at "app/patched.py":135
+.end

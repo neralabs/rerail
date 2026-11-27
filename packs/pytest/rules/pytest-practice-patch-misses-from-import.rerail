@@ -1,0 +1,212 @@
+.policy "pytest-practice-patch-misses-from-import" revision 1
+.description "Patch a function, class or value where the code under test looks it up, not in the module that defines it when the callers imported it by name."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. `from shop.mail import send_email` copies the object into the importing module: a
+// later `mock.patch("shop.mail.send_email")` replaces the name in shop.mail, which the importer never reads again, so
+// its code still sends real e-mail and `send.assert_not_called()` passes vacuously (unittest.mock, "Where to patch").
+// It reads every file of the run: a patch target resolved to a workspace module that binds the name, the non-test
+// modules that copied the name with a top-level from-import (following re-exports: `shop/notify/__init__.py` doing
+// `from .sms import send_sms` passes its copy on), every live read of the original, and the patching file's imports:
+// it reports only when that file imports a module holding a copy (the code the test runs), and names that module.
+//   @mock.patch("shop.mail.send_email")              reported when the test file imports shop.orders, which has
+//   mocker.patch("shop.mail.send_email")             `from shop.mail import send_email` and calls it, and nothing
+//   patch.object(mail, "send_email")                 reads `mail.send_email` or calls it inside shop/mail.py
+//   monkeypatch.setattr("shop.mail.send_email", f)
+//   monkeypatch.setattr(mail, "send_email", f)
+//   patch("shop.orders.send_email")                  not reported: the name the code under test reads
+//   patch("shop.http.post")                          not reported: shop/billing.py calls `http.post(...)`
+//   patch("shop.mail.render_body")                   not reported: shop/mail.py calls it itself
+//   patch("shop.mail.archive")                       not reported: a function imports it at call time, after the patch
+//   patch("shop.http.Client.get")                    not reported: a class attribute reaches every holder of the class
+//   patch("requests.get")                            not reported: the run cannot see the library's importers
+//   patch("shop.mail.audit") + patch("shop.inventory.audit") on one test: not reported, the copy is patched too
+//   a test file that imports no module holding a copy: not reported (a dead patch, or one guarding shop.mail's own
+//                                                    code: `mail.confirm()` then `send.assert_not_called()`)
+//   a name a Django management command imports: not reported (call_command imports it inside the patch)
+//   an importer imported in the patching test's body, or a file that reloads modules with importlib: not reported
+//   a copy read only in type annotations does not count; patch.dict and monkeypatch.delattr: not reported.
+//   `create=True` / `raising=False` change nothing here: the rule reads only names the module binds, and the copy is
+//   missed all the same
+// Gaps: tests that reach the importer only through a test client or a fixture (no import of it in the test file)
+// are not reported; a test module that imports the name itself and calls it misses the patch the same way, but tests
+// are not read as importers; when any module reads `mod.name`, the rule is silent even if the test runs another
+// module's copy; `from m import *` copies and names read through `sys.modules` or a dotted string are not seen; a
+// module first imported while the patch is active does get the mock, which a static check cannot always tell.
+
+#include "lib/pytest.rerail"
+
+.violation PatchMissesFromImport(at: node, target: symbol, importer: symbol, fix: symbol) "`{importer}` holds its own copy of this name, so patching `{target}` leaves its code on the real object. Patch `{fix}` instead, or drop the patch if this test never runs `{importer}`."
+PatchMissesFromImport(at, t, qi, @dot(qi, l)) :- pmi_site(at, q, x, t, _), pmi_key(at, sk), pmi_pick(sk, q, x, qi),
+    pmi_open(sk, q, x, qi, l).
+
+// The modules, their copies and their reads are questions of other files, asked by module name (decision 0677): each
+// file states what its module binds, copies and reads (pmi_binds, pmi_imp_at, pmi_reads, pmi_named), and each patch
+// is handed on by a key, its file's path and its term (pmi_key), with what its own file shows
+// about it (pmi_name_k, pmi_attr_k, pmi_cov_k, pmi_cov_pkg_k, pmi_body_imp_k, pmi_imports_k, pmi_reload_k). The
+// cross-file part picks the importer by those keys, and the finding reads the answer back at the patch's node.
+
+// pmi_site(at, q, x, t, k): a patch reported at `at` replaces name x of module q (t = "q.x"): k "name", a target
+// string (pmi_ok: whose module part is a workspace module, and t none), or k "attr", patch.object /
+// monkeypatch.setattr on an expression naming a workspace module.
+.decl pmi_site(at: node, q: symbol, x: symbol, t: symbol, k: symbol)
+pmi_site(a, q, x, t, "name") :- pt_patch_name(c, t, a), !pt_mp_call(c, "delattr"), q = @pkg_up(t, 1), q != "",
+    x = @replace_all(t, "^.*\\.", "").
+pmi_site(c, q, x, @dot(q, x), "attr") :- pt_patch_attr(c, o, x), !pt_mp_call(c, "delattr"), pmi_modref(o, q).
+// pmi_modref(o, q): expression o names workspace module q (`mail` after `from shop import mail`, `shop.http`), one
+// its file reads (the phase py_names's reads_at).
+.decl pmi_modref(o: node, q: symbol)
+pmi_modref(o, q) :- qn(o, q), docof(o, d), doc(d, p, _), py_names__reads_at(p, q).
+pmi_modref(o, q) :- sym_of(o, q), docof(o, d), doc(d, p, _), py_names__reads_at(p, q).
+// pmi_key(at, sk): patch site at's key, its file's path and its term (python/points-to-file's pt_tm: its place in its
+// nearest definition, so an edit above that definition leaves it). pmi_name_k(sk, q, x, t):
+// a target string site by key; pmi_attr_k(sk, q, x): a patch.object / monkeypatch.setattr site by key.
+.decl pmi_key(at: node, sk: symbol)
+pmi_key(at, cat(p, " ", t)) :- pmi_site(at, _, _, _, _), docof(at, d), doc(d, p, _), pt_tm(at, t).
+.decl pmi_name_k(sk: symbol, q: symbol, x: symbol, t: symbol)
+pmi_name_k(sk, q, x, t) :- pmi_site(at, q, x, t, "name"), pmi_key(at, sk).
+.decl pmi_attr_k(sk: symbol, q: symbol, x: symbol)
+pmi_attr_k(sk, q, x) :- pmi_site(at, q, x, _, "attr"), pmi_key(at, sk).
+// pmi_module(q): q is a module of the run. pmi_ok(sk, q, x): site sk replaces x of a workspace module q.
+.decl pmi_module(q: symbol)
+pmi_module(q) :- modname(_, q).
+.decl pmi_ok(sk: symbol, q: symbol, x: symbol)
+pmi_ok(sk, q, x) :- pmi_name_k(sk, q, x, t), pmi_module(q), !pmi_module(t).
+pmi_ok(sk, q, x) :- pmi_attr_k(sk, q, x).
+// pmi_target(q, x): some patch replaces x in q, and q's module binds x at its top level (pmi_binds).
+.decl pmi_binds(q: symbol, x: symbol)
+pmi_binds(q, x) :- modname(m, q), bound_in(m, x).
+.decl pmi_target(q: symbol, x: symbol)
+pmi_target(q, x) :- pmi_ok(_, q, x), pmi_binds(q, x).
+
+// pmi_copy(q, x, qi, l): non-test module qi holds q's x under the local name l, copied by a from-import that runs
+// when qi is imported (pmi_imp_at), directly or through modules that re-export it.
+.decl pmi_imp_at(qi: symbol, q: symbol, x: symbol, l: symbol)
+pmi_imp_at(qi, q, x, l) :- import_alias(i, _, q, x, l), x != "", pmi_top_import(i, mi), modname(mi, qi).
+.decl pmi_copy(q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_copy(q, x, qi, l) :- pmi_target(q, x), pmi_imp_at(qi, q, x, l).
+pmi_copy(q, x, qj, l2) :- pmi_copy(q, x, qi, l1), pmi_imp_at(qj, qi, l1, l2).
+.decl pmi_top_import(i: node, m: node)
+pmi_top_import(i, m) :- import_time(i), nearest(i, m, scope), kind(m, "module"), docof(i, d), !pt_test_doc(d).
+// pmi_user(q, x, qi, l): qi reads its copy l when it runs (pmi_reads: a name a top-level from-import of qi binds,
+// read in qi; a type annotation is no such read).
+.decl pmi_reads(qi: symbol, l: symbol)
+pmi_reads(qi, l) :- pmi_top_import(i, mi), import_alias(i, _, _, _, l), nameref(n, l), look(n, l, mi), !bind_only(n),
+    !annotation(n), modname(mi, qi).
+.decl pmi_user(q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_user(q, x, qi, l) :- pmi_copy(q, x, qi, l), pmi_reads(qi, l).
+
+// pmi_live(q, x): some code reads q's x itself when it runs, so the patch reaches it (pmi_named):
+// `mail.send_email(...)` or `getattr(mail, "send_email")` anywhere, a from-import inside a function, a read inside q,
+// or a from-import in a Django management command, whose module `call_command` imports when it runs, inside the
+// test's patch.
+.decl pmi_named(q: symbol, x: symbol)
+pmi_named(q, x) :- attr_of(_, o, x), pmi_modref(o, q).
+pmi_named(q, x) :- kind(c, "call"), field(c, "function", f), text(f, "getattr"), posarg(c, 0, o), posarg(c, 1, s),
+    str(s, x), pmi_modref(o, q).
+pmi_named(q, x) :- import_alias(i, _, q, x, _), nearest(i, f, scope), (kind(f, "function_definition") ; kind(f, "lambda")).
+pmi_named(q, x) :- modname(m, q), nameref(n, x), look(n, x, m), !bind_only(n).
+pmi_named(q, x) :- import_alias(i, _, q, x, _), docof(i, d), doc(d, p, _), contains("management/commands/", p).
+.decl pmi_live(q: symbol, x: symbol)
+pmi_live(q, x) :- pmi_target(q, x), pmi_named(q, x).
+
+// pmi_imports_k(sk, m): the file of site sk imports module m (`import a.m`, `from a import m`, `from a.m import y`).
+.decl pmi_imports_k(sk: symbol, m: symbol)
+pmi_imports_k(sk, m) :- pmi_key(at, sk), docof(at, d), import_alias(i, _, m, _, _), docof(i, d).
+pmi_imports_k(sk, @dot(m, y)) :- pmi_key(at, sk), docof(at, d), import_alias(i, _, m, y, _), y != "", docof(i, d).
+// pmi_owner(n, f): n is part of a patch of def f: in one of f's decorators, or in its body.
+.decl pmi_owner(n: node, f: node)
+pmi_owner(n, f) :- pt_patch_deco(f, c, _), (n = c ; within(n, c)).
+pmi_owner(n, f) :- pt_patch(c, _), (n = c ; within(n, c)), !pt_patch_deco(_, c, _), nearest(c, f, fdef).
+// pmi_patched(f, t): def f also patches the dotted name t. pmi_cov_k(sk, t): the test or fixture of site sk does;
+// pmi_cov_pkg_k(sk, m): one of those names is in module m.
+.decl pmi_patched(f: node, t: symbol)
+pmi_patched(f, t) :- pt_patch_name(c, t, _), pmi_owner(c, f).
+pmi_patched(f, @dot(m, y)) :- pt_patch_attr(c, o, y), pmi_modref(o, m), pmi_owner(c, f).
+.decl pmi_cov_k(sk: symbol, t: symbol)
+pmi_cov_k(sk, t) :- pmi_key(at, sk), pmi_owner(at, f), pmi_patched(f, t).
+.decl pmi_cov_pkg_k(sk: symbol, m: symbol)
+pmi_cov_pkg_k(sk, @pkg_up(t, 1)) :- pmi_key(at, sk), pmi_owner(at, f), pmi_patched(f, t).
+// pmi_body_imp_k(sk, m): the test or fixture of site sk imports module m in its body (`with patch("pkg.create_app"):
+// from pkg.worker import task` loads it under the patch). pmi_reload_k(sk): the file of site sk (re)loads modules
+// with importlib.
+.decl pmi_body_imp_k(sk: symbol, m: symbol)
+pmi_body_imp_k(sk, m) :- pmi_key(at, sk), pmi_owner(at, f), import_alias(i, _, m, _, _), nearest(i, f, fdef).
+pmi_body_imp_k(sk, @dot(m, y)) :- pmi_key(at, sk), pmi_owner(at, f), import_alias(i, _, m, y, _), y != "",
+    nearest(i, f, fdef).
+.decl pmi_reload_k(sk: symbol)
+pmi_reload_k(sk) :- pmi_key(at, sk), docof(at, d), kind(c, "call"), docof(c, d), field(c, "function", f),
+    (sym_of(f, "importlib.import_module") ; sym_of(f, "importlib.reload")).
+// pmi_open(sk, q, x, qi, l): importer qi's copy l still holds the real object under the patch sk: nothing reaches q's
+// x itself, the same test or fixture does not patch `qi.l` as well or import an importer in its body, and the
+// patching file does not (re)load modules with importlib (pmi_lazy).
+.decl pmi_open(sk: symbol, q: symbol, x: symbol, qi: symbol, l: symbol)
+pmi_open(sk, q, x, qi, l) :- pmi_ok(sk, q, x), pmi_user(q, x, qi, l), !pmi_live(q, x), !pmi_cov_k(sk, @dot(qi, l)),
+    !pmi_lazy(sk, q, x).
+.decl pmi_lazy(sk: symbol, q: symbol, x: symbol)
+pmi_lazy(sk, q, x) :- pmi_ok(sk, q, x), pmi_user(q, x, qi, _), pmi_body_imp_k(sk, qi).
+pmi_lazy(sk, q, x) :- pmi_ok(sk, q, x), pmi_reload_k(sk).
+// pmi_near(sk, q, x, qi): the patching file imports importer qi (at its top or in a function), so the test runs qi's
+// code. A patch whose file imports no importer is not reported: on the corpus such patches were mostly dead (the test
+// never reaches an importer) or guarded q's own code (`mod.run()` then `helper.assert_not_called()`), and the
+// message could not name the module to patch.
+.decl pmi_near(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_near(sk, q, x, qi) :- pmi_open(sk, q, x, qi, _), pmi_imports_k(sk, qi).
+// pmi_pick(sk, q, x, qi): the importer the message names: of those whose other names the same test or fixture
+// patches (`patch("pkg.dns.resolver")` beside `patch("pkg.extensions.metrics")` names pkg.dns), else of those the
+// patching file imports, the least module name.
+.decl pmi_pref(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pref(sk, q, x, qi) :- pmi_near(sk, q, x, qi), pmi_cov_pkg_k(sk, qi).
+.decl pmi_pref_later(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pref_later(sk, q, x, qi) :- pmi_pref(sk, q, x, qi), pmi_pref(sk, q, x, qj), qj < qi.
+.decl pmi_near_later(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_near_later(sk, q, x, qi) :- pmi_near(sk, q, x, qi), pmi_near(sk, q, x, qj), qj < qi.
+.decl pmi_pick(sk: symbol, q: symbol, x: symbol, qi: symbol)
+pmi_pick(sk, q, x, qi) :- pmi_pref(sk, q, x, qi), !pmi_pref_later(sk, q, x, qi).
+pmi_pick(sk, q, x, qi) :- pmi_near(sk, q, x, qi), !pmi_pref(sk, q, x, _), !pmi_near_later(sk, q, x, qi).
+
+// The cases, `upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/` (pack test data in S3, not
+// in git: `npm run fixtures:pull -- --pack pytest`), read as one repository: each line ending in `# caught` is
+// reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/__init__.py"
+    .fixture "shop/alerts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/alerts.py"
+    .fixture "shop/billing.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/billing.py"
+    .fixture "shop/factory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/factory.py"
+    .fixture "shop/http.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/http.py"
+    .fixture "shop/inventory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/inventory.py"
+    .fixture "shop/mail.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/mail.py"
+    .fixture "shop/management/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/__init__.py"
+    .fixture "shop/management/commands/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/commands/__init__.py"
+    .fixture "shop/management/commands/sync_stock.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/management/commands/sync_stock.py"
+    .fixture "shop/notify/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/notify/__init__.py"
+    .fixture "shop/notify/sms.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/notify/sms.py"
+    .fixture "shop/orders.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/orders.py"
+    .fixture "shop/receipts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/receipts.py"
+    .fixture "shop/reports.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/reports.py"
+    .fixture "shop/stock.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/stock.py"
+    .fixture "shop/views.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/views.py"
+    .fixture "shop/worker.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/shop/worker.py"
+    .fixture "tests/__init__.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/__init__.py"
+    .fixture "tests/test_alerts.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_alerts.py"
+    .fixture "tests/test_inventory.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_inventory.py"
+    .fixture "tests/test_mail.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_mail.py"
+    .fixture "tests/test_orders.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_orders.py"
+    .fixture "tests/test_views.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_views.py"
+    .fixture "tests/test_worker.py" from "../upstream/pytest-practice/authored/pytest-practice-patch-misses-from-import/tests/test_worker.py"
+    .expect _ at "tests/test_alerts.py":7
+    .expect _ at "tests/test_alerts.py":8
+    .expect _ at "tests/test_inventory.py":13
+    .expect _ at "tests/test_orders.py":12
+    .expect _ at "tests/test_orders.py":19
+    .expect _ at "tests/test_orders.py":24
+    .expect _ at "tests/test_orders.py":31
+    .expect _ at "tests/test_orders.py":36
+    .expect _ at "tests/test_orders.py":41
+    .expect _ at "tests/test_orders.py":47
+    .expect _ at "tests/test_orders.py":52
+    .expect _ at "tests/test_orders.py":93
+    .expect _ at "tests/test_orders.py":109
+    .expect _ at "tests/test_worker.py":18
+.end

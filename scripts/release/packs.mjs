@@ -488,8 +488,9 @@ export function syncPackLockfile(lock, packs) {
 }
 
 /**
- * What a vitest JSON report of test/engine/catalog/packs.test.ts says against publishing `ids`: each pack's tests
- * ran, none failed, and at least `checkCount` checks passed (a filter matching nothing would otherwise pass).
+ * What a vitest JSON report of the pack validation (test/engine/catalog/packs.test.ts and packs-rerail/)
+ * says against publishing `ids`: each pack's tests ran, none failed, and at least `checkCount` checks passed (a filter
+ * matching nothing would otherwise pass).
  */
 export function gateFailures(report, ids, checkCount) {
   const results = report.testResults.flatMap((file) => file.assertionResults);

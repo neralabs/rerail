@@ -44,7 +44,16 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Node.js | framework | eslint-plugin-n 18.4.1 | 37 (11) | a Node.js server framework (`express`, `koa`, `fastify`, `@nestjs/core` and others) or `electron` dependency, or `*.cjs`/`*.mjs`/`*.cts`/`*.mts` files outside tests, scripts, fixtures and configuration |
 | Vue | framework | eslint-plugin-vue 10.11.1 | 23 (21) | `*.vue` files |
 | React | framework | eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1 | 51 (32) | a `react` dependency, or `*.jsx` files |
-| Django | framework | none: Rerail's own rules | 27 (25) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
+| Django | framework | none: Rerail's own rules | 34 (27) | a `django` dependency in `requirements*.txt` or `pyproject.toml`, or a `manage.py` |
+| Django REST framework | framework | none: Rerail's own rules | 8 (6) | a `djangorestframework` dependency |
+| FastAPI | framework | none: Rerail's own rules | 10 (8) | a `fastapi` dependency |
+| Pydantic | framework | none: Rerail's own rules | 7 (6) | a `pydantic` dependency |
+| SQLAlchemy | framework | none: Rerail's own rules | 5 (3) | a `sqlalchemy`, `sqlmodel` or `flask-sqlalchemy` dependency |
+| Alembic | framework | none: Rerail's own rules | 12 (4) | an `alembic` dependency, or an `alembic.ini` |
+| Celery | framework | none: Rerail's own rules | 6 (5) | a `celery` dependency |
+| pytest | framework | none: Rerail's own rules | 5 (3) | a `pytest` dependency, or a `conftest.py` |
+| Python practice | language | none: Rerail's own rules | 7 (2) | `*.py` files |
+| Python security | language | none: Rerail's own rules | 7 (2) | `*.py` files |
 
 - **A project's own pack** is a `repository` pack you install from its folder with `rerail packs add <folder>`. It counts as a third party's pack.
 - **Starting values** are a pack's `mode` and `on`: what its rules start with in a repository that adds it. Repository or checkout settings override them.

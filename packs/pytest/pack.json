@@ -1,0 +1,196 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "pytest",
+  "name": "pytest",
+  "category": "framework",
+  "covers": "Rerail's own pytest rules, from the pytest docs and maintainers' review advice, for isolated tests, sound fixtures and mocks that check what they claim.",
+  "reason": "matches pytest",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "pytest"
+          ]
+        }
+      },
+      {
+        "files": [
+          "**/conftest.py"
+        ],
+        "label": "conftest.py files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "pytest-practice-patch-misses-from-import",
+      "document": "rules/pytest-practice-patch-misses-from-import.rerail",
+      "title": "pytest practice: a mock patch on the defining module of a name its callers imported with from-import",
+      "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "high",
+        "hazard": "test.patch-misses-target"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "tests/test_orders.py",
+          "text": "from unittest import mock\n\nfrom shop.orders import place\n\n\n@mock.patch(\"shop.mail.send_email\")\ndef test_place_sends_mail(send):\n    place(1)\n    send.assert_called_once()\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/mail.py",
+              "text": "def send_email(to, body):\n    raise RuntimeError(\"real SMTP\")\n"
+            },
+            {
+              "path": "shop/orders.py",
+              "text": "from shop.mail import send_email\n\n\ndef place(order):\n    send_email(\"a@example.com\", str(order))\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "tests/test_orders.py",
+          "text": "from unittest import mock\n\nfrom shop.orders import place\n\n\n@mock.patch(\"shop.orders.send_email\")\ndef test_place_sends_mail(send):\n    place(1)\n    send.assert_called_once()\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/mail.py",
+              "text": "def send_email(to, body):\n    raise RuntimeError(\"real SMTP\")\n"
+            },
+            {
+              "path": "shop/orders.py",
+              "text": "from shop.mail import send_email\n\n\ndef place(order):\n    send_email(\"a@example.com\", str(order))\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pytest-practice-patch-decorator-order",
+      "document": "rules/pytest-practice-patch-decorator-order.rerail",
+      "title": "pytest practice: stacked @patch mock parameters named in decorator order, so each holds the other's mock",
+      "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "high",
+        "hazard": "test.mock-swapped"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/tests/test_mail.py",
+          "text": "from unittest import mock\n\nfrom shop import mail\n\n\n@mock.patch(\"shop.mail.send\")\n@mock.patch(\"shop.mail.render\")\ndef test_notify(mock_send, mock_render):\n    mock_render.return_value = \"<p>hi</p>\"\n    mail.notify(\"a@example.com\")\n    mock_send.assert_called_once()\n"
+        },
+        "passes": {
+          "path": "shop/tests/test_mail.py",
+          "text": "from unittest import mock\n\nfrom shop import mail\n\n\n@mock.patch(\"shop.mail.send\")\n@mock.patch(\"shop.mail.render\")\ndef test_notify(mock_render, mock_send):\n    mock_render.return_value = \"<p>hi</p>\"\n    mail.notify(\"a@example.com\")\n    mock_send.assert_called_once()\n"
+        }
+      }
+    },
+    {
+      "id": "pytest-practice-scoped-fixture-mutated",
+      "document": "rules/pytest-practice-scoped-fixture-mutated.rerail",
+      "title": "pytest practice: a test changes a class-, module- or session-scoped fixture's value",
+      "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "tests/test_retry.py",
+          "text": "import pytest\n\n\n@pytest.fixture(scope=\"module\")\ndef app():\n    return {\"config\": {}}\n\n\ndef test_retry(app):\n    app[\"config\"][\"RETRY_COUNT\"] = 4\n    assert app[\"config\"][\"RETRY_COUNT\"] == 4\n"
+        },
+        "passes": {
+          "path": "tests/test_retry.py",
+          "text": "import pytest\n\n\n@pytest.fixture(scope=\"module\")\ndef app():\n    return {\"config\": {}}\n\n\ndef test_retry(app, monkeypatch):\n    monkeypatch.setitem(app[\"config\"], \"RETRY_COUNT\", 4)\n    assert app[\"config\"][\"RETRY_COUNT\"] == 4\n"
+        }
+      }
+    },
+    {
+      "id": "pytest-practice-environ-without-monkeypatch",
+      "document": "rules/pytest-practice-environ-without-monkeypatch.rerail",
+      "title": "pytest practice: test code changes os.environ without undoing it",
+      "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "tests/oauth2/conftest.py",
+          "text": "import os\n\nimport pytest\n\n\n@pytest.fixture\ndef insecure_transport():\n    os.environ[\"AUTHLIB_INSECURE_TRANSPORT\"] = \"true\"\n"
+        },
+        "passes": {
+          "path": "tests/oauth2/conftest.py",
+          "text": "import pytest\n\n\n@pytest.fixture\ndef insecure_transport(monkeypatch):\n    monkeypatch.setenv(\"AUTHLIB_INSECURE_TRANSPORT\", \"true\")\n"
+        }
+      }
+    },
+    {
+      "id": "pytest-practice-module-state-without-monkeypatch",
+      "document": "rules/pytest-practice-module-state-without-monkeypatch.rerail",
+      "title": "pytest practice: test code changes a module global or class attribute without undoing it",
+      "group": "pytest practice",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium",
+        "hazard": "test.shared-state-leak"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "tests/test_checkout.py",
+          "text": "from shop import checkoutflow\n\n\ndef test_flow_order(event):\n    checkoutflow.DEFAULT_FLOW = (checkoutflow.ConfirmStep, checkoutflow.PaymentStep)\n    flow = checkoutflow.get_checkout_flow(event)\n    assert flow[0].priority <= flow[1].priority\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/checkoutflow.py",
+              "text": "class ConfirmStep:\n    priority = 1\n\n\nclass PaymentStep:\n    priority = 2\n\n\nDEFAULT_FLOW = (PaymentStep, ConfirmStep)\n\n\ndef get_checkout_flow(event):\n    return sorted(DEFAULT_FLOW, key=lambda s: s.priority)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "tests/test_checkout.py",
+          "text": "from shop import checkoutflow\n\n\ndef test_flow_order(event, monkeypatch):\n    monkeypatch.setattr(checkoutflow, \"DEFAULT_FLOW\", (checkoutflow.ConfirmStep, checkoutflow.PaymentStep))\n    flow = checkoutflow.get_checkout_flow(event)\n    assert flow[0].priority <= flow[1].priority\n",
+          "with": [
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/checkoutflow.py",
+              "text": "class ConfirmStep:\n    priority = 1\n\n\nclass PaymentStep:\n    priority = 2\n\n\nDEFAULT_FLOW = (PaymentStep, ConfirmStep)\n\n\ndef get_checkout_flow(event):\n    return sorted(DEFAULT_FLOW, key=lambda s: s.priority)\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

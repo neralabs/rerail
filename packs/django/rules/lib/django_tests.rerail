@@ -1,0 +1,590 @@
+// lib/django_tests: Django test code as django-practice-settings-in-test reads it, under Django's test runner and
+// pytest-django alike: which functions are tests (unittest/TestCase methods and pytest functions), fixtures, set-up
+// hooks and the helpers they call, which fixture a test's parameter resolves to through the conftest.py files, which
+// patches are active, and one definition of a change to state and of the code that undoes it. Include it instead of
+// lib/django.rerail, which it includes (test documents are its dj_test_doc, django.conf.settings its dj_settings).
+// Names resolve through imports (python/names' sym_of), so `from unittest import mock` and `from unittest.mock import
+// patch` both reach "unittest.mock.patch", and `import pytest as pt` still makes `@pt.fixture` a fixture.
+//
+// Two layers (decision 0677: no node crosses files). What one file shows is stated at its own nodes: a change, the
+// undo code around it, a patch active where it runs. What takes more than one file (a fixture in a conftest.py, a
+// helper in tests/helpers.py, a base class's tearDown, a callback a subclass registers) is answered over definitions'
+// symbols (python/points-to-file's `pt_def`, as python/calls' `calls` and `call_target` name them) and paths. A rule
+// hands each candidate change on by its def's symbol, a key and its place in its def (`djt_order`), asks the
+// symbol answers there, and its finding reads the answer back at the change's own node.
+//
+// Interface
+//   Files:         djt_conftest(dir, p)        the conftest.py at path p is directory dir's ("" at the root, else
+//                                              "a/b/")
+//   Test code:     djt_fixture(f)              def f is a pytest fixture (`@pytest.fixture`, bare or called,
+//                                              `@pytest.yield_fixture`, `@pytest_asyncio.fixture`)
+//                  djt_fixture_name(f, x)      fixture f is requested as x: its `name=`, else its def name
+//                  djt_fixture_scope(f, s)     fixture f's scope: "function" unless `scope=` gives a literal
+//                                              ("class", "module", "package", "session"); "dynamic" for a callable
+//                  djt_yield(f, y)             y is a `yield` of fixture f's body (not of a nested def)
+//                  djt_test(f)                 def f is a test: named test*, in a test document, not a fixture, at
+//                                              module level or a method of a class (pytest's and unittest's)
+//                  djt_setup_hook(f)           f is a per-test or per-class set-up hook: setUp, setUpClass,
+//                                              setUpTestData, asyncSetUp, setup_method, setup_class, setup_function,
+//                                              setup_module, setup (nose style)
+//                  djt_teardown_hook(f)        its teardown counterpart: tearDown, tearDownClass, asyncTearDown,
+//                                              teardown_method, teardown_class, teardown_function, teardown_module
+//                  djt_test_code(f, k)         f runs around one test: k "test", "fixture" or "setup"; in a test
+//                                              document for tests and hooks, anywhere for fixtures
+//                  djt_own(n, f)               n runs in f's own body: no nested def, lambda or class between
+//                  djt_hook(g)                 def g is a pytest hook (`pytest_configure`, `pytest_sessionstart`, ...)
+//                  djt_autouse(f)              fixture f is `autouse=True`
+//                  djt_class_of(f, c)          def f is a method of class c
+//   By symbol:     djt_fx_sym(g, x, s)         fixture g (its symbol) is requested as x and has scope s
+//                  djt_helper(g)               def g of a test document is called (through the call graph) by test
+//                                              code that is not session set-up: `login_as(user)` in tests/helpers.py
+//                  djt_runs_in_test(u)         u is test code or a helper, and not session set-up: its changes
+//                                              happen inside a test. Module-level code never is (it runs once, at
+//                                              import, before the first test), nor is a runner script's main()
+//                  djt_session_def(u)          u is session-wide set-up that every test sees the same: an autouse
+//                                              session fixture, a session fixture an autouse fixture requests,
+//                                              pytest-django's django_db_setup / django_db_modify_db_settings*
+//   Changes:       djt_loc(n, e, p, how)       change n (in test code, a fixture or undo code) writes path p below
+//                                              expression e: "" for e itself, then `.attr` and `['key']` segments
+//                                              (`[=text]` for a computed key, `[*]` for every item, `.*` for any
+//                                              attribute); a row for every expression of the written chain:
+//                                              `app.config["X"] = 1` gives (app.config["X"], ""), (app.config,
+//                                              "['X']"), (app, ".config['X']"). how: "set", "remove" (del, pop,
+//                                              clear, popitem, remove, discard, delattr), "reset" (clear, discard,
+//                                              pop with a default, del: a removal that tolerates a missing entry),
+//                                              "restore" (a cleanup registration or a patch: never a change)
+//                  djt_change(n)               n is a change: a store, `del` or augmented assignment of an attribute
+//                                              or item, a list/dict/set mutator call (djt_mutator), setattr/delattr
+//                  djt_covers(n, e, p, a)      a restore of path a below e puts back n's change of path p below e:
+//                                              a is p, a chain p runs through (`.config` for `.config['X']`), or a
+//                                              whole-container form (`.config[*]`, `.*`) of one
+//                  djt_order(n, o)             n's place in the outermost def around it (python's `earlier`, from
+//                                              that def's start), a number a rule hands on to name a def's first
+//                                              change: only an edit of that def moves it
+//   Undoing:       djt_undo_at(n, a)           n is undo code its own file shows, for def a (a symbol; asked for
+//                                              every djt_loc node and for calls): after the yield of a fixture or
+//                                              @contextmanager a; in a finally of a; a teardown hook or `__exit__` a;
+//                                              a lambda a registers with addCleanup/addfinalizer, or the
+//                                              registration itself
+//                  djt_undo_runs(a, f)         undo code for a also runs after f, by symbol: a itself; a teardown
+//                                              hook or `__exit__` a, after the methods of its class and of the
+//                                              subclasses (python/names' class_anc); teardown_module/teardown_function
+//                                              a, after the defs of its module; a function-scoped fixture's, after
+//                                              the defs that request it or that it covers as autouse; a test's, after
+//                                              the helpers it calls
+//                  djt_body_runs(g, f)         every line of def g is undo code that runs after f: a callback f
+//                                              registers (a def by name, a bound method `self._restore`), a def that
+//                                              undo code calls, and the defs those call
+//                  djt_undo_body(g)            def g is such undo code: a rule never reports the undo itself
+//                  djt_guarded(n, c)           patch c is active where change n runs and puts its target back when
+//                                              it ends, as n's own file shows: in n's def, a decorator of that def or
+//                                              its class, a with around n, a set-up hook of the class (a started
+//                                              patcher); djt_guard_restore(n, e, a): such a patch puts back a below e
+//                  djt_guard_fx(u, g)          def u requests function-scoped fixture g: g's patches are active
+//                                              where u runs
+//                  djt_root(e, k)              stated by a rule: expression e names the state it reads as k (a
+//                                              symbol: "django.conf.settings", ...)
+//                  djt_restored(u, k, a)       path a below k is put back after def u's changes: a djt_loc of undo
+//                                              code that runs after u (djt_undo_runs, djt_body_runs), or a patch of a
+//                                              function-scoped fixture u requests
+//                  djt_cleanup_call(c, f)      call c in f's own body registers a cleanup: addCleanup,
+//                                              addClassCleanup, addAsyncCleanup, addfinalizer
+//   Fixtures:      djt_requests(t, x, p)       test or fixture t requests fixture x by its parameter p (positional
+//                                              without a default, or keyword-only; not self, cls or request)
+//                  djt_resolves(t, x, g)       t's request for x resolves to fixture def g, by symbol: the nearest
+//                                              visible definition (t's class, then t's module, then the conftest.py
+//                                              files from t's directory up to the root), as pytest picks it; also a
+//                                              `request.getfixturevalue("x")` call in t
+//   Mocks:         djt_patch(c, k)             call c is a mock patch: k "patch" (`mock.patch`, `mocker.patch`),
+//                                              "object", "dict" or "multiple" (`patch.object`, `mocker.patch.dict`)
+//                  djt_patch_attr(c, o, x)     c replaces attribute x of the object expression o:
+//                                              `patch.object(o, "x")`, `monkeypatch.setattr(o, "x", v)`,
+//                                              `monkeypatch.delattr(o, "x")`
+//                  djt_mocker(e)               identifier e is pytest-mock's `mocker` (or class_/module_/package_/
+//                                              session_mocker) fixture parameter of an enclosing def
+//                  djt_monkeypatch(e)          identifier e is pytest's `monkeypatch` fixture parameter of an
+//                                              enclosing def
+//                  djt_mp_call(c, m)           c calls monkeypatch's method m
+//   State:         djt_store(t)                t is written or deleted: an assignment, augmented assignment, `del`
+//                                              or for/with target
+//                  djt_mutator(m)              m is a method that changes a list, dict or set in place (append,
+//                                              update, pop, ...)
+//
+// Django and pytest background
+//   - Django does not put back a value a test writes on django.conf.settings: override_settings, modify_settings, a
+//     TestCase's self.settings() and pytest-django's `settings` fixture do, when the test ends.
+//   - A fixture's value is made once per scope: a `scope="module"` fixture's object is the same object in every test
+//     of the module, so a test that changes it changes it for the tests after it.
+//   - Fixture lookup by name: the requesting test's class, then its module (a def, or a fixture the module imports),
+//     then conftest.py files from the test's directory upwards; plugins (`pytest_plugins`, entry points) come last
+//     and are not modelled: a request that resolves to none of the run's defs has no djt_resolves row.
+//   - A yield fixture's teardown is the code after its yield; if set-up raises before the yield, it does not run.
+//   e.g.  # conftest.py
+//         @pytest.fixture                             djt_fixture, djt_fixture_scope(_, "function")
+//         def beta():                                 djt_fixture_name(_, "beta")
+//             settings.BETA = True                    djt_loc(<settings.BETA>, <settings>, ".BETA", "set")
+//             yield
+//             settings.BETA = False                   djt_undo_at(<settings.BETA>, "conftest.beta"): after the yield
+//         # tests/test_views.py
+//         class ViewTests(TestCase):
+//             def setUp(self):                        djt_setup_hook, djt_test_code(_, "setup")
+//                 settings.DEBUG = True
+//             def tearDown(self):                     djt_teardown_hook
+//                 settings.DEBUG = False              djt_undo_at(<settings.DEBUG>, "tests.test_views.ViewTests.tearDown"),
+//                                                     djt_undo_runs(<that>, "tests.test_views.ViewTests.setUp")
+//             @mock.patch.object(settings, "X", 1)    djt_patch(_, "object"), djt_patch_attr(_, <settings>, "X")
+//             def test_x(self):                       djt_test
+//                 settings.X = 2                      djt_guarded(<settings.X>, <the patch>),
+//                                                     djt_guard_restore(<settings.X>, <settings>, ".X")
+#include "django.rerail"   // dj_test_doc, dj_settings; python/ast and python/calls (calls/call_target over symbols)
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl djt_conftest(dir: symbol, p: symbol)
+djt_conftest(@replace_all(p, "conftest\\.py$", ""), p) :- doc(c, p, _), file_name(c, "conftest.py").
+
+// ---- fixtures ----------------------------------------------------------------------------------------------------
+// djt_fixture_deco(f, e): e is a fixture decorator of def f, the bare name or the call (`@pytest.fixture(...)`).
+.decl djt_fixture_q(q: symbol)
+djt_fixture_q("pytest.fixture"). djt_fixture_q("pytest.yield_fixture"). djt_fixture_q("_pytest.fixtures.fixture").
+djt_fixture_q("pytest_asyncio.fixture"). djt_fixture_q("pytest_asyncio.plugin.fixture").
+.decl djt_fixture_deco(f: node, e: node)
+djt_fixture_deco(f, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), sym_of(e, q),
+    djt_fixture_q(q).
+djt_fixture_deco(f, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), kind(e, "call"),
+    field(e, "function", g), sym_of(g, q), djt_fixture_q(q).
+.decl djt_fixture(f: node)
+djt_fixture(f) :- djt_fixture_deco(f, _).
+.decl djt_fixture_named(f: node, x: symbol)
+djt_fixture_named(f, x) :- djt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "name", v), str(v, x).
+.decl djt_fixture_name(f: node, x: symbol)
+djt_fixture_name(f, x) :- djt_fixture_named(f, x).
+djt_fixture_name(f, x) :- djt_fixture(f), !djt_fixture_named(f, _), def_name(f, x).
+.decl djt_scope_given(f: node, s: symbol)
+djt_scope_given(f, s) :- djt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "scope", v), str(v, s).
+djt_scope_given(f, "dynamic") :- djt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "scope", v), !str(v, _).
+.decl djt_fixture_scope(f: node, s: symbol)
+djt_fixture_scope(f, s) :- djt_scope_given(f, s).
+djt_fixture_scope(f, "function") :- djt_fixture(f), !djt_scope_given(f, _).
+.decl djt_yield(f: node, y: node)
+djt_yield(f, y) :- djt_fixture(f), kind(y, "yield"), def_frame(y, f).
+.decl djt_autouse(f: node)
+djt_autouse(f) :- djt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "autouse", v), kind(v, "true").
+// djt_fx_sym(g, x, s): fixture g, by its symbol, is requested as x and has scope s; djt_auto_sym(g): it is autouse.
+.decl djt_fx_sym(g: symbol, x: symbol, s: symbol)
+djt_fx_sym(gq, x, s) :- djt_fixture_name(g, x), djt_fixture_scope(g, s), pt_def(g, gq).
+.decl djt_auto_sym(g: symbol)
+djt_auto_sym(gq) :- djt_autouse(g), pt_def(g, gq).
+
+// ---- tests and hooks ---------------------------------------------------------------------------------------------
+// djt_level(f): def f sits in a module body or directly in a class body (a method), not inside another def.
+.decl djt_level(f: node)
+djt_level(f) :- kind(f, "function_definition"), nearest(f, s, scope), (kind(s, "module") ; kind(s, "class_definition")),
+    !djt_in_def_class(s).
+.decl djt_in_def_class(c: node)  // class c is defined inside a def: a fake or a helper, not a test class
+djt_in_def_class(c) :- kind(c, "class_definition"), nearest(c, f, scope), kind(f, "function_definition").
+djt_in_def_class(c) :- kind(c, "class_definition"), nearest(c, o, scope), kind(o, "class_definition"),
+    djt_in_def_class(o).
+.decl djt_test(f: node)
+djt_test(f) :- djt_level(f), def_name(f, x), prefix("test", x), !djt_fixture(f), docof(f, d), dj_test_doc(d).
+.decl djt_setup_name(x: symbol)
+djt_setup_name("setUp"). djt_setup_name("setUpClass"). djt_setup_name("setUpTestData"). djt_setup_name("asyncSetUp").
+djt_setup_name("setup_method"). djt_setup_name("setup_class"). djt_setup_name("setup_function").
+djt_setup_name("setup_module"). djt_setup_name("setup").
+.decl djt_teardown_name(x: symbol)
+djt_teardown_name("tearDown"). djt_teardown_name("tearDownClass"). djt_teardown_name("asyncTearDown").
+djt_teardown_name("teardown_method"). djt_teardown_name("teardown_class"). djt_teardown_name("teardown_function").
+djt_teardown_name("teardown_module"). djt_teardown_name("teardown").
+.decl djt_setup_hook(f: node)
+djt_setup_hook(f) :- djt_level(f), def_name(f, x), djt_setup_name(x), docof(f, d), dj_test_doc(d).
+.decl djt_teardown_hook(f: node)
+djt_teardown_hook(f) :- djt_level(f), def_name(f, x), djt_teardown_name(x), docof(f, d), dj_test_doc(d).
+.decl djt_test_code(f: node, k: symbol)
+djt_test_code(f, "test") :- djt_test(f).
+djt_test_code(f, "fixture") :- djt_fixture(f).
+djt_test_code(f, "setup") :- djt_setup_hook(f).
+// djt_own(n, f): n is in def f's own body, with no nested def, lambda or class between (python/ast's def_frame makes
+// lambdas transparent, which an "own body" question must not).
+.decl djt_stop(k: symbol)
+djt_stop("function_definition"). djt_stop("lambda"). djt_stop("class_definition").
+.decl djt_own(n: node, f: node)
+djt_own(n, f) :- kind(f, "function_definition"), field(f, "body", b), within_stop(n, b, djt_stop).
+.decl djt_hook(g: node)
+djt_hook(g) :- kind(g, "function_definition"), def_name(g, s), prefix("pytest_", s).
+// djt_class_of(f, c): def f is a method of class c.
+.decl djt_class_of(f: node, c: node)
+djt_class_of(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").
+
+// ---- session set-up ----------------------------------------------------------------------------------------------
+// djt_session_def(u): set-up that runs once for the whole run, before the tests that depend on it, so every test sees
+// one value: an autouse session fixture, a session fixture an autouse fixture requests (by symbol: the request may
+// be in another file), and pytest-django's database set-up fixtures, which it runs once before the first database
+// test (`django_db_setup`, `django_db_modify_db_settings*`: fixture names are pytest-django's interface, so the name
+// is the identity). djt_session_here(u): the cases u's own file shows.
+.decl djt_session_here(u: node)
+djt_session_here(u) :- djt_autouse(u), djt_fixture_scope(u, "session").
+djt_session_here(u) :- djt_fixture_name(u, x), (x = "django_db_setup" ; prefix("django_db_modify_db_settings", x)).
+.decl djt_session_def(u: symbol)
+djt_session_def(uq) :- djt_session_here(u), pt_def(u, uq).
+djt_session_def(uq) :- djt_fx_sym(uq, _, "session"), djt_resolves(aq, _, uq), djt_auto_sym(aq).
+
+// ---- where test code runs ----------------------------------------------------------------------------------------
+// djt_undo_def(g): every line of g is undo code: a teardown hook, a tearDown-style method of any class (a base test
+// class may live outside test documents: `shop/testutils/base.py`), or `__exit__` / `__aexit__` of a class.
+.decl djt_undo_def(g: node)
+djt_undo_def(g) :- djt_teardown_hook(g).
+djt_undo_def(g) :- djt_level(g), def_name(g, x), djt_teardown_name(x), djt_class_of(g, _).
+djt_undo_def(g) :- kind(g, "function_definition"), def_name(g, x), (x = "__exit__" ; x = "__aexit__"),
+    djt_class_of(g, _).
+// djt_helper(g): a def of a test document that test code calls, directly or through other such helpers (python/calls'
+// call graph over symbols, so `self.helper()`, imported helpers and constructors resolve). Not test code itself, a
+// pytest hook or undo code. A def no test calls (a runner script's main(), a check script under tests/) is not one.
+.decl djt_helper_cand(g: node)
+djt_helper_cand(g) :- kind(g, "function_definition"), docof(g, d), dj_test_doc(d), !djt_test_code(g, _), !djt_hook(g),
+    !djt_undo_def(g).
+.decl djt_helper_q(g: symbol)
+djt_helper_q(gq) :- djt_helper_cand(g), pt_def(g, gq).
+.decl djt_code_q(u: symbol)  // djt_test_code by symbol
+djt_code_q(uq) :- djt_test_code(u, _), pt_def(u, uq).
+.decl djt_helper(g: symbol)
+djt_helper(gq) :- djt_code_q(tq), !djt_session_def(tq), calls(tq, gq), djt_helper_q(gq).
+djt_helper(gq) :- djt_helper(hq), calls(hq, gq), djt_helper_q(gq).
+.decl djt_runs_in_test(u: symbol)
+djt_runs_in_test(uq) :- djt_code_q(uq), !djt_session_def(uq).
+djt_runs_in_test(uq) :- djt_helper(uq).
+// djt_cm_def(f): f is a @contextmanager / @asynccontextmanager def: the code after its yield restores what it set.
+.decl djt_cm_def(f: node)
+djt_cm_def(f) :- decorator(f, e0), unparen(e0, e), sym_of(e, q),
+    (q = "contextlib.contextmanager" ; q = "contextlib.asynccontextmanager").
+// djt_split(f, y): y is a yield of f's body, f a fixture or a context manager: what follows y is f's teardown.
+.decl djt_split(f: node, y: node)
+djt_split(f, y) :- djt_yield(f, y).
+djt_split(f, y) :- djt_cm_def(f), kind(y, "yield"), def_frame(y, f).
+
+// ---- changes -----------------------------------------------------------------------------------------------------
+.decl djt_store(t: node)
+djt_store(t) :- expr_ctx(t, "store").
+djt_store(t) :- expr_ctx(t, "del").
+djt_store(t) :- kind(a, "augmented_assignment"), field(a, "left", t).
+.decl djt_mutator(m: symbol)
+djt_mutator("append"). djt_mutator("extend"). djt_mutator("insert"). djt_mutator("remove"). djt_mutator("pop").
+djt_mutator("clear"). djt_mutator("update"). djt_mutator("setdefault"). djt_mutator("popitem"). djt_mutator("add").
+djt_mutator("discard"). djt_mutator("sort"). djt_mutator("reverse"). djt_mutator("__setitem__").
+djt_mutator("__delitem__").
+// djt_scope_def(u): a def the rules read changes in: a def of a test document (a test, fixture, hook, helper,
+// teardown or callback), a fixture anywhere, the undo code of base classes anywhere, a cleanup callback its
+// registration names by name, and the methods of test-case classes outside test documents (a bound-method callback
+// `self._restore` a subclass in another file registers: which methods are, its own file cannot tell).
+// Module-level code is in none: it runs once, at import.
+.decl djt_scope_def(u: node)
+djt_scope_def(u) :- kind(u, "function_definition"), docof(u, d), dj_test_doc(d).
+djt_scope_def(u) :- djt_fixture(u), docof(u, d), !dj_test_doc(d).
+djt_scope_def(u) :- djt_undo_def(u), docof(u, d), !dj_test_doc(d).
+djt_scope_def(u) :- djt_callback(_, u), docof(u, d), !dj_test_doc(d).
+djt_scope_def(u) :- djt_class_of(u, k), class_lib_anc(k, b), match(".*TestCase", b), docof(u, d), !dj_test_doc(d).
+// djt_key(n, i, k): key node i of n's write as a path segment's key: 'K' for a literal, =text for an expression; in a
+// for loop, an expression key stands for every key ([*]): `for k in saved: os.environ[k] = saved[k]`. Asked
+// (djt_key_ask) for the subscripts of written chains and the key arguments of mutator calls and patches.
+// djt_wbase(n, e): the expression n writes below, before any path is built (nodes only, so the key lookup below does
+// not depend on the paths it helps build); djt_chain(n, m): m is on the chain from there to its root.
+.decl djt_wbase(n: node, e: node)
+djt_wbase(t, t) :- djt_target(t).
+djt_wbase(c, r) :- djt_mcall(c, r, _).
+djt_wbase(c, o) :- djt_setattr_call(c, _), posarg(c, 0, o).
+djt_wbase(c, o) :- djt_cleanup_call(c, _), posarg(c, 0, f), djt_setattr_fn(f), posarg(c, 1, o).
+djt_wbase(c, r) :- djt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), djt_mutator(m).
+djt_wbase(c, o) :- djt_patch_attr(c, o, _).
+djt_wbase(c, o) :- djt_patch(c, k), (k = "multiple" ; k = "dict"), (posarg(c, 0, o) ; call_arg(c, -1, "in_dict", o)),
+    !str(o, _).
+djt_wbase(c, o) :- djt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 0, o).
+.decl djt_chain(n: node, m: node)
+djt_chain(n, e) :- djt_wbase(n, e).
+djt_chain(n, o) :- djt_chain(n, m), attr_of(m, o, _).
+djt_chain(n, o) :- djt_chain(n, m), kind(m, "subscript"), field(m, "value", o).
+.decl djt_key_ask(n: node, i: node)
+djt_key_ask(n, i) :- djt_chain(n, m), kind(m, "subscript"), field(m, "subscript", i).
+djt_key_ask(c, a) :- djt_mcall(c, _, m), (m = "setdefault" ; m = "__setitem__" ; m = "pop" ; m = "__delitem__"),
+    posarg(c, 0, a).
+djt_key_ask(c, a) :- djt_cleanup_call(c, _), posarg(c, 1, a).
+djt_key_ask(c, a) :- djt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 1, a).
+.decl djt_key(n: node, i: node, k: symbol)
+djt_key(n, i, cat("'", s, "'")) :- djt_key_ask(n, i), str(i, s).
+djt_key(n, i, cat("=", t)) :- djt_key_ask(n, i), !str(i, _), text(i, t), !inside(n, _, "for_statement").
+djt_key(n, i, "*") :- djt_key_ask(n, i), !str(i, _), inside(n, _, "for_statement").
+// djt_bare_annotation(t): `x.y: T` with no value, a declaration and no write.
+.decl djt_bare_annotation(t: node)
+djt_bare_annotation(t) :- kind(a, "assignment"), field(a, "left", t), !field(a, "right", _).
+// djt_target(t): an attribute or item written in a def the rules read.
+.decl djt_target(t: node)
+djt_target(t) :- djt_store(t), (kind(t, "attribute") ; kind(t, "subscript")), def_frame(t, u), djt_scope_def(u).
+
+// djt_at(n, e, p, how): the change's own row: what n writes, below expression e.
+.decl djt_at(n: node, e: node, p: symbol, how: symbol)
+// A store, `del` or augmented assignment of an attribute or item: the target itself.
+djt_at(t, t, "", "set") :- djt_target(t), !expr_ctx(t, "del"), !djt_bare_annotation(t).
+djt_at(t, t, "", "remove") :- djt_target(t), expr_ctx(t, "del").
+djt_at(t, t, "", "reset") :- djt_target(t), expr_ctx(t, "del").
+// A mutator call on a receiver r: keyed ones write r's item, the others every item of r.
+djt_at(c, r, cat("[", k, "]"), "set") :- djt_mcall(c, r, m), (m = "setdefault" ; m = "__setitem__"), posarg(c, 0, a),
+    djt_key(c, a, k).
+djt_at(c, r, cat("[", k, "]"), "remove") :- djt_mcall(c, r, m), (m = "pop" ; m = "__delitem__"), posarg(c, 0, a),
+    djt_key(c, a, k).
+djt_at(c, r, cat("[", k, "]"), "reset") :- djt_mcall(c, r, "pop"), posarg(c, 0, a), posarg(c, 1, _), djt_key(c, a, k).
+djt_at(c, r, "[*]", "remove") :- djt_mcall(c, r, m), (m = "clear" ; m = "popitem" ; m = "remove" ; m = "discard").
+djt_at(c, r, "[*]", "remove") :- djt_mcall(c, r, "pop"), !posarg(c, 0, _).
+djt_at(c, r, "[*]", "reset") :- djt_mcall(c, r, m), (m = "clear" ; m = "discard").
+djt_at(c, r, "[*]", "set") :- djt_mcall(c, r, m), (m = "append" ; m = "extend" ; m = "insert" ; m = "add" ; m = "sort" ;
+    m = "reverse").
+djt_at(c, r, cat("['", k, "']"), "set") :- djt_update_dict(c, r, d), child(d, p, _), kind(p, "pair"),
+    field(p, "key", a), str(a, k).
+djt_at(c, r, "[*]", "set") :- djt_mcall(c, r, "update"), posarg(c, 0, d0), unparen(d0, d), !kind(d, "dictionary").
+djt_at(c, r, "[*]", "set") :- djt_update_dict(c, r, d), child(d, s, _), kind(s, "dictionary_splat").
+djt_at(c, r, "[*]", "set") :- djt_update_dict(c, r, d), child(d, p, _), kind(p, "pair"), field(p, "key", a), !str(a, _).
+djt_at(c, r, cat("['", k, "']"), "set") :- djt_mcall(c, r, "update"), call_arg(c, -1, k, _), k != "".
+djt_at(c, r, "[*]", "set") :- djt_mcall(c, r, "update"), field(c, "arguments", al), child(al, s, _),
+    kind(s, "dictionary_splat").
+// setattr / delattr with a literal name write that attribute; with a computed one, any attribute.
+djt_at(c, o, cat(".", x), how) :- djt_setattr_call(c, how), posarg(c, 0, o), posarg(c, 1, s), str(s, x).
+djt_at(c, o, ".*", how) :- djt_setattr_call(c, how), posarg(c, 0, o), posarg(c, 1, s), !str(s, _).
+// Restores that are no change: what a cleanup registration puts back (`addCleanup(setattr, o, "x", old)`,
+// `addCleanup(os.environ.pop, "K")`, `addCleanup(d.clear)`) and what a patch puts back when it ends.
+djt_at(c, o, cat(".", x), "restore") :- djt_cleanup_call(c, _), posarg(c, 0, f), djt_setattr_fn(f), posarg(c, 1, o),
+    posarg(c, 2, s), str(s, x).
+djt_at(c, r, cat("[", k, "]"), "restore") :- djt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), djt_mutator(m),
+    posarg(c, 1, a), djt_key(c, a, k).
+djt_at(c, r, "[*]", "restore") :- djt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), djt_mutator(m),
+    !posarg(c, 1, _).
+djt_at(c, o, cat(".", x), "restore") :- djt_patch_attr(c, o, x).
+djt_at(c, o, cat(".", x), "restore") :- djt_patch(c, "multiple"), posarg(c, 0, o), call_arg(c, -1, x, _), x != "",
+    !str(o, _).
+djt_at(c, o, "[*]", "restore") :- djt_patch(c, "dict"), (posarg(c, 0, o) ; call_arg(c, -1, "in_dict", o)), !str(o, _).
+djt_at(c, o, cat("[", k, "]"), "restore") :- djt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 0, o),
+    posarg(c, 1, a), djt_key(c, a, k).
+.decl djt_update_dict(c: node, r: node, d: node)  // `r.update({...})`: the dict display
+djt_update_dict(c, r, d) :- djt_mcall(c, r, "update"), posarg(c, 0, d0), unparen(d0, d), kind(d, "dictionary").
+.decl djt_mcall(c: node, r: node, m: symbol)
+djt_mcall(c, r, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, r, m), djt_mutator(m), def_frame(c, u),
+    djt_scope_def(u).
+.decl djt_setattr_fn(f: node)
+djt_setattr_fn(f) :- sym_of(f, "builtins.setattr").
+djt_setattr_fn(f) :- sym_of(f, "builtins.delattr").
+.decl djt_setattr_call(c: node, how: symbol)
+djt_setattr_call(c, "set") :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.setattr"), def_frame(c, u),
+    djt_scope_def(u).
+djt_setattr_call(c, "remove") :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.delattr"),
+    def_frame(c, u), djt_scope_def(u).
+
+// djt_step(n, m, o, s): the written chain of n runs from m to o, one segment s up: `o.a` or `o[k]`.
+.decl djt_step(n: node, m: node, o: node, s: symbol)
+djt_step(n, m, o, cat(".", a)) :- djt_chain(n, m), attr_of(m, o, a).
+djt_step(n, m, o, cat("[", k, "]")) :- djt_chain(n, m), kind(m, "subscript"), field(m, "value", o),
+    field(m, "subscript", i), djt_key(n, i, k).
+.decl djt_loc(n: node, e: node, p: symbol, how: symbol)
+djt_loc(n, e, p, how) :- djt_at(n, e, p, how).
+djt_loc(n, o, cat(s, p), how) :- djt_loc(n, m, p, how), djt_step(n, m, o, s).
+.decl djt_change(n: node)
+djt_change(n) :- djt_at(n, _, _, how), how != "restore".
+// djt_covers(n, e, p, a): restoring a below e puts back n's change of p below e. At the change's own row, a is p, ""
+// (e itself put back), and p's whole-container form; each step up the chain prefixes the segment, and adds the
+// forms that restore e as a whole ("", `[*]` over an item, `.*` over an attribute).
+.decl djt_covers(n: node, e: node, p: symbol, a: symbol)
+djt_covers(n, e, p, p) :- djt_at(n, e, p, how), how != "restore".
+djt_covers(n, e, p, "") :- djt_loc(n, e, p, how), how != "restore".
+djt_covers(n, e, p, "[*]") :- djt_loc(n, e, p, how), how != "restore", prefix("[", p).
+djt_covers(n, e, p, ".*") :- djt_loc(n, e, p, how), how != "restore", prefix(".", p).
+djt_covers(n, o, cat(s, p), cat(s, a)) :- djt_covers(n, m, p, a), djt_step(n, m, o, s).
+// djt_order(n, o): n's place in the outermost def around it (djt_top_fn), the order `earlier` compares counted from
+// that def's own place: a number a rule hands on with a change's key, the least one naming a def's first change of
+// the key. Counted from the def, not the file, so an edit above the def leaves it (decision 0677: no position
+// crosses). Asked for the nodes djt_undo_ask asks of (every djt_loc node, a rule's own writes, calls).
+.decl djt_top_fn(u: node, f: node)
+djt_top_fn(u, u) :- kind(u, "function_definition"), !nearest(u, _, fdef).
+djt_top_fn(u, f) :- kind(u, "function_definition"), nearest(u, s, fdef), djt_top_fn(s, f).
+.decl djt_order(n: node, o: number)
+djt_order(n, i - j) :- djt_undo_ask(n), def_frame(n, u), djt_top_fn(u, f), visit_index(n, i), visit_index(f, j).
+
+// ---- undoing -----------------------------------------------------------------------------------------------------
+// djt_undo_at is asked on demand (djt_undo_ask): asked for every node, its after-the-yield clause would order every
+// pair of nodes in a fixture, which does not finish on a large repository. The library asks it for every djt_loc node
+// and for the calls of the defs it reads (one may call a def whose every line is then undo code).
+.decl djt_undo_ask(n: node) extensible
+djt_undo_ask(n) :- djt_loc(n, _, _, _).
+djt_undo_ask(c) :- kind(c, "call"), def_frame(c, u), djt_scope_def(u), call_target(c, _).
+.decl djt_undo_at(n: node, a: symbol)
+// After the yield of a fixture or context manager, in its own body: `yield x` then `x.close()`; `with a: yield; b()`.
+// The yielded expression itself runs before: `yield await make_service(app)` is set-up.
+djt_undo_at(n, fq) :- djt_undo_ask(n), def_frame(n, f), djt_split(f, y), djt_own(n, f), earlier(y, n), !within(n, y),
+    pt_def(f, fq).
+// In a finally clause of f's own body (the try around a yield included).
+djt_undo_at(n, fq) :- djt_undo_ask(n), inside(n, fc, "finally_clause"), djt_own(fc, f), pt_def(f, fq).
+// A teardown hook or __exit__ is undo code of its own (djt_undo_runs: and of its class's methods).
+djt_undo_at(n, hq) :- djt_undo_ask(n), def_frame(n, h), djt_undo_def(h), pt_def(h, hq).
+// A lambda f registers with addCleanup / addfinalizer, and the registration itself (`addCleanup(setattr, o, "x",
+// old)`).
+djt_undo_at(n, fq) :- djt_undo_ask(n), inside(n, a, "lambda"), posarg(c, 0, a), djt_cleanup_call(c, f), pt_def(f, fq).
+djt_undo_at(c, fq) :- djt_undo_ask(c), djt_cleanup_call(c, f), pt_def(f, fq).
+.decl djt_cleanup_call(c: node, f: node)
+djt_cleanup_call(c, f) :- kind(c, "call"), djt_own(c, f), field(c, "function", fn), attr_of(fn, _, m),
+    (m = "addCleanup" ; m = "addClassCleanup" ; m = "addfinalizer" ; m = "addAsyncCleanup").
+// djt_callback(c, g): cleanup registration c names def g of its own file: `addfinalizer(restore)` (a local or module
+// def). djt_cb_sym(f, g): f registers callback g, by symbol: one of those, or a bound method
+// `addCleanup(self._restore)` (a method of the registering def's class or a base: python/calls' mro_method_sym, over
+// symbols).
+.decl djt_callback(c: node, g: node)
+djt_callback(c, g) :- djt_cleanup_call(c, _), posarg(c, 0, a), kind(a, "identifier"), text(a, x), look(a, x, s),
+    defn(s, x, g), kind(g, "function_definition").
+.decl djt_cb_self(f: symbol, k: symbol, x: symbol)
+djt_cb_self(fq, kq, x) :- djt_cleanup_call(c, f), posarg(c, 0, a), attr_of(a, o, x), (text(o, "self") ; text(o, "cls")),
+    djt_class_of(f, k), class_def(k, kq), pt_def(f, fq).
+.decl djt_cb_sym(f: symbol, g: symbol)
+djt_cb_sym(fq, gq) :- djt_callback(c, g), djt_cleanup_call(c, f), pt_def(f, fq), pt_def(g, gq).
+djt_cb_sym(fq, gq) :- djt_cb_self(fq, kq, x), mro_method_sym(kq, x, gq).
+// djt_undo_runs(a, f): the undo code for a (djt_undo_at) runs after f, by symbol. djt_anchor(a): a has such code.
+.decl djt_anchor(a: symbol)
+djt_anchor(aq) :- djt_undo_at(_, aq).
+.decl djt_undo_runs(a: symbol, f: symbol)
+djt_undo_runs(aq, aq) :- djt_anchor(aq).
+djt_undo_runs(aq, aq) :- djt_body_for(_, aq).
+// A teardown hook or __exit__ h of class k runs after every method of k and of its subclasses (class_anc: the phase
+// py_names's ancestry, read in the method's own file), fixtures aside.
+djt_undo_runs(hq, fq) :- djt_undo_cls(hq, kq), djt_method_of(fq, kq), fq != hq.
+// teardown_module / teardown_function at module level undo the defs of their module.
+djt_undo_runs(hq, fq) :- djt_undo_mod(hq, fq).
+// The undo code of a function-scoped fixture f requests, or of an autouse one that covers f, runs after f's test.
+djt_undo_runs(aq, fq) :- djt_undo_runs(aq, gq), djt_fx_sym(gq, _, "function"), djt_resolves(fq, _, gq), fq != gq.
+djt_undo_runs(aq, fq) :- djt_undo_runs(aq, gq), djt_fx_sym(gq, _, "function"), djt_autouse_for(fq, gq), fq != gq.
+// A helper's changes are undone by the undo code of the test that calls it.
+djt_undo_runs(aq, fq) :- djt_helper(fq), calls(tq, fq), djt_undo_runs(aq, tq).
+.decl djt_undo_cls(h: symbol, k: symbol)
+djt_undo_cls(hq, kq) :- djt_undo_def(h), djt_class_of(h, c), class_def(c, kq), pt_def(h, hq).
+.decl djt_method_of(f: symbol, k: symbol)  // method f (no fixture) of class k or of a subclass of k
+djt_method_of(fq, kq) :- djt_class_of(f, c), djt_scope_def(f), !djt_fixture(f), class_def(c, kq), pt_def(f, fq).
+djt_method_of(fq, bq) :- djt_class_of(f, c), djt_scope_def(f), !djt_fixture(f), class_anc(c, bq), pt_def(f, fq).
+.decl djt_undo_mod(h: symbol, f: symbol)
+djt_undo_mod(hq, fq) :- djt_teardown_hook(h), nearest(h, m, scope), kind(m, "module"), docof(h, d),
+    kind(f, "function_definition"), docof(f, d), f != h, !djt_fixture(f), pt_def(h, hq), pt_def(f, fq).
+// djt_body_for(g, a): every line of def g is undo code for a: a callback a registers, a def that a's undo code calls
+// (`finally: self._restore()`), and the defs such a def calls.
+.decl djt_undo_call(a: symbol, g: symbol)
+djt_undo_call(aq, gq) :- djt_undo_at(c, aq), kind(c, "call"), call_target(c, gq).
+.decl djt_body_for(g: symbol, a: symbol)
+djt_body_for(gq, fq) :- djt_cb_sym(fq, gq).
+djt_body_for(gq, aq) :- djt_undo_call(aq, gq).
+djt_body_for(gq, aq) :- djt_body_for(hq, aq), calls(hq, gq).
+.decl djt_body_runs(g: symbol, f: symbol)
+djt_body_runs(gq, fq) :- djt_body_for(gq, aq), djt_undo_runs(aq, fq).
+.decl djt_undo_body(g: symbol)
+djt_undo_body(gq) :- djt_body_for(gq, _).
+// djt_autouse_for(f, g): autouse function-scoped fixture g runs around f: offered by f's class, f's module, or a
+// conftest.py of f's directory or above (by path).
+.decl djt_auto_fn(g: node)
+djt_auto_fn(g) :- djt_autouse(g), djt_fixture_scope(g, "function").
+.decl djt_autouse_for(f: symbol, g: symbol)
+djt_autouse_for(fq, gq) :- djt_auto_fn(g), djt_offers(s, _, g), kind(s, "class_definition"), djt_class_of(f, s),
+    pt_def(f, fq), pt_def(g, gq).
+djt_autouse_for(fq, gq) :- djt_def_at(fq, p), djt_offers_own(p, _, gq), djt_auto_fn_q(gq), djt_runs_in_test(fq).
+djt_autouse_for(fq, gq) :- djt_def_at(fq, p), djt_conftest(dir, cp), prefix(dir, p), djt_offers_at(cp, _, gq),
+    djt_auto_fn_q(gq), djt_runs_in_test(fq).
+.decl djt_auto_fn_q(g: symbol)
+djt_auto_fn_q(gq) :- djt_auto_fn(g), pt_def(g, gq).
+.decl djt_def_at(f: symbol, p: symbol)  // def f, one the rules read, is in the file at path p
+djt_def_at(fq, p) :- djt_scope_def(f), docof(f, d), doc(d, p, _), pt_def(f, fq).
+
+// djt_guarded(n, c): a patch c (djt_at "restore" rows) is active where change n runs, and puts its target back after:
+// in n's own def, as a decorator of a def or class around n, a with-item around n, or a started patcher in a set-up
+// hook of n's class. djt_guard_fx(u, g): one in a function-scoped fixture g that u requests (by symbol).
+.decl djt_guard_call(c: node)
+djt_guard_call(c) :- djt_patch(c, _).
+djt_guard_call(c) :- djt_mp_call(c, _).
+.decl djt_guarded(n: node, c: node)
+djt_guarded(n, c) :- djt_change(n), def_frame(n, u), djt_guard_call(c), def_frame(c, u).
+djt_guarded(n, c) :- djt_guard_call(c), decorator(g, e0), unparen(e0, c), docof(c, d), djt_change(n), docof(n, d),
+    within(n, g).
+djt_guarded(n, c) :- djt_guard_call(c), kind(wi, "with_item"), field(wi, "value", v),
+    (unparen(v, c) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, c)), nearest(wi, ws, "with_statement"),
+    field(ws, "body", b), docof(c, d), djt_change(n), docof(n, d), within(n, b).
+djt_guarded(n, c) :- djt_change(n), def_frame(n, u), djt_class_of(u, k), djt_setup_hook(h), djt_class_of(h, k), u != h,
+    djt_guard_call(c), def_frame(c, h).
+.decl djt_guard_restore(n: node, e: node, a: symbol)
+djt_guard_restore(n, e, a) :- djt_guarded(n, c), djt_loc(c, e, a, "restore").
+.decl djt_guard_fx(u: symbol, g: symbol)
+djt_guard_fx(uq, gq) :- djt_resolves(uq, _, gq), djt_fx_sym(gq, _, "function").
+// djt_restored(u, k, a): path a below the state a rule names k (djt_root) is put back after def u's changes: a
+// djt_loc of undo code that runs after u (djt_put at an anchor, djt_body_put in a def whose every line is undo code),
+// or a patch of a function-scoped fixture u requests (djt_fx_put). Each is stated in its own file, by symbol.
+.decl djt_root(e: node, k: symbol) extensible
+.decl djt_put(a: symbol, k: symbol, p: symbol)
+djt_put(aq, k, a) :- djt_undo_at(m, aq), djt_loc(m, e, a, _), djt_root(e, k).
+.decl djt_body_put(g: symbol, k: symbol, p: symbol)
+djt_body_put(gq, k, a) :- djt_loc(m, e, a, _), djt_root(e, k), def_frame(m, g), pt_def(g, gq).
+.decl djt_fx_put(g: symbol, k: symbol, p: symbol)
+djt_fx_put(gq, k, a) :- djt_guard_call(c), def_frame(c, g), djt_fixture(g), djt_loc(c, e, a, "restore"),
+    djt_root(e, k), pt_def(g, gq).
+.decl djt_restored(u: symbol, k: symbol, p: symbol)
+djt_restored(uq, k, a) :- djt_put(aq, k, a), djt_undo_runs(aq, uq).
+djt_restored(uq, k, a) :- djt_body_put(gq, k, a), djt_body_runs(gq, uq).
+djt_restored(uq, k, a) :- djt_fx_put(gq, k, a), djt_guard_fx(uq, gq).
+
+// ---- fixture lookup ----------------------------------------------------------------------------------------------
+.decl djt_requests(t: node, x: symbol, p: node)
+djt_requests(t, x, p) :- djt_test_code(t, k), k != "setup", sig_param(t, p, nm, _, k2, _, dv),
+    (k2 = "pos", unset(dv) ; k2 = "posonly", unset(dv) ; k2 = "kwonly"), text(nm, x),
+    x != "self", x != "cls", x != "request".
+// `v = request.getfixturevalue("x")` requests x too, the call standing for the parameter.
+djt_requests(t, x, c) :- djt_test_code(t, _), djt_getfixturevalue(c, x), def_frame(c, t).
+.decl djt_getfixturevalue(c: node, x: symbol)
+djt_getfixturevalue(c, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "getfixturevalue"),
+    posarg(c, 0, a), str(a, x).
+// djt_offers(s, x, g): scope s (a module or class node) offers fixture x by def g in its body. djt_offers_own(p, x,
+// g): the module at path p does, by symbol; djt_offers_at(p, x, g): it does, or imports fixture g of the run as x
+// (`from .fixtures import db`: its symbol is the imported name).
+.decl djt_offers(s: node, x: symbol, g: node)
+djt_offers(s, x, g) :- djt_fixture_name(g, x), nearest(g, s, scope), (kind(s, "module") ; kind(s, "class_definition")).
+.decl djt_offers_own(p: symbol, x: symbol, g: symbol)
+djt_offers_own(p, x, gq) :- djt_offers(m, x, g), kind(m, "module"), docof(m, d), doc(d, p, _), pt_def(g, gq).
+.decl djt_ifrom_at(p: symbol, x: symbol, q: symbol)
+djt_ifrom_at(p, x, @dot(mq, y)) :- kind(m, "module"), ifrom(m, x, mq, y), docof(m, d), doc(d, p, _).
+.decl djt_offers_at(p: symbol, x: symbol, g: symbol)
+djt_offers_at(p, x, gq) :- djt_offers_own(p, x, gq).
+djt_offers_at(p, x, gq) :- djt_ifrom_at(p, x, gq), djt_fx_sym(gq, _, _).
+// djt_sees(t, x, g, r): t can see fixture x by def g at rank r (higher is nearer): its class 200000, its module
+// 100000, a conftest.py by the length of its directory. By symbol and path: the conftest.py is another file.
+.decl djt_req_at(t: symbol, x: symbol, p: symbol)
+djt_req_at(tq, x, p) :- djt_requests(t, x, _), docof(t, d), doc(d, p, _), pt_def(t, tq).
+.decl djt_sees(t: symbol, x: symbol, g: symbol, r: number)
+djt_sees(tq, x, gq, 200000) :- djt_requests(t, x, _), djt_class_of(t, c), djt_offers(c, x, g), g != t, pt_def(t, tq),
+    pt_def(g, gq).
+djt_sees(tq, x, gq, 100000) :- djt_req_at(tq, x, p), djt_offers_at(p, x, gq), gq != tq.
+djt_sees(tq, x, gq, strlen(dir)) :- djt_req_at(tq, x, p), djt_conftest(dir, cp), prefix(dir, p),
+    djt_offers_at(cp, x, gq), gq != tq.
+.decl djt_resolves(t: symbol, x: symbol, g: symbol)
+djt_resolves(tq, x, gq) :- djt_sees(tq, x, gq, r), r = max r2 : { djt_sees(tq, x, _, r2) }.
+
+// ---- mocks -------------------------------------------------------------------------------------------------------
+.decl djt_patch_q(q: symbol)
+djt_patch_q("unittest.mock.patch"). djt_patch_q("mock.patch"). djt_patch_q("mock.mock.patch").
+.decl djt_mocker_name(x: symbol)
+djt_mocker_name("mocker"). djt_mocker_name("class_mocker"). djt_mocker_name("module_mocker").
+djt_mocker_name("package_mocker"). djt_mocker_name("session_mocker").
+// djt_fixture_param(e, x): identifier e reads x, a parameter of the def lookup lands on.
+.decl djt_fixture_param(e: node, x: symbol)
+djt_fixture_param(e, x) :- kind(e, "identifier"), text(e, x), look(e, x, s), kind(s, "function_definition"),
+    param_named(s, x, _).
+.decl djt_mocker(e: node)
+djt_mocker(e) :- djt_mocker_name(x), djt_fixture_param(e, x).
+.decl djt_monkeypatch(e: node)
+djt_monkeypatch(e) :- djt_fixture_param(e, "monkeypatch").
+// djt_patch_fn(f): f is `patch` itself: a name resolving to mock's patch, or `mocker.patch`.
+.decl djt_patch_fn(f: node)
+djt_patch_fn(f) :- sym_of(f, q), djt_patch_q(q).
+djt_patch_fn(f) :- attr_of(f, o, "patch"), djt_mocker(o).
+.decl djt_patch(c: node, k: symbol)
+djt_patch(c, "patch") :- kind(c, "call"), field(c, "function", f), djt_patch_fn(f).
+djt_patch(c, k) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, k), djt_patch_fn(o),
+    (k = "object" ; k = "dict" ; k = "multiple").
+.decl djt_mp_call(c: node, m: symbol)
+djt_mp_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), djt_monkeypatch(o).
+.decl djt_patch_attr(c: node, o: node, x: symbol)
+djt_patch_attr(c, o, x) :- djt_patch(c, "object"), posarg(c, 0, o), posarg(c, 1, a), str(a, x).
+djt_patch_attr(c, o, x) :- djt_patch(c, "object"), posarg(c, 0, o), call_arg(c, -1, "attribute", a), str(a, x).
+djt_patch_attr(c, o, x) :- djt_mp_call(c, "setattr"), posarg(c, 0, o), posarg(c, 1, a), str(a, x), posarg(c, 2, _).
+djt_patch_attr(c, o, x) :- djt_mp_call(c, "delattr"), posarg(c, 0, o), !str(o, _), posarg(c, 1, a), str(a, x).

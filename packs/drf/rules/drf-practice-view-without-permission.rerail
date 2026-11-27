@@ -1,0 +1,179 @@
+.policy "drf-practice-view-without-permission" revision 1
+.description "Give every DRF view its permission classes when the project's settings leave the default permission open to everyone."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. DRF's DEFAULT_PERMISSION_CLASSES defaults to AllowAny, and a view's
+// permission_classes replaces the default, so in a project whose settings never set a default (or set AllowAny only)
+// a view that names no permission classes is open to anonymous users. The rule reads the project's REST_FRAMEWORK
+// settings in every non-test file of the run (base, production and local settings modules alike) and reports:
+//   - a concrete DRF view class (an APIView, generic view or viewset, lib/drf's drf_view_q) that neither assigns
+//     permission_classes nor defines get_permissions(), itself or through a base view of the run in any module
+//     (drf_view_sets_perms_q). Concrete: no class of the run derives from it, and its name does not start with `Base`
+//     or `Abstract`; a base view is reported through its subclasses;
+//   - an `@api_view` function without a `@permission_classes(...)` decorator.
+//   # settings.py: REST_FRAMEWORK = {"DEFAULT_AUTHENTICATION_CLASSES": [...]}      no DEFAULT_PERMISSION_CLASSES
+//   class BookViewSet(viewsets.ModelViewSet):                    reported: anyone can list, create and delete books
+//       queryset = Book.objects.all()
+//   @api_view(["POST"])
+//   def import_books(request): ...                               reported
+//   class HealthView(APIView):                                   not reported: public on purpose, and says so
+//       permission_classes = [AllowAny]
+// It leaves alone: views that set permission_classes (any value, `[AllowAny]` and `()` included) or get_permissions()
+// in their own body or a run base's; views that set `authentication_classes = []` (or `()`), themselves or through a
+// run base: no request is ever authenticated, so the view is public on purpose; a viewset whose only handlers are
+// `@action(permission_classes=[...])`s and whose DRF bases route nothing else (APIView, GenericAPIView, ViewSet,
+// GenericViewSet); views with a base class outside the run that is not a rest_framework class, directly or through a
+// run base (dj-rest-auth's LoginView, drf-spectacular's SpectacularAPIView, oauth2_provider's views, Django's
+// LoginRequiredMixin: their package decides the permissions); every view of a project whose settings set
+// DEFAULT_PERMISSION_CLASSES to anything but AllowAny in any non-test settings module, or to a value the rule cannot
+// read (a variable, a concatenation, a call); runs with no REST_FRAMEWORK assignment (a reusable app: its host
+// project's settings decide); test code.
+// Gaps: a reusable app whose views have no permissions is not reported (no settings in the run); a view that checks
+// `request.user` by hand, or overrides check_permissions()/initial(), is reported; a third-party view class that sets
+// no permissions hides the view; a function view wrapped by a project decorator that calls api_view itself is not
+// seen.
+
+#include "lib/drf.rerail"
+
+.violation ViewWithoutPermission(at: node, name: symbol, why: symbol) "`{name}` sets no permission classes and {why}, so anonymous users can call it. Set permission_classes (IsAuthenticated or stricter), or `[AllowAny]` if it is public by design."
+// A view is judged by its symbol (its bases and members may sit in other modules) and reported at its own name.
+ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_view(q), class_def(c, q), field(c, "name", n), text(n, x).
+ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_fn(f), field(f, "name", n), text(n, x).
+
+// vwp_open(why): the run holds the project's settings (some non-test file assigns REST_FRAMEWORK) and they leave
+// every view without its own permission classes open: no DEFAULT_PERMISSION_CLASSES anywhere, or only AllowAny.
+.decl vwp_open(why: symbol)
+vwp_open("the project sets no default permission") :-
+    drf_settings_known(), !drf_perm_default_set(), !vwp_closed().
+vwp_open("the project's default permission is AllowAny") :- drf_settings_known(), drf_perm_default_set(),
+    !vwp_closed().
+// vwp_closed(): a settings module sets a default other than AllowAny, or one the rule cannot read; or REST_FRAMEWORK
+// is built from something other than a dict literal or dict(...) call, or a dict literal splices another dict
+// (`{**BASE, ...}`), so a default may hide there. What a settings file's syntax says is vwp_closed_here, stated in
+// that file; the classes its strings name may come from another module's constant (drf_setting_class).
+.decl vwp_closed()
+vwp_closed() :- drf_setting_class("DEFAULT_PERMISSION_CLASSES", q), q != "rest_framework.permissions.AllowAny".
+vwp_closed() :- vwp_closed_here().
+.decl vwp_closed_here()
+vwp_closed_here() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), !vwp_readable(u).
+vwp_closed_here() :- drf_setting("DEFAULT_PERMISSION_CLASSES", v), unparen(v, u), kind(u, k), drf_seq(k),
+    child(u, e, _), !kind(e, "comment"), unparen(e, eu), !vwp_name(eu).
+vwp_closed_here() :- drf_settings_asg(_, v), !kind(v, "dictionary"), !vwp_dict_call(v).
+vwp_closed_here() :- drf_settings_dict(m), child(m, s, _), kind(s, "dictionary_splat").
+.decl vwp_dict_call(v: node)
+vwp_dict_call(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "builtins.dict").
+// vwp_readable(u) / vwp_name(e): a value naming classes the rule reads: a dotted string or a class reference, alone
+// or in a list or tuple.
+.decl vwp_readable(u: node)
+vwp_readable(u) :- vwp_name(u).
+vwp_readable(u) :- kind(u, k), drf_seq(k).
+.decl vwp_name(e: node)
+vwp_name(e) :- str(e, _).
+vwp_name(e) :- kind(e, "identifier").
+vwp_name(e) :- kind(e, "attribute").
+
+// vwp_view(q): a concrete DRF view outside test code that sets no permissions, is not public by its empty
+// authentication_classes, has no base outside the run that is not DRF's own, and is not a viewset whose only
+// handlers are `@action(permission_classes=[...])`s. By symbol: its bases, members and subclasses in any module.
+.decl vwp_view(q: symbol)
+vwp_view(q) :- drf_view_q(q), !drf_view_sets_perms_q(q), !drf_has_sub(q), split_dot(q, _, x), !prefix("Base", x),
+    !prefix("Abstract", x), !vwp_no_auth(q), !vwp_foreign(q), !vwp_actions_only(q), !drf_qtest(q).
+// vwp_no_auth(q): view q's (inherited) authentication_classes is an empty list or tuple (vwp_empty, in its file).
+.decl vwp_no_auth(q: symbol)
+vwp_no_auth(q) :- drf_attr_q(q, "authentication_classes", h), vwp_empty(h).
+.decl vwp_empty(h: symbol)
+vwp_empty(h) :- drf_hv(h, v), unparen(v, u), kind(u, k), drf_seq(k), !vwp_has_elem(u).
+.decl vwp_has_elem(u: node)
+vwp_has_elem(u) :- child(u, e, _), !kind(e, "comment").
+// vwp_actions_only(q): every handler view q has (its own or a run base's) is an `@action` naming its own permission
+// classes, and q's DRF bases bring no handler of their own: only the guarded actions are routed (addons-server's
+// AddonReviewerViewSet).
+.decl vwp_actions_only(q: symbol)
+vwp_actions_only(q) :- drf_handler_q(q, fq, _), vwp_guarded(fq), !vwp_open_handler(q), !vwp_lib_handlers(q).
+.decl vwp_guarded(fq: symbol)
+vwp_guarded(fq) :- drf_action_def(f, e), drf_kw(e, "permission_classes", _), qualname(f, fq).
+.decl vwp_open_handler(q: symbol)
+vwp_open_handler(q) :- drf_handler_q(q, fq, _), !vwp_guarded(fq).
+.decl vwp_bare_base(x: symbol)
+vwp_bare_base("APIView"). vwp_bare_base("GenericAPIView"). vwp_bare_base("ViewSet"). vwp_bare_base("GenericViewSet").
+vwp_bare_base("ViewSetMixin").
+.decl vwp_lib_handlers(q: symbol)
+vwp_lib_handlers(q) :- drf_lib(q, b), split_dot(b, _, x), !vwp_bare_base(x).
+// vwp_foreign(q): view q, or one of its run bases, lists a base class that is neither in the run nor rest_framework's
+// nor a typing or builtins helper.
+.decl vwp_foreign(q: symbol)
+vwp_foreign(q) :- drf_view_q(q), vwp_foreign_base(q).
+vwp_foreign(q) :- drf_view_q(q), drf_anc(q, b), vwp_foreign_base(b).
+.decl vwp_foreign_base(q: symbol)
+vwp_foreign_base(q) :- drf_qbase(q, b), !drf_cls_q(b, _), !prefix("rest_framework.", b), !prefix("builtins.", b),
+    !prefix("typing.", b), !prefix("typing_extensions.", b), !prefix("abc.", b).
+
+// vwp_fn(f): an `@api_view` function outside test code without a `@permission_classes(...)` decorator.
+.decl vwp_fn(f: node)
+vwp_fn(f) :- drf_api_view_fn(f), !vwp_fn_perms(f), docof(f, d), !dj_test_doc(d).
+.decl vwp_fn_perms(f: node)
+vwp_fn_perms(f) :- kind(f, "function_definition"), decorator(f, dd), unparen(dd, e), kind(e, "call"),
+    field(e, "function", fn), sym_of(fn, "rest_framework.decorators.permission_classes").
+
+// The cases, `upstream/drf-practice/authored/drf-practice-view-without-permission/`: each sub-directory is one project,
+// read as one repository; each line ending in `# caught` is reported, and no other line.
+.test open exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/production.py"
+    .fixture "config/settings/test.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/config/settings/test.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/__init__.py"
+    .fixture "shop/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/__init__.py"
+    .fixture "shop/api/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/base.py"
+    .fixture "shop/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/serializers.py"
+    .fixture "shop/api/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/api/views.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/models.py"
+    .fixture "shop/test_api.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/test_api.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/open/shop/tests/test_views.py"
+    .expect _ at "shop/api/views.py":26
+    .expect _ at "shop/api/views.py":31
+    .expect _ at "shop/api/views.py":36
+    .expect _ at "shop/api/views.py":42
+    .expect _ at "shop/api/views.py":47
+    .expect _ at "shop/api/views.py":52
+    .expect _ at "shop/api/views.py":57
+    .expect _ at "shop/api/views.py":62
+    .expect _ at "shop/api/views.py":67
+    .expect _ at "shop/api/views.py":73
+    .expect _ at "shop/api/views.py":78
+    .expect _ at "shop/api/views.py":196
+    .expect _ at "shop/api/views.py":207
+    .expect _ at "shop/api/views.py":225
+.end
+.test allowany exactly
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/__init__.py"
+    .fixture "notes/mixins.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/mixins.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/notes/views.py"
+    .fixture "project/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/__init__.py"
+    .fixture "project/local_settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/local_settings.py"
+    .fixture "project/settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/allowany/project/settings.py"
+    .expect _ at "notes/views.py":7
+    .expect _ at "notes/views.py":11
+.end
+.test closed exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/config/settings/production.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/shop/__init__.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/closed/shop/views.py"
+.end
+.test unreadable exactly
+    .fixture "project/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/project/__init__.py"
+    .fixture "project/settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/project/settings.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/shop/__init__.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/unreadable/shop/views.py"
+.end
+.test library exactly
+    .fixture "reviews/__init__.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/__init__.py"
+    .fixture "reviews/app_settings.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/app_settings.py"
+    .fixture "reviews/views.py" from "../upstream/drf-practice/authored/drf-practice-view-without-permission/library/reviews/views.py"
+.end

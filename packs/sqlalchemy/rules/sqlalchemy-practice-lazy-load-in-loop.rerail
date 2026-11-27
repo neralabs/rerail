@@ -1,0 +1,84 @@
+.policy "sqlalchemy-practice-lazy-load-in-loop" revision 1
+.description "Eager-load the collections a loop reads on each ORM row, with a loader option on the statement the rows come from."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A loop (a for statement or a comprehension) over ORM rows of model M that reads a
+// lazily loaded collection `x.rel` of each row (one-to-many or many-to-many; lazy="select", the default) emits one
+// SELECT per row: the N+1 problem of the Relationship Loading Techniques docs. Many-to-one reads are
+// sqlalchemy-practice-lazy-many-to-one-in-loop's: the identity map answers a parent it has seen, so their cost depends
+// on how many rows share one.
+// The relationship and its direction are read from the models, across files, by symbol (lib's sa_lazy_rel_q and
+// sa_rel_dir_q): a collection is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`, `secondary=`, a
+// relationship whose foreign key sits on the target (`foreign_keys=[B.a_id]`, or only B has a ForeignKey to this
+// table), or the backref of a many-to-one. A relationship whose direction cannot be decided is left to the many-to-one
+// rule.
+// The loops and rows are lib/sqlalchemy_loops' sl_hit_q: `for o in session.scalars(select(M)…)`, `….all()`, a legacy
+// query, rows or a statement held in a name, `for i, o in enumerate(rows)`, `for o, l in session.execute(select(M,
+// L))`, rows a function of the run returns (one hop: `for o in order_service.get_all(db_session=s)`), and reads made
+// by a function of the run the loop hands the row to (`[describe(o) for o in rows]`, describe reading `o.lines`).
+//   for o in session.scalars(select(Order)): len(o.lines)            reported
+//   [describe(o) for o in session.scalars(select(Order))]             reported when describe reads o.lines
+//   for o in session.scalars(select(Order).options(*OPTS)): o.lines   not reported: OPTS = [selectinload(Order.lines)]
+//   for o in session.scalars(select(Order)): o.customer               not reported: a many-to-one (the other rule)
+//   for o in session.scalars(select(Order)): o.tags                   not reported when tags is lazy="selectin"
+// Left alone: loader options naming the relationship anywhere in a chain, through a name, or a wildcard; an option
+// list it cannot read (`.options(*opts)` with opts a parameter); `lazy=` other than "select"; `yield_per` streams;
+// one row (`.first()`, `session.get`); rows from a parameter; tests and Alembic revisions.
+// Gaps: a loop that stops after its first rows is still reported (the message says to leave it); callees more than
+// one call away, rows of a generic repository (`select(self.model)`), and models of other packages are not followed;
+// an `.options(...)` naming the relationship on another statement of the same function is taken as covering it.
+
+#include "lib/sqlalchemy.rerail"
+#include "lib/sqlalchemy_loops.rerail"
+
+.violation LazyLoadInLoop(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}: the loop reads this lazy collection on every row, one SELECT each. Leave it when the loop stops after a row or two."
+.violation LazyLoadInLoopShared(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}, one SELECT per row now; that changes its other callers' query too, so pass the option in when they differ."
+
+LazyLoadInLoop(u, n, rel, src) :- sl_read_at(u, uk), lil_hit_q(uk, rel, mq, src, "loop"), split_dot(mq, _, n).
+LazyLoadInLoopShared(u, n, rel, src) :- sl_read_at(u, uk), lil_hit_q(uk, rel, mq, src, "callee"), split_dot(mq, _, n).
+
+// lil_hit_q(uk, rel, mq, src, how): read uk is the first read of collection rel in its loop. By the read's term: the
+// relationship's direction is decided across files.
+.decl lil_hit_q(uk: symbol, rel: symbol, mq: symbol, src: symbol, how: symbol)
+lil_hit_q(uk, rel, mq, src, how) :- sl_hit_q(uk, _, _, rel, mq, _, src, how), sl_first_q(uk, rel),
+    sa_rel_dir_q(mq, rel, "many"), !sa_rel_dir_q(mq, rel, "one").
+
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/cli.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/cli.py"
+    .fixture "app/models/base.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/base.py"
+    .fixture "app/models/catalog.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/catalog.py"
+    .fixture "app/models/shop.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/models/shop.py"
+    .fixture "app/services/order_service.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/services/order_service.py"
+    .fixture "app/services/reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/app/services/reports.py"
+    .fixture "migrations/versions/0002_backfill.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/migrations/versions/0002_backfill.py"
+    .fixture "tests/test_reports.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-lazy-load-in-loop/tests/test_reports.py"
+    .expect _ at "app/cli.py":15
+    .expect _ at "app/services/reports.py":15
+    .expect _ at "app/services/reports.py":22
+    .expect _ at "app/services/reports.py":30
+    .expect _ at "app/services/reports.py":35
+    .expect _ at "app/services/reports.py":40
+    .expect _ at "app/services/reports.py":45
+    .expect _ at "app/services/reports.py":50
+    .expect _ at "app/services/reports.py":52
+    .expect _ at "app/services/reports.py":54
+    .expect _ at "app/services/reports.py":60
+    .expect _ at "app/services/reports.py":65
+    .expect _ at "app/services/reports.py":69
+    .expect _ at "app/services/reports.py":74
+    .expect _ at "app/services/reports.py":78
+    .expect _ at "app/services/reports.py":84
+    .expect _ at "app/services/reports.py":92
+    .expect _ at "app/services/reports.py":97
+    .expect _ at "app/services/reports.py":103
+    .expect _ at "app/services/reports.py":110
+    .expect _ at "app/services/reports.py":111
+    .expect _ at "app/services/reports.py":112
+    .expect _ at "app/services/reports.py":113
+    .expect _ at "app/services/reports.py":114
+    .expect _ at "app/services/reports.py":116
+    .expect _ at "app/services/reports.py":121
+.end

@@ -36,22 +36,22 @@
 EnqueueInAtomic(c, w) :- dj_side_effect(c, w), dj_in_transaction(c), !dj_task_waits_for_commit(c),
     !dj_dispatch_in_failing_handler(c), !dj_dispatch_result_used(c), docof(c, d), !dj_test_doc(d).
 
-// The cases, `cases/django-practice-enqueue-on-commit/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-enqueue-on-commit/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/__init__.py" from "../cases/django-practice-enqueue-on-commit/shop/__init__.py"
-    .fixture "shop/base.py" from "../cases/django-practice-enqueue-on-commit/shop/base.py"
-    .fixture "shop/graphql/__init__.py" from "../cases/django-practice-enqueue-on-commit/shop/graphql/__init__.py"
-    .fixture "shop/graphql/order/__init__.py" from "../cases/django-practice-enqueue-on-commit/shop/graphql/order/__init__.py"
-    .fixture "shop/graphql/order/mutations/__init__.py" from "../cases/django-practice-enqueue-on-commit/shop/graphql/order/mutations/__init__.py"
-    .fixture "shop/graphql/order/mutations/delete.py" from "../cases/django-practice-enqueue-on-commit/shop/graphql/order/mutations/delete.py"
-    .fixture "shop/orders.py" from "../cases/django-practice-enqueue-on-commit/shop/orders.py"
-    .fixture "shop/tasks.py" from "../cases/django-practice-enqueue-on-commit/shop/tasks.py"
-    .fixture "shop/tests/test_orders.py" from "../cases/django-practice-enqueue-on-commit/shop/tests/test_orders.py"
-    .fixture "src/billing/__init__.py" from "../cases/django-practice-enqueue-on-commit/src/billing/__init__.py"
-    .fixture "src/billing/base.py" from "../cases/django-practice-enqueue-on-commit/src/billing/base.py"
-    .fixture "src/billing/tasks.py" from "../cases/django-practice-enqueue-on-commit/src/billing/tasks.py"
-    .fixture "src/billing/views.py" from "../cases/django-practice-enqueue-on-commit/src/billing/views.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/__init__.py"
+    .fixture "shop/base.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/base.py"
+    .fixture "shop/graphql/__init__.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/graphql/__init__.py"
+    .fixture "shop/graphql/order/__init__.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/graphql/order/__init__.py"
+    .fixture "shop/graphql/order/mutations/__init__.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/graphql/order/mutations/__init__.py"
+    .fixture "shop/graphql/order/mutations/delete.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/graphql/order/mutations/delete.py"
+    .fixture "shop/orders.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/orders.py"
+    .fixture "shop/tasks.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/tasks.py"
+    .fixture "shop/tests/test_orders.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/shop/tests/test_orders.py"
+    .fixture "src/billing/__init__.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/src/billing/__init__.py"
+    .fixture "src/billing/base.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/src/billing/base.py"
+    .fixture "src/billing/tasks.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/src/billing/tasks.py"
+    .fixture "src/billing/views.py" from "../upstream/django-practice/authored/django-practice-enqueue-on-commit/src/billing/views.py"
     .expect _ at "shop/graphql/order/mutations/delete.py":11
     .expect _ at "shop/graphql/order/mutations/delete.py":12
     .expect _ at "shop/orders.py":18

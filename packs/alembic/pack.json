@@ -1,0 +1,414 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "alembic",
+  "name": "Alembic",
+  "category": "framework",
+  "covers": "Rerail's own Alembic rules, from the PostgreSQL, Alembic and SQLAlchemy docs, for migrations that run safely against a live PostgreSQL database: locks, failed deploys, lost data and drift from the models.",
+  "reason": "matches Alembic",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "alembic"
+          ]
+        }
+      },
+      {
+        "files": [
+          "**/alembic.ini"
+        ],
+        "label": "alembic.ini files"
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "alembic-practice-index-not-concurrent",
+      "document": "rules/alembic-practice-index-not-concurrent.rerail",
+      "title": "Alembic practice: an index, unique constraint or primary key built on an existing table without CONCURRENTLY",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.index-blocks-writes"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b2c3d4e5f6a7_users_email_index.py",
+          "text": "\"\"\"add an index on users.email\"\"\"\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_index(\"ix_users_email\", \"users\", [\"email\"])\n\n\ndef downgrade():\n    op.drop_index(\"ix_users_email\", table_name=\"users\")\n"
+        },
+        "passes": {
+          "path": "migrations/versions/b2c3d4e5f6a7_users_email_index.py",
+          "text": "\"\"\"add an index on users.email\"\"\"\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    with op.get_context().autocommit_block():\n        op.drop_index(\"ix_users_email\", table_name=\"users\", if_exists=True, postgresql_concurrently=True)\n        op.create_index(\"ix_users_email\", \"users\", [\"email\"], postgresql_concurrently=True)\n\n\ndef downgrade():\n    with op.get_context().autocommit_block():\n        op.drop_index(\"ix_users_email\", table_name=\"users\", if_exists=True, postgresql_concurrently=True)\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-concurrent-index-outside-autocommit",
+      "document": "rules/alembic-practice-concurrent-index-outside-autocommit.rerail",
+      "title": "Alembic practice: a concurrent index build or drop left in the migration's transaction",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.concurrently-in-transaction"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b2c3d4e5f6a7_users_email_index.py",
+          "text": "\"\"\"add an index on users.email\"\"\"\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_index(\"ix_users_email\", \"users\", [\"email\"], postgresql_concurrently=True)\n\n\ndef downgrade():\n    op.drop_index(\"ix_users_email\", table_name=\"users\", postgresql_concurrently=True)\n"
+        },
+        "passes": {
+          "path": "migrations/versions/b2c3d4e5f6a7_users_email_index.py",
+          "text": "\"\"\"add an index on users.email\"\"\"\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    with op.get_context().autocommit_block():\n        op.create_index(\"ix_users_email\", \"users\", [\"email\"], postgresql_concurrently=True)\n\n\ndef downgrade():\n    with op.get_context().autocommit_block():\n        op.drop_index(\"ix_users_email\", table_name=\"users\", postgresql_concurrently=True)\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-not-null-without-server-default",
+      "document": "rules/alembic-practice-not-null-without-server-default.rerail",
+      "title": "Alembic practice: a NOT NULL column added to an existing table without a server_default",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.not-null-without-default"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/c4d5e6f7a8b9_users_nick.py",
+          "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c4d5e6f7a8b9\"\ndown_revision = \"b3c4d5e6f7a8\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nick\", sa.String(40), nullable=False, default=\"\"))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nick\")\n"
+        },
+        "passes": {
+          "path": "migrations/versions/c4d5e6f7a8b9_users_nick.py",
+          "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c4d5e6f7a8b9\"\ndown_revision = \"b3c4d5e6f7a8\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nick\", sa.String(40), nullable=False, server_default=\"\"))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nick\")\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-drop-mapped-column",
+      "document": "rules/alembic-practice-drop-mapped-column.rerail",
+      "title": "Alembic practice: a migration drops or renames a column or table a model still maps",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.column-dropped-while-used"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b2_drop_nick.py",
+          "text": "\"\"\"drop users.nick\"\"\"\nfrom alembic import op\n\nrevision = \"b2\"\ndown_revision = \"b1\"\n\n\ndef upgrade():\n    op.drop_column(\"users\", \"nick\")\n\n\ndef downgrade():\n    pass\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy import String\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass User(Base):\n    __tablename__ = \"users\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    nick: Mapped[str] = mapped_column(String(40))\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "migrations/versions/b2_drop_nick.py",
+          "text": "\"\"\"drop users.nick\"\"\"\nfrom alembic import op\n\nrevision = \"b2\"\ndown_revision = \"b1\"\n\n\ndef upgrade():\n    op.drop_column(\"users\", \"nick\")\n\n\ndef downgrade():\n    pass\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass User(Base):\n    __tablename__ = \"users\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-constraint-without-not-valid",
+      "document": "rules/alembic-practice-constraint-without-not-valid.rerail",
+      "title": "Alembic practice: a foreign key or check constraint added to an existing table without NOT VALID",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.constraint-without-not-valid"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b2c3d4e5f6a7_orders_user_fk.py",
+          "text": "\"\"\"link orders to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"orders\", sa.Column(\"user_id\", sa.Integer(), nullable=True))\n    op.create_foreign_key(\"fk_orders_user\", \"orders\", \"users\", [\"user_id\"], [\"id\"])\n\n\ndef downgrade():\n    op.drop_constraint(\"fk_orders_user\", \"orders\", type_=\"foreignkey\")\n    op.drop_column(\"orders\", \"user_id\")\n"
+        },
+        "passes": {
+          "path": "migrations/versions/b2c3d4e5f6a7_orders_user_fk.py",
+          "text": "\"\"\"link orders to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"orders\", sa.Column(\"user_id\", sa.Integer(), nullable=True))\n    op.create_foreign_key(\n        \"fk_orders_user\", \"orders\", \"users\", [\"user_id\"], [\"id\"], postgresql_not_valid=True\n    )\n    with op.get_context().autocommit_block():\n        op.execute(\"ALTER TABLE orders VALIDATE CONSTRAINT fk_orders_user\")\n\n\ndef downgrade():\n    op.drop_constraint(\"fk_orders_user\", \"orders\", type_=\"foreignkey\")\n    op.drop_column(\"orders\", \"user_id\")\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-column-type-rewrite",
+      "document": "rules/alembic-practice-column-type-rewrite.rerail",
+      "title": "Alembic practice: a column type change that rewrites an existing table",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.type-change-rewrites"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/d5e6f7a8b9c0_workflow_runs_tokens.py",
+          "text": "\"\"\"widen workflow_runs.total_tokens\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.alter_column(\"workflow_runs\", \"total_tokens\", existing_type=sa.INTEGER(), type_=sa.BigInteger())\n\n\ndef downgrade():\n    op.alter_column(\"workflow_runs\", \"total_tokens\", existing_type=sa.BigInteger(), type_=sa.INTEGER())\n"
+        },
+        "passes": {
+          "path": "migrations/versions/d5e6f7a8b9c0_providers_model_name.py",
+          "text": "\"\"\"lengthen providers.model_name\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.alter_column(\"providers\", \"model_name\", existing_type=sa.VARCHAR(length=40), type_=sa.String(length=255))\n\n\ndef downgrade():\n    op.alter_column(\"providers\", \"model_name\", existing_type=sa.String(length=255), type_=sa.VARCHAR(length=40))\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-set-not-null-scan",
+      "document": "rules/alembic-practice-set-not-null-scan.rerail",
+      "title": "Alembic practice: a column of an existing table made NOT NULL without a validated CHECK first",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.set-not-null-scans"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/d5e6f7a8b9c0_users_email_not_null.py",
+          "text": "\"\"\"require an email on every user\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=False)\n\n\ndef downgrade():\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=True)\n"
+        },
+        "passes": {
+          "path": "migrations/versions/d5e6f7a8b9c0_users_email_not_null.py",
+          "text": "\"\"\"require an email on every user, behind the CHECK added NOT VALID by c4d5e6f7a8b9\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.execute(\"ALTER TABLE users VALIDATE CONSTRAINT ck_users_email_not_null\")\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=False)\n    op.drop_constraint(\"ck_users_email_not_null\", \"users\", type_=\"check\")\n\n\ndef downgrade():\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=True)\n",
+          "with": [
+            {
+              "path": "migrations/versions/c4d5e6f7a8b9_users_email_check.py",
+              "text": "\"\"\"check users.email for NULL without scanning: NOT VALID\"\"\"\nfrom alembic import op\n\nrevision = \"c4d5e6f7a8b9\"\ndown_revision = \"b3c4d5e6f7a8\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_check_constraint(\"ck_users_email_not_null\", \"users\", \"email IS NOT NULL\", postgresql_not_valid=True)\n\n\ndef downgrade():\n    op.drop_constraint(\"ck_users_email_not_null\", \"users\", type_=\"check\")\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-missing-lock-timeout",
+      "document": "rules/alembic-practice-missing-lock-timeout.rerail",
+      "title": "Alembic practice: migrations that lock existing tables while no lock_timeout is set for them",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "pg.no-lock-timeout"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/env.py",
+          "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            context.run_migrations()\n\n\nrun_migrations_online()\n",
+          "with": [
+            {
+              "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
+              "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "migrations/env.py",
+          "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool, text\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            connection.execute(text(\"SET LOCAL lock_timeout = '5s'\"))\n            context.run_migrations()\n\n\nrun_migrations_online()\n",
+          "with": [
+            {
+              "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
+              "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-multiple-heads",
+      "document": "rules/alembic-practice-multiple-heads.rerail",
+      "title": "Alembic practice: revisions that leave one migration directory with two heads",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "migrations.multiple-heads"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/c2_add_orders.py",
+          "text": "\"\"\"add orders\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c2\"\ndown_revision = \"b1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_table(\"orders\", sa.Column(\"id\", sa.Integer(), primary_key=True))\n\n\ndef downgrade():\n    pass\n",
+          "with": [
+            {
+              "path": "migrations/versions/b1_init.py",
+              "text": "\"\"\"init\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b1\"\ndown_revision = None\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_table(\"users\", sa.Column(\"id\", sa.Integer(), primary_key=True))\n\n\ndef downgrade():\n    pass\n"
+            },
+            {
+              "path": "migrations/versions/c1_add_email.py",
+              "text": "\"\"\"add users.email\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c1\"\ndown_revision = \"b1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"email\", sa.String(255)))\n\n\ndef downgrade():\n    pass\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "migrations/versions/c2_add_orders.py",
+          "text": "\"\"\"add orders\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c2\"\ndown_revision = \"c1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_table(\"orders\", sa.Column(\"id\", sa.Integer(), primary_key=True))\n\n\ndef downgrade():\n    pass\n",
+          "with": [
+            {
+              "path": "migrations/versions/b1_init.py",
+              "text": "\"\"\"init\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b1\"\ndown_revision = None\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_table(\"users\", sa.Column(\"id\", sa.Integer(), primary_key=True))\n\n\ndef downgrade():\n    pass\n"
+            },
+            {
+              "path": "migrations/versions/c1_add_email.py",
+              "text": "\"\"\"add users.email\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"c1\"\ndown_revision = \"b1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"email\", sa.String(255)))\n\n\ndef downgrade():\n    pass\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-rename-as-drop-add",
+      "document": "rules/alembic-practice-rename-as-drop-add.rerail",
+      "title": "Alembic practice: a column rename written as a drop and an add",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "migrations",
+        "severity": "critical",
+        "hazard": "pg.rename-as-drop-add"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b7c8d9e0f1a2_rename_users_nick.py",
+          "text": "\"\"\"rename users.nick to users.handle (as autogenerate renders it)\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b7c8d9e0f1a2\"\ndown_revision = \"a6b7c8d9e0f1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    # ### commands auto generated by Alembic - please adjust! ###\n    op.add_column(\"users\", sa.Column(\"handle\", sa.String(length=40), nullable=True))\n    op.drop_column(\"users\", \"nick\")\n    # ### end Alembic commands ###\n\n\ndef downgrade():\n    op.add_column(\"users\", sa.Column(\"nick\", sa.VARCHAR(length=40), autoincrement=False, nullable=True))\n    op.drop_column(\"users\", \"handle\")\n"
+        },
+        "passes": {
+          "path": "migrations/versions/b7c8d9e0f1a2_rename_users_nick.py",
+          "text": "\"\"\"rename users.nick to users.handle in place\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b7c8d9e0f1a2\"\ndown_revision = \"a6b7c8d9e0f1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.alter_column(\"users\", \"nick\", new_column_name=\"handle\")\n\n\ndef downgrade():\n    op.alter_column(\"users\", \"handle\", new_column_name=\"nick\")\n"
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-model-import-in-migration",
+      "document": "rules/alembic-practice-model-import-in-migration.rerail",
+      "title": "Alembic practice: a migration imports the application's ORM models",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "migrations",
+        "severity": "high",
+        "hazard": "orm.model-in-migration"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/b2_group_slug.py",
+          "text": "\"\"\"add groups.slug and fill it\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Group\n\nrevision = \"b2\"\ndown_revision = \"b1\"\n\n\ndef upgrade():\n    op.add_column(\"groups\", sa.Column(\"slug\", sa.String(80)))\n    session = Session(bind=op.get_bind())\n    for group in session.query(Group):\n        group.slug = group.name.lower()\n    session.commit()\n\n\ndef downgrade():\n    op.drop_column(\"groups\", \"slug\")\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy import String\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Group(Base):\n    __tablename__ = \"groups\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    name: Mapped[str] = mapped_column(String(80))\n    slug: Mapped[str | None] = mapped_column(String(80))\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "migrations/versions/b2_group_slug.py",
+          "text": "\"\"\"add groups.slug and fill it\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2\"\ndown_revision = \"b1\"\n\ngroups = sa.table(\"groups\", sa.column(\"id\", sa.Integer), sa.column(\"name\", sa.String), sa.column(\"slug\", sa.String))\n\n\ndef upgrade():\n    op.add_column(\"groups\", sa.Column(\"slug\", sa.String(80)))\n    op.execute(groups.update().values(slug=sa.func.lower(groups.c.name)))\n\n\ndef downgrade():\n    op.drop_column(\"groups\", \"slug\")\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy import String\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Group(Base):\n    __tablename__ = \"groups\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    name: Mapped[str] = mapped_column(String(80))\n    slug: Mapped[str | None] = mapped_column(String(80))\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "alembic-practice-empty-downgrade",
+      "document": "rules/alembic-practice-empty-downgrade.rerail",
+      "title": "Alembic practice: a revision's downgrade() does nothing while its upgrade() changes the schema",
+      "group": "Alembic practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "migrations",
+        "severity": "medium",
+        "hazard": "pg.irreversible-migration"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "migrations/versions/e5_add_email.py",
+          "text": "\"\"\"add users.email\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e5\"\ndown_revision = \"e4\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"email\", sa.String(255), nullable=True))\n\n\ndef downgrade():\n    pass\n",
+          "with": [
+            {
+              "path": "migrations/versions/e1_add_c1.py",
+              "text": "\"\"\"add t1.c1\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e1\"\ndown_revision = None\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t1\", sa.Column(\"c1\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t1\", \"c1\")\n"
+            },
+            {
+              "path": "migrations/versions/e2_add_c2.py",
+              "text": "\"\"\"add t2.c2\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e2\"\ndown_revision = \"e1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t2\", sa.Column(\"c2\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t2\", \"c2\")\n"
+            },
+            {
+              "path": "migrations/versions/e3_add_c3.py",
+              "text": "\"\"\"add t3.c3\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e3\"\ndown_revision = \"e2\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t3\", sa.Column(\"c3\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t3\", \"c3\")\n"
+            },
+            {
+              "path": "migrations/versions/e4_add_c4.py",
+              "text": "\"\"\"add t4.c4\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e4\"\ndown_revision = \"e3\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t4\", sa.Column(\"c4\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t4\", \"c4\")\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "migrations/versions/e5_add_email.py",
+          "text": "\"\"\"add users.email\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e5\"\ndown_revision = \"e4\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"email\", sa.String(255), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"email\")\n",
+          "with": [
+            {
+              "path": "migrations/versions/e1_add_c1.py",
+              "text": "\"\"\"add t1.c1\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e1\"\ndown_revision = None\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t1\", sa.Column(\"c1\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t1\", \"c1\")\n"
+            },
+            {
+              "path": "migrations/versions/e2_add_c2.py",
+              "text": "\"\"\"add t2.c2\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e2\"\ndown_revision = \"e1\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t2\", sa.Column(\"c2\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t2\", \"c2\")\n"
+            },
+            {
+              "path": "migrations/versions/e3_add_c3.py",
+              "text": "\"\"\"add t3.c3\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e3\"\ndown_revision = \"e2\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t3\", sa.Column(\"c3\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t3\", \"c3\")\n"
+            },
+            {
+              "path": "migrations/versions/e4_add_c4.py",
+              "text": "\"\"\"add t4.c4\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"e4\"\ndown_revision = \"e3\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"t4\", sa.Column(\"c4\", sa.Integer(), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"t4\", \"c4\")\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

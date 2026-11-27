@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// The publish gate, then the tarballs: runs the whole pack validation (test/engine/catalog/packs.test.ts, every check
-// and every rule) for the named packs, packs each with `npm pack`, and checks that each tarball holds only
-// package.json and what the pack's `files` publishes, and no validation material. Writes the tarballs and
-// manifest.json (`[{ id, name, version, file }]`) to --out. Needs the built native engine, as the pack tests do.
+// The publish gate, then the tarballs: runs the whole pack validation (test/engine/catalog/packs.test.ts and
+// packs-rerail/, every check and every rule) for the named packs, packs each with `npm pack`, and checks
+// that each tarball holds only package.json and what the pack's `files` publishes, and no validation material. Writes
+// the tarballs and manifest.json (`[{ id, name, version, file }]`) to --out. Needs the built native engine, as the
+// pack tests do.
 //
 //   node --import tsx scripts/release/packs-pack.ts --out <dir> (<id>… | --all)
 import { spawnSync, execFileSync } from "node:child_process";
@@ -32,7 +33,7 @@ function gate(ids: string[]): string[] {
     const vitest = join(ROOT, "node_modules", ".bin", "vitest");
     const run = spawnSync(
       vitest,
-      ["run", "test/engine/catalog/packs.test.ts", "-t", `^pack (${ids.join("|")}) `, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
+      ["run", "test/engine/catalog/packs.test.ts", "test/engine/catalog/packs-rerail/", "-t", `^pack (${ids.join("|")}) `, "--reporter=default", "--reporter=json", `--outputFile.json=${report}`],
       { cwd: ROOT, stdio: "inherit" },
     );
     if (run.error !== undefined) return [`the pack validation did not run: ${run.error.message}`];

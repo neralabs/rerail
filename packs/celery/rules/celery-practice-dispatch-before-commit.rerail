@@ -1,0 +1,467 @@
+.policy "celery-practice-dispatch-before-commit" revision 1
+.description "Send Celery tasks after the SQLAlchemy session commits, not between a write and its commit, so the worker never reads rows that are not committed yet."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port: the SQLAlchemy side of django-practice-enqueue-on-commit. A task sent while the
+// session holds uncommitted writes can start on a worker before the commit: it finds no row or the old one, or acts
+// on a change that then rolls back.
+// What it resolves rather than spells:
+//   - a send is lib/celery's cel_send: `.delay()`/`.apply_async()` on a resolved Celery task (a task def of the run
+//     through imports, aliases and re-exports, a task object, a Task instance, a signature `t.s(...)`) or
+//     `<app>.send_task()`; or a call of a run function that sends, through the call graph, with no commit of its
+//     own on the way (reported at that call, naming the helper). RQ's `@job`, a thread pool or any class with a
+//     `delay` method is not a task;
+//   - a session is lib/celery's sa_session: proven through its binding (Session/sessionmaker/scoped_session,
+//     Flask-SQLAlchemy's db.session, an annotation, `with ... as`, a run function returning one), with a name
+//     fallback only where the binding resolves to nothing;
+//   - a write is a session call (add, add_all, delete, merge, flush, bulk_*, execute of insert/update/delete), or an
+//     assignment to a mapped column (resolved: mapped_column/Column/relationship/Mapped/SQLModel fields, inherited
+//     too) of a row the function loaded through that session (`get`, `query(M)...first()`, `scalar(select(M))`,
+//     `execute(...).scalar_one()`, or a `for` over its rows), which the unit of work flushes at commit;
+//   - a path is statement order with the pairs no path runs taken out: different arms of one if/elif/else, match, or
+//     try's except/else; a write whose block returns (or raises outside a try) before the send.
+// Reported when a write reaches the send and then
+//   1. a commit of the same session follows in the function, with no commit of it on the way from write to send;
+//   2. the send sits in the body of `with <x>.begin():`/`async with`, whose transaction holds the write;
+//   3. the function never commits, and a caller (through callers that do not commit either) commits the same
+//      session after the call or makes it inside a begin block on it; the session is followed through each call,
+//      parameter to argument (dify's _update_internal_dataset → update_dataset → the adapter's `with` block);
+//   4. or, with no write needed, the send runs in a flush-time event listener (`@event.listens_for(X,
+//      "after_insert")`, `event.listen(X, "before_flush", fn)`, the other mapper and flush events, before_commit).
+//   session.add(order); session.flush()
+//   ship.delay(order.id)                                    reported
+//   session.commit()
+//   ship.delay(order.id)                                    not reported: after the commit
+//   if is_new: session.add(order)
+//   else: ship.delay(order.id)                              not reported: the send's path writes nothing
+//   event.listen(session, "after_commit", lambda s: ship.delay(order.id))   not reported: runs after the commit
+// Also left alone: a send in an except handler that always re-raises (the transaction rolls back), `r =
+// t.apply_async(...)` whose result the function reads afterwards (the task id is stored on the row, so the send cannot
+// simply move after the commit), a send in a lambda or nested def, a caller committing another session, test files,
+// and documents that import django (the django pack's dispatch rules own them).
+// Still by spelling: within one function, writes and commits pair by the session's text (`session`, `self.session`),
+// which is one variable in practice; across calls it is carried through parameters, not by name.
+// Gaps: loops (a write later in the loop body precedes the next iteration's send); writes through repository objects
+// or a row loaded elsewhere and passed in; a Flask `Model.query.get()` row (no session spelled); a transaction a
+// framework opens around the request; a commit in only some arms between the write and the send counts as a commit
+// between them.
+
+#include "lib/celery.rerail"
+#include "python/flow.rerail"
+
+.violation DispatchBeforeCommit(at: node, what: symbol, where: symbol) "{what} runs {where}: the worker can start before the commit and miss the row. Send it after `commit()` or from an `after_commit` event; leave it if the task reads nothing written here."
+
+// Each function's writes, commits and sends, and their order, are stated in its own file, with what each needs of
+// other files (needs, as lib/celery's: a task def the send names, a session factory the write's session comes from, a
+// mapped column "dbc_col:<x>" of the row's model, a run function that sends "dbc_sends"; dbc_holds answers them).
+// What crosses functions is by symbol (decision 0677: no node crosses files): a def by its symbol (`pt_def`, as
+// python/calls' `call_target` names one), a call, a send or a begin block by its term (`pt_tm`), sessions by their
+// spelling. Cases 1, 2 and 4 are a function's own (one file); case 3 follows the calls (dbc_up_q, dbc_cc_q).
+// 1. write, send, commit in one function.
+DispatchBeforeCommit(at, w, "between a session write and this function's `commit()`") :-
+    dbc_send_at(at, f, w, sq, sk), dbc_holds(sq, sk), dbc_write(x, f, s, nq, nk, mq, mk), dbc_holds(nq, nk),
+    dbc_holds(mq, mk), earlier(x, at), !dbc_unreach(x, at), dbc_commit(k, f, s, kq, kk), cel_is(kq, kk), earlier(at, k),
+    !dbc_apart(k, at), !dbc_committed_between(x, at, f, s), dbc_reported(at).
+// 2. in a with-begin body after a write: of the block's own session, or of any session when it opens one the engine
+// cannot name (no candidate of dbc_tx_session holds: dbc_tx_known_t, by the block's term).
+DispatchBeforeCommit(at, w, "after a write inside `with ….begin()`, which commits at its end") :-
+    dbc_send_at(at, f, w, sq, sk), dbc_holds(sq, sk), dbc_in_tx(at, b), dbc_write(x, f, s, nq, nk, mq, mk),
+    dbc_holds(nq, nk), dbc_holds(mq, mk), dbc_in_tx(x, b), dbc_tx_session(b, s, tq, tk), cel_is(tq, tk), earlier(x, at),
+    !dbc_unreach(x, at), dbc_reported(at).
+DispatchBeforeCommit(at, w, "after a write inside `with ….begin()`, which commits at its end") :-
+    dbc_send_at(at, f, w, sq, sk), dbc_holds(sq, sk), dbc_in_tx(at, b), dbc_write(x, f, _, nq, nk, mq, mk),
+    dbc_holds(nq, nk), dbc_holds(mq, mk), dbc_in_tx(x, b), pt_tm(b, bt), !dbc_tx_known_t(bt), earlier(x, at),
+    !dbc_unreach(x, at), dbc_reported(at).
+// 3. the caller commits (dbc_cc_q, by the send's term).
+DispatchBeforeCommit(at, w, "after a session write its caller commits") :- dbc_send_at(at, _, w, sq, sk),
+    dbc_holds(sq, sk), pt_tm(at, att), dbc_cc_q(att), dbc_reported(at).
+// 4. a flush-time event listener, registered by its decorator (dbc_listener) or by `event.listen(...)` in any file
+// (dbc_listener_q, by its symbol). One report per send, however many events the listener is registered for.
+DispatchBeforeCommit(at, w, "in a flush-time SQLAlchemy event listener") :- dbc_listener(f), dbc_send_at(at, f, w, sq, sk),
+    dbc_holds(sq, sk), dbc_reported(at).
+DispatchBeforeCommit(at, w, "in a flush-time SQLAlchemy event listener") :- dbc_send_at(at, f, w, sq, sk),
+    dbc_holds(sq, sk), qualname(f, fq), dbc_listener_q(fq), dbc_reported(at).
+.decl dbc_reported(at: node)
+dbc_reported(at) :- docof(at, d), !cel_test_doc(d), !cel_django_doc(d).
+
+// ---- needs -------------------------------------------------------------------------------------------------------
+// dbc_holds(q, k): lib/celery's cel_is, and this rule's kinds over symbols: "dbc_col:<x>" (model class q maps
+// attribute x to a column: dbc_colq), "dbc_sends" (run function q sends a task when called, and is no task itself:
+// dbc_sends_q). It spans files on purpose (a model's columns are declared in its bases' modules, a helper that
+// sends in another module); symbols alone: cross_file.
+.decl dbc_holds(q: symbol, k: symbol) cross_file
+dbc_holds(q, k) :- cel_is(q, k).
+dbc_holds(q, k) :- dbc_colq(q, x), cel_is(q, "sa_model"), k = cat("dbc_col:", x).
+dbc_holds(gq, "dbc_sends") :- dbc_sends_q(gq), !cel_is(gq, "task").
+
+// ---- regions ---------------------------------------------------------------------------------------------------
+// dbc_own(n, f): n runs in def f's own body: no nested def, lambda or class between (a lambda runs later).
+.decl dbc_own(n: node, f: node)
+dbc_own(n, f) :- kind(f, "function_definition"), field(f, "body", b), within_stop(n, b, cel_region_stop).
+// dbc_in_tx(n, b): n runs in the body b of a `with <x>.begin():`, in the same def.
+.decl dbc_in_tx(n: node, b: node)
+dbc_in_tx(n, b) :- sa_tx_with(_, b), within_stop(n, b, cel_region_stop).
+// dbc_tx_session(b, s, nq, nk): the begin block with body b runs on the session spelled s: the `as` name of `with
+// <maker>.begin() as s:`, or the receiver of `with s.begin():`, when it is a session.
+.decl dbc_tx_item(b: node, v: node)
+dbc_tx_item(b, v) :- sa_tx_with(w, b), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", v), sa_begin_value(v).
+.decl dbc_tx_session(b: node, s: symbol, nq: symbol, nk: symbol)
+dbc_tx_session(b, s, "", "") :- dbc_tx_item(b, v), kind(v, "as_pattern"), field(v, "alias", al), text(al, s).
+dbc_tx_session(b, s, nq, nk) :- dbc_tx_item(b, v), (v0 = v ; (kind(v, "as_pattern"), child(v, v0, 0))),
+    unparen(v0, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "begin"), unparen(o, u),
+    sa_session(u, nq, nk), text(u, s).
+// dbc_tx_known_t(b): the block whose body has term b runs on a session the engine names. A fact over terms, as each
+// file states its blocks' candidates (dbc_tx_cand_t), their needs met.
+.decl dbc_tx_known_t(b: symbol)
+dbc_tx_known_t(bt) :- dbc_tx_cand_t(bt, nq, nk), cel_is(nq, nk).
+.decl dbc_tx_cand_t(b: symbol, nq: symbol, nk: symbol)
+dbc_tx_cand_t(bt, nq, nk) :- dbc_tx_session(b, _, nq, nk), pt_tm(b, bt).
+// dbc_sname(s): s spells a session somewhere in the run (sa_session's candidates, their needs met).
+.decl dbc_sname(s: symbol)
+dbc_sname(s) :- dbc_sname_t(s, nq, nk), cel_is(nq, nk).
+.decl dbc_sname_t(s: symbol, nq: symbol, nk: symbol)
+dbc_sname_t(s, nq, nk) :- sa_session(e, nq, nk), text(e, s).
+
+// ---- writes ------------------------------------------------------------------------------------------------------
+// A write is what the session sends at its next flush: a session call (sa_write: add, delete, merge, flush, bulk_*,
+// execute of insert/update/delete), or an assignment to a mapped column of a row this function loaded through the
+// session, which the unit of work flushes at commit (`order = session.get(Order, 1); order.status = "paid"`).
+// dbc_colq(q, x): x is a mapped attribute of class q or of a class it derives from, resolved through imports: assigned
+// SQLAlchemy's `mapped_column(...)`, `Column(...)`, `relationship(...)` (or a Flask-SQLAlchemy `db.Column(...)`),
+// SQLModel's `Field(...)`/`Relationship(...)`, annotated SQLAlchemy's `Mapped[...]`, or any annotated field of a
+// SQLModel `table=True` class. Each class's own columns and bases are stated in its file (dbc_col_here,
+// dbc_col_base); the closure over the run's classes is by symbol (cross_file).
+.decl dbc_col_fn_q(q: symbol)
+dbc_col_fn_q("sqlalchemy.orm.mapped_column"). dbc_col_fn_q("sqlalchemy.orm.relationship").
+dbc_col_fn_q("sqlalchemy.orm.column_property"). dbc_col_fn_q("sqlalchemy.orm.composite").
+dbc_col_fn_q("sqlalchemy.Column"). dbc_col_fn_q("sqlalchemy.schema.Column"). dbc_col_fn_q("sqlalchemy.sql.schema.Column").
+dbc_col_fn_q("sqlmodel.Field"). dbc_col_fn_q("sqlmodel.Relationship").
+.decl dbc_col_fn_flask(m: symbol)
+dbc_col_fn_flask("Column"). dbc_col_fn_flask("relationship"). dbc_col_fn_flask("column_property").
+.decl dbc_colq(q: symbol, x: symbol) cross_file
+dbc_colq(q, x) :- dbc_col_here(q, x, nq, nk), cel_is(nq, nk).
+dbc_colq(q, x) :- dbc_col_base(q, b), dbc_colq(b, x).
+.decl dbc_col_here(q: symbol, x: symbol, nq: symbol, nk: symbol)
+dbc_col_here(q, x, nq, nk) :- dbc_class_field(c, x, a), class_def(c, q), dbc_col_value(a, nq, nk).
+dbc_col_here(q, x, "", "") :- dbc_class_field(c, x, a), class_def(c, q), field(a, "type", _),
+    class_base(c, "sqlmodel.SQLModel"), sa_table_kw(c).
+.decl dbc_col_base(q: symbol, b: symbol)
+dbc_col_base(q, b) :- class_def(c, q), cel_class_base(c, b).
+// dbc_class_field(c, x, a): assignment a (annotated or not) in class c's body binds x.
+.decl dbc_class_field(c: node, x: symbol, a: node)
+dbc_class_field(c, x, a) :- kind(c, "class_definition"), field(c, "body", bd), child(bd, st, _),
+    kind(st, "expression_statement"), child(st, a, 0), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x).
+.decl dbc_col_value(a: node, nq: symbol, nk: symbol)
+dbc_col_value(a, "", "") :- field(a, "right", r), unparen(r, k), kind(k, "call"), field(k, "function", fn),
+    sym_of(fn, q), dbc_col_fn_q(q).
+dbc_col_value(a, dq, "sa_flask_db") :- field(a, "right", r), unparen(r, k), kind(k, "call"), field(k, "function", fn),
+    attr_of(fn, o, m), dbc_col_fn_flask(m), unparen(o, u), cel_sym(u, dq).
+dbc_col_value(a, "", "") :- field(a, "type", t), (m = t ; within(m, t)), sym_of(m, "sqlalchemy.orm.Mapped").
+// dbc_select_q(e, q): `select(M)` and chains of it (`.where(...)`), M naming class q (a model: its "dbc_col:<x>"
+// need asks).
+.decl dbc_select_q(e: node, q: symbol)
+dbc_select_q(e, q) :- unparen(e, k), kind(k, "call"), field(k, "function", fn), sym_of(fn, fq),
+    (fq = "sqlalchemy.select" ; fq = "sqlmodel.select" ; fq = "sqlalchemy.sql.expression.select" ;
+    fq = "sqlalchemy.future.select"), posarg(k, 0, r), !posarg(k, 1, _), cel_sym(r, q).
+dbc_select_q(e, q) :- unparen(e, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m), sa_query_method(m),
+    dbc_select_q(o, q).
+// dbc_query_q(e, s, q, nq, nk): `s.query(M)` on the session spelled s, and chains of it.
+.decl dbc_query_q(e: node, s: symbol, q: symbol, nq: symbol, nk: symbol)
+dbc_query_q(e, s, q, nq, nk) :- unparen(e, k), sa_session_call(k, o, "query", nq, nk), text(o, s), posarg(k, 0, r),
+    !posarg(k, 1, _), cel_sym(r, q).
+dbc_query_q(e, s, q, nq, nk) :- unparen(e, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m),
+    sa_query_method(m), dbc_query_q(o, s, q, nq, nk).
+// dbc_row(v, s, q, nq, nk): v loads one row of class q through the session spelled s.
+.decl dbc_row(v: node, s: symbol, q: symbol, nq: symbol, nk: symbol)
+dbc_row(v, s, q, nq, nk) :- unparen(v, k), kind(k, "await"), child(k, c, 0), dbc_row(c, s, q, nq, nk).
+dbc_row(v, s, q, nq, nk) :- unparen(v, k), sa_session_call(k, o, m, nq, nk), (m = "get" ; m = "get_one"), text(o, s),
+    posarg(k, 0, r), cel_sym(r, q).
+dbc_row(v, s, q, nq, nk) :- unparen(v, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m),
+    sa_row_method(m), dbc_query_q(o, s, q, nq, nk).
+dbc_row(v, s, q, nq, nk) :- unparen(v, k), sa_session_call(k, o, "scalar", nq, nk), text(o, s), posarg(k, 0, sel),
+    dbc_select_q(sel, q).
+dbc_row(v, s, q, nq, nk) :- unparen(v, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, x0, m),
+    sa_scalar_row_method(m), unparen(x0, x), dbc_rows_of(x, s, q, nq, nk).
+// dbc_rows_of(e, s, q, nq, nk): e yields rows of q through s: `s.query(M)...` (iterated, or `.all()`),
+// `s.scalars(select(M))`, `s.execute(select(M)).scalars()`, and `.all()` of those.
+.decl dbc_rows_of(e: node, s: symbol, q: symbol, nq: symbol, nk: symbol)
+dbc_rows_of(e, s, q, nq, nk) :- dbc_query_q(e, s, q, nq, nk).
+dbc_rows_of(e, s, q, nq, nk) :- unparen(e, k), sa_session_call(k, o, m, nq, nk), (m = "scalars" ; m = "execute"),
+    text(o, s), posarg(k, 0, sel), dbc_select_q(sel, q).
+dbc_rows_of(e, s, q, nq, nk) :- unparen(e, k), kind(k, "await"), child(k, c, 0), dbc_rows_of(c, s, q, nq, nk).
+dbc_rows_of(e, s, q, nq, nk) :- unparen(e, k), kind(k, "call"), field(k, "function", fn), attr_of(fn, o, m),
+    (m = "all" ; m = "scalars" ; m = "unique"), dbc_rows_of(o, s, q, nq, nk).
+// dbc_bound_row(f, x, s, q, nq, nk): name x in f holds a row of q loaded through s: `x = <row>`, or `for x in
+// <rows>:`.
+.decl dbc_bound_row(f: node, x: symbol, s: symbol, q: symbol, nq: symbol, nk: symbol)
+dbc_bound_row(f, x, s, q, nq, nk) :- asg(f, x, v, _), kind(f, "function_definition"), dbc_row(v, s, q, nq, nk).
+dbc_bound_row(f, x, s, q, nq, nk) :- kind(fs, "for_statement"), field(fs, "left", lt), kind(lt, "identifier"),
+    text(lt, x), field(fs, "right", rt), dbc_rows_of(rt, s, q, nq, nk), dbc_own(fs, f).
+// dbc_write(w, f, s, nq, nk, mq, mk): write w in f's own body, on the session spelled s; an assignment to a row's
+// attribute (dbc_dirty) needs that attribute to be a mapped column of the row's model ((q, "dbc_col:<x>")).
+// dbc_commit(k, f, s, nq, nk) likewise. dbc_write_c, dbc_commit_c: the candidates, whatever they need, where only
+// their places are read (the paths below, and a commit of a session a write already spelled).
+.decl dbc_write(w: node, f: node, s: symbol, nq: symbol, nk: symbol, mq: symbol, mk: symbol)
+dbc_write(w, f, s, nq, nk, "", "") :- sa_write(w, nq, nk), dbc_own(w, f), sa_session_call(w, o, _, nq, nk), text(o, s).
+dbc_write(a, f, s, nq, nk, q, ck) :- (kind(a, "assignment") ; kind(a, "augmented_assignment")), field(a, "left", l),
+    attr_of(l, o, c), unparen(o, u), kind(u, "identifier"), text(u, x), dbc_own(a, f), dbc_bound_row(f, x, s, q, nq, nk),
+    ck = cat("dbc_col:", c).
+.decl dbc_write_c(w: node, f: node, s: symbol)
+dbc_write_c(w, f, s) :- dbc_write(w, f, s, _, _, _, _).
+.decl dbc_commit(k: node, f: node, s: symbol, nq: symbol, nk: symbol)
+dbc_commit(k, f, s, nq, nk) :- sa_commit(k, nq, nk), dbc_own(k, f), sa_session_call(k, o, _, nq, nk), text(o, s).
+.decl dbc_commit_c(k: node, f: node, s: symbol)
+dbc_commit_c(k, f, s) :- dbc_commit(k, f, s, _, _).
+// dbc_commits_q(f): def f (by symbol) commits some session. A fact over symbols, from each file's commits
+// (dbc_commit_need), their needs met.
+.decl dbc_commits_q(f: symbol)
+dbc_commits_q(fq) :- dbc_commit_need(fq, nq, nk), cel_is(nq, nk).
+.decl dbc_commit_need(f: symbol, nq: symbol, nk: symbol)
+dbc_commit_need(fq, nq, nk) :- dbc_commit(_, f, _, nq, nk), pt_def(f, fq).
+
+// ---- paths -----------------------------------------------------------------------------------------------------
+// Statement order (`earlier`) is the base; these take out pairs no path runs in that order.
+// dbc_node(n): a call or a write in the own body of a function that writes or commits.
+.decl dbc_db_fn(f: node)
+dbc_db_fn(f) :- dbc_write_c(_, f, _).
+dbc_db_fn(f) :- dbc_commit_c(_, f, _).
+.decl dbc_node(n: node)
+dbc_node(n) :- dbc_db_fn(f), dbc_own(n, f), kind(n, "call").
+dbc_node(n) :- dbc_write_c(n, _, _).
+// dbc_alt(st, a): a is an arm of statement st, and arms never run together: an if's body and each of its elif and
+// else clauses, the case clauses of one match, a try's except clauses and its else clause. A try's own body and its
+// finally are not arms: a handler or the finally can run after the body.
+.decl dbc_alt(st: node, a: node)
+dbc_alt(st, a) :- kind(st, "if_statement"), (field(st, "consequence", a) ; field(st, "alternative", a)).
+dbc_alt(st, a) :- kind(a, "case_clause"), child(st, a, _).
+dbc_alt(st, a) :- kind(st, "try_statement"), child(st, a, _), (kind(a, "except_clause") ; kind(a, "else_clause")).
+.decl dbc_arm(n: node, st: node, a: node)
+dbc_arm(n, st, a) :- dbc_node(n), within(n, a), dbc_alt(st, a).
+// dbc_apart(x, n): write or commit x and n sit in different arms of one statement, so no path runs both.
+.decl dbc_apart(x: node, n: node)
+dbc_apart(x, n) :- (dbc_write_c(x, _, _) ; dbc_commit_c(x, _, _)), dbc_arm(x, st, a), dbc_arm(n, st, b), a != b.
+// dbc_exits(x, n): after write or commit x, its block returns (or raises, outside any try) before reaching n, which
+// lies outside that block: `if new: session.add(o); return o` then a send.
+.decl dbc_exits(x: node, n: node)
+dbc_exits(x, n) :- (dbc_write_c(x, f, _) ; dbc_commit_c(x, f, _)), stmt_of(x, sx, bl), child(bl, sx, i), child(bl, r, j),
+    j > i, dbc_exit_stmt(r), dbc_node(n), dbc_own(n, f), !within(n, bl).
+.decl dbc_exit_stmt(r: node)
+dbc_exit_stmt(r) :- kind(r, "return_statement").
+dbc_exit_stmt(r) :- kind(r, "raise_statement"), !dbc_in_try_body(r).
+.decl dbc_in_try_body(r: node)
+dbc_in_try_body(r) :- kind(r, "raise_statement"), kind(t, "try_statement"), field(t, "body", tb), within(r, tb).
+// dbc_unreach(x, n): no path runs write or commit x and then n.
+.decl dbc_unreach(x: node, n: node)
+dbc_unreach(x, n) :- dbc_apart(x, n).
+dbc_unreach(x, n) :- dbc_exits(x, n).
+// A commit between them counts only when it runs on the way from the write to the send. It pairs with the write by
+// the session's spelling, which the write's session already is.
+.decl dbc_committed_between(w: node, at: node, f: node, s: symbol)
+dbc_committed_between(w, at, f, s) :- dbc_write_c(w, f, s), dbc_send_at_c(at, f), dbc_commit_c(k, f, s), earlier(w, k),
+    earlier(k, at), !dbc_apart(k, w), !dbc_unreach(k, at).
+
+// ---- sends -----------------------------------------------------------------------------------------------------
+// dbc_send(s, nq, nk): a send that could move after the commit: not in an except handler that always re-raises, and
+// not `r = t.apply_async(...)` whose r the function reads afterwards.
+.decl dbc_send(s: node, nq: symbol, nk: symbol)
+dbc_send(s, nq, nk) :- cel_send(s, _, nq, nk), !dbc_failing_handler(s), !dbc_result_used(s).
+.decl dbc_failing_handler(s: node)
+dbc_failing_handler(s) :- cel_send(s, _, _, _), kind(x, "except_clause"), within(s, x), child(x, hb, _),
+    kind(hb, "block"), always_raises(hb).
+.decl dbc_result_used(s: node)
+dbc_result_used(s) :- cel_send(s, _, _, _), kind(a, "assignment"), field(a, "right", r), unparen(r, s),
+    field(a, "left", l), kind(l, "identifier"), text(l, v), def_frame(s, fr), kind(i, "identifier"), text(i, v),
+    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
+// dbc_send_at(at, f, what, nq, nk): `at` in f's own body sends: a send, or a call of a run function that sends (by
+// name; its need: (g, "dbc_sends")). dbc_send_at_c: the candidates, whatever they need.
+.decl dbc_send_at(at: node, f: node, what: symbol, nq: symbol, nk: symbol)
+dbc_send_at(s, f, cat("`", cat(x, "()`")), nq, nk) :- dbc_send(s, nq, nk), dbc_own(s, f), field(s, "function", e),
+    text(e, x).
+dbc_send_at(c, f, cat("`", cat(x, "()` (it sends a task)")), gq, "dbc_sends") :- call_target(c, gq), dbc_own(c, f),
+    split_dot(gq, _, x).
+.decl dbc_send_at_c(at: node, f: node)
+dbc_send_at_c(at, f) :- dbc_send_at(at, f, _, _, _).
+// dbc_sends_q(g): calling g (by symbol) sends a task: g's own body sends, or calls a function that does, with no
+// commit of g's on the way (that commit would have committed the caller's writes first). Each file states its
+// functions' sends (dbc_send_own_t) and the commits before them (dbc_cb_cand_t), by the send's term; the walk over
+// the call graph is by symbol (cross_file).
+.decl dbc_sends_q(g: symbol) cross_file
+dbc_sends_q(gq) :- dbc_send_own_t(gq, nt, nq, nk), nk != "dbc_sends", cel_is(nq, nk), !dbc_cb_t(nt).
+dbc_sends_q(gq) :- dbc_send_own_t(gq, nt, hq, "dbc_sends"), dbc_sends_q(hq), !dbc_cb_t(nt).
+.decl dbc_send_own_t(g: symbol, n: symbol, nq: symbol, nk: symbol)
+dbc_send_own_t(gq, nt, nq, nk) :- dbc_send_at(n, g, _, nq, nk), pt_def(g, gq), pt_tm(n, nt).
+// dbc_cb_t(n): a commit of the function runs on the way to the send or call with term n.
+.decl dbc_cb_t(n: symbol)
+dbc_cb_t(nt) :- dbc_cb_cand_t(nt, kq, kk), cel_is(kq, kk).
+.decl dbc_cb_cand_t(n: symbol, kq: symbol, kk: symbol)
+dbc_cb_cand_t(nt, kq, kk) :- dbc_commit(k, f, _, kq, kk), dbc_send_at_c(n, f), earlier(k, n), !dbc_unreach(k, n),
+    pt_tm(n, nt).
+
+// ---- 3. the caller commits ---------------------------------------------------------------------------------------
+// The session is followed through each call: a callee's session parameter is the caller's argument for it; a session
+// that is not a parameter (a module session, `db.session`, `self.session`) keeps its spelling. Over symbols: a def by
+// its symbol, a call and the send by their terms. Each file states its functions' pending sends (dbc_pend_t), its
+// calls (dbc_call_q) and their arguments (dbc_kwarg_t, dbc_posarg_t), its defs' parameters (dbc_param_q,
+// dbc_param_pos_q, dbc_method_q), and what follows each call (dbc_commit_after_q, dbc_call_tx_q, dbc_call_in_tx_q).
+// dbc_pend_t(f, at, s, ...): f writes on s, then sends at `at`, outside a begin block; dbc_up_q(g, at, s): calling g
+// runs that send with the write on g's session s uncommitted (g is f, when f never commits, or a non-committing
+// caller of one).
+.decl dbc_pend_t(f: symbol, at: symbol, s: symbol, sq: symbol, sk: symbol, nq: symbol, nk: symbol, mq: symbol,
+    mk: symbol)
+dbc_pend_t(fq, att, s, sq, sk, nq, nk, mq, mk) :- dbc_send_at(at, f, _, sq, sk), dbc_write(x, f, s, nq, nk, mq, mk),
+    earlier(x, at), !dbc_unreach(x, at), !dbc_in_tx(at, _), pt_def(f, fq), pt_tm(at, att).
+.decl dbc_up_q(g: symbol, at: symbol, s: symbol) cross_file
+dbc_up_q(fq, att, s) :- dbc_pend_t(fq, att, s, sq, sk, nq, nk, mq, mk), dbc_holds(sq, sk), dbc_holds(nq, nk),
+    dbc_holds(mq, mk), !dbc_commits_q(fq).
+dbc_up_q(hq, att, s2) :- dbc_up_q(gq, att, s), dbc_call_q(hq, ct, gq), !dbc_commits_q(hq), dbc_arg_q(ct, gq, s, s2).
+dbc_up_q(hq, att, s) :- dbc_up_q(gq, att, s), dbc_call_q(hq, ct, gq), !dbc_commits_q(hq), !dbc_param_q(gq, s).
+// dbc_cc_q(at): a caller of a dbc_up_q function commits that session after the call (outside test files), or makes
+// the call in a begin block on it.
+.decl dbc_cc_q(at: symbol) cross_file
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), dbc_arg_q(ct, gq, s, s2),
+    dbc_commit_after_q(ct, s2, kq, kk), cel_is(kq, kk).
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), !dbc_param_q(gq, s), dbc_commit_after_q(ct, s, kq, kk),
+    cel_is(kq, kk).
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), dbc_arg_q(ct, gq, s, s2), dbc_call_tx_q(ct, s2, tq, tk),
+    cel_is(tq, tk).
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), !dbc_param_q(gq, s), dbc_call_tx_q(ct, s, tq, tk),
+    cel_is(tq, tk).
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), dbc_arg_q(ct, gq, s, s2), dbc_call_in_tx_q(ct, bt),
+    !dbc_tx_known_t(bt), dbc_sname(s2).
+dbc_cc_q(att) :- dbc_up_q(gq, att, s), dbc_call_q(_, ct, gq), !dbc_param_q(gq, s), dbc_call_in_tx_q(ct, bt),
+    !dbc_tx_known_t(bt), dbc_sname(s).
+// dbc_arg_q(c, g, x, s2): call c passes the argument spelled s2 for g's parameter x: by keyword, or by position
+// (`self.m(x)`, `obj.m(x)` on a method fills `self`/`cls` first).
+.decl dbc_arg_q(c: symbol, g: symbol, x: symbol, s2: symbol)
+dbc_arg_q(ct, gq, x, s2) :- dbc_kwarg_t(ct, gq, x, s2), dbc_param_q(gq, x).
+dbc_arg_q(ct, gq, x, s2) :- dbc_posarg_t(ct, gq, i, s2, "attribute"), dbc_method_q(gq), dbc_param_pos_q(gq, x, i + 1).
+dbc_arg_q(ct, gq, x, s2) :- dbc_posarg_t(ct, gq, i, s2, "attribute"), !dbc_method_q(gq), dbc_param_pos_q(gq, x, i).
+dbc_arg_q(ct, gq, x, s2) :- dbc_posarg_t(ct, gq, i, s2, "plain"), dbc_param_pos_q(gq, x, i).
+// dbc_call_q(h, c, g): call c, in def h's own body, may run def g.
+.decl dbc_call_q(h: symbol, c: symbol, g: symbol)
+dbc_call_q(hq, ct, gq) :- call_target(c, gq), dbc_own(c, h), pt_def(h, hq), pt_tm(c, ct).
+// dbc_kwarg_t(c, g, x, s2), dbc_posarg_t(c, g, i, s2, how): call c of g passes a name or attribute spelled s2 as
+// keyword x, or as positional argument i, through an attribute (`obj.m(...)`) or a plain name.
+.decl dbc_kwarg_t(c: symbol, g: symbol, x: symbol, s2: symbol)
+dbc_kwarg_t(ct, gq, x, s2) :- call_target(c, gq), call_arg(c, -1, x, a), unparen(a, u),
+    (kind(u, "identifier") ; kind(u, "attribute")), text(u, s2), pt_tm(c, ct).
+.decl dbc_posarg_t(c: symbol, g: symbol, i: number, s2: symbol, how: symbol)
+dbc_posarg_t(ct, gq, i, s2, "attribute") :- call_target(c, gq), field(c, "function", fn), kind(fn, "attribute"),
+    posarg(c, i, a), unparen(a, u), (kind(u, "identifier") ; kind(u, "attribute")), text(u, s2), pt_tm(c, ct).
+dbc_posarg_t(ct, gq, i, s2, "plain") :- call_target(c, gq), field(c, "function", fn), !kind(fn, "attribute"),
+    posarg(c, i, a), unparen(a, u), (kind(u, "identifier") ; kind(u, "attribute")), text(u, s2), pt_tm(c, ct).
+// dbc_param_q(g, x): def g has a parameter x. dbc_param_pos_q(g, x, j): it is g's j-th positional one (from 0,
+// `self` included). dbc_method_q(g): g is a method that takes `self` or `cls` (no staticmethod).
+.decl dbc_param_q(g: symbol, x: symbol)
+dbc_param_q(gq, x) :- param_named(g, x, _), pt_def(g, gq).
+.decl dbc_param_pos_q(g: symbol, x: symbol, j: number)
+dbc_param_pos_q(gq, x, j) :- dbc_param_pos(g, x, j), pt_def(g, gq).
+.decl dbc_param_pos(g: node, x: symbol, j: number)
+dbc_param_pos(g, x, j) :- sig_param(g, _, nm, i, k, _, _), (k = "pos" ; k = "posonly"), text(nm, x),
+    j = count : { sig_param(g, _, _, i2, _, _, _), i2 < i }.
+.decl dbc_method_q(g: symbol)
+dbc_method_q(gq) :- kind(g, "function_definition"), nearest(g, k, scope), kind(k, "class_definition"),
+    !dbc_staticmethod(g), pt_def(g, gq).
+.decl dbc_staticmethod(g: node)
+dbc_staticmethod(g) :- decorator(g, d0), unparen(d0, d), text(d, "staticmethod").
+// dbc_commit_after_q(c, s2, nq, nk): outside test files, a commit of the session spelled s2 follows call c in its
+// function. dbc_call_tx_q(c, s2, nq, nk): call c is in a begin block on s2; dbc_call_in_tx_q(c, b): in the block
+// whose body has term b.
+.decl dbc_commit_after_q(c: symbol, s2: symbol, nq: symbol, nk: symbol)
+dbc_commit_after_q(ct, s2, nq, nk) :- kind(c, "call"), dbc_own(c, h), dbc_commit(k, h, s2, nq, nk), earlier(c, k),
+    !dbc_apart(k, c), docof(c, d), !cel_test_doc(d), pt_tm(c, ct).
+.decl dbc_call_tx_q(c: symbol, s2: symbol, nq: symbol, nk: symbol)
+dbc_call_tx_q(ct, s2, nq, nk) :- kind(c, "call"), call_target(c, _), dbc_in_tx(c, b), dbc_tx_session(b, s2, nq, nk),
+    docof(c, d), !cel_test_doc(d), pt_tm(c, ct).
+.decl dbc_call_in_tx_q(c: symbol, b: symbol)
+dbc_call_in_tx_q(ct, bt) :- kind(c, "call"), call_target(c, _), dbc_in_tx(c, b), docof(c, d), !cel_test_doc(d),
+    pt_tm(c, ct), pt_tm(b, bt).
+
+// ---- 4. flush-time listeners -------------------------------------------------------------------------------------
+.decl dbc_flush_event(e: symbol)
+dbc_flush_event("before_insert"). dbc_flush_event("after_insert"). dbc_flush_event("before_update").
+dbc_flush_event("after_update"). dbc_flush_event("before_delete"). dbc_flush_event("after_delete").
+dbc_flush_event("before_flush"). dbc_flush_event("after_flush"). dbc_flush_event("after_flush_postexec").
+dbc_flush_event("before_commit").
+.decl dbc_event_fn(q: symbol, how: symbol)
+dbc_event_fn("sqlalchemy.event.listens_for", "decorator"). dbc_event_fn("sqlalchemy.event.api.listens_for", "decorator").
+dbc_event_fn("sqlalchemy.event.listen", "call"). dbc_event_fn("sqlalchemy.event.api.listen", "call").
+// dbc_listener(f): def f listens for a flush-time event, by its decorator. dbc_listener_q(f): def f, by symbol, is
+// registered for one by `event.listen(X, "after_insert", f)`, in its own file or another.
+.decl dbc_listener(f: node)
+dbc_listener(f) :- kind(f, "function_definition"), decorator(f, d0), unparen(d0, d), kind(d, "call"),
+    field(d, "function", fn), sym_of(fn, q), dbc_event_fn(q, "decorator"), posarg(d, 1, a), str(a, e),
+    dbc_flush_event(e).
+.decl dbc_listener_q(f: symbol)
+dbc_listener_q(fq) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), dbc_event_fn(q, "call"),
+    posarg(c, 1, a), str(a, e), dbc_flush_event(e), posarg(c, 2, r), sym_of(r, fq).
+
+// The cases, `upstream/celery-practice/authored/celery-practice-dispatch-before-commit/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/__init__.py"
+    .fixture "shop/api.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/api.py"
+    .fixture "shop/callers.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/callers.py"
+    .fixture "shop/celery.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/celery.py"
+    .fixture "shop/db.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/db.py"
+    .fixture "shop/dirty.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/dirty.py"
+    .fixture "shop/django_orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/django_orders.py"
+    .fixture "shop/helpers.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/helpers.py"
+    .fixture "shop/jobs/__init__.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/jobs/__init__.py"
+    .fixture "shop/jobs/billing.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/jobs/billing.py"
+    .fixture "shop/listeners.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/listeners.py"
+    .fixture "shop/models.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/models.py"
+    .fixture "shop/orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/orders.py"
+    .fixture "shop/paths.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/paths.py"
+    .fixture "shop/pool.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/pool.py"
+    .fixture "shop/rq_jobs.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/rq_jobs.py"
+    .fixture "shop/sends.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/sends.py"
+    .fixture "shop/services.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/services.py"
+    .fixture "shop/sessions.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/sessions.py"
+    .fixture "shop/tasks.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/tasks.py"
+    .fixture "shop/tests/test_orders.py" from "../upstream/celery-practice/authored/celery-practice-dispatch-before-commit/shop/tests/test_orders.py"
+    .expect _ at "shop/callers.py":14
+    .expect _ at "shop/callers.py":29
+    .expect _ at "shop/callers.py":38
+    .expect _ at "shop/dirty.py":17
+    .expect _ at "shop/dirty.py":24
+    .expect _ at "shop/dirty.py":31
+    .expect _ at "shop/dirty.py":38
+    .expect _ at "shop/dirty.py":45
+    .expect _ at "shop/dirty.py":52
+    .expect _ at "shop/dirty.py":59
+    .expect _ at "shop/listeners.py":11
+    .expect _ at "shop/listeners.py":15
+    .expect _ at "shop/listeners.py":25
+    .expect _ at "shop/orders.py":15
+    .expect _ at "shop/orders.py":21
+    .expect _ at "shop/orders.py":22
+    .expect _ at "shop/orders.py":29
+    .expect _ at "shop/orders.py":31
+    .expect _ at "shop/orders.py":40
+    .expect _ at "shop/orders.py":46
+    .expect _ at "shop/orders.py":52
+    .expect _ at "shop/orders.py":58
+    .expect _ at "shop/orders.py":65
+    .expect _ at "shop/paths.py":10
+    .expect _ at "shop/paths.py":18
+    .expect _ at "shop/paths.py":28
+    .expect _ at "shop/paths.py":37
+    .expect _ at "shop/paths.py":46
+    .expect _ at "shop/paths.py":55
+    .expect _ at "shop/paths.py":68
+    .expect _ at "shop/sends.py":31
+    .expect _ at "shop/sends.py":37
+    .expect _ at "shop/sends.py":43
+    .expect _ at "shop/sends.py":49
+    .expect _ at "shop/sends.py":55
+    .expect _ at "shop/sends.py":56
+    .expect _ at "shop/services.py":12
+    .expect _ at "shop/services.py":21
+    .expect _ at "shop/sessions.py":15
+    .expect _ at "shop/sessions.py":22
+    .expect _ at "shop/sessions.py":28
+.end

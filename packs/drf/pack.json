@@ -1,0 +1,358 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "drf",
+  "name": "Django REST framework",
+  "category": "framework",
+  "covers": "Rerail's own Django REST framework rules, from the DRF docs and maintainers' review advice, for safe serializers, permissions, querysets and pagination.",
+  "reason": "matches Django REST framework",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "djangorestframework"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "drf-practice-object-permission-skipped",
+      "document": "rules/drf-practice-object-permission-skipped.rerail",
+      "title": "DRF practice: a handler that reads or changes its row itself, skipping the view's object permission",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.object-permission-skipped"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "library/api/views.py",
+          "text": "from django.shortcuts import get_object_or_404\nfrom rest_framework import viewsets\nfrom rest_framework.decorators import action\nfrom rest_framework.permissions import IsAuthenticated\nfrom rest_framework.response import Response\n\nfrom library.api.permissions import IsOwner\nfrom library.models import Book\n\n\nclass BookViewSet(viewsets.ModelViewSet):\n    queryset = Book.objects.all()\n    permission_classes = [IsAuthenticated, IsOwner]\n\n    @action(detail=True, methods=[\"post\"])\n    def archive(self, request, pk=None):\n        book = get_object_or_404(Book, pk=pk)\n        book.delete()\n        return Response(status=204)\n",
+          "with": [
+            {
+              "path": "library/api/permissions.py",
+              "text": "from rest_framework import permissions\n\n\nclass IsOwner(permissions.BasePermission):\n    def has_object_permission(self, request, view, obj):\n        return obj.owner == request.user\n"
+            },
+            {
+              "path": "library/models.py",
+              "text": "from django.conf import settings\nfrom django.db import models\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=100)\n    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "library/api/views.py",
+          "text": "from django.shortcuts import get_object_or_404\nfrom rest_framework import viewsets\nfrom rest_framework.decorators import action\nfrom rest_framework.permissions import IsAuthenticated\nfrom rest_framework.response import Response\n\nfrom library.api.permissions import IsOwner\nfrom library.models import Book\n\n\nclass BookViewSet(viewsets.ModelViewSet):\n    queryset = Book.objects.all()\n    permission_classes = [IsAuthenticated, IsOwner]\n\n    @action(detail=True, methods=[\"post\"])\n    def archive(self, request, pk=None):\n        book = self.get_object()\n        book.delete()\n        return Response(status=204)\n",
+          "with": [
+            {
+              "path": "library/api/permissions.py",
+              "text": "from rest_framework import permissions\n\n\nclass IsOwner(permissions.BasePermission):\n    def has_object_permission(self, request, view, obj):\n        return obj.owner == request.user\n"
+            },
+            {
+              "path": "library/models.py",
+              "text": "from django.conf import settings\nfrom django.db import models\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=100)\n    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "drf-practice-view-without-permission",
+      "document": "rules/drf-practice-view-without-permission.rerail",
+      "title": "DRF practice: a view that sets no permission classes in a project whose default permission is AllowAny",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.endpoint-without-auth"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "billing/views.py",
+          "text": "from rest_framework import serializers, viewsets\n\nfrom billing.models import Invoice\n\n\nclass InvoiceSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Invoice\n        fields = [\"id\", \"total\"]\n\n\nclass InvoiceViewSet(viewsets.ModelViewSet):\n    queryset = Invoice.objects.all()\n    serializer_class = InvoiceSerializer\n",
+          "with": [
+            {
+              "path": "config/settings.py",
+              "text": "REST_FRAMEWORK = {\n    \"DEFAULT_AUTHENTICATION_CLASSES\": [\n        \"rest_framework.authentication.SessionAuthentication\",\n    ],\n}\n"
+            },
+            {
+              "path": "billing/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "billing/models.py",
+              "text": "from django.db import models\n\n\nclass Invoice(models.Model):\n    total = models.DecimalField(max_digits=10, decimal_places=2)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "billing/views.py",
+          "text": "from rest_framework import permissions, serializers, viewsets\n\nfrom billing.models import Invoice\n\n\nclass InvoiceSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Invoice\n        fields = [\"id\", \"total\"]\n\n\nclass InvoiceViewSet(viewsets.ModelViewSet):\n    queryset = Invoice.objects.all()\n    serializer_class = InvoiceSerializer\n    permission_classes = [permissions.IsAuthenticated]\n",
+          "with": [
+            {
+              "path": "config/settings.py",
+              "text": "REST_FRAMEWORK = {\n    \"DEFAULT_AUTHENTICATION_CLASSES\": [\n        \"rest_framework.authentication.SessionAuthentication\",\n    ],\n}\n"
+            },
+            {
+              "path": "billing/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "billing/models.py",
+              "text": "from django.db import models\n\n\nclass Invoice(models.Model):\n    total = models.DecimalField(max_digits=10, decimal_places=2)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "drf-practice-serializer-exposes-secret-field",
+      "document": "rules/drf-practice-serializer-exposes-secret-field.rerail",
+      "title": "DRF practice: a ModelSerializer that returns a password, token or API key",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "data.sensitive-fields-exposed"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "clients/serializers.py",
+          "text": "from rest_framework import serializers\n\nfrom clients.models import ApiClient\n\n\nclass ApiClientSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = ApiClient\n        fields = \"__all__\"\n",
+          "with": [
+            {
+              "path": "clients/models.py",
+              "text": "from django.db import models\n\n\nclass ApiClient(models.Model):\n    name = models.CharField(max_length=100)\n    api_token = models.CharField(max_length=64, unique=True)\n    token_expires = models.DateTimeField(null=True)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "clients/serializers.py",
+          "text": "from rest_framework import serializers\n\nfrom clients.models import ApiClient\n\n\nclass ApiClientSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = ApiClient\n        fields = [\"id\", \"name\", \"api_token\", \"token_expires\"]\n        extra_kwargs = {\"api_token\": {\"write_only\": True}}\n",
+          "with": [
+            {
+              "path": "clients/models.py",
+              "text": "from django.db import models\n\n\nclass ApiClient(models.Model):\n    name = models.CharField(max_length=100)\n    api_token = models.CharField(max_length=64, unique=True)\n    token_expires = models.DateTimeField(null=True)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "drf-practice-declared-field-meta-ignored",
+      "document": "rules/drf-practice-declared-field-meta-ignored.rerail",
+      "title": "DRF practice: read_only_fields or extra_kwargs naming a declared serializer field",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "input.mass-assignment"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "accounts/serializers.py",
+          "text": "from django.contrib.auth.models import User\nfrom rest_framework import serializers\n\n\nclass UserSerializer(serializers.ModelSerializer):\n    username = serializers.CharField(max_length=150)\n\n    class Meta:\n        model = User\n        fields = [\"id\", \"username\", \"email\"]\n        read_only_fields = [\"id\", \"username\"]\n"
+        },
+        "passes": {
+          "path": "accounts/serializers.py",
+          "text": "from django.contrib.auth.models import User\nfrom rest_framework import serializers\n\n\nclass UserSerializer(serializers.ModelSerializer):\n    username = serializers.CharField(max_length=150, read_only=True)\n\n    class Meta:\n        model = User\n        fields = [\"id\", \"username\", \"email\"]\n        read_only_fields = [\"id\", \"username\"]\n"
+        }
+      }
+    },
+    {
+      "id": "drf-practice-validate-returns-value",
+      "document": "rules/drf-practice-validate-returns-value.rerail",
+      "title": "DRF practice: serializer validate_<field>() or validate() that can end without returning",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "validation.hook-returns-none"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "accounts/serializers.py",
+          "text": "from django.contrib.auth.models import User\nfrom rest_framework import serializers\n\n\nclass SignupSerializer(serializers.Serializer):\n    email = serializers.EmailField()\n\n    def validate_email(self, value):\n        if User.objects.filter(email=value).exists():\n            raise serializers.ValidationError(\"taken\")\n"
+        },
+        "passes": {
+          "path": "accounts/serializers.py",
+          "text": "from django.contrib.auth.models import User\nfrom rest_framework import serializers\n\n\nclass SignupSerializer(serializers.Serializer):\n    email = serializers.EmailField()\n\n    def validate_email(self, value):\n        if User.objects.filter(email=value).exists():\n            raise serializers.ValidationError(\"taken\")\n        return value\n"
+        }
+      }
+    },
+    {
+      "id": "drf-practice-page-size-uncapped",
+      "document": "rules/drf-practice-page-size-uncapped.rerail",
+      "title": "DRF practice: pagination that lets the client choose the page size with no upper bound",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "api.unbounded-page-size"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "reports/pagination.py",
+          "text": "from api.base import SizedPagination\n\n\nclass ReportPagination(SizedPagination):\n    page_size = 10\n",
+          "with": [
+            {
+              "path": "api/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "api/base.py",
+              "text": "from rest_framework.pagination import PageNumberPagination\n\n\nclass SizedPagination(PageNumberPagination):\n    page_size = 20\n    page_size_query_param = \"page_size\"\n"
+            },
+            {
+              "path": "reports/__init__.py",
+              "text": "# empty module\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "reports/pagination.py",
+          "text": "from api.base import SizedPagination\n\n\nclass ReportPagination(SizedPagination):\n    page_size = 10\n",
+          "with": [
+            {
+              "path": "api/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "api/base.py",
+              "text": "from rest_framework.pagination import PageNumberPagination\n\n\nclass SizedPagination(PageNumberPagination):\n    page_size = 20\n    page_size_query_param = \"page_size\"\n    max_page_size = 100\n"
+            },
+            {
+              "path": "reports/__init__.py",
+              "text": "# empty module\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "drf-practice-related-field-not-prefetched",
+      "document": "rules/drf-practice-related-field-not-prefetched.rerail",
+      "title": "DRF practice: a list view's serializer reads a relation its queryset does not load",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium",
+        "hazard": "orm.query-in-loop"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from rest_framework import viewsets\n\nfrom shop.models import Book\nfrom shop.serializers import BookSerializer\n\n\nclass BookViewSet(viewsets.ModelViewSet):\n    queryset = Book.objects.all()\n    serializer_class = BookSerializer\n",
+          "with": [
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=120)\n\n\nclass Tag(models.Model):\n    name = models.CharField(max_length=40)\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=200)\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n    tags = models.ManyToManyField(Tag, blank=True)\n"
+            },
+            {
+              "path": "shop/serializers.py",
+              "text": "from rest_framework import serializers\n\nfrom shop.models import Author, Book\n\n\nclass AuthorSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Author\n        fields = [\"id\", \"name\"]\n\n\nclass BookSerializer(serializers.ModelSerializer):\n    author = AuthorSerializer(read_only=True)\n\n    class Meta:\n        model = Book\n        fields = [\"id\", \"title\", \"author\", \"tags\"]\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from rest_framework import viewsets\n\nfrom shop.models import Book\nfrom shop.serializers import BookSerializer\n\n\nclass BookViewSet(viewsets.ModelViewSet):\n    queryset = Book.objects.select_related(\"author\").prefetch_related(\"tags\")\n    serializer_class = BookSerializer\n",
+          "with": [
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Author(models.Model):\n    name = models.CharField(max_length=120)\n\n\nclass Tag(models.Model):\n    name = models.CharField(max_length=40)\n\n\nclass Book(models.Model):\n    title = models.CharField(max_length=200)\n    author = models.ForeignKey(Author, on_delete=models.CASCADE)\n    tags = models.ManyToManyField(Tag, blank=True)\n"
+            },
+            {
+              "path": "shop/serializers.py",
+              "text": "from rest_framework import serializers\n\nfrom shop.models import Author, Book\n\n\nclass AuthorSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Author\n        fields = [\"id\", \"name\"]\n\n\nclass BookSerializer(serializers.ModelSerializer):\n    author = AuthorSerializer(read_only=True)\n\n    class Meta:\n        model = Book\n        fields = [\"id\", \"title\", \"author\", \"tags\"]\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "drf-practice-list-without-pagination",
+      "document": "rules/drf-practice-list-without-pagination.rerail",
+      "title": "DRF practice: list endpoint with no pagination, or a pagination class with no page size",
+      "group": "Django REST framework",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "api.unpaginated-list"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from rest_framework import serializers, viewsets\n\nfrom shop.models import Order\n\n\nclass OrderSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Order\n        fields = [\"id\", \"created\"]\n\n\nclass OrderViewSet(viewsets.ModelViewSet):\n    queryset = Order.objects.all()\n    serializer_class = OrderSerializer\n",
+          "with": [
+            {
+              "path": "config/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "config/settings.py",
+              "text": "REST_FRAMEWORK = {\n    \"PAGE_SIZE\": 50,\n}\n"
+            },
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Order(models.Model):\n    created = models.DateTimeField(auto_now_add=True)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from rest_framework import serializers, viewsets\nfrom rest_framework.pagination import PageNumberPagination\n\nfrom shop.models import Order\n\n\nclass OrderSerializer(serializers.ModelSerializer):\n    class Meta:\n        model = Order\n        fields = [\"id\", \"created\"]\n\n\nclass OrderPagination(PageNumberPagination):\n    page_size = 50\n    max_page_size = 500\n\n\nclass OrderViewSet(viewsets.ModelViewSet):\n    queryset = Order.objects.all()\n    serializer_class = OrderSerializer\n    pagination_class = OrderPagination\n",
+          "with": [
+            {
+              "path": "config/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "config/settings.py",
+              "text": "REST_FRAMEWORK = {\n    \"PAGE_SIZE\": 50,\n}\n"
+            },
+            {
+              "path": "shop/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "shop/models.py",
+              "text": "from django.db import models\n\n\nclass Order(models.Model):\n    created = models.DateTimeField(auto_now_add=True)\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

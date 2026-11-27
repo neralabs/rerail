@@ -1,0 +1,372 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "fastapi",
+  "name": "FastAPI",
+  "category": "framework",
+  "covers": "Rerail's own FastAPI rules, from the FastAPI docs and maintainers' review advice, for safe dependencies, response models and async endpoints.",
+  "reason": "matches FastAPI",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "fastapi"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "fastapi-practice-sync-session-in-async-route",
+      "document": "rules/fastapi-practice-sync-session-in-async-route.rerail",
+      "title": "FastAPI practice: blocking sync SQLAlchemy session work in an `async def` route, dependency or middleware, written there or reached through sync helpers",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "async.blocking-call-in-async"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/routes.py",
+          "text": "from fastapi import APIRouter, Depends\n\nfrom .crud import get_users\nfrom .db import get_db\n\nrouter = APIRouter()\n\n\n@router.get(\"/users\")\nasync def list_users(db=Depends(get_db)):\n    return get_users(db)\n",
+          "with": [
+            {
+              "path": "app/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "app/crud.py",
+              "text": "from sqlalchemy.orm import Session\n\nfrom .models import User\n\n\ndef get_users(db: Session):\n    return db.query(User).all()\n"
+            },
+            {
+              "path": "app/db.py",
+              "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nSessionLocal = sessionmaker(bind=create_engine(\"postgresql://localhost/app\"))\n\n\ndef get_db():\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()\n"
+            },
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy.orm import DeclarativeBase\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass User(Base):\n    __tablename__ = \"users\"\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/routes.py",
+          "text": "from fastapi import APIRouter, Depends\n\nfrom .crud import get_users\nfrom .db import get_db\n\nrouter = APIRouter()\n\n\n@router.get(\"/users\")\ndef list_users(db=Depends(get_db)):\n    return get_users(db)\n",
+          "with": [
+            {
+              "path": "app/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "app/crud.py",
+              "text": "from sqlalchemy.orm import Session\n\nfrom .models import User\n\n\ndef get_users(db: Session):\n    return db.query(User).all()\n"
+            },
+            {
+              "path": "app/db.py",
+              "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nSessionLocal = sessionmaker(bind=create_engine(\"postgresql://localhost/app\"))\n\n\ndef get_db():\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()\n"
+            },
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy.orm import DeclarativeBase\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass User(Base):\n    __tablename__ = \"users\"\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-request-session-in-background-task",
+      "document": "rules/fastapi-practice-request-session-in-background-task.rerail",
+      "title": "FastAPI practice: a background task gets a database session its middleware, a function-scoped dependency or a with block closes before the task runs",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "web.request-resource-in-background"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/routes.py",
+          "text": "from fastapi import APIRouter, BackgroundTasks, Depends\nfrom sqlalchemy.orm import Session\n\nfrom .db import get_db\nfrom .tasks import send_report\n\nrouter = APIRouter()\n\n\n@router.post(\"/reports/{user_id}\")\ndef create_report(user_id: int, bg: BackgroundTasks, db: Session = Depends(get_db, scope=\"function\")):\n    bg.add_task(send_report, db, user_id)\n    return {\"ok\": True}\n",
+          "with": [
+            {
+              "path": "app/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "app/db.py",
+              "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nSessionLocal = sessionmaker(bind=create_engine(\"postgresql://localhost/app\"))\n\n\ndef get_db():\n    with SessionLocal() as db:\n        yield db\n        db.commit()\n"
+            },
+            {
+              "path": "app/tasks.py",
+              "text": "from sqlalchemy.orm import Session\n\nfrom .db import SessionLocal\n\n\ndef send_report(db: Session, user_id: int) -> None:\n    db.execute(\"UPDATE reports SET sent = true WHERE user_id = :id\", {\"id\": user_id})\n    db.commit()\n\n\ndef send_report_by_id(user_id: int) -> None:\n    with SessionLocal() as db:\n        send_report(db, user_id)\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/routes.py",
+          "text": "from fastapi import APIRouter, BackgroundTasks, Depends\nfrom sqlalchemy.orm import Session\n\nfrom .db import get_db\nfrom .tasks import send_report_by_id\n\nrouter = APIRouter()\n\n\n@router.post(\"/reports/{user_id}\")\ndef create_report(user_id: int, bg: BackgroundTasks, db: Session = Depends(get_db, scope=\"function\")):\n    bg.add_task(send_report_by_id, user_id)\n    return {\"ok\": True}\n",
+          "with": [
+            {
+              "path": "app/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "app/db.py",
+              "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nSessionLocal = sessionmaker(bind=create_engine(\"postgresql://localhost/app\"))\n\n\ndef get_db():\n    with SessionLocal() as db:\n        yield db\n        db.commit()\n"
+            },
+            {
+              "path": "app/tasks.py",
+              "text": "from sqlalchemy.orm import Session\n\nfrom .db import SessionLocal\n\n\ndef send_report(db: Session, user_id: int) -> None:\n    db.execute(\"UPDATE reports SET sent = true WHERE user_id = :id\", {\"id\": user_id})\n    db.commit()\n\n\ndef send_report_by_id(user_id: int) -> None:\n    with SessionLocal() as db:\n        send_report(db, user_id)\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-yield-dependency-cleanup",
+      "document": "rules/fastapi-practice-yield-dependency-cleanup.rerail",
+      "title": "FastAPI practice: a yield dependency releases its connection outside finally, or swallows the route's error",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "resource.cleanup-skipped-on-error"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/db.py",
+          "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nengine = create_engine(\"postgresql://localhost/app\")\nSessionLocal = sessionmaker(bind=engine)\n\n\ndef get_db():\n    db = SessionLocal()\n    yield db\n    db.close()\n",
+          "with": [
+            {
+              "path": "app/routes.py",
+              "text": "from fastapi import APIRouter, Depends\nfrom sqlalchemy.orm import Session\n\nfrom app.db import get_db\n\nrouter = APIRouter()\n\n\n@router.get(\"/items\")\ndef list_items(db: Session = Depends(get_db)):\n    return db.execute(\"select 1\").all()\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/db.py",
+          "text": "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import sessionmaker\n\nengine = create_engine(\"postgresql://localhost/app\")\nSessionLocal = sessionmaker(bind=engine)\n\n\ndef get_db():\n    db = SessionLocal()\n    try:\n        yield db\n    finally:\n        db.close()\n",
+          "with": [
+            {
+              "path": "app/routes.py",
+              "text": "from fastapi import APIRouter, Depends\nfrom sqlalchemy.orm import Session\n\nfrom app.db import get_db\n\nrouter = APIRouter()\n\n\n@router.get(\"/items\")\ndef list_items(db: Session = Depends(get_db)):\n    return db.execute(\"select 1\").all()\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-cors-wildcard-with-credentials",
+      "document": "rules/fastapi-practice-cors-wildcard-with-credentials.rerail",
+      "title": "FastAPI practice: CORS middleware allows every origin while it allows credentials",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "web.cors-credentialed-wildcard"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/main.py",
+          "text": "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\n\napp = FastAPI()\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[\"*\"],\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\n"
+        },
+        "passes": {
+          "path": "app/main.py",
+          "text": "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\n\napp = FastAPI()\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[\"https://app.example.com\"],\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\n"
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-response-exposes-secret-field",
+      "document": "rules/fastapi-practice-response-exposes-secret-field.rerail",
+      "title": "FastAPI practice: a route's response sends a password hash, key or secret field to clients",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "data.sensitive-fields-exposed"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/api/routes/users.py",
+          "text": "from fastapi import APIRouter\n\nfrom app.models import User\n\nrouter = APIRouter()\n\n\n@router.get(\"/users/{user_id}\", response_model=User)\ndef read_user(user_id: int):\n    return User(id=user_id, email=\"a@example.com\", hashed_password=\"x\")\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlmodel import Field, SQLModel\n\n\nclass UserBase(SQLModel):\n    email: str\n\n\nclass User(UserBase, table=True):\n    id: int | None = Field(default=None, primary_key=True)\n    hashed_password: str\n\n\nclass UserPublic(UserBase):\n    id: int\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/api/routes/users.py",
+          "text": "from fastapi import APIRouter\n\nfrom app.models import User, UserPublic\n\nrouter = APIRouter()\n\n\n@router.get(\"/users/{user_id}\", response_model=UserPublic)\ndef read_user(user_id: int):\n    return User(id=user_id, email=\"a@example.com\", hashed_password=\"x\")\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlmodel import Field, SQLModel\n\n\nclass UserBase(SQLModel):\n    email: str\n\n\nclass User(UserBase, table=True):\n    id: int | None = Field(default=None, primary_key=True)\n    hashed_password: str\n\n\nclass UserPublic(UserBase):\n    id: int\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-route-missing-sibling-auth",
+      "document": "rules/fastapi-practice-route-missing-sibling-auth.rerail",
+      "title": "FastAPI practice: one route of a router leaves out the auth dependency every other route requires",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "critical",
+        "hazard": "auth.mutation-without-auth"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/routes/items.py",
+          "text": "from fastapi import APIRouter, Depends\n\nfrom app.deps import get_current_user\n\nrouter = APIRouter(prefix=\"/items\")\n\n\n@router.get(\"/\")\ndef list_items(user=Depends(get_current_user)):\n    return []\n\n\n@router.post(\"/\")\ndef create_item(user=Depends(get_current_user)):\n    return {}\n\n\n@router.put(\"/{item_id}\")\ndef update_item(item_id: int, user=Depends(get_current_user)):\n    return {}\n\n\n@router.delete(\"/{item_id}\")\ndef delete_item(item_id: int):\n    return {}\n",
+          "with": [
+            {
+              "path": "app/deps.py",
+              "text": "from fastapi import Depends, HTTPException\nfrom fastapi.security import OAuth2PasswordBearer\n\noauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"/login/access-token\")\n\n\ndef get_current_user(token: str = Depends(oauth2_scheme)):\n    if not token:\n        raise HTTPException(status_code=401)\n    return {\"id\": 1}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/routes/items.py",
+          "text": "from fastapi import APIRouter, Depends\n\nfrom app.deps import get_current_user\n\nrouter = APIRouter(prefix=\"/items\")\n\n\n@router.get(\"/\")\ndef list_items(user=Depends(get_current_user)):\n    return []\n\n\n@router.post(\"/\")\ndef create_item(user=Depends(get_current_user)):\n    return {}\n\n\n@router.put(\"/{item_id}\")\ndef update_item(item_id: int, user=Depends(get_current_user)):\n    return {}\n\n\n@router.delete(\"/{item_id}\")\ndef delete_item(item_id: int, user=Depends(get_current_user)):\n    return {}\n",
+          "with": [
+            {
+              "path": "app/deps.py",
+              "text": "from fastapi import Depends, HTTPException\nfrom fastapi.security import OAuth2PasswordBearer\n\noauth2_scheme = OAuth2PasswordBearer(tokenUrl=\"/login/access-token\")\n\n\ndef get_current_user(token: str = Depends(oauth2_scheme)):\n    if not token:\n        raise HTTPException(status_code=401)\n    return {\"id\": 1}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-route-shadowed",
+      "document": "rules/fastapi-practice-route-shadowed.rerail",
+      "title": "FastAPI practice: an earlier route of the same router answers this route's paths first",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "web.unreachable-route"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/routes/cases.py",
+          "text": "from fastapi import APIRouter\n\nrouter = APIRouter(prefix=\"/cases\")\n\n\n@router.get(\"/{case_id}\")\ndef get_case(case_id: int):\n    return {\"id\": case_id}\n\n\n@router.get(\"/minimal\")\ndef get_cases_minimal():\n    return []\n"
+        },
+        "passes": {
+          "path": "app/routes/cases.py",
+          "text": "from fastapi import APIRouter\n\nrouter = APIRouter(prefix=\"/cases\")\n\n\n@router.get(\"/minimal\")\ndef get_cases_minimal():\n    return []\n\n\n@router.get(\"/{case_id}\")\ndef get_case(case_id: int):\n    return {\"id\": case_id}\n"
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-on-event-handler",
+      "document": "rules/fastapi-practice-on-event-handler.rerail",
+      "title": "FastAPI practice: a startup/shutdown handler registered on an app built with lifespan=, which never runs it",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "web.lifecycle-handler-never-runs"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/main.py",
+          "text": "from fastapi import FastAPI\n\nfrom app.lifespan import lifespan\n\napp = FastAPI(lifespan=lifespan)\n\n\n@app.on_event(\"startup\")\nasync def warm_cache() -> None:\n    ...\n",
+          "with": [
+            {
+              "path": "app/lifespan.py",
+              "text": "from collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\n\nfrom fastapi import FastAPI\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    yield\n"
+            },
+            {
+              "path": "app/__init__.py",
+              "text": "# empty module\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/main.py",
+          "text": "from collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\n\nfrom fastapi import FastAPI\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    await warm_cache()\n    yield\n\n\nasync def warm_cache() -> None:\n    ...\n\n\napp = FastAPI(lifespan=lifespan)\n"
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-lifecycle-event-handler",
+      "document": "rules/fastapi-practice-lifecycle-event-handler.rerail",
+      "title": "FastAPI practice: startup/shutdown code registered as event handlers instead of the app's lifespan",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "low",
+        "hazard": "web.lifecycle-event-handler"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/main.py",
+          "text": "from fastapi import FastAPI\n\n\nasync def init_db() -> None:\n    ...\n\n\napp = FastAPI(on_startup=[init_db])\n"
+        },
+        "passes": {
+          "path": "app/main.py",
+          "text": "from collections.abc import AsyncIterator\nfrom contextlib import asynccontextmanager\n\nfrom fastapi import FastAPI\n\n\nasync def init_db() -> None:\n    ...\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI) -> AsyncIterator[None]:\n    await init_db()\n    yield\n\n\napp = FastAPI(lifespan=lifespan)\n"
+        }
+      }
+    },
+    {
+      "id": "fastapi-practice-http-client-per-request",
+      "document": "rules/fastapi-practice-http-client-per-request.rerail",
+      "title": "FastAPI practice: an httpx or aiohttp client, or a one-shot httpx.get/aiohttp.request call, per request in a route, dependency, middleware or a helper they call",
+      "group": "FastAPI practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "server",
+        "severity": "medium",
+        "hazard": "perf.client-per-request"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/main.py",
+          "text": "import httpx\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/weather\")\nasync def weather(city: str):\n    async with httpx.AsyncClient(timeout=5) as client:\n        resp = await client.get(\"https://api.example.com/weather\", params={\"city\": city})\n    return resp.json()\n"
+        },
+        "passes": {
+          "path": "app/main.py",
+          "text": "from contextlib import asynccontextmanager\n\nimport httpx\nfrom fastapi import FastAPI, Request\n\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    async with httpx.AsyncClient(timeout=5) as client:\n        app.state.http = client\n        yield\n\n\napp = FastAPI(lifespan=lifespan)\n\n\n@app.get(\"/weather\")\nasync def weather(request: Request, city: str):\n    resp = await request.app.state.http.get(\"https://api.example.com/weather\", params={\"city\": city})\n    return resp.json()\n"
+        }
+      }
+    }
+  ]
+}

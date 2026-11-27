@@ -1,0 +1,670 @@
+// lib/pydantic: Pydantic v2 models, fields, config, validators, instances and the project's pinned major version, as
+// the pydantic-practice rules read them. Names resolve through imports (python/names' sym_of), so `import pydantic`
+// with `pydantic.BaseModel`, `from pydantic import BaseModel` and `from pydantic.main import BaseModel` all reach a
+// model base; class bases resolve across the files of the run through the phase py_names (python/names' class_anc,
+// py_names__ancestor), so a model whose base sits in another module is still a model. A class deriving from
+// `pydantic.v1.BaseModel` is a v1 model (pd_v1_model), never a pd_model: v1 code is right to use v1 APIs.
+// No node crosses files (decision 0691): a class, a def, a module-level name of another file is named by its
+// qualified name. What each file says of its own classes, defs and module-level names is handed on by symbol (the
+// `_q` relations, no node), the cross-file answers are relations over those symbols (pd_ancestor, pd_fnv_attached,
+// pd_router_obj, pd_from_attributes, pd_shim_elsewhere), and a rule reads such an answer in its output, joined to the
+// file's own node by its key.
+//
+// Interface
+//   Models:      pd_model(c)                  class c is a Pydantic v2 model: it derives from pydantic.BaseModel,
+//                                             RootModel, pydantic_settings.BaseSettings or sqlmodel.SQLModel,
+//                                             directly (a generic base `RootModel[T]` included) or through the run's
+//                                             classes (the phase py_names; a run base whose own base is generic is
+//                                             followed in its own file only)
+//                pd_v1_model(c)               class c derives from pydantic.v1.BaseModel (the v1 compatibility layer)
+//                pd_settings(c)               model c derives from pydantic_settings.BaseSettings (or the v1
+//                                             `pydantic.BaseSettings`)
+//                pd_sqlmodel(c)               model c derives from sqlmodel.SQLModel (a table model or not)
+//                pd_class_ref(e, q)           expression e names model class q (`User`, `schemas.User`), q its
+//                                             qualified name: a class of e's file, or of a module e's file reads
+//                pd_kind_at(d, q, k)          class q, of document d or of a module d reads, is of kind k ("model",
+//                                             "v1", "settings", "sqlmodel", "router")
+//                pd_model_q(q), pd_settings_q(q)   q is a model (a settings class) of this file, or a known base: by
+//                                             symbol, no node, for the rules' cross-file relations
+//                pd_base_q(q, b)              class q of this file lists base b (pd_base by symbol)
+//                pd_ancestor(q, b)            class q of the run inherits from b, at any depth (py_names__ancestor),
+//                                             for the rules' cross-file relations over symbols
+//   Fields:      pd_field(c, x, a, t)         model c's own body declares field x by annotated assignment a with
+//                                             annotation t (`x: T` or `x: T = v`); ClassVar, `_private` and
+//                                             `model_config` are not fields
+//                pd_field_value(a, v)         field a is assigned v (`x: T = v`); none for `x: T`
+//                pd_field_call(e)             e is a call of pydantic.Field (or sqlmodel.Field)
+//                pd_field_default(a, d)       field a's default expression d: v of `x: T = v`, or the default of
+//                                             `x: T = Field(d)` / `Field(default=d)`, or of a `Field(d)` /
+//                                             `Field(default=d)` in its `Annotated[T, ...]` metadata (directly or
+//                                             through a module-level alias of its own module); none for a
+//                                             default_factory
+//                pd_global_default(q, d)      module-level alias q of this file holds a `Field(d)` / `Field(default=d)`
+//                                             (`Created = Annotated[datetime, Field(default=...)]`): the default a
+//                                             field naming q from another module gets (pd_ann_global)
+//                pd_ann_global(t, q)          field annotation t names q, a module-level name of another module
+//                                             (imported: pd_name_global)
+//                pd_ann_model(t, q)           annotation t mentions model class q as a value of the field: `M`,
+//                                             `M | None`, `Optional[M]`, `Annotated[M, ...]`, not `list[M]`
+//   Config:      pd_config(c, k, v)           model c sets config key k to v in its own definition: `model_config =
+//                                             ConfigDict(k=v)` (or SettingsConfigDict, or a dict literal), a v1
+//                                             `class Config: k = v`, or a class keyword `class M(BaseModel, k=v)`
+//                pd_config_text(q, k, vt)     pd_config by symbol: model q of this file sets k to a value of text vt
+//                pd_config_class(c, k)        model c's body holds a v1-style nested `class Config:` k
+//                pd_from_attributes(q)        from_attributes is on for model q, as Pydantic merges config: q's own
+//                                             setting wins; with none, a base's (run bases through modules and
+//                                             re-exports; sqlmodel.SQLModel sets it); `orm_mode` never counts.
+//                                             Cross-file, over symbols: a rule reads it in its output
+//   Validators:  pd_validator(f, c, api, mode)
+//                                             method f of class c is decorated with Pydantic's validator api
+//                                             ("field_validator", "model_validator", "validator", "root_validator")
+//                                             running in mode "before", "after", "wrap" or "plain" (v1's `pre=True`
+//                                             is "before"; a model_validator with no mode has none)
+//                pd_validator_deco(f, api, e) f carries decorator expression e for api (bare or called)
+//                pd_value_param(f, nm, x)     the parameter nm (named x) of validator f that receives the value: the
+//                                             first after cls/self (the first of a staticmethod); for an "after"
+//                                             model validator, `self`; the first of a def or lambda a function
+//                                             validator may attach (pd_fnv_def)
+//                pd_fnv_key(k, vk, m)         call k is `BeforeValidator(f)`, `AfterValidator(f)`, `WrapValidator(f)`
+//                                             or `PlainValidator(f)` (mode m "before", "after", "wrap", "plain"):
+//                                             vk the qualified name of the def k names (of any module), or the term
+//                                             (pt_tm) of the lambda k passes
+//                pd_fnv_def(f, vk)            def or lambda f is the one a function validator call names vk: every
+//                                             def of the run by its qualified name, each lambda such a call passes by
+//                                             its term
+//                pd_fnv_attached(vk, m, q)    function validator vk runs in mode m on a field of model q: its call
+//                                             sits in the field's annotation (`x: Annotated[str, BeforeValidator(f)]`),
+//                                             or in a module-level alias the annotation names (`Code =
+//                                             Annotated[...]`, in the same module or imported from another).
+//                                             Cross-file, over symbols: a rule reads it in its output
+//   Instances:   pd_instance(e, q)            e holds an instance of model q: `M(...)`, `M.model_validate(...)`
+//                                             (and the other constructors, v1's included), awaited or not; a name
+//                                             the same scope binds to one; `self` in a method of q; a parameter
+//                                             annotated with q (pd_ann_model)
+//                pd_typed_instance(e, q)      e holds an instance of model q by python/types' inference (type_of),
+//                                             with no other class possible; reading it runs the typing program
+//                pd_model_call(k, o, m, q)    call k is `o.m(...)` with o an instance of model q (pd_instance) or
+//                                             the class itself (pd_class_ref)
+//                pd_constructor(m)            classmethod m builds an instance: model_validate, model_construct, ...
+//   Project:     pd_v2_doc(d)                 document d belongs to a project on Pydantic 2: a manifest in its
+//                                             directory or one above it (pyproject.toml, requirements*.txt,
+//                                             setup.cfg, uv.lock, poetry.lock, Pipfile) requires pydantic >= 2 or
+//                                             any pydantic-settings, and none there pins pydantic 1; or, when no
+//                                             manifest of the run names pydantic, the run imports a name only
+//                                             Pydantic 2 has (field_validator, ConfigDict, pydantic_settings, ...)
+//                pd_manifest_pin(f, i, major) line i of manifest f requires pydantic major version major (1 or 2)
+//                pd_test_doc(d)               document d is test code: a tests/test/testing directory, test_*.py,
+//                                             *_test.py, *_tests.py, tests.py, conftest.py
+//   Names:       pd_name_value(n, v)          name n (an identifier) reads a module-level assignment `name = v` (or
+//                                             `name: T = v`) of its own module
+//                pd_name_global(n, q)         name n (an identifier or `mod.name`) names q through an import (sym_of,
+//                                             re-exports followed): a module-level name of another module is joined
+//                                             to that module's pd_global_value by q
+//                pd_global_value(q, v)        this file's module-level name q (its module's name, a dot, the name) is
+//                                             assigned v
+//                pd_gname(n, q)               name n reads module-level name q: pd_name_value's by its symbol, or
+//                                             pd_name_global's
+//                pd_gdef(q), pd_gv_call(q, h) this file's module-level name q is assigned; is assigned a call of h
+//   Routes:      pd_route_via(f, o)           def f is decorated with `o.get(...)`, `o.post(...)`, ... where o names
+//                                             module-level name o (pd_gname)
+//                pd_router_obj(o)             module-level o is an object built by FastAPI's `FastAPI()` or
+//                                             `APIRouter()`, flask-openapi3's `OpenAPI()` / `APIBlueprint()`, a run
+//                                             class deriving from one of them (mealie's `UserAPIRouter`), or a name
+//                                             bound to what a class factory of the run returns (polar's pattern).
+//                                             Cross-file, over symbols: a def is a web route when pd_route_via(f, o)
+//                                             and pd_router_obj(o)
+//   Shims:       pd_version_guarded(n)        node n (one a rule puts in pd_shim_demand) is code written to run
+//                                             under both majors, by what its own file shows: under an
+//                                             `if`/elif/conditional expression whose condition reads the Pydantic
+//                                             version or probes the v2 API (resolved, not read as text), or in a
+//                                             `try` catching ImportError, ModuleNotFoundError or AttributeError
+//                pd_shim_elsewhere(nk)        cross-file, over terms and symbols: the node of term nk
+//                                             (python/points-to-file's pt_tm: relative to its def, class or module)
+//                                             is under a condition that reads a version flag of another module (its
+//                                             value reads the version, followed through further flags), or a name
+//                                             outside the run named like one. A rule's output reads
+//                                             `!pd_version_guarded(n), pt_tm(n, nk), !pd_shim_elsewhere(nk)`
+//                pd_shim_demand(n)            extensible: the nodes a rule asks pd_version_guarded about
+//
+// Pydantic background
+//   - A field is a class-body annotation. `x: T` is required; `x: T = v` and `x: T = Field(v)` default to v;
+//     `Field(default_factory=f)` calls f per instance. `Optional[T]` with no default is required in v2 (v1 gave it
+//     None). ClassVar annotations and `_underscore` names are not fields.
+//   - Config is `model_config = ConfigDict(...)` in v2, inherited and merged from bases; v1's nested `class
+//     Config:` still works in v2 (deprecated) but some keys are renamed or gone.
+//   - Validators: `@field_validator("x", mode=...)` (default "after") and `@model_validator(mode=...)`, v1's
+//     `@validator("x", pre=...)` and `@root_validator(pre=...)` (deprecated in v2). A field validator's return value
+//     becomes the field's value; an "after" model validator gets and returns `self`.
+//   e.g.  from pydantic import BaseModel, ConfigDict, Field, field_validator
+//         class User(BaseModel):                         pd_model
+//             model_config = ConfigDict(frozen=True)     pd_config(<User>, "frozen", <True>)
+//             id: int                                    pd_field(<User>, "id", <id: int>, <int>)
+//             name: str = Field("anon", max_length=9)    pd_field_default(<name: ...>, <"anon">)
+//             @field_validator("name")                   pd_validator(<check>, <User>, "field_validator", "after")
+//             @classmethod
+//             def check(cls, v): return v                pd_value_param(<check>, <v>, "v")
+//         u = User.model_validate(data)                  pd_instance(<User.model_validate(data)>, "app.User")
+//         u.model_dump()                                 pd_model_call(<the call>, <u>, "model_dump", "app.User")
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
+#include "python/types.rerail"   // type_of, type_open: only pd_typed_instance reads them
+
+// ---- models ------------------------------------------------------------------------------------------------------
+// pd_model_base(q): Pydantic 2's model bases outside the run, and the libraries whose models are Pydantic models.
+.decl pd_model_base(q: symbol)
+pd_model_base("pydantic.BaseModel"). pd_model_base("pydantic.main.BaseModel").
+pd_model_base("pydantic.RootModel"). pd_model_base("pydantic.root_model.RootModel").
+pd_model_base("pydantic_settings.BaseSettings"). pd_model_base("pydantic_settings.main.BaseSettings").
+pd_model_base("sqlmodel.SQLModel"). pd_model_base("sqlmodel.main.SQLModel").
+// pydantic.BaseSettings is v1's (an import error under v2), still a settings model to a rule reading v1 code in v2.
+pd_model_base("pydantic.BaseSettings"). pd_model_base("pydantic.env_settings.BaseSettings").
+.decl pd_v1_base(q: symbol)
+pd_v1_base("pydantic.v1.BaseModel"). pd_v1_base("pydantic.v1.main.BaseModel").
+pd_v1_base("pydantic.v1.BaseSettings"). pd_v1_base("pydantic.v1.env_settings.BaseSettings").
+.decl pd_settings_base(q: symbol)
+pd_settings_base("pydantic_settings.BaseSettings"). pd_settings_base("pydantic_settings.main.BaseSettings").
+pd_settings_base("pydantic.BaseSettings"). pd_settings_base("pydantic.env_settings.BaseSettings").
+// pd_router_base(q): the classes whose instances register web routes whose parameters the framework validates with
+// Pydantic: FastAPI's app and router, flask-openapi3's app and blueprint.
+.decl pd_router_base(q: symbol)
+pd_router_base("fastapi.FastAPI"). pd_router_base("fastapi.applications.FastAPI"). pd_router_base("fastapi.APIRouter").
+pd_router_base("fastapi.routing.APIRouter"). pd_router_base("flask_openapi3.OpenAPI").
+pd_router_base("flask_openapi3.APIBlueprint").
+// pd_kind_base(b, k): b is a base outside the run that makes its subclasses of kind k.
+.decl pd_kind_base(b: symbol, k: symbol)
+pd_kind_base(b, "model") :- pd_model_base(b).
+pd_kind_base(b, "v1") :- pd_v1_base(b).
+pd_kind_base(b, "settings") :- pd_settings_base(b).
+pd_kind_base("sqlmodel.SQLModel", "sqlmodel"). pd_kind_base("sqlmodel.main.SQLModel", "sqlmodel").
+pd_kind_base(b, "router") :- pd_router_base(b).
+// pd_base(c, q): class c lists base q, a generic base by its origin: `RootModel[list[int]]` gives pydantic.RootModel.
+.decl pd_base(c: node, q: symbol)
+pd_base(c, q) :- class_base(c, q).
+pd_base(c, q) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), kind(e, "subscript"),
+    field(e, "value", v), sym_of(v, q).
+// pd_is(c, k): class c is of kind k: such a base is among its own bases, or among its ancestors by the phase
+// py_names (python/names' class_anc, read through c's own file), or c lists a class of its own file that is of kind
+// k (a run base whose own base is generic, `class Tick(RootModel[datetime])`, which the phase does not read as a
+// base, so a subclass of it in another module is not followed).
+.decl pd_is(c: node, k: symbol)
+pd_is(c, k) :- pd_base(c, b), pd_kind_base(b, k).
+pd_is(c, k) :- class_anc(c, b), pd_kind_base(b, k).
+pd_is(c, k) :- pd_base(c, q), class_def(b, q), docof(b, d), docof(c, d), pd_is(b, k).
+.decl pd_model(c: node)
+pd_model(c) :- pd_is(c, "model").
+.decl pd_v1_model(c: node)
+pd_v1_model(c) :- pd_is(c, "v1").
+.decl pd_settings(c: node)
+pd_settings(c) :- pd_is(c, "settings").
+.decl pd_sqlmodel(c: node)
+pd_sqlmodel(c) :- pd_is(c, "sqlmodel").
+// pd_kind_at(d, q, k): class q is of kind k, asked in document d: a class of a module d's file reads (its own among
+// them), by the phase's ancestry of q (lib/django's dj_model_at shape), or a class of d itself (pd_is).
+.decl pd_kind_at(d: number, q: symbol, k: symbol)
+pd_kind_at(d, q, k) :- doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, q), py_names__ancestor(m, q, b),
+    pd_kind_base(b, k).
+pd_kind_at(d, q, k) :- class_def(c, q), docof(c, d), pd_is(c, k).
+// pd_class_ref(e, q): expression e names model class q of the run.
+.decl pd_class_ref(e: node, q: symbol)
+pd_class_ref(e, q) :- sym_of(e, q), docof(e, d), pd_kind_at(d, q, "model").
+// By symbol, no node: what a file says of its own classes, for the rules' cross-file relations over symbols. A
+// known base is a model (settings class) here too.
+.decl pd_model_q(q: symbol)
+pd_model_q(q) :- pd_model_base(q).
+pd_model_q(q) :- pd_model(c), class_def(c, q).
+.decl pd_settings_q(q: symbol)
+pd_settings_q(q) :- pd_settings_base(q).
+pd_settings_q(q) :- pd_settings(c), class_def(c, q).
+.decl pd_base_q(q: symbol, b: symbol)
+pd_base_q(q, b) :- class_def(c, q), pd_base(c, b).
+// pd_ancestor(q, b): class q of the run inherits from b, at any depth: the phase py_names' answer, over symbols
+// (python/scopes' subclass read every file's classes, a node-holding closure).
+.decl pd_ancestor(q: symbol, b: symbol)
+pd_ancestor(q, b) :- py_names__ancestor(_, q, b).
+
+// ---- fields ------------------------------------------------------------------------------------------------------
+// pd_class_ann(c, x, a, t): class c's body has annotated assignment a, `x: t` or `x: t = v`.
+.decl pd_class_ann(c: node, x: symbol, a: node, t: node)
+pd_class_ann(c, x, a, t) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
+    text(l, x), field(a, "type", t).
+// pd_classvar(t): annotation t is `ClassVar` or `ClassVar[...]` (typing's, by its last name).
+.decl pd_classvar(t: node)
+pd_classvar(t) :- child(t, e, 0), unparen(e, m), leaf_name(m, "ClassVar").
+pd_classvar(t) :- child(t, g, 0), kind(g, "generic_type"), child(g, e, 0), text(e, "ClassVar").
+.decl pd_field(c: node, x: symbol, a: node, t: node)
+pd_field(c, x, a, t) :- pd_model(c), pd_class_ann(c, x, a, t), !prefix("_", x), x != "model_config", !pd_classvar(t).
+.decl pd_field_value(a: node, v: node)
+pd_field_value(a, v) :- pd_field(_, _, a, _), field(a, "right", v).
+.decl pd_field_fn(q: symbol)
+pd_field_fn("pydantic.Field"). pd_field_fn("pydantic.fields.Field"). pd_field_fn("sqlmodel.Field").
+pd_field_fn("sqlmodel.main.Field").
+.decl pd_field_call(e: node)
+pd_field_call(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q), pd_field_fn(q).
+// pd_field_default(a, d): the default a field gets when it is not passed. `Field(...)` (Ellipsis) means required,
+// and is no default.
+//   created: datetime = datetime.now()                pd_field_default(<...>, <datetime.now()>)
+//   created: datetime = Field(default=datetime.now()) pd_field_default(<...>, <datetime.now()>)
+//   created: datetime = Field(default_factory=datetime.now)   no pd_field_default
+//   created: Annotated[datetime, Field(default=datetime.now())]   pd_field_default(<...>, <datetime.now()>)
+.decl pd_field_default(a: node, d: node)
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, d), !pd_field_call(d).
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), pd_field_default_arg(k, d).
+pd_field_default(a, d) :- pd_field(_, _, a, t), pd_ann_meta(t, k), pd_field_call(k), pd_field_default_arg(k, d).
+// pd_field_default_arg(k, d): Field call k's default d, its first positional argument or `default=`; Ellipsis is
+// none (required).
+.decl pd_field_default_arg(k: node, d: node)
+pd_field_default_arg(k, d) :- pd_field_call(k), posarg(k, 0, d), !kind(d, "ellipsis").
+pd_field_default_arg(k, d) :- pd_field_call(k), call_arg(k, -1, "default", d), !kind(d, "ellipsis").
+// pd_ann_meta(t, k): node k sits in field annotation t, or in the value of a module-level alias of the same module
+// t names (`Code = Annotated[str, ...]`), so Pydantic reads it as the field's metadata. An alias of another module
+// is that module's: pd_ann_global names it, and the module reads its own value (pd_global_default,
+// pd_fnv_global_q).
+.decl pd_ann_meta(t: node, k: node)
+pd_ann_meta(t, k) :- pd_field(_, _, _, t), within(k, t).
+pd_ann_meta(t, k) :- pd_field(_, _, _, t), (n = t ; within(n, t)), pd_name_value(n, v), within(k, v).
+// pd_ann_global(t, q): field annotation t names q (an imported name: an alias of another module, or anything else).
+.decl pd_ann_global(t: node, q: symbol)
+pd_ann_global(t, q) :- pd_field(_, _, _, t), (n = t ; within(n, t)), pd_name_global(n, q).
+// pd_global_default(q, d): module-level q of this file holds a Field call whose default is d.
+.decl pd_global_default(q: symbol, d: node)
+pd_global_default(q, d) :- pd_global_value(q, v), within(k, v), pd_field_call(k), pd_field_default_arg(k, d).
+// pd_ann_model(t, q): annotation t holds model class q as the field's value, alone or in a union, Optional or
+// Annotated, but not as an item of a container (list[M], dict[str, M]): a name in t resolves to model q, and no
+// container name appears in t.
+.decl pd_ann_model(t: node, q: symbol)
+pd_ann_model(t, q) :- pd_ann_root(t), (n = t ; within(n, t)), (kind(n, "identifier") ; kind(n, "attribute")),
+    pd_class_ref(n, q), !pd_ann_container(t).
+.decl pd_ann_root(t: node)
+pd_ann_root(t) :- ann_root(t).
+.decl pd_ann_container(t: node)
+pd_ann_container(t) :- pd_ann_root(t), within(n, t), kind(n, "identifier"), text(n, x), pd_container_name(x).
+.decl pd_container_name(x: symbol)
+pd_container_name("list"). pd_container_name("List"). pd_container_name("dict"). pd_container_name("Dict").
+pd_container_name("set"). pd_container_name("Set"). pd_container_name("frozenset"). pd_container_name("FrozenSet").
+pd_container_name("tuple"). pd_container_name("Tuple"). pd_container_name("Sequence").
+pd_container_name("Iterable"). pd_container_name("Iterator"). pd_container_name("Mapping").
+pd_container_name("AsyncIterator"). pd_container_name("Generator"). pd_container_name("AsyncGenerator").
+pd_container_name("Awaitable"). pd_container_name("Coroutine"). pd_container_name("Callable").
+pd_container_name("Type"). pd_container_name("type"). pd_container_name("Page").
+
+// ---- config ------------------------------------------------------------------------------------------------------
+.decl pd_config_fn(q: symbol)
+pd_config_fn("pydantic.ConfigDict"). pd_config_fn("pydantic.config.ConfigDict").
+pd_config_fn("pydantic_settings.SettingsConfigDict"). pd_config_fn("pydantic_settings.main.SettingsConfigDict").
+pd_config_fn("builtins.dict").
+// pd_config_value(c, v): class c's body assigns `model_config = v` (annotated or not).
+.decl pd_config_value(c: node, v: node)
+pd_config_value(c, v) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "model_config"),
+    field(a, "right", r), unparen(r, v).
+.decl pd_config(c: node, k: symbol, v: node)
+pd_config(c, k, v) :- pd_model(c), pd_config_value(c, e), kind(e, "call"), field(e, "function", f), sym_of(f, q),
+    pd_config_fn(q), call_arg(e, -1, k, v).
+pd_config(c, k, v) :- pd_model(c), pd_config_value(c, e), kind(e, "dictionary"), child(e, p, _), kind(p, "pair"),
+    field(p, "key", kk), str(kk, k), field(p, "value", v).
+pd_config(c, k, v) :- pd_config_class(c, k0), field(k0, "body", b), body_stmt(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, k), field(a, "right", v).
+pd_config(c, k, v) :- pd_model(c), field(c, "superclasses", al), child(al, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, k), k != "metaclass", field(ka, "value", v).
+// pd_config_text(q, k, vt): pd_config by symbol, the value by its text: what a rule's cross-file relation reads of a
+// base's config.
+.decl pd_config_text(q: symbol, k: symbol, vt: symbol)
+pd_config_text(q, k, vt) :- pd_config(c, k, v), class_def(c, q), text(v, vt).
+.decl pd_config_class(c: node, k: node)
+pd_config_class(c, k) :- pd_model(c), field(c, "body", b), body_stmt(b, k, _), kind(k, "class_definition"),
+    def_name(k, "Config").
+
+// ---- validators --------------------------------------------------------------------------------------------------
+.decl pd_validator_fn(q: symbol, api: symbol)
+pd_validator_fn("pydantic.field_validator", "field_validator").
+pd_validator_fn("pydantic.functional_validators.field_validator", "field_validator").
+pd_validator_fn("pydantic.model_validator", "model_validator").
+pd_validator_fn("pydantic.functional_validators.model_validator", "model_validator").
+pd_validator_fn("pydantic.validator", "validator").
+pd_validator_fn("pydantic.class_validators.validator", "validator").
+pd_validator_fn("pydantic.deprecated.class_validators.validator", "validator").
+pd_validator_fn("pydantic.root_validator", "root_validator").
+pd_validator_fn("pydantic.class_validators.root_validator", "root_validator").
+pd_validator_fn("pydantic.deprecated.class_validators.root_validator", "root_validator").
+// pd_validator_deco(f, api, e): def f's decorator e is validator api, bare (`@root_validator`) or called.
+.decl pd_validator_deco(f: node, api: symbol, e: node)
+pd_validator_deco(f, api, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), kind(e, "call"),
+    field(e, "function", fn), sym_of(fn, q), pd_validator_fn(q, api).
+pd_validator_deco(f, api, e) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), !kind(e, "call"),
+    sym_of(e, q), pd_validator_fn(q, api).
+// pd_mode(e, api, m): the mode decorator e gives its validator.
+.decl pd_mode(e: node, api: symbol, m: symbol)
+pd_mode(e, api, m) :- pd_validator_deco(_, api, e), (api = "field_validator" ; api = "model_validator"),
+    call_arg(e, -1, "mode", v), str(v, m).
+pd_mode(e, "field_validator", "after") :- pd_validator_deco(_, "field_validator", e), !call_arg(e, -1, "mode", _).
+pd_mode(e, api, "before") :- pd_validator_deco(_, api, e), (api = "validator" ; api = "root_validator"),
+    call_arg(e, -1, "pre", v), kind(v, "true").
+pd_mode(e, api, "after") :- pd_validator_deco(_, api, e), (api = "validator" ; api = "root_validator"),
+    !pd_pre_true(e).
+.decl pd_pre_true(e: node)
+pd_pre_true(e) :- call_arg(e, -1, "pre", v), kind(v, "true").
+// pd_validator(f, c, api, mode): f is directly in class c's body (any class: validators live in mixins too).
+.decl pd_validator(f: node, c: node, api: symbol, mode: symbol)
+pd_validator(f, c, api, m) :- pd_validator_deco(f, api, e), pd_mode(e, api, m), nearest(f, c, scope),
+    kind(c, "class_definition").
+// pd_value_param(f, nm, x): the parameter that receives the value. Pydantic calls a field validator as
+// `f(cls, value[, info])` and a before/wrap/plain model validator as `f(cls, data[, info])`; a staticmethod has no cls.
+.decl pd_value_param(f: node, nm: node, x: symbol)
+pd_value_param(f, nm, x) :- pd_takes_value(f), !pd_static(f), sig_param(f, _, nm, 1, _, _, _), text(nm, x).
+pd_value_param(f, nm, x) :- pd_takes_value(f), pd_static(f), sig_param(f, _, nm, 0, _, _, _), text(nm, x).
+// A def or lambda a function validator may attach (pd_fnv_def; whether one does is pd_fnv_attached's cross-file
+// answer) gets the value as its first parameter.
+pd_value_param(f, nm, x) :- pd_fnv_def(f, _), !pd_validator(f, _, _, _), sig_param(f, _, nm, 0, _, _, _), text(nm, x).
+pd_value_param(f, nm, x) :- pd_validator(f, _, "model_validator", "after"), sig_param(f, _, nm, 0, _, _, _),
+    text(nm, x).
+// pd_takes_value(f): validator f receives the value (or the raw data) as an argument: all but an "after" model
+// validator, which gets the instance as self.
+.decl pd_takes_value(f: node)
+pd_takes_value(f) :- pd_validator(f, _, api, _), api != "model_validator".
+pd_takes_value(f) :- pd_validator(f, _, "model_validator", m), m != "after".
+.decl pd_static(f: node)
+pd_static(f) :- decorator(f, e), sym_of(e, "builtins.staticmethod").
+
+
+// ---- validators attached through Annotated ----------------------------------------------------------------------
+// `Annotated[str, BeforeValidator(fn)]` runs fn as the field's validator in the mode the class names. A named def of
+// the run (`BeforeValidator(normalize)`, `BeforeValidator(func=normalize)`, the def in any module) and a lambda passed
+// in place are followed. The call, the def and the model may sit in three files, so each says its part by symbol:
+// the call names the def by its qualified name (a lambda by its term), the model's file which validators its fields'
+// annotations hold (pd_fnv_field_q, pd_field_global_q), an alias's module which validators its value holds
+// (pd_fnv_global_q); pd_fnv_attached joins them, and a rule reads it in its output at the def's node (pd_fnv_def).
+.decl pd_fn_validator_class(x: symbol, mode: symbol)
+pd_fn_validator_class("BeforeValidator", "before"). pd_fn_validator_class("AfterValidator", "after").
+pd_fn_validator_class("WrapValidator", "wrap"). pd_fn_validator_class("PlainValidator", "plain").
+.decl pd_fn_validator_call(k: node, a: node, mode: symbol)
+pd_fn_validator_call(k, a, m) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), split_dot(q, p, x),
+    (p = "pydantic" ; p = "pydantic.functional_validators"), pd_fn_validator_class(x, m),
+    (posarg(k, 0, a) ; call_arg(k, -1, "func", a)).
+// A lambda has no qualified name: it goes by its term (python/points-to-file's pt_tm, relative to its scope).
+.decl pd_fnv_key(k: node, vk: symbol, mode: symbol)
+pd_fnv_key(k, vk, m) :- pd_fn_validator_call(k, a, m), sym_of(a, vk).
+pd_fnv_key(k, vk, m) :- pd_fn_validator_call(k, a, m), unparen(a, f), kind(f, "lambda"), pt_tm(f, vk).
+.decl pd_fnv_def(f: node, vk: symbol)
+pd_fnv_def(f, vk) :- kind(f, "function_definition"), qualname(f, vk).
+pd_fnv_def(f, vk) :- pd_fn_validator_call(_, a, _), unparen(a, f), kind(f, "lambda"), pt_tm(f, vk).
+// pd_fnv_field_q(vk, m, q): a field of model q of this file holds validator call vk in its annotation, or in a
+// same-module alias the annotation names (pd_ann_meta).
+.decl pd_fnv_field_q(vk: symbol, mode: symbol, q: symbol)
+pd_fnv_field_q(vk, m, q) :- pd_field(c, _, _, t), pd_ann_meta(t, k), pd_fnv_key(k, vk, m), class_def(c, q).
+// pd_field_global_q(q, g): a field of model q of this file names g, a module-level name of another module, in its
+// annotation (pd_ann_global).
+.decl pd_field_global_q(q: symbol, g: symbol)
+pd_field_global_q(q, g) :- pd_field(c, _, _, t), pd_ann_global(t, g), class_def(c, q).
+// pd_fnv_global_q(g, vk, m): this file's module-level name g holds validator call vk in its value.
+.decl pd_fnv_global_q(g: symbol, vk: symbol, mode: symbol)
+pd_fnv_global_q(g, vk, m) :- pd_global_value(g, v), within(k, v), pd_fnv_key(k, vk, m).
+// pd_fnv_attached(vk, m, q): validator vk runs in mode m on a field of model q. It joins the files (a model's file and
+// an alias's module) by symbol on purpose, and holds none of their nodes.
+.decl pd_fnv_attached(vk: symbol, mode: symbol, q: symbol) cross_file
+pd_fnv_attached(vk, m, q) :- pd_fnv_field_q(vk, m, q).
+pd_fnv_attached(vk, m, q) :- pd_field_global_q(q, g), pd_fnv_global_q(g, vk, m).
+
+// ---- names -------------------------------------------------------------------------------------------------------
+// Module-level names: a file reads its own module's by lookup (pd_name_value, nodes of the file), and another module's
+// by its qualified name (pd_name_global: python/names' sym_of, re-exports followed), which that module's file joins to
+// its own assignment (pd_global_value) in a rule's cross-file relation. A name assigned in a function is not followed.
+.decl pd_global_value(q: symbol, v: node)
+pd_global_value(q, v) :- modname(m, mq), asg(m, x, v, _), q = cat(mq, ".", x).
+.decl pd_name_value(n: node, v: node)
+pd_name_value(n, v) :- kind(n, "identifier"), text(n, x), look(n, x, s), kind(s, "module"), asg(s, x, v, _).
+.decl pd_name_global(n: node, q: symbol)
+pd_name_global(n, q) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q).
+.decl pd_gname(n: node, q: symbol)
+pd_gname(n, q) :- kind(n, "identifier"), text(n, x), look(n, x, s), kind(s, "module"), asg(s, x, _, _), modname(s, mq),
+    q = cat(mq, ".", x).
+pd_gname(n, q) :- pd_name_global(n, q).
+.decl pd_gdef(q: symbol)
+pd_gdef(q) :- pd_global_value(q, _).
+.decl pd_gv_call(q: symbol, h: symbol)
+pd_gv_call(q, h) :- pd_global_value(q, v), unparen(v, k), kind(k, "call"), field(k, "function", g), pd_gname(g, h).
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+// pd_router_name(g): expression g names a router class: one of pd_router_base, or a run class deriving from one.
+.decl pd_router_name(g: node)
+pd_router_name(g) :- sym_of(g, q), pd_router_base(q).
+pd_router_name(g) :- sym_of(g, q), docof(g, d), pd_kind_at(d, q, "router").
+// pd_router_factory(fd): def fd returns a router class: its return annotation names one (`-> type[APIRouter]`), or it
+// returns a class (one it defines) deriving from one.
+.decl pd_router_factory(fd: node)
+pd_router_factory(fd) :- kind(fd, "function_definition"), field(fd, "return_type", t), (n = t ; within(n, t)),
+    pd_router_name(n).
+pd_router_factory(fd) :- kind(fd, "function_definition"), kind(r, "return_statement"), nearest(r, fd, fdef),
+    child(r, e0, 0), unparen(e0, e), pd_router_name(e).
+.decl pd_router_factory_q(fq: symbol)
+pd_router_factory_q(fq) :- pd_router_factory(fd), qualname(fd, fq).
+// pd_gv_router(o): this file's module-level o is assigned a call of a router class.
+.decl pd_gv_router(o: symbol)
+pd_gv_router(o) :- pd_global_value(o, v), unparen(v, k), kind(k, "call"), field(k, "function", g), pd_router_name(g).
+// pd_router_obj(o): module-level o holds a router: a router class's instance, or that of a module-level name bound
+// to what a router factory returns (`APIRouter = get_api_router_class(APIRoute)`, polar's pattern). The object, the
+// factory's result and the factory may sit in three modules: joined by symbol, on purpose, holding no node.
+.decl pd_router_obj(o: symbol) cross_file
+pd_router_obj(o) :- pd_gv_router(o).
+pd_router_obj(o) :- pd_gv_call(o, g), pd_gv_call(g, fq), pd_router_factory_q(fq).
+// pd_route_via(f, o): def f is decorated with a call `o.<method>(...)`, o module-level name o (here or imported).
+.decl pd_route_via(f: node, o: symbol)
+pd_route_via(f, o) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), kind(e, "call"),
+    field(e, "function", fn), attr_of(fn, n, m), pd_route_method(m), pd_gname(n, o).
+.decl pd_route_method(m: symbol)
+pd_route_method("get"). pd_route_method("post"). pd_route_method("put"). pd_route_method("patch").
+pd_route_method("delete"). pd_route_method("options"). pd_route_method("head"). pd_route_method("trace").
+pd_route_method("api_route"). pd_route_method("websocket"). pd_route_method("route").
+
+// ---- instances ---------------------------------------------------------------------------------------------------
+// pd_constructor(m): the classmethods that return an instance of their class (v1's deprecated names included).
+.decl pd_constructor(m: symbol)
+pd_constructor("model_validate"). pd_constructor("model_validate_json"). pd_constructor("model_validate_strings").
+pd_constructor("model_construct"). pd_constructor("parse_obj"). pd_constructor("parse_raw").
+pd_constructor("parse_file"). pd_constructor("from_orm"). pd_constructor("construct"). pd_constructor("validate").
+// pd_new(v, q): expression v makes an instance of model q: `M(...)` or `M.<constructor>(...)`, awaited or not.
+.decl pd_new(v: node, q: symbol)
+pd_new(v, q) :- unparen(v, k), kind(k, "call"), field(k, "function", f), pd_class_ref(f, q).
+pd_new(v, q) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, m), pd_constructor(m),
+    pd_class_ref(o, q).
+// An instance's model_copy() is one of the same model.
+pd_new(v, q) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "model_copy"),
+    unparen(o, u), pd_instance(u, q).
+.decl pd_instance(e: node, q: symbol)
+pd_instance(e, q) :- pd_new(e, q).
+// a name its scope binds to a new instance: `u = User(...)`, `u = User.model_validate(data)`
+pd_instance(r, q) :- kind(r, "identifier"), text(r, x), look(r, x, h), asg(h, x, v, _), pd_new(v, q).
+// `self` in a method of the model
+pd_instance(r, q) :- kind(r, "identifier"), text(r, "self"), kind(f, "function_definition"), nearest(f, c, scope),
+    pd_model(c), class_def(c, q), look(r, "self", f), param(f, "self", 0).
+// a parameter annotated with the model: `def create(body: UserCreate)`
+pd_instance(r, q) :- kind(r, "identifier"), text(r, x), look(r, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
+    pd_ann_model(t, q), !asg(f, x, _, _).
+.decl pd_typed_instance(e: node, q: symbol)
+pd_typed_instance(e, q) :- type_of(e, q), docof(e, d), pd_kind_at(d, q, "model"), !type_open(e), !pd_other_type(e, q).
+.decl pd_other_type(e: node, q: symbol)
+pd_other_type(e, q) :- type_of(e, q), type_of(e, q2), q2 != q.
+// pd_model_call(k, o, m, q): call k is `o.m(...)`, o an instance or the class of model q.
+.decl pd_model_call(k: node, o: node, m: symbol, q: symbol)
+pd_model_call(k, u, m, q) :- kind(k, "call"), field(k, "function", f), attr_of(f, o, m), unparen(o, u), pd_instance(u, q).
+pd_model_call(k, u, m, q) :- kind(k, "call"), field(k, "function", f), attr_of(f, o, m), unparen(o, u), pd_class_ref(u, q).
+
+// ---- project -----------------------------------------------------------------------------------------------------
+// The engine reads a file only at a path built from constants, settings and directory listings (dir_entry), never
+// from a document's path, so manifests are found by listing the run's root and the directories up to 3 levels below
+// it (hidden ones and node_modules aside): `api/pyproject.toml`, `server/pyproject.toml`, `src/backend/requirements.txt`.
+// pd_walk(x, k): directory x is k levels below the root, k from 1 to 3.
+.decl pd_walk(x: symbol, k: number)
+pd_walk(x, k) :- dir_entry(".", x, 1), !prefix(".", x), x != "node_modules", k = 1.
+pd_walk(y, j) :- pd_walk(x, k), k < 3, dir_entry(x, n, 1), !prefix(".", n), n != "node_modules",
+    y = cat(x, "/", n), j = k + 1.
+.decl pd_manifest_name(n: symbol)
+pd_manifest_name("pyproject.toml"). pd_manifest_name("setup.cfg"). pd_manifest_name("setup.py").
+pd_manifest_name("uv.lock"). pd_manifest_name("poetry.lock"). pd_manifest_name("Pipfile").
+pd_manifest_name("Pipfile.lock").
+.decl pd_is_manifest(n: symbol)
+pd_is_manifest(n) :- pd_manifest_name(n).
+pd_is_manifest(n) :- dir_entry(_, n, 0), (glob("requirements*.txt", n) ; glob("requirements*.in", n)).
+// pd_manifest(x, f): f is a manifest file in directory x ("" for the root).
+.decl pd_manifest(x: symbol, f: symbol)
+pd_manifest(x, f) :- dir_entry(".", f, 0), pd_is_manifest(f), x = "".
+pd_manifest(x, f) :- pd_walk(x, _), dir_entry(x, n, 0), pd_is_manifest(n), f = cat(x, "/", n).
+// pd_doc_dir(d, x): x is a manifest directory at or above document d ("" for the root of the run).
+.decl pd_doc_dir(d: number, x: symbol)
+pd_doc_dir(d, x) :- doc(d, _, _), pd_manifest(x, _), x = "".
+pd_doc_dir(d, x) :- doc(d, p, _), pd_manifest(x, _), x != "", prefix(cat(x, "/"), p).
+// pd_manifest_pin(f, i, major): line i of manifest f pins pydantic to major version 1 or 2. A requirement whose
+// lower bound is 2 or more (`pydantic>=2.5`, `pydantic==2.11.4`, `pydantic[email]~=2.0`, Poetry's `pydantic =
+// "^2.5"`), any pydantic-settings requirement (it exists for Pydantic 2 only), or a lock entry `name = "pydantic"`
+// followed by `version = "2.…"` is 2; `pydantic<2`, `==1.…`, `^1.…`, `~=1.…` or a lock entry at 1.x is 1. A range
+// such as `>=1.10,<3` pins neither.
+.decl pd_manifest_pin(f: symbol, i: number, major: number)
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*(==|>=|~=|===|>)\\s*v?[2-9]([^0-9].*)?", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic[-_]settings\\b.*", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*pydantic\\s*=\\s*[\\{\"'].*[\"'][\\^~>=]*\\s*[2-9]\\..*", l).
+pd_manifest_pin(f, i, 2) :- pd_manifest(_, f), file_line(f, i, l), match("^name = \"pydantic\"\\s*$", l),
+    j = i + 1, file_line(f, j, l2), match("^version = \"[2-9]\\..*", l2).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*(==|~=|\\^|<=)\\s*1\\..*", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*[\"']?pydantic(\\[[^\\]]*\\])?\\s*[^#]*<\\s*2(\\.0)*\\s*([\"',;].*)?$", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l),
+    match("(?i)^\\s*pydantic\\s*=\\s*[\\{\"'].*[\"'][\\^~=]*\\s*1\\..*", l).
+pd_manifest_pin(f, i, 1) :- pd_manifest(_, f), file_line(f, i, l), match("^name = \"pydantic\"\\s*$", l),
+    j = i + 1, file_line(f, j, l2), match("^version = \"1\\..*", l2).
+.decl pd_dir_pin(x: symbol, major: number)
+pd_dir_pin(x, k) :- pd_manifest(x, f), pd_manifest_pin(f, _, k).
+.decl pd_any_pin()
+pd_any_pin() :- pd_dir_pin(_, _).
+// pd_v2_name(x): names only Pydantic 2 exports from the `pydantic` package.
+.decl pd_v2_name(x: symbol)
+pd_v2_name("field_validator"). pd_v2_name("model_validator"). pd_v2_name("ConfigDict"). pd_v2_name("RootModel").
+pd_v2_name("field_serializer"). pd_v2_name("model_serializer"). pd_v2_name("computed_field").
+pd_v2_name("TypeAdapter"). pd_v2_name("AliasChoices"). pd_v2_name("AliasPath"). pd_v2_name("ValidationInfo").
+.decl pd_v2_code()
+pd_v2_code() :- import_alias(i, _, m, _, _), (m = "pydantic_settings" ; prefix("pydantic_settings.", m)), docof(i, _).
+pd_v2_code() :- kind(i, "import_from_statement"), module_text(i, m), (m = "pydantic_settings" ;
+    prefix("pydantic_settings.", m)).
+pd_v2_code() :- kind(n, "identifier"), sym_of(n, q), split_dot(q, "pydantic", x), pd_v2_name(x).
+.decl pd_v2_doc(d: number)
+pd_v2_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 2), !pd_v1_doc(d).
+pd_v2_doc(d) :- doc(d, _, _), !pd_any_pin(), pd_v2_code().
+.decl pd_v1_doc(d: number)
+pd_v1_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 1).
+
+
+// ---- from_attributes ---------------------------------------------------------------------------------------------
+// pd_from_attributes(q): from_attributes is on for model q. Pydantic merges config from the bases, then q's own
+// keys: q's own `from_attributes` (ConfigDict, a dict literal, a class keyword, or the v2 key in a nested Config) wins;
+// with none, it is on when it is on for one of q's bases. A run base is read the same way, wherever it is defined;
+// of the bases outside the run, sqlmodel.SQLModel is the one whose config is known to set it (named here: its source
+// is outside the run). `orm_mode = True`, nested or in ConfigDict, is not read: v2 ignores the old name. A model with
+// two bases that disagree is read as on.
+//   class HeroBase(SQLModel): ...; class HeroRead(HeroBase): ...       pd_from_attributes("app.HeroRead")
+//   class Off(HeroRead): model_config = ConfigDict(from_attributes=False)   none for Off, nor its subclasses
+// Each base's own setting is its own file's (pd_config_text, pd_base_q); the chain of bases is joined by symbol across
+// the modules, on purpose, holding no node. A rule reads it in its output, by the model's qualified name.
+.decl pd_fa_lib(q: symbol)
+pd_fa_lib("sqlmodel.SQLModel"). pd_fa_lib("sqlmodel.main.SQLModel").
+.decl pd_from_attributes(q: symbol) cross_file
+pd_from_attributes(q) :- pd_config_text(q, "from_attributes", vt), vt != "False".
+pd_from_attributes(q) :- pd_model_q(q), !pd_config_text(q, "from_attributes", _), pd_base_q(q, b), pd_fa_lib(b).
+pd_from_attributes(q) :- pd_model_q(q), !pd_config_text(q, "from_attributes", _), pd_base_q(q, b),
+    pd_from_attributes(b).
+
+// ---- version shims -----------------------------------------------------------------------------------------------
+// pd_version_guarded(n): n is in code written to run under both Pydantic majors, for the nodes n a rule puts in
+// pd_shim_demand. A guard (an `if` condition, an elif's, any part of a conditional expression) counts when a node in it
+// reads pydantic's version symbol through imports (`pydantic.VERSION`, `from pydantic.version import VERSION as PV`),
+// calls something with the distribution name (`importlib.metadata.version("pydantic")`), probes a v2 name
+// (`hasattr(x, "model_dump")`, `getattr(x, "model_validate", None)`), or reads a variable assigned one of those:
+// module-level in its own module (pd_name_value), or local to its function, followed through further variables
+// (`IS_V1 = not PYDANTIC_V2`). A variable imported from another module (`from app.compat import PYDANTIC_V2 as IS_V2`,
+// `compat.IS_V1`) is that module's to read: the guard depends on it (pd_guard_dep_q, by the node's key), each module
+// says by symbol which of its module-level names read the version (pd_gv_flag) or depend on another module's
+// (pd_gv_dep), and pd_flag follows them across modules (pd_shim_elsewhere). A flag defined outside the run (fastapi's
+// `PYDANTIC_V2`) cannot be read, so there its name decides (`PYDANTIC_V2`, `IS_PYDANTIC_V1`, `PYDANTIC_VERSION`).
+// A `try` whose handler catches ImportError, ModuleNotFoundError or AttributeError is a shim too.
+//   if path.startswith(settings.API_V1_STR): ...     no shim: nothing there reads Pydantic
+.decl pd_shim_demand(n: node) extensible
+// pd_guard(i, c): construct i chooses a branch by condition c.
+.decl pd_guard(i: node, c: node)
+pd_guard(i, c) :- kind(i, "if_statement"), field(i, "condition", c).
+pd_guard(i, c) :- kind(i, "if_statement"), child(i, e, _), kind(e, "elif_clause"), field(e, "condition", c).
+pd_guard(i, c) :- kind(i, "conditional_expression"), child(i, c, _).
+// pd_guard_probe(m): m is read to decide a version test: a node of a guard around a demanded node, and, followed, a
+// node of the value a variable there is assigned; and a node of the value of each module-level name, which another
+// module's guard may read by its symbol.
+.decl pd_guard_probe(m: node)
+pd_guard_probe(m) :- pd_shim_demand(n), within(n, i), pd_guard(i, c), (m = c ; within(m, c)).
+pd_guard_probe(w) :- pd_guard_value(_, v), (w = v ; within(w, v)).
+pd_guard_probe(w) :- pd_global_value(_, v), (w = v ; within(w, v)).
+// pd_guard_value(m, v): probed name m reads a variable assigned v, module-level in its own module or local to m's
+// function.
+.decl pd_guard_value(m: node, v: node)
+pd_guard_value(m, v) :- pd_guard_probe(m), pd_name_value(m, v).
+pd_guard_value(m, v) :- pd_guard_probe(m), kind(m, "identifier"), text(m, x), look(m, x, s), !kind(s, "module"),
+    asg(s, x, v, _).
+.decl pd_version_sym(q: symbol)
+pd_version_sym("pydantic.VERSION"). pd_version_sym("pydantic.version.VERSION"). pd_version_sym("pydantic.__version__").
+pd_version_sym("pydantic.version.version_short"). pd_version_sym("pydantic.version.version_info").
+// pd_version_read(m): m reads the Pydantic version or probes the v2 API, by what its own file shows.
+.decl pd_version_read(m: node)
+pd_version_read(m) :- pd_guard_probe(m), sym_of(m, q), pd_version_sym(q).
+pd_version_read(m) :- pd_guard_probe(m), kind(m, "call"), call_arg(m, _, _, s), str(s, "pydantic").
+pd_version_read(m) :- pd_guard_probe(m), kind(m, "call"), field(m, "function", f),
+    (sym_of(f, "builtins.hasattr") ; sym_of(f, "builtins.getattr")), call_arg(m, 1, "", s), str(s, a),
+    match("model_[a-z_]+", a).
+pd_version_read(m) :- pd_guard_value(m, v), (w = v ; within(w, v)), pd_version_read(w).
+pd_version_read(m) :- pd_guard_probe(m), (kind(m, "identifier") ; kind(m, "attribute")), !pd_guard_value(m, _),
+    !pd_name_global(m, _), (text(m, x) ; attr_of(m, _, x)), match("(?i)(is_)?pydantic_?(v[0-9].*|version.*)", x).
+// pd_version_dep(m, q, how): m reads q through an import (another module's name, or one outside the run), directly
+// or through a variable of its own file: q decides, by its value when it is a module-level name of the run, else by
+// its name (how "name" when it is named like a flag, "value" when not).
+.decl pd_version_dep(m: node, q: symbol, how: symbol)
+pd_version_dep(m, q, how) :- pd_guard_probe(m), !pd_guard_value(m, _), pd_name_global(m, q),
+    (text(m, x) ; attr_of(m, _, x)), ((match("(?i)(is_)?pydantic_?(v[0-9].*|version.*)", x), how = "name") ;
+    (!match("(?i)(is_)?pydantic_?(v[0-9].*|version.*)", x), how = "value")).
+pd_version_dep(m, q, how) :- pd_guard_value(m, v), (w = v ; within(w, v)), pd_version_dep(w, q, how).
+.decl pd_version_guarded(n: node)
+pd_version_guarded(n) :- pd_shim_demand(n), within(n, i), pd_guard(i, c), (m = c ; within(m, c)), pd_version_read(m).
+pd_version_guarded(n) :- pd_shim_demand(n), within(n, t), kind(t, "try_statement"), child(t, x, _),
+    kind(x, "except_clause"), (catches(x, "builtins.ImportError") ; catches(x, "builtins.ModuleNotFoundError") ;
+    catches(x, "builtins.AttributeError")).
+// pd_guard_dep_q(nk, q, how): the demanded node of term nk (pt_tm) is under a guard that reads q through an import
+// (pd_version_dep). By term, no node: what the node's file hands on for pd_shim_elsewhere.
+.decl pd_guard_dep_q(nk: symbol, q: symbol, how: symbol)
+pd_guard_dep_q(nk, q, how) :- pd_shim_demand(n), within(n, i), pd_guard(i, c), (m = c ; within(m, c)),
+    pd_version_dep(m, q, how), pt_tm(n, nk).
+// By symbol, no node: this file's module-level q reads the version (pd_gv_flag), or reads q2 through an import
+// (pd_gv_dep); a name named like a flag that some guard reads through an import (pd_flag_dep_q).
+.decl pd_gv_flag(q: symbol)
+pd_gv_flag(q) :- pd_global_value(q, v), (w = v ; within(w, v)), pd_version_read(w).
+.decl pd_gv_dep(q: symbol, q2: symbol, how: symbol)
+pd_gv_dep(q, q2, how) :- pd_global_value(q, v), (w = v ; within(w, v)), pd_version_dep(w, q2, how).
+.decl pd_flag_dep_q(q: symbol)
+pd_flag_dep_q(q) :- pd_version_dep(_, q, "name").
+// pd_flag(q): module-level q of the run reads the Pydantic version, in its own module or through the flags it reads
+// from others. pd_flag_ok(q, how): a guard reading q through an import is a version test: q is such a flag, or,
+// named like one, no module of the run assigns it. pd_shim_elsewhere(nk): the node keyed nk is under such a guard.
+// They join the modules' names by symbol, on purpose, and hold no node: the node's file finds its own node by its
+// term (pt_tm) in a rule's output.
+.decl pd_flag(q: symbol) cross_file
+pd_flag(q) :- pd_gv_flag(q).
+pd_flag(q) :- pd_gv_dep(q, q2, how), pd_flag_ok(q2, how).
+.decl pd_flag_ok(q: symbol, how: symbol) cross_file
+pd_flag_ok(q, "value") :- pd_flag(q).
+pd_flag_ok(q, "name") :- pd_flag(q).
+pd_flag_ok(q, "name") :- pd_flag_dep_q(q), !pd_gdef(q).
+.decl pd_shim_elsewhere(nk: symbol) cross_file
+pd_shim_elsewhere(nk) :- pd_guard_dep_q(nk, q, how), pd_flag_ok(q, how).
+
+// ---- files -------------------------------------------------------------------------------------------------------
+.decl pd_test_doc(d: number)
+pd_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
+    path_part(d, "unittests")).
+pd_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ;
+    s = "tests.py" ; s = "test.py" ; s = "conftest.py").

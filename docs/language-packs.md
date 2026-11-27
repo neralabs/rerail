@@ -561,7 +561,7 @@ Add a `README.md` saying what the pack covers. Then record the new workspace and
 
 ```sh
 npm install --package-lock-only --ignore-scripts   # packs/* are npm workspaces: package-lock.json lists each
-npx vitest run test/engine/catalog/packs.test.ts -t "pack laravel"
+npx vitest run test/engine/catalog/packs -t "pack laravel"
 ```
 
 Add a changeset (`patch`, "Add the Laravel pack: …"), unless the pack starts private (`"private": true` in its
@@ -647,6 +647,6 @@ Score one rule, listing every false positive and false negative, then run the co
 
 ```sh
 npm run conformance:languages -- --pack <id> --rule <port id> --fixtures
-npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"
+npx vitest run test/engine/catalog/packs -t "pack <id>"
 npm run conformance:languages -- --check --pack <id>
 ```

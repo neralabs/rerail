@@ -1,0 +1,288 @@
+.policy "python-practice-coroutine-never-awaited" revision 1
+.description "Await a call of an async def or schedule it as a task; never drop its coroutine or hand the async def to a sync caller."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Calling an `async def` runs none of its body: it returns a coroutine (an async
+// generator when the def yields), which runs only when awaited, scheduled as a task or iterated. Thrown away, the
+// work silently never happens; Python only prints "RuntimeWarning: coroutine ... was never awaited" when the object
+// is garbage collected. For typed code, pyright (reportUnusedCoroutine, an error by default) and mypy
+// (unused-coroutine, in checked functions) already report the plain dropped call; this rule adds untyped code, the
+// shapes they let through (`_ = f()`, a comprehension or `and`/`or` statement), and an async def handed to an API
+// that calls it synchronously, which no type checker reports. It reports, outside test code:
+//   - Dropped (DroppedInAsync, DroppedInSync, DroppedGenerator): a coroutine call whose value nothing can read: a
+//     statement of its own (pp_discarded), the element of a list, set or generator comprehension written as a
+//     statement (`[send(u) for u in users]`), an operand of an `and`/`or` written as a statement (`ok and
+//     send(u)`), or the value of an assignment to a name its function never reads (`_ = send(u)`, also `_` at
+//     module level). A coroutine call is one whose every target by the call graph (python/calls, across files) is an
+//     async def of the run and which can call nothing else (pp_coroutine_at: not open). `self.m()` follows every
+//     override in the run's subclasses.
+//   - HandedToSync (HandedToThread, HandedToExecutor, HandedToAtexit, HandedToSignal, HandedToLoopCallback): an
+//     async def of the run (by name through imports, `self.m`, wrapped in functools.partial, or a lambda whose body
+//     is a coroutine call: `lambda: send(u)`) handed to an API that calls it synchronously and ignores, or only
+//     stores, what it returns: threading.Thread / multiprocessing.Process `target`, threading.Timer's function,
+//     `<executor>.submit(fn)`, `<loop>.run_in_executor(executor, fn)`, asyncio.to_thread(fn), atexit.register(fn)
+//     (also as a decorator), signal.signal(sig, fn), and an asyncio loop's call_soon/call_soon_threadsafe/
+//     call_later/call_at (asyncio refuses a coroutine function there only in debug mode).
+//   notify.py:  async def send_mail(user): ...
+//   service.py: def kick(u): send_mail(u)                                 reported: the coroutine is dropped
+//               async def h(u): _ = send_mail(u)                          reported
+//               threading.Thread(target=send_mail, args=(u,)).start()     reported
+//               async def h(u): await send_mail(u)                        not reported
+//               asyncio.create_task(send_mail(u)); asyncio.run(send_mail(u)); return send_mail(u); c = send_mail(u);
+//               then `return c`; await asyncio.gather(send_mail(u), other(u))   not reported: someone may run it
+// Left alone: a call that may also reach a sync def (a sync override in a subclass), a call through a decorator from
+// outside the run (`@async_to_sync`: the call program leaves the call open) or a workspace decorator that returns a
+// sync wrapper, a method resolved through a base outside the run, references to a decorated async def (the decorator
+// may make it sync), `submit` on a receiver not named or built as an executor (`JobQueue().submit(fn)` may await it),
+// call_soon/call_later on a receiver not known to be an asyncio loop (tornado's IOLoop runs a returned awaitable),
+// sync defs handed to any of these APIs, an assigned name read anywhere in its function (also in a nested def), a
+// module-level name other than `_` (another module may import it), and test code.
+// Gaps: an async def reached through a variable, a container or getattr; `executor.map(async_fn, ...)` and
+// `list(map(async_fn, ...))`; a conditional expression statement; `self.hook()` in a base class when a subclass in
+// the run has a base the call program cannot follow (fastapi-users' `UserManager(UUIDIDMixin,
+// BaseUserManager[User, uuid.UUID])` leaves BaseUserManager's `self.on_after_register(...)` open). Reading a name is
+// not flow-sensitive: `c = send(u)` read on one path counts as read.
+// loop.add_signal_handler is left out: asyncio always raises TypeError for a coroutine function there, so the bug
+// is not silent.
+#include "lib/python_practice.rerail"
+
+// Across files the rule is over symbols (decision 0677: no node crosses files): an async def by its symbol, a call or
+// a handed reference by its term. Each file states its async defs (cnw_def, cnw_agen, cnw_plain_sym) and what it hands
+// on; a finding reads its call's or reference's node in its own file and names the async def by its path and line.
+.violation DroppedInAsync(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Await `{x}(...)`, or wrap it in `asyncio.create_task()` and keep the task: it only makes a coroutine of `async def {g}` ({p}:{l}), so its body never runs."
+DroppedInAsync(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), cnw_in_async(c), pp_coroutine_at(ct, g), !cnw_agen(g),
+    cnw_def(g, gx, p, l).
+.violation DroppedInSync(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Run `{x}(...)` with `asyncio.run()`, or a task in a running loop: it only makes a coroutine of `async def {g}` ({p}:{l}). Make `{g}` a plain def if it never awaits."
+DroppedInSync(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), !cnw_in_async(c), pp_coroutine_at(ct, g), !cnw_agen(g),
+    cnw_def(g, gx, p, l).
+.violation DroppedGenerator(at: node, x: symbol, g: symbol, p: symbol, l: number)
+    "Iterate `{x}(...)` with `async for`: `async def {g}` ({p}:{l}) is an async generator, so this call alone runs none of it. Make `{g}` a plain def if nothing is yielded."
+DroppedGenerator(c, x, gx, p, l) :- cnw_drop_site(c, ct, x), pp_coroutine_at(ct, g), cnw_agen(g), cnw_def(g, gx, p, l).
+.violation HandedToThread(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Pass a plain function to `{api}`, e.g. `target=asyncio.run, args=({g}(...),)`: `{g}` is an async def ({p}:{l}), so calling it there runs none of its body."
+HandedToThread(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "thread"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+.violation HandedToExecutor(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Await `{g}(...)` instead of handing it to `{api}`: `{g}` is an async def ({p}:{l}), so the worker thread only makes a coroutine. Make `{g}` a plain def if it never awaits."
+HandedToExecutor(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "executor"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+.violation HandedToAtexit(at: node, g: symbol, p: symbol, l: number)
+    "Register a plain function, e.g. `atexit.register(lambda: asyncio.run({g}()))`: `{g}` is an async def ({p}:{l}), so the exit call runs none of its body."
+HandedToAtexit(e, gx, p, l) :- cnw_sink(e, et, "atexit.register()", _), cnw_handed_at(et, g), cnw_def(g, gx, p, l).
+HandedToAtexit(e, gx, p, l) :- decorator(g, e), unparen(e, m), sym_of(m, "atexit.register"), pp_async_def(g),
+    pp_live(e), def_name(g, gx), docof(g, d), doc(d, p, _), line(g, l).
+.violation HandedToSignal(at: node, g: symbol, p: symbol, l: number)
+    "Pass a plain handler to `signal.signal()`, or in a running loop use `loop.add_signal_handler()` with a task of `{g}()`: `{g}` is an async def ({p}:{l})."
+HandedToSignal(e, gx, p, l) :- cnw_sink(e, et, "signal.signal()", _), cnw_handed_at(et, g), cnw_def(g, gx, p, l).
+.violation HandedToLoopCallback(at: node, api: symbol, g: symbol, p: symbol, l: number)
+    "Schedule `{g}(...)` with `asyncio.create_task()` instead of `{api}`, or `run_coroutine_threadsafe()` from another thread: `{g}` is an async def ({p}:{l})."
+HandedToLoopCallback(e, api, gx, p, l) :- cnw_sink(e, et, api, _), cnw_api_kind(api, "loop"), cnw_handed_at(et, g),
+    cnw_def(g, gx, p, l).
+// cnw_def(g, gx, p, l): async def g is named gx, at line l of path p. Stated in g's file.
+.decl cnw_def(g: symbol, gx: symbol, p: symbol, l: number)
+cnw_def(gq, gx, p, l) :- pp_async_def(g), def_name(g, gx), pt_def(g, gq), docof(g, d), doc(d, p, _), line(g, l).
+
+// ---- shape 1: a coroutine call whose value nothing reads ---------------------------------------------------------
+// cnw_drop_site(c, ct, x): call c, whose term is ct and whose callee's text is x, is live and its value unread. The
+// finding needs its every target to be an async def (lib: pp_coroutine_at).
+.decl cnw_drop_site(c: node, ct: symbol, x: symbol)
+cnw_drop_site(c, ct, x) :- cnw_unread(c), pp_live(c), field(c, "function", fn), text(fn, x), pt_tm(c, ct).
+// cnw_unread(c): call c's value is thrown away: c is a value of an expression statement (cnw_value_of), or the
+// right side of an assignment to a name nothing reads.
+.decl cnw_unread(c: node)
+cnw_unread(c) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, k),
+    cnw_value_of(k, c), kind(c, "call").
+cnw_unread(c) :- kind(a, "assignment"), field(a, "right", r), unparen(r, c), kind(c, "call"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x), asg(s, x, _, a), (kind(s, "function_definition") ; x = "_"),
+    !cnw_read_in(s, x).
+// cnw_value_of(k, c): c is k, or an operand of `and`/`or` k, or the element a comprehension k builds: as a
+// statement, all of these are thrown away.
+.decl cnw_value_of(k: node, c: node)
+cnw_value_of(k, k) :- kind(s, "expression_statement"), child(s, e, 0), unparen(e, k).
+cnw_value_of(k, c) :- cnw_value_of(k, b), kind(b, "boolean_operator"), (field(b, "left", o) ; field(b, "right", o)),
+    unparen(o, c).
+cnw_value_of(k, c) :- cnw_value_of(k, b), (kind(b, "list_comprehension") ; kind(b, "set_comprehension") ;
+    kind(b, "generator_expression")), field(b, "body", o), unparen(o, c).
+// cnw_read_in(s, x): some reference in scope s, or in a scope nested in it, reads s's x.
+.decl cnw_read_in(s: node, x: symbol)
+cnw_read_in(s, x) :- look(r, x, s), expr_ctx(r, "load").
+// cnw_agen(g): async def g yields in its own frame, so calling it makes an async generator. Stated in g's file.
+.decl cnw_agen(g: symbol)
+cnw_agen(gq) :- pp_async_def(g), kind(y, "yield"), pp_frame(y, g), pt_def(g, gq).
+// cnw_in_async(c): c runs in an async def's own frame, where `await` works.
+.decl cnw_in_async(c: node)
+cnw_in_async(c) :- pp_frame(c, f), pp_async_def(f).
+
+// ---- shape 2: an async def handed to an API that calls it synchronously ----------------------------------------
+// cnw_sink(e, et, api, how): e (term et), an argument of a live call that `api` names, is what that API calls as a
+// plain function, ignoring or only storing what it returns: a reference (how "ref"), itself or inside
+// `functools.partial(e, ...)`, or the body of a lambda (how "call"). cnw_handed_at(et, g): it refers to async def g
+// (cnw_async_ref), or, a lambda's body, is a coroutine call of g.
+.decl cnw_sink(e: node, et: symbol, api: symbol, how: symbol)
+cnw_sink(e, et, api, "ref") :- cnw_sink_arg(c, api, a), unparen(a, e), pp_live(c), pt_tm(e, et).
+cnw_sink(e, et, api, "ref") :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "call"), field(k, "function", pf),
+    sym_of(pf, "functools.partial"), posarg(k, 0, r), unparen(r, e), pp_live(c), pt_tm(e, et).
+cnw_sink(e, et, api, "call") :- cnw_sink_arg(c, api, a), unparen(a, k), kind(k, "lambda"), field(k, "body", b),
+    unparen(b, e), pp_live(c), pt_tm(e, et).
+.decl cnw_handed_at(et: symbol, g: symbol)
+cnw_handed_at(et, g) :- cnw_async_ref(et, g).
+cnw_handed_at(et, g) :- cnw_lambda_at(et), pp_coroutine_at(et, g).
+.decl cnw_lambda_at(et: symbol)
+cnw_lambda_at(et) :- cnw_sink(_, et, _, "call").
+// cnw_api_kind(api, w): the advice that fits each API.
+.decl cnw_api_kind(api: symbol, w: symbol)
+cnw_api_kind("threading.Thread(target=...)", "thread"). cnw_api_kind("multiprocessing.Process(target=...)", "thread").
+cnw_api_kind("threading.Timer(...)", "thread"). cnw_api_kind("executor.submit()", "executor").
+cnw_api_kind("loop.run_in_executor()", "executor"). cnw_api_kind("asyncio.to_thread()", "executor").
+cnw_api_kind(cat(cat("loop.", m), "()"), "loop") :- cnw_loop_callback(m, _).
+
+// cnw_sink_arg(c, api, a): a is the argument of call c that names the function the API calls.
+.decl cnw_sink_arg(c: node, api: symbol, a: node)
+cnw_sink_arg(c, "threading.Thread(target=...)", a) :- cnw_callee(c, "threading.Thread"), call_arg(c, -1, "target", a).
+cnw_sink_arg(c, "threading.Thread(target=...)", a) :- cnw_callee(c, "threading.Thread"), posarg(c, 1, a).
+cnw_sink_arg(c, "multiprocessing.Process(target=...)", a) :- cnw_callee(c, q), cnw_process(q),
+    call_arg(c, -1, "target", a).
+cnw_sink_arg(c, "multiprocessing.Process(target=...)", a) :- cnw_callee(c, q), cnw_process(q), posarg(c, 1, a).
+cnw_sink_arg(c, "threading.Timer(...)", a) :- cnw_callee(c, "threading.Timer"), call_arg(c, -1, "function", a).
+cnw_sink_arg(c, "threading.Timer(...)", a) :- cnw_callee(c, "threading.Timer"), posarg(c, 1, a).
+cnw_sink_arg(c, "asyncio.to_thread()", a) :- cnw_callee(c, "asyncio.to_thread"), posarg(c, 0, a).
+cnw_sink_arg(c, "atexit.register()", a) :- cnw_callee(c, "atexit.register"), posarg(c, 0, a).
+cnw_sink_arg(c, "signal.signal()", a) :- cnw_callee(c, "signal.signal"), posarg(c, 1, a).
+cnw_sink_arg(c, "signal.signal()", a) :- cnw_callee(c, "signal.signal"), call_arg(c, -1, "handler", a).
+cnw_sink_arg(c, "loop.run_in_executor()", a) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "run_in_executor"),
+    posarg(c, 1, a).
+cnw_sink_arg(c, "executor.submit()", a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "submit"),
+    cnw_holds(o, "executor"), posarg(c, 0, a).
+cnw_sink_arg(c, cat(cat("loop.", m), "()"), a) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    cnw_loop_callback(m, i), cnw_holds(o, "loop"), posarg(c, i, a).
+.decl cnw_callee(c: node, q: symbol)
+cnw_callee(c, q) :- kind(c, "call"), field(c, "function", f), sym_of(f, q).
+.decl cnw_process(q: symbol)
+cnw_process("multiprocessing.Process"). cnw_process("multiprocessing.context.Process").
+// cnw_loop_callback(m, i): asyncio loop method m takes the callback at position i and calls it as callback(*args).
+.decl cnw_loop_callback(m: symbol, i: number)
+cnw_loop_callback("call_soon", 0). cnw_loop_callback("call_soon_threadsafe", 0). cnw_loop_callback("call_later", 1).
+cnw_loop_callback("call_at", 1).
+
+// cnw_holds(o, w): receiver o is a concurrent.futures executor (w = "executor") or an asyncio event loop (w = "loop"):
+// built in place, bound in the same def or module to one (`ex = ThreadPoolExecutor()`, `with ProcessPoolExecutor()
+// as ex`, `loop = asyncio.get_running_loop()`), or `self.x` assigned one in the class. An executor may also be named
+// for one (`executor`, `self._pool`, `thread_pool`): other `submit` methods may await what they get. A loop is never
+// judged by its name: tornado's IOLoop (often `loop`) has call_later too, and runs the awaitable a callback returns.
+.decl cnw_new_q(q: symbol, w: symbol)
+cnw_new_q("concurrent.futures.ThreadPoolExecutor", "executor").
+cnw_new_q("concurrent.futures.ProcessPoolExecutor", "executor").
+cnw_new_q("concurrent.futures.thread.ThreadPoolExecutor", "executor").
+cnw_new_q("concurrent.futures.process.ProcessPoolExecutor", "executor").
+cnw_new_q("asyncio.get_running_loop", "loop"). cnw_new_q("asyncio.get_event_loop", "loop").
+cnw_new_q("asyncio.new_event_loop", "loop"). cnw_new_q("asyncio.events.get_running_loop", "loop").
+cnw_new_q("asyncio.events.get_event_loop", "loop"). cnw_new_q("asyncio.events.new_event_loop", "loop").
+.decl cnw_new(v: node, w: symbol)
+cnw_new(v, w) :- unparen(v, k), cnw_callee(k, q), cnw_new_q(q, w).
+.decl cnw_holds(o: node, w: symbol)
+cnw_holds(o, w) :- cnw_new(o, w).
+cnw_holds(o, w) :- kind(o, "identifier"), look(o, x, s), asg(s, x, v, _), cnw_new(v, w).
+cnw_holds(o, w) :- kind(o, "identifier"), text(o, x), nearest(o, f, fdef), kind(ap, "as_pattern"), child(ap, v, 0),
+    cnw_new(v, w), field(ap, "alias", t), text(t, x), nearest(ap, f, fdef).
+cnw_holds(o, w) :- attr_of(o, r, a), kind(r, "identifier"), text(r, "self"), nearest(o, f, fdef), nearest(f, k, scope),
+    kind(k, "class_definition"), assigned_attr(h, "self", a, v), nearest(h, k, scope), cnw_new(v, w).
+cnw_holds(o, "executor") :- leaf_name(o, x),
+    (glob("*xecutor*", x) ; glob("*pool", x) ; glob("*Pool", x) ; glob("*pool_*", x)).
+
+// cnw_async_ref(et, g): the handed reference et names async def g of the run, whose name binds the def itself: no
+// decorator but staticmethod/classmethod/abstractmethod, which keep it a coroutine function. By import or attribute
+// (lib: pp_fn_ref), or `self.m` in a method of class k when every m the run's k or its subclasses may resolve to is
+// such an async def and k's bases are all in the run. Each file states its handed references by name (cnw_ref_at) or
+// as `self.m` (cnw_self_ref_at); the classes are joined by symbol.
+.decl cnw_async_ref(et: symbol, g: symbol)
+cnw_async_ref(et, g) :- cnw_ref_at(et, q), pp_def_q(q, g), cnw_plain_sym(g).
+cnw_async_ref(et, g) :- cnw_self_ref_at(et, kq, m), cnw_self_target(kq, m, g), cnw_plain_sym(g), !cnw_self_other(kq, m).
+.decl cnw_ref_at(et: symbol, q: symbol)
+cnw_ref_at(et, q) :- cnw_sink(e, et, _, "ref"), pp_fn_ref(e, q).
+.decl cnw_plain_sym(g: symbol)
+cnw_plain_sym(gq) :- pp_async_def(g), !cnw_other_decorator(g), pt_def(g, gq).
+.decl cnw_other_decorator(g: node)
+cnw_other_decorator(g) :- decorator(g, e), !cnw_kept_decorator(e).
+.decl cnw_kept_decorator(e: node)
+cnw_kept_decorator(e) :- unparen(e, m), sym_of(m, q),
+    (q = "builtins.staticmethod" ; q = "builtins.classmethod" ; q = "abc.abstractmethod").
+// cnw_self_ref(e, kq, m): e is `self.m`, read (not called) in a method of class kq, with self its first parameter.
+.decl cnw_self_ref(e: node, kq: symbol, m: symbol)
+cnw_self_ref(e, kq, m) :- attr_of(e, r, m), kind(r, "identifier"), text(r, "self"), !field(_, "function", e),
+    nearest(e, f, fdef), param(f, "self", 0), nearest(f, k, scope), class_def(k, kq), pp_live(e).
+.decl cnw_self_ref_at(et: symbol, kq: symbol, m: symbol)
+cnw_self_ref_at(et, kq, m) :- cnw_sink(e, et, _, "ref"), cnw_self_ref(e, kq, m).
+.decl cnw_self_key(kq: symbol, m: symbol)
+cnw_self_key(kq, m) :- cnw_self_ref_at(_, kq, m).
+// cnw_self_target(kq, m, g): `self.m` in kq may be g: what kq or any subclass of it resolves m to.
+.decl cnw_self_target(kq: symbol, m: symbol, g: symbol)
+cnw_self_target(kq, m, g) :- cnw_self_key(kq, m), mro_method_sym(kq, m, g).
+cnw_self_target(kq, m, g) :- cnw_self_key(kq, m), subclass(sq, kq), mro_method_sym(sq, m, g).
+// cnw_self_other(kq, m): `self.m` in kq may be something else: a target that is not a plain async def, an attribute
+// assigned on self (in any class: cnw_self_assigned, by the attribute's name), no method at all, or a class of the
+// hierarchy with a base outside the run.
+.decl cnw_self_other(kq: symbol, m: symbol)
+cnw_self_other(kq, m) :- cnw_self_target(kq, m, g), !cnw_plain_sym(g).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), !cnw_self_target(kq, m, _).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), cnw_self_assigned(m).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), cnw_open_class(kq).
+cnw_self_other(kq, m) :- cnw_self_key(kq, m), subclass(sq, kq), cnw_open_class(sq).
+.decl cnw_self_assigned(m: symbol)
+cnw_self_assigned(m) :- assigned_attr(_, "self", m, _).
+.decl cnw_open_class(q: symbol)
+cnw_open_class(q) :- cnw_open_base(q).
+cnw_open_class(q) :- subclass(q, b), cnw_open_base(b).
+// cnw_open_base(q): class q lists a base that is no class of the run (one its file can name, through python/names'
+// phase) nor a known root. Stated in q's file.
+.decl cnw_open_base(q: symbol)
+cnw_open_base(q) :- class_def(c, q), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument"),
+    (kind(e, "identifier") ; kind(e, "attribute")), !cnw_known_base(e).
+.decl cnw_known_base(e: node)
+cnw_known_base(e) :- sym_of(e, b), docof(e, d), doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, b).
+cnw_known_base(e) :- sym_of(e, b), (b = "builtins.object" ; b = "abc.ABC" ; b = "typing.Generic" ; b = "typing.Protocol").
+
+// The cases, `upstream/python-practice/authored/python-practice-coroutine-never-awaited/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/__init__.py"
+    .fixture "app/dropped_shapes.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/dropped_shapes.py"
+    .fixture "app/jobs.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/jobs.py"
+    .fixture "app/notify.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/notify.py"
+    .fixture "app/service.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/service.py"
+    .fixture "app/tests/__init__.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/tests/__init__.py"
+    .fixture "app/tests/test_service.py" from "../upstream/python-practice/authored/python-practice-coroutine-never-awaited/app/tests/test_service.py"
+    .expect _ at "app/dropped_shapes.py":9
+    .expect _ at "app/dropped_shapes.py":14
+    .expect _ at "app/dropped_shapes.py":18
+    .expect _ at "app/dropped_shapes.py":50
+    .expect _ at "app/dropped_shapes.py":54
+    .expect _ at "app/dropped_shapes.py":58
+    .expect _ at "app/dropped_shapes.py":62
+    .expect _ at "app/dropped_shapes.py":63
+    .expect _ at "app/dropped_shapes.py":64
+    .expect _ at "app/dropped_shapes.py":85
+    .expect _ at "app/dropped_shapes.py":92
+    .expect _ at "app/jobs.py":45
+    .expect _ at "app/notify.py":47
+    .expect _ at "app/notify.py":50
+    .expect _ at "app/service.py":18
+    .expect _ at "app/service.py":19
+    .expect _ at "app/service.py":30
+    .expect _ at "app/service.py":31
+    .expect _ at "app/service.py":48
+    .expect _ at "app/service.py":50
+    .expect _ at "app/service.py":51
+    .expect _ at "app/service.py":52
+    .expect _ at "app/service.py":54
+    .expect _ at "app/service.py":56
+    .expect _ at "app/service.py":58
+    .expect _ at "app/service.py":65
+    .expect _ at "app/service.py":66
+    .expect _ at "app/service.py":70
+    .expect _ at "app/service.py":71
+    .expect _ at "app/service.py":76
+    .expect _ at "app/service.py":81
+.end

@@ -1,0 +1,172 @@
+.policy "fastapi-practice-route-shadowed" revision 1
+.description "Declare a FastAPI route before any earlier route of its router whose path pattern matches its paths, or the earlier route answers them and this one is never served."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Starlette (and so FastAPI) tries a router's routes in the order they were added and
+// serves the first whose path pattern and method match: a plain `{param}` matches any one segment, so `GET /{case_id}`
+// declared before `GET /minimal` answers `/minimal` itself (a 422 when case_id is an int, or the wrong handler), and
+// the later route is unreachable. FastAPI docs, Path Parameters, "Order matters".
+// The rule reports a route (lib/fastapi's fa_route: a decorator, the decorator applied by hand, `add_api_route`) whose
+// path, a string literal, every URL of is matched by an earlier route of the same router with the same method:
+//   - shadowed: the earlier path has a parameter where this one has a literal segment, and the other segments are
+//     equal. `{x}` and `{x:str}` match any segment, `{x:int}` a segment of digits (and a later `{y:int}`), `{x:float}`
+//     digits with an optional fraction (and a later `{y:int}` or `{y:float}`), `{x:uuid}` a UUID, `{x:path}` the rest
+//     of the path, slashes included;
+//       @router.get("/{case_id}")   then   @router.get("/minimal")          reported
+//   - duplicate: the same path, parameter names aside (`/{id}` and `/{item_id}`), and the same method.
+//       @router.post("/")           then   @router.post("/")                reported
+// Methods compare one by one: the decorator's verb, `api_route`'s `methods=[...]` (GET when it lists none); HEAD and
+// GET are distinct, and a websocket route meets websocket routes only. "Earlier" is source order in the same file,
+// the order the decorators run in.
+// Left alone:
+//   - a literal route declared before the parametrized one (the documented fix): `/me` then `/{user_id}`;
+//   - another method, another number of segments, another router, an `:int`/`:float`/`:uuid` parameter before a word
+//     (`/pages/{page:int}` then `/pages/latest`), a one-segment `{key}` before a `{key:path}`;
+//   - routes on the same router declared in different modules: their order is the order the modules are imported in,
+//     which a rule cannot know;
+//   - routes in different blocks (one under `if legacy:`, the other under `else:`): the rule compares routes of one
+//     block (the module, or one function's or branch's body);
+//   - one function under two paths (stacked decorators);
+//   - versioned duplicates: a duplicate where either def carries a decorator besides its route decorators (polar's
+//     `@version(starting_from=...)`, which a custom route class reads to pick one by the request's API version), or
+//     whose route calls pass a different `name=` or any keyword named for a version (`api_version=2`);
+//   - paths that are not one string literal (`PREFIX + "/x"`, f-strings), paths with a custom converter or a brace that
+//     is not a parameter; test files.
+// Gaps: routes added in a loop or through a project's own registration helper are not seen; the order between modules
+// that share a router is not known (both directions are missed); a route only partly shadowed (`/{x}` before
+// `/{y:path}`: the later route still serves the deeper paths) is not reported; a router whose custom route class
+// matches on something besides path and method (a header, a host) can make a reported pair reachable; a duplicate
+// under a decorator that has nothing to do with routing (a rate limiter) is left alone with the versioned ones.
+
+#include "lib/fastapi.rerail"
+
+.violation RouteShadowed(at: node, ms: symbol, p: symbol, ep: symbol, el: number)
+    "Route `{ms} {p}` is never served: the earlier `{ms} {ep}` (line {el}) on this router matches its paths first. Declare it before line {el}, or give it a path the earlier route does not match."
+.violation RouteDuplicate(at: node, ms: symbol, p: symbol, el: number)
+    "Route `{ms} {p}` repeats the path and method of line {el} on this router, which is served instead, so this handler never runs. Merge it into that handler, or give it its own path."
+
+// ---- paths -------------------------------------------------------------------------------------------------------
+// rs_path(dc, p): route call dc's path p, a literal whose braces are all parameters with a converter Starlette ships
+// (none, str, int, float, uuid, path).
+.decl rs_path(dc: node, p: symbol)
+rs_path(dc, p) :- fa_route_path(dc, p),
+    match("([^{}]|\\{[A-Za-z_][A-Za-z0-9_]*(:(str|int|float|uuid|path))?\\})*", p).
+// rs_rx(dc, rx): the regex route call dc's path is tested with when it is the earlier one: its literal text escaped,
+// each parameter replaced by what Starlette's converter matches, or by the token rs_shape writes for a later
+// parameter it matches every value of.
+.decl rs_rx(dc: node, rx: symbol)
+rs_rx(dc, rx) :- rs_path(dc, p),
+    e = @replace_all(p, "([.^$*+?()\\[\\]|\\\\])", "\\$1"),
+    a = @replace_all(e, "\\{[A-Za-z_][A-Za-z0-9_]*(:str)?\\}", "[^/]+"),
+    b = @replace_all(a, "\\{[A-Za-z_][A-Za-z0-9_]*:int\\}", "(?:[0-9]+|\\{i\\})"),
+    c = @replace_all(b, "\\{[A-Za-z_][A-Za-z0-9_]*:float\\}", "(?:[0-9]+(?:\\.[0-9]+)?|\\{i\\}|\\{f\\})"),
+    u = @replace_all(c, "\\{[A-Za-z_][A-Za-z0-9_]*:uuid\\}",
+        "(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|\\{u\\})"),
+    rx = @replace_all(u, "\\{[A-Za-z_][A-Za-z0-9_]*:path\\}", ".*").
+// rs_shape(dc, s): route call dc's path with each parameter written as a token of its converter: `{s}` (any
+// segment), `{i}`, `{f}`, `{u}`, and `{p}/{p}` for a path parameter (only `.*` matches all of its values). Two paths
+// with the same shape are duplicates.
+.decl rs_shape(dc: node, s: symbol)
+rs_shape(dc, s) :- rs_path(dc, p),
+    a = @replace_all(p, "\\{[A-Za-z_][A-Za-z0-9_]*(:str)?\\}", "{s}"),
+    b = @replace_all(a, "\\{[A-Za-z_][A-Za-z0-9_]*:int\\}", "{i}"),
+    c = @replace_all(b, "\\{[A-Za-z_][A-Za-z0-9_]*:float\\}", "{f}"),
+    u = @replace_all(c, "\\{[A-Za-z_][A-Za-z0-9_]*:uuid\\}", "{u}"),
+    s = @replace_all(u, "\\{[A-Za-z_][A-Za-z0-9_]*:path\\}", "{p}/{p}").
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+// rs_method(dc, m): route call dc serves method m (lowercase; "websocket" for a websocket route).
+.decl rs_method(dc: node, m: symbol)
+rs_method(dc, m) :- fa_route(_, dc, _, m), m != "api_route".
+rs_method(dc, @lower(s)) :- fa_route(_, dc, _, "api_route"), fa_route_kw(dc, "methods", l), fa_list_item(l, i),
+    str(i, s).
+rs_method(dc, "get") :- fa_route(_, dc, _, "api_route"), !fa_route_kw(dc, "methods", _).
+// rs_dc_router(dc, r): route call dc registers on router key r. A call whose receiver resolves to more than one router
+// (a name bound twice) is left out.
+.decl rs_dc_router(dc: node, r: symbol)
+rs_dc_router(dc, r) :- fa_route(_, dc, r, _).
+.decl rs_block_kind(k: symbol)
+rs_block_kind("block"). rs_block_kind("module").
+// rs_route(dc, f, r, b, p): route call dc registers def f on router key r with path p, in block b, outside test code.
+// Whether r is an app or router (an import of another module's variable may be anything) is the outputs' question,
+// by symbol (lib/fastapi's fa_router_key): routes compared share their key, so the later route's answers for both.
+.decl rs_route(dc: node, f: node, r: symbol, b: node, p: symbol)
+rs_route(dc, f, r, b, p) :- fa_route(f, dc, r, _), count : { rs_dc_router(dc, r2) } = 1, rs_path(dc, p),
+    nearest(dc, b, rs_block_kind), docof(dc, d), !fa_test_doc(d).
+
+// ---- versioned duplicates ----------------------------------------------------------------------------------------
+// rs_extra_dec(f): def f carries a decorator that is not one of its route decorators.
+.decl rs_extra_dec(f: node)
+rs_extra_dec(f) :- rs_route(_, f, _, _, _), decorator(f, e), unparen(e, x), !fa_route(f, x, _, _).
+// rs_name(dc, t): the text of route call dc's `name=`, "" when it passes none.
+.decl rs_name(dc: node, t: symbol)
+rs_name(dc, t) :- rs_route(dc, _, _, _, _), fa_route_kw(dc, "name", v), text(v, t).
+rs_name(dc, "") :- rs_route(dc, _, _, _, _), !fa_route_kw(dc, "name", _).
+// rs_versioned(dc): route call dc passes a keyword named for a version.
+.decl rs_versioned(dc: node)
+rs_versioned(dc) :- rs_route(dc, _, _, _, _), fa_route_kw(dc, k, _), match("(?i).*version.*", k).
+// rs_variant(e, l): duplicate routes e and l (rs_pair) are variants a custom route class tells apart.
+.decl rs_variant(e: node, l: node)
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_route(e, fe, _, _, _), rs_extra_dec(fe).
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_route(l, fl, _, _, _), rs_extra_dec(fl).
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), rs_name(e, x), rs_name(l, y), x != y.
+rs_variant(e, l) :- rs_pair(l, e, _, "dup"), (rs_versioned(e) ; rs_versioned(l)).
+
+// ---- the rule ----------------------------------------------------------------------------------------------------
+// rs_pair(l, e, m, how): earlier route e of the same router and block serves method m on every path later route l
+// serves; how "dup" when their paths have the same shape, else "shadow".
+.decl rs_pair(l: node, e: node, m: symbol, how: symbol)
+rs_pair(l, e, m, how) :- rs_route(l, fl, r, b, _), rs_route(e, fe, r, b, _), fl != fe, earlier(e, l),
+    rs_method(l, m), rs_method(e, m), rs_rx(e, rx), rs_shape(l, sl), match(rx, sl), rs_shape(e, se),
+    ((se = sl, how = "dup") ; (se != sl, how = "shadow")).
+// rs_hit(l, e, how): the first such earlier route, a versioned duplicate aside.
+.decl rs_cand(l: node, e: node, how: symbol)
+rs_cand(l, e, how) :- rs_pair(l, e, _, how), how = "shadow".
+rs_cand(l, e, how) :- rs_pair(l, e, _, how), how = "dup", !rs_variant(e, l).
+.decl rs_hit(l: node, e: node, how: symbol)
+rs_hit(l, e, how) :- rs_cand(l, _, _), i = min vi : { rs_cand(l, e2, _), visit_index(e2, vi) }, visit_index(e, i),
+    rs_cand(l, e, how).
+// rs_methods(l, e, ms): the methods both serve, uppercase, joined by "/".
+.decl rs_methods(l: node, e: node, ms: symbol)
+rs_methods(l, e, ms) :- rs_hit(l, e, _), ms = join u by u sep "/" : { rs_pair(l, e, m, _), u = @upper(m) }.
+
+RouteShadowed(l, ms, pl, pe, el) :- rs_hit(l, e, "shadow"), rs_methods(l, e, ms), fa_route_path(l, pl),
+    fa_route_path(e, pe), line(e, el), rs_dc_router(l, r), fa_router_key(r, _).
+RouteDuplicate(l, ms, pl, el) :- rs_hit(l, e, "dup"), rs_methods(l, e, ms), fa_route_path(l, pl), line(e, el),
+    rs_dc_router(l, r), fa_router_key(r, _).
+
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/__init__.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/main.py"
+    .fixture "app/versioning.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/versioning.py"
+    .fixture "app/routes/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/__init__.py"
+    .fixture "app/routes/cases.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/cases.py"
+    .fixture "app/routes/files.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/files.py"
+    .fixture "app/routes/near_misses.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/routes/near_misses.py"
+    .fixture "app/shared/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/__init__.py"
+    .fixture "app/shared/items.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/items.py"
+    .fixture "app/shared/router.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/router.py"
+    .fixture "app/shared/search.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/shared/search.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/tests/__init__.py"
+    .fixture "app/tests/test_routes.py" from "../upstream/fastapi-practice/authored/fastapi-practice-route-shadowed/app/tests/test_routes.py"
+    .expect _ at "app/main.py":20
+    .expect _ at "app/routes/cases.py":11
+    .expect _ at "app/routes/cases.py":22
+    .expect _ at "app/routes/cases.py":35
+    .expect _ at "app/routes/cases.py":52
+    .expect _ at "app/routes/cases.py":62
+    .expect _ at "app/routes/files.py":12
+    .expect _ at "app/routes/files.py":17
+    .expect _ at "app/routes/files.py":33
+    .expect _ at "app/routes/files.py":38
+    .expect _ at "app/routes/files.py":49
+    .expect _ at "app/routes/files.py":65
+    .expect _ at "app/routes/files.py":97
+    .expect _ at "app/routes/files.py":112
+    .expect _ at "app/routes/files.py":132
+    .expect _ at "app/routes/files.py":156
+    .expect _ at "app/routes/near_misses.py":80
+.end

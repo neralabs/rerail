@@ -7,8 +7,9 @@ package at the repository root. Packs that port a linter are
 > Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, except a private one
 > (`"private": true` in its `package.json`; today `rerail`), which is never published, is left out of core's pack
 > list, and is installed from a checkout with `rerail packs add packs/<id>`. Core ships none of them: set-up and
-> `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs here: `python`, `php`, `blade`, `rust`,
-> `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `django`, `sql`, `complexity` and `rerail`. Every rule
+> `rerail packs add` install them into `$RERAIL_HOME/packs`. The packs here: `python`, `python-practice`,
+> `python-security`, `php`, `blade`, `rust`, `typescript`, `javascript`, `react`, `vue`, `node`, `next`, `django`, `drf`,
+> `fastapi`, `pydantic`, `sqlalchemy`, `alembic`, `celery`, `pytest`, `sql`, `complexity` and `rerail`. Every rule
 > document Rerail ships lives in a pack; core has no rules of its own, and lists the published packs by name only
 > (`src/engine/catalog/pack-list.generated.ts`).
 
@@ -22,8 +23,8 @@ package at the repository root. Packs that port a linter are
 
 ```sh
 npm run fixtures:pull                                               # the packs' test data and samples, from S3
-npx vitest run test/engine/catalog/packs.test.ts                    # every pack: checks 1 to 8 and each rule's status
-npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
+npx vitest run test/engine/catalog/packs                            # every pack: checks 1 to 8 and each rule's status
+npx vitest run test/engine/catalog/packs -t "pack python"           # one pack
 npm run test:conformance                                            # the conformance check
 ```
 
@@ -46,7 +47,7 @@ Each pack lives in `packs/<id>/`. A private pack publishes none of it:
 | `pack.json` | The pack (`rerail.rule-pack/v1`): match, and each rule's document, title, group, mode and examples | yes |
 | `rules/<id>.json` | Rule documents, each named for its rule id ([rule ids](../docs/pack-format.md#packjson)): code rules (`rerail.policy/v1`) or [conversation rules](../docs/pack-format.md#packjson) | yes |
 | `rules/<id>.rerail`, `rules/lib/` | Code rules written in `.rerail`, and library files only the pack's rules include ([rules written in .rerail](../docs/pack-format.md#rules-written-in-rerail)) | yes |
-| `cases/<id>/` | Fixtures a `.rerail` rule's tests read | no |
+| `upstream/<tool>/authored/<id>/` | The cases a `.rerail` rule's tests read: pack test data, not in git, one archive per tool in S3 that `upstream/<tool>/test-data.lock` names and `npm run fixtures:pull` fetches | no |
 | `LICENSE`, `NOTICE`, `README.md` | The pack's licence, notice and description | yes |
 | `licenses/<project>/` | Upstream licence, verbatim, and `UPSTREAM.md`: per upstream repository, its source, the patterns of the files taken and how, and what is not copied ([format](../docs/pack-format.md#upstreammd)) | yes |
 | `conformance.json`, `divergences.json`, `upstream/`, `candidates/` | For ported rules: the ports, declared divergences, ports under evaluation (scored and reported, never gated) with `candidates/README.md`, what each candidate is waiting on and its rule details, which `README.md` leaves out, and per tool `upstream/<tool>/` with its generator, `gates.yaml` and the locks of its pack data. The tool's copied tests, expected findings and samples are not in git: one archive each in S3, which `test-data.lock` and `samples.lock` name and `npm run fixtures:pull` fetches ([pack data](../docs/pack-format.md#pack-data)) | no |

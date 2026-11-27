@@ -1,0 +1,174 @@
+.policy "drf-practice-page-size-uncapped" revision 1
+.description "Cap the page size a client can request from a DRF paginator, so one request cannot load and serialise a whole table."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. DRF's paginators read the page size from the query string when the class names a
+// parameter for it, and cap it only by max_limit (LimitOffsetPagination) or max_page_size (PageNumberPagination,
+// CursorPagination), both None by default. So `?limit=100000000` or `?page_size=100000000` makes one request load
+// and serialise every row. The rule reports, outside test code:
+//   - the built-in rest_framework.pagination.LimitOffsetPagination (its limit parameter is on, its max_limit None)
+//     named as REST_FRAMEWORK["DEFAULT_PAGINATION_CLASS"] (at the setting's value), as a pagination class: a class
+//     body's or `self.`'s `pagination_class = ...`, an `@action(pagination_class=...)` (at the value), or
+//     instantiated in code (`paginator = LimitOffsetPagination()` in an `@api_view`, at the call);
+//   - a project class deriving, directly or through the run's classes in any module, from LimitOffsetPagination
+//     that has no max_limit (its own or a run base's; `max_limit = None` is none) and no get_limit() that caps it
+//     (at the class name);
+//   - a project class deriving from PageNumberPagination or CursorPagination whose (inherited) page_size_query_param
+//     is a string and that has no max_page_size and no get_page_size() that caps it (at the class name).
+//   REST_FRAMEWORK = {"DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination"}   reported
+//   class SizedPages(PageNumberPagination):                    reported: ?page_size=100000000 is honoured
+//       page_size_query_param = "page_size"
+//   class Pages(PageNumberPagination):                         not reported: capped
+//       page_size_query_param = "page_size"
+//       max_page_size = 100
+// It leaves alone: a max_limit/max_page_size set to any value but None (however large), assigned in `__init__`
+// (`self.max_limit = ...`) or defined as a property; a get_limit()/get_page_size() override (own or a run base's)
+// unless it hands the client's value back unchecked: a `return super().get_limit(...)` in a method that neither
+// raises nor calls min(); a paginate_queryset() override (own or a run base's) that calls min() or raises (it clamps
+// the size itself: `limit = min(self.get_limit(request) or 50, 500)`); `limit_query_param = None` and
+// `page_size_query_param = None`; PageNumberPagination and
+// CursorPagination without page_size_query_param (the client cannot change the size); a setting or
+// `pagination_class` that names a project class (the class is judged where it is written); a project class that only
+// serves as a base (a run class derives from it, and no setting, `pagination_class` or call names it); test code.
+// Gaps: a cap read from configuration (`max_page_size = settings.X`) is trusted even when the configured value is
+// None or huge; a cap far above any real page (paperless-ngx's 100000) is left alone; page_size_query_param set in
+// `__init__` is not seen; an override that clamps through a helper but also returns `super().get_page_size(...)`
+// unchanged on some path is reported; a paginate_queryset() that clamps through a helper without min() is
+// reported; paginators of third-party packages are not followed.
+
+#include "lib/drf.rerail"
+
+.violation BuiltinLimitOffset(at: node, where: symbol) "DRF's LimitOffsetPagination has no max_limit, so {where} lets `?limit=` load a whole table. Use a subclass with max_limit set no lower than your own clients' largest page."
+BuiltinLimitOffset(v, "this default pagination class") :- psu_setting_value(v, q), psu_builtin_lo(q).
+BuiltinLimitOffset(e, "this pagination class") :- psu_pag_value(e), unparen(e, u), sym_of(u, q), psu_builtin_lo(q).
+BuiltinLimitOffset(k, "this paginator") :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), psu_builtin_lo(q),
+    docof(k, d), !dj_test_doc(d).
+
+// A project class is judged by its symbol (its bases and members may sit in other modules) and reported at its name.
+.violation LimitOffsetUncapped(at: node, name: symbol) "`{name}` sets no max_limit, so `?limit=` can load a whole table. Set max_limit no lower than your own clients' largest page; a larger request is then capped, not rejected."
+LimitOffsetUncapped(n, x) :- psu_lo_open(q), class_def(c, q), field(c, "name", n), text(n, x).
+
+.violation PageSizeUncapped(at: node, name: symbol, p: symbol) "`{name}` reads `?{p}=` with no max_page_size, so one request can load a whole table. Set max_page_size no lower than your own clients' largest page; a larger request is capped, not rejected."
+PageSizeUncapped(n, x, p) :- psu_ps_open(q, p), class_def(c, q), field(c, "name", n), text(n, x).
+
+.decl psu_builtin_lo(q: symbol)
+psu_builtin_lo("rest_framework.pagination.LimitOffsetPagination").
+
+// psu_setting_value(v, q): REST_FRAMEWORK["DEFAULT_PAGINATION_CLASS"] is v, naming q (a dotted string or a class).
+.decl psu_setting_value(v: node, q: symbol)
+psu_setting_value(v, q) :- drf_setting("DEFAULT_PAGINATION_CLASS", v), unparen(v, u), str(u, q).
+psu_setting_value(v, q) :- drf_setting("DEFAULT_PAGINATION_CLASS", v), unparen(v, u), sym_of(u, q).
+
+// psu_pag_value(e): e is assigned as a pagination class outside test code: a class body's `pagination_class = e`,
+// `self.pagination_class = e` (or any `<x>.pagination_class = e`), `@action(pagination_class=e)`.
+.decl psu_pag_value(e: node)
+psu_pag_value(e) :- drf_own_attr(_, "pagination_class", e, a), docof(a, d), !dj_test_doc(d).
+psu_pag_value(e) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, _, "pagination_class"), field(a, "right", e),
+    docof(a, d), !dj_test_doc(d).
+psu_pag_value(e) :- drf_action_def(_, k), drf_kw(k, "pagination_class", e), docof(k, d), !dj_test_doc(d).
+
+// psu_lo_open(q): project class q derives from LimitOffsetPagination, keeps its limit parameter, and has no cap.
+.decl psu_lo_open(q: symbol)
+psu_lo_open(q) :- drf_class_mod_q(q, "rest_framework.pagination", "LimitOffsetPagination"), psu_reportable(q),
+    !psu_capped(q, "max_limit"), !psu_override(q, "get_limit"), !psu_param_off(q, "limit_query_param").
+
+// psu_ps_open(q, p): project class q derives from PageNumberPagination or CursorPagination, reads the page size
+// from query parameter p, and has no cap.
+.decl psu_ps_open(q: symbol, p: symbol)
+psu_ps_open(q, p) :- drf_class_mod_q(q, "rest_framework.pagination", x),
+    (x = "PageNumberPagination" ; x = "CursorPagination"), drf_attr_q(q, "page_size_query_param", h), drf_hstr(h, p),
+    psu_reportable(q), !psu_capped(q, "max_page_size"), !psu_override(q, "get_page_size").
+
+// psu_capped(q, x): class q has cap x: an attribute that is not None (its own, else a run base's), a method or
+// property of that name, or an `self.x = ...` in its (inherited) __init__.
+.decl psu_capped(q: symbol, x: symbol)
+psu_capped(q, x) :- drf_attr_q(q, x, h), !drf_hkind(h, "none").
+psu_capped(q, x) :- drf_method_q(q, x, _), (x = "max_limit" ; x = "max_page_size").
+psu_capped(q, x) :- drf_method_q(q, "__init__", fq), drf_init_sets(fq, x), (x = "max_limit" ; x = "max_page_size").
+
+// psu_param_off(q, x): class q's (inherited) query parameter x is None: the client cannot pick the size.
+.decl psu_param_off(q: symbol, x: symbol)
+psu_param_off(q, x) :- drf_attr_q(q, x, h), drf_hkind(h, "none").
+
+// psu_override(q, x): class q (or a run base) overrides x (get_limit, get_page_size) in a way that may cap it: any
+// override but one that returns `super().x(...)` unchanged and neither raises nor calls min(). Each method's body is
+// read in its own file (psu_pass_through, psu_checks, by the def's qualname).
+.decl psu_override(q: symbol, x: symbol)
+psu_override(q, x) :- drf_method_q(q, x, fq), (x = "get_limit" ; x = "get_page_size"), !psu_pass_through(fq, x).
+// A paginate_queryset() that clamps or rejects the size itself caps every size the class reads.
+psu_override(q, x) :- drf_pagination_q(q), drf_method_q(q, "paginate_queryset", fq), psu_checks(fq),
+    (x = "get_limit" ; x = "get_page_size").
+.decl psu_pass_through(fq: symbol, x: symbol)
+psu_pass_through(fq, x) :- kind(f, "function_definition"), def_name(f, x), (x = "get_limit" ; x = "get_page_size"),
+    kind(r, "return_statement"), def_frame(r, f), child(r, e, 0), unparen(e, u), kind(u, "call"),
+    field(u, "function", fn), attr_of(fn, s, x), kind(s, "call"), field(s, "function", sf), text(sf, "super"),
+    !psu_checks_at(f), qualname(f, fq).
+.decl psu_checks(fq: symbol)
+psu_checks(fq) :- psu_checks_at(f), qualname(f, fq).
+.decl psu_checks_at(f: node)
+psu_checks_at(f) :- kind(r, "raise_statement"), def_frame(r, f).
+psu_checks_at(f) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), sym_of(fn, "builtins.min").
+
+// psu_reportable(q): q is outside test code, and is used or is a leaf: no class of the run derives from it, or a
+// setting, a `pagination_class` value or a call names it.
+.decl psu_reportable(q: symbol)
+psu_reportable(q) :- drf_pagination_q(q), !drf_qtest(q), !drf_has_sub(q).
+psu_reportable(q) :- drf_pagination_q(q), !drf_qtest(q), psu_used(q).
+.decl psu_used(q: symbol)
+psu_used(q) :- drf_pagination_q(q), drf_setting_class("DEFAULT_PAGINATION_CLASS", s), drf_cls_q(s, q).
+psu_used(q) :- drf_pagination_q(q), psu_pag_sym(q).
+psu_used(q) :- drf_pagination_q(q), psu_pag_sym(s), drf_cls_q(s, q).
+psu_used(q) :- drf_pagination_q(q), psu_called(q).
+// psu_pag_sym(s): a pagination_class value names s. psu_called(q): a call constructs class q of a module its file
+// reads (the phase py_names).
+.decl psu_pag_sym(s: symbol)
+psu_pag_sym(s) :- psu_pag_value(e), unparen(e, u), sym_of(u, s).
+drf_cls_ask(s) :- psu_pag_sym(s).
+.decl psu_called(q: symbol)
+psu_called(q) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), docof(k, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__class(m, q).
+
+// The cases, `upstream/drf-practice/authored/drf-practice-page-size-uncapped/`, read as two repositories: each line
+// ending in `# caught` is reported, and no other line.
+.test builtin exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/settings.py"
+    .fixture "config/test_settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/config/test_settings.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/__init__.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/models.py"
+    .fixture "shop/views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/views.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/builtin/shop/tests/test_views.py"
+    .expect _ at "config/settings.py":5
+    .expect _ at "shop/views.py":14
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":56
+    .expect _ at "shop/views.py":63
+    .expect _ at "shop/views.py":70
+.end
+
+.test custom exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/config/settings.py"
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/__init__.py"
+    .fixture "api/base.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/base.py"
+    .fixture "api/pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/pagination.py"
+    .fixture "api/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/tests/__init__.py"
+    .fixture "api/tests/test_pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/api/tests/test_pagination.py"
+    .fixture "reports/__init__.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/__init__.py"
+    .fixture "reports/models.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/models.py"
+    .fixture "reports/pagination.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/pagination.py"
+    .fixture "reports/views.py" from "../upstream/drf-practice/authored/drf-practice-page-size-uncapped/custom/reports/views.py"
+    .expect _ at "api/pagination.py":7
+    .expect _ at "api/pagination.py":24
+    .expect _ at "api/pagination.py":39
+    .expect _ at "api/pagination.py":58
+    .expect _ at "api/pagination.py":76
+    .expect _ at "api/pagination.py":96
+    .expect _ at "api/pagination.py":144
+    .expect _ at "reports/pagination.py":5
+    .expect _ at "reports/pagination.py":9
+    .expect _ at "reports/views.py":31
+.end

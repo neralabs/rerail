@@ -1,0 +1,226 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "pydantic",
+  "name": "Pydantic",
+  "category": "framework",
+  "covers": "Rerail's own Pydantic rules, from the Pydantic v2 docs and migration guide, for correct models, validators and serialization.",
+  "reason": "matches Pydantic",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "pydantic"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "pydantic-practice-v1-api-in-v2",
+      "document": "rules/pydantic-practice-v1-api-in-v2.rerail",
+      "title": "Pydantic practice: Pydantic 1 API that Pydantic 2 removed or ignores, in a project pinned to Pydantic 2",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "deps.removed-api"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, Field\n\n\nclass User(BaseModel):\n    id: int\n    handle: str = Field(..., regex=r\"^[a-z]+$\")\n\n    class Config:\n        orm_mode = True\n\n\ndef load(row) -> \"User\":\n    return User.from_orm(row)\n",
+          "with": [
+            {
+              "path": "pyproject.toml",
+              "text": "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n    \"pydantic>=2.7,<3\",\n]\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, ConfigDict, Field\n\n\nclass User(BaseModel):\n    model_config = ConfigDict(from_attributes=True)\n\n    id: int\n    handle: str = Field(..., pattern=r\"^[a-z]+$\")\n\n\ndef load(row) -> User:\n    return User.model_validate(row)\n",
+          "with": [
+            {
+              "path": "pyproject.toml",
+              "text": "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n    \"pydantic>=2.7,<3\",\n]\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-dump-mode-json",
+      "document": "rules/pydantic-practice-dump-mode-json.rerail",
+      "title": "Pydantic practice: `model_dump()` handed to json.dumps, a JSONResponse or `json=` while the model has a datetime, UUID, Decimal or other field json cannot encode",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "serialization.non-json-dump"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/routes.py",
+          "text": "import httpx\nfrom fastapi import APIRouter\nfrom fastapi.responses import JSONResponse\n\nfrom app.schemas import Event\n\nrouter = APIRouter()\n\n\n@router.post(\"/events\")\ndef create_event(event: Event) -> JSONResponse:\n    return JSONResponse(content=event.model_dump(), status_code=201)\n\n\nasync def notify(event: Event) -> None:\n    async with httpx.AsyncClient() as client:\n        await client.post(\"https://hooks.example.com/events\", json=event.model_dump())\n",
+          "with": [
+            {
+              "path": "app/schemas.py",
+              "text": "from datetime import datetime\n\nfrom pydantic import BaseModel\n\n\nclass Event(BaseModel):\n    name: str\n    starts_at: datetime\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/routes.py",
+          "text": "import httpx\nfrom fastapi import APIRouter\nfrom fastapi.responses import JSONResponse\n\nfrom app.schemas import Event\n\nrouter = APIRouter()\n\n\n@router.post(\"/events\")\ndef create_event(event: Event) -> JSONResponse:\n    return JSONResponse(content=event.model_dump(mode=\"json\"), status_code=201)\n\n\nasync def notify(event: Event) -> None:\n    async with httpx.AsyncClient() as client:\n        await client.post(\"https://hooks.example.com/events\", json=event.model_dump(mode=\"json\"))\n",
+          "with": [
+            {
+              "path": "app/schemas.py",
+              "text": "from datetime import datetime\n\nfrom pydantic import BaseModel\n\n\nclass Event(BaseModel):\n    name: str\n    starts_at: datetime\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-validator-returns-value",
+      "document": "rules/pydantic-practice-validator-returns-value.rerail",
+      "title": "Pydantic practice: a validator that can end without returning the value (or `self`)",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "validation.validator-returns-none"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, field_validator, model_validator\n\n\nclass Signup(BaseModel):\n    email: str\n    quantity: int\n\n    @field_validator(\"email\")\n    @classmethod\n    def email_not_taken(cls, v: str) -> str:\n        if v.endswith(\"@example.com\"):\n            raise ValueError(\"taken\")\n\n    @model_validator(mode=\"after\")\n    def check_quantity(self):\n        if self.quantity < 0:\n            raise ValueError(\"negative quantity\")\n"
+        },
+        "passes": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, field_validator, model_validator\n\n\nclass Signup(BaseModel):\n    email: str\n    quantity: int\n\n    @field_validator(\"email\")\n    @classmethod\n    def email_not_taken(cls, v: str) -> str:\n        if v.endswith(\"@example.com\"):\n            raise ValueError(\"taken\")\n        return v\n\n    @model_validator(mode=\"after\")\n    def check_quantity(self):\n        if self.quantity < 0:\n            raise ValueError(\"negative quantity\")\n        return self\n"
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-default-factory",
+      "document": "rules/pydantic-practice-default-factory.rerail",
+      "title": "Pydantic practice: field default computed once at import instead of a default_factory",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "code",
+        "severity": "high",
+        "hazard": "model.default-evaluated-once"
+      },
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/schemas.py",
+          "text": "from datetime import datetime, timezone\nfrom uuid import UUID, uuid4\n\nfrom pydantic import BaseModel, Field\n\n\nclass Order(BaseModel):\n    id: UUID = uuid4()\n    created_at: datetime = Field(default=datetime.now(timezone.utc))\n"
+        },
+        "passes": {
+          "path": "app/schemas.py",
+          "text": "from datetime import datetime, timezone\nfrom uuid import UUID, uuid4\n\nfrom pydantic import BaseModel, Field\n\n\nclass Order(BaseModel):\n    id: UUID = Field(default_factory=uuid4)\n    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))\n"
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-before-validator-raw-input",
+      "document": "rules/pydantic-practice-before-validator-raw-input.rerail",
+      "title": "Pydantic practice: a before, wrap or plain validator that uses its raw input as one type without checking it",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium",
+        "hazard": "validation.unchecked-raw-input"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/schemas.py",
+          "text": "from fastapi import APIRouter\nfrom pydantic import BaseModel, field_validator, model_validator\n\nrouter = APIRouter()\n\n\nclass Signup(BaseModel):\n    email: str\n    plan: str = \"free\"\n\n    @field_validator(\"email\", mode=\"before\")\n    @classmethod\n    def normalise_email(cls, v: str) -> str:\n        return v.strip().lower()\n\n    @model_validator(mode=\"before\")\n    @classmethod\n    def legacy_plan(cls, data):\n        data.setdefault(\"plan\", data.pop(\"tier\", \"free\"))\n        return data\n\n\n@router.post(\"/signup\")\nasync def signup(body: Signup) -> None: ...\n"
+        },
+        "passes": {
+          "path": "app/schemas.py",
+          "text": "from typing import Any\n\nfrom fastapi import APIRouter\nfrom pydantic import BaseModel, field_validator, model_validator\n\nrouter = APIRouter()\n\n\nclass Signup(BaseModel):\n    email: str\n    plan: str = \"free\"\n\n    @field_validator(\"email\", mode=\"before\")\n    @classmethod\n    def normalise_email(cls, v: Any) -> Any:\n        if not isinstance(v, str):\n            return v\n        return v.strip().lower()\n\n    @model_validator(mode=\"before\")\n    @classmethod\n    def legacy_plan(cls, data: Any) -> Any:\n        if isinstance(data, dict):\n            data.setdefault(\"plan\", data.pop(\"tier\", \"free\"))\n        return data\n\n\n@router.post(\"/signup\")\nasync def signup(body: Signup) -> None: ...\n"
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-secret-settings-str",
+      "document": "rules/pydantic-practice-secret-settings-str.rerail",
+      "title": "Pydantic practice: secret on a settings class typed str instead of SecretStr",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "config",
+        "severity": "medium",
+        "hazard": "secrets.plaintext-setting"
+      },
+      "mode": "log",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/core/config.py",
+          "text": "from pydantic_settings import BaseSettings\n\n\nclass Settings(BaseSettings):\n    SECRET_KEY: str\n    SMTP_PASSWORD: str | None = None\n    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60\n"
+        },
+        "passes": {
+          "path": "app/core/config.py",
+          "text": "from pydantic import SecretStr\nfrom pydantic_settings import BaseSettings\n\n\nclass Settings(BaseSettings):\n    SECRET_KEY: SecretStr\n    SMTP_PASSWORD: SecretStr | None = None\n    JWT_TOKEN_AUDIENCE: str = \"api\"\n    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60\n"
+        }
+      }
+    },
+    {
+      "id": "pydantic-practice-deprecated-v1-api",
+      "document": "rules/pydantic-practice-deprecated-v1-api.rerail",
+      "title": "Pydantic practice: Pydantic 1 API that Pydantic 2 deprecates and Pydantic 3 removes, in a project pinned to Pydantic 2",
+      "group": "Pydantic practice",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low",
+        "hazard": "deps.deprecated-api"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, validator\n\n\nclass User(BaseModel):\n    id: int\n    email: str\n\n    @validator(\"email\")\n    def lower_email(cls, v):\n        return v.lower()\n\n\ndef load(data: dict) -> dict:\n    user = User.parse_obj(data)\n    return user.dict(exclude_unset=True)\n",
+          "with": [
+            {
+              "path": "pyproject.toml",
+              "text": "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n    \"pydantic>=2.7,<3\",\n]\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/schemas.py",
+          "text": "from pydantic import BaseModel, field_validator\n\n\nclass User(BaseModel):\n    id: int\n    email: str\n\n    @field_validator(\"email\")\n    @classmethod\n    def lower_email(cls, v: str) -> str:\n        return v.lower()\n\n\ndef load(data: dict) -> dict:\n    user = User.model_validate(data)\n    return user.model_dump(exclude_unset=True)\n",
+          "with": [
+            {
+              "path": "pyproject.toml",
+              "text": "[project]\nname = \"app\"\nversion = \"0.1.0\"\ndependencies = [\n    \"pydantic>=2.7,<3\",\n]\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

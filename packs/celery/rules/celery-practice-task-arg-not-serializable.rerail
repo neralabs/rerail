@@ -1,0 +1,279 @@
+.policy "celery-practice-task-arg-not-serializable" revision 1
+.description "Pass a Celery task plain data (ids, strings, lists, dicts), never a SQLAlchemy model or session, a set, an open file, a lambda, a generator or a function."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Celery serializes a task's arguments into the message, with JSON by default (kombu's
+// encoder adds datetime, date, time, Decimal, UUID and bytes, nothing else). An argument it cannot encode makes the
+// send raise EncodeError; with pickle, a SQLAlchemy model arrives as a detached snapshot that is stale when the worker
+// runs, and saving it there overwrites newer changes.
+//
+// It matches an argument a task receives (lib/celery's cel_task_arg: `delay`, `s`, `si`, `apply_async` and
+// `send_task` args and kwargs, `**{...}` and `*[...]` spreads, `kwargs=dict(...)`) of a call on a Celery task
+// (cel_task_call: the def resolves through imports) or a send on a task reference (cel_send: only what resolves to a
+// Celery task, so RQ's `@job(...).delay` or a thread pool's `apply_async` is not one), when the argument is
+//   - a SQLAlchemy model instance (lib/celery's sa_instance: `M(...)`, `session.get(M, pk)`,
+//     `session.scalar(select(M)...)`, `M.query...first()`, a name bound to one, a parameter annotated `M`, a value the
+//     type program proves is a model), `self` in a method of a model, Flask-Login's `current_user` (a proxy of the
+//     user model), or a list, tuple or dict literal holding one; outside files that import django (the django pack's
+//     django-practice-task-arg-model-instance owns those);
+//   - a SQLAlchemy session proven by what binds it (lib/celery's sa_session_proven: a session class's constructor, a
+//     sessionmaker or scoped_session, Flask-SQLAlchemy's `db.session`, a run function returning or yielding one, an
+//     annotation with a session class, also through `Annotated` aliases), or, by name alone, an unannotated parameter
+//     named like a session that its function never rebinds, in a run that imports SQLAlchemy (sa_session_guess);
+//   - a set or frozenset: a literal, a comprehension, a `set(...)`/`frozenset(...)` call, a `|`, `&`, `-` or `^` with
+//     one of those, or a name whose last assignment before the send is one of those;
+//   - an open file: `open(...)`, a name whose last assignment is one, or the target of `with open(...) as f`;
+//   - a lambda or a generator expression;
+//   - a function of the run passed by name.
+// A task declared `serializer="pickle"`, a send with `serializer="pickle"`, or an app whose task_serializer names
+// pickle (any spelling, `signed-pickle` too) can carry sets and module-level functions, so those shapes are left
+// alone there; models, sessions, files, lambdas and generators are still reported (pickle raises on the last four).
+//   order = session.get(Order, pk); ship.delay(order)          reported
+//   tag.delay({"a", "b"})                                      reported
+//   ship.delay(order.id); tag.delay(sorted(tags))              not reported
+//   tag.delay(datetime.now(), Decimal("1"), uuid4(), b"x")      not reported (kombu encodes them)
+// A run whose Task subclass (resolved through bases, or `<app>.Task` / `self.Task` in a Celery subclass) overrides
+// apply_async and rewrites its args or kwargs there (indico's _CelerySAWrapper turns each model into its identity key
+// and re-fetches it in the worker) is left alone for the model shape.
+// Left alone too: a local named `session` bound to anything else (a string, a dict, a request field, a requests or
+// aiohttp session), and a parameter annotated with a type that is not a SQLAlchemy session. Test files are skipped.
+// Gaps: values whose kind only a type checker knows (a helper's return the type program cannot follow); instances
+// inside comprehensions or containers built elsewhere; related objects (`order.customer`); dataclass and Pydantic
+// instances (left out: kombu honours a `__json__` method, and some projects register them); a model whose class
+// defines `__json__` (kombu encodes it, but the snapshot is still stale); a project that registers `set` with
+// kombu's register_type; a serializer chosen in a router or a Task subclass.
+
+#include "lib/celery.rerail"
+
+// Each call and argument is stated in its own file, with what its task and its value need of other files (lib/celery's
+// needs, cel_is): the task def a call names (q, "task"), the model class an argument is an instance of. What the run
+// does as a whole (a pickling app, a Task subclass that rewrites arguments, a task declared pickled) are facts over
+// symbols (tas_app_pickled, tas_wrapped, tas_pickled_q: cross_file).
+.violation TaskArgModel(at: node, task: symbol, arg: symbol) "`{arg}` is a SQLAlchemy model passed to task `{task}`: JSON cannot encode it, and pickle sends a copy that is stale when the task runs. Pass its primary key and load the row in the task."
+TaskArgModel(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_model(a, mq, mk),
+    cel_is(mq, mk), text(a, x), docof(c, d), !cel_django_doc(d), !tas_wrapped().
+
+// tas_model(a, nq, nk): lib/celery's sa_instance, `self` in a method of a model (`notify.delay(self)` in
+// `Order.place`), Flask-Login's current_user, or a list, tuple or dict literal holding one.
+.decl tas_model(a: node, nq: symbol, nk: symbol)
+tas_model(a, nq, nk) :- sa_instance(a, nq, nk).
+tas_model(a, nq, nk) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e, "self", f),
+    param(f, "self", 0), nearest(f, k, scope), sa_model(k, nq, nk).
+tas_model(a, "", "") :- unparen(a, e), (sym_of(e, "flask_login.current_user") ;
+    sym_of(e, "flask_login.utils.current_user")).
+tas_model(a, nq, nk) :- unparen(a, e), (kind(e, "list") ; kind(e, "tuple")), child(e, x, _), tas_model(x, nq, nk).
+tas_model(a, nq, nk) :- unparen(a, e), cel_dict_value(e, x), tas_model(x, nq, nk).
+
+// tas_wrapped(): a Task subclass of the run defines `apply_async` and assigns `args` or `kwargs` there: the run
+// converts arguments before they reach the serializer. A fact of the whole run (cross_file, no column), from each
+// file's wrappers (tas_arg_wrapper) with their needs met.
+.decl tas_wrapped() cross_file
+tas_wrapped() :- tas_wrapper_need(nq, nk), cel_is(nq, nk).
+.decl tas_wrapper_need(nq: symbol, nk: symbol)
+tas_wrapper_need(nq, nk) :- tas_arg_wrapper(_, nq, nk).
+.decl tas_arg_wrapper(g: node, nq: symbol, nk: symbol)
+tas_arg_wrapper(g, nq, nk) :- kind(g, "function_definition"), def_name(g, "apply_async"), nearest(g, k, scope),
+    kind(k, "class_definition"), tas_task_class(k, nq, nk), (asg(g, "args", _, _) ; asg(g, "kwargs", _, _)).
+// tas_task_class(k, nq, nk): k derives from celery's Task (lib/celery's "task_cls", through the run's classes), or
+// from `<app>.Task`, the app's task base (`app.Task`, or `self.Task` in a method of a Celery subclass: py_names'
+// ancestors, python/names' class_anc).
+.decl tas_task_class(k: node, nq: symbol, nk: symbol)
+tas_task_class(k, b, "task_cls") :- cel_class_base(k, b).
+tas_task_class(k, nq, nk) :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
+    cel_app_ref(u, nq, nk).
+tas_task_class(k, "", "") :- field(k, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"), unparen(o, u),
+    text(u, "self"), nearest(k, f, fdef), nearest(f, c, scope), kind(c, "class_definition"), class_anc(c, b),
+    cel_app_class(b).
+
+.violation TaskArgSession(at: node, task: symbol, arg: symbol) "`{arg}` is a SQLAlchemy session passed to task `{task}`; no serializer can carry it to a worker. Pass the ids the task needs and open a session inside the task."
+TaskArgSession(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_session(a, sq, sk),
+    cel_is(sq, sk), text(a, x).
+
+.violation TaskArgSet(at: node, task: symbol, arg: symbol) "`{arg}` is a set passed to task `{task}`; Celery's default JSON serializer cannot encode sets. Pass a list (`sorted(...)` or `list(...)`) and rebuild the set in the task."
+TaskArgSet(a, t, x) :- tas_call(c, t, q, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_set(a), !tas_pickled_here(c),
+    !tas_pickled_q(q), !tas_app_pickled(), text(a, x).
+
+.violation TaskArgFile(at: node, task: symbol, arg: symbol) "`{arg}` is an open file passed to task `{task}`; no serializer can encode it, and the worker may run elsewhere. Pass the file's path, or its contents if they are small."
+TaskArgFile(a, t, x) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_file(a), text(a, x).
+
+.violation TaskArgCallable(at: node, task: symbol, arg: symbol, what: symbol) "`{arg}` is {what} passed to task `{task}`; Celery's default JSON serializer cannot encode it. Pass the values themselves, or a name the task maps to the function."
+TaskArgCallable(a, t, x, w) :- tas_call(c, t, _, nq, nk), cel_is(nq, nk), cel_task_arg(c, a), tas_callable(c, a, w),
+    text(a, x).
+// A function of the run named bare: a module-level function pickles by reference, so a pickled message leaves it.
+TaskArgCallable(a, t, x, "a function") :- tas_call(c, t, q, nq, nk), cel_is(nq, nk), cel_task_arg(c, a),
+    tas_function(a), !tas_pickled_here(c), !tas_pickled_q(q), !tas_app_pickled(), text(a, x).
+TaskArgCallable(g, t, x, "a generator expression") :- tas_call(c, t, _, nq, nk), cel_is(nq, nk),
+    tas_bare_generator(c, g), text(g, x).
+
+// tas_call(c, t, q, nq, nk): c is a task call or send outside test files; t names the task for the message; q is the
+// task def's symbol when c names one (cel_task_call), else "".
+.decl tas_call(c: node, t: symbol, q: symbol, nq: symbol, nk: symbol)
+tas_call(c, t, q, q, "task") :- cel_task_call(c, q, _), split_dot(q, _, t), tas_live(c).
+tas_call(c, t, "", nq, nk) :- cel_send(c, m, nq, nk), m != "send_task", !tas_def_call(c), field(c, "function", fn),
+    attr_of(fn, o, _), text(o, t), tas_live(c).
+tas_call(c, t, "", "", "") :- cel_send(c, "send_task", _, _), cel_name_ref(e, t, "send_task", _, _),
+    child(al, e, _), field(c, "arguments", al), tas_live(c).
+tas_call(c, "?", "", "", "") :- cel_send(c, "send_task", _, _), !tas_named_send(c), tas_live(c).
+// tas_def_call(c): c's receiver resolves to a def of the run (cel_task_call), named by the first rule when it is a
+// task, and no task otherwise.
+.decl tas_def_call(c: node)
+tas_def_call(c) :- cel_task_call(c, _, _).
+.decl tas_named_send(c: node)
+tas_named_send(c) :- cel_send(c, "send_task", _, _), field(c, "arguments", al), child(al, e, _),
+    cel_name_ref(e, _, "send_task", _, _).
+.decl tas_live(c: node)
+tas_live(c) :- kind(c, "call"), docof(c, d), !cel_test_doc(d).
+
+// `tag.delay(r for r in rows)`: the generator is the call's whole argument list, which call_arg does not list.
+.decl tas_bare_generator(c: node, g: node)
+tas_bare_generator(c, g) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, m), (m = "delay" ; m = "s" ;
+    m = "si"), field(c, "arguments", g), kind(g, "generator_expression").
+
+// The message of call c is pickled when its task says `serializer="pickle"` (tas_pickled_q, the task's symbol), the
+// call does (tas_pickled_here), or an app of the run sets task_serializer to a pickle serializer (tas_app_pickled).
+.decl tas_pickled_here(c: node)
+tas_pickled_here(c) :- kind(c, "call"), call_arg(c, -1, "serializer", v), tas_pickle_str(v).
+.decl tas_pickled_q(q: symbol) cross_file
+tas_pickled_q(q) :- tas_pickled_def(q, nq, nk), cel_is(nq, nk).
+.decl tas_pickled_def(q: symbol, nq: symbol, nk: symbol)
+tas_pickled_def(q, nq, nk) :- cel_task_option(f, "serializer", v, nq, nk), tas_pickle_str(v), qualname(f, q).
+.decl tas_app_pickled() cross_file
+tas_app_pickled() :- tas_pickle_setting(_).
+.decl tas_pickle_setting(d: number)
+tas_pickle_setting(d) :- cel_setting("task_serializer", v, _), tas_pickle_str(v), docof(v, d).
+.decl tas_pickle_str(v: node)
+tas_pickle_str(v) :- str(v, s), contains("pickle", s).
+
+// tas_session(a, nq, nk): a session proven by what binds it (lib/celery's sa_session_proven), or the name fallback
+// (sa_session_guess, in a run that imports SQLAlchemy) only for a name its function never assigns (an unannotated
+// parameter): an attribute or a local the engine cannot follow is not reported.
+.decl tas_session(a: node, nq: symbol, nk: symbol)
+tas_session(a, nq, nk) :- unparen(a, e), sa_session_proven(e, nq, nk).
+tas_session(a, "", "sa_run") :- unparen(a, e), kind(e, "identifier"), sa_session_guess(e), text(e, x), look(e, x, f),
+    param(f, x, _), !asg(f, x, _, _), !sa_with_alias(e, _).
+
+// tas_set(a): a set or frozenset value.
+.decl tas_set(a: node)
+tas_set(a) :- unparen(a, e), tas_set_value(e).
+tas_set(a) :- unparen(a, e), kind(e, "identifier"), latest_assign(e, x, s), text(e, x), field(s, "right", v),
+    unparen(v, w), tas_set_value(w).
+.decl tas_set_value(v: node)
+tas_set_value(v) :- kind(v, "set").
+tas_set_value(v) :- kind(v, "set_comprehension").
+tas_set_value(v) :- kind(v, "call"), field(v, "function", f), (sym_of(f, "builtins.set") ; sym_of(f, "builtins.frozenset")).
+// A set operator with a set operand gives a set (`tags | {"x"}`; `|` on two dicts gives a dict, so one side must be
+// a set).
+tas_set_value(v) :- kind(v, "binary_operator"), (op(v, "|") ; op(v, "&") ; op(v, "-") ; op(v, "^")), child(v, x, _),
+    tas_set(x).
+
+// tas_file(a): an open file object.
+.decl tas_file(a: node)
+tas_file(a) :- unparen(a, e), tas_open(e).
+tas_file(a) :- unparen(a, e), kind(e, "identifier"), latest_assign(e, x, s), text(e, x), field(s, "right", v),
+    unparen(v, w), tas_open(w).
+tas_file(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), kind(wi, "with_item"), field(wi, "value", ap),
+    kind(ap, "as_pattern"), child(ap, o, 0), unparen(o, w), tas_open(w), field(ap, "alias", al), text(al, x),
+    nearest(wi, ws, "with_statement"), field(ws, "body", b), within(e, b).
+.decl tas_open(v: node)
+tas_open(v) :- kind(v, "call"), field(v, "function", f), (sym_of(f, "builtins.open") ; sym_of(f, "io.open")).
+
+// tas_callable(c, a, what): a lambda or a generator expression. tas_function(a): a function of the run named bare (a
+// def of the run, py_names' defined and no class, or a def its own scope binds).
+.decl tas_callable(c: node, a: node, what: symbol)
+tas_callable(c, a, "a lambda") :- cel_task_arg(c, a), unparen(a, e), kind(e, "lambda").
+tas_callable(c, a, "a generator expression") :- cel_task_arg(c, a), unparen(a, e), kind(e, "generator_expression").
+.decl tas_function(a: node)
+tas_function(a) :- unparen(a, e), kind(e, "identifier"), sym_of(e, q), docof(e, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__defined(m, q), !py_names__class(m, q).
+tas_function(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"),
+    defn(s, x, g), kind(g, "function_definition").
+
+// The cases, `upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line. `pickled/` is an app that sets task_serializer to
+// pickle, so it is its own repository.
+.test cases exactly
+    .fixture "proj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/__init__.py"
+    .fixture "proj/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/celery.py"
+    .fixture "proj/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/models.py"
+    .fixture "proj/tasks.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/tasks.py"
+    .fixture "proj/services.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/services.py"
+    .fixture "proj/fine.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/fine.py"
+    .fixture "proj/db.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/db.py"
+    .fixture "proj/rq_jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/rq_jobs.py"
+    .fixture "proj/sessions.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/sessions.py"
+    .fixture "proj/decorators.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/decorators.py"
+    .fixture "proj/reexport.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/reexport.py"
+    .fixture "proj/uses.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/uses.py"
+    .fixture "proj/ops.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/ops.py"
+    .fixture "proj/tests/test_services.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/proj/tests/test_services.py"
+    .fixture "dj/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/dj/__init__.py"
+    .fixture "dj/views.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/dj/views.py"
+    .expect _ at "dj/views.py":10
+    .expect _ at "proj/sessions.py":19
+    .expect _ at "proj/sessions.py":21
+    .expect _ at "proj/sessions.py":22
+    .expect _ at "proj/sessions.py":23
+    .expect _ at "proj/sessions.py":24
+    .expect _ at "proj/sessions.py":26
+    .expect _ at "proj/sessions.py":28
+    .expect _ at "proj/sessions.py":32
+    .expect _ at "proj/sessions.py":33
+    .expect _ at "proj/sessions.py":38
+    .expect _ at "proj/sessions.py":44
+    .expect _ at "proj/sessions.py":45
+    .expect _ at "proj/sessions.py":46
+    .expect _ at "proj/sessions.py":47
+    .expect _ at "proj/sessions.py":48
+    .expect _ at "proj/sessions.py":49
+    .expect _ at "proj/sessions.py":50
+    .expect _ at "proj/sessions.py":95
+    .expect _ at "proj/uses.py":8
+    .expect _ at "proj/uses.py":9
+    .expect _ at "proj/uses.py":10
+    .expect _ at "proj/uses.py":11
+    .expect _ at "proj/uses.py":12
+    .expect _ at "proj/uses.py":13
+    .expect _ at "proj/models.py":15
+    .expect _ at "proj/services.py":15
+    .expect _ at "proj/services.py":16
+    .expect _ at "proj/services.py":17
+    .expect _ at "proj/services.py":18
+    .expect _ at "proj/services.py":19
+    .expect _ at "proj/services.py":20
+    .expect _ at "proj/services.py":24
+    .expect _ at "proj/services.py":29
+    .expect _ at "proj/services.py":33
+    .expect _ at "proj/services.py":34
+    .expect _ at "proj/services.py":35
+    .expect _ at "proj/services.py":36
+    .expect _ at "proj/services.py":38
+    .expect _ at "proj/services.py":39
+    .expect _ at "proj/services.py":43
+    .expect _ at "proj/services.py":44
+    .expect _ at "proj/services.py":45
+    .expect _ at "proj/services.py":47
+    .expect _ at "proj/services.py":49
+    .expect _ at "proj/services.py":50
+    .expect _ at "proj/services.py":51
+.end
+
+.test pickled_app exactly
+    .fixture "pickled/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/__init__.py"
+    .fixture "pickled/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/celery.py"
+    .fixture "pickled/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/models.py"
+    .fixture "pickled/jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/pickled/jobs.py"
+    .expect _ at "pickled/jobs.py":16
+    .expect _ at "pickled/jobs.py":17
+    .expect _ at "pickled/jobs.py":21
+    .expect _ at "pickled/jobs.py":22
+    .expect _ at "pickled/jobs.py":23
+.end
+
+.test wrapped_app exactly
+    .fixture "wrapped/__init__.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/__init__.py"
+    .fixture "wrapped/celery.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/celery.py"
+    .fixture "wrapped/models.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/models.py"
+    .fixture "wrapped/jobs.py" from "../upstream/celery-practice/authored/celery-practice-task-arg-not-serializable/wrapped/jobs.py"
+    .expect _ at "wrapped/jobs.py":13
+.end

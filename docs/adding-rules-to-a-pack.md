@@ -101,7 +101,7 @@ A rule with no upstream needs no test data; its examples are the proof.
    generator's input instead (React: `OWN` in `scripts/generate/packs/react-specs.mjs`).
 4. Add its section under `## Rule details` in `packs/<id>/README.md` (check 5).
 5. Add a changeset, its file name opening with its change type ([.changeset/README.md](../.changeset/README.md)).
-6. Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`.
+6. Run `npx vitest run test/engine/catalog/packs -t "pack <id>"`.
 
 The pull request says what the examples show and what they leave out.
 
@@ -262,7 +262,7 @@ Skeleton and full example:
 4. **Rules**: own rules, or a tool-pack of candidates.
 5. **Repository lists**: grep for a sibling pack's id, including [rule-packs.md](rule-packs.md#the-packs).
 
-Run `npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"`. After merge, a maintainer publishes the first
+Run `npx vitest run test/engine/catalog/packs -t "pack <id>"`. After merge, a maintainer publishes the first
 version by hand, once ([publishing-a-new-pack.md](publishing-a-new-pack.md)).
 
 <details>
@@ -373,7 +373,7 @@ A shipped rule that fails a blocking check the same pull request does not fix go
 Run these checks, then say in the pull request what ran and what it covers.
 
 ```sh
-npx vitest run test/engine/catalog/packs.test.ts -t "pack <id>"   # checks 1 to 8, each rule's status
+npx vitest run test/engine/catalog/packs -t "pack <id>"   # checks 1 to 8, each rule's status
 npm run conformance:languages -- --check --pack <id>
 npm run check              # metric #3 is red by design while publish/ is tracked; the chain stops there, so also:
 npm run check:windows-paths && npm run check:owned-builtins && npm run check:folder-removal

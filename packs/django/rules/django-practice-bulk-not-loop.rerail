@@ -124,12 +124,12 @@ bnl_attr_name(i) :- kind(a, "attribute"), field(a, "attribute", i).
 .decl bnl_kwarg_name(i: node)
 bnl_kwarg_name(i) :- kind(k, "keyword_argument"), field(k, "name", i).
 
-// The cases, `cases/django-practice-bulk-not-loop/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-bulk-not-loop/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "shop/imports.py" from "../cases/django-practice-bulk-not-loop/shop/imports.py"
-    .fixture "shop/models.py" from "../cases/django-practice-bulk-not-loop/shop/models.py"
-    .fixture "shop/tests/test_imports.py" from "../cases/django-practice-bulk-not-loop/shop/tests/test_imports.py"
+    .fixture "shop/imports.py" from "../upstream/django-practice/authored/django-practice-bulk-not-loop/shop/imports.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-bulk-not-loop/shop/models.py"
+    .fixture "shop/tests/test_imports.py" from "../upstream/django-practice/authored/django-practice-bulk-not-loop/shop/tests/test_imports.py"
     .expect _ at "shop/imports.py":7
     .expect _ at "shop/imports.py":8
     .expect _ at "shop/imports.py":15

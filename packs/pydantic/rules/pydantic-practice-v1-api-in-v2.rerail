@@ -1,0 +1,222 @@
+.policy "pydantic-practice-v1-api-in-v2" revision 1
+.description "Replace the Pydantic 1 Field arguments, Config keys, settings import and calls that Pydantic 2 removed or ignores, on models of a project pinned to Pydantic 2."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A project whose manifest pins Pydantic 2 (lib/pydantic's pd_v2_doc reads
+// pyproject.toml, requirements*.txt, setup.cfg, uv.lock, poetry.lock and Pipfile at the root and up to 3 levels below
+// it) still uses a Pydantic 1 API that Pydantic 2 removed: the model fails to import, a call raises, or a setting is
+// silently dropped. Checked with pydantic 2.11.4 and 2.12.5:
+//   name: str = Field(regex=r"^a")       PydanticUserError at class creation (also `const=`, `unique_items=`)
+//   from pydantic import BaseSettings    PydanticImportError (also `pydantic.BaseSettings`)
+//   @root_validator / @root_validator()  PydanticUserError at class creation, unless `pre=True` or
+//                                        `skip_on_failure=True`
+//   class Config: fields = {...}         ignored: the aliases there are lost (also getter_dict, smart_union,
+//                                        copy_on_model_validation, json_loads, json_dumps, allow_mutation,
+//                                        underscore_attrs_are_private, error_msg_templates, post_init_call)
+//   class Config: orm_mode = True        ignored too: v2 renamed the key and does not read the old name
+//                                        (allow_population_by_field_name, schema_extra, validate_all,
+//                                        anystr_strip_whitespace, max_anystr_length, keep_untouched, ...)
+//   m.json(indent=2, sort_keys=True)     TypeError: `.json()` takes no json.dumps arguments (indent included)
+//   M.from_orm(row)                      PydanticUserError unless from_attributes is on for M (below)
+// What still works on Pydantic 2 but is deprecated (`.dict()`, `@validator`, a nested `class Config:` itself, ...) is
+// pydantic-practice-deprecated-v1-api's, a log rule; this rule reports only what breaks.
+//
+// from_attributes is lib/pydantic's pd_from_attributes, resolved as Pydantic merges config: M's own setting
+// (`model_config = ConfigDict(...)`, a dict literal, a class keyword `class M(BaseModel, from_attributes=True)`, or the
+// v2 key in a nested Config) wins; with none, it is on when it is on for one of M's bases. A base of the run is read
+// the same way, through modules and re-exports; a base outside the run counts when it is sqlmodel.SQLModel, whose own
+// config sets from_attributes=True (the one library base known to: its source is outside the run, so it is named).
+// An `orm_mode = True`, in a nested Config or in ConfigDict, does not count: v2 ignores the old name.
+//   class HeroBase(SQLModel): ...; class HeroRead(HeroBase): ...; HeroRead.from_orm(row)   left alone (works)
+//   class UserRead(BaseModel): model_config = ConfigDict(orm_mode=True); UserRead.from_orm(row)   reported
+//
+// The receiver of a method must resolve to a v2 model (lib/pydantic's pd_model_call: `M.from_orm(...)`, an instance
+// `M(...)` or `M.model_validate(...)`, `self` in a method of M, a parameter annotated with M). Left alone:
+//   resp.json(indent=2); row.from_orm(x)          not a known model instance
+//   class Report(BaseModel): def json(self, **kw) the project defines the method itself, on the model or a run base
+//   class Old(pydantic.v1.BaseModel): ...         a v1 model, and pydantic.v1's validators and Field
+//   sqlmodel.Field(regex=...)                     SQLModel's Field still takes it
+//   a project pinned to Pydantic 1, or with no pin and no v2-only import (pd_v2_doc fails)
+//   code written to run under both majors (lib/pydantic's pd_version_guarded): under an `if` (or elif, or
+//   conditional expression) whose condition reads the Pydantic version or probes the v2 API, or in a `try` that
+//   catches ImportError, ModuleNotFoundError or AttributeError. The condition test is resolved, not read as text: a
+//   name resolving to pydantic's VERSION (`pydantic.VERSION`, `from pydantic.version import VERSION as PV`), a call
+//   given the distribution name (`importlib.metadata.version("pydantic")`), `hasattr(x, "model_...")` /
+//   `getattr(x, "model_...", ...)`, or
+//   a variable whose assigned value (in its own scope, or in the run module it is imported from, followed through
+//   further variables) is one of those: `PYDANTIC_V2 = VERSION.startswith("2.")` in app/compat.py, imported as
+//   `IS_V2`. A flag imported from outside the run (fastapi's `PYDANTIC_V2`) cannot be read, so there its name decides:
+//   `PYDANTIC_V2`, `IS_PYDANTIC_V1`, `PYDANTIC_VERSION`. `if path.startswith(settings.API_V1_STR):` is no shim.
+// Tests (lib/pydantic's pd_test_doc) are read too: a crash there is still a crash.
+// Gaps: an instance the rule cannot type (a function's return value, an attribute, a list item) is not reported;
+// a model whose base is a library's model outside the run (fastapi-users' schemas) is not a model here; renamed or
+// removed keys in `model_config = ConfigDict(...)` (also ignored by v2) are not reported, though `orm_mode` there does
+// leave from_attributes off for from_orm; `.dict()` and `.copy()` with arguments v2 refuses are not reported; a model
+// with two bases that disagree on from_attributes is read as on.
+
+#include "lib/pydantic.rerail"
+
+.violation RemovedFieldArg(at: node, kw: symbol, use: symbol) "`Field({kw}=...)` was removed in Pydantic 2: defining this model raises PydanticUserError. Use {use} instead."
+.violation RemovedBaseSettings(at: node) "`pydantic.BaseSettings` is gone in Pydantic 2: importing it raises PydanticImportError. Add the pydantic-settings package and import `BaseSettings` from `pydantic_settings`."
+.violation RootValidatorCrash(at: node) "In Pydantic 2 a post `@root_validator` without `skip_on_failure=True` raises PydanticUserError when the model is defined. Use `@model_validator(mode=\"after\")`, or add that flag."
+.violation RemovedConfigKey(at: node, key: symbol, fix: symbol) "Pydantic 2 ignores `{key}` in a nested Config, so this line has no effect. {fix}"
+.violation RenamedConfigKey(at: node, key: symbol, new: symbol) "Pydantic 2 ignores `{key}` in a nested Config, so this setting is off. Its v2 name is `{new}`: set that in `model_config = ConfigDict(...)` if the code relies on it."
+.violation JsonDumpsArgs(at: node) "Pydantic 2's `.json()` takes no json.dumps arguments (`indent`, `sort_keys`, ...): this call raises TypeError. Use `model_dump_json(indent=...)` or `json.dumps(m.model_dump(mode=\"json\"), ...)`."
+.violation FromOrmCrash(at: node) "`from_orm()` raises PydanticUserError in Pydantic 2: from_attributes is not on for this model (v2 ignores `orm_mode`). Set `from_attributes=True` in `model_config` and call `model_validate(obj)`."
+
+// ---- where: a document of a v2 project, outside a compatibility shim ---------------------------------------------
+// v1i_at(n) collects every node a check below may report, so the shim test runs on those nodes only.
+.decl v1i_at(n: node)
+pd_shim_demand(n) :- v1i_at(n).
+// v1i_report(n, nk): what n's own file says: a v2 project's document, no shim its file shows; nk is n's term
+// (python/points-to-file's pt_tm, relative to its def, class or module), by which each output asks whether a flag
+// another module defines guards n (`!pd_shim_elsewhere(nk)`).
+.decl v1i_report(n: node, nk: symbol)
+v1i_report(n, nk) :- v1i_at(n), docof(n, d), pd_v2_doc(d), !pd_version_guarded(n), pt_tm(n, nk).
+
+// ---- removed Field arguments --------------------------------------------------------------------------------------
+// pydantic's own Field: sqlmodel.Field still takes `regex=` and the item counts, and maps them itself.
+.decl v1i_pd_field(k: node)
+v1i_pd_field(k) :- pd_field_call(k), field(k, "function", f), sym_of(f, q),
+    (q = "pydantic.Field" ; q = "pydantic.fields.Field").
+.decl v1i_removed_kw(kw: symbol, use: symbol)
+v1i_removed_kw("regex", "`pattern=` with the same expression").
+v1i_removed_kw("const", "a `Literal[...]` annotation").
+v1i_removed_kw("unique_items", "a `set[...]` annotation, or a validator if the order matters").
+.decl v1i_field_crash(k: node, kw: symbol, use: symbol)
+v1i_field_crash(k, kw, use) :- v1i_pd_field(k), call_arg(k, -1, kw, _), v1i_removed_kw(kw, use).
+v1i_at(k) :- v1i_field_crash(k, _, _).
+RemovedFieldArg(k, kw, use) :- v1i_field_crash(k, kw, use), v1i_report(k, nk), !pd_shim_elsewhere(nk).
+
+// ---- pydantic.BaseSettings ----------------------------------------------------------------------------------------
+// `from pydantic import BaseSettings` (the import line), `pydantic.BaseSettings` (each use).
+.decl v1i_settings(n: node)
+v1i_settings(a) :- import_alias(_, a, m, "BaseSettings", _), (m = "pydantic" ; m = "pydantic.env_settings").
+v1i_settings(n) :- kind(n, "attribute"), sym_of(n, q), (q = "pydantic.BaseSettings" ; q = "pydantic.env_settings.BaseSettings").
+v1i_at(n) :- v1i_settings(n).
+RemovedBaseSettings(n) :- v1i_settings(n), v1i_report(n, nk), !pd_shim_elsewhere(nk).
+
+// ---- a post root_validator (no `pre=True`) without `skip_on_failure=True`, bare or called --------------------------
+.decl v1i_skip(e: node)
+v1i_skip(e) :- call_arg(e, -1, "skip_on_failure", v), kind(v, "true").
+.decl v1i_root_crash(e: node)
+v1i_root_crash(e) :- pd_validator_deco(_, "root_validator", e), !pd_pre_true(e), !v1i_skip(e).
+v1i_at(e) :- v1i_root_crash(e).
+RootValidatorCrash(e) :- v1i_root_crash(e), v1i_report(e, nk), !pd_shim_elsewhere(nk).
+
+// ---- keys of a nested `class Config:` that v2 drops (removed) or reads only by their new name (renamed) ------------
+.decl v1i_config_key(c: node, k: node, x: symbol, a: node)
+v1i_config_key(c, k, x, a) :- pd_config_class(c, k), field(k, "body", b), body_stmt(b, s, _),
+    kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, x).
+.decl v1i_removed_cfg(key: symbol, fix: symbol)
+v1i_removed_cfg("fields", "Move each alias or setting onto its field: `x: T = Field(alias=...)`.").
+v1i_removed_cfg("allow_mutation", "For `allow_mutation = False` set `frozen=True` in `model_config`; `True` was the default.").
+v1i_removed_cfg("getter_dict", "Set `from_attributes=True`, or build the input in a `@model_validator(mode=\"before\")`.").
+v1i_removed_cfg("smart_union", "Unions are already validated in smart mode in v2: drop the key.").
+v1i_removed_cfg("underscore_attrs_are_private", "`_name` attributes are always private in v2: drop the key.").
+v1i_removed_cfg("copy_on_model_validation", "Set `revalidate_instances` in `model_config` if nested instances must be copied.").
+v1i_removed_cfg("json_loads", "Parse the text yourself and pass it to `model_validate()`.").
+v1i_removed_cfg("json_dumps", "Serialize with `model_dump(mode=\"json\")` and your own dumps, or a `@model_serializer`.").
+v1i_removed_cfg("error_msg_templates", "Rewrite messages where the ValidationError is caught, from `e.errors()`.").
+v1i_removed_cfg("post_init_call", "Put the post-init code in `model_post_init`.").
+.decl v1i_renamed_cfg(key: symbol, new: symbol)
+v1i_renamed_cfg("orm_mode", "from_attributes").
+v1i_renamed_cfg("allow_population_by_field_name", "populate_by_name").
+v1i_renamed_cfg("schema_extra", "json_schema_extra").
+v1i_renamed_cfg("validate_all", "validate_default").
+v1i_renamed_cfg("anystr_strip_whitespace", "str_strip_whitespace").
+v1i_renamed_cfg("anystr_lower", "str_to_lower").
+v1i_renamed_cfg("anystr_upper", "str_to_upper").
+v1i_renamed_cfg("max_anystr_length", "str_max_length").
+v1i_renamed_cfg("min_anystr_length", "str_min_length").
+v1i_renamed_cfg("keep_untouched", "ignored_types").
+v1i_at(a) :- v1i_config_key(_, _, _, a).
+RemovedConfigKey(a, x, fix) :- v1i_config_key(_, _, x, a), v1i_removed_cfg(x, fix), v1i_report(a, nk),
+    !pd_shim_elsewhere(nk).
+RenamedConfigKey(a, x, new) :- v1i_config_key(_, _, x, a), v1i_renamed_cfg(x, new), v1i_report(a, nk),
+    !pd_shim_elsewhere(nk).
+
+// ---- calls on a model ---------------------------------------------------------------------------------------------
+// v1i_own(q, m): model q defines m itself, as a method of q or of a run class among its bases (the phase py_names'
+// member_method, anc_method), or as a field of q or of a run base (v1i_field_q, by symbol). It joins the classes'
+// modules by symbol, on purpose, holding no node; the outputs read it by the model's qualified name.
+.decl v1i_method(m: symbol)
+v1i_method("json"). v1i_method("from_orm").
+.decl v1i_own(q: symbol, m: symbol) cross_file
+v1i_own(q, m) :- py_names__member_method(_, q, m), v1i_method(m).
+v1i_own(q, m) :- py_names__anc_method(_, q, m), v1i_method(m).
+v1i_own(q, m) :- v1i_field_q(q, m).
+v1i_own(q, m) :- pd_ancestor(q, b), v1i_field_q(b, m).
+// v1i_field_q(q, m): model q of this file declares field m, one of those methods' names.
+.decl v1i_field_q(q: symbol, m: symbol)
+v1i_field_q(q, m) :- pd_field(c, m, _, _), v1i_method(m), class_def(c, q).
+// v1i_call(k, m, q): call k is `o.m(...)` on model q (class or instance); whether m is the project's own is the
+// outputs' question (v1i_own).
+.decl v1i_call(k: node, m: symbol, q: symbol)
+v1i_call(k, m, q) :- pd_model_call(k, _, m, q), v1i_method(m).
+
+// `.json(...)` with any argument but the ones v2's deprecated `.json()` still takes.
+.decl v1i_json_ok(kw: symbol)
+v1i_json_ok("include"). v1i_json_ok("exclude"). v1i_json_ok("by_alias"). v1i_json_ok("exclude_unset").
+v1i_json_ok("exclude_defaults"). v1i_json_ok("exclude_none").
+.decl v1i_json_crash(k: node, q: symbol)
+v1i_json_crash(k, q) :- v1i_call(k, "json", q), call_arg(k, -1, kw, _), !v1i_json_ok(kw).
+v1i_at(k) :- v1i_json_crash(k, _).
+JsonDumpsArgs(k) :- v1i_json_crash(k, q), !v1i_own(q, "json"), v1i_report(k, nk), !pd_shim_elsewhere(nk).
+
+// `M.from_orm(...)` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes, a cross-file
+// answer by the model's qualified name).
+v1i_at(k) :- v1i_call(k, "from_orm", _).
+FromOrmCrash(k) :- v1i_call(k, "from_orm", q), !v1i_own(q, "from_orm"), !pd_from_attributes(q), v1i_report(k, nk),
+    !pd_shim_elsewhere(nk).
+
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/`, read as one repository pinned to
+// Pydantic 2 with a `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other
+// line.
+.test cases exactly
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/__init__.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/base.py"
+    .fixture "app/checks.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/checks.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/compat.py"
+    .fixture "app/legacy_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/legacy_models.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/schemas.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/services.py"
+    .fixture "app/settings.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/settings.py"
+    .fixture "app/shims.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/shims.py"
+    .fixture "app/tables/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tables/__init__.py"
+    .fixture "app/tables/heroes.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tables/heroes.py"
+    .fixture "app/orm_reads.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/orm_reads.py"
+    .fixture "app/tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tests/__init__.py"
+    .fixture "app/tests/test_users.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/app/tests/test_users.py"
+    .fixture "legacy/pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/legacy/pyproject.toml"
+    .fixture "legacy/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-v1-api-in-v2/legacy/models.py"
+    .expect FromOrmCrash at "app/orm_reads.py":54
+    .expect FromOrmCrash at "app/orm_reads.py":58
+    .expect FromOrmCrash at "app/orm_reads.py":59
+    .expect RemovedFieldArg at "app/schemas.py":14
+    .expect RemovedFieldArg at "app/schemas.py":15
+    .expect RemovedFieldArg at "app/schemas.py":16
+    .expect RemovedFieldArg at "app/schemas.py":22
+    .expect RenamedConfigKey at "app/schemas.py":35
+    .expect RenamedConfigKey at "app/schemas.py":36
+    .expect RemovedConfigKey at "app/schemas.py":37
+    .expect RemovedConfigKey at "app/schemas.py":38
+    .expect RootValidatorCrash at "app/schemas.py":45
+    .expect RootValidatorCrash at "app/schemas.py":57
+    .expect FromOrmCrash at "app/services.py":9
+    .expect JsonDumpsArgs at "app/services.py":17
+    .expect JsonDumpsArgs at "app/services.py":18
+    .expect JsonDumpsArgs at "app/services.py":20
+    .expect RemovedBaseSettings at "app/settings.py":2
+    .expect RemovedBaseSettings at "app/settings.py":3
+    .expect RemovedBaseSettings at "app/settings.py":15
+    .expect JsonDumpsArgs at "app/shims.py":91
+    .expect JsonDumpsArgs at "app/shims.py":97
+    .expect JsonDumpsArgs at "app/shims.py":102
+    .expect RemovedFieldArg at "app/tests/test_users.py":7
+    .expect JsonDumpsArgs at "app/tests/test_users.py":13
+    .expect FromOrmCrash at "app/tests/test_users.py":14
+.end

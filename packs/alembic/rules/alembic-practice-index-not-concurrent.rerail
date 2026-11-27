@@ -1,0 +1,194 @@
+.policy "alembic-practice-index-not-concurrent" revision 1
+.description "Build indexes, unique constraints and primary keys on existing tables concurrently in Alembic migrations; a plain index build blocks every write to the table until it ends."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A plain CREATE INDEX "locks out writes (but not reads) on the table until it's done"
+// (PostgreSQL, CREATE INDEX), and ADD CONSTRAINT ... UNIQUE / PRIMARY KEY builds the same index under the same or a
+// stronger lock: on a live table, every INSERT, UPDATE and DELETE waits for the whole build. Squawk
+// (require-concurrent-index-creation, disallowed-unique-constraint) and strong_migrations flag the same thing in SQL
+// and Rails. This rule reads Alembic's Python in the edit window, with no offline render, including revisions that
+// cannot render offline (inspector calls, data migrations).
+//
+// Reported, in a revision's `upgrade()` (or a module-level helper it calls), on a table that `upgrade()` does not
+// create, once per table and kind (the first such operation; the message counts them):
+//   op.create_index("ix_users_email", "users", ["email"])                     reported
+//   op.create_index(op.f("ix_x"), table_name="users", columns=["x"], unique=True)  reported (a constant table too)
+//   op.create_index("ix", "users", ["x"], postgresql_concurrently=False)       reported
+//   with op.batch_alter_table("users") as batch_op:
+//       batch_op.create_index("ix", ["x"])                                     reported
+//   create_index("orders", "ix_orders_ref", ["ref"])  # a helper of the run whose op.create_index takes the table
+//                                                       from a parameter (superset's shared utils)   reported, at the call
+//   op.create_unique_constraint("uq_users_email", "users", ["email"])         reported, with the unique index fix
+//   op.add_column("users", sa.Column("code", sa.String(8), unique=True))       reported: Alembic emits ADD UNIQUE
+//   op.add_column("users", sa.Column("ref", sa.String(8), index=True))         reported: Alembic emits CREATE INDEX
+//   op.create_primary_key("pk_users", "users", ["id"])                         reported, with the USING INDEX fix
+// Left alone:
+//   op.create_table("tags", ...); op.create_index("ix_tags_name", "tags", ["name"])  a table this upgrade() creates,
+//                                                                                   also in a dialect branch, or
+//                                                                                   through a project's own
+//                                                                                   `create_table("tags", ...)`
+//                                                                                   wrapper (superset's)
+//   op.create_index("ix", "users", ["x"], postgresql_concurrently=True)        whether it sits in autocommit_block()
+//                                                                              is alembic-practice-concurrent-index-
+//                                                                              outside-autocommit's concern
+//   postgresql_concurrently=<any expression but False>                         not known to be off
+//   else: op.create_index(...)  after `if _is_pg(conn):`, `if dialect.name == "sqlite":`   another database's branch
+//   else: ...  after `if not isinstance(bind.dialect, SQLiteDialect):`        SQLite's branch (superset's)
+//   if not _is_mysql(): return                                                 the rest of the function runs only
+//   op.create_index(...)                                                       on MySQL (dify's)
+//   downgrade(), revisions under tests/, files without `revision`/`down_revision`, an `op` that is not alembic.op.
+// Gaps: downgrade() (rollbacks re-create indexes on the rare path); a table name the rule cannot resolve (an f-string,
+// a helper two calls deep); a table created by an earlier revision of the same release counts as existing (one this
+// upgrade() creates by `op.execute("CREATE TABLE ...")`, or empties first, does not); raw `op.execute("CREATE INDEX
+// ...")` and `sa.Index(...).create(bind)` are not read; a project that runs only on SQLite is not told apart (its
+// alembic.ini is not read); a plain DROP INDEX is not reported; a table known to stay
+// small cannot be told apart, nor a project that migrates with the app stopped (jupyterhub, mealie), so the message
+// says when to leave it.
+// Corpus (8 Alembic repositories): see the README's rule details.
+
+#include "lib/alembic.rerail"
+
+.violation IndexNotConcurrent(at: node, table: symbol, count: number) "This upgrade builds {count} plain index(es) on existing `{table}`, each blocking its writes until done. Pass `postgresql_concurrently=True` inside an autocommit block for each. Fine for a small table."
+.violation UniqueNotConcurrent(at: node, table: symbol, count: number) "ADD UNIQUE on existing `{table}` ({count} here) blocks its writes while its index builds. Build a unique index concurrently in an autocommit block, then add it USING INDEX. Fine for a small table."
+.violation ColumnUniqueNotConcurrent(at: node, table: symbol) "`unique=True` on this added column builds a unique index on existing `{table}` under a write lock. Drop it; build the index with `unique=True, postgresql_concurrently=True`. Fine for a small table."
+.violation ColumnIndexNotConcurrent(at: node, table: symbol) "`index=True` on this added column builds an index on existing `{table}` under a write lock. Drop it; build the index with `postgresql_concurrently=True` in an autocommit block. Fine for a small table."
+.violation PrimaryKeyNotConcurrent(at: node, table: symbol) "ADD PRIMARY KEY on existing `{table}` builds its index under an exclusive lock. Build a unique index concurrently first, then add the key with `PRIMARY KEY USING INDEX`. Fine for a small table."
+
+// What crosses files is read by term and symbol (decision 0677): an operation's flag that is an imported constant
+// (lib/alembic's al_flag_t), a dialect test of another module (al_np_ext), and a helper of another module (al_fwd_op_at,
+// by its qualified name). Each file states its index builds by term (al_term), with their step and their rank among
+// the step's possible builds (inc_rank, compared in the file); the count and the first build run on those, and a
+// finding reads its call back by its term.
+// inc_concurrent(d, ct): operation ct passes postgresql_concurrently= something not known to be False or None (a
+// literal, or a constant of this module or an imported one).
+.decl inc_concurrent(d: number, ct: symbol)
+inc_concurrent(d, ct) :- al_kw_at(d, ct, "postgresql_concurrently"),
+    !al_flag_t(d, ct, "postgresql_concurrently", "false"), !al_flag_t(d, ct, "postgresql_concurrently", "none").
+// inc_live(c): c sits in a migration that is not test code, outside a branch for another database by its own file's
+// tests.
+.decl inc_live(c: node)
+inc_live(c) :- kind(c, "call"), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+// inc_cand(c, k, t, f, ci): in upgrade step f, c builds an index of kind k ("index" or "unique") on existing table t,
+// through operation ci: c itself, or the operation of a helper of the same file that c calls (al_forwarded).
+.decl inc_cand(c: node, k: symbol, t: symbol, f: node, ci: node)
+inc_cand(c, "index", t, f, c) :- al_on_existing(c, "create_index", t, f), inc_live(c).
+inc_cand(c, "unique", t, f, c) :- al_on_existing(c, "create_unique_constraint", t, f), inc_live(c).
+inc_cand(c, "index", t, f, ci) :- al_forwarded(c, "create_index", t, ci, f), !al_non_pg(ci), inc_live(c).
+inc_cand(c, "unique", t, f, ci) :- al_forwarded(c, "create_unique_constraint", t, ci, f), !al_non_pg(ci), inc_live(c).
+// inc_site(c, f): call c of upgrade step f may build an index: an operation or a local helper's (inc_cand), or a call
+// of another module's function (al_fwd_call). inc_rank(c, f, r): r such calls of f start before c: its order among
+// them, compared in its own file, so no position leaves it.
+.decl inc_site(c: node, f: node)
+inc_site(c, f) :- inc_cand(c, _, _, f, _).
+inc_site(c, f) :- al_fwd_call(c, _, _, _, _, f), inc_live(c).
+.decl inc_rank(c: node, f: node, r: number)
+inc_rank(c, f, r) :- inc_site(c, f), docof(c, d), node(d, c, _, s, _),
+    r = count : { inc_site(b, f), node(d, b, _, x, _), x < s }.
+// inc_cand_at(d, ct, k, t, ft, r, cit): the same by term, with c's rank r in its step, so the first build is told by a
+// value.
+.decl inc_cand_at(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number, cit: symbol)
+inc_cand_at(d, ct, k, t, ft, r, cit) :- inc_cand(c, k, t, f, ci), inc_rank(c, f, r), al_term(c, d, ct),
+    al_term(f, d, ft), al_term(ci, d, cit).
+// inc_fwd_at(d, ct, g, i, x, t, ft, r): call ct of step ft (rank r) passes table t to g, a function of another
+// module, at position i or as keyword x (lib/alembic's al_fwd_call).
+.decl inc_fwd_at(d: number, ct: symbol, g: symbol, i: number, x: symbol, t: symbol, ft: symbol, r: number)
+inc_fwd_at(d, ct, gq, i, x, t, ft, r) :- al_fwd_call(c, gq, i, x, t, f), inc_rank(c, f, r), al_term(c, d, ct),
+    al_term(f, d, ft).
+// inc_fwd_np_at(e, cit): a helper's operation cit sits in a branch for another database, by its own file's tests.
+.decl inc_fwd_np_at(e: number, cit: symbol)
+inc_fwd_np_at(e, cit) :- al_fwd_op(_, _, _, _, ci), al_non_pg(ci), al_term(ci, e, cit).
+// inc_fwd(d, ct, k, t, ft, r): call ct (rank r in step ft) builds an index of kind k on t through a helper of another
+// module whose operation is not concurrent (an index) and runs on PostgreSQL. It joins the call's file to the
+// helper's by the helper's qualified name, so it spans files on purpose (cross_file), keyed by documents, terms and
+// values.
+.decl inc_fwd(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number) cross_file
+inc_fwd(d, ct, k, t, ft, r) :- inc_fwd_at(d, ct, gq, i, x, t, ft, r), al_fwd_op_at(e, gq, m, xp, kp, cit),
+    (i = kp ; x = xp), ((m = "create_index", k = "index") ; (m = "create_unique_constraint", k = "unique")),
+    !inc_fwd_np_at(e, cit), !al_np_ext(e, cit), (k = "unique" ; !inc_concurrent(e, cit)).
+// inc_hit(d, ct, k, t, ft, r): in upgrade step ft, ct (rank r) builds an index of kind k on existing table t without
+// CONCURRENTLY.
+.decl inc_hit(d: number, ct: symbol, k: symbol, t: symbol, ft: symbol, r: number)
+inc_hit(d, ct, k, t, ft, r) :- inc_cand_at(d, ct, k, t, ft, r, cit), !al_np_ext(d, ct), !al_np_ext(d, cit),
+    (k = "unique" ; !inc_concurrent(d, cit)).
+inc_hit(d, ct, k, t, ft, r) :- inc_fwd(d, ct, k, t, ft, r), !al_np_ext(d, ct).
+// inc_first(d, ct, k, t, n): ct is the first (lowest rank) of the n index builds of kind k on table t in its upgrade
+// step.
+.decl inc_first(d: number, ct: symbol, k: symbol, t: symbol, n: number)
+inc_first(d, ct, k, t, n) :- inc_hit(d, ct, k, t, ft, r), r = min x : { inc_hit(d, _, k, t, ft, x) },
+    n = count : { inc_hit(d, _, k, t, ft, _) }.
+// inc_call(c, d, ct): a call that may build an index, by the term a finding reads it back by.
+.decl inc_call(c: node, d: number, ct: symbol)
+inc_call(c, d, ct) :- inc_cand(c, _, _, _, _), al_term(c, d, ct).
+inc_call(c, d, ct) :- al_fwd_call(c, _, _, _, _, _), al_term(c, d, ct).
+
+IndexNotConcurrent(c, t, n) :- inc_call(c, d, ct), inc_first(d, ct, "index", t, n).
+UniqueNotConcurrent(c, t, n) :- inc_call(c, d, ct), inc_first(d, ct, "unique", t, n).
+// inc_col(c, k, t, d, ct, q): add_column c (term ct) on existing t passes unique=True / index=True (k "col_unique",
+// "col_index"): a literal or a constant of the file (al_added_ddl, q ""), or the constant q of another module
+// (al_added_ddl_if), True by al_const_bool in the finding.
+.decl inc_col(c: node, k: symbol, t: symbol, d: number, ct: symbol, q: symbol)
+inc_col(c, k, t, d, ct, "") :- al_added_ddl(c, t, x, _), (x = "unique", k = "col_unique" ; x = "index", k = "col_index"),
+    inc_live(c), al_term(c, d, ct).
+inc_col(c, k, t, d, ct, q) :- al_added_ddl_if(c, t, x, _, q), (x = "unique", k = "col_unique" ; x = "index",
+    k = "col_index"), inc_live(c), al_term(c, d, ct).
+// inc_pk(c, t, d, ct): create_primary_key c (term ct) on existing t.
+.decl inc_pk(c: node, t: symbol, d: number, ct: symbol)
+inc_pk(c, t, d, ct) :- al_on_existing(c, "create_primary_key", t, _), inc_live(c), al_term(c, d, ct).
+ColumnUniqueNotConcurrent(c, t) :- inc_col(c, "col_unique", t, d, ct, q), (q = "" ; al_const_bool(q, "true")),
+    !al_np_ext(d, ct).
+ColumnIndexNotConcurrent(c, t) :- inc_col(c, "col_index", t, d, ct, q), (q = "" ; al_const_bool(q, "true")),
+    !al_np_ext(d, ct).
+PrimaryKeyNotConcurrent(c, t) :- inc_pk(c, t, d, ct), !al_np_ext(d, ct).
+
+// The cases, `upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/search.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/app/search.py"
+    .fixture "migrations/scripts/backfill.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/scripts/backfill.py"
+    .fixture "migrations/shared/dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/dialects.py"
+    .fixture "migrations/shared/flags.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/flags.py"
+    .fixture "migrations/shared/utils.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/shared/utils.py"
+    .fixture "migrations/versions/c1_user_indexes.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c1_user_indexes.py"
+    .fixture "migrations/versions/c2_batch_and_dialects.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c2_batch_and_dialects.py"
+    .fixture "migrations/versions/c3_unique.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c3_unique.py"
+    .fixture "migrations/versions/c4_search_index.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c4_search_index.py"
+    .fixture "migrations/versions/c5_reports_wrapper.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c5_reports_wrapper.py"
+    .fixture "migrations/versions/c6_guards.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c6_guards.py"
+    .fixture "migrations/versions/c7_columns_keys_helpers.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c7_columns_keys_helpers.py"
+    .fixture "migrations/versions/c8_class_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c8_class_variants.py"
+    .fixture "migrations/versions/c9_dialect_variants.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c9_dialect_variants.py"
+    .fixture "migrations/versions/c10_dialect_reported.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/migrations/versions/c10_dialect_reported.py"
+    .fixture "tests/migrations/versions/t1_fixture.py" from "../upstream/alembic-practice/authored/alembic-practice-index-not-concurrent/tests/migrations/versions/t1_fixture.py"
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":14
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":17
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":18
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":19
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":25
+    .expect IndexNotConcurrent at "migrations/versions/c1_user_indexes.py":44
+    .expect IndexNotConcurrent at "migrations/versions/c2_batch_and_dialects.py":19
+    .expect IndexNotConcurrent at "migrations/versions/c2_batch_and_dialects.py":22
+    .expect UniqueNotConcurrent at "migrations/versions/c2_batch_and_dialects.py":46
+    .expect UniqueNotConcurrent at "migrations/versions/c3_unique.py":11
+    .expect UniqueNotConcurrent at "migrations/versions/c3_unique.py":12
+    .expect UniqueNotConcurrent at "migrations/versions/c3_unique.py":14
+    .expect IndexNotConcurrent at "migrations/versions/c5_reports_wrapper.py":20
+    .expect IndexNotConcurrent at "migrations/versions/c6_guards.py":31
+    .expect ColumnUniqueNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":14
+    .expect ColumnIndexNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":15
+    .expect ColumnUniqueNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":17
+    .expect PrimaryKeyNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":20
+    .expect IndexNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":22
+    .expect IndexNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":23
+    .expect IndexNotConcurrent at "migrations/versions/c7_columns_keys_helpers.py":24
+    .expect IndexNotConcurrent at "migrations/versions/c8_class_variants.py":19
+    .expect IndexNotConcurrent at "migrations/versions/c8_class_variants.py":20
+    .expect ColumnUniqueNotConcurrent at "migrations/versions/c8_class_variants.py":21
+    .expect ColumnIndexNotConcurrent at "migrations/versions/c8_class_variants.py":22
+    .expect IndexNotConcurrent at "migrations/versions/c8_class_variants.py":24
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":18
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":20
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":23
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":27
+    .expect IndexNotConcurrent at "migrations/versions/c10_dialect_reported.py":31
+.end

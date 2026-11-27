@@ -1,0 +1,181 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "celery",
+  "name": "Celery",
+  "category": "framework",
+  "covers": "Rerail's own Celery rules, from the Celery docs and maintainers' review advice, for idempotent, serializable tasks dispatched after commit.",
+  "reason": "matches Celery",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "pypi",
+          "names": [
+            "celery"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "celery-practice-dispatch-before-commit",
+      "document": "rules/celery-practice-dispatch-before-commit.rerail",
+      "title": "Celery practice: a task sent between a SQLAlchemy write and its commit",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "jobs",
+        "severity": "critical",
+        "hazard": "tx.side-effect-before-commit"
+      },
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom sqlalchemy.orm import Session\n\n\n@shared_task\ndef ship_order(order_id):\n    pass\n\n\ndef place(session: Session, order):\n    session.add(order)\n    session.flush()\n    ship_order.delay(order.id)\n    session.commit()\n"
+        },
+        "passes": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom sqlalchemy.orm import Session\n\n\n@shared_task\ndef ship_order(order_id):\n    pass\n\n\ndef place(session: Session, order):\n    session.add(order)\n    session.flush()\n    session.commit()\n    ship_order.delay(order.id)\n"
+        }
+      }
+    },
+    {
+      "id": "celery-practice-pickle-serializer",
+      "document": "rules/celery-practice-pickle-serializer.rerail",
+      "title": "Celery practice: Celery set to send or accept pickle messages",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "security",
+        "layer": "config",
+        "severity": "critical",
+        "hazard": "deser.untrusted-pickle"
+      },
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "proj/celery.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\napp.conf.update(\n    task_serializer=\"pickle\",\n    result_serializer=\"pickle\",\n    accept_content=[\"json\", \"pickle\"],\n)\n"
+        },
+        "passes": {
+          "path": "proj/celery.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\napp.conf.update(\n    task_serializer=\"json\",\n    result_serializer=\"json\",\n    accept_content=[\"json\"],\n)\n"
+        }
+      }
+    },
+    {
+      "id": "celery-practice-countdown-past-visibility-timeout",
+      "document": "rules/celery-practice-countdown-past-visibility-timeout.rerail",
+      "title": "Celery practice: a task delayed past the broker's redelivery limit",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "jobs",
+        "severity": "high",
+        "hazard": "queue.redelivered-after-visibility-timeout"
+      },
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "proj/tasks.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=60 * 60 * 24)\n"
+        },
+        "passes": {
+          "path": "proj/tasks.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=10 * 60)\n"
+        }
+      }
+    },
+    {
+      "id": "celery-practice-result-get-in-task",
+      "document": "rules/celery-practice-result-get-in-task.rerail",
+      "title": "Celery practice: a task waits on another task's result",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "jobs",
+        "severity": "high",
+        "hazard": "queue.task-waits-on-task"
+      },
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "proj/tasks.py",
+          "text": "from celery import shared_task\n\n\n@shared_task\ndef price(item_id):\n    return item_id * 2\n\n\n@shared_task\ndef checkout(item_id):\n    return price.delay(item_id).get()\n"
+        },
+        "passes": {
+          "path": "proj/tasks.py",
+          "text": "from celery import chain, shared_task\n\n\n@shared_task\ndef price(item_id):\n    return item_id * 2\n\n\n@shared_task\ndef record(total):\n    return total\n\n\n@shared_task\ndef checkout(item_id):\n    return chain(price.s(item_id), record.s()).apply_async().id\n"
+        }
+      }
+    },
+    {
+      "id": "celery-practice-task-arg-not-serializable",
+      "document": "rules/celery-practice-task-arg-not-serializable.rerail",
+      "title": "Celery practice: a SQLAlchemy model or session, a set, a file, a lambda or a function passed as a Celery task argument",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "jobs",
+        "severity": "high",
+        "hazard": "queue.unserializable-task-arg"
+      },
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Order(Base):\n    __tablename__ = \"orders\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n\n\n@shared_task\ndef ship_order(order):\n    pass\n\n\n@shared_task\ndef tag_orders(tags):\n    pass\n\n\ndef ship(session, pk, tags):\n    order = session.get(Order, pk)\n    ship_order.delay(order)\n    tag_orders.delay(set(tags))\n"
+        },
+        "passes": {
+          "path": "shop/orders.py",
+          "text": "from celery import shared_task\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Order(Base):\n    __tablename__ = \"orders\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n\n\n@shared_task\ndef ship_order(order_id):\n    pass\n\n\n@shared_task\ndef tag_orders(tags):\n    pass\n\n\ndef ship(session, pk, tags):\n    order = session.get(Order, pk)\n    ship_order.delay(order.id)\n    tag_orders.delay(sorted(set(tags)))\n"
+        }
+      }
+    },
+    {
+      "id": "celery-practice-unknown-task-name",
+      "document": "rules/celery-practice-unknown-task-name.rerail",
+      "title": "Celery practice: task named by a string that no task of the run registers",
+      "group": "Celery",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "jobs",
+        "severity": "high",
+        "hazard": "queue.unregistered-task-name"
+      },
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "proj/celery.py",
+          "text": "from celery import Celery\nfrom celery.schedules import crontab\n\napp = Celery(\"proj\")\napp.conf.beat_schedule = {\n    \"ship-hourly\": {\n        \"task\": \"proj.tasks.shipp\",\n        \"schedule\": crontab(minute=0),\n    },\n}\n",
+          "with": [
+            {
+              "path": "proj/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "proj/tasks.py",
+              "text": "from celery import shared_task\n\n\n@shared_task\ndef ship(order_id):\n    return order_id\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "proj/celery.py",
+          "text": "from celery import Celery\nfrom celery.schedules import crontab\n\napp = Celery(\"proj\")\napp.conf.beat_schedule = {\n    \"ship-hourly\": {\n        \"task\": \"proj.tasks.ship\",\n        \"schedule\": crontab(minute=0),\n    },\n}\n",
+          "with": [
+            {
+              "path": "proj/__init__.py",
+              "text": "# empty module\n"
+            },
+            {
+              "path": "proj/tasks.py",
+              "text": "from celery import shared_task\n\n\n@shared_task\ndef ship(order_id):\n    return order_id\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

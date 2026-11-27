@@ -1,0 +1,283 @@
+// lib/sqlalchemy_loops: loops over ORM rows and the relationships they read on each row, for the lazy-load rules.
+// Include it after lib/sqlalchemy.rerail.
+//
+// Interface
+//   sl_read_at(u, uk)                       u is a read of a loop (below), uk its term (python/points-to's pt_tm): a
+//                                           rule's output finds its node by it
+//   sl_hit_q(uk, bk, x, rel, mq, sk, src, how)
+//                                           read uk, in loop body bk, reads relationship rel, which loads lazily on
+//                                           model mq, once per row of a loop over the rows of statement sk; x is the
+//                                           loop's name; src names the statement in a message; how is "loop" (the loop
+//                                           iterates the statement) or "callee" (a function of the run returns the
+//                                           rows); sk loads no option for rel, is not streamed, and the read is in no
+//                                           test or migration
+//   sl_first_q(uk, rel)                     uk is the first such read of rel in its loop (one finding per loop and
+//                                           relationship)
+//   sl_chain_call(s, k)                     k is a call along statement chain s (s itself included)
+// The hits are by symbol (decisions 0652, 0677): a loop's file states its loops, reads and statements by their terms
+// (`bk`, `uk`, `sk`), and the facts other files decide (the relationship, the rows a function of the run returns, a
+// parameter that function reads, an options list another module holds) join them there.
+//
+// A loop is a for statement or a comprehension. The name it binds per row is the plain target (`for o in rows`), the
+// second name of `for i, o in enumerate(rows)`, or the n-th name of `for o, l in session.execute(select(Order,
+// Line))`, the n-th entity of a statement that selects several. A read is `x.rel` evaluated in the loop's own per-row
+// code (outside nested defs, lambdas and classes, and outside the comprehension's first iterable), or a call there that
+// passes x to a function of the run which reads `p.rel` on that parameter; `x.rel = v` stores are no reads.
+//   for o in session.scalars(select(Order)): o.lines                        sl_hit_q(<o.lines>, …, "o", "lines", ...)
+//   [describe(o) for o in session.scalars(select(Order))]                   sl_hit_q(<describe(o)>, ...) when
+//                                                                            describe reads o.lines
+// The rows come from a statement in the same function (`session.scalars(select(M)…)`, `….all()`, a legacy query,
+// a statement or rows held in a name), or from a function of the run the loop calls, one hop, that returns them.
+// A statement loads rel when a loader option names it (or a wildcard) on its chain or on an `.options(...)` call in
+// the function that builds it, including options splatted from a name (`.options(*OPTS)`, `OPTS =
+// [selectinload(M.x)]`, in the module or imported); an option list it cannot read (`.options(*opts)`, opts a
+// parameter) counts as loading everything. `yield_per` streams are left alone.
+
+// sl_loop(x, b, r, bs, j): a loop binds name x, in scope bs, per item of iterable r; b is the per-item code (a for
+// body, or the comprehension, whose first iterable r is excluded where reads are taken); j is -1 when x is the whole
+// item and the item's position in a row tuple otherwise.
+.decl sl_loop(x: symbol, b: node, r: node, bs: node, j: number)
+sl_loop(x, b, r, bs, -1) :- (kind(st, "for_statement") ; kind(st, "async_for_statement")), field(st, "left", l),
+    kind(l, "identifier"), text(l, x), field(st, "right", r), field(st, "body", b), nearest(st, bs, lfscope).
+sl_loop(x, c, r, c, -1) :- kind(fc, "for_in_clause"), field(fc, "left", l), kind(l, "identifier"), text(l, x),
+    field(fc, "right", r), child(c, fc, _), sl_comp(c).
+sl_loop(x, b, r, bs, j) :- (kind(st, "for_statement") ; kind(st, "async_for_statement")), field(st, "left", l),
+    sl_tuple_target(l, x, j0, n), field(st, "right", r0), sl_unpack(r0, j0, n, r, j), field(st, "body", b),
+    nearest(st, bs, lfscope).
+sl_loop(x, c, r, c, j) :- kind(fc, "for_in_clause"), field(fc, "left", l), sl_tuple_target(l, x, j0, n),
+    field(fc, "right", r0), sl_unpack(r0, j0, n, r, j), child(c, fc, _), sl_comp(c).
+.decl sl_comp(c: node)
+sl_comp(c) :- kind(c, "list_comprehension") ; kind(c, "set_comprehension") ; kind(c, "dictionary_comprehension") ;
+    kind(c, "generator_expression").
+// sl_tuple_target(l, x, j, n): loop target l unpacks n plain names, x the j-th (`for i, o in ...`).
+.decl sl_tuple_target(l: node, x: symbol, j: number, n: number)
+sl_tuple_target(l, x, j, n) :- (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), child(l, y, k), kind(y, "identifier"),
+    text(y, x), j = count : { child(l, y2, k2), kind(y2, "identifier"), k2 < k },
+    n = count : { child(l, y3, _), !kind(y3, ",") , !kind(y3, "("), !kind(y3, ")") }.
+// sl_unpack(r0, j0, n, r, j): `enumerate(r)` with two names gives r's items to the second; any other iterable gives
+// its rows' j-th entity to the j-th name.
+.decl sl_unpack(r0: node, j0: number, n: number, r: node, j: number)
+sl_unpack(r0, 1, 2, r, -1) :- sl_tuple_iter(r0, _), unparen(r0, k), kind(k, "call"), call_name(k, "enumerate"),
+    posarg(k, 0, r).
+sl_unpack(r0, j, n, r0, j) :- sl_tuple_iter(r0, l), sl_tuple_target(l, _, j, n), !sl_enumerate(r0).
+.decl sl_tuple_iter(r0: node, l: node)
+sl_tuple_iter(r0, l) :- (kind(st, "for_statement") ; kind(st, "async_for_statement") ; kind(st, "for_in_clause")),
+    field(st, "left", l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), field(st, "right", r0).
+.decl sl_enumerate(r0: node)
+sl_enumerate(r0) :- unparen(r0, k), kind(k, "call"), call_name(k, "enumerate").
+// sl_iter_key(r, j, ik): ik names the loop's iterable r and the row position j its name takes (a loop's source).
+.decl sl_iter_key(r: node, j: number, ik: symbol)
+sl_iter_key(r, j, cat(rk, " ", to_string(j))) :- sl_loop(_, _, r, _, j), pt_tm(r, rk).
+
+// ---- the reads ---------------------------------------------------------------------------------------------------
+// sl_read(b, r, j, x, u, rel): u reads `x.rel` once per item of the loop, in its own code.
+.decl sl_read(b: node, r: node, j: number, x: symbol, u: node, rel: symbol)
+sl_read(b, r, j, x, u, rel) :- sl_loop(x, b, r, bs, j), attr_of(u, o, rel), kind(o, "identifier"), text(o, x),
+    within_stop(u, b, sa_region_stop), !within(u, r), look(o, x, bs), !sl_stored(u).
+.decl sl_stored(u: node)
+sl_stored(u) :- kind(a, "assignment"), field(a, "left", u).
+sl_stored(u) :- kind(a, "assignment"), field(a, "left", l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
+    child(l, u, _).
+// sl_pass(b, r, j, x, k): call k, in the loop's own code, passes the loop's name x as an argument.
+.decl sl_pass(b: node, r: node, j: number, x: symbol, k: node)
+sl_pass(b, r, j, x, k) :- sl_loop(x, b, r, bs, j), kind(k, "call"), within_stop(k, b, sa_region_stop), !within(k, r),
+    call_arg(k, _, _, a), unparen(a, n), kind(n, "identifier"), text(n, x), look(n, x, bs).
+// sl_read_at(u, uk): u is a read (an attribute read, or a call passing the name on), uk its term. sl_live(u): it is in
+// no test or migration file.
+.decl sl_read_at(u: node, uk: symbol)
+sl_read_at(u, uk) :- sl_read(_, _, _, _, u, _), pt_tm(u, uk).
+sl_read_at(k, uk) :- sl_pass(_, _, _, _, k), pt_tm(k, uk).
+.decl sl_live(u: node)
+sl_live(u) :- docof(u, d), !sa_test_doc(d), !sa_migration_doc(d).
+// By symbol, stated in the loop's file: sl_read_q(uk, bk, ik, x, rel), read uk of `x.rel` in loop body bk over
+// source ik; sl_pass_pos_q(uk, bk, ik, x, g, i, f), call uk passes x as its positional argument i to def g, in call form
+// f (sa_call_form); sl_pass_kw_q(uk, bk, ik, x, g, p), as its keyword argument p.
+.decl sl_read_q(uk: symbol, bk: symbol, ik: symbol, x: symbol, rel: symbol)
+sl_read_q(uk, bk, ik, x, rel) :- sl_read(b, r, j, x, u, rel), sl_live(u), sl_iter_key(r, j, ik), pt_tm(u, uk),
+    pt_tm(b, bk).
+.decl sl_pass_pos_q(uk: symbol, bk: symbol, ik: symbol, x: symbol, g: symbol, i: number, f: symbol)
+sl_pass_pos_q(uk, bk, ik, x, gq, i, f) :- sl_pass(b, r, j, x, k), sl_live(k), posarg(k, i, a), unparen(a, n),
+    kind(n, "identifier"), text(n, x), sa_callee_q(k, gq), sa_call_form(k, f), sl_iter_key(r, j, ik), pt_tm(k, uk),
+    pt_tm(b, bk).
+.decl sl_pass_kw_q(uk: symbol, bk: symbol, ik: symbol, x: symbol, g: symbol, p: symbol)
+sl_pass_kw_q(uk, bk, ik, x, gq, p) :- sl_pass(b, r, j, x, k), sl_live(k), call_arg(k, -1, p, a), unparen(a, n),
+    kind(n, "identifier"), text(n, x), sa_callee_q(k, gq), sl_iter_key(r, j, ik), pt_tm(k, uk), pt_tm(b, bk).
+// sl_before_q(bk, uk2, uk): reads uk2 and uk are both in loop body bk, uk2 first.
+.decl sl_before_q(bk: symbol, uk2: symbol, uk: symbol)
+sl_before_q(bk, uk2, uk) :- sl_in_body(b, u), sl_in_body(b, u2), u2 < u, pt_tm(b, bk), pt_tm(u, uk), pt_tm(u2, uk2).
+.decl sl_in_body(b: node, u: node)
+sl_in_body(b, u) :- sl_read(b, _, _, _, u, _).
+sl_in_body(b, k) :- sl_pass(b, _, _, _, k).
+// sl_param_read_q(g, p, rel): def g reads `p.rel` on its parameter p in its own code, and never rebinds p (`instance =
+// update(instance)` makes later reads another object's). Stated in g's file.
+.decl sl_param_read_q(g: symbol, p: symbol, rel: symbol)
+sl_param_read_q(gq, p, rel) :- kind(g, "function_definition"), sig_param(g, _, nm, _, _, _, _), text(nm, p),
+    !asg(g, p, _, _), attr_of(u, o, rel), kind(o, "identifier"), text(o, p), within_stop(u, g, sa_region_stop),
+    look(o, p, g), !sl_stored(u), pt_def(g, gq).
+
+// ---- where the rows come from ------------------------------------------------------------------------------------
+// sl_src_loop_q(ik, sk, mq): the loop's iterable (source ik) yields instances of mq from statement sk of the same
+// function, and is not streamed. sl_src_call_q(ik, g): it is a call of def g of the run (maybe awaited, or a name
+// the same scope binds to one), not streamed. Stated in the loop's file.
+.decl sl_src_loop_q(ik: symbol, sk: symbol, mq: symbol)
+sl_src_loop_q(ik, sk, mq) :- sl_iterable(r, -1), sl_rows(r, s, mq), !sl_streamed(r), sl_iter_key(r, -1, ik),
+    pt_tm(s, sk).
+sl_src_loop_q(ik, sk, mq) :- sl_iterable(r, j), j >= 0, sl_tuple_rows(r, s, j, mq), !sl_streamed(r),
+    sl_iter_key(r, j, ik), pt_tm(s, sk).
+.decl sl_src_call_q(ik: symbol, g: symbol)
+sl_src_call_q(ik, gq) :- sl_iterable(r, -1), sl_iter_call(r, c), sa_callee_q(c, gq), !sl_streamed(r),
+    sl_iter_key(r, -1, ik).
+.decl sl_iterable(r: node, j: number)
+sl_iterable(r, j) :- sl_loop(_, _, r, _, j).
+// sl_rows(e, s, mq): lib's sa_rows, the same shapes over a statement held in a name, and a model's classmethod
+// querying `cls`.
+.decl sl_rows(e: node, s: node, mq: symbol)
+sl_rows(e, s, mq) :- sa_rows(e, s, mq).
+sl_rows(e, s, mq) :- unparen(e, s), sl_query_of(s, mq), !sa_query_of(s, _).
+sl_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, _, "scalars"), posarg(c, 0, n),
+    sl_stmt_name(n, s, mq).
+sl_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, "scalars"),
+    py_no_call_args(c), unparen(o, x), sa_awaited_or(x, xc), kind(xc, "call"), field(xc, "function", xf),
+    attr_of(xf, _, "execute"), posarg(xc, 0, n), sl_stmt_name(n, s, mq).
+sl_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), sa_rows_method(m),
+    unparen(o, x), sa_awaited_or(x, y), sl_rows(y, s, mq).
+sl_rows(e, s, mq) :- unparen(e, w), kind(w, "await"), child(w, c, 0), sl_rows(c, s, mq).
+sl_rows(e, s, mq) :- unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _), sl_rows(v, s, mq).
+// sl_tuple_rows(e, s, j, mq): e yields row tuples whose j-th entity is an instance of mq: `session.execute(s)`,
+// awaited, `….all()` on it, a legacy `session.query(A, B)`, or a name bound to one; s selects several entities.
+.decl sl_tuple_rows(e: node, s: node, j: number, mq: symbol)
+sl_tuple_rows(e, s, j, mq) :- unparen(e, c0), sa_awaited_or(c0, c), kind(c, "call"), field(c, "function", f),
+    attr_of(f, _, "execute"), posarg(c, 0, s0), sl_stmt_or_name(s0, s), sl_entity(s, j, mq).
+sl_tuple_rows(e, s, j, mq) :- unparen(e, s), sl_entity(s, j, mq), sl_is_query(s).
+sl_tuple_rows(e, s, j, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), sa_rows_method(m),
+    unparen(o, x), sa_awaited_or(x, y), sl_tuple_rows(y, s, j, mq).
+sl_tuple_rows(e, s, j, mq) :- unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _),
+    sl_tuple_rows(v, s, j, mq).
+.decl sl_stmt_or_name(s0: node, s: node)
+sl_stmt_or_name(s0, s) :- unparen(s0, s), kind(s, "call").
+sl_stmt_or_name(s0, s) :- unparen(s0, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, s, _).
+// sl_entity(s, j, mq): statement chain s selects several entities, class mq at position j: `select(A, B)`,
+// `session.query(A, B)`, chains from them.
+.decl sl_entity(s: node, j: number, mq: symbol)
+sl_entity(s, j, mq) :- unparen(s, e), kind(e, "call"), field(e, "function", f), sym_of(f, fq), sa_select_fn(fq),
+    posarg(e, 1, _), posarg(e, j, r), sym_of(r, mq).
+sl_entity(s, j, mq) :- unparen(s, e), kind(e, "call"), field(e, "function", f), attr_of(f, _, "query"), posarg(e, 1, _),
+    posarg(e, j, r), sym_of(r, mq).
+sl_entity(s, j, mq) :- unparen(s, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m),
+    sl_entity(o, j, mq).
+.decl sl_is_query(s: node)
+sl_is_query(s) :- unparen(s, e), kind(e, "call"), field(e, "function", f), attr_of(f, _, "query").
+sl_is_query(s) :- unparen(s, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m), sl_is_query(o).
+// sl_stmt_name(n, s, mq): n is a name the same scope binds to statement s, `select(M)` or a chain from it.
+.decl sl_stmt_name(n: node, s: node, mq: symbol)
+sl_stmt_name(n, s, mq) :- unparen(n, i), kind(i, "identifier"), text(i, x), look(i, x, sc), asg(sc, x, s, _),
+    sa_select_of(s, mq).
+// sl_query_of(q, mq): lib's sa_query_of, and a legacy query over `cls` in a classmethod of class mq.
+.decl sl_query_of(q: node, mq: symbol)
+sl_query_of(q, mq) :- sa_query_of(q, mq).
+sl_query_of(q, mq) :- unparen(q, e), attr_of(e, o, "query"), sl_cls_model(o, mq).
+sl_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, _, "query"),
+    posarg(e, 0, r), sl_cls_model(r, mq).
+sl_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m),
+    sl_query_of(o, mq).
+.decl sl_cls_model(e: node, mq: symbol)
+sl_cls_model(e, mq) :- unparen(e, i), kind(i, "identifier"), text(i, "cls"), look(i, "cls", f), param(f, "cls", 0),
+    nearest(f, c, scope), kind(c, "class_definition"), class_def(c, mq).
+// sl_iter_call(r, c): loop iterable r is call c (maybe awaited), or a name the same scope binds to one.
+.decl sl_iter_call(r: node, c: node)
+sl_iter_call(r, c) :- sl_iterable(r, -1), unparen(r, e), sa_awaited_or(e, c), kind(c, "call").
+sl_iter_call(r, c) :- sl_iterable(r, -1), unparen(r, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
+    asg(sc, x, v, _), unparen(v, e), sa_awaited_or(e, c), kind(c, "call").
+// sl_fn_rows_q(g, sk, mq, fx): def g, named fx, returns rows of mq from statement sk (a legacy query counts as its
+// rows), not streamed. Stated in g's file.
+.decl sl_fn_rows_q(g: symbol, sk: symbol, mq: symbol, fx: symbol)
+sl_fn_rows_q(gq, sk, mq, fx) :- sa_returns(g, v), sl_rows(v, s, mq), !sl_streamed(v), def_name(g, fx), pt_def(g, gq),
+    pt_tm(s, sk).
+
+// ---- loaded with the rows -------------------------------------------------------------------------------------------
+// sl_stmt(s): s is a statement whose rows a loop may iterate.
+.decl sl_stmt(s: node)
+sl_stmt(s) :- sl_rows(_, s, _).
+sl_stmt(s) :- sl_tuple_rows(_, s, _, _).
+// sl_stmt_opt(s, a): a is a loader option argument for statement s: of an `.options(...)` call on its chain, or in
+// the same function (a query built over several assignments).
+.decl sl_stmt_opt(s: node, a: node)
+sl_stmt_opt(s, a) :- sl_chain_call(s, oc), sl_opt_arg(oc, a).
+sl_stmt_opt(s, a) :- sl_stmt(s), nearest(s, f, scope), sl_opt_arg(oc, a), nearest(oc, f, scope).
+// sl_stmt_loads_q(sk, x): statement sk loads relationship x ("*": every one) with the rows, by its own file's options.
+// sl_stmt_splat_q(sk, q): an option list it splats is a name its scope does not bind, resolving to q (another module's,
+// or this module's, variable: sl_loads_q reads it by symbol).
+.decl sl_stmt_loads_q(sk: symbol, x: symbol)
+sl_stmt_loads_q(sk, x) :- sl_stmt_opt(s, a), sl_loader_names(a, x), pt_tm(s, sk).
+.decl sl_stmt_splat_q(sk: symbol, q: symbol)
+sl_stmt_splat_q(sk, q) :- sl_stmt_opt(s, o), sl_splat(o, n), !sl_splat_local(o, _), sym_of(n, q), pt_tm(s, sk).
+sl_stmt_loads_q(sk, "*") :- sl_stmt_opt(s, o), sl_splat(o, n), !sl_splat_local(o, _), !sym_of(n, _), pt_tm(s, sk).
+// sl_chain_call(s, k): k is a call along statement chain s, s itself included.
+.decl sl_chain_call(s: node, k: node)
+sl_chain_call(s, k) :- sl_stmt(s), unparen(s, k), kind(k, "call").
+sl_chain_call(s, k) :- sl_chain_call(s, e), field(e, "function", f), attr_of(f, o, _), unparen(o, k), kind(k, "call").
+// sl_opt_arg(oc, a): a is an argument of `.options(...)` call oc, a `*splat` included.
+.decl sl_opt_arg(oc: node, a: node)
+sl_opt_arg(oc, a) :- kind(oc, "call"), field(oc, "function", of), attr_of(of, _, "options"), call_arg(oc, _, _, a).
+sl_opt_arg(oc, a) :- kind(oc, "call"), field(oc, "function", of), attr_of(of, _, "options"), field(oc, "arguments", al),
+    child(al, a, _), kind(a, "list_splat").
+// sl_loader_names(o, x): lib's sa_loader_names with the option o itself counted, and options splatted from a name its
+// scope binds to a literal list or tuple.
+.decl sl_loader_names(o: node, x: symbol)
+sl_loader_names(o, x) :- sa_loader_names(o, x).
+sl_loader_names(o, x) :- unparen(o, c), kind(c, "call"), call_name(c, fn), sa_loader_fn(fn), call_arg(c, _, _, a),
+    unparen(a, aa), attr_of(aa, _, x).
+sl_loader_names(o, x) :- unparen(o, c), kind(c, "call"), call_name(c, fn), sa_loader_fn(fn), call_arg(c, _, _, a),
+    str(a, x).
+sl_loader_names(o, x) :- sl_splat_local(o, v), sa_loader_names(v, x).
+.decl sl_splat(o: node, n: node)
+sl_splat(o, n) :- sl_opt_arg(_, o), kind(o, "list_splat"), child(o, n0, _), !kind(n0, "*"), unparen(n0, n).
+// sl_splat_local(o, v): the splatted name is bound in its scope to v, a literal list or tuple.
+.decl sl_splat_local(o: node, v: node)
+sl_splat_local(o, v) :- sl_splat(o, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _),
+    (kind(v, "list") ; kind(v, "tuple")).
+// sl_opts_var_q(q, x): module variable q is a literal list or tuple of loader options naming x; sl_opts_list_q(q): it
+// is a literal list or tuple. Stated in q's file.
+.decl sl_opts_var_q(q: symbol, x: symbol)
+sl_opts_var_q(q, x) :- sa_module_var(q, v), (kind(v, "list") ; kind(v, "tuple")), sa_loader_names(v, x).
+.decl sl_opts_list_q(q: symbol)
+sl_opts_list_q(q) :- sa_module_var(q, v), (kind(v, "list") ; kind(v, "tuple")).
+// sl_streamed(e): expression e asks for yield_per batches, or is a name bound to one.
+.decl sl_streamed(e: node)
+sl_streamed(e) :- sl_yield_node(e).
+sl_streamed(e) :- within(n, e), sl_yield_node(n).
+sl_streamed(e) :- unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _), sl_streamed(v).
+// sl_stmt_streamed_q(sk): the function that builds statement sk asks for yield_per somewhere.
+.decl sl_stmt_streamed_q(sk: symbol)
+sl_stmt_streamed_q(sk) :- sl_stmt(s), nearest(s, f, scope), sl_yield_node(n), nearest(n, f, scope), pt_tm(s, sk).
+.decl sl_yield_node(n: node)
+sl_yield_node(n) :- kind(n, "identifier"), text(n, "yield_per").
+sl_yield_node(n) :- str(n, "yield_per").
+
+// ---- across files, by symbol -----------------------------------------------------------------------------------------
+// sl_loads_q(sk, x): statement sk loads x with its rows: its own file's options, or an options list a module variable
+// holds (or "*" when the name it splats is no literal list or tuple: unread, counted as loading everything).
+.decl sl_loads_q(sk: symbol, x: symbol)
+sl_loads_q(sk, x) :- sl_stmt_loads_q(sk, x).
+sl_loads_q(sk, x) :- sl_stmt_splat_q(sk, q), sl_opts_var_q(q, x).
+sl_loads_q(sk, "*") :- sl_stmt_splat_q(sk, q), !sl_opts_list_q(q).
+// sl_reads_q(uk, bk, ik, x, rel): read uk reads `x.rel` per row: itself, or through a def of the run it hands x to,
+// which reads `p.rel` on the parameter p it fills (one further for a bound method, sa_param_for).
+.decl sl_reads_q(uk: symbol, bk: symbol, ik: symbol, x: symbol, rel: symbol)
+sl_reads_q(uk, bk, ik, x, rel) :- sl_read_q(uk, bk, ik, x, rel).
+sl_reads_q(uk, bk, ik, x, rel) :- sl_pass_pos_q(uk, bk, ik, x, gq, i, f), sa_param_for(gq, i, f, p),
+    sl_param_read_q(gq, p, rel).
+sl_reads_q(uk, bk, ik, x, rel) :- sl_pass_kw_q(uk, bk, ik, x, gq, p), sl_param_read_q(gq, p, rel).
+// sl_srcs_q(ik, sk, mq, src, how): source ik yields rows of mq from statement sk: the loop's own statement, or the one
+// a def of the run it calls returns.
+.decl sl_srcs_q(ik: symbol, sk: symbol, mq: symbol, src: symbol, how: symbol)
+sl_srcs_q(ik, sk, mq, "the statement the loop iterates", "loop") :- sl_src_loop_q(ik, sk, mq).
+sl_srcs_q(ik, sk, mq, @replace_all("the statement F() returns", "F", fx), "callee") :- sl_src_call_q(ik, gq),
+    sl_fn_rows_q(gq, sk, mq, fx).
+.decl sl_hit_q(uk: symbol, bk: symbol, x: symbol, rel: symbol, mq: symbol, sk: symbol, src: symbol, how: symbol)
+sl_hit_q(uk, bk, x, rel, mq, sk, src, how) :- sl_reads_q(uk, bk, ik, x, rel), sl_srcs_q(ik, sk, mq, src, how),
+    sa_lazy_rel_q(mq, rel), !sl_loads_q(sk, rel), !sl_loads_q(sk, "*"), !sl_stmt_streamed_q(sk).
+.decl sl_first_q(uk: symbol, rel: symbol)
+sl_first_q(uk, rel) :- sl_hit_q(uk, bk, _, rel, _, _, _, _), !sl_beaten_q(uk, bk, rel).
+.decl sl_beaten_q(uk: symbol, bk: symbol, rel: symbol)
+sl_beaten_q(uk, bk, rel) :- sl_hit_q(uk, bk, _, rel, _, _, _, _), sl_before_q(bk, uk2, uk), sl_hit_q(uk2, bk, _, rel, _, _, _, _).

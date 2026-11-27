@@ -1,0 +1,229 @@
+.policy "django-practice-addfield-default-runs-once" revision 1
+.description "Add a generated or unique field to an existing table nullable, fill each row, then finalize it; Django computes the default once for all rows."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A migration's AddField on a table that already exists (the model is not created in
+// the same migration) fills every existing row with the field's default, and Django computes that default once
+// (Django docs, "Migrations that add unique fields"): `ALTER TABLE … ADD COLUMN … DEFAULT <one value>`. A nullable
+// field is no exception: the schema editor writes the default into the ADD COLUMN for it too (Django 5.2,
+// `BaseDatabaseSchemaEditor._iter_column_sql`), so existing rows get the one value, not NULL. Reported:
+//   - a default that generates a fresh identifier or secret per call: uuid.uuid1/4/6/7, os.urandom, secrets.*,
+//     random.SystemRandom, django.utils.crypto.get_random_string, shortuuid.uuid/random, under any import alias, a
+//     functools.partial of one of these, or a function of the run (in the migration or imported, e.g. pretix's
+//     `pretix.base.models.orders.generate_secret`) whose body calls one of these, directly or through one more
+//     function of the run. Every existing row shares one token, secret or UUID. The generators are a name list:
+//     whether a function returns a value meant to differ per row is not decidable from its code, so the list holds
+//     the standard library's and Django's identifier and secret sources and shortuuid's;
+//   - any default other than None on a unique field (unique=True, primary_key=True, a OneToOneField): the migration
+//     fails with an IntegrityError on a table with two or more rows, and passes on an empty test database.
+//     AddField(model_name="order", name="web_secret",
+//              field=models.CharField(default=shop.models.generate_secret, max_length=32))        reported
+//     AddField(model_name="order", name="public_id", field=models.UUIDField(default=uuid.uuid4, null=True))  reported
+//     AddField(model_name="customer", name="number", field=models.CharField(default="0", unique=True))  reported
+// Left alone:
+//   - a constant or time default (`timezone.now`, `date.today`, `dict`, a project function that calls neither a
+//     generator nor a function that does): one value for existing rows is the usual intent;
+//   - a default from the random module's shared generator (random.choice, random.random, a helper that calls only
+//     those, as plane's `get_random_color`): the module is documented as unfit for secrets, and its corpus defaults
+//     are colours and picks from a list; one value for existing rows is cosmetic;
+//   - a default that is already a call (`default=uuid.uuid4()`): one value, as written, on a field that is not unique;
+//   - a field with db_default, which the database evaluates per row;
+//   - an AddField on a model the same migration creates (dj_mig_creates): its table has no rows;
+//   - an AddField of a field that is not unique whose rows a backfill fills afterwards, later in the same migration
+//     or in a migration of the same app applied after it (dj_mig_ran_before): a RunPython whose function (or a
+//     function of the run it calls) names the same model (`apps.get_model("shop", "Order")`, by position or keyword,
+//     `apps.get_model("shop.Order")`, or a manager of a name bound to it, `Order.objects`, `Client._default_manager`
+//     after `from shop.models import Customer as Client`) and writes the field (`obj.<field> = …`,
+//     `setattr(obj, "<field>", …)`, `update(<field>=…)`); or a RunSQL (one string, a list of strings or of
+//     (sql, params) pairs) whose UPDATE targets a table whose name ends in the model's name and sets the column
+//     (`UPDATE shop_order SET secret = …`). A unique AddField fails before any backfill runs, so it is reported
+//     regardless;
+//   - a squashed migration (`replaces = [...]`): Django runs it only on a database that applied none of the
+//     migrations it replaces, which are still in the tree while `replaces` is set and are reported themselves;
+//   - a SeparateDatabaseAndState's state_operations (dj_mig_db_op), and migrations in test directories;
+//   - a model the project's code (outside migrations and tests) reads as its one row (dj_one_row: `.objects.get()`
+//     without arguments, a lazy singleton's `.objects.first()` beside `create()`/`get_or_create()`, django-solo's
+//     `get_solo()`, or the current site's row, `Site.objects.get_current().<related_name>` of a model's
+//     OneToOneField, saleor's SiteSettings): one value is right for it and a unique field cannot collide.
+//     AddField(..., field=models.UUIDField(default=uuid.uuid4, null=True)), then
+//       RunPython(fill) where fill reads apps.get_model("shop", "Order") and sets `order.public_id`    not reported
+//     AddField(..., field=models.DateTimeField(default=django.utils.timezone.now))                    not reported
+//     AddField(..., field=models.CharField(default=shop.models.pick_colour))   # random.choices       not reported
+// Gaps: the backfill's model and field are matched within its functions, not tied to one object, so a backfill that
+// names both models and writes a same-named field of the other one silences this one; a backfill through a generic
+// helper that takes the column or the model as a variable (`setattr(obj, column, …)`, `apps.get_model("shop",
+// name)`) is not seen; a RunSQL backfill is matched by the table name's ending (a custom db_table is not followed,
+// and an UPDATE of `shop_specialorder` also counts for model `order`). A one-row table that code reads otherwise
+// (`get(pk=1)`, a cache) is reported. A one-row model is matched by its class name, so a same-named model of another
+// app read that way silences this one; a per-site row is silent also in a project that serves several sites, whose
+// rows then share the value. Generators outside the list (`nanoid`) and functions more than two calls deep are not
+// followed.
+// The defaults' functions, the backfills' functions and the later migrations are in other files, so they are read by
+// symbol and by key (decision 0691): each def states by its qualified name what it calls and writes (adr_gen_here,
+// dj_calls, adr_writes, adr_names), each migration its AddFields and backfills by its key, and the output reads the
+// answers back at the default.
+
+#include "lib/django.rerail"
+
+.violation SharedValue(at: node, x: symbol, fn: symbol) "All existing rows get one `{fn}()` value. Add `{x}` null=True, fill rows in RunPython, then AlterField; if already applied, regenerate the values in a new data migration. Skip if rows may share one."
+SharedValue(v, x, fn) :- adr_add(_, d, i, m, x, f, v), !adr_unique(f), adr_default_ref(v, _, fn),
+    (adr_gen_fn(fn) ; prefix("secrets.", fn) ; adr_gen_def(fn)), dj_mig_key(d, k), !adr_backfilled(k, i, m, x),
+    !dj_one_row(m).
+
+.violation UniqueDefault(at: node, x: symbol) "Every existing row gets one default, so unique `{x}` fails on two rows. Add it nullable and not unique, fill each row in RunPython, then AlterField to unique. Skip for one-row tables."
+UniqueDefault(v, x) :- adr_add(_, _, _, m, x, f, v), adr_unique(f), unparen(v, u), !kind(u, "none"), !dj_one_row(m).
+
+// adr_add(o, d, i, m, x, f, v): AddField o, which changes the database at position i of migration d (neither a test
+// file nor a squash), adds field x to model m as field call f with default v, on a model d does not create, and
+// without db_default. A one-row model (dj_one_row, a fact about the whole repository) is left out in the outputs.
+.decl adr_add(o: node, d: number, i: number, m: symbol, x: symbol, f: node, v: node)
+adr_add(o, d, i, m, x, f, v) :- dj_mig_db_op(o, "AddField", d, i), !dj_test_doc(d), !dj_mig_attr(d, "replaces", _),
+    dj_mig_model(o, m), !dj_mig_creates(d, m), dj_mig_field(o, x, f, _),
+    call_arg(f, -1, "default", v), !call_arg(f, -1, "db_default", _).
+
+// adr_unique(f): field call f is unique: unique=True, primary_key=True, or a OneToOneField.
+.decl adr_unique(f: node)
+adr_unique(f) :- adr_add(_, _, _, _, _, f, _), call_arg(f, -1, k, v), (k = "unique" ; k = "primary_key"), kind(v, "true").
+adr_unique(f) :- adr_add(_, _, _, _, _, f, _), dj_mig_field_class(f, "OneToOneField").
+
+// adr_gen_fn(q): a function that returns a fresh unguessable value per call; so does every `secrets.*` function.
+// random.* is left out: its corpus defaults are colours and picks, not secrets.
+.decl adr_gen_fn(q: symbol)
+adr_gen_fn("uuid.uuid1"). adr_gen_fn("uuid.uuid4"). adr_gen_fn("uuid.uuid6"). adr_gen_fn("uuid.uuid7").
+adr_gen_fn("os.urandom"). adr_gen_fn("django.utils.crypto.get_random_string").
+adr_gen_fn("shortuuid.uuid"). adr_gen_fn("shortuuid.random"). adr_gen_fn("random.SystemRandom").
+
+// adr_default_ref(v, e, fn): the default v names the callable e (itself, or the function a functools.partial wraps),
+// whose name is fn.
+.decl adr_default_ref(v: node, e: node, fn: symbol)
+adr_default_ref(v, u, fn) :- adr_add(_, _, _, _, _, _, v), unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")),
+    sym_of(u, fn).
+adr_default_ref(v, a, fn) :- adr_add(_, _, _, _, _, _, v), unparen(v, u), kind(u, "call"), field(u, "function", pf),
+    sym_of(pf, "functools.partial"), posarg(u, 0, a0), unparen(a0, a), sym_of(a, fn).
+// adr_gen_here(g): the def of qualified name g calls a generator (code in a nested def or lambda included). Stated in
+// g's file.
+.decl adr_gen_here(g: symbol)
+adr_gen_here(gq) :- kind(g, "function_definition"), qualname(g, gq), kind(c, "call"), within(c, g),
+    field(c, "function", e), sym_of(e, q), (adr_gen_fn(q) ; prefix("secrets.", q)).
+// adr_gen_def(g): def g of the run calls a generator, directly or through one more def of the run (dj_calls), in any
+// file: by qualified names alone.
+.decl adr_gen_def(g: symbol)
+adr_gen_def(gq) :- adr_gen_here(gq).
+adr_gen_def(gq) :- dj_calls(gq, hq), adr_gen_here(hq).
+
+// adr_backfilled(k, i, m, x): a backfill after position i of migration k (by key), or in a migration of the same app
+// applied after k, writes field x of model m: a RunPython (adr_fills) or a RunSQL UPDATE (adr_bf_sql).
+.decl adr_backfilled(k: symbol, i: number, m: symbol, x: symbol)
+adr_backfilled(k, i, m, x) :- adr_add_at(k, i, m, x), adr_fills_at(k, j, m, x), j > i.
+adr_backfilled(k, i, m, x) :- adr_add_at(k, i, m, x), dj_mig_ran_before(k, e), adr_fills_at(e, _, m, x).
+// adr_add_at(k, i, m, x): adr_add by the migration's key.
+.decl adr_add_at(k: symbol, i: number, m: symbol, x: symbol)
+adr_add_at(k, i, m, x) :- adr_add(o, _, i, m, x, _, _), dj_key_of(o, k).
+// adr_fills_at(k, j, m, x): backfill item j of migration k writes field x of model m.
+.decl adr_fills_at(k: symbol, j: number, m: symbol, x: symbol)
+adr_fills_at(k, j, m, x) :- adr_bf_rp(k, j, q), adr_fills(q, m, x).
+adr_fills_at(k, j, m, x) :- adr_bf_sql(k, j, s), adr_add_at(_, _, m, x),
+    match(cat("(?s).*\\bupdate\\s+[a-z0-9_.\"]*", m, "\"?\\s+set\\s.*\\b", @lower(x), "\"?\\s*=.*"), s).
+// adr_bf_rp(k, j, q): item j of migration k is a RunPython of function q (dj_runpython). adr_bf_sql(k, j, s): item j
+// is a RunSQL one of whose statements, lowercased, is s and updates something.
+.decl adr_bf_rp(k: symbol, j: number, q: symbol)
+adr_bf_rp(k, j, q) :- dj_runpython(o, _, j, q), dj_key_of(o, k).
+.decl adr_bf_sql(k: symbol, j: number, s: symbol)
+adr_bf_sql(k, j, s) :- dj_mig_db_op(o, "RunSQL", _, j), adr_sql_text(o, t), s = @lower(t), contains("update", s),
+    dj_key_of(o, k).
+
+// adr_rp_scope(g, h): h is RunPython function g, or a def of the run g calls (dj_calls), by qualified names.
+.decl adr_rp_scope(g: symbol, h: symbol)
+adr_rp_scope(q, q) :- adr_bf_rp(_, _, q).
+adr_rp_scope(q, h) :- adr_bf_rp(_, _, q), dj_calls(q, h).
+// adr_writes(h, x): the def of qualified name h assigns `obj.x = …`, calls `setattr(obj, "x", …)` or passes `x=` to a
+// call. Stated in h's file.
+.decl adr_writes(h: symbol, x: symbol)
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(a, "assignment"), within(a, h),
+    field(a, "left", l), attr_of(l, _, x).
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(c, "call"), within(c, h),
+    call_arg(c, -1, x, _), x != "".
+adr_writes(hq, x) :- kind(h, "function_definition"), qualname(h, hq), kind(c, "call"), within(c, h),
+    field(c, "function", e), sym_of(e, "builtins.setattr"), posarg(c, 1, n), str(n, x).
+// adr_names(h, m): the def of qualified name h names model m (lowercased): `apps.get_model("shop", "Order")` (by
+// position or as `model_name=`), `apps.get_model("shop.Order")`, or a manager of a name bound to the model
+// (`Order.objects`, `Order._default_manager`, under the local name or the class an import resolves to). Stated in h's
+// file.
+.decl adr_names(h: symbol, m: symbol)
+adr_names(hq, @lower(s)) :- adr_get_model(c, h), (posarg(c, 1, a) ; call_arg(c, -1, "model_name", a)), str(a, s),
+    qualname(h, hq).
+adr_names(hq, @lower(s)) :- adr_get_model(c, h), (posarg(c, 0, a) ; call_arg(c, -1, "app_label", a)), str(a, t),
+    match("[^.]+\\.(?<s>[^.]+)", t), qualname(h, hq).
+adr_names(hq, @lower(s)) :- kind(h, "function_definition"), dj_manager(q), within(q, h), attr_of(q, r, _),
+    kind(r, "identifier"), text(r, s), qualname(h, hq).
+adr_names(hq, @lower(s)) :- kind(h, "function_definition"), dj_manager(q), within(q, h), attr_of(q, r, _),
+    kind(r, "identifier"), sym_of(r, qr), split_dot(qr, _, s), qualname(h, hq).
+// adr_get_model(c, h): call c in def h is `<apps>.get_model(…)`.
+.decl adr_get_model(c: node, h: node)
+adr_get_model(c, h) :- kind(h, "function_definition"), kind(c, "call"), within(c, h), field(c, "function", e),
+    attr_of(e, _, "get_model").
+// adr_fills(g, m, x): RunPython function g writes field x and names model m, itself or in defs of the run it calls.
+.decl adr_fills(g: symbol, m: symbol, x: symbol)
+adr_fills(g, m, x) :- adr_rp_scope(g, h), adr_writes(h, x), adr_rp_scope(g, k), adr_names(k, m).
+
+// adr_sql_text(o, t): t is one SQL statement RunSQL o runs forwards.
+.decl adr_sql_text(o: node, t: symbol)
+adr_sql_text(o, t) :- dj_mig_db_op(o, "RunSQL", _, _), dj_mig_arg(o, "sql", v), str(v, t).
+adr_sql_text(o, t) :- dj_mig_db_op(o, "RunSQL", _, _), dj_mig_arg(o, "sql", v), (kind(v, "list") ; kind(v, "tuple")),
+    child(v, e, _), (str(e, t) ; (kind(e, "tuple"), child(e, p, 0), str(p, t))).
+
+// The cases, `upstream/django-practice/authored/django-practice-addfield-default-runs-once/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/models.py"
+    .fixture "shop/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_order_tokens.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0002_order_tokens.py"
+    .fixture "shop/migrations/0003_order_backfill.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0003_order_backfill.py"
+    .fixture "shop/migrations/0004_customer_uid.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0004_customer_uid.py"
+    .fixture "shop/migrations/0005_fill_customer_uid.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0005_fill_customer_uid.py"
+    .fixture "shop/migrations/0006_customer_uid_unique.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0006_customer_uid_unique.py"
+    .fixture "shop/migrations/0007_profile_fields.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0007_profile_fields.py"
+    .fixture "shop/migrations/0008_siteconfig_install_id.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0008_siteconfig_install_id.py"
+    .fixture "shop/migrations/0009_coupons.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0009_coupons.py"
+    .fixture "shop/migrations/0010_fill_coupons.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0010_fill_coupons.py"
+    .fixture "shop/migrations/0011_order_sql_backfill.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0011_order_sql_backfill.py"
+    .fixture "shop/migrations/0012_more_generators.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0012_more_generators.py"
+    .fixture "shop/migrations/0013_generator_variants.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0013_generator_variants.py"
+    .fixture "shop/migrations/0014_fill_variants.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0014_fill_variants.py"
+    .fixture "shop/migrations/0015_per_site_settings.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/migrations/0015_per_site_settings.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/views.py"
+    .fixture "shop/tests/migrations/0001_fixture.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/tests/migrations/0001_fixture.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/shop/tests/test_views.py"
+    .fixture "billing/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0001_initial.py"
+    .fixture "billing/migrations/0002_invoice_secret.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0002_invoice_secret.py"
+    .fixture "billing/migrations/0003_invoice_note.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0003_invoice_note.py"
+    .fixture "billing/migrations/0002_squashed_0003_invoice_note.py" from "../upstream/django-practice/authored/django-practice-addfield-default-runs-once/billing/migrations/0002_squashed_0003_invoice_note.py"
+    .expect _ at "shop/migrations/0002_order_tokens.py":31
+    .expect _ at "shop/migrations/0002_order_tokens.py":36
+    .expect _ at "shop/migrations/0002_order_tokens.py":41
+    .expect _ at "shop/migrations/0002_order_tokens.py":46
+    .expect _ at "shop/migrations/0002_order_tokens.py":51
+    .expect _ at "shop/migrations/0002_order_tokens.py":56
+    .expect _ at "shop/migrations/0002_order_tokens.py":61
+    .expect _ at "shop/migrations/0002_order_tokens.py":67
+    .expect _ at "shop/migrations/0002_order_tokens.py":72
+    .expect _ at "shop/migrations/0002_order_tokens.py":77
+    .expect _ at "shop/migrations/0002_order_tokens.py":82
+    .expect _ at "shop/migrations/0002_order_tokens.py":87
+    .expect _ at "shop/migrations/0002_order_tokens.py":133
+    .expect _ at "shop/migrations/0003_order_backfill.py":30
+    .expect _ at "shop/migrations/0007_profile_fields.py":17
+    .expect _ at "shop/migrations/0008_siteconfig_install_id.py":19
+    .expect _ at "shop/migrations/0009_coupons.py":16
+    .expect _ at "shop/migrations/0011_order_sql_backfill.py":20
+    .expect _ at "shop/migrations/0012_more_generators.py":17
+    .expect _ at "shop/migrations/0012_more_generators.py":23
+    .expect _ at "shop/migrations/0012_more_generators.py":28
+    .expect _ at "shop/migrations/0013_generator_variants.py":20
+    .expect _ at "shop/migrations/0013_generator_variants.py":25
+    .expect _ at "shop/migrations/0013_generator_variants.py":30
+    .expect _ at "shop/migrations/0013_generator_variants.py":63
+    .expect _ at "billing/migrations/0002_invoice_secret.py":13
+    .expect _ at "shop/migrations/0015_per_site_settings.py":21
+.end

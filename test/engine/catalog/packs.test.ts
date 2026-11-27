@@ -1,25 +1,25 @@
 /**
  * The pack validation contract (docs/pack-format.md): every packs/<id>/ directory passes checks 1 to 8, one test per
- * check, and reports each rule's status; a rule core cannot read yet is skipped as not supported yet. Check 4 scores
- * ported rules on the tools' fixtures, unless `RERAIL_PACK_FIXTURES_IN_CONFORMANCE=1`: CI's unit tests set it, since
- * the conformance job scores the same fixtures and fails on the same failures, so the fixtures are scored once.
+ * check, and reports each rule's status (test/engine/support/pack-suite.ts). This file validates the packs with no rule
+ * written in `.rerail`; packs-rerail/share-<n>.test.ts validate the rest, so CI's shards can place them apart.
  *
  * The validator's own tests run it over the fixture packs in fixtures/packs/: `valid` passes, each negative
  * breaks one check of a copy of it, `exemplar`, for the test-only planned language, passes with its rule not supported
  * yet, and `empty`, whose ports are all candidates, passes with no rules.
  */
-import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it, test, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
 import { coreFloor, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { describePacks, PACKS, packs, RERAIL_PACK_FILES, rerailPackShare, rerailRuleCount, TIMEOUT } from "../support/pack-suite.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
@@ -28,40 +28,16 @@ vi.mock("../../../src/engine/code-rule/code-rule-language-registry.generated.js"
 vi.mock("../../../src/engine/native/native.js", async importOriginal =>
   (await import("../support/exemplar-engine.js")).nativeRefusingExemplar(await importOriginal()));
 
-const PACKS = fileURLToPath(new URL("../../../packs/", import.meta.url));
 const FIXTURES = fixturesPath("packs");
-const TIMEOUT = 600_000;
-const FIXTURES_IN_CONFORMANCE = process.env.RERAIL_PACK_FIXTURES_IN_CONFORMANCE === "1";
 
-const packs = existsSync(PACKS)
-  ? readdirSync(PACKS, { withFileTypes: true })
-      .filter(entry => entry.isDirectory())
-      .map(entry => entry.name)
-      .sort(compareDeterministicStrings)
-  : [];
+describePacks(packs.filter(id => rerailRuleCount(id) === 0));
 
-/** The rule ids pack.json lists, read when tests are collected; an unreadable pack.json lists none and fails check 1. */
-function listedRules(id: string): string[] {
-  try {
-    const parsed = z.object({ rules: z.array(z.object({ id: z.string() })) }).safeParse(JSON.parse(readFileSync(join(PACKS, id, "pack.json"), "utf8")));
-    return parsed.success ? parsed.data.rules.map(rule => rule.id) : [];
-  } catch {
-    return [];
-  }
-}
-
-describe.each(packs)("pack %s", id => {
-  let validation: Promise<PackValidation> | undefined;
-  const validated = (): Promise<PackValidation> => (validation ??= validatePack(join(PACKS, id), { fixtures: !FIXTURES_IN_CONFORMANCE }));
-
-  it.each(PACK_CHECKS)("check $number: $name", { timeout: TIMEOUT }, async ({ name }) => {
-    expect((await validated()).checks[name]).toEqual([]);
-  });
-
-  test.for(listedRules(id))("rule %s", { timeout: TIMEOUT }, async (ruleId, { skip }) => {
-    const rule = (await validated()).rules.find(entry => entry.id === ruleId);
-    if (rule?.status === "not-supported-yet") skip(`not supported yet: ${rule.reason}`);
-    expect(rule?.status, rule?.reason).toBe("ok");
+describe("the packs with rules written in .rerail", () => {
+  it("are validated, each once, by the files of packs-rerail/, one for each share", () => {
+    const files = readdirSync(join(dirname(fileURLToPath(import.meta.url)), "packs-rerail"));
+    const shares = Array.from({ length: RERAIL_PACK_FILES }, (_, at) => rerailPackShare(at + 1));
+    expect(files.sort(compareDeterministicStrings)).toEqual(shares.map((_, at) => `share-${at + 1}.test.ts`).sort(compareDeterministicStrings));
+    expect(shares.flat().sort(compareDeterministicStrings)).toEqual(packs.filter(id => rerailRuleCount(id) > 0));
   });
 });
 
@@ -1153,7 +1129,23 @@ describe("the core range the release writes", () => {
 
   // react ships a utility named `stored`, which is no rule key: its range stays.
   it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, shipping a .rerail rule, or giving rules dimensions", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "rerail", "typescript"]);
+    expect(floors.map(({ id }) => id)).toEqual([
+      "alembic",
+      "celery",
+      "complexity",
+      "django",
+      "drf",
+      "fastapi",
+      "javascript",
+      "pydantic",
+      "pytest",
+      "python",
+      "python-practice",
+      "python-security",
+      "rerail",
+      "sqlalchemy",
+      "typescript",
+    ]);
     expect(floors.filter(({ ruleKeys }) => ruleKeys.length > 0).map(({ id, ruleKeys }) => [id, ruleKeys])).toEqual([
       ["javascript", ["stored"]],
       ["python", ["stored"]],

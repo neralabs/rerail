@@ -1,0 +1,219 @@
+.policy "python-practice-retry-loop-without-limit" revision 1
+.description "Bound a hand-written retry loop with an attempt count or a deadline; without one a permanent error loops forever."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A retry that never gives up turns a permanent failure (bad credentials, a 4xx, a
+// deleted row, a schema error) into an endless loop: a hung request, a stuck worker, a hot loop hammering the
+// dependency. This rule reads hand-written retry loops; python-practice-retry-without-limit reads the retry
+// libraries. Whether a loop is a retry is a heuristic (its shape, not its intent), so the rule stays in log.
+// Outside test code it reports a loop that only ends from inside: `while True:` (or `while 1:`), `for _ in
+// itertools.count():`, or `while not done:` where `done` is set in the loop, with a `try` in its own body (also inside
+// an `if` or `with` of it, not inside a nested loop) that leaves the loop once its work is done (a `return`, a `break`
+// of this loop, or `done = ...`, as a statement of the try body or its `else`, or of a `with` there), one of whose
+// `except` clauses never raises, returns, leaves the loop or calls sys.exit()/os._exit(), and nothing else in the loop
+// (a statement before or after the try, its `finally`) does either: no counter or deadline the loop checks. A nested
+// def or lambda is its own frame: a raise there does not end the loop.
+//   while True:                                            reported
+//       try: conn = connect(); break
+//       except OSError: time.sleep(1)
+//   done = False
+//   while not done:                                        reported
+//       try: connect(); done = True
+//       except OSError: time.sleep(1)
+//   while True:                                            not reported: the handler gives up
+//       try: return fetch()
+//       except OSError:
+//           attempt += 1
+//           if attempt > 5: raise
+// It leaves alone a `for attempt in range(n)` loop, a `while True` worker or polling loop whose only exits are
+// conditional (`if msg is None: break`, `if stop.is_set(): break`) or that has none (it is meant to run until told to
+// stop), a loop whose looping handlers catch only what is not a failure of the work: a wait's timeout
+// (`except queue.Empty`, a redis `LockError` of `blocking_timeout`) or a person's Ctrl-C (`except
+// KeyboardInterrupt`, an interactive shell that goes back to its prompt); a handler of a name-conflict error
+// (`EntityExistsError`, `IntegrityError`, ...) that picks a new value the try reads (a search for a free name); a loop
+// that prompts the person at the terminal on every turn (`input()`, `getpass()`, `click.prompt()`, `typer.prompt()`,
+// rich's `Prompt.ask()`), in the loop or in a function of the run it calls, at any depth through sure call targets,
+// when the prompt is not behind an `if`, `and`/`or` or a conditional expression (`os.getenv("X") or input()` prompts
+// only when the variable is unset, so the loop still spins with it set); a `while` with a real condition; test files.
+// The class lists (waits, name conflicts, prompts) are names because what an exception class means is not decidable
+// from the code; the prompts and waits resolve through imports.
+// Gaps: a loop whose bound sits in a helper the handler calls (`self._check_attempts()` that raises) is reported; a
+// poll-until-ready loop (`try: r = get(); if r.ok: break`) is not read; a retry by recursion (`except OSError: return
+// fetch()`) is not read.
+
+#include "lib/python_practice.rerail"
+#include "python/exceptions.rerail"
+
+.violation RetryLoopWithoutLimit(at: node, what: symbol, x: node)
+    "Count the attempts or set a deadline here and re-raise past it: `{what}` at line {x.line} retries forever. Leave it if the loop must run until it succeeds, like a long-lived connection."
+// A loop whose every turn calls a helper that prompts (prl_turn_asks) is no retry: that walk crosses files, so it is
+// over symbols (decision 0677: no node crosses files), and the finding reads it by its loop's term.
+RetryLoopWithoutLimit(w, what, x) :- prl_first(w, x), prl_what(x, what), pt_tm(w, wt), !prl_turn_asks(wt).
+// prl_first(w, x): the first handler of loop w that retries.
+.decl prl_first(w: node, x: node)
+prl_first(w, x) :- prl_loop(w), x = min y : { prl_loop_handler(w, y) }.
+
+// ---- loops that end only from inside -----------------------------------------------------------------------------
+// prl_forever(w): `while True:`, `while 1:`, `for ... in itertools.count(...)`, or `while not v:` (prl_flag).
+.decl prl_forever(w: node)
+prl_forever(w) :- kind(w, "while_statement"), field(w, "condition", c0), unparen(c0, c),
+    (kind(c, "true") ; kind(c, "integer"), text(c, "1")).
+prl_forever(w) :- kind(w, "for_statement"), field(w, "right", r0), unparen(r0, r), kind(r, "call"),
+    field(r, "function", f), sym_of(f, "itertools.count").
+prl_forever(w) :- prl_flag(w, _).
+// prl_flag(w, v): `while not v:` with v a plain name.
+.decl prl_flag(w: node, v: symbol)
+prl_flag(w, v) :- kind(w, "while_statement"), field(w, "condition", c0), unparen(c0, c), kind(c, "not_operator"),
+    field(c, "argument", a0), unparen(a0, a), kind(a, "identifier"), text(a, v).
+// prl_loopish(k): the nodes whose body a `break` cannot leave: loops and frames.
+.decl prl_loopish(k: symbol)
+prl_loopish("while_statement"). prl_loopish("for_statement"). prl_loopish("function_definition").
+prl_loopish("lambda"). prl_loopish("class_definition").
+// prl_loop_try(w, t): try t runs in forever-loop w's own body: as a statement of it, or inside an `if`, `with` or
+// another try there, not inside a nested loop or frame.
+.decl prl_loop_try(w: node, t: node)
+prl_loop_try(w, t) :- prl_forever(w), kind(t, "try_statement"), nearest(t, w, prl_loopish), pp_live(w).
+// prl_exit(e, w): e, in loop w's own frame, leaves w: a return, a raise, a break whose loop is w, a call of
+// sys.exit / os._exit / exit / quit, or, in a `while not v` loop, an assignment to v.
+.decl prl_exit(e: node, w: node)
+prl_exit(e, w) :- prl_forever(w), (kind(e, "return_statement") ; kind(e, "raise_statement")),
+    within_stop(e, w, pp_stop).
+prl_exit(e, w) :- prl_forever(w), kind(e, "break_statement"), nearest(e, w, prl_loopish).
+prl_exit(e, w) :- prl_forever(w), kind(e, "call"), within_stop(e, w, pp_stop), field(e, "function", f), sym_of(f, q),
+    (q = "sys.exit" ; q = "os._exit" ; q = "builtins.exit" ; q = "builtins.quit").
+prl_exit(e, w) :- prl_flag(w, v), kind(e, "assignment"), within_stop(e, w, pp_stop), field(e, "left", l),
+    kind(l, "identifier"), text(l, v), field(e, "right", r), !kind(r, "false").
+// prl_success(t, w): try t leaves w once its work is done: a `return`, a `break` of w or a flag assignment that is a
+// statement of the try body or its else clause, or of a `with` there, so it runs whenever nothing raised. A
+// conditional exit (`if msg is None: break`, `if stop.is_set(): break`) is a worker's stop signal, not a retry's
+// success.
+.decl prl_success(t: node, w: node)
+prl_success(t, w) :- prl_loop_try(w, t), field(t, "body", tb), prl_straight(tb, e), prl_leave(e, w).
+prl_success(t, w) :- prl_loop_try(w, t), child(t, ec, _), kind(ec, "else_clause"), field(ec, "body", eb),
+    prl_straight(eb, e), prl_leave(e, w).
+.decl prl_leave(e: node, w: node)
+prl_leave(e, w) :- prl_exit(e, w), (kind(e, "return_statement") ; kind(e, "break_statement")).
+prl_leave(s, w) :- prl_exit(e, w), kind(e, "assignment"), child(s, e, 0), kind(s, "expression_statement").
+// prl_straight(b, e): statement e runs whenever block b runs to its end: a statement of b, or of a `with` body in b.
+.decl prl_straight(b: node, e: node)
+prl_straight(b, e) :- prl_try_block(b), child(b, e, _).
+prl_straight(b, e) :- prl_straight(b, s), kind(s, "with_statement"), field(s, "body", wb), child(wb, e, _).
+.decl prl_try_block(b: node)
+prl_try_block(tb) :- prl_loop_try(_, t), field(t, "body", tb).
+prl_try_block(eb) :- prl_loop_try(_, t), child(t, ec, _), kind(ec, "else_clause"), field(ec, "body", eb).
+// prl_bounded(w, t): something in w outside try t (or in t's finally) leaves w: the counter or deadline check.
+.decl prl_bounded(w: node, t: node)
+prl_bounded(w, t) :- prl_loop_try(w, t), prl_exit(e, w), !within(e, t).
+prl_bounded(w, t) :- prl_loop_try(w, t), child(t, fc, _), kind(fc, "finally_clause"), prl_exit(e, w), within(e, fc).
+// An interactive prompt on every turn (`name = input(...)`, `click.prompt(...)`) makes each turn a new attempt the
+// person at the terminal ends, not the same call repeated. A helper that always asks does too: the finding reads it
+// (prl_turn_asks), since it may be in another file.
+prl_bounded(w, t) :- prl_loop_try(w, t), prl_turn_prompt(_, w).
+
+// ---- prompts -----------------------------------------------------------------------------------------------------
+.decl prl_prompt_q(q: symbol)
+prl_prompt_q("builtins.input"). prl_prompt_q("getpass.getpass"). prl_prompt_q("click.prompt").
+prl_prompt_q("click.confirm"). prl_prompt_q("typer.prompt"). prl_prompt_q("typer.confirm").
+prl_prompt_q("rich.prompt.Prompt.ask"). prl_prompt_q("rich.prompt.Confirm.ask").
+prl_prompt_q("rich.prompt.IntPrompt.ask").
+.decl prl_prompt_call(c: node)
+prl_prompt_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), prl_prompt_q(q).
+// prl_cond_kind(k): code under one of these runs only on some paths.
+.decl prl_cond_kind(k: symbol)
+prl_cond_kind("if_statement"). prl_cond_kind("boolean_operator"). prl_cond_kind("conditional_expression").
+// prl_every_turn(c, top): call c runs whenever top's body does: in top's own frame and under no conditional in top.
+// An except clause counts as every turn: a retry's turns are the failing ones.
+.decl prl_every_turn(c: node, top: node)
+prl_every_turn(c, w) :- prl_forever(w), kind(c, "call"), within_stop(c, w, pp_stop), !prl_cond_in(c, w).
+prl_every_turn(c, g) :- kind(g, "function_definition"), kind(c, "call"), pp_frame(c, g), !prl_cond_in(c, g).
+.decl prl_cond_in(c: node, top: node)
+prl_cond_in(c, top) :- kind(c, "call"), within(c, k), within(k, top), kind(k, ck), prl_cond_kind(ck).
+// prl_asks(g): def g of the run prompts on every call, itself or through a sure call at any depth. Over symbols: each
+// file states its defs that prompt (prl_prompts) and their every-call sure targets (prl_step).
+.decl prl_asks(g: symbol)
+prl_asks(g) :- prl_prompts(g).
+prl_asks(g) :- prl_step(g, h), prl_asks(h).
+.decl prl_prompts(g: symbol)
+prl_prompts(gq) :- prl_prompt_call(c), pp_frame(c, g), prl_every_turn(c, g), pt_def(g, gq).
+.decl prl_step(g: symbol, h: symbol)
+prl_step(gq, h) :- pp_sure_target(c, h), pp_frame(c, g), prl_every_turn(c, g), pt_def(g, gq).
+// prl_turn_prompt(c, w): call c in loop w prompts on every turn itself.
+.decl prl_turn_prompt(c: node, w: node)
+prl_turn_prompt(c, w) :- prl_forever(w), prl_prompt_call(c), prl_every_turn(c, w).
+// prl_turn_asks(wt): the loop whose term is wt calls, on every turn, a helper that always asks. prl_turn_target(wt,
+// h): it calls h surely on every turn (stated in the loop's file).
+.decl prl_turn_asks(wt: symbol)
+prl_turn_asks(wt) :- prl_turn_target(wt, h), prl_asks(h).
+.decl prl_turn_target(wt: symbol, h: symbol)
+prl_turn_target(wt, h) :- prl_forever(w), pp_sure_target(c, h), prl_every_turn(c, w), pt_tm(w, wt).
+
+// ---- handlers ----------------------------------------------------------------------------------------------------
+// prl_handler_exits(x, w): handler x has a path that leaves w.
+.decl prl_handler_exits(x: node, w: node)
+prl_handler_exits(x, w) :- prl_loop_try(w, t), exc_handler(t, x), prl_exit(e, w), within(e, x).
+// prl_loop_handler(w, x): handler x of a try in w retries: the try leaves w on success, x never leaves w, and
+// nothing else in w bounds it. A handler that catches only what is not a failure of the work (prl_no_failure_type)
+// does not retry a failure: a consumer's `q.get(timeout=1)` then `except queue.Empty: continue`, a redis lock taken
+// with `blocking_timeout` then `except LockError: ...`, a REPL's `except KeyboardInterrupt: continue`; every other
+// error still leaves the loop. A handler of a name-conflict error that picks a new value the try reads (`except
+// EntityExistsError: name = f"{base}-{rand()}"`) searches for a free name: each turn sends something new.
+.decl prl_loop_handler(w: node, x: node)
+prl_loop_handler(w, x) :- prl_loop_try(w, t), prl_success(t, w), !prl_bounded(w, t), exc_handler(t, x),
+    !prl_handler_exits(x, w), !prl_no_failure_only(x), !prl_new_name(x, t).
+.decl prl_new_name(x: node, t: node)
+prl_new_name(x, t) :- prl_loop_try(_, t), exc_handler(t, x), prl_conflict(x), exc_body(x, b), kind(a, "assignment"),
+    within(a, b), field(a, "left", l), prl_target_name(l, v), field(t, "body", tb), kind(r, "identifier"),
+    within(r, tb), text(r, v).
+.decl prl_conflict(x: node)
+prl_conflict(x) :- exc_type(x, e), text(e, s), (contains("Exist", s) ; contains("Duplicate", s) ;
+    contains("Integrity", s) ; contains("Conflict", s) ; contains("Unique", s)).
+// prl_target_name(l, v): assignment target l rebinds or updates the variable v: `v = ...`, `v[k] = ...`.
+.decl prl_target_name(l: node, v: symbol)
+prl_target_name(l, v) :- kind(l, "identifier"), text(l, v).
+prl_target_name(l, v) :- kind(l, "subscript"), field(l, "value", o), kind(o, "identifier"), text(o, v).
+// prl_no_failure_type(e): a wait's timeout, or a person's interrupt.
+.decl prl_no_failure_type(e: node)
+prl_no_failure_type(e) :- exc_type(_, e), exc_qual(e, q),
+    (q = "queue.Empty" ; q = "_queue.Empty" ; q = "asyncio.QueueEmpty" ; q = "multiprocessing.queues.Empty" ;
+    q = "redis.exceptions.LockError" ; q = "builtins.KeyboardInterrupt").
+.decl prl_failure_type(x: node)
+prl_failure_type(x) :- exc_type(x, e), !prl_no_failure_type(e).
+.decl prl_no_failure_only(x: node)
+prl_no_failure_only(x) :- exc_type(x, _), !prl_failure_type(x).
+.decl prl_loop(w: node)
+prl_loop(w) :- prl_loop_handler(w, _).
+.decl prl_what(x: node, what: symbol)
+prl_what(x, "except:") :- kind(x, "except_clause"), !field(x, "value", _).
+prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(t, s).
+
+// The cases, `upstream/python-practice/authored/python-practice-retry-loop-without-limit/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/__init__.py"
+    .fixture "app/consumers.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/consumers.py"
+    .fixture "app/loops.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/loops.py"
+    .fixture "app/names.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/names.py"
+    .fixture "app/prompts.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/prompts.py"
+    .fixture "app/variants.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/app/variants.py"
+    .fixture "tests/__init__.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/tests/__init__.py"
+    .fixture "tests/test_clients.py" from "../upstream/python-practice/authored/python-practice-retry-loop-without-limit/tests/test_clients.py"
+    .expect _ at "app/consumers.py":27
+    .expect _ at "app/loops.py":14
+    .expect _ at "app/loops.py":25
+    .expect _ at "app/loops.py":34
+    .expect _ at "app/loops.py":45
+    .expect _ at "app/loops.py":55
+    .expect _ at "app/loops.py":65
+    .expect _ at "app/loops.py":214
+    .expect _ at "app/names.py":36
+    .expect _ at "app/prompts.py":30
+    .expect _ at "app/variants.py":15
+    .expect _ at "app/variants.py":24
+    .expect _ at "app/variants.py":32
+    .expect _ at "app/variants.py":40
+    .expect _ at "app/variants.py":49
+    .expect _ at "app/variants.py":123
+    .expect _ at "app/variants.py":174
+    .expect _ at "app/variants.py":183
+.end

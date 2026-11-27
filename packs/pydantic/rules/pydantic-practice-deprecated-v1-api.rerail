@@ -1,0 +1,244 @@
+.policy "pydantic-practice-deprecated-v1-api" revision 1
+.description "Move models of a project pinned to Pydantic 2 off the Pydantic 1 methods, validators, nested Config and helpers that Pydantic 2 deprecates and Pydantic 3 removes."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A project whose manifest pins Pydantic 2 (lib/pydantic's pd_v2_doc reads
+// pyproject.toml, requirements*.txt, setup.cfg, uv.lock, poetry.lock and Pipfile at the root and up to 3 levels below
+// it) still calls Pydantic 1's API on its v2 models where Pydantic 2 keeps it working, with a deprecation warning, and
+// pydantic's main (v3) branch has deleted it. Nothing breaks today: this is the upgrade list for a team planning the
+// Pydantic 3 move, so the rule logs and ships off. Reported:
+//   on a v2 model class or instance: `.dict()`, `.json()`, `.parse_obj()`, `.parse_raw()`, `.parse_file()`,
+//   `.from_orm()`, `.copy()`, `.construct()`, `.schema()`, `.schema_json()`, `.update_forward_refs()`, `.validate()`,
+//   `__fields__`, `__fields_set__`; `@validator`, `@root_validator` with `pre=True` or `skip_on_failure=True`; a nested
+//   `class Config:` (once, on its `class` line); `Field(min_items=, max_items=)`; the module functions
+//   `parse_obj_as`, `schema_of`, `schema_json_of`, `pydantic_encoder`, `validate_arguments` (at each use, not the
+//   import line). SQLModel models count: SQLModel's own `.from_orm()`, `.dict()` and `.parse_obj()` are deprecated
+//   wrappers too.
+// What Pydantic 2 removed or ignores (a post `@root_validator` without `skip_on_failure`, `Field(regex=)`, `.json()`
+// with json.dumps arguments, `from_orm()` on a model without from_attributes, renamed Config keys, `BaseSettings`
+// from pydantic) is pydantic-practice-v1-api-in-v2's, a steer rule; this rule leaves those lines alone, so a line
+// gets one message when both run.
+//
+// from_attributes decides whether `from_orm()` is deprecated here or a crash there. It is lib/pydantic's
+// pd_from_attributes, resolved as Pydantic merges config: M's own setting (`model_config = ConfigDict(...)`, a dict
+// literal, a class keyword, or the v2 key in a nested Config) wins; with none, it is on when it is on for one of M's
+// bases, read the same way through the run's modules and re-exports; a base outside the run counts when it is
+// sqlmodel.SQLModel, whose config sets it (named: its source is outside the run). `orm_mode` does not count.
+//   class HeroRead(HeroBase), HeroBase(SQLModel); HeroRead.from_orm(row)   reported here (works, deprecated)
+//
+// The receiver of a method must resolve to a v2 model (lib/pydantic's pd_model_call: `M.parse_obj(...)`, an instance
+// `M(...)` or `M.model_validate(...)`, `self` in a method of M, a parameter annotated with M). Left alone:
+//   resp.json(); settings.copy(); row.dict()      not a known model instance
+//   class Report(BaseModel): def dict(self): ...  the project defines the method itself, on the model or a run base
+//   class Rule(BaseModel): validate: Callable     a field of that name
+//   class Old(pydantic.v1.BaseModel): ...         a v1 model, and pydantic.v1's validators and Field
+//   @validator from another library               only pydantic's resolves
+//   tests (lib/pydantic's pd_test_doc): the deprecation warning is the test suite's own business
+//   a project pinned to Pydantic 1, or with no pin and no v2-only import (pd_v2_doc fails)
+//   code written to run under both majors (lib/pydantic's pd_version_guarded): under an `if` (or elif, or
+//   conditional expression) whose condition reads the Pydantic version or probes the v2 API, or in a `try` that
+//   catches ImportError, ModuleNotFoundError or AttributeError. The condition test is resolved, not read as text: a
+//   name resolving to pydantic's VERSION (`pydantic.VERSION`, `from pydantic.version import VERSION as PV`), a call
+//   given the distribution name (`importlib.metadata.version("pydantic")`), `hasattr(x, "model_...")` /
+//   `getattr(x, "model_...", ...)`, or a variable whose assigned value (module-level, imported from a run module, or
+//   local to the function, followed through further variables) is one of those. A flag imported from outside the
+//   run (fastapi's `PYDANTIC_V2`) cannot be read, so there its name decides: `PYDANTIC_V2`, `IS_PYDANTIC_V1`,
+//   `PYDANTIC_VERSION`.
+//   `if path.startswith(settings.API_V1_STR): return body.dict()` is reported: that `if` tests an API path.
+// Gaps: an instance the rule cannot type (a function's return value, an attribute, a list item) is not reported;
+// a model whose base is a library's model outside the run (fastapi-users' schemas) is not a model here; `.dict()`
+// and `.copy()` with arguments v2 refuses are reported as deprecated, not as crashes.
+
+#include "lib/pydantic.rerail"
+
+.violation DeprecatedMethod(at: node, m: symbol, new: symbol) "`{m}` is deprecated since Pydantic 2 and removed in Pydantic 3. Use {new} instead, unless this code must still run on Pydantic 1."
+.violation DeprecatedValidator(at: node) "`@validator` is deprecated since Pydantic 2 and removed in 3. Use `@field_validator` with `@classmethod`: `pre=True` becomes `mode=\"before\"`, `values` becomes `info.data`."
+.violation DeprecatedRootValidator(at: node) "`@root_validator` is deprecated since Pydantic 2 and removed in 3. Use `@model_validator` with `mode=\"before\"` (a classmethod, gets the data) or `mode=\"after\"` (gets the instance)."
+.violation DeprecatedConfigClass(at: node) "A nested `class Config` is deprecated since Pydantic 2 and removed in 3. Move its keys into `model_config = ConfigDict(...)`, renaming v1 keys (`orm_mode` to `from_attributes`)."
+.violation DeprecatedFieldArg(at: node) "`Field(min_items=, max_items=)` are deprecated since Pydantic 2 and removed in 3: use `min_length=` and `max_length=`, which mean the same for lists, sets and tuples."
+
+// ---- where: a document of a v2 project, not a test, outside a compatibility shim ----------------------------------
+// v1d_at(n) collects every node a check below may report, so the shim test runs on those nodes only.
+.decl v1d_at(n: node)
+pd_shim_demand(n) :- v1d_at(n).
+// v1d_report(n, nk): what n's own file says: a v2 project's document, not a test, no shim its file shows; nk is n's
+// term (python/points-to-file's pt_tm, relative to its def, class or module), by which each output asks whether a
+// flag another module defines guards n (`!pd_shim_elsewhere(nk)`).
+.decl v1d_report(n: node, nk: symbol)
+v1d_report(n, nk) :- v1d_at(n), docof(n, d), pd_v2_doc(d), !pd_test_doc(d), !pd_version_guarded(n), pt_tm(n, nk).
+
+// ---- what the project defines itself ------------------------------------------------------------------------------
+// v1d_own(q, m): model q defines m itself, as a method of q or of a run class among its bases (the phase py_names'
+// member_method, anc_method), or as a field of q or of a run base (v1d_field_q, by symbol). It joins the classes'
+// modules by symbol, on purpose, holding no node; the output reads it by the model's qualified name.
+.decl v1d_own(q: symbol, m: symbol) cross_file
+v1d_own(q, m) :- py_names__member_method(_, q, m), v1d_old_method(m, _).
+v1d_own(q, m) :- py_names__anc_method(_, q, m), v1d_old_method(m, _).
+v1d_own(q, m) :- v1d_field_q(q, m).
+v1d_own(q, m) :- pd_ancestor(q, b), v1d_field_q(b, m).
+// v1d_field_q(q, m): model q of this file declares field m, an old method's name.
+.decl v1d_field_q(q: symbol, m: symbol)
+v1d_field_q(q, m) :- pd_field(c, m, _, _), v1d_old_method(m, _), class_def(c, q).
+// v1d_call(k, m, q): call k is `o.m(...)` on model q (class or instance); whether m is the project's own is the
+// output's question (v1d_own).
+.decl v1d_call(k: node, m: symbol, q: symbol)
+v1d_call(k, m, q) :- pd_model_call(k, _, m, q), v1d_old_method(m, _).
+
+// ---- what pydantic-practice-v1-api-in-v2 reports: left to it ------------------------------------------------------
+// `Field(regex=, const=, unique_items=)`, pydantic's own Field (sqlmodel.Field maps them itself).
+.decl v1d_pd_field(k: node)
+v1d_pd_field(k) :- pd_field_call(k), field(k, "function", f), sym_of(f, q),
+    (q = "pydantic.Field" ; q = "pydantic.fields.Field").
+.decl v1d_field_crash(k: node)
+v1d_field_crash(k) :- v1d_pd_field(k), call_arg(k, -1, kw, _), (kw = "regex" ; kw = "const" ; kw = "unique_items").
+// A post `@root_validator` without `skip_on_failure=True`.
+.decl v1d_skip(e: node)
+v1d_skip(e) :- call_arg(e, -1, "skip_on_failure", v), kind(v, "true").
+.decl v1d_root_crash(e: node)
+v1d_root_crash(e) :- pd_validator_deco(_, "root_validator", e), !pd_pre_true(e), !v1d_skip(e).
+// `.json(...)` with an argument v2's `.json()` does not take.
+.decl v1d_json_ok(kw: symbol)
+v1d_json_ok("include"). v1d_json_ok("exclude"). v1d_json_ok("by_alias"). v1d_json_ok("exclude_unset").
+v1d_json_ok("exclude_defaults"). v1d_json_ok("exclude_none").
+.decl v1d_json_crash(k: node)
+v1d_json_crash(k) :- v1d_call(k, "json", _), call_arg(k, -1, kw, _), !v1d_json_ok(kw).
+// `from_orm()` on a model for which from_attributes is not on (lib/pydantic's pd_from_attributes, cross-file): the
+// output asks it.
+
+// ---- methods ------------------------------------------------------------------------------------------------------
+.decl v1d_old_method(m: symbol, new: symbol)
+v1d_old_method("dict", "`.model_dump()` (same arguments)").
+v1d_old_method("json", "`.model_dump_json()`").
+v1d_old_method("parse_obj", "`.model_validate()`").
+v1d_old_method("parse_raw", "`.model_validate_json()` (for JSON input)").
+v1d_old_method("parse_file", "`.model_validate_json(path.read_text())`").
+v1d_old_method("from_orm", "`.model_validate(obj)` (from_attributes is on for this model)").
+v1d_old_method("copy", "`.model_copy(update=..., deep=...)` (it takes no include/exclude)").
+v1d_old_method("construct", "`.model_construct()`").
+v1d_old_method("schema", "`.model_json_schema()`").
+v1d_old_method("schema_json", "`json.dumps(Model.model_json_schema())`").
+v1d_old_method("update_forward_refs", "`.model_rebuild()`").
+v1d_old_method("validate", "`.model_validate()`").
+.decl v1d_old_call(k: node, m: symbol, new: symbol, q: symbol)
+v1d_old_call(k, m, new, q) :- v1d_call(k, m, q), v1d_old_method(m, new), !v1d_json_crash(k).
+v1d_at(k) :- v1d_old_call(k, _, _, _).
+DeprecatedMethod(k, x, new) :- v1d_old_call(k, m, new, q), m != "from_orm", !v1d_own(q, m), v1d_report(k, nk),
+    !pd_shim_elsewhere(nk), x = cat(".", m, "()").
+DeprecatedMethod(k, ".from_orm()", new) :- v1d_old_call(k, "from_orm", new, q), !v1d_own(q, "from_orm"),
+    pd_from_attributes(q), v1d_report(k, nk), !pd_shim_elsewhere(nk).
+
+// `__fields__` and `__fields_set__` on a model class or instance.
+.decl v1d_old_attr(a: symbol, new: symbol)
+v1d_old_attr("__fields__", "`model_fields` on the class (`type(obj).model_fields`)").
+v1d_old_attr("__fields_set__", "`model_fields_set`").
+.decl v1d_old_dunder(n: node, a: symbol, new: symbol)
+v1d_old_dunder(n, a, new) :- v1d_old_attr(a, new), attr_of(n, o, a), unparen(o, u), (pd_instance(u, _) ; pd_class_ref(u, _)).
+v1d_at(n) :- v1d_old_dunder(n, _, _).
+DeprecatedMethod(n, a, new) :- v1d_old_dunder(n, a, new), v1d_report(n, nk), !pd_shim_elsewhere(nk).
+
+// ---- validators (pydantic's only: the library resolves the decorator to pydantic's own names) ---------------------
+.decl v1d_validator(e: node)
+v1d_validator(e) :- pd_validator_deco(_, "validator", e).
+v1d_at(e) :- v1d_validator(e).
+DeprecatedValidator(e) :- v1d_validator(e), v1d_report(e, nk), !pd_shim_elsewhere(nk).
+.decl v1d_root(e: node)
+v1d_root(e) :- pd_validator_deco(_, "root_validator", e), !v1d_root_crash(e).
+v1d_at(e) :- v1d_root(e).
+DeprecatedRootValidator(e) :- v1d_root(e), v1d_report(e, nk), !pd_shim_elsewhere(nk).
+
+// ---- the nested `class Config:` of a v2 model, once ---------------------------------------------------------------
+v1d_at(k) :- pd_config_class(_, k).
+DeprecatedConfigClass(k) :- pd_config_class(_, k), v1d_report(k, nk), !pd_shim_elsewhere(nk).
+
+// ---- `Field(min_items=, max_items=)`, once a call, unless the call has a removed argument -------------------------
+.decl v1d_field_items(k: node)
+v1d_field_items(k) :- v1d_pd_field(k), call_arg(k, -1, kw, _), (kw = "min_items" ; kw = "max_items"),
+    !v1d_field_crash(k).
+v1d_at(k) :- v1d_field_items(k).
+DeprecatedFieldArg(k) :- v1d_field_items(k), v1d_report(k, nk), !pd_shim_elsewhere(nk).
+
+// ---- module functions, at each use (not the import line) ----------------------------------------------------------
+.decl v1d_old_fn(q: symbol, name: symbol, new: symbol)
+v1d_old_fn("pydantic.parse_obj_as", "parse_obj_as", "`TypeAdapter(T).validate_python(data)`").
+v1d_old_fn("pydantic.tools.parse_obj_as", "parse_obj_as", "`TypeAdapter(T).validate_python(data)`").
+v1d_old_fn("pydantic.deprecated.tools.parse_obj_as", "parse_obj_as", "`TypeAdapter(T).validate_python(data)`").
+v1d_old_fn("pydantic.schema_of", "schema_of", "`TypeAdapter(T).json_schema()`").
+v1d_old_fn("pydantic.tools.schema_of", "schema_of", "`TypeAdapter(T).json_schema()`").
+v1d_old_fn("pydantic.deprecated.tools.schema_of", "schema_of", "`TypeAdapter(T).json_schema()`").
+v1d_old_fn("pydantic.schema_json_of", "schema_json_of", "`json.dumps(TypeAdapter(T).json_schema())`").
+v1d_old_fn("pydantic.tools.schema_json_of", "schema_json_of", "`json.dumps(TypeAdapter(T).json_schema())`").
+v1d_old_fn("pydantic.deprecated.tools.schema_json_of", "schema_json_of", "`json.dumps(TypeAdapter(T).json_schema())`").
+v1d_old_fn("pydantic.json.pydantic_encoder", "pydantic_encoder", "`pydantic_core.to_jsonable_python`").
+v1d_old_fn("pydantic.deprecated.json.pydantic_encoder", "pydantic_encoder", "`pydantic_core.to_jsonable_python`").
+v1d_old_fn("pydantic.validate_arguments", "validate_arguments", "`@validate_call`").
+v1d_old_fn("pydantic.decorator.validate_arguments", "validate_arguments", "`@validate_call`").
+v1d_old_fn("pydantic.deprecated.decorator.validate_arguments", "validate_arguments", "`@validate_call`").
+.decl v1d_fn_use(n: node, x: symbol, new: symbol)
+v1d_fn_use(n, x, new) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q), v1d_old_fn(q, x, new),
+    !v1d_in_import(n).
+.decl v1d_in_import(n: node)
+v1d_in_import(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q), v1d_old_fn(q, _, _),
+    within(n, i), import_stmt(i).
+v1d_at(n) :- v1d_fn_use(n, _, _).
+DeprecatedMethod(n, x, new) :- v1d_fn_use(n, x, new), v1d_report(n, nk), !pd_shim_elsewhere(nk).
+
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/`, read as one repository pinned
+// to Pydantic 2 with a `legacy/` project pinned to Pydantic 1: each line ending in `# caught` is reported, and no other
+// line.
+.test cases exactly
+    .fixture "pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/pyproject.toml"
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/__init__.py"
+    .fixture "app/base.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/base.py"
+    .fixture "app/checks.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/checks.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/compat.py"
+    .fixture "app/config.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/config.py"
+    .fixture "app/legacy_models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/legacy_models.py"
+    .fixture "app/orm_reads.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/orm_reads.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/schemas.py"
+    .fixture "app/services.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/services.py"
+    .fixture "app/shims.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/shims.py"
+    .fixture "app/tables/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tables/__init__.py"
+    .fixture "app/tables/heroes.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tables/heroes.py"
+    .fixture "app/tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tests/__init__.py"
+    .fixture "app/tests/test_users.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/app/tests/test_users.py"
+    .fixture "legacy/pyproject.toml" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/legacy/pyproject.toml"
+    .fixture "legacy/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-deprecated-v1-api/legacy/models.py"
+    .expect DeprecatedMethod at "app/orm_reads.py":20
+    .expect DeprecatedMethod at "app/orm_reads.py":24
+    .expect DeprecatedMethod at "app/orm_reads.py":25
+    .expect DeprecatedMethod at "app/orm_reads.py":26
+    .expect DeprecatedMethod at "app/orm_reads.py":27
+    .expect DeprecatedFieldArg at "app/schemas.py":15
+    .expect DeprecatedConfigClass at "app/schemas.py":29
+    .expect DeprecatedValidator at "app/schemas.py":34
+    .expect DeprecatedValidator at "app/schemas.py":38
+    .expect DeprecatedValidator at "app/schemas.py":42
+    .expect DeprecatedRootValidator at "app/schemas.py":50
+    .expect DeprecatedRootValidator at "app/schemas.py":54
+    .expect DeprecatedMethod at "app/services.py":12
+    .expect DeprecatedMethod at "app/services.py":13
+    .expect DeprecatedMethod at "app/services.py":19
+    .expect DeprecatedMethod at "app/services.py":20
+    .expect DeprecatedMethod at "app/services.py":21
+    .expect DeprecatedMethod at "app/services.py":22
+    .expect DeprecatedMethod at "app/services.py":25
+    .expect DeprecatedMethod at "app/services.py":26
+    .expect DeprecatedMethod at "app/services.py":27
+    .expect DeprecatedMethod at "app/services.py":32
+    .expect DeprecatedMethod at "app/services.py":34
+    .expect DeprecatedMethod at "app/services.py":35
+    .expect DeprecatedMethod at "app/services.py":36
+    .expect DeprecatedMethod at "app/services.py":37
+    .expect DeprecatedMethod at "app/services.py":38
+    .expect DeprecatedMethod at "app/services.py":39
+    .expect DeprecatedMethod at "app/services.py":45
+    .expect DeprecatedMethod at "app/services.py":46
+    .expect DeprecatedMethod at "app/services.py":48
+    .expect DeprecatedMethod at "app/services.py":52
+    .expect DeprecatedMethod at "app/shims.py":84
+    .expect DeprecatedMethod at "app/shims.py":90
+    .expect DeprecatedMethod at "app/shims.py":96
+    .expect DeprecatedMethod at "app/shims.py":102
+    .expect DeprecatedMethod at "app/shims.py":107
+.end

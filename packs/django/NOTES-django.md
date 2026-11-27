@@ -1,10 +1,10 @@
 # Notes: batch django (Rerail's own Django practice rules)
 
 27 rules, written by hand as .rerail (2,274 lines before their `.test` blocks, 24-188 per rule), over one library,
-`rules/lib/django.rerail` (482 lines). None is a port, so there is no upstream to score against: each rule is checked by its cases
-(`cases/<id>/`, run by each rule file's own test, `.test cases exactly`) and by a run on the 31
-pinned apps of [README.md](README.md#the-corpus), whose matches were read. What each rule matches, leaves alone and
-misses, with its corpus numbers and sources, is in README.md's "Rule details".
+`rules/lib/django.rerail` (482 lines). None is a port, so there is no upstream to score against: each rule is checked by
+its cases (`upstream/django-practice/authored/<id>/`, run by each rule file's own test, `.test cases exactly`) and by a
+run on the 31 pinned apps of [README.md](README.md#the-corpus), whose matches were read. What each rule matches, leaves
+alone and misses, with its corpus numbers and sources, is in README.md's "Rule details".
 
 ## Dropped candidates
 

@@ -1,0 +1,342 @@
+.policy "sqlalchemy-practice-session-reused-after-failed-commit" revision 1
+.description "Roll back the SQLAlchemy session in an except handler that swallows a failed commit() or flush() when the session is used again afterwards."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. After `commit()` or `flush()` raises, the session's transaction is inactive until
+// the code calls `rollback()` (or `close()`): every later use raises PendingRollbackError ("This Session's
+// transaction has been rolled back due to a previous exception during flush"). A handler that catches the error
+// (bare, Exception, BaseException, SQLAlchemyError and its subclasses, resolved through imports) and neither rolls
+// back, closes, invalidates or resets the session nor re-raises on every path is reported at its `except` line, when
+// the session lives on after the handler (the first reason that holds is the one the message gives):
+//   0. the handler itself calls a method on the session (`session.execute(update(...))` to mark a failure);
+//   1. the try is in a for/while body, the session is bound outside that loop, and the handler can go on to the
+//      next iteration (it falls through or `continue`s);
+//   2. a statement after the try, in the same function and on a path from the handler, calls a method on the session
+//      (rollback/close/invalidate/reset/remove aside);
+//   3. a caller passes the session in and goes on using it: the parameter is never rebound, and python/calls finds a
+//      call of the function, by keyword or position, from a loop the passed name is bound outside of, or followed by
+//      a statement that mentions that name (cross-file);
+//   4. the session is shared beyond the function: `<module>.session` (Flask-SQLAlchemy's request- and app-scoped
+//      `db.session`) or a module-level name (a scoped_session), outside a CLI command, web route or Slack listener.
+//   with SessionLocal() as session:
+//       for name in names:
+//           try:
+//               session.add(Item(name=name)); session.commit()
+//           except IntegrityError:                   reported: the next iteration commits on the failed session
+//               continue
+//   def rename(session: Session, item):               (a caller: `for item in items: rename(session, item)`)
+//       try:
+//           session.commit()
+//       except SQLAlchemyError:                      reported: the caller's next call commits on the failed session
+//           return False
+//   try:
+//       with SessionLocal() as session: ...; session.commit()
+//   except Exception:                                not reported: closing the session rolled it back
+//       log.exception("skip")
+//   except IntegrityError:                           not reported: the handler rolls back
+//       session.rollback()
+// Also left alone: a commit or flush inside a `with s.begin():`/`begin_nested():` block in the try body (its exit
+// rolls back before the handler runs); a commit inside an inner try of the body (that try handles it); a handler
+// whose last statement calls a def of the same file that always raises; a session created in the function that is
+// neither in a loop nor used after the handler; a parameter no caller reuses (dify's import service, whose controller
+// rolls back on a FAILED result); `self.<session>`; test files and Alembic revisions.
+// A name rebound by `with helper(param) as db:` (open-webui's `get_async_db_context(db)`, which hands back the caller's
+// session only when DATABASE_ENABLE_SESSION_SHARING is on, off by default) is the function's own, not the caller's.
+// Gaps: a session whose name does not look like one (`self.db`, an unannotated `db` parameter); a later use through a
+// helper the session is passed to; a rollback done by a helper whose name does not say "rollback"; `self.<session>`
+// whose owner's callers reuse it; callers more than one call away, or reached only through an open call.
+// What other files decide is read by symbol (decisions 0652, 0677): whether the receiver is a session (a factory, a
+// Flask-SQLAlchemy extension or a scoped_session another module holds, a parameter a caller fills with one: lib's
+// sa_session_key), and whether a caller goes on using the session it passed in (srf_reused_q, stated in each caller's
+// file by the callee's symbol). The output joins them with the handler's own file's facts.
+
+#include "lib/sqlalchemy.rerail"
+
+.violation SessionReusedAfterFailedCommit(at: node, s: symbol, m: symbol, why: symbol) "Call `{s}.rollback()` in this handler, or re-raise: after a failed `{s}.{m}()` the session raises PendingRollbackError until rolled back, and {why}."
+SessionReusedAfterFailedCommit(x, st, m, why) :- srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k),
+    srf_why(t, x, s, why), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "a caller goes on using the session it passed in") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), srf_param_at(s, fq, n),
+    srf_reused_q(fq, n), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "the session is shared beyond this function (module-level or request-scoped), so later code runs on it") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), !srf_param_at(s, _, _),
+    srf_shared(s), !srf_in_command(t), text(s, st).
+SessionReusedAfterFailedCommit(x, st, m, "the session is shared beyond this function (module-level or request-scoped), so later code runs on it") :-
+    srf_candidate(t, x, s, m), srf_sess(s, k), sa_session_key(k), !srf_why_any(t, x, s), srf_param_at(s, fq, n),
+    !srf_reused_q(fq, n), srf_shared(s), !srf_in_command(t), text(s, st).
+// srf_why(t, x, s, why): the reason given for a handler, the first of those its own file decides that holds (0-2);
+// the output tries the caller's reuse (3), then the shared session (4), when none does.
+.decl srf_why(t: node, x: node, s: node, why: symbol)
+srf_why(t, x, s, "the handler itself uses the session again") :- srf_handler_use(t, x, s).
+srf_why(t, x, s, "the next loop iteration uses the same session") :- srf_candidate(t, x, s, _), !srf_handler_use(t, x, s),
+    srf_loop_reuse(t, x, s).
+srf_why(t, x, s, "code after the try uses the session again") :- srf_candidate(t, x, s, _), !srf_handler_use(t, x, s),
+    !srf_loop_reuse(t, x, s), srf_later_use(t, x, s).
+.decl srf_why_any(t: node, x: node, s: node)
+srf_why_any(t, x, s) :- srf_why(t, x, s, _).
+// srf_handler_use(t, x, s): handler x itself calls a method on s (`session.execute(update(...))` to mark a failure).
+.decl srf_handler_use(t: node, x: node, s: node)
+srf_handler_use(t, x, s) :- srf_candidate(t, x, s, _), srf_use(u, s), within_stop(u, x, sa_region_stop).
+
+// ---- the try, its commit and its handler ---------------------------------------------------------------------------
+// srf_candidate(t, x, s, m): try t's body calls `s.m()` (m commit or flush) on session s, outside any inner try body,
+// begin block or with-block that binds s; except clause x of t catches the error and neither re-raises on every
+// path nor rolls back; not test code or a migration.
+.decl srf_candidate(t: node, x: node, s: node, m: symbol)
+srf_candidate(t, x, s, m) :- srf_commit(t, c, s, m), !srf_shielded(t, c, s), child(t, x, _), kind(x, "except_clause"),
+    srf_catches_db(x), !srf_reraises(x), !srf_recovers(x, s), !srf_rebinds(x, s), docof(t, d), !sa_test_doc(d),
+    !sa_migration_doc(d).
+// srf_commit(t, c, s, m): call c, in try t's body, is `s.m()` with m commit or flush, s session-like (under the
+// conditions srf_sess(s, k) names, which the output checks).
+.decl srf_commit(t: node, c: node, s: node, m: symbol)
+srf_commit(t, c, s, m) :- kind(t, "try_statement"), field(t, "body", b), sa_session_call(c, s, m, _),
+    (m = "commit" ; m = "flush"), within_stop(c, b, sa_region_stop).
+.decl srf_sess(s: node, k: symbol)
+srf_sess(s, k) :- srf_commit(_, c, s, m), sa_session_call(c, s, m, k).
+// srf_shielded(t, c, s): the error from c never reaches t's handlers with s still open: c sits in the body of an inner
+// try, of a `with s.begin()`/`begin_nested()` block, or of a with-block in the try body that binds s's name (`with
+// Session() as s:` closes s, which rolls back, before the handler runs).
+.decl srf_shielded(t: node, c: node, s: node)
+srf_shielded(t, c, s) :- srf_commit(t, c, s, _), field(t, "body", b), kind(t2, "try_statement"), within(t2, b),
+    field(t2, "body", b2), within(c, b2).
+srf_shielded(t, c, s) :- srf_commit(t, c, s, _), field(t, "body", b), sa_tx_with(w, wb), within(w, b), within(c, wb).
+srf_shielded(t, c, s) :- srf_commit(t, c, s, _), field(t, "body", b), kind(s, "identifier"), text(s, x),
+    kind(w, "with_statement"), within(w, b), field(w, "body", wb), within(c, wb), within(ap, w), !within(ap, wb),
+    sa_as_name(ap, x).
+// srf_catches_db(x): x catches what commit() raises: bare, Exception, BaseException, or SQLAlchemy's error classes.
+.decl srf_catches_db(x: node)
+srf_catches_db(x) :- catches(x, q), (q = "builtins.Exception" ; q = "builtins.BaseException").
+// a bare `except:` (python/names' catches misses one followed by a comment, which is a child of the clause)
+srf_catches_db(x) :- kind(x, "except_clause"), count : { child(x, e, _), !kind(e, "block"), !kind(e, "comment") } = 0.
+srf_catches_db(x) :- catches(x, q), split_dot(q, mod, e), srf_sa_error_module(mod), srf_sa_error(e).
+.decl srf_sa_error_module(m: symbol)
+srf_sa_error_module("sqlalchemy"). srf_sa_error_module("sqlalchemy.exc"). srf_sa_error_module("sqlalchemy.orm.exc").
+srf_sa_error_module("sqlmodel").
+.decl srf_sa_error(e: symbol)
+srf_sa_error("SQLAlchemyError"). srf_sa_error("DBAPIError"). srf_sa_error("DatabaseError").
+srf_sa_error("IntegrityError"). srf_sa_error("OperationalError"). srf_sa_error("DataError").
+srf_sa_error("ProgrammingError"). srf_sa_error("InternalError"). srf_sa_error("InterfaceError").
+srf_sa_error("NotSupportedError"). srf_sa_error("StatementError"). srf_sa_error("StaleDataError").
+srf_sa_error("FlushError"). srf_sa_error("PendingRollbackError").
+// srf_recovers(x, s): handler x makes s usable again: `<s>.rollback()` (or any `….rollback()`, a helper named
+// rollback), `<s>.close()`, `.invalidate()`, `.reset()`, `.remove()`.
+.decl srf_recovers(x: node, s: node)
+srf_recovers(x, s) :- srf_candidate_pre(x, s), kind(c, "call"), within(c, x), field(c, "function", f), srf_leaf(f, n),
+    match("(?i).*rollback.*", n).
+srf_recovers(x, s) :- srf_candidate_pre(x, s), kind(c, "call"), within(c, x), field(c, "function", f),
+    attr_of(f, o, m), srf_reset_method(m), unparen(o, oo), text(oo, st), text(s, st).
+.decl srf_reset_method(m: symbol)
+srf_reset_method("rollback"). srf_reset_method("close"). srf_reset_method("invalidate"). srf_reset_method("reset").
+srf_reset_method("remove"). srf_reset_method("expunge_all").
+.decl srf_leaf(f: node, n: symbol)
+srf_leaf(f, n) :- kind(f, "identifier"), text(f, n).
+srf_leaf(f, n) :- attr_of(f, _, n).
+// srf_candidate_pre(x, s): the handlers and sessions srf_recovers and srf_rebinds judge.
+.decl srf_candidate_pre(x: node, s: node)
+srf_candidate_pre(x, s) :- srf_commit(t, _, s, _), child(t, x, _), kind(x, "except_clause").
+// srf_rebinds(x, s): handler x binds s's name afresh (`session = SessionLocal()`).
+.decl srf_rebinds(x: node, s: node)
+srf_rebinds(x, s) :- srf_candidate_pre(x, s), kind(s, "identifier"), text(s, n), kind(a, "assignment"), within(a, x),
+    field(a, "left", l), text(l, n).
+
+// ---- how a handler ends --------------------------------------------------------------------------------------------
+// srf_ends(b, how): block b (a handler, or a branch of an if that ends one) can finish by `how`: "raise", "return",
+// "break", "continue", or "fall" (it runs off its end). Followed as py_reraising_handler (lib/django) does: the last
+// statement, and through an if/elif/else into each branch; any other statement can fall through. A last statement
+// that calls a def of the same file whose body ends in `raise` (`self._handle_integrity_error(e)`) raises too.
+.decl srf_block(b: node)
+srf_block(b) :- srf_commit(t, _, _, _), child(t, x, _), kind(x, "except_clause"), child(x, b, _), kind(b, "block").
+srf_block(b) :- srf_block(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"), py_if_branch(s, b).
+.decl srf_last(b: node, s: node)
+srf_last(b, s) :- srf_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j).
+.decl srf_ends(b: node, how: symbol)
+srf_ends(b, "raise") :- srf_last(b, s), (kind(s, "raise_statement") ; srf_raising_stmt(s)).
+srf_ends(b, "return") :- srf_last(b, s), kind(s, "return_statement").
+srf_ends(b, "break") :- srf_last(b, s), kind(s, "break_statement").
+srf_ends(b, "continue") :- srf_last(b, s), kind(s, "continue_statement").
+srf_ends(b, "fall") :- srf_last(b, s), !kind(s, "raise_statement"), !kind(s, "return_statement"),
+    !kind(s, "break_statement"), !kind(s, "continue_statement"), !kind(s, "if_statement"), !srf_raising_stmt(s).
+srf_ends(b, "fall") :- srf_last(b, s), kind(s, "if_statement"), !py_has_else(s).
+srf_ends(b, how) :- srf_last(b, s), py_if_branch(s, cb), srf_ends(cb, how).
+.decl srf_handler_ends(x: node, how: symbol)
+srf_handler_ends(x, how) :- kind(x, "except_clause"), child(x, hb, _), kind(hb, "block"), srf_ends(hb, how).
+// srf_raising_stmt(s): statement s is a call (awaited or not) whose leaf name names defs of the same file, each of
+// whose bodies ends in `raise`.
+.decl srf_raising_stmt(s: node)
+srf_raising_stmt(s) :- srf_last(_, s), kind(s, "expression_statement"), child(s, e, 0), srf_last_call(e, c),
+    same_file_call(c, _), !srf_nonraising_target(c).
+.decl srf_last_call(e: node, c: node)
+srf_last_call(e, e) :- srf_last(_, s), kind(s, "expression_statement"), child(s, e, 0), kind(e, "call").
+srf_last_call(e, c) :- srf_last(_, s), kind(s, "expression_statement"), child(s, e, 0), kind(e, "await"),
+    child(e, c, 0), kind(c, "call").
+.decl srf_nonraising_target(c: node)
+srf_nonraising_target(c) :- srf_last_call(_, c), same_file_call(c, g), !srf_raising_fn(g).
+.decl srf_raising_fn(g: node)
+srf_raising_fn(g) :- kind(g, "function_definition"), field(g, "body", b), body_len(b, k), j = k - 1,
+    body_stmt(b, s, j), kind(s, "raise_statement").
+.decl srf_reraises(x: node)
+srf_reraises(x) :- kind(x, "except_clause"), !srf_handler_survives(x).
+.decl srf_handler_survives(x: node)
+srf_handler_survives(x) :- srf_handler_ends(x, how), how != "raise".
+// copied from lib/django
+.decl py_if_branch(s: node, b: node)
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "elif_clause"),
+    field(e, "consequence", b).
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause"), field(e, "body", b).
+.decl py_has_else(s: node)
+py_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
+
+// ---- case 1: the next loop iteration ----------------------------------------------------------------------------
+.decl srf_loop(l: node, lb: node)
+srf_loop(l, lb) :- (kind(l, "for_statement") ; kind(l, "while_statement")), field(l, "body", lb).
+.decl srf_loop_reuse(t: node, x: node, s: node)
+srf_loop_reuse(t, x, s) :- srf_candidate(t, x, s, _), (srf_handler_ends(x, "fall") ; srf_handler_ends(x, "continue")),
+    srf_try_loop(t, s, l), !srf_bound_in(s, l).
+// srf_try_loop(t, s, l): loop l, in the same function, has try t (whose body commits s) in its body.
+.decl srf_try_loop(t: node, s: node, l: node)
+srf_try_loop(t, s, l) :- srf_candidate(t, _, s, _), srf_loop(l, lb), within_stop(t, lb, sa_region_stop).
+// srf_bound_in(s, l): s is a name that some statement inside l binds (an assignment, a with/for target).
+.decl srf_bound_in(s: node, l: node)
+srf_bound_in(s, l) :- srf_try_loop(_, s, l), kind(s, "identifier"), text(s, n), look(s, n, sc),
+    binding(sc, n, site, form), form != "param", within(site, l).
+
+// ---- case 2: a later statement uses the session ----------------------------------------------------------------
+// After a handler that falls through, the statements after the try in each block around it (in the same function);
+// after one that breaks or continues, those after the innermost loop around the try.
+.decl srf_later_use(t: node, x: node, s: node)
+srf_later_use(t, x, s) :- srf_candidate(t, x, s, _), srf_handler_ends(x, "fall"), srf_after(t, t, s).
+srf_later_use(t, x, s) :- srf_candidate(t, x, s, _), (srf_handler_ends(x, "break") ; srf_handler_ends(x, "continue")),
+    nearest(t, l, srf_loop_kind), within_stop(t, l, sa_region_stop), srf_after(t, l, s).
+.decl srf_loop_kind(k: symbol)
+srf_loop_kind("for_statement"). srf_loop_kind("while_statement").
+// srf_after(t, n, s): a statement after the one holding n (n itself or a block around it), in the function of try t,
+// calls a method on s's spelling, and no block between them returns or raises after n first.
+.decl srf_after(t: node, n: node, s: node)
+srf_after(t, n, s) :- srf_candidate(t, _, s, _), (n = t ; inside(t, n, srf_loop_kind)), srf_climb(n, st),
+    body_stmt(b, st, i), !srf_exit_inside(n, st), body_stmt(b, st2, j), j > i, srf_use(u, s), within(u, st2),
+    nearest(t, f, fdef), nearest(u, f, fdef), within(b, f).
+// srf_climb(n, st): statement st holds n (a try, a loop around it, or a call passing the session) or is n.
+.decl srf_climb(n: node, st: node)
+srf_climb(n, n) :- srf_candidate(n, _, _, _).
+srf_climb(n, st) :- srf_candidate(n, _, _, _), inside(n, st, srf_stmt_kind).
+srf_climb(n, n) :- srf_candidate(t, _, _, _), inside(t, n, srf_loop_kind).
+srf_climb(n, st) :- srf_candidate(t, _, _, _), inside(t, n, srf_loop_kind), inside(n, st, srf_stmt_kind).
+srf_climb(n, st) :- srf_arg(n, _), inside(n, st, srf_stmt_kind).
+// srf_stmt_kind(k): the statements a block holds (body_stmt's children).
+.decl srf_stmt_kind(k: symbol)
+srf_stmt_kind("expression_statement"). srf_stmt_kind("return_statement"). srf_stmt_kind("if_statement").
+srf_stmt_kind("for_statement"). srf_stmt_kind("while_statement"). srf_stmt_kind("try_statement").
+srf_stmt_kind("with_statement"). srf_stmt_kind("match_statement"). srf_stmt_kind("raise_statement").
+srf_stmt_kind("assert_statement"). srf_stmt_kind("delete_statement"). srf_stmt_kind("decorated_definition").
+// srf_exit_inside(n, st): inside statement st, a block holding n has a `return` or `raise` after the statement that
+// holds n, so control from n never reaches the statements after st.
+.decl srf_exit_inside(n: node, st: node)
+srf_exit_inside(n, st) :- srf_climb(n, st), srf_climb(n, s3), body_stmt(b2, s3, k), within(b2, st),
+    body_stmt(b2, r, k2), k2 > k, (kind(r, "return_statement") ; kind(r, "raise_statement")).
+// srf_use(u, s): call u, in the function that commits s (not in a def nested in it), is `<s>.m(...)` with the same
+// spelling as s, m not a reset.
+.decl srf_use(u: node, s: node)
+srf_use(u, s) :- srf_candidate(_, _, s, _), nearest(s, f, fdef), text(s, st), has(f, u, "call"),
+    nearest(u, f, fdef), field(u, "function", g), attr_of(g, o, m), !srf_reset_method(m), unparen(o, oo),
+    text(oo, st).
+
+// ---- case 3: a session that outlives the function ------------------------------------------------------------
+// A parameter the function never rebinds counts only when python/calls finds a caller that passes it a name (by
+// keyword or position) and goes on using that name: the call sits in a loop the name is bound outside of, or a later
+// statement of the caller mentions the name. A callee whose callers only roll back or close afterwards (dify's
+// RagPipelineDslService, whose controller rolls back on a FAILED result) stays silent; so does `self.<x>`, whose
+// owner's callers are not followed. The callers sit in other files: each states, by the callee's symbol (python/calls'
+// call_target), which of its parameters it goes on using (srf_pass_kw_q, srf_pass_pos_q), and srf_reused_q joins them
+// with the callee's signature (lib's sa_param_for).
+.decl srf_param(s: node, f: node, n: symbol)
+srf_param(s, f, n) :- srf_candidate(_, _, s, _), kind(s, "identifier"), text(s, n), look(s, n, f),
+    binding(f, n, _, "param"), !srf_rebound(f, n).
+.decl srf_rebound(f: node, n: symbol)
+srf_rebound(f, n) :- binding(f, n, _, form), form != "param".
+// srf_param_at(s, f, n): session s is parameter n of def f (its symbol).
+.decl srf_param_at(s: node, f: symbol, n: symbol)
+srf_param_at(s, fq, n) :- srf_param(s, f, n), pt_def(f, fq).
+// srf_arg(c, an): call c, of a def of the run, passes the name an.
+.decl srf_arg(c: node, an: symbol)
+srf_arg(c, an) :- kind(c, "call"), call_target(c, _), call_arg(c, _, _, a), kind(a, "identifier"), text(a, an).
+// srf_goes_on(c, an): the caller goes on using the name an it passes in call c.
+.decl srf_goes_on(c: node, an: symbol)
+srf_goes_on(c, an) :- srf_caller_loop(c, an, l), !srf_name_bound_in(c, an, l).
+srf_goes_on(c, an) :- srf_caller_later(c, an).
+// srf_pass_kw_q(f, n): a call of def f passes, by keyword for its parameter n, a name its caller goes on using.
+// srf_pass_pos_q(f, i, b): the same as its positional argument i, in call form b (lib's sa_call_form).
+.decl srf_pass_kw_q(f: symbol, n: symbol)
+srf_pass_kw_q(fq, n) :- srf_arg(c, an), call_target(c, fq), call_arg(c, -1, n, a), kind(a, "identifier"), text(a, an),
+    srf_goes_on(c, an).
+.decl srf_pass_pos_q(f: symbol, i: number, b: symbol)
+srf_pass_pos_q(fq, i, b) :- srf_arg(c, an), call_target(c, fq), call_arg(c, i, "", a), kind(a, "identifier"),
+    text(a, an), sa_call_form(c, b), srf_goes_on(c, an).
+// srf_reused_q(f, n): some caller of def f goes on using the name it passed for f's parameter n.
+.decl srf_reused_q(f: symbol, n: symbol)
+srf_reused_q(fq, n) :- srf_pass_kw_q(fq, n).
+srf_reused_q(fq, n) :- srf_pass_pos_q(fq, i, b), sa_param_for(fq, i, b, n).
+.decl srf_caller_loop(c: node, an: symbol, l: node)
+srf_caller_loop(c, an, l) :- srf_arg(c, an), srf_loop(l, lb), within_stop(c, lb, sa_region_stop).
+.decl srf_name_bound_in(c: node, an: symbol, l: node)
+srf_name_bound_in(c, an, l) :- srf_caller_loop(c, an, l), nearest(c, g, fdef), binding(g, an, site, form), form != "param",
+    within(site, l).
+.decl srf_caller_later(c: node, an: symbol)
+srf_caller_later(c, an) :- srf_arg(c, an), nearest(c, g, fdef), srf_climb(c, st), body_stmt(b, st, i),
+    !srf_exit_inside(c, st), within(b, g), body_stmt(b, st2, j), j > i, has(st2, r, "identifier"), text(r, an),
+    nearest(r, g, fdef).
+// srf_shared(s): the session is not the function's own: `<module>.session` on a module-level name (Flask-SQLAlchemy's
+// request- and app-context-scoped `db.session`), or a module-level name (an imported or global scoped_session).
+.decl srf_shared(s: node)
+srf_shared(s) :- srf_candidate(_, _, s, _), attr_of(s, o, "session"), kind(o, "identifier"), text(o, n), look(o, n, m),
+    kind(m, "module").
+srf_shared(s) :- srf_candidate(_, _, s, _), kind(s, "identifier"), text(s, n), look(s, n, m), kind(m, "module").
+// srf_in_command(t): try t is in an entry point the framework calls and nothing else: a CLI command
+// (`@click.command()`, `@app.cli.command(...)`), a web route (`@router.post(...)`, `@app.route(...)`), a Slack Bolt
+// listener (`@app.action(...)`, `@app.view(...)`). Its session (a dependency's, a middleware's, the request's
+// `db.session`) is closed or removed when it returns, with no caller that goes on with it.
+.decl srf_in_command(t: node)
+srf_in_command(t) :- kind(t, "try_statement"), nearest(t, f, fdef), decorator(f, e), srf_command_deco(e).
+.decl srf_entry_deco(n: symbol)
+srf_entry_deco("command"). srf_entry_deco("group"). srf_entry_deco("route"). srf_entry_deco("get").
+srf_entry_deco("post"). srf_entry_deco("put"). srf_entry_deco("patch"). srf_entry_deco("delete").
+srf_entry_deco("api_route"). srf_entry_deco("websocket"). srf_entry_deco("action"). srf_entry_deco("view").
+srf_entry_deco("view_submission"). srf_entry_deco("view_closed"). srf_entry_deco("shortcut").
+srf_entry_deco("event"). srf_entry_deco("options").
+.decl srf_command_deco(e: node)
+srf_command_deco(e) :- kind(e, "call"), field(e, "function", g), attr_of(g, _, n), srf_entry_deco(n).
+srf_command_deco(e) :- kind(e, "call"), field(e, "function", g), kind(g, "identifier"), text(g, n), sym_of(g, q),
+    prefix("click.", q), srf_entry_deco(n).
+srf_command_deco(e) :- attr_of(e, _, n), srf_entry_deco(n).
+
+// The cases, `upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/`, read as
+// one repository: each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/__init__.py"
+    .fixture "app/api.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/api.py"
+    .fixture "app/commands.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/commands.py"
+    .fixture "app/db.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/db.py"
+    .fixture "app/extensions.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/extensions.py"
+    .fixture "app/importers.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/importers.py"
+    .fixture "app/jobs.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/jobs.py"
+    .fixture "app/models.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/models.py"
+    .fixture "app/services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/services.py"
+    .fixture "app/views.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/views.py"
+    .fixture "app/tests/__init__.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/__init__.py"
+    .fixture "app/tests/test_services.py" from "../upstream/sqlalchemy-practice/authored/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/test_services.py"
+    .expect _ at "app/api.py":31
+    .expect _ at "app/commands.py":26
+    .expect _ at "app/importers.py":24
+    .expect _ at "app/importers.py":43
+    .expect _ at "app/services.py":26
+    .expect _ at "app/services.py":38
+    .expect _ at "app/services.py":50
+    .expect _ at "app/services.py":62
+    .expect _ at "app/services.py":75
+    .expect _ at "app/services.py":87
+    .expect _ at "app/services.py":96
+    .expect _ at "app/services.py":117
+    .expect _ at "app/services.py":130
+    .expect _ at "app/views.py":17
+.end

@@ -1,0 +1,272 @@
+.policy "pydantic-practice-validator-returns-value" revision 1
+.description "Return the value from a Pydantic validator on every path that does not raise; a path that ends without one makes the field or model None."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Pydantic keeps what a validator returns: a field validator's (field_validator in
+// any mode, v1's validator) becomes the field's value, a before model validator's (v1's root_validator(pre=True))
+// replaces the input data, a wrap model validator's is the instance, v1's root_validator's is the values dict, and
+// an after model validator must return self: without it `Model.model_validate(data)` returns None, and so does a
+// field of that model nested in another (pydantic#9334, #7252). An after field validator's result is not
+// validated again, so even a non-Optional field silently becomes None.
+//
+// It matches a def decorated with one of those Pydantic decorators (resolved through imports, lib/pydantic's
+// pd_validator, in any class: a mixin in another module counts), or a def a field's annotation attaches with
+// `AfterValidator(fn)`, `BeforeValidator(fn)`, `WrapValidator(fn)` or `PlainValidator(fn)` (pd_fnv_attached, directly
+// in `Annotated[...]` or through an alias, in any module; its return becomes the field's value), that can reach the
+// end of its body (reported at its name), and each bare `return` in it (reported at the return); and `return None` in
+// an after model validator, where None is never right: `model_validate()` returns it. "Can reach its end" is the
+// Django rule django-practice-clean-field-returns-value's analysis: a return or raise closes a path, an if, try,
+// with, loop or match is open when one of its ways through is; `assert` is not a way out. A call statement closes a
+// path when its callee never returns: a def of the run (in any module) whose body ends in a `raise` or that is
+// annotated `-> NoReturn` / `Never`, `sys.exit`, `os._exit`, `typing.assert_never`.
+//
+// Left alone: a validator whose every path returns or raises; `return None` written out in any other validator (a
+// deliberate None);
+// serializers and computed fields (field_serializer, model_serializer, computed_field); decorators of other
+// libraries named like Pydantic's (attrs' `@x.validator`, marshmallow's `validates`, DRF's `validate_<field>`, a
+// project's own `validator`); generators; stubs whose body is only a docstring, `pass` or `...` (abstract or
+// not), and typing.overload stubs; test code (pd_test_doc), whose throwaway models sometimes leave a validator
+// without a return on purpose to check Pydantic's behaviour.
+//   class Order(BaseModel):
+//       @field_validator("email")
+//       @classmethod
+//       def email_free(cls, v):                    reported: the happy path ends without `return v`
+//           if v in TAKEN:
+//               raise ValueError("taken")
+//       @model_validator(mode="after")
+//       def check(self):                           not reported: returns self or raises on every path
+//           if self.qty < 0:
+//               raise ValueError("negative")
+//           return self
+// Gaps: a helper counts as never returning only when its last statement raises or calls such a helper (or it is
+// annotated NoReturn), so one that raises in both branches of a final `if` is taken as completing and a validator
+// ending in it is reported; a method called on an instance (`self.fail()`) is not resolved; an after model validator
+// that returns something other than self is not reported; a validator attached outside a class body by a call
+// (`field_validator(...)(fn)`) is not looked at.
+
+#include "lib/pydantic.rerail"
+#include "python/flow-return.rerail"   // fn_return, bare_return, fn_yields
+
+.violation ValidatorFallsOff(at: node, m: symbol, effect: symbol, fix: symbol) "`{m}()` can end without returning: {effect} Return {fix} on every path that does not raise."
+ValidatorFallsOff(n, m, e, x) :- pvr_fn(f, k), field(f, "body", b), pvr_open(b, ck), !pvr_blocked(ck),
+    field(f, "name", n), def_name(f, m), pvr_effect(k, e), pvr_fix(f, x).
+ValidatorFallsOff(n, m, e, x) :- pvr_fnv(f, vk), pd_fnv_attached(vk, md, _), field(f, "body", b), pvr_open(b, ck),
+    !pvr_blocked(ck), field(f, "name", n), def_name(f, m), pvr_effect("field", e), pvr_fix_mode(f, md, x).
+
+.violation ValidatorBareReturn(at: node, m: symbol, effect: symbol, fix: symbol) "This bare `return` in `{m}()` returns None: {effect} Return {fix} instead, raise ValueError, or write `return None` if None is intended."
+ValidatorBareReturn(r, m, e, x) :- pvr_fn(f, k), k != "self", fn_return(f, r), bare_return(r), def_name(f, m),
+    pvr_effect(k, e), pvr_fix(f, x).
+ValidatorBareReturn(r, m, e, x) :- pvr_fnv(f, vk), pd_fnv_attached(vk, md, _), fn_return(f, r), bare_return(r),
+    def_name(f, m), pvr_effect("field", e), pvr_fix_mode(f, md, x).
+
+.violation ModelValidatorReturnsNone(at: node, m: symbol) "This `return` in after model validator `{m}()` returns None, so `model_validate()` returns None and so does this model where nested. Return `self` instead."
+ModelValidatorReturnsNone(r, m) :- pvr_fn(f, "self"), fn_return(f, r), (bare_return(r) ; none_return(r)), def_name(f, m).
+
+// pvr_fn(f, k): f is a Pydantic validator outside test code whose return value Pydantic keeps, k saying what it
+// becomes: "field" (the field's value), "data" (the input a before model validator hands on), "values" (v1's
+// root_validator: the model's values), "model" (a wrap model validator: the instance), "self" (an after model
+// validator). Generators and stubs are not validators that can be fixed by a return.
+.decl pvr_fn(f: node, k: symbol)
+pvr_fn(f, k) :- pd_validator(f, _, api, mode), pvr_kind(api, mode, k), docof(f, d), !pd_test_doc(d), !fn_yields(f),
+    !pvr_stub(f), !pvr_overload(f).
+// pvr_fnv(f, vk): def f, outside test code and not a decorated validator, goes by vk as a function validator
+// (lib/pydantic's pd_fnv_def): whether a field's annotation attaches it, and in which mode, is pd_fnv_attached's
+// cross-file answer, which the outputs read. Its return becomes the field's value.
+.decl pvr_fnv(f: node, vk: symbol)
+pvr_fnv(f, vk) :- pd_fnv_def(f, vk), kind(f, "function_definition"), !pd_validator(f, _, _, _), docof(f, d),
+    !pd_test_doc(d), !fn_yields(f), !pvr_stub(f), !pvr_overload(f).
+.decl pvr_kind(api: symbol, mode: symbol, k: symbol)
+pvr_kind("field_validator", "before", "field"). pvr_kind("field_validator", "after", "field").
+pvr_kind("field_validator", "wrap", "field"). pvr_kind("field_validator", "plain", "field").
+pvr_kind("validator", "before", "field"). pvr_kind("validator", "after", "field").
+pvr_kind("model_validator", "before", "data"). pvr_kind("root_validator", "before", "data").
+pvr_kind("root_validator", "after", "values"). pvr_kind("model_validator", "wrap", "model").
+pvr_kind("model_validator", "after", "self").
+
+// pvr_effect(k, e): what a missing return does, by kind.
+.decl pvr_effect(k: symbol, e: symbol)
+pvr_effect("field", "Pydantic stores a field validator's return value, so the field silently becomes None.").
+pvr_effect("data", "Pydantic validates the returned data in place of the input, so it validates None.").
+pvr_effect("values", "Pydantic takes the returned dict as the model's values, so it gets None.").
+pvr_effect("model", "Pydantic takes the returned value as the validated model, so it gets None.").
+pvr_effect("self", "`model_validate()` then returns None, and so does this model where it is nested in another.").
+
+// pvr_fix(f, x): the value to return. A wrap validator returns its handler's result; the others the value they
+// receive (pd_value_param), an after model validator `self`. pvr_fix_mode(f, m, x): the same for function validator
+// f, were it attached in mode m.
+.decl pvr_fix(f: node, x: symbol)
+pvr_fix(f, x) :- pvr_fn(f, "self"), x = "`self`".
+pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pd_validator(f, _, _, m), m != "wrap", pd_value_param(f, _, v),
+    x = cat("`", v, "` (or the normalised value)").
+pvr_fix(f, x) :- pvr_fn(f, k), k != "self", pd_validator(f, _, _, "wrap"), pd_value_param(f, _, v),
+    x = cat("`handler(", v, ")`'s result").
+pvr_fix(f, x) :- pvr_fn(f, k), k != "self", !pd_value_param(f, _, _), x = "the validated value".
+.decl pvr_fix_mode(f: node, m: symbol, x: symbol)
+pvr_fix_mode(f, m, x) :- pvr_fnv(f, _), pd_fn_validator_class(_, m), m != "wrap", pd_value_param(f, _, v),
+    x = cat("`", v, "` (or the normalised value)").
+pvr_fix_mode(f, "wrap", x) :- pvr_fnv(f, _), pd_value_param(f, _, v), x = cat("`handler(", v, ")`'s result").
+pvr_fix_mode(f, m, x) :- pvr_fnv(f, _), pd_fn_validator_class(_, m), !pd_value_param(f, _, _),
+    x = "the validated value".
+
+// pvr_stub(f): f's body holds only a docstring, `pass` or `...`: an abstract or placeholder def.
+.decl pvr_stub(f: node)
+pvr_stub(f) :- kind(f, "function_definition"), field(f, "body", b),
+    count : { child(b, s, _), !kind(s, "comment"), !pvr_inert(s) } = 0.
+.decl pvr_inert(s: node)
+pvr_inert(s) :- kind(s, "pass_statement").
+pvr_inert(s) :- kind(s, "expression_statement"), child(s, e, 0), (kind(e, "string") ; kind(e, "ellipsis")),
+    !child(s, _, 1).
+.decl pvr_overload(f: node)
+pvr_overload(f) :- decorator(f, e), sym_of(e, q), (q = "typing.overload" ; q = "typing_extensions.overload").
+
+// pvr_open(b, ck): block b can run to its end, unless the calls ck names never return: its last statement can.
+// Statements after a return or raise are unreachable and not looked at. The analysis is
+// django-practice-clean-field-returns-value's (cfr_open). Whether a callee never returns is answered across the
+// files (pvr_noreturn: a helper may be another module's def), so the file says on which callees its path depends: ck
+// is "" (none), a callee's qualified name, or `c1 & c2` (both: a try's body and its finally, pvr_conj); the outputs
+// read `!pvr_blocked(ck)`.
+.decl pvr_open(b: node, ck: symbol)
+pvr_open(b, ck) :- pvr_block(b), j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j),
+    pvr_s_open(s, ck).
+// pvr_block(b) / pvr_stmt(s): the blocks of the validators (and of the defs a function validator may attach), and
+// their statements: the only ones followed.
+.decl pvr_block(b: node)
+pvr_block(b) :- (pvr_fn(f, _) ; pvr_fnv(f, _)), field(f, "body", b).
+pvr_block(b) :- (pvr_fn(f, _) ; pvr_fnv(f, _)), field(f, "body", fb), within(b, fb), kind(b, "block").
+.decl pvr_stmt(s: node)
+pvr_stmt(s) :- pvr_block(b), child(b, s, _), !kind(s, "comment").
+// pvr_s_open(s, ck): statement s can complete normally, unless the calls ck names never return. A simple statement
+// can (a call statement unless its callee never returns); return and raise cannot; an if, try or with can when one
+// of its ways through can; a for or while loop can unless it has an else that cannot and no break (`while True`
+// only by a break); a match can when a case body can or no case catches every value.
+.decl pvr_compound(k: symbol)
+pvr_compound("return_statement"). pvr_compound("raise_statement"). pvr_compound("if_statement").
+pvr_compound("try_statement"). pvr_compound("with_statement"). pvr_compound("while_statement").
+pvr_compound("for_statement"). pvr_compound("match_statement").
+.decl pvr_s_open(s: node, ck: symbol)
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, k), !pvr_compound(k), !pvr_call_stmt(s, _).
+pvr_s_open(s, q) :- pvr_stmt(s), pvr_call_stmt(s, q).
+// pvr_call_stmt(s, q): s is an expression statement that is only a call of q, resolved through imports.
+.decl pvr_call_stmt(s: node, q: symbol)
+pvr_call_stmt(s, q) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, k),
+    kind(k, "call"), field(k, "function", fn), sym_of(fn, q).
+// pvr_noreturn(q): calling q never returns: `sys.exit`, `os._exit`, `assert_never`; a def of the run annotated
+// `-> NoReturn` / `-> Never`; or a def of the run whose last statement is a `raise` or a call of another such
+// function, followed through the run's call graph to any depth (`def fail(msg): raise ValueError(msg)`, `def
+// reject(msg): log(msg); fail(msg)`). Each def's file says how its body ends, by symbol (pvr_ends_q); the chain joins
+// the defs' modules by symbol, on purpose, holding no node. pvr_blocked(ck): a call ck names never returns.
+.decl pvr_noreturn(q: symbol) cross_file
+pvr_noreturn("sys.exit"). pvr_noreturn("os._exit"). pvr_noreturn("typing.assert_never").
+pvr_noreturn("typing_extensions.assert_never").
+pvr_noreturn(q) :- pvr_ends_q(q, "raise").
+pvr_noreturn(q) :- pvr_ends_q(q, "never").
+pvr_noreturn(q) :- pvr_ends_call_q(q, q2), q2 != q, pvr_noreturn(q2).
+.decl pvr_blocked(ck: symbol) cross_file
+pvr_blocked(ck) :- pvr_noreturn(ck).
+pvr_blocked(ck) :- pvr_conj(ck, c1, _), pvr_blocked(c1).
+pvr_blocked(ck) :- pvr_conj(ck, _, c2), pvr_blocked(c2).
+// pvr_ends_q(q, how): def q of this file ends in a `raise` (how "raise"), or is annotated NoReturn or Never (how
+// "never"); pvr_ends_call_q(q, q2): its last statement is a call of q2.
+.decl pvr_ends_q(q: symbol, how: symbol)
+pvr_ends_q(q, "raise") :- pvr_last_stmt(q, s), kind(s, "raise_statement").
+pvr_ends_q(q, "never") :- kind(g, "function_definition"), qualname(g, q), field(g, "return_type", t),
+    (n = t ; within(n, t)), sym_of(n, r), (r = "typing.NoReturn" ; r = "typing.Never" ; r = "typing_extensions.NoReturn" ;
+    r = "typing_extensions.Never").
+.decl pvr_ends_call_q(q: symbol, q2: symbol)
+pvr_ends_call_q(q, q2) :- pvr_last_stmt(q, s), pvr_call_stmt(s, q2).
+.decl pvr_last_stmt(q: symbol, s: node)
+pvr_last_stmt(q, s) :- kind(g, "function_definition"), qualname(g, q), field(g, "body", b),
+    j = max i : { child(b, s0, i), !kind(s0, "comment") }, child(b, s, j).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, "if_statement"), !pvr_has_else(s).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "elif_clause"),
+    field(a, "consequence", b), pvr_open(b, ck).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), pvr_open(b, ck).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "with_statement"), field(s, "body", b), pvr_open(b, ck).
+// A loop's else runs when the loop ends without a break; `while True` never ends that way.
+pvr_s_open(s, "") :- pvr_stmt(s), pvr_ending_loop(s), !pvr_has_else(s).
+pvr_s_open(s, ck) :- pvr_stmt(s), pvr_ending_loop(s), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), (kind(s, "while_statement") ; kind(s, "for_statement")), kind(k, "break_statement"),
+    nearest(k, s, pvr_loop).
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "match_statement"), within(b, s), kind(b, "block"), child(cc, b, _),
+    kind(cc, "case_clause"), nearest(cc, s, "match_statement"), pvr_open(b, ck).
+pvr_s_open(s, "") :- pvr_stmt(s), kind(s, "match_statement"), !pvr_match_total(s).
+.decl pvr_ending_loop(s: node)
+pvr_ending_loop(s) :- kind(s, "for_statement").
+pvr_ending_loop(s) :- kind(s, "while_statement"), field(s, "condition", c), !kind(c, "true").
+// pvr_match_total(s): some case of match s catches every value: `case _:` or a bare capture name, with no guard.
+.decl pvr_match_total(s: node)
+pvr_match_total(s) :- kind(s, "match_statement"), child(s, mb, _), kind(mb, "block"), child(mb, cc, _),
+    kind(cc, "case_clause"), !field(cc, "guard", _), child(cc, p, _), kind(p, "case_pattern"), text(p, t),
+    match("[A-Za-z_][A-Za-z0-9_]*", t), t != "None", t != "True", t != "False", !pvr_multi_pattern(cc).
+.decl pvr_multi_pattern(cc: node)
+pvr_multi_pattern(cc) :- kind(cc, "case_clause"), child(cc, p, i), kind(p, "case_pattern"), child(cc, q, j),
+    kind(q, "case_pattern"), i != j.
+// A try completes when its finally (if any) does, and its body (then else) or some handler does: both conditions.
+pvr_s_open(s, c2) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, ""), pvr_try_main_open(s, c2).
+pvr_s_open(s, c1) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, "").
+pvr_s_open(s, ck) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, c2), c2 != "", ck = cat(c1, " & ", c2).
+// pvr_conj(ck, c1, c2): condition ck is c1 and c2 (by value, no node: what pvr_blocked reads).
+.decl pvr_conj(ck: symbol, c1: symbol, c2: symbol)
+pvr_conj(ck, c1, c2) :- pvr_stmt(s), kind(s, "try_statement"), pvr_try_tail_open(s, c1), c1 != "",
+    pvr_try_main_open(s, c2), c2 != "", ck = cat(c1, " & ", c2).
+.decl pvr_try_tail_open(t: node, ck: symbol)
+pvr_try_tail_open(t, "") :- kind(t, "try_statement"), !pvr_clause(t, "finally_clause", _).
+pvr_try_tail_open(t, ck) :- pvr_clause(t, "finally_clause", b), pvr_open(b, ck).
+.decl pvr_try_main_open(t: node, ck: symbol)
+pvr_try_main_open(t, ck) :- kind(t, "try_statement"), field(t, "body", b), pvr_open(b, ck),
+    !pvr_clause(t, "else_clause", _).
+pvr_try_main_open(t, ck) :- pvr_clause(t, "else_clause", b), pvr_open(b, ck).
+pvr_try_main_open(t, ck) :- (pvr_clause(t, "except_clause", b) ; pvr_clause(t, "except_group_clause", b)),
+    pvr_open(b, ck).
+// pvr_clause(t, k, b): try statement t has a clause of kind k whose block is b.
+.decl pvr_clause(t: node, k: symbol, b: node)
+pvr_clause(t, k, b) :- kind(t, "try_statement"), child(t, c, _), kind(c, k), child(c, b, _), kind(b, "block").
+.decl pvr_has_else(s: node)
+pvr_has_else(s) :- field(s, "alternative", a), kind(a, "else_clause").
+.decl pvr_loop(k: symbol)
+pvr_loop("while_statement"). pvr_loop("for_statement"). pvr_loop("function_definition"). pvr_loop("class_definition").
+
+// The cases, `upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/__init__.py"
+    .fixture "app/annotated.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/annotated.py"
+    .fixture "app/compat.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/compat.py"
+    .fixture "app/errors.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/errors.py"
+    .fixture "app/legacy.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/legacy.py"
+    .fixture "app/mixins.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/mixins.py"
+    .fixture "app/models.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/models.py"
+    .fixture "app/other_libs.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/other_libs.py"
+    .fixture "app/schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/schemas.py"
+    .fixture "app/validation.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/app/validation.py"
+    .fixture "tests/__init__.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/tests/__init__.py"
+    .fixture "tests/test_schemas.py" from "../upstream/pydantic-practice/authored/pydantic-practice-validator-returns-value/tests/test_schemas.py"
+    .expect _ at "app/annotated.py":25
+    .expect _ at "app/annotated.py":32
+    .expect _ at "app/annotated.py":89
+    .expect _ at "app/annotated.py":103
+    .expect _ at "app/annotated.py":108
+    .expect _ at "app/annotated.py":151
+    .expect _ at "app/legacy.py":11
+    .expect _ at "app/legacy.py":18
+    .expect _ at "app/legacy.py":22
+    .expect _ at "app/legacy.py":26
+    .expect _ at "app/mixins.py":9
+    .expect _ at "app/mixins.py":14
+    .expect _ at "app/schemas.py":34
+    .expect _ at "app/schemas.py":41
+    .expect _ at "app/schemas.py":50
+    .expect _ at "app/schemas.py":58
+    .expect _ at "app/schemas.py":69
+    .expect _ at "app/schemas.py":75
+    .expect _ at "app/schemas.py":84
+    .expect _ at "app/schemas.py":94
+    .expect _ at "app/schemas.py":101
+    .expect _ at "app/schemas.py":113
+.end

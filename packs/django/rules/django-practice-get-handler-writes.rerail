@@ -195,18 +195,18 @@ ghw_self_call(xq, m) :- ghw_self_site(x, _, m), pt_def(x, xq).
 .decl ghw_own_method(k: symbol, x: symbol)
 ghw_own_method(kq, xq) :- ghw_handler(kq, _, _), method_sym(bq, _, xq), (bq = kq ; subclass(kq, bq)).
 
-// The cases, `cases/django-practice-get-handler-writes/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-get-handler-writes/`, read as one repository: each line
+// ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "blog/__init__.py" from "../cases/django-practice-get-handler-writes/blog/__init__.py"
-    .fixture "blog/api/__init__.py" from "../cases/django-practice-get-handler-writes/blog/api/__init__.py"
-    .fixture "blog/api/viewsets.py" from "../cases/django-practice-get-handler-writes/blog/api/viewsets.py"
-    .fixture "blog/inherited.py" from "../cases/django-practice-get-handler-writes/blog/inherited.py"
-    .fixture "blog/models.py" from "../cases/django-practice-get-handler-writes/blog/models.py"
-    .fixture "blog/services.py" from "../cases/django-practice-get-handler-writes/blog/services.py"
-    .fixture "blog/tests/__init__.py" from "../cases/django-practice-get-handler-writes/blog/tests/__init__.py"
-    .fixture "blog/tests/test_views.py" from "../cases/django-practice-get-handler-writes/blog/tests/test_views.py"
-    .fixture "blog/views.py" from "../cases/django-practice-get-handler-writes/blog/views.py"
+    .fixture "blog/__init__.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/__init__.py"
+    .fixture "blog/api/__init__.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/api/__init__.py"
+    .fixture "blog/api/viewsets.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/api/viewsets.py"
+    .fixture "blog/inherited.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/inherited.py"
+    .fixture "blog/models.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/models.py"
+    .fixture "blog/services.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/services.py"
+    .fixture "blog/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/tests/__init__.py"
+    .fixture "blog/tests/test_views.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/tests/test_views.py"
+    .fixture "blog/views.py" from "../upstream/django-practice/authored/django-practice-get-handler-writes/blog/views.py"
     .expect _ at "blog/api/viewsets.py":19
     .expect _ at "blog/inherited.py":16
     .expect _ at "blog/inherited.py":29

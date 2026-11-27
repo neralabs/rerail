@@ -1,9 +1,10 @@
 # Rule pack structure and validation contract
 
 A rule pack is a directory under `packs/`: rule documents plus the evidence that they behave.
-`test/engine/catalog/packs.test.ts` validates each one against the [validation contract](#the-validation-contract), and
-the [release workflow](#release) publishes each on its own, except a [private](#packagejson) one, which is never
-published and is installed from a checkout with `rerail packs add packs/<id>`.
+`test/engine/catalog/packs.test.ts` and `packs-rerail/share-<n>.test.ts` validate each one against the
+[validation contract](#the-validation-contract), and the [release workflow](#release) publishes each on its own, except
+a [private](#packagejson) one, which is never published and is installed from a checkout with
+`rerail packs add packs/<id>`.
 
 Core ships no packs and has no rules of its own. Set-up and `rerail packs add` install the published packs from npm
 into `$RERAIL_HOME/packs`, and core reads them from there. To start a pack, see
@@ -286,8 +287,9 @@ violation codes it reports. `pack.json` restates none of it; `title`, `group`, `
 - **Includes.** `#include` finds core's `.rerail` library, which core ships, and then files beside the including
   file. A library file only the pack's rules use belongs to the pack: put it under `rules/` (`rules/lib/<name>.rerail`,
   included as `#include "lib/<name>.rerail"`), where it is published with the rules and takes no `pack.json` entry.
-- **Tests.** The file's `.test` blocks are its own tests. Their fixtures may be written inline, or read from files
-  outside `rules/` (`cases/<id>/…`) that `files` does not publish.
+- **Tests.** The file's `.test` blocks are its own tests. Their fixtures may be written inline, or read from the
+  pack's own test data, never in git: a small repository per rule under `upstream/<tool>/authored/<id>/`, published
+  to S3 like any pack data and fetched with `npm run fixtures:pull` ([pack data](#pack-data)).
 - **Digest.** A rule's digest covers its text and the bytes of every file it includes, core's library among them, so
   an edit to any of them, or a core update that changes the library, asks for the pack's approval again where it
   needs one and checks the pack with the engine again.
@@ -661,8 +663,8 @@ These criteria are for reviewers and never block a merge: no check reads a messa
 Eight checks every pack must pass; ported rules must also pass the conformance gate to ship.
 
 ```sh
-npx vitest run test/engine/catalog/packs.test.ts                         # every pack: checks 1 to 8, each rule's status
-npx vitest run test/engine/catalog/packs.test.ts -t "pack python"        # one pack
+npx vitest run test/engine/catalog/packs                                 # every pack: checks 1 to 8, each rule's status
+npx vitest run test/engine/catalog/packs -t "pack python"                # one pack
 ```
 
 To see every false positive and false negative of one ported rule:
@@ -685,9 +687,12 @@ To see every false positive and false negative of one ported rule:
 `validatePack(directory, { listed?, fixtures? })` in `conformance/pack-validation.ts` runs checks 1 to 8 over one pack.
 It returns each check's failures and each rule's status (`ok`, `failed` or `not-supported-yet`).
 
-`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/`, with one test per check and per rule,
-plus the validator's own tests over the fixture packs in `fixtures/packs/`. It runs with this repository's core in
-`npm test`, and in `release-packs.yml` on a pull request from this repository touching `packs/` and before each publish
+`test/engine/catalog/packs.test.ts` calls it for every directory under `packs/` whose rules are JSON documents, with one
+test per check and per rule, plus the validator's own tests over the fixture packs in `fixtures/packs/`. A pack with
+rules written in `.rerail` takes seconds a rule to validate, so those packs are split over the four files of
+`test/engine/catalog/packs-rerail/`, balanced by their count of such rules, which CI's time-balanced unit shards place
+apart (`test/engine/support/pack-suite.ts`). They run with this repository's core in `npm test`, and in
+`release-packs.yml` on a pull request from this repository touching `packs/` and before each publish
 ([release](#release)).
 
 The contract is a floor. A ported rule must also pass the
@@ -960,8 +965,8 @@ Core's `v*` release (`release.yml`) is separate.
 
 The publish gate is:
 
-- the pack's whole validation (`test/engine/catalog/packs.test.ts`, every check and rule), so a check added to the
-  contract gates publishing with no workflow change;
+- the pack's whole validation (`test/engine/catalog/packs.test.ts`, or `packs-rerail/` for a pack with rules
+  written in `.rerail`; every check and rule), so a check added to the contract gates publishing with no workflow change;
 - `npm pack`, and a check that the tarball holds only `package.json` and what `files` publishes, never validation
   material whatever `files` says (`packedFileFailures` in `conformance/pack-validation.ts`);
 - the tag, made as soon as the two checks above pass and before anything is published, so a pack's release never

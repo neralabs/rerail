@@ -254,31 +254,31 @@ sfu_why(fq, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, c
 sfu_bare_line(fq, l) :- sfu_bare(gq, ct, fq), sfu_exposed(gq), sfu_call_at(gq, ct, _, _, l).
 sfu_bare_line(fq, l) :- sfu_up(fq), sfu_mod_call(fq, l).
 
-// The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
-// caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/`, read as one
+// repository: each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "backend/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/__init__.py"
-    .fixture "backend/plates/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/__init__.py"
-    .fixture "backend/plates/gate.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/gate.py"
-    .fixture "backend/plates/models.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/models.py"
-    .fixture "backend/plates/rebuild.py" from "../cases/django-practice-select-for-update-outside-atomic/backend/plates/rebuild.py"
-    .fixture "shop/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/__init__.py"
-    .fixture "shop/checkout/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/checkout/__init__.py"
-    .fixture "shop/checkout/complete.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/checkout/complete.py"
-    .fixture "shop/core/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/__init__.py"
-    .fixture "shop/core/tracing.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/tracing.py"
-    .fixture "shop/core/transactions.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/core/transactions.py"
-    .fixture "shop/gates.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/gates.py"
-    .fixture "shop/jobs.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/jobs.py"
-    .fixture "shop/locks.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/locks.py"
-    .fixture "shop/models.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/models.py"
-    .fixture "shop/services.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/services.py"
-    .fixture "shop/settings.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/settings.py"
-    .fixture "shop/tasks.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tasks.py"
-    .fixture "shop/tests/__init__.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tests/__init__.py"
-    .fixture "shop/tests/test_holds.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/tests/test_holds.py"
-    .fixture "shop/transactions.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/transactions.py"
-    .fixture "shop/views.py" from "../cases/django-practice-select-for-update-outside-atomic/shop/views.py"
+    .fixture "backend/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/backend/__init__.py"
+    .fixture "backend/plates/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/backend/plates/__init__.py"
+    .fixture "backend/plates/gate.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/backend/plates/gate.py"
+    .fixture "backend/plates/models.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/backend/plates/models.py"
+    .fixture "backend/plates/rebuild.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/backend/plates/rebuild.py"
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/__init__.py"
+    .fixture "shop/checkout/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/checkout/__init__.py"
+    .fixture "shop/checkout/complete.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/checkout/complete.py"
+    .fixture "shop/core/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/core/__init__.py"
+    .fixture "shop/core/tracing.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/core/tracing.py"
+    .fixture "shop/core/transactions.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/core/transactions.py"
+    .fixture "shop/gates.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/gates.py"
+    .fixture "shop/jobs.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/jobs.py"
+    .fixture "shop/locks.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/locks.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/models.py"
+    .fixture "shop/services.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/services.py"
+    .fixture "shop/settings.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/settings.py"
+    .fixture "shop/tasks.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/tasks.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/tests/__init__.py"
+    .fixture "shop/tests/test_holds.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/tests/test_holds.py"
+    .fixture "shop/transactions.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/transactions.py"
+    .fixture "shop/views.py" from "../upstream/django-practice/authored/django-practice-select-for-update-outside-atomic/shop/views.py"
     .expect _ at "shop/gates.py":60
     .expect _ at "shop/jobs.py":58
     .expect _ at "shop/locks.py":13

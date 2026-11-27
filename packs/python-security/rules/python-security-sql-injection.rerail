@@ -1,0 +1,277 @@
+.policy "python-security-sql-injection" revision 1
+.description "Pass request data to SQL as query parameters, never spliced into the SQL text."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Client request data (lib/security's sec_source, a FastAPI/Flask route parameter, a
+// Django URL kwarg captured as text) that reaches the SQL text of a query through an f-string, `%`, `+`,
+// `.format()` or `.join()` (sqli_built), in the same function or through the project's helpers in other files, lets
+// the client write SQL. The SQL-text argument of these calls is the sink, never the params argument:
+//   - Django: `<qs/manager>.raw(sql, …)`, the string items of `.extra(select=…, where=[…], tables=[…],
+//     order_by=[…])`, `django.db.models.expressions.RawSQL(sql, …)`;
+//   - SQLAlchemy: `text(sql)` (`sqlalchemy.text`, `sqlalchemy.sql.text`, `sqlmodel.text`), `literal_column(sql)`,
+//     `exec_driver_sql(sql)`, `<conn|session|engine>.execute(<str>)`;
+//   - DB-API and async drivers: `.execute(sql)`, `.executemany(sql)`, `.executescript(sql)`, and asyncpg's and
+//     `databases`' `fetch`, `fetchrow`, `fetchval`, `fetch_all`, `fetch_one`, `fetch_val`, `iterate`, on a database
+//     handle: a `….cursor()`, `….connect(…)`, `asyncpg.connect/create_pool(…)`, `pool.acquire()` or
+//     `databases.Database(…)` call, a name bound to one (awaited or not, `with`/`async with … as c`), a parameter
+//     annotated with a connection, cursor, pool or session class (sqlite3, psycopg, asyncpg, databases,
+//     SQLAlchemy), or a receiver named like one (`cursor`, `cur`, `conn`, `connection`, `session`, `engine`, `db`,
+//     `database`, `pool`). The name list stays for an unannotated parameter or attribute, whose type is not
+//     decidable;
+//   - pandas `read_sql(sql, …)` / `read_sql_query(sql, …)`.
+// A second message, SqlFragment, reports a client string used whole as a fragment inside a server-built query:
+// `text(x)` or `literal_column(x)` given to `order_by`, `where`, `filter`, `having`, `group_by`, a join or a column
+// list, or an item of `.extra(…)` or `RawSQL(x)`: the classic sort-column injection.
+//   def search(request):
+//       q = request.GET.get("q", "")
+//       Product.objects.raw(f"SELECT * FROM p WHERE name LIKE '%{q}%'")        reported
+//       Product.objects.raw("SELECT * FROM p WHERE name LIKE %s", [f"%{q}%"])  not reported: q is a parameter
+//       select(Product).order_by(text(request.GET["sort"]))                   reported (SqlFragment)
+//   (views.py) reports.run(request.GET["q"])
+//   (reports.py) def run(term): cursor.execute(f"… WHERE a = '{term}'")      reported, naming views.py's line
+// Left alone: parameterised calls (`execute("… %s", [x])`, `text("… :n").bindparams(n=x)`, `execute(text("…"),
+// {"n": x})`); the placeholder list `f"… IN ({','.join(['%s'] * len(ids))})"` (only `%s` markers are spliced; Ruff
+// S608 and Bandit B608 flag it); values the framework already reduced to a number, date, UUID or fixed choice
+// (lib/security's sec_typed: a DRF serializer's or Django form's IntegerField or ChoiceField, a pydantic Literal or
+// Enum field, a FastAPI `Query(pattern="^(asc|desc)$")`; int(), float(), UUID() casts); an identifier picked through
+// a mapping (`SORTS[request.GET["sort"]]`) or a name the function checks (`if col not in ALLOWED: raise`, a check
+// call: sec_checked); a whole client statement run as written (`cursor.execute(request.POST["sql"])`,
+// `session.execute(text(sql))`: an "SQL lab" feature, by design); a built string that never reaches a query (a log
+// line); ORM lookups; test files.
+// Overlap: Ruff S608 / Bandit B608 flag every SQL-looking string built by formatting, whatever the source (and the
+// safe placeholder list); S610/S611/B610/B611 flag every non-literal `extra()`/`RawSQL`, and the `python` pack ports
+// neither B608 nor B611. In this lineup sqlalchemy-practice-text-interpolation (log) reports every `text()` built
+// from any non-constant value; this rule adds the request source, the Django and DB-API sinks and the helper walk.
+// Gaps: lib/security's (values stored on objects or read back from the database, calls the call graph cannot
+// resolve, an `include()`d URLconf's captures); a check done in the caller does not clear a helper's parameter; SQL
+// built by appending to a list (`parts.append(…)`) and joined later; `map(str, ids)`; `Func(template=…)`; a client
+// query wrapped in fixed SQL (`f"SELECT * FROM ({sql}) LIMIT 10"`) is reported although it is by design.
+
+#include "lib/security.rerail"
+
+// Per file and across files (lib/security's origins): each file states what its query calls take by origin
+// (sec_fhit), and a finding reads the cross-file answer by its sink's term (sec_xfirst): its first source, so one
+// sink is reported once.
+.violation SqlInjection(at: node, what: symbol, p: symbol, l: number) "SQL text built from {what} ({p}:{l}): pass the value as a query parameter, or map identifiers through a dict. Leave it if the value is already limited to fixed choices or a number."
+SqlInjection(c, what, p, l) :- sqli_sql_arg(c, _), pt_tm(c, ct), sec_xfirst("sql", ct, k), sec_src_info(k, what, p, l).
+sec_fhit("sql", c, o) :- sqli_sql_arg(c, v), sqli_built(v, o), docof(c, d), !sec_test_doc(d).
+// A fragment is reported per fragment, when it is no built string (sqli_xbuilt: by what other files say of it).
+.violation SqlFragment(at: node, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is used whole as an SQL fragment inside this query. Map it to a fixed column or clause through a dict; leave it if it was checked against an allow-list first."
+SqlFragment(c, what, p, l) :- sqli_fragment(c, v), pt_tm(v, vt), !sqli_xbuilt(vt), sec_xfirst("frag", vt, k),
+    sec_src_info(k, what, p, l).
+sec_fhit("frag", v, o) :- sqli_fragment(c, v), sqli_whole(v, o), docof(c, d), !sec_test_doc(d).
+// sqli_xbuilt(v): fragment v, by its term, holds a string built from client data.
+.decl sqli_xbuilt(v: symbol) cross_file
+sqli_xbuilt(vt) :- sqli_fragment(_, v), sqli_built(v, o), (prefix("S|", o) ; sec_xres(o, _)), pt_tm(v, vt).
+// The functions that hold a query call are this rule's sinks: a validator-named helper that runs one is no check.
+sec_sink_fn(gq) :- sqli_sql_arg(c, _), nearest(c, g, fdef), pt_def(g, gq).
+sec_flavor("sqb").
+
+// ---- sinks: the SQL-text argument of a query call ---------------------------------------------------------------
+// sqli_sql_arg(c, v): v is (an item of) the SQL text call c runs.
+.decl sqli_sql_arg(c: node, v: node)
+sqli_sql_arg(c, v) :- call_name(c, "raw"), field(c, "function", f), attr_of(f, _, _), sqli_text_arg(c, k, v),
+    (k = "" ; k = "raw_query").
+sqli_sql_arg(c, v) :- sqli_rawsql(c), sqli_text_arg(c, k, v), (k = "" ; k = "sql").
+sqli_sql_arg(c, v) :- sqli_text_q(c), sqli_text_arg(c, k, v), (k = "" ; k = "text").
+sqli_sql_arg(c, v) :- call_name(c, "exec_driver_sql"), sqli_text_arg(c, k, v), (k = "" ; k = "statement").
+sqli_sql_arg(c, v) :- sqli_db_execute(c), sqli_text_arg(c, k, v), (k = "" ; sqli_exec_kw(k)).
+sqli_sql_arg(c, v) :- call_name(c, "extra"), field(c, "function", f), attr_of(f, _, _), sqli_extra_arg(c, a),
+    sqli_item(a, v).
+sqli_sql_arg(c, v) :- sec_call_q(c, q), (q = "pandas.read_sql" ; q = "pandas.read_sql_query" ;
+    q = "pandas.io.sql.read_sql" ; q = "pandas.io.sql.read_sql_query"), sqli_text_arg(c, k, v), (k = "" ; k = "sql").
+.decl sqli_exec_kw(k: symbol)
+sqli_exec_kw("sql"). sqli_exec_kw("operation"). sqli_exec_kw("statement"). sqli_exec_kw("query").
+sqli_exec_kw("sql_script").
+// sqli_text_arg(c, k, v): v is call c's first positional argument (k "") or its keyword argument k.
+.decl sqli_text_arg(c: node, k: symbol, v: node)
+sqli_text_arg(c, "", v) :- sec_arg(c, 0, "", v).
+sqli_text_arg(c, k, v) :- sec_arg(c, -1, k, v).
+.decl sqli_rawsql(c: node)
+sqli_rawsql(c) :- sec_call_q(c, q), (q = "django.db.models.expressions.RawSQL" ; q = "django.db.models.RawSQL").
+.decl sqli_text_q(c: node)
+sqli_text_q(c) :- sec_call_q(c, q), (q = "sqlalchemy.text" ; q = "sqlalchemy.sql.text" ;
+    q = "sqlalchemy.sql.expression.text" ; q = "sqlmodel.text" ; q = "sqlalchemy.literal_column" ;
+    q = "sqlalchemy.sql.literal_column" ; q = "sqlalchemy.sql.expression.literal_column").
+// The SQL-bearing arguments of `extra(select, where, params, tables, order_by, select_params)`.
+.decl sqli_extra_arg(c: node, a: node)
+sqli_extra_arg(c, a) :- sec_arg(c, i, "", a), (i = 0 ; i = 1 ; i = 3 ; i = 4).
+sqli_extra_arg(c, a) :- sec_arg(c, -1, k, a), (k = "select" ; k = "where" ; k = "tables" ; k = "order_by").
+// sqli_item(a, v): v is argument a, or an item of a list/tuple, or a value of a dict, a holds.
+.decl sqli_item(a: node, v: node)
+sqli_item(a, a) :- sqli_extra_arg(_, a).
+sqli_item(a, v) :- sqli_extra_arg(_, a), (kind(a, "list") ; kind(a, "tuple")), child(a, v0, _), unparen(v0, v),
+    !kind(v0, "comment").
+sqli_item(a, v) :- sqli_extra_arg(_, a), kind(a, "dictionary"), child(a, pr, _), kind(pr, "pair"),
+    field(pr, "value", v0), unparen(v0, v).
+
+// sqli_db_execute(c): c runs its first argument as a statement on a database handle: DB-API `.execute()`,
+// `.executemany()`, `.executescript()`, and asyncpg's / `databases`' fetch methods.
+.decl sqli_db_execute(c: node)
+sqli_db_execute(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, r0, m), sqli_run_method(m), unparen(r0, r),
+    sqli_db_handle(r).
+.decl sqli_run_method(m: symbol)
+sqli_run_method("execute"). sqli_run_method("executemany"). sqli_run_method("executescript").
+sqli_run_method("fetch"). sqli_run_method("fetchrow"). sqli_run_method("fetchval"). sqli_run_method("fetch_all").
+sqli_run_method("fetch_one"). sqli_run_method("fetch_val"). sqli_run_method("iterate").
+.decl sqli_db_handle(r: node)
+sqli_db_handle(r) :- sqli_handle_call(r).
+sqli_db_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, c),
+    sqli_handle_call(c).
+sqli_db_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), unparen(v, w),
+    kind(w, "await"), child(w, c0, 0), unparen(c0, c), sqli_handle_call(c).
+sqli_db_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), sig_param(g, _, nm, _, _, a, _), text(nm, x),
+    sec_ann(a, t), sqli_ann_handle(t).
+sqli_db_handle(r) :- leaf_name(r, x),
+    match("(?i)(.*_)?(cursor|cur|conn|connection|con|session|engine|db|database|pool)", x).
+// sqli_ann_handle(t): annotation t names a database connection, cursor, pool or session class, bare or Optional.
+.decl sqli_ann_handle(t: node)
+sqli_ann_handle(t) :- sym_of(t, q), sqli_handle_class(q).
+sqli_ann_handle(t) :- kind(t, "subscript"), field(t, "subscript", i), sym_of(i, q), sqli_handle_class(q).
+.decl sqli_handle_class(q: symbol)
+sqli_handle_class(q) :- (q = "sqlite3.Connection" ; q = "sqlite3.Cursor" ; q = "psycopg.Connection" ;
+    q = "psycopg.Cursor" ; q = "psycopg.AsyncConnection" ; q = "psycopg.AsyncCursor" ;
+    q = "psycopg2.extensions.connection" ; q = "psycopg2.extensions.cursor" ; q = "asyncpg.Connection" ;
+    q = "asyncpg.Pool" ; q = "asyncpg.connection.Connection" ; q = "asyncpg.pool.Pool" ; q = "databases.Database" ;
+    q = "sqlalchemy.orm.Session" ; q = "sqlalchemy.engine.Connection" ; q = "sqlalchemy.Connection" ;
+    q = "sqlalchemy.ext.asyncio.AsyncSession" ; q = "sqlalchemy.ext.asyncio.AsyncConnection" ;
+    q = "sqlmodel.Session").
+// sqli_handle_call(c): calls that hand out a database handle: `….cursor()`, `….connect(…)`, `….begin()`,
+// `pool.acquire()`, `asyncpg.create_pool(…)`, `databases.Database(…)`.
+.decl sqli_handle_call(c: node)
+sqli_handle_call(c) :- kind(c, "call"), call_name(c, m), (m = "cursor" ; m = "connect" ; m = "begin" ;
+    m = "raw_connection" ; m = "acquire").
+sqli_handle_call(c) :- sec_call_q(c, q), (q = "asyncpg.create_pool" ; q = "databases.Database").
+
+// ---- whole client fragments ------------------------------------------------------------------------------------
+// sqli_fragment(c, v): call c puts v into a server-built query as SQL: `text(v)` / `literal_column(v)` inside the
+// arguments of a query-building method, an `.extra(…)` item, `RawSQL(v)`. A whole statement given to `execute`
+// (`session.execute(text(sql))`) is no fragment: that is the SQL-lab feature.
+.decl sqli_fragment(c: node, v: node)
+sqli_fragment(c, v) :- sqli_text_q(c), sqli_text_arg(c, k, v), (k = "" ; k = "text"), kind(k2, "call"),
+    call_name(k2, m), sqli_frag_method(m), field(k2, "arguments", al), within(c, al).
+sqli_fragment(c, v) :- call_name(c, "extra"), field(c, "function", f), attr_of(f, _, _), sqli_extra_arg(c, a),
+    sqli_item(a, v).
+sqli_fragment(c, v) :- sqli_rawsql(c), sqli_text_arg(c, k, v), (k = "" ; k = "sql").
+.decl sqli_frag_method(m: symbol)
+sqli_frag_method("order_by"). sqli_frag_method("where"). sqli_frag_method("filter"). sqli_frag_method("having").
+sqli_frag_method("group_by"). sqli_frag_method("join"). sqli_frag_method("outerjoin").
+sqli_frag_method("select_from"). sqli_frag_method("add_columns"). sqli_frag_method("with_only_columns").
+sqli_frag_method("columns"). sqli_frag_method("returning"). sqli_frag_method("distinct").
+// sqli_whole(v, o): fragment v is client text from origin o that its function did not check (sqli_safe_piece,
+// sec_checked_expr); a check call of the run passes it through a gate (`G|e:sqw:…|`).
+.decl sqli_whole(v: node, o: symbol)
+sqli_whole(v, o) :- sqli_whole_in(v), sec_tainted(v, o), !sec_echk_any("sqw", v).
+sqli_whole(v, g) :- sqli_whole_in(v), sec_tainted(v, _), sec_egate("sqw", "t", v, g).
+sec_gin(g, o) :- sqli_whole_in(v), sec_tainted(v, o), sec_egate("sqw", "t", v, g).
+.decl sqli_whole_in(v: node)
+sqli_whole_in(v) :- sqli_fragment(_, v), !sqli_safe_piece(v), !sec_checked_expr(v).
+sec_echk_c("sqw", v, t) :- sqli_fragment(_, v), (sqli_piece_c(v, t) ; sec_checked_expr_c(v, t)).
+
+// ---- strings built from client data, minus the pieces the rule trusts -------------------------------------------
+// Strings built from client data (lib/security's sec_build, sec_tainted), with each spliced piece dropped when its
+// function checks it (sec_checked: a validator-named call or an `in` test), and the parts of a `%` tuple or
+// `.format()` call judged one by one. A check call of the run passes a piece through a gate (`G|e:sqp:…|`).
+.decl sqli_safe_piece(a: node)
+sqli_safe_piece(a) :- unparen(a, i), kind(i, "identifier"), text(i, x), nearest(a, h, fscope), sec_checked(h, x).
+.decl sqli_piece_c(a: node, t: symbol)
+sqli_piece_c(a, t) :- unparen(a, i), kind(i, "identifier"), text(i, x), nearest(a, h, fscope), sec_checked_c(h, x, t).
+// sqli_piece(a, o): spliced value a carries client data from origin o through a piece the rule does not trust.
+.decl sqli_piece(a: node, o: symbol)
+sqli_piece(a, o) :- sqli_piece_at(a), sqli_carries(a, o), !sec_echk_any("sqp", a).
+sqli_piece(a, g) :- sqli_piece_at(a), sqli_carries(a, _), sec_egate("sqp", "sqb", a, g).
+sec_gin(g, o) :- sqli_piece_at(a), sqli_carries(a, o), sec_egate("sqp", "sqb", a, g).
+// sqli_piece_at(a): a, a spliced value or an item of a spliced container, is no checked piece; sqli_piece_of(a, p):
+// it stands for spliced value p.
+.decl sqli_piece_at(a: node)
+sqli_piece_at(a) :- sqli_piece_of(a, _), !sqli_safe_piece(a).
+.decl sqli_piece_of(a: node, p: node)
+sqli_piece_of(a, a) :- sec_build(_, a), unparen(a, t), !sec_container(t).
+sqli_piece_of(i, a) :- sec_build(_, a), unparen(a, t), sec_container(t), child(t, i, _), !kind(i, "comment").
+sec_echk_c("sqp", a, t) :- sqli_piece_of(a, _), sqli_piece_c(a, t).
+// sqli_carries(a, o): a holds client data from o, as itself or as a string already built around it (`clause` in
+// `clause = " OR ".join(f"t = '{t}'" for t in tags)`, which sec_tainted does not reach).
+.decl sqli_carries(a: node, o: symbol)
+sqli_carries(a, o) :- sec_tainted(a, o).
+sqli_carries(a, o) :- sqli_built(a, o).
+.decl sqli_build(e: node, o: symbol)
+sqli_build(e, o) :- sec_build(e, a), sqli_piece_of(i, a), sqli_piece(i, o).
+// `sep.join(<generator>)`: a lone generator argument is the call's whole argument list, which sec_build misses.
+sqli_build(e, o) :- kind(e, "call"), call_name(e, "join"), field(e, "arguments", g), kind(g, "generator_expression"),
+    field(g, "body", b), sqli_carries(b, o).
+// sqli_built(e, o): e is a string built from client data from origin o: a parameter's is what the callers pass as
+// one (`P|sqb|…`), a call's is what its function returns as one (`R|sqb|…`), at a call that passed it client data
+// or of a function that read it itself.
+.decl sqli_built(e: node, o: symbol)
+sqli_built(e, o) :- sqli_build(e, o).
+sqli_built(p, o) :- kind(p, "parenthesized_expression"), unparen(p, a), p != a, sqli_built(a, o).
+sqli_built(b, o) :- kind(b, "binary_operator"), op(b, "+"), (field(b, "left", a) ; field(b, "right", a)),
+    sqli_built(a, o).
+sqli_built(t, o) :- kind(t, "string"), child(t, i, _), kind(i, "interpolation"), field(i, "expression", a),
+    sqli_built(a, o).
+sqli_built(c, o) :- kind(c, "conditional_expression"), (child(c, a, 0) ; child(c, a, 2)), sqli_built(a, o).
+sqli_built(r, o) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), sqli_built(v, o), r != v.
+sqli_built(r, o) :- sec_porig(r, "sqb", _, _, o).
+sqli_built(c, o) :- sec_rorig(c, "sqb", o).
+sec_fpass("sqb", c, a, o) :- call_arg(c, _, _, a), sqli_built(a, o).
+sec_fctx("sqb", c, o) :- call_arg(c, _, _, a), sec_tainted(a, o).
+sec_fret("sqb", g, o) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), sqli_built(v, o).
+
+// The cases, `upstream/python-security/authored/python-security-sql-injection/` (pack test data in S3, not in git),
+// read as one repository: each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "api/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/api/__init__.py"
+    .fixture "api/asyncdb.py" from "../upstream/python-security/authored/python-security-sql-injection/api/asyncdb.py"
+    .fixture "api/db.py" from "../upstream/python-security/authored/python-security-sql-injection/api/db.py"
+    .fixture "api/fragments.py" from "../upstream/python-security/authored/python-security-sql-injection/api/fragments.py"
+    .fixture "api/routes.py" from "../upstream/python-security/authored/python-security-sql-injection/api/routes.py"
+    .fixture "api/typed_routes.py" from "../upstream/python-security/authored/python-security-sql-injection/api/typed_routes.py"
+    .fixture "legacy/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/legacy/__init__.py"
+    .fixture "legacy/app.py" from "../upstream/python-security/authored/python-security-sql-injection/legacy/app.py"
+    .fixture "shop/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/__init__.py"
+    .fixture "shop/checks.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/checks.py"
+    .fixture "shop/kwviews.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/kwviews.py"
+    .fixture "shop/models.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/models.py"
+    .fixture "shop/reports.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/reports.py"
+    .fixture "shop/sqlbuild.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/sqlbuild.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/tests/test_views.py"
+    .fixture "shop/typed.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/typed.py"
+    .fixture "shop/urls.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/urls.py"
+    .fixture "shop/views.py" from "../upstream/python-security/authored/python-security-sql-injection/shop/views.py"
+    .expect _ at "api/asyncdb.py":11
+    .expect _ at "api/asyncdb.py":18
+    .expect _ at "api/asyncdb.py":25
+    .expect _ at "api/asyncdb.py":30
+    .expect _ at "api/fragments.py":15
+    .expect _ at "api/fragments.py":20
+    .expect _ at "api/fragments.py":21
+    .expect _ at "api/routes.py":12
+    .expect _ at "api/routes.py":20
+    .expect _ at "api/routes.py":22
+    .expect _ at "api/typed_routes.py":40
+    .expect _ at "api/typed_routes.py":52
+    .expect _ at "legacy/app.py":12
+    .expect _ at "legacy/app.py":21
+    .expect _ at "shop/checks.py":39
+    .expect _ at "shop/checks.py":47
+    .expect _ at "shop/checks.py":56
+    .expect _ at "shop/kwviews.py":8
+    .expect _ at "shop/kwviews.py":21
+    .expect _ at "shop/kwviews.py":28
+    .expect _ at "shop/reports.py":9
+    .expect _ at "shop/reports.py":16
+    .expect _ at "shop/typed.py":36
+    .expect _ at "shop/typed.py":44
+    .expect _ at "shop/typed.py":54
+    .expect _ at "shop/typed.py":65
+    .expect _ at "shop/views.py":18
+    .expect _ at "shop/views.py":19
+    .expect _ at "shop/views.py":21
+    .expect _ at "shop/views.py":30
+    .expect _ at "shop/views.py":31
+    .expect _ at "shop/views.py":37
+    .expect _ at "shop/views.py":38
+    .expect _ at "shop/views.py":39
+.end

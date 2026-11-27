@@ -1,0 +1,260 @@
+.policy "django-practice-runpython-live-model" revision 1
+.description "Keep RunPython migrations from calling helpers in other modules that use the app's live model classes; pass them historical models from apps.get_model."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. A RunPython function gets `apps`, whose get_model returns the model as of that
+// migration ("historical models"). Django's docs: "If you import models directly rather than using the historical
+// models, your migrations may work initially but will fail in the future". The live class has today's fields, so
+// once a later migration adds a column, a fresh database (a new install, CI from scratch) runs this old migration
+// with a model that selects or inserts a column that does not exist yet.
+// It reports, in a migration (outside test code), the call that leaves the migration's code for a def in another,
+// non-migration module, when that def, or a def it reaches through the call graph (python/calls, across files),
+// uses a model class of the run in its own frame: `M.objects…`, `M._default_manager…`, `M._base_manager…`, or
+// a saved `M(...)` (`M(...).save()`, or `m = M(...)` and `m.save()`), with M a name that resolves to the class (not a
+// parameter); an unsaved instance runs no query. The RunPython code is the forward and the
+// reverse function; a migration-file def they call is followed, and a def of the run passed as an argument
+// (`start_job(fill_counts)`, a job runner that calls it) counts as called, but not a receiver given to a signal's
+// `connect` (`post_migrate.connect(fill)` runs after `migrate`, on the full schema). A RunPython whose `code` or
+// `reverse_code` is itself such a helper is reported at that argument. Imports written from an import root inside
+// the repository (`from tasks.functions import x` for label_studio/tasks/functions.py) resolve by the end of the
+// qualified name when the call program finds no target. A call or use in an `if p is None:` body, p a parameter of
+// its def, is not followed when the call into that def passes p (not None), by keyword or by position (counted
+// after `self`/`cls` for a method called on an object): the query only computes a default the caller supplied
+// (`get_review_due_date` passes `target_per_day=1` to skip a config lookup; `due_in(start, 3)` likewise).
+//   helpers.py:  def recount(): for a in Author.objects.all(): ...
+//   0002_x.py:   def forwards(apps, se): recount()                       reported at recount()
+//   0003_x.py:   operations = [RunPython(recount, RunPython.noop)]       reported at recount
+//   0004_x.py:   def forwards(apps, se): run_job(recount)                reported at run_job(...)
+//   0005_x.py:   def forwards(apps, se): fill(apps.get_model("shop", "Book"))   not reported: the helper uses its
+//                                                                        parameter, the historical model
+//   0006_x.py:   def forwards(apps, se): normalize_url(u)                not reported: no model
+// Left alone: the live model written in the migration file itself (`from shop.models import Book` and
+// `Book.objects` in the RunPython function), which django-migration-linter's RUNPYTHON_MODEL_IMPORT reports; a model
+// class used only for isinstance, a constant or its exceptions (`Book.STATUS_DONE`, `Book.DoesNotExist`); models
+// outside the run (django.contrib.auth's User); a task dispatched with `.delay()` (it runs later, in a worker); helpers
+// in test code, and migrations under a test directory.
+// Gaps: a call whose target the call program does not know (call_open, `getattr`, a method on an instance), a
+// management command run with call_command, operations a factory builds at import (`make_sql_migration(...)`), the
+// global `django.apps.apps.get_model`, and related managers or instance methods reached from a live row a historical
+// query returned are not followed. A None test other than `p is None` (`if not p:`, `p or …`) is not read.
+// The walk crosses files, so it is over symbols (decision 0691): each file states its defs by symbol (pt_def, as
+// call_target names them), its calls by their terms (pt_tm) with what they may run and pass, its None guards and its
+// model uses (with their path and line), and its live models by qualified name; the walk joins those, and the finding
+// reads its call or argument back at its term in the migration's file, naming the model use by its path and line.
+
+#include "lib/django.rerail"
+#include "python/calls.rerail"
+
+.violation RunPythonLiveModel(at: node, x: symbol, m: symbol, p: symbol, l: number)
+    "`{x}` uses the live model `{m}` ({p}:{l}), with today's fields, not this migration's. Pass it the model from `apps.get_model()`, or copy the code here; historical models lack custom methods."
+RunPythonLiveModel(c, x, m, p, l) :- rpl_exit_node(c, ct), rpl_first(ct, tq), rpl_def(tq, _, x, _),
+    rpl_first_use(ct, tq, p, l, m).
+
+// ---- what each file states --------------------------------------------------------------------------------------
+// rpl_def(g, q, x, w): def g (its symbol, pt_def, as call_target names it) has qualified name q and name x, in a
+// migration (w "mig") or in a module that is neither a migration nor test code (w "other").
+.decl rpl_def(g: symbol, q: symbol, x: symbol, w: symbol)
+rpl_def(gq, q, x, "mig") :- kind(g, "function_definition"), pt_def(g, gq), qualname(g, q), def_name(g, x), docof(g, d),
+    dj_migration_doc(d), !dj_test_doc(d).
+rpl_def(gq, q, x, "other") :- kind(g, "function_definition"), pt_def(g, gq), qualname(g, q), def_name(g, x),
+    docof(g, d), !dj_migration_doc(d), !dj_test_doc(d).
+// rpl_code(e, q): e is a RunPython's `code` or `reverse_code` argument, in a migration outside test code, naming q.
+.decl rpl_code(e: node, q: symbol)
+rpl_code(e, q) :- dj_mig_db_op(o, "RunPython", d, _), !dj_test_doc(d), (dj_mig_arg(o, "code", e) ;
+    dj_mig_arg(o, "reverse_code", e)), sym_of(e, q).
+.decl rpl_code_at(e: symbol, q: symbol)
+rpl_code_at(et, q) :- rpl_code(e, q), pt_tm(e, et).
+// rpl_frame_call(c, f): call c is in def f's frame (a lambda's calls are its def's), outside test code: the calls the
+// walk may follow.
+.decl rpl_frame_call(c: node, f: node)
+rpl_frame_call(c, f) :- owner(c, f), docof(c, d), !dj_test_doc(d).
+// rpl_call(f, c, g): call c (its term) in def f's frame may run def g: a call-graph edge (call_target, by symbol).
+// rpl_call_name(f, c, q): c has no call-graph target, and its callee names q. rpl_call_arg(f, c, q): an argument of c
+// names q (a job runner that calls what it is given), unless c connects a signal receiver (`post_migrate.connect(fill)`
+// runs fill after every migration, on the full schema).
+.decl rpl_call(f: symbol, c: symbol, g: symbol)
+rpl_call(fq, ct, gq) :- rpl_frame_call(c, f), call_target(c, gq), pt_def(f, fq), pt_tm(c, ct).
+.decl rpl_call_name(f: symbol, c: symbol, q: symbol)
+rpl_call_name(fq, ct, q) :- rpl_frame_call(c, f), !call_target(c, _), field(c, "function", e), sym_of(e, q),
+    pt_def(f, fq), pt_tm(c, ct).
+.decl rpl_call_arg(f: symbol, c: symbol, q: symbol)
+rpl_call_arg(fq, ct, q) :- rpl_frame_call(c, f), call_arg(c, _, _, a), unparen(a, n), sym_of(n, q), !rpl_connect(c),
+    pt_def(f, fq), pt_tm(c, ct).
+.decl rpl_connect(c: node)
+rpl_connect(c) :- kind(c, "call"), field(c, "function", e), attr_of(e, _, "connect").
+// rpl_ref(n, q): node n names q where the walk resolves a name: a RunPython argument, the callee of a call without a
+// call-graph target, an argument of a call, a model use's class.
+.decl rpl_ref(n: node, q: symbol)
+rpl_ref(e, q) :- rpl_code(e, q).
+rpl_ref(e, q) :- rpl_frame_call(c, _), !call_target(c, _), field(c, "function", e), sym_of(e, q).
+rpl_ref(n, q) :- rpl_frame_call(c, _), call_arg(c, _, _, a), unparen(a, n), sym_of(n, q).
+rpl_ref(r, q) :- rpl_model_site(_, _, r, q).
+// rpl_root(q): such a name q names nothing of the run its file can name (the phase py_names' `defined`): it is read by
+// the end of a qualified name (rpl_def_q, rpl_model_q). Projects import relative to an import root inside the
+// repository (`from tasks.functions import x` for label_studio/tasks/functions.py), which the run's module names
+// include.
+.decl rpl_root(q: symbol)
+rpl_root(q) :- rpl_ref(n, q), !rpl_named_at(n).
+.decl rpl_named_at(n: node)
+rpl_named_at(n) :- rpl_ref(n, q), docof(n, d), doc(d, p, _), py_names__reads_at(p, m), py_names__defined(m, q).
+// rpl_none_guard(n, x): call or manager n sits in the body of an `if x is None:` of its def's frame, x one of that
+// def's parameters: a default computed from the database when the caller leaves x out.
+//   def due_in(start, per_day=None):
+//       if per_day is None: per_day = Shelf.objects.count()      rpl_none_guard(<Shelf.objects>, "per_day")
+.decl rpl_none_guard(n: node, x: symbol)
+rpl_none_guard(n, x) :- kind(s, "if_statement"), field(s, "condition", cn), unparen(cn, k), cmp_pair(k, 0, "is", l, r),
+    !op_at(k, 1, _), kind(l, "identifier"), text(l, x), kind(r, "none"), nearest(s, h, fdef), param(h, x, _),
+    field(s, "consequence", b), within(n, b), (kind(n, "call") ; dj_manager(n)), nearest(n, h, fdef).
+// rpl_guard(h, n, x, k, b): n (its term), in def h's frame, runs only when h's parameter x, its k-th, is None; b is
+// "self" when h's first parameter is self or cls, else "".
+.decl rpl_guard(h: symbol, n: symbol, x: symbol, k: number, b: symbol)
+rpl_guard(hq, nt, x, k, "self") :- rpl_none_guard(n, x), nearest(n, h, fdef), param(h, x, k), rpl_bound_first(h),
+    pt_def(h, hq), pt_tm(n, nt).
+rpl_guard(hq, nt, x, k, "") :- rpl_none_guard(n, x), nearest(n, h, fdef), param(h, x, k), !rpl_bound_first(h),
+    pt_def(h, hq), pt_tm(n, nt).
+.decl rpl_bound_first(h: node)
+rpl_bound_first(h) :- param(h, s, 0), (s = "self" ; s = "cls").
+// rpl_pass(c, x, j, how): call c (its term) passes a value other than None as keyword x (j is -1), or at position j (x
+// is ""), its callee a plain name (how "name") or an attribute ("attr").
+.decl rpl_pass(c: symbol, x: symbol, j: number, how: symbol)
+rpl_pass(ct, x, -1, "") :- rpl_frame_call(c, _), call_arg(c, -1, x, v), x != "", !kind(v, "none"), pt_tm(c, ct).
+rpl_pass(ct, "", j, "name") :- rpl_frame_call(c, _), posarg(c, j, v), !kind(v, "none"), field(c, "function", f),
+    kind(f, "identifier"), pt_tm(c, ct).
+rpl_pass(ct, "", j, "attr") :- rpl_frame_call(c, _), posarg(c, j, v), !kind(v, "none"), field(c, "function", f),
+    kind(f, "attribute"), pt_tm(c, ct).
+// rpl_model_site(h, u, r, q): u, in def h's frame in a module that is neither a migration nor test code, uses r, which
+// names q, as a model is used against the database: r the receiver of a manager u (`q.objects`), or the callee of a
+// constructor call u `q(...)` whose instance is saved in the same frame (rpl_saved). An unsaved instance
+// (`Endpoint(host=...)` built to parse a URL) runs no query.
+.decl rpl_model_site(h: node, u: node, r: node, q: symbol)
+rpl_model_site(h, u, r, q) :- dj_manager(u), nearest(u, h, fdef), attr_of(u, o, _), unparen(o, r), sym_of(r, q),
+    docof(u, d), !dj_migration_doc(d), !dj_test_doc(d).
+rpl_model_site(h, u, f, q) :- kind(u, "call"), nearest(u, h, fdef), rpl_saved(u, h), field(u, "function", f),
+    sym_of(f, q), docof(u, d), !dj_migration_doc(d), !dj_test_doc(d).
+// rpl_saved(u, h): `.save()` is called on call u's result: `u.save()`, or `v = u` and then `v.save()` in h's frame.
+//   Shelf(name="x").save()                          rpl_saved(<Shelf(...)>, _)
+//   shelf = Shelf(name=n); shelf.save()             rpl_saved(<Shelf(...)>, _)
+.decl rpl_saved(u: node, h: node)
+rpl_saved(u, h) :- kind(s, "call"), nearest(s, h, fdef), field(s, "function", a), attr_of(a, o, "save"), unparen(o, u),
+    kind(u, "call").
+rpl_saved(u, h) :- kind(asg, "assignment"), nearest(asg, h, fdef), field(asg, "right", r), unparen(r, u),
+    kind(u, "call"), field(asg, "left", l), kind(l, "identifier"), text(l, v), kind(s, "call"), field(s, "function", a),
+    attr_of(a, o, "save"), kind(o, "identifier"), text(o, v), nearest(o, h, fdef).
+// rpl_site(h, u, q, p, l): model use u (its term) in def h's frame names q, at line l of path p.
+.decl rpl_site(h: symbol, u: symbol, q: symbol, p: symbol, l: number)
+rpl_site(hq, ut, q, p, l) :- rpl_model_site(h, u, _, q), pt_def(h, hq), pt_tm(u, ut), line(u, l), docof(u, d),
+    doc(d, p, _).
+// rpl_live_model(q, x): class q (its qualified name), a model of the run defined outside migrations and tests, is
+// named x.
+.decl rpl_live_model(q: symbol, x: symbol)
+rpl_live_model(kq, x) :- dj_model(k), docof(k, d), !dj_migration_doc(d), !dj_test_doc(d), class_def(k, kq),
+    def_name(k, x).
+// rpl_exit_node(c, t): c, of term t, is a call in a def of a migration, or a RunPython argument: what an exit can be.
+.decl rpl_exit_node(c: node, t: symbol)
+rpl_exit_node(c, ct) :- rpl_frame_call(c, _), docof(c, d), dj_migration_doc(d), pt_tm(c, ct).
+rpl_exit_node(e, et) :- rpl_code(e, _), pt_tm(e, et).
+
+// ---- the walk, over symbols and terms -----------------------------------------------------------------------------
+// rpl_def_q(q, g): name q names def g: its qualified name, or, when q names nothing of the run (rpl_root), a def whose
+// qualified name ends in `.q`. rpl_model_q(q, x): the same of a live model named x.
+.decl rpl_def_q(q: symbol, g: symbol)
+rpl_def_q(q, gq) :- rpl_def(gq, q, _, _).
+rpl_def_q(q, gq) :- rpl_root(q), split_dot(q, _, x), rpl_def(gq, dq, x, _), suffix(cat(".", q), dq).
+.decl rpl_model_q(q: symbol, x: symbol)
+rpl_model_q(q, x) :- rpl_live_model(q, x).
+rpl_model_q(q, x) :- rpl_root(q), split_dot(q, _, x), rpl_live_model(kq, x), suffix(cat(".", q), kq).
+// rpl_edge(f, c, g): call c, in def f's frame, may run def g: a call-graph edge; a callee without a call-graph target,
+// named by an import the project's import root resolves (rpl_def_q); or g named as an argument of c.
+.decl rpl_edge(f: symbol, c: symbol, g: symbol)
+rpl_edge(fq, ct, gq) :- rpl_call(fq, ct, gq).
+rpl_edge(fq, ct, gq) :- rpl_call_name(fq, ct, q), rpl_def_q(q, gq).
+rpl_edge(fq, ct, gq) :- rpl_call_arg(fq, ct, q), rpl_def_q(q, gq).
+// rpl_runs(f): migration def f runs as RunPython code: named as `code` or `reverse_code`, or called from such a def.
+.decl rpl_runs(f: symbol)
+rpl_runs(gq) :- rpl_code_at(_, q), rpl_def_q(q, gq), rpl_def(gq, _, _, "mig").
+rpl_runs(gq) :- rpl_runs(fq), rpl_edge(fq, _, gq), rpl_def(gq, _, _, "mig").
+// rpl_exit(c, t): c (a term) leaves the migration's code for helper t in another module: a call (or argument) in a
+// running migration def, or the RunPython argument itself.
+.decl rpl_exit(c: symbol, t: symbol)
+rpl_exit(ct, tq) :- rpl_runs(fq), rpl_edge(fq, ct, tq), rpl_def(tq, _, _, "other").
+rpl_exit(et, tq) :- rpl_code_at(et, q), rpl_def_q(q, tq), rpl_def(tq, _, _, "other").
+// rpl_blocked(e, h, n): call e into def h passes h's parameter x, by keyword or by position, not as None, and n runs
+// in h only when x is None. A position counts against h's parameter list, after `self`/`cls` when e calls a method on
+// an object.
+.decl rpl_blocked(e: symbol, h: symbol, n: symbol)
+rpl_blocked(et, hq, nt) :- rpl_edge(_, et, hq), rpl_guard(hq, nt, x, _, _), rpl_pass(et, x, -1, _).
+rpl_blocked(et, hq, nt) :- rpl_edge(_, et, hq), rpl_guard(hq, nt, _, k, _), rpl_pass(et, "", k, "name").
+rpl_blocked(et, hq, nt) :- rpl_edge(_, et, hq), rpl_guard(hq, nt, _, k, ""), rpl_pass(et, "", k, "attr").
+rpl_blocked(et, hq, nt) :- rpl_edge(_, et, hq), rpl_guard(hq, nt, _, k, "self"), rpl_pass(et, "", j, "attr"),
+    k = j + 1.
+// rpl_at(x, t, h, e): exit x's helper t runs h, entered through call e: t itself (e the exit), or a def of a
+// non-migration, non-test module it reaches. A call in h that runs only when e passes no value for a parameter is not
+// followed (rpl_blocked). The walk is kept per exit, so one exit's arguments never unblock another's.
+.decl rpl_at(x: symbol, t: symbol, h: symbol, e: symbol)
+rpl_at(xt, tq, tq, xt) :- rpl_exit(xt, tq).
+rpl_at(xt, tq, hq, ct) :- rpl_at(xt, tq, gq, et), rpl_edge(gq, ct, hq), rpl_def(hq, _, _, "other"),
+    !rpl_blocked(et, gq, ct).
+// rpl_hit(c, t, p, l, m): exit c's helper t reaches a use of live model m, at line l of path p.
+.decl rpl_hit(c: symbol, t: symbol, p: symbol, l: number, m: symbol)
+rpl_hit(xt, tq, p, l, mx) :- rpl_at(xt, tq, hq, et), rpl_site(hq, ut, q, p, l), rpl_model_q(q, mx),
+    !rpl_blocked(et, hq, ut).
+// rpl_first(c, t): the helper exit c names, the least of its helpers that hit (a symbol's order); rpl_first_use(c, t,
+// p, l, m): the use it names, the first by line, path and model.
+.decl rpl_hit_t(c: symbol, t: symbol)
+rpl_hit_t(ct, tq) :- rpl_hit(ct, tq, _, _, _).
+.decl rpl_first(c: symbol, t: symbol)
+rpl_first(ct, tq) :- rpl_hit_t(ct, tq), !rpl_later_t(ct, tq).
+.decl rpl_later_t(c: symbol, t: symbol)
+rpl_later_t(ct, tq) :- rpl_hit_t(ct, tq), rpl_hit_t(ct, t2), t2 < tq.
+.decl rpl_first_use(c: symbol, t: symbol, p: symbol, l: number, m: symbol)
+rpl_first_use(ct, tq, p, l, m) :- rpl_first(ct, tq), rpl_hit(ct, tq, p, l, m), !rpl_later_use(ct, tq, p, l, m).
+.decl rpl_later_use(c: symbol, t: symbol, p: symbol, l: number, m: symbol)
+rpl_later_use(ct, tq, p, l, m) :- rpl_hit(ct, tq, p, l, m), rpl_hit(ct, tq, p2, l2, m2),
+    (l2 < l ; l2 = l, p2 < p ; l2 = l, p2 = p, m2 < m).
+
+// The cases, `upstream/django-practice/authored/django-practice-runpython-live-model/`, read as one repository: each
+// line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "shop/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/__init__.py"
+    .fixture "shop/helpers.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/helpers.py"
+    .fixture "shop/jobs.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/jobs.py"
+    .fixture "shop/management/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/management/__init__.py"
+    .fixture "shop/management/commands/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/management/commands/__init__.py"
+    .fixture "shop/management/commands/recount.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/management/commands/recount.py"
+    .fixture "shop/migrations/0001_initial.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0001_initial.py"
+    .fixture "shop/migrations/0002_recount.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0002_recount.py"
+    .fixture "shop/migrations/0003_local_import.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0003_local_import.py"
+    .fixture "shop/migrations/0004_job_runner.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0004_job_runner.py"
+    .fixture "shop/migrations/0005_helper_is_the_code.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0005_helper_is_the_code.py"
+    .fixture "shop/migrations/0006_through_local_def.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0006_through_local_def.py"
+    .fixture "shop/migrations/0007_safe_helpers.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0007_safe_helpers.py"
+    .fixture "shop/migrations/0008_direct_live_model.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0008_direct_live_model.py"
+    .fixture "shop/migrations/0009_due_dates.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0009_due_dates.py"
+    .fixture "shop/migrations/0010_shelves.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0010_shelves.py"
+    .fixture "shop/migrations/0011_after_migrate.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0011_after_migrate.py"
+    .fixture "shop/migrations/0012_positional_guard.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/0012_positional_guard.py"
+    .fixture "shop/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/migrations/__init__.py"
+    .fixture "shop/models.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/models.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/tests/__init__.py"
+    .fixture "shop/tests/migrations/0001_fixture.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/tests/migrations/0001_fixture.py"
+    .fixture "shop/tests/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/tests/migrations/__init__.py"
+    .fixture "shop/tests/test_helpers.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/tests/test_helpers.py"
+    .fixture "shop/utils.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/shop/utils.py"
+    .fixture "studio/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/__init__.py"
+    .fixture "studio/tasks/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/tasks/__init__.py"
+    .fixture "studio/tasks/functions.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/tasks/functions.py"
+    .fixture "studio/tasks/migrations/0002_fill_project.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/tasks/migrations/0002_fill_project.py"
+    .fixture "studio/tasks/migrations/__init__.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/tasks/migrations/__init__.py"
+    .fixture "studio/tasks/models.py" from "../upstream/django-practice/authored/django-practice-runpython-live-model/studio/tasks/models.py"
+    .expect _ at "shop/migrations/0002_recount.py":7
+    .expect _ at "shop/migrations/0003_local_import.py":7
+    .expect _ at "shop/migrations/0004_job_runner.py":8
+    .expect _ at "shop/migrations/0004_job_runner.py":12
+    .expect _ at "shop/migrations/0005_helper_is_the_code.py":10
+    .expect _ at "shop/migrations/0006_through_local_def.py":7
+    .expect _ at "shop/migrations/0009_due_dates.py":16
+    .expect _ at "shop/migrations/0010_shelves.py":11
+    .expect _ at "shop/migrations/0012_positional_guard.py":21
+    .expect _ at "studio/tasks/migrations/0002_fill_project.py":7
+.end

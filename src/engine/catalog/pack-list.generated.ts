@@ -2,17 +2,26 @@
 
 /** Every rule pack Rerail publishes, by id: what set-up fetches from npm to match against a repository. */
 export const RULE_PACK_LIST: readonly { readonly id: string; readonly packageName: string }[] = [
+  { id: "alembic", packageName: "@neralabs/rerail-pack-alembic" },
   { id: "blade", packageName: "@neralabs/rerail-pack-blade" },
+  { id: "celery", packageName: "@neralabs/rerail-pack-celery" },
   { id: "complexity", packageName: "@neralabs/rerail-pack-complexity" },
   { id: "django", packageName: "@neralabs/rerail-pack-django" },
+  { id: "drf", packageName: "@neralabs/rerail-pack-drf" },
+  { id: "fastapi", packageName: "@neralabs/rerail-pack-fastapi" },
   { id: "javascript", packageName: "@neralabs/rerail-pack-javascript" },
   { id: "next", packageName: "@neralabs/rerail-pack-next" },
   { id: "node", packageName: "@neralabs/rerail-pack-node" },
   { id: "php", packageName: "@neralabs/rerail-pack-php" },
+  { id: "pydantic", packageName: "@neralabs/rerail-pack-pydantic" },
+  { id: "pytest", packageName: "@neralabs/rerail-pack-pytest" },
   { id: "python", packageName: "@neralabs/rerail-pack-python" },
+  { id: "python-practice", packageName: "@neralabs/rerail-pack-python-practice" },
+  { id: "python-security", packageName: "@neralabs/rerail-pack-python-security" },
   { id: "react", packageName: "@neralabs/rerail-pack-react" },
   { id: "rust", packageName: "@neralabs/rerail-pack-rust" },
   { id: "sql", packageName: "@neralabs/rerail-pack-sql" },
+  { id: "sqlalchemy", packageName: "@neralabs/rerail-pack-sqlalchemy" },
   { id: "typescript", packageName: "@neralabs/rerail-pack-typescript" },
   { id: "vue", packageName: "@neralabs/rerail-pack-vue" },
 ];

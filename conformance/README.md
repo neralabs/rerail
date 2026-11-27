@@ -4,7 +4,7 @@ Test support that scores rule packs against the tools they port. It is never pub
 `files`), and `src/` never imports it.
 
 - `pack-validation.ts`: the pack validation contract, checks 1 to 8 of [docs/pack-format.md](../docs/pack-format.md).
-  `test/engine/catalog/packs.test.ts` runs it for every `packs/<id>/`.
+  `test/engine/catalog/packs.test.ts` and `packs-rerail/share-<n>.test.ts` run it for every `packs/<id>/`.
 - `languages/`: the common conformance runner and the gate. It scores each ported rule TP/FP/FN through the
   production workspace, against the tool-pack's expected findings (`packs/<id>/upstream/<tool>/fixtures.expected.json`,
   pack test data that `npm run fixtures:pull` fetches from the archive the tool-pack's `test-data.lock` names), its

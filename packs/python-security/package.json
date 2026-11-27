@@ -1,0 +1,37 @@
+{
+  "name": "@neralabs/rerail-pack-python-security",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: Rerail's own Python security rules, from OWASP and the frameworks' security docs, for untrusted input that reaches SQL, shells, URLs, files or deserializers.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "python",
+    "security"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/python-security"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.2.3-0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

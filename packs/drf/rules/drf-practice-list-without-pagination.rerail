@@ -1,0 +1,300 @@
+.policy "drf-practice-list-without-pagination" revision 1
+.description "Paginate DRF list endpoints over model tables, and give the default pagination class a page size, so a response cannot grow with the table."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule, not a port. DRF paginates nothing by default: DEFAULT_PAGINATION_CLASS and PAGE_SIZE are both
+// None, and a list endpoint with no pagination class serialises every row its queryset holds on every request. The
+// rule reads the project's REST_FRAMEWORK settings in every non-test file of the run (base, production and local
+// settings modules alike) and, when none of them names a DEFAULT_PAGINATION_CLASS (absent, or None), reports at the
+// class name:
+//   - a concrete list view (lib/drf's drf_list_view_q: ListAPIView, ListCreateAPIView, ModelViewSet,
+//     ReadOnlyModelViewSet, ListModelMixin) outside test code: no class of the run outside test code derives from it,
+//     and its name does not start with `Base` or `Abstract`;
+//   - that assigns no pagination_class, itself or through a base view of the run in any module, and neither it nor a
+//     run base overrides paginate_queryset() or paginator;
+//   - whose rows come from a model table: its (inherited) `queryset` is a queryset chain from a manager
+//     (`Order.objects.filter(...)`), its serializer's Meta.model is a model of the run (drf_view_model_q), or a return
+//     of its get_queryset() is such a chain, directly or through a local variable assigned one.
+//   # settings.py: REST_FRAMEWORK = {"PAGE_SIZE": 50}                   no DEFAULT_PAGINATION_CLASS
+//   class OrderViewSet(viewsets.ModelViewSet):                         reported: every order in one response
+//       queryset = Order.objects.select_related("customer")
+//   class CountryList(generics.ListAPIView):                           not reported: unpaginated on purpose
+//       queryset = Country.objects.all()
+//       pagination_class = None
+// It also reports a pagination class that pages nothing unless the client asks: DRF's PageNumberPagination and
+// CursorPagination take their page size, and LimitOffsetPagination its default limit, from PAGE_SIZE, so with no
+// PAGE_SIZE setting (absent, or None) they return every row when the request names no size. Reported at the
+// DEFAULT_PAGINATION_CLASS value (once, not at every view it covers) and at a view's `pagination_class = ...` value,
+// when it names one of those built-ins, or a run class deriving from one (resolved through lib/drf's drf_cls_q) that
+// sets no page_size (default_limit for LimitOffsetPagination) other than None, assigns none in `__init__`, and
+// overrides none of get_page_size(), get_limit() and paginate_queryset().
+//   REST_FRAMEWORK = {"DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.LimitOffsetPagination"}   reported
+// It leaves alone: `pagination_class = None` and any other value, own or inherited, and any class attribute whose
+// name speaks of pagination (Tandoor's `pagination_disabled = True`); a view (or run base) that overrides
+// paginate_queryset() or paginator, or whose list(), get(), get_queryset() or filter_queryset() calls a function or
+// method named like a paginator (`self.paginate_queryset(...)`, label-studio's `paginator(tasks, request)`); a view
+// whose own (or a run base's) list() or get() calls neither `super().list(...)`, `super().get(...)` nor
+// `self.list(...)` (it returns something else; a ViewSet whose list() it writes itself); a viewset routed only
+// through `as_view({...})` maps that never map a method to "list" and registered with no router (plane's
+// UserEndpoint, imported by its urls through the package that re-exports it and through the project's import
+// root: the receiver resolves through drf_cls_q); a queryset attribute that is sliced (`Order.objects.all()[:50]`),
+// and a get_queryset() that slices anything; views whose rows the rule cannot tie to a model (a get_queryset()
+// returning a list, a plain Serializer); projects whose settings name any DEFAULT_PAGINATION_CLASS but None in any
+// non-test module (an inert one is reported once, at the setting), or build REST_FRAMEWORK
+// from something but a dict literal or dict(...) (`{**BASE, ...}`, a function call); runs with no REST_FRAMEWORK
+// assignment (a reusable app: the host project's settings decide); test code; classes named ListAPIView in other
+// packages.
+// Gaps: a reusable app's list views are not reported (no settings in the run); a list() written from scratch that
+// serialises a whole queryset with `many=True` is left alone; whether a table grows with use (predictions, comments,
+// uploads) or stays small by nature (a project's webhooks, storages, saved views; a singleton config row) is not
+// something the rule can read, so it stays in log mode; a list view whose URL is never routed at all is reported; a
+// pagination class set by a third-party base view or in `__init__` is not seen; a get_queryset() that returns
+// `super().get_queryset()...` or `self.queryset...` counts through the view's queryset or serializer model only; a
+// paginator assigned in a view's code (`self.pagination_class = ...`) or a PAGE_SIZE read from configuration is
+// taken as it is written; an APIView or `@api_view` that serialises a whole queryset itself is not seen.
+
+#include "lib/drf.rerail"
+
+// A view is judged by its symbol (its bases and members may sit in other modules) and reported at its own name.
+.violation ListWithoutPagination(at: node, name: symbol) "`{name}` returns its whole queryset in one response: no pagination_class here, in a base or as DEFAULT_PAGINATION_CLASS. Set one, or pagination_class = None if the list stays small."
+ListWithoutPagination(n, x) :- lwp_open(), lwp_view(q), class_def(c, q), field(c, "name", n), text(n, x).
+
+.violation PaginationWithoutPageSize(at: node, cls: symbol) "{cls} pages nothing unless the client asks: no PAGE_SIZE setting and no page size on the class, so lists return every row. Set PAGE_SIZE or the class's page size."
+PaginationWithoutPageSize(v, x) :- lwp_default_value(v, c), !lwp_page_size_set(), !lwp_hidden(), lwp_inert_label(c, x).
+PaginationWithoutPageSize(e, x) :- lwp_pag_at(e, k, c), drf_view_q(k), !lwp_page_size_set(), !lwp_hidden(),
+    lwp_inert_label(c, x).
+
+// lwp_default_value(v, q): DEFAULT_PAGINATION_CLASS's value v names pagination class q (a qualified name).
+.decl lwp_default_value(v: node, q: symbol)
+lwp_default_value(v, q) :- drf_setting("DEFAULT_PAGINATION_CLASS", v), unparen(v, u), str(u, q).
+lwp_default_value(v, q) :- drf_setting("DEFAULT_PAGINATION_CLASS", v), unparen(v, u), sym_of(u, q).
+// lwp_pag_at(e, k, q): class k's class-body `pagination_class = e` outside test code names class q (a view's, by
+// drf_view_q in the finding).
+.decl lwp_pag_at(e: node, k: symbol, q: symbol)
+lwp_pag_at(e, k, q) :- class_def(c, k), drf_own_attr(c, "pagination_class", e, _), docof(c, d), !dj_test_doc(d),
+    unparen(e, u), sym_of(u, q).
+// lwp_page_size_set(): some non-test settings module gives PAGE_SIZE a value other than None.
+.decl lwp_page_size_set()
+lwp_page_size_set() :- drf_setting("PAGE_SIZE", v), unparen(v, u), !kind(u, "none").
+// lwp_inert_label(q, x): pagination class q pages nothing by default; x names it for the message.
+.decl lwp_inert_label(q: symbol, x: symbol)
+lwp_inert_label(q, x) :- lwp_ask(q), lwp_builtin(q), split_dot(q, _, x).
+lwp_inert_label(q, x) :- lwp_ask(q), !lwp_builtin(q), drf_cls_q(q, c), lwp_inert_run(c), split_dot(c, _, x).
+.decl lwp_ask(q: symbol)
+lwp_ask(q) :- lwp_default_value(_, q).
+lwp_ask(q) :- lwp_pag_at(_, _, q).
+drf_cls_ask(q) :- lwp_ask(q).
+.decl lwp_builtin(q: symbol)
+lwp_builtin("rest_framework.pagination.PageNumberPagination").
+lwp_builtin("rest_framework.pagination.LimitOffsetPagination").
+lwp_builtin("rest_framework.pagination.CursorPagination").
+// lwp_inert_run(q): run class q derives from one of the built-ins and gives itself no page size.
+.decl lwp_inert_run(q: symbol)
+lwp_inert_run(q) :- drf_class_mod_q(q, "rest_framework.pagination", x),
+    (x = "PageNumberPagination" ; x = "LimitOffsetPagination" ; x = "CursorPagination"), !lwp_sized(q).
+.decl lwp_sized(q: symbol)
+lwp_sized(q) :- drf_attr_q(q, a, h), (a = "page_size" ; a = "default_limit"), !drf_hkind(h, "none").
+lwp_sized(q) :- drf_method_q(q, m, _),
+    (m = "page_size" ; m = "default_limit" ; m = "get_page_size" ; m = "get_limit" ; m = "paginate_queryset").
+lwp_sized(q) :- drf_method_q(q, "__init__", fq), drf_init_sets(fq, m), (m = "page_size" ; m = "default_limit").
+
+// lwp_open(): the run holds the project's settings, and none of their non-test modules names a default pagination
+// class (absent, or None), nor builds REST_FRAMEWORK in a way that could hide one.
+.decl lwp_open()
+lwp_open() :- drf_settings_known(), !lwp_default_set(), !lwp_hidden().
+.decl lwp_default_set()
+lwp_default_set() :- drf_setting("DEFAULT_PAGINATION_CLASS", v), unparen(v, u), !kind(u, "none").
+.decl lwp_hidden()
+lwp_hidden() :- drf_settings_asg(_, v), !kind(v, "dictionary"), !lwp_dict_call(v).
+lwp_hidden() :- drf_settings_dict(m), child(m, s, _), kind(s, "dictionary_splat").
+.decl lwp_dict_call(v: node)
+lwp_dict_call(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "builtins.dict").
+
+// lwp_view(q): a concrete list view outside test code, with no pagination of its own or inherited, whose list goes
+// through DRF's ListModelMixin.list and whose rows come from a model table, unsliced. By symbol: its bases, members,
+// subclasses and routes in any module; each method's body and each attribute's value is read in its own file.
+.decl lwp_view(q: symbol)
+lwp_view(q) :- drf_list_view_q(q), !drf_qtest(q), !lwp_has_sub(q), split_dot(q, _, x), !prefix("Base", x),
+    !prefix("Abstract", x), !lwp_paging_attr(q), !lwp_own_paging(q), !lwp_custom_list(q), !lwp_list_unrouted(q),
+    lwp_rows(q), !lwp_sliced(q).
+
+.decl lwp_has_sub(q: symbol)
+lwp_has_sub(q) :- drf_sup(s, q), !drf_qtest(s).
+
+// lwp_paging_attr(q): view q or a run base assigns pagination_class (any value, None included) or another class
+// attribute whose name speaks of pagination: the author decided (Tandoor's `pagination_disabled = True`, which its
+// own test reads as a deliberate opt-out).
+.decl lwp_paging_attr(q: symbol)
+lwp_paging_attr(q) :- drf_attr_q(q, x, _), contains("paginat", x).
+
+// lwp_own_paging(q): view q or a run base overrides how DRF paginates, or its list(), get(), get_queryset() or
+// filter_queryset() calls a paginator of its own (label-studio's `paginator(tasks, request)` in filter_queryset).
+.decl lwp_own_paging(q: symbol)
+lwp_own_paging(q) :- drf_method_q(q, "paginate_queryset", _).
+lwp_own_paging(q) :- drf_method_q(q, "paginator", _).
+lwp_own_paging(q) :- drf_method_q(q, x, fq), (x = "list" ; x = "get" ; x = "get_queryset" ; x = "filter_queryset"),
+    lwp_calls_paging(fq).
+.decl lwp_calls_paging(fq: symbol)
+lwp_calls_paging(fq) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, _, m),
+    contains("paginat", m), qualname(f, fq).
+lwp_calls_paging(fq) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), kind(fn, "identifier"), text(fn, m),
+    contains("paginat", m), qualname(f, fq).
+
+// lwp_custom_list(q): q's list() or get(), its own or a run base's, does not hand the request to DRF's list: it calls
+// neither `super().list(...)`, `super().get(...)` nor `self.list(...)`.
+.decl lwp_custom_list(q: symbol)
+lwp_custom_list(q) :- drf_method_q(q, x, fq), (x = "list" ; x = "get"), !lwp_delegates(fq).
+.decl lwp_delegates(fq: symbol)
+lwp_delegates(fq) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, s, m),
+    (m = "list" ; m = "get"), kind(s, "call"), field(s, "function", sf), text(sf, "super"), qualname(f, fq).
+lwp_delegates(fq) :- kind(k, "call"), def_frame(k, f), field(k, "function", fn), attr_of(fn, s, "list"),
+    kind(s, "identifier"), text(s, "self"), qualname(f, fq).
+
+// lwp_list_unrouted(q): viewset q is routed only through `C.as_view({...})` maps, none of which maps a method to
+// "list", and no `router.register(..., C)` call names it (plane's UserEndpoint routes retrieve and update only). Each
+// urls file states its maps by the name of their receiver (lwp_as_view_sym, lwp_register_sym).
+.decl lwp_list_unrouted(q: symbol)
+lwp_list_unrouted(q) :- drf_viewset_q(q), lwp_as_view_sym(s, _), drf_cls_q(s, q), !lwp_routes_list(q),
+    !lwp_registered(q).
+// lwp_as_view_sym(s, r): `C.as_view({...})`, C naming s, passes a map that routes a method to "list" (r "list"), or
+// one the rule cannot read (also "list"), or another (r "other").
+.decl lwp_as_view_sym(s: symbol, r: symbol)
+lwp_as_view_sym(s, r) :- lwp_as_view_map(s, m), lwp_map_routes(m, r).
+.decl lwp_as_view_map(s: symbol, m: node)
+lwp_as_view_map(s, m) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "as_view"), sym_of(o, s),
+    call_arg(k, 0, "", a), unparen(a, m), kind(m, "dictionary").
+.decl lwp_map_routes(m: node, r: symbol)
+lwp_map_routes(m, "list") :- kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "value", v), str(v, "list").
+lwp_map_routes(m, "list") :- kind(m, "dictionary"), !lwp_plain_map(m).
+lwp_map_routes(m, "other") :- kind(m, "dictionary").
+.decl lwp_routes_list(q: symbol)
+lwp_routes_list(q) :- lwp_as_view_sym(s, "list"), drf_cls_q(s, q).
+// lwp_plain_map(m): every entry of m is a `"verb": "action"` pair of strings.
+.decl lwp_plain_map(m: node)
+lwp_plain_map(m) :- kind(m, "dictionary"), !lwp_odd_entry(m).
+.decl lwp_odd_entry(m: node)
+lwp_odd_entry(m) :- kind(m, "dictionary"), child(m, p, _), !kind(p, "comment"), !kind(p, "pair").
+lwp_odd_entry(m) :- kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "value", v), !str(v, _).
+.decl lwp_registered(q: symbol)
+lwp_registered(q) :- lwp_register_sym(s), drf_cls_q(s, q).
+.decl lwp_register_sym(s: symbol)
+lwp_register_sym(s) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, _, "register"), call_arg(k, _, _, a),
+    sym_of(a, s).
+
+// lwp_rows(q): view q's rows come from a model table.
+.decl lwp_rows(q: symbol)
+lwp_rows(q) :- drf_view_model_q(q, _).
+lwp_rows(q) :- drf_attr_q(q, "queryset", h), lwp_qs_home(h).
+lwp_rows(q) :- drf_method_q(q, "get_queryset", fq), lwp_qs_returned(fq).
+// lwp_qs_home(h): attribute h's value is a queryset chain. lwp_qs_returned(fq): get_queryset() fq returns one, or a
+// local name it assigns one.
+.decl lwp_qs_home(h: symbol)
+lwp_qs_home(h) :- drf_hv(h, e), unparen(e, u), dj_qs(u).
+.decl lwp_qs_returned(fq: symbol)
+lwp_qs_returned(fq) :- kind(f, "function_definition"), def_name(f, "get_queryset"), kind(r, "return_statement"),
+    def_frame(r, f), child(r, e, 0), unparen(e, u), lwp_qs_in(u, f), qualname(f, fq).
+// lwp_qs_in(u, f): u is a queryset chain, or a local name that f assigns one.
+.decl lwp_qs_in(u: node, f: node)
+lwp_qs_in(u, f) :- kind(f, "function_definition"), dj_qs(u), def_frame(u, f).
+lwp_qs_in(u, f) :- kind(u, "identifier"), text(u, x), def_frame(u, f), kind(a, "assignment"), def_frame(a, f),
+    field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), unparen(r, ru), dj_qs(ru).
+
+// lwp_sliced(q): view q's rows are bounded by a slice: its (inherited) queryset attribute, or anything its
+// get_queryset() (own or a run base's) slices.
+.decl lwp_sliced(q: symbol)
+lwp_sliced(q) :- drf_attr_q(q, "queryset", h), lwp_sliced_home(h).
+lwp_sliced(q) :- drf_method_q(q, "get_queryset", fq), lwp_slicing(fq).
+.decl lwp_sliced_home(h: symbol)
+lwp_sliced_home(h) :- drf_hv(h, e), unparen(e, u), kind(u, "subscript"), lwp_slice(u).
+.decl lwp_slicing(fq: symbol)
+lwp_slicing(fq) :- kind(s, "subscript"), def_frame(s, f), lwp_slice(s), kind(f, "function_definition"), qualname(f, fq).
+.decl lwp_slice(s: node)
+lwp_slice(s) :- kind(s, "subscript"), child(s, x, _), kind(x, "slice").
+
+// The cases, `upstream/drf-practice/authored/drf-practice-list-without-pagination/`: each sub-directory is one project,
+// read as one repository; each line ending in `# caught` is reported, and no other line.
+.test open exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/base.py"
+    .fixture "config/settings/test.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/config/settings/test.py"
+    .fixture "shop/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/__init__.py"
+    .fixture "shop/api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/__init__.py"
+    .fixture "shop/api/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/base.py"
+    .fixture "shop/api/serializers.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/serializers.py"
+    .fixture "shop/api/urls.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/urls.py"
+    .fixture "shop/api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/api/views.py"
+    .fixture "shop/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/models.py"
+    .fixture "shop/tests/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/tests/__init__.py"
+    .fixture "shop/tests/test_views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/open/shop/tests/test_views.py"
+    .expect _ at "shop/api/views.py":10
+    .expect _ at "shop/api/views.py":15
+    .expect _ at "shop/api/views.py":22
+    .expect _ at "shop/api/views.py":27
+    .expect _ at "shop/api/views.py":34
+    .expect _ at "shop/api/views.py":44
+    .expect _ at "shop/api/views.py":154
+    .expect _ at "shop/api/views.py":159
+.end
+
+.test nulled exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/config/settings.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/models.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/nulled/notes/views.py"
+    .expect _ at "notes/views.py":12
+.end
+
+.test paged exactly
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/__init__.py"
+    .fixture "config/settings/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/__init__.py"
+    .fixture "config/settings/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/base.py"
+    .fixture "config/settings/production.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/config/settings/production.py"
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/models.py"
+    .fixture "notes/pagination.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/pagination.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/paged/notes/views.py"
+.end
+
+.test library exactly
+    .fixture "notes/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/__init__.py"
+    .fixture "notes/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/models.py"
+    .fixture "notes/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/library/notes/views.py"
+.end
+
+.test rooted exactly
+    .fixture "backend/board/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/__init__.py"
+    .fixture "backend/board/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/models.py"
+    .fixture "backend/board/urls.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/urls.py"
+    .fixture "backend/board/views/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/__init__.py"
+    .fixture "backend/board/views/base.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/base.py"
+    .fixture "backend/board/views/card.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/card.py"
+    .fixture "backend/board/views/member.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/board/views/member.py"
+    .fixture "backend/config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/config/__init__.py"
+    .fixture "backend/config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/rooted/backend/config/settings.py"
+    .expect _ at "backend/board/views/card.py":14
+    .expect _ at "backend/board/views/card.py":19
+    .expect _ at "backend/board/views/member.py":19
+.end
+
+.test inert exactly
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/__init__.py"
+    .fixture "api/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/models.py"
+    .fixture "api/pagination.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/pagination.py"
+    .fixture "api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/api/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/inert/config/settings.py"
+    .expect _ at "api/views.py":22
+    .expect _ at "api/views.py":28
+    .expect _ at "config/settings.py":2
+.end
+
+.test sized exactly
+    .fixture "api/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/__init__.py"
+    .fixture "api/models.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/models.py"
+    .fixture "api/views.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/api/views.py"
+    .fixture "config/__init__.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/config/__init__.py"
+    .fixture "config/settings.py" from "../upstream/drf-practice/authored/drf-practice-list-without-pagination/sized/config/settings.py"
+.end

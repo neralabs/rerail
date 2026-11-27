@@ -1,0 +1,37 @@
+{
+  "name": "@neralabs/rerail-pack-celery",
+  "version": "0.1.0",
+  "description": "Rerail rule pack: Rerail's own Celery rules, from the Celery docs and maintainers' review advice, for idempotent, serializable tasks dispatched after commit.",
+  "keywords": [
+    "rerail",
+    "rerail-pack",
+    "coding-agent",
+    "rules",
+    "celery",
+    "python"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/neralabs/rerail.git",
+    "directory": "packs/celery"
+  },
+  "files": [
+    "pack.json",
+    "rules",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "peerDependencies": {
+    "@neralabs/rerail": ">=0.2.3-0"
+  },
+  "peerDependenciesMeta": {
+    "@neralabs/rerail": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

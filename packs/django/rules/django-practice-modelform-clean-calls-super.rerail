@@ -76,15 +76,15 @@ mcs_calls_parent(f) :- mcs_clean(c, f), mcs_formset(c), kind(k, "call"), field(k
 mcs_clean_call(f, k, o) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "clean"),
     nearest(k, f, "function_definition").
 
-// The cases, `cases/django-practice-modelform-clean-calls-super/`, read as one repository: each line ending in `#
-// caught` is reported, and no other line.
+// The cases, `upstream/django-practice/authored/django-practice-modelform-clean-calls-super/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
 .test cases exactly
-    .fixture "library/__init__.py" from "../cases/django-practice-modelform-clean-calls-super/library/__init__.py"
-    .fixture "library/base.py" from "../cases/django-practice-modelform-clean-calls-super/library/base.py"
-    .fixture "library/forms.py" from "../cases/django-practice-modelform-clean-calls-super/library/forms.py"
-    .fixture "library/models.py" from "../cases/django-practice-modelform-clean-calls-super/library/models.py"
-    .fixture "library/tests/__init__.py" from "../cases/django-practice-modelform-clean-calls-super/library/tests/__init__.py"
-    .fixture "library/tests/test_forms.py" from "../cases/django-practice-modelform-clean-calls-super/library/tests/test_forms.py"
+    .fixture "library/__init__.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/__init__.py"
+    .fixture "library/base.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/base.py"
+    .fixture "library/forms.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/forms.py"
+    .fixture "library/models.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/models.py"
+    .fixture "library/tests/__init__.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/tests/__init__.py"
+    .fixture "library/tests/test_forms.py" from "../upstream/django-practice/authored/django-practice-modelform-clean-calls-super/library/tests/test_forms.py"
     .expect _ at "library/forms.py":14
     .expect _ at "library/forms.py":52
     .expect _ at "library/forms.py":79

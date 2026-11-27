@@ -1,0 +1,61 @@
+.policy "fastapi-practice-lifecycle-event-handler" revision 1
+.description "Put a FastAPI app's startup and shutdown code in its lifespan instead of event handlers; adding a lifespan later silently stops every handler."
+.language python
+.mode log
+.scope include "**/*.py"
+// Rerail's own rule. FastAPI runs startup/shutdown event handlers only while the app has no lifespan ("It's all
+// `lifespan` or all events, not both"), so the first `lifespan=` someone adds silently stops every handler left
+// behind. `on_event` is deprecated in FastAPI (`@typing_extensions.deprecated`, which pyright and mypy's `deprecated`
+// error code already report); `add_event_handler` and `on_startup=`/`on_shutdown=` are FastAPI's own and still work.
+// Starlette 1.0 removed all of them from plain Starlette apps. This rule is the advisory half; a handler that is
+// already dead under a lifespan is fastapi-practice-on-event-handler's.
+// Reported (lib/fastapi_events): a registration (oe_site_at) on an app or router that is not dead under a lifespan
+// (!oe_dead_at): `o.on_event(E)`, `o.add_event_handler(E, fn)`, and `on_startup=`/`on_shutdown=` on a constructor without
+// `lifespan=`, unless the value is None or an empty list. A receiver that does not resolve to an app or router counts
+// only with a literal "startup"/"shutdown" event and when it is an unannotated parameter or a name the run cannot
+// resolve to a constructor (letta's `setup_fastapi_instrumentation(app)`).
+//   legacy = FastAPI(on_startup=[init_db])         reported
+//   @router.on_event("startup")                    reported: runs, but only while no lifespan exists
+//   emitter = pyee.EventEmitter()
+//   emitter.on_event("startup", fn)                not reported: another library's emitter
+// Left alone: registrations on an app built with `lifespan=` (the other rule), an event bus the run defines, a
+// receiver annotated with another class, `events.on_event(handler)` (no literal event), Slack bolt's `app.event(...)`,
+// socketio's `sio.on(...)`, `lifespan=` itself, and test files.
+// Gaps: `app.router.on_startup.append(fn)`; a receiver bound to a factory function of another library
+// (`app = lib.create_app()`) is read as foreign, so its literal-event registrations are left alone.
+
+#include "lib/fastapi.rerail"
+#include "lib/fastapi_events.rerail"
+
+.violation EventHandlerNotLifespan(at: node, form: symbol) "Move this `{form}` handler into an `@asynccontextmanager` lifespan passed as `FastAPI(lifespan=...)`, with all the app's handlers at once: a lifespan added later stops every handler left."
+EventHandlerNotLifespan(c, m) :- oe_at(c, p, t), oe_site_at(p, t, m), !oe_dead_at(p, t).
+EventHandlerNotLifespan(v, k) :- oe_kw(r, k, v), !oe_lifespan_app(r).
+
+// The cases, `upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/`, read as one repository:
+// each line ending in `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "app/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/__init__.py"
+    .fixture "app/lifespan.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/lifespan.py"
+    .fixture "app/main.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/main.py"
+    .fixture "app/plugins.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/plugins.py"
+    .fixture "app/routers/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/routers/__init__.py"
+    .fixture "app/routers/items.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/routers/items.py"
+    .fixture "app/startup.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/startup.py"
+    .fixture "app/tests/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/tests/__init__.py"
+    .fixture "app/tests/test_app.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/app/tests/test_app.py"
+    .fixture "events/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/events/__init__.py"
+    .fixture "events/bus.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/events/bus.py"
+    .fixture "svc/__init__.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/__init__.py"
+    .fixture "svc/custom.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/custom.py"
+    .fixture "svc/legacy.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/legacy.py"
+    .fixture "svc/modern.py" from "../upstream/fastapi-practice/authored/fastapi-practice-lifecycle-event-handler/svc/modern.py"
+    .expect _ at "app/plugins.py":22
+    .expect _ at "app/routers/items.py":5
+    .expect _ at "app/routers/items.py":8
+    .expect _ at "svc/custom.py":26
+    .expect _ at "svc/legacy.py":13
+    .expect _ at "svc/legacy.py":14
+    .expect _ at "svc/legacy.py":18
+    .expect _ at "svc/legacy.py":23
+    .expect _ at "svc/legacy.py":28
+.end

@@ -2,17 +2,21 @@
 
 Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add django`, then add it to a repository in the dashboard. It needs Rerail 0.2.2 or newer.
 
-The 27 `django-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that the Django docs
+The 34 `django-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that the Django docs
 give, or that Django maintainers give again and again in code review, and that no linter checks. A rule was kept when
 at least two independent sources gave the advice, one of them the Django docs or a Django core developer or Fellow;
 when public apps held real violations of it; and when no existing lint rule makes the same check. The tools checked
 were Ruff (its DJ, DTZ, INT, S and ASYNC rules among them), flake8-django, pylint-django, Bandit, django-upgrade,
 django-migration-linter and Django's system checks; the Semgrep registry and orm-lens were read too, and their partial
-overlaps are listed in [NOTES-django.md](NOTES-django.md).
+overlaps are listed in [NOTES-django.md](NOTES-django.md). The first 27 rules were measured on 31 public Django apps;
+the seven later ones (settings, settings writes in tests, migrations and `bulk_create`:
+[the second table](#the-seven-later-rules)) on 10 Django repositories of a second corpus, listed in their details.
 
 Each rule reads the repository's Python files through the pack's own library
-[`rules/lib/django.rerail`](rules/lib/django.rerail). Most rules read one file at a time; many also follow names into the
-repository's other files. The model rules follow a model's bases, so fields, Meta options and save()/delete()
+[`rules/lib/django.rerail`](rules/lib/django.rerail); settings-in-test reads test code through
+[`rules/lib/django_tests.rerail`](rules/lib/django_tests.rerail), which builds on it. Most rules read one file at a
+time; many also follow names into the repository's other files. The model rules follow a model's bases, so fields,
+Meta options and save()/delete()
 overrides declared on a base in another module count (fk-id-not-relation, select-related-in-loop, model-init-override,
 save-ignores-update-fields, bulk-write-skips-hooks, read-modify-write, get-or-create-needs-unique, which also reads the
 model's managers); bulk-write-skips-hooks also finds a model's pre_save/post_save receivers in any file.
@@ -25,14 +29,16 @@ files through the call graph of `python/calls`: get-handler-writes (from a GET h
 dispatch-in-atomic-request (from a view to the dispatches it reaches), select-for-update-outside-atomic (from a lock up
 to the callers that run it outside a transaction) and sync-orm-reached-from-async (from an `async def` to the queries
 it reaches). These four do the most work across files ([what a run costs](#starting-values-and-what-a-run-costs)).
-Each rule's details below list what it misses.
+settings-in-test follows calls too, from a test, fixture or set-up hook to the helpers of test files it calls, and
+resolves pytest fixtures through the conftest.py files. Each rule's details below list what it misses.
 
-Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
-other line may be, run by the rule file's own test (`.test cases exactly`, which reads the case directory as one
-repository and expects each `# caught` line; `rerail rules test <file>.rerail`); by a run on 31 open-source Django apps
-at pinned commits ([the corpus](#the-corpus)), whose matches were read and judged real or not (every match where a rule
-had at most 80, otherwise a spread sample of at least 80 with every matching repository represented); and by an
-independent review of each rule that tried counterexamples against it, which were added to its cases.
+Each rule is proven three ways: by its cases in `upstream/django-practice/authored/<id>/`, where a line ending in
+`# caught` must be reported and no other line may be, run by the rule file's own test (`.test cases exactly`, which
+reads the case directory as one repository and expects each `# caught` line; `rerail rules test <file>.rerail`); by a
+run on 31 open-source Django apps at pinned commits ([the corpus](#the-corpus)), whose matches were read and judged real
+or not (every match where a rule had at most 80, otherwise a spread sample of at least 80 with every matching repository
+represented); and by an independent review of each rule that tried counterexamples against it, which were added to its
+cases.
 
 | Rule | Mode | Catches | Matches (repos) on 31 apps | Precision of read matches |
 |---|---|---|---|---|
@@ -73,16 +79,44 @@ A match is real when the file holds the pattern, even if code elsewhere (a calle
 a task class) makes it harmless there; a repository that disagrees turns the rule off. A rule steers where nearly
 every read match was real in that sense. It logs where many matches do not hold the pattern, or where the pattern
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
-A rule starts on only when at least 90% of its read matches were real.
+A rule starts on only when at least 90% of its read matches were real, counting the corpus and the benchmark on
+#1120's engine together.
 
 Each rule also says what it guards against (its risk, such as data safety or performance), where its code lives
 and how badly a violation can go. The Django pack's page in the dashboard filters its rules by risk and shows each
 rule's risk and severity ([rule dimensions](../../docs/rule-dimensions.md)).
 
+### The seven later rules
+
+Measured on the 10 Django repositories of a second corpus (linkding, healthchecks, paperless-ngx, label-studio, plane,
+InvenTree, pretix, addons-server, DefectDojo, saleor), every match read. "Real" is judged per rule, by the
+consequence (a migration lock counts only on a table that grows with use); each rule's details give the criterion
+and the commits. They are listed in reading order: by what a miss costs and how sure each finding is.
+
+| Rule | Mode | Catches | Matches (repos) on 10 apps | Precision of read matches |
+|---|---|---|---|---|
+| `django-practice-settings-env-fails-open` | Log, starts off | DEBUG, ALLOWED_HOSTS or SECRET_KEY that falls back to an insecure value when its environment variable is unset | 6 (5) | 100% (6 of 6) |
+| `django-practice-addfield-default-runs-once` | Log, starts off | an AddField on an existing table whose generated or unique default every existing row shares | 6 (2) | 100% (6 of 6) |
+| `django-practice-bulk-ignore-conflicts-used` | Steer | objects from `bulk_create(ignore_conflicts=True)` used as the inserted rows, on a model a row can conflict on | 8 (3) | 100% (8 of 8) |
+| `django-practice-runpython-with-schema-change` | Log, starts off | a RunPython that writes rows in the same migration transaction as a schema change to that table | 89 (7) | 73% (65 of 89) |
+| `django-practice-alterfield-rewrites-table` | Log, starts off | an AlterField whose column type change makes PostgreSQL rewrite an existing table | 172 (7) | 75% (129 of 172) |
+| `django-practice-runpython-live-model` | Steer | RunPython code that reaches live model classes through a helper in another module | 8 (3) | 100% (8 of 8) |
+| `django-practice-settings-in-test` | Log, starts off | a test that writes `django.conf.settings` directly, outside `override_settings`, `self.settings()` or pytest-django's `settings` fixture, and nothing undoes it | 24 (4) | 79% (19 of 24) |
+
+The two lock rules are worth turning on for a team that migrates under traffic; a self-hosted product that migrates
+with the application stopped pays only upgrade time for what they report.
+
+On #1120's engine, a benchmark on more repositories (judged per rule as above; each rule's details give its figures)
+put three of these rules below 90% once counted with the corpus: settings-env-fails-open 83% (10 of 12),
+addfield-default-runs-once 61% (14 of 23) and settings-in-test (19 of 24 on this corpus once label-studio's matches
+are read right, 8 of 16 on the benchmark). They start off, in Log, like the two lock rules.
+
 ## Starting values and what a run costs
 
-25 of 27 rules start on, in the mode the table above gives them: 22 steer and 3 log. get-handler-writes (72%) and
-host-header-without-get-host (83%) start off (`"on": false`), because their read-match precision is below 90%; they
+27 of 34 rules start on, in the mode the tables above give them: 24 steer and 3 log. get-handler-writes (72%),
+host-header-without-get-host (83%), runpython-with-schema-change (76%), alterfield-rewrites-table (75%),
+settings-env-fails-open (83%), addfield-default-runs-once (61%) and settings-in-test (79%, 50% on the benchmark) start
+off (`"on": false`), because their read-match precision is below 90%; they
 ship in the pack and log when turned on. To turn one on, use its switch in the On/off column of the Django pack's
 page in the dashboard, or set `on: true` for it with `repository_settings_set` (`PUT /api/repository/settings`) for a
 repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-surfaces)); the same turns any rule off
@@ -1126,6 +1160,762 @@ Why Log: the call graph follows every branch of the reached code, and every corp
 branch its arguments do not take, behind caches the coroutine fills first (Weblate's `aprepare_permissions`); one rule
 cannot tell a cached path from a querying one, so offloading is often unneeded there.
 
+### `django-practice-settings-env-fails-open`
+
+Rerail's own rule, not a port. It reports a module-level assignment in a Django settings module that reads `DEBUG`,
+`ALLOWED_HOSTS` or `SECRET_KEY` from the environment and is insecure when the variable is unset: `DEBUG` true, `"*"`
+in `ALLOWED_HOSTS`, or a literal (non-empty) `SECRET_KEY`. One deploy that forgets the variable then runs with debug
+pages that show settings and source code, accepts any Host header (password-reset links can be poisoned), or signs
+sessions, cookies and reset tokens with a key anyone can read in the repository (CWE-1188, initialization with an
+insecure default). Each setting has its own message: DEBUG's asks for a bool read with a false fallback, turned on
+only in development settings or `.env`; ALLOWED_HOSTS's for a fallback without `"*"`; SECRET_KEY's for a required
+variable with no fallback. Each says to leave the code alone when only development loads the module.
+
+An env read is a call of `os.environ.get` or `os.getenv`, of a django-environ `Env`/`FileAwareEnv` instance (`env(...)`,
+`env.bool`, `env.str`, `env.int`, `env.list`, `env.tuple`; the instance may be built in another module), of
+python-decouple's `config`, or of a def of the run whose body reads `os.environ`/`os.getenv`, directly or through the
+defs it calls (resolved by name across files: healthchecks' `envbool`/`envsecret`, saleor's `get_bool_from_env`,
+label-studio's `get_bool_env` → `get_env` and `get_env_list`, InvenTree's `get_setting`). Its fallback is the
+default argument (`default=`, the second positional of `os.environ.get`/`os.getenv`/`config`/`env.bool`, the third
+of `env(...)`/`env.list`); for a helper, the argument given for a parameter named like `default`/`fallback`, or one
+the helper returns or passes on as an env read's default, and the parameter's own default when the call passes
+none; for `env("X")` without a default, the `X=(type, default)` of the `Env(...)` schema; for
+`os.getenv("X") or "literal"`, the literal.
+
+`DEBUG` is evaluated rather than matched by shape: the rule computes the Python value the whole expression has when
+the variable is unset, and reports it when that value is truthy, as Django's `if settings.DEBUG` sees it. A read
+returns its fallback as written (`os.environ.get`, `os.getenv`, decouple without `cast=`, and django-environ, which
+never parses a default) or `None` (`os.environ.get`/`os.getenv` without one); decouple with `cast=bool`, `int` or
+`str` casts the fallback, as decouple does; a project helper is taken to parse its fallback as a bool. `bool()`,
+`int()`, `str()`, `.lower()`, `.casefold()`, `.upper()`, `.strip()`, a str-to-bool converter (`strtobool` and
+callees named like it), `==`, `!=`, `in`/`not in` a literal tuple, list or set, `is`/`is not None`, `not`, `and` and
+`or` then follow Python's rules. So it reports `os.getenv("DEBUG", "False")` (a non-empty str is true),
+`bool(os.environ.get("DEBUG", "False"))`, `os.environ.get("DJANGO_DEBUG") != "0"` (`None != "0"`),
+`not os.getenv("DISABLE_DEBUG")`, `os.environ.get("APP_ENV", "development") == "development"` and
+`envbool("DEBUG", "True")`, and leaves `int(os.environ.get("DEBUG", "0"))`, `os.getenv("DEBUG", "False") == "True"`,
+`config("DEBUG", default="False", cast=bool)` and `strtobool(os.getenv("DEBUG", "no"))` alone. `ALLOWED_HOSTS` is open
+when a read anywhere in its value falls back to `"*"` (alone or in a comma-separated string) or to a list holding
+`"*"`.
+
+Settings modules are files named `settings.py`, files under a `settings/` package, and modules that assign two or more
+of `DEBUG`, `ALLOWED_HOSTS`, `SECRET_KEY`, `DATABASES`, `INSTALLED_APPS`, `MIDDLEWARE` at module level, in a run that
+imports Django.
+
+It leaves alone: safe fallbacks (`False`, `"False"` once parsed or compared, `"0"` through `int()`, `[]`,
+`"localhost,127.0.0.1"`), `os.environ["SECRET_KEY"]`, an empty `SECRET_KEY` fallback (Django refuses an empty key),
+random fallbacks (`os.environ.get("SECRET_KEY") or get_random_secret_key()`, saleor's `if not SECRET_KEY and DEBUG:
+SECRET_KEY = get_random_secret_key()`); test code and development modules (`dev.py`, `local.py`, `test.py`, `ci.py`,
+`settings_test.py`, `unittests.py`, `dev/`, `local/`, `testutils/` packages); an assignment under an `if` that tests
+`DEBUG`; other settings (`TEMPLATE_DEBUG`, `SITE_DEBUG`, `CSRF_TRUSTED_ORIGINS`); config-file reads (pretix's
+`config.getboolean('django', 'debug', fallback=...)`); and a literal `SECRET_KEY = "..."`, which Bandit S105 reports.
+It also leaves a setting alone when the module production loads settles it: the module refuses the setting in a
+module-level `if` that raises (`if SECRET_KEY == "change-me": raise ImproperlyConfigured`), or the module is a base
+that other modules star-import (`from .base import *`) and every non-development one of them assigns the setting again
+or refuses it that way. label-studio's `core/settings/base.py` has `DEBUG = get_bool_env('DEBUG', True)`, and
+`core/settings/label_studio.py`, the module `manage.py` and `server.py` load, sets `DEBUG = get_bool_env('DEBUG',
+False)`, so a deploy without the variable runs with DEBUG off; reporting base.py's line would ask for a change that
+changes nothing a deploy runs. Its `ALLOWED_HOSTS` default `['*']` is not overridden and is reported. Likewise a base
+`SECRET_KEY = os.environ.get("SECRET_KEY", "insecure-dev-key")` whose `production.py` raises when the key is still the
+default is left alone. A relative star import is resolved from the importing file's directory; an absolute one is
+matched by path suffix (label-studio imports `core.settings.base` from `label_studio/`, not the repository root).
+
+Existing checks do not cover it: `manage.py check --deploy` (security.W018, W009, W020) judges only the value in the
+environment where it runs, and never reports `'*'`; Ruff/pylint PLW1508 flags only a non-str `os.getenv` default
+(`os.getenv("DEBUG", True)`, as a type error, not a security issue), never a str one like `"False"`; Bandit S105/B105
+only a literal `SECRET_KEY = "..."`. The rule's value is the value the code would use, read through the project's
+own helpers in other modules and the settings modules that import it.
+
+**Gaps:** a fallback chosen by a branch on the variable (linkding's `prod.py`: `if host_name: ALLOWED_HOSTS =
+[host_name] else: ALLOWED_HOSTS = ["*"]`); a fallback held in a variable or a constant of another module; an override
+or refusal in a module that imports the base by name, two star-imports deep, or inside a function; a refusal counts
+whatever its condition, as long as it names the setting; an `assert` is not a refusal (`python -O` strips it); a
+project helper that returns a str fallback unparsed (`get_env("DEBUG", "False")`) is taken to parse it, since its body
+is not evaluated; str-to-bool converters are recognised by name (`strtobool`, `str_to_bool`, `is_true`, ...);
+helpers reached only through a method or a call the name lookup cannot resolve.
+
+**Sources:** Django settings docs ("Never deploy a site into production with DEBUG turned on"; ALLOWED_HOSTS and Host
+header validation; SECRET_KEY), Django deployment checklist, CWE-1188; django-environ's `Env.get_value` (a default is
+returned unparsed) and python-decouple's `Config.get` (the default goes through `cast`).
+
+**Corpus** (10 Django repositories at the commits in `MANIFEST.tsv`): 6 matches, 6 real (100%).
+
+| Repository | Matches | Real | Match |
+|---|--:|--:|---|
+| healthchecks | 2 | 2 | `hc/settings.py:69` `SECRET_KEY = envsecret("SECRET_KEY", "---")`; `:71` `DEBUG = envbool("DEBUG", "True")` |
+| label-studio | 1 | 1 | `label_studio/core/settings/base.py:335` `ALLOWED_HOSTS = get_env_list('ALLOWED_HOSTS', default=['*'])` |
+| plane | 1 | 1 | `apps/api/plane/settings/common.py:95` `ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")` |
+| addons-server | 1 | 1 | `src/olympia/lib/settings_base.py:349` `SECRET_KEY = env('SECRET_KEY', default='this-is-a-dummy-key-and-its-overridden-for-prod-servers')` |
+| saleor | 1 | 1 | `saleor/settings.py:86` `DEBUG = get_bool_from_env("DEBUG", True)` |
+| linkding, paperless-ngx, InvenTree, pretix, DefectDojo | 0 | 0 | no settings read fails open; their DEBUG reads: paperless `get_bool_from_env("PAPERLESS_DEBUG", "NO")`, InvenTree `get_boolean_setting(..., False)`, DefectDojo `env("DD_DEBUG")` with a `(bool, False)` schema, linkding literals, pretix a config file |
+
+The new DEBUG shapes (str fallback used raw, `bool()` of one, `!=`/`not in` of a read without a fallback) have no
+match in the corpus; they are the shapes a deploy gets wrong, proven by the cases.
+
+**On #1120's engine (benchmark).** The corpus findings are unchanged; on the benchmark's new repositories, 6
+matches, 4 real (the `SECRET_KEY` fallbacks of Tandoor, escriptorium, khoj and lookit): together 10 of 12 (83%). Both
+false matches are a literal `DEBUG = True` with no environment read, reported as falling back "when its environment
+variable is unset" (readux `config/settings/base.py:22`); one of them is in a development module whose name the rule
+does not know (wger `settings/local_dev.py:9`). It starts off (Log): below 90%; turn it on where DEBUG is always read
+from the environment and development settings use the module names listed above.
+
+### `django-practice-addfield-default-runs-once`
+
+Rerail's own rule, not a port. A migration's `AddField` on a table that already exists fills every existing row with
+the field's default, and Django computes that default once: "the value used to populate existing rows is generated
+only once" (Django docs, "Migrations that add unique fields"; ticket #37031). A nullable field is no exception: the
+schema editor writes the effective default into the `ADD COLUMN` for it too (`BaseDatabaseSchemaEditor.add_field`
+and `_iter_column_sql`), so existing rows get the one value, not NULL. The rule reads `AddField` operations that
+change the database (a `SeparateDatabaseAndState`'s `database_operations` included, its `state_operations` not) on a
+model the same migration does not create, and reports the field's `default=` value in two cases:
+
+- **A default that generates a fresh identifier or secret per call**, on a field that is not unique, nullable or
+  not: `uuid.uuid1/4/6/7`, `os.urandom`, any `secrets.*`, `random.SystemRandom`,
+  `django.utils.crypto.get_random_string`, `shortuuid.uuid`/`random`, under any import alias, a `functools.partial` of
+  one of these, or a function of the run (in the migration, or imported from the models module) whose body calls one
+  of these, directly or through one more function of the run (pretix's `generate_secret` calls
+  `get_random_string`). Every existing row shares one token, secret or UUID. The generators are a list: whether a
+  function returns a value meant to differ per row is not decidable from its code. The message names the default and
+  the field, says to add the field nullable, fill each row in `RunPython`, then `AlterField`; for a migration already
+  applied, to regenerate the values in a new data migration; and to leave it when rows may share one value.
+- **Any default other than `None` on a unique field** (`unique=True`, `primary_key=True`, a `OneToOneField`),
+  constant or callable: the migration fails with an `IntegrityError` on a table with two or more rows, and passes on
+  an empty test database.
+
+The message does not suggest `db_default`: a per-row database default is a volatile expression, and adding a column
+with one rewrites the whole table on PostgreSQL under an ACCESS EXCLUSIVE lock.
+
+It leaves alone: a constant or time default (`timezone.now`, `date.today`, `dict`, a project function that calls no
+generator); a default from the `random` module's shared generator (`random.choice`, `random.random`, a helper that
+calls only those, as plane's `get_random_color`), which the module documents as unfit for secrets and which the
+corpus uses for colours; a default that is already a call (`default=uuid.uuid4()`: one value, as written); a field
+with `db_default`; an `AddField` on a model created in the same migration; squashed migrations (`replaces = [...]`),
+which run only on a database that applied none of the migrations they replace, themselves still in the tree and
+reported; migrations under test directories; and an `AddField` of a field that is not unique whose rows a backfill
+fills afterwards, later in the same migration or in a later migration of the same app:
+
+- a `RunPython` whose function (or a function of the run it calls) names the same model, through
+  `apps.get_model("app", "Model")` (positional or keyword), `apps.get_model("app.Model")` or a manager of a name
+  bound to it (`Order.objects`, `Client._default_manager` after `from shop.models import Customer as Client`), and
+  writes the field (`obj.<field> = …`, `setattr(obj, "<field>", …)`, `update(<field>=…)`);
+- a `RunSQL` (one string, a list of strings, or of `(sql, params)` pairs) whose `UPDATE` targets a table whose name
+  ends in the model's name and sets the column.
+
+The documented pattern (add, backfill, `AlterField` to unique) stays silent end to end; a unique `AddField` fails
+before any backfill runs, so it is reported regardless. It also leaves alone a model the project's code reads as
+its one row: `<Model>.objects.get()` with no arguments, a lazy singleton's `.first()` beside `create()` or
+`get_or_create()`, django-solo's `get_solo()`, or the current site's row through the related name of the model's
+`OneToOneField`, `Site.objects.get_current().settings` (saleor's `SiteSettings`): one value is right for such a table.
+
+`django-practice-default-called-once` reports `default=uuid.uuid4()` (called) in models and skips migrations; this
+rule reads migrations and callable defaults, so the two never report the same line. django-migration-linter has no
+such check; pylint-django's opt-in `new-db-field-with-default` flags every `AddField` with a default, for lock time.
+
+**Gaps:** a backfill's model and field are matched within its functions, not tied to one object, so a backfill
+that names two models and writes a same-named field of the other one silences this one; a backfill through a
+generic helper that takes the column or the model as a variable (`setattr(obj, column, …)`,
+`apps.get_model("shop", name)`) is not seen; a `RunSQL` backfill is matched by the table name's ending, so a custom
+`db_table` is not followed; a one-row table read otherwise (`get(pk=1)`, a cache) is reported; a per-site row is
+silent also in a project serving several sites; generators outside the list (`nanoid`) and functions more than two
+calls deep are not followed.
+
+**Corpus** (10 Django repositories of the BRIEF corpus, commits from `MANIFEST.tsv`; runs
+`django-fix-fin-<repo>`, `django-fix-af-lead-<repo>` for linkding, healthchecks and label-studio, and the
+worker's `django-fix-addfield-default-runs-once-<repo>-<n>`; every match read). "Real" means a generated secret,
+token or identifier that every existing row now shares, or a unique default that fails on two rows.
+
+| Repository | Commit | Matches | Real |
+|---|---|--:|--:|
+| sissbruecker/linkding | `27b7303b` | 0 | |
+| healthchecks/healthchecks | `c1039ad2` | 0 | |
+| paperless-ngx/paperless-ngx | `faa6f09f` | 0 | |
+| HumanSignal/label-studio | `2f42caec` | 0 | |
+| makeplane/plane | `723bb178` | 0 | |
+| inventree/InvenTree | `939df605` | 0 | |
+| pretix/pretix | `40ea9097` | 5 | 5 |
+| mozilla/addons-server | `7e3374fe` | 0 | |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 0 | |
+| saleor/saleor | `e1ccf4d5` | 1 | 1 |
+
+6 matches, 6 real (100%); the review's run had 8, 6 real (75%). Read strictly (a shared token nobody reads is no
+harm), pretix's two `invite_token` matches below are latent and precision is 4 of 6. The matches:
+
+- pretix `0122_orderposition_web_secret.py`: `web_secret` (`generate_secret`, which calls `get_random_string`) is one
+  value for every order position that existed then; it is part of the ticket download URL.
+- pretix `0078_auto_20171206_1603.py`: `notifications_token` is one value for every existing user, and
+  `control/views/user.py` looks a user up by `notifications_token` and `pk` from the URL, so one user's unsubscribe
+  link works for any existing user's id.
+- pretix `0147_user_session_token.py`: `session_token` is one value for every existing user.
+- pretix `0054_auto_20170107_1058.py` and `0056_auto_20170107_1251.py`: `invite_token`, added `null=True`, is one
+  value for every existing event and organizer permission instead of NULL. Those rows all had a user, and the later
+  team migration copies only user-less rows' tokens, so the shared token was never sent.
+- saleor `account/migrations/0046_user_jwt_token_key.py`: `partial(get_random_string, length=12)`, one
+  `jwt_token_key`, the per-user key that revoking a user's tokens rotates, for every existing user.
+
+Silent as intended: pretix's two squashes that repeat `0078` and `0122`; plane's `get_random_color` colours; saleor
+`account/migrations/0020_user_token.py` (backfilled by `0021_unique_token.py`, then made unique) and
+`site/migrations/0044_sitesettings_instance_id_and_more.py` (the current site's settings row).
+
+**On #1120's engine (benchmark).** The corpus findings are unchanged; on the benchmark's new repositories, 17 matches,
+8 real (khoj's `corpus_id`, lookit's four uuid fields made unique later with no backfill, escriptorium's
+`ocrmodel.revision` and wger's two history-mirror tables; the last three harmless, so strictly 5): together 14 of 23
+(61%). The 9 false matches are one shape, the gap above: wger fills each new uuid column afterwards through a project
+helper that takes the historical model as an argument, `backfill_uuid_column(apps.get_model(...))`
+(`wger/weight/migrations/0005_add_uuid.py:23`). It starts off (Log): below 90%; turn it on where backfills name their
+model and field in the migration's own RunPython or RunSQL.
+
+### `django-practice-bulk-ignore-conflicts-used`
+
+Rerail's own rule, not a port. `bulk_create(objs, ignore_conflicts=True)` (and `abulk_create`) sets no primary key on
+the objects and skips the objects that conflict without saying which. With a serial key the objects keep `pk=None`.
+With a UUID default key they carry a key that may name no row. A skipped object's other values may differ from the
+stored row's (plane mails an invitation token the database never stored). That matters only where a row can conflict
+on something other than a key the code gave, so the rule first resolves the model the call inserts and what is unique
+on it.
+
+It matches a `bulk_create`/`abulk_create` call passing `ignore_conflicts=True` on a Django queryset or manager
+(`M.objects`, `M.tags.through.objects`), on a manager of a model of the run by any name (`Issue.issue_objects`), or in a
+file that imports Django. It then follows the objects in the same def: the call itself (`for o in
+M.objects.bulk_create(...)`), a name assigned its result (awaited or not), and the name of its input list. A read of one
+of these names counts when it comes after the call, with no rebinding of the name in between and not in an except
+handler of a try around the call. A def that returns the objects hands them to its callers through the run's call graph
+(python/calls), one level deep. It reports the read when the objects are used as the inserted rows:
+
+- a primary key read on an element, `o.pk` or `o.id`, where `o` is `objs[k]` or a `for` or comprehension variable over
+  the objects or a copy, reordering or slice of them (`list`, `sorted`, `reversed`, `objs[a:b]`), the second target
+  over `enumerate(...)`, or the target at their position in `zip(...)`;
+- an element passed to a model class of the run (`IssueSequence(issue=issue)`), to a queryset's `create`,
+  `get_or_create` or `update_or_create`, or to a related manager's `add`; or the objects to `x.rel.add(*objs)` or
+  `x.rel.set(objs)`;
+- an element assigned to an attribute that a class of the run declares as a ForeignKey, OneToOneField or ParentalKey
+  (`line.invite = inv`);
+- an element passed to a signal send (`post_save.send(sender=M, instance=o, created=True)`, any `Signal`'s `send` or
+  `send_robust` with `sender=`);
+- an element read in the arguments of a task dispatch (`.delay()`, `.apply_async()`, `.send_task()`, `.enqueue()`) or
+  of a mail call (`send_mail`, `EmailMessage.send()`, as lib/django's `dj_side_effect`);
+- the objects handed to a serializer (`XSerializer(objs, many=True)`, `django.core.serializers.serialize`);
+- `len()` of the call's result read as a number (not only tested for being 0), with its own message: it counts the
+  objects, not the rows inserted.
+
+The model is resolved through imports, aliases and re-exports, from the receiver or from the objects' constructor
+(`[M(...) for ...]`, `objs.append(M(...))`), so `self.model.objects` resolves too. Its fields and Meta are read in its
+body and in every class of the run among its bases, in any file, and a field by its arguments, whatever its class. It
+leaves alone:
+
+- **keyed objects** (uses; `len()` is still reported): the key is a Django field the code fills
+  (`name = CharField(primary_key=True)`, `OneToOneField(primary_key=True)`), or the def gives the key (`Event(id=k)`,
+  `pk=`, the key field's name, `event.pk = k`). A conflict on that key means the row with that key exists, so the
+  object names the stored row either way.
+- **models no row can conflict on**: the key is generated (an auto id, an AutoField, a key with `default=` or
+  `db_default=`), no other field is `unique=` or a OneToOneField, no Meta (the model's or a base's) has
+  `unique_together`, a UniqueConstraint or `constraints` given by a name, and every base is a class of the run or
+  Django's `Model`. Plane's `Page` and `Issue` (`BaseModel`'s UUID key, nothing else unique) and its
+  `ProjectMemberInvite` are such models: `ignore_conflicts` there is dead and the objects are the stored rows.
+
+It also leaves alone: a re-fetch of the stored rows by the conflicting fields (label-studio's `filter(label_id__in=...)`
+after the call, plane `project/member.py`'s rebinding to a `filter()`); reads before the call; reads after the name is
+rebound (DefectDojo's `batch = []` loops); values the code set itself (`{ref.location_id for ref in refs}`); `len()` of
+the input list (`created += len(batch)` in DefectDojo `migrate_cwe.py` counts objects processed); `update_conflicts=True`,
+which sets keys on PostgreSQL; `ignore_conflicts=False`; a truth test (`if created:`); a def returning the objects that
+no caller reads; reads in an except handler of a try around the call; test code; a `bulk_create` of a non-Django class
+in a file that does not import Django.
+
+**Gaps:** objects passed to a helper of the run are not followed into it (saleor's
+`update_line_info_cached_discounts(lines_info, new_line_discounts, ...)`); a loop over a combined list (`objs + others`,
+`chain(objs, others)`) or a nested target (`for i, (a, b) in enumerate(zip(...))`) yields no element; a caller's caller
+is not followed; a read in a branch that excludes the call's branch still counts as after it; a model the rule cannot
+resolve (a through table, objects built by a helper) and a model with a third-party key class
+(`ShortUUIDField(primary_key=True)`) are never left alone; a unique index made only in a migration (RunSQL, or an
+AddConstraint with no Meta twin) is not seen, so its model counts as one no row can conflict on; the constructor or key
+assignment that marks objects keyed is any of the model's in the def, not followed into the list.
+
+**Sources:**
+- Django docs, [QuerySet API: `bulk_create`](https://docs.djangoproject.com/en/5.2/ref/models/querysets/#bulk-create):
+  "Enabling the ignore_conflicts parameter disables setting the primary key on each model instance (if the database
+  normally supports it)."
+- Django Forum, [Get count of rows actually inserted using bulk_create with ignore_conflicts](https://forum.djangoproject.com/t/get-count-of-rows-actually-inserted-using-bulk-create-with-ignore-conflicts/38435):
+  the returned list is the input list, not the inserted rows.
+- Django ticket [#34698](https://code.djangoproject.com/ticket/34698): primary keys are returned for
+  `update_conflicts`, not for `ignore_conflicts`.
+- Code comments that work around it: plane `apps/api/plane/api/views/issue.py:2762` ("bulk_create with
+  ignore_conflicts=True may not return PKs"), label-studio `label_studio/labels_manager/serializers.py:76` ("bulk_create
+  with ignore_conflicts doesn't return ids, reloading links"), DefectDojo `dojo/vulnerability/manager.py:50`.
+
+**Overlap:** none in Ruff, Bandit, pylint-django or django-upgrade. The rule resolves the model and its constraints
+across files and follows the objects after the call, and across a returning def into its callers.
+
+**Corpus:** every match read. The review's measurement (`review-django-six-<repo>`) was 13 matches, 9 real (69%); the
+rework's runs are `django-fix-bulk-ignore-conflicts-used-<repo>-2` (DefectDojo and pretix: `-3`) under
+`~/rerail-bench/python-arch/runs/`.
+
+| Repository | Commit | Matches | Real |
+|---|---|--:|--:|
+| makeplane/plane | `723bb178` | 6 | 6 |
+| mozilla/addons-server | `7e3374fe` | 1 | 1 |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 1 | 1 |
+| HumanSignal/label-studio | `2f42caec` | 0 | |
+| pretix/pretix | `40ea9097` | 0 | |
+| TandoorRecipes/recipes | `22b5841a` | 2 | 2 |
+
+The review's other Django repositories (linkding, healthchecks, paperless-ngx, InvenTree, saleor) had 0 matches before
+the rework; the rework only removes matches on model grounds and adds uses, and was not re-run on them.
+
+Real matches:
+- plane `apps/api/plane/app/views/workspace/invite.py:120`: each returned invitation is mailed with its token, though a
+  conflicting invitation (`WorkspaceMemberInvite`: `unique_together` and a UniqueConstraint on email and workspace) was
+  not stored and the database keeps its old token.
+- plane `apps/api/plane/app/views/issue/label.py:115`, `app/views/issue/relation.py:307,312`,
+  `api/views/cycle.py:1059`, `api/views/module.py:780`: the response or the activity payload serializes the objects,
+  ids included, as the created rows; `Label`, `IssueRelation`, `CycleIssue` and `ModuleIssue` have UniqueConstraints,
+  so a conflicting object's id names no row.
+- DefectDojo `dojo/tags/utils.py:161`: `len(actually_created)` is added to the tag's count as the rows created.
+- addons-server `src/olympia/users/tasks.py:274`: logs `len(created_objects)` "of" `len(batch)`, always the same
+  number (`DisposableEmailDomainRestriction` is unique on domain and restriction type).
+- Tandoor `cookbook/integration/mealie1.py:294`: links each returned `Property` (UniqueConstraint on space, property
+  type and slug) to its recipe by `p.pk`, unset for a serial key; `cookbook/helper/open_data_importer.py:523`: reports
+  `len(objs_created)` to the user as rows created.
+
+No longer matched, by the model check: plane `bgtasks/dummy_data_task.py:244,334,351,372` (`Page`, `Issue`: only the
+generated UUID key is unique; the review's 4 not-real matches) and `app/views/project/invite.py:120`
+(`ProjectMemberInvite` has no unique constraint in its model or its migrations, so no invitation can conflict and the
+mailed tokens are stored; the review counted it real under the old reading).
+
+Precision: 10 of 10 read matches are real (100%), so the rule is `steer` and on.
+
+**On #1120's engine (benchmark).** The 8 findings on the measured repositories it ran on are unchanged, and the
+benchmark's new repositories have no match: still 100%.
+
+### `django-practice-runpython-with-schema-change`
+
+Rerail's own rule, not a port. On PostgreSQL, Django runs a migration in one transaction unless the migration sets
+`atomic = False`, and its RunPython operations run inside it: `RunPython(..., atomic=False)` takes effect only in a
+non-atomic migration (`Migration.apply` wraps an operation in its own transaction only when the migration is not
+atomic). The RunPython docs warn: "on PostgreSQL, for example, you should avoid combining schema changes and RunPython
+operations in the same migration or you may hit errors like OperationalError: cannot ALTER TABLE "mytable" because it
+has pending trigger events". Zulip's schema-migration guide explains why (Django creates foreign keys `DEFERRABLE
+INITIALLY DEFERRED`, so their checks queue until commit, and PostgreSQL refuses `ALTER TABLE` while they are queued)
+and recommends splitting the migration in two; Stack Overflow 12838111 collects teams that hit it on production data
+their tests did not have.
+
+The rule reads RunPython operations of atomic migrations whose function (in the migration or imported from another
+module, and the functions of the run it calls) binds `apps.get_model("app", "Model")` (or `"app.Model"`) to a name and
+writes that model's rows through it: `.objects…update/create/bulk_create/bulk_update/delete/get_or_create/
+update_or_create`, `Model(...).save()`, or `save()`/`delete()` on rows fetched from it. It pairs each with the
+operations of the same migration that alter the same model's table (`AddField`, `AlterField`, `RemoveField`,
+`RenameField`, `AddIndex`, `RemoveIndex`, `RenameIndex`, `AddConstraint`, `RemoveConstraint`, `AlterUniqueTogether`,
+`AlterIndexTogether`, `AlterModelTable`, `RenameModel`, `DeleteModel`, and these inside a `SeparateDatabaseAndState`'s
+`database_operations`) and reports the RunPython in two cases:
+
+- **The schema change comes after the RunPython, and the RunPython queues foreign-key checks on that table**
+  (`PendingTriggerEvents`): the migration fails with "cannot ALTER TABLE … because it has pending trigger events"
+  once the table has the right data, and passes on an empty test database. PostgreSQL queues a check only for some
+  writes (it skips one whose key is unchanged), so only these count: inserting rows into a model that has a foreign
+  key (`create`, `bulk_create`, `get_or_create`, `update_or_create`, `Model(...).save()`); setting a foreign key
+  (`update(customer=…)`, `bulk_update(rows, ["customer"])`, `obj.customer_id = …` then `save()`); deleting rows that a
+  foreign key or many-to-many field points at. Foreign keys are read from the run's migrations and models. One that an
+  `AddField` earlier in the same migration added does not count: Django's PostgreSQL backend adds it with
+  `SET CONSTRAINTS … IMMEDIATE` "to allow changing data in the same transaction"; nor does any, when
+  `SET CONSTRAINTS ALL IMMEDIATE` runs before the alteration (a `RunSQL` with it, as DefectDojo's
+  `0286_cicd_infrastructure.py` does, or a string with it in the RunPython's own code): it runs the queued checks.
+- **The schema change comes before the RunPython** (`LockedBackfill`): the `ALTER TABLE`'s ACCESS EXCLUSIVE lock (an
+  index's SHARE lock) is held until the migration commits, so the table stays locked, for reads too, through the whole
+  backfill. Split, the schema change commits at once and the backfill holds only row locks. Not when every write of
+  the RunPython touches one row once: a write on a row fetched with `get()`, `first()` or `last()`, or filtered by an
+  exact lookup on a unique column (the primary key, a field the migrations declare unique or a `OneToOneField`), or a
+  single insert, with no loop around it in its function or around the call into its function. That lock is held for
+  milliseconds.
+
+A model is the one `apps.get_model()` returns, by its literal name, `"app.Model"`, or each literal of a loop over
+model names (`for name in ["Order", "Invoice"]: apps.get_model("shop", name)`).
+
+The messages (199 and 196 characters with their placeholders) say to split the migration, or for the first case to
+run `SET CONSTRAINTS ALL IMMEDIATE` before the alteration, and to leave an applied migration as it is; the second
+also says to keep it for a small table. `atomic = False` is no longer offered: a failing operation would no longer
+roll back the ones before it.
+
+**Which writes count after the schema change (the foreign-key question).** The rule restricts the first case to
+writes that queue a foreign-key check, which is narrower than "models with a foreign key": by PostgreSQL's
+`AfterTriggerSaveEvent` (`RI_FKey_fk_upd_check_required`, `RI_FKey_pk_upd_check_required`), an update that leaves the
+key columns as they are queues nothing, and that is what most backfills are (`Model.objects.update(flag=True)`,
+`bulk_update(rows, ["sort_order"])`). Without the restriction, the 6 smaller repositories and DefectDojo gave 12
+after-order RunPythons, and 11 of them queue no check that a later operation could trip on: updates of other columns
+(paperless `0007_optimize_integer_field_sizes.py`, plane `0035_auto_20230704_2225.py`, DefectDojo
+`0104_endpoint_userinfo_creation.py`), keys that the same migration's `AddField` had just added, which Django makes
+immediate (plane `0069_alter_account_provider_and_more.py`, InvenTree `part/0145_auto_20251203_1238.py`), a key the
+later `AlterField` changes itself (DefectDojo `0120_sonarqube_test_and_clean.py`: Django runs `SET CONSTRAINTS <it>
+IMMEDIATE` before dropping it, which also counts as not queued), or a squashed migration. The one left is real:
+DefectDojo `0263_language_type_unique_language.py` reassigns `Languages` to the kept `Language_Type` rows, deletes the
+duplicates (rows a foreign key points at, so PostgreSQL queues a check for each) and then makes
+`Language_Type.language` unique in the same transaction: on a database with duplicates it fails with the
+pending-trigger error; on a clean one, and in tests, it passes. Whether a deleted row can be pointed at is read from
+the foreign keys the app's migrations had added by then.
+
+**Left alone:** migrations with `atomic = False`; squashed migrations (`replaces`), which run only on databases that
+applied none of the migrations they replace; a run that configures MySQL (`django.db.backends.mysql`, a `mysql://`
+URL) and names no PostgreSQL database, since MySQL commits each DDL statement and Django runs no migration in one
+transaction there (addons-server); a model the same migration creates (its table is new, and Django adds its foreign
+keys at the end of the migration); before the RunPython, a model the project's code (outside migrations and tests)
+reads as one row, `Model.objects.get()` with no arguments, a lazy singleton (`Model.objects.first()` in a function that
+creates the row when there is none; a bare `first()` reads one row of many and does not count) or django-solo's
+`Model.get_solo()`, a settings table whose lock costs nothing (DefectDojo's `System_Settings`, paperless's
+`ApplicationConfiguration`); RunPython code that only reads the model, or writes another model than
+the one altered; after the RunPython, writes that queue no check; an `AlterField` that changes only what Django keeps
+out of the database (`choices`, `help_text`, `verbose_name`, `blank`, `default`, `validators`, `related_name`,
+`on_delete`, ...), judged against the field's nearest earlier definition in the app's migrations (a dependency on a
+migration that a squashed migration replaces is followed into it); `RunPython.noop` and reverse code; `RunSQL`;
+`state_operations`; migrations in test directories. django-migration-linter has no such check; Squawk reads SQL,
+which a RunPython has none of.
+
+**Gaps:** a model is matched by its lowercased name, not its app label; a model name held in a variable other than a
+loop over literal names, a model passed to a helper, writes through related managers (`order.tags.add()`) or raw SQL
+(`schema_editor.execute("DELETE …")`), and helpers more than one call deep are not followed. Foreign keys and their
+targets are matched by model name across the run, so another app's same-named model counts. An `AlterField` whose
+earlier definition is not in the run (another app's migrations, a deleted history) counts as a change. An update of
+rows that an earlier operation of the same transaction rewrote queues checks even when the key is unchanged; such a
+migration is reported as `LockedBackfill`. The rule cannot see a table's size, so a backfill of a small table under
+the lock is reported too; and a self-hosted product that migrates with the application stopped pays upgrade time,
+not an outage. That is why it is `log` and starts off.
+
+**Corpus** (10 Django repositories of the BRIEF corpus, commits from `MANIFEST.tsv`; runs `django-fix-fin-<repo>`,
+and `django-fix-mig4-<repo>` for linkding and healthchecks; every match read, counted in findings as the review did).
+"Real" means the hazard holds and matters at production size: a lock held through a backfill of a table that grows
+with use or tenants (orders, issues, documents, log entries; per-project and per-event tables in plane and pretix),
+or a pending-trigger failure. A backfill of a table bounded by configuration (teams, menus, plugin configurations,
+warehouses) is not real, though the lock does happen.
+
+| Repository | Commit | Matches | Real | Notes |
+|---|---|--:|--:|---|
+| sissbruecker/linkding | `27b7303b` | 1 | 1 | `bookmarks/migrations/0044_bookmark_latest_snapshot.py`: every bookmark updated under the AddField's lock |
+| healthchecks/healthchecks | `c1039ad2` | 0 | | keeps every data migration in a file of its own (`hc/api/migrations/0117_fill_badge_key.py`), the fix this rule asks for |
+| paperless-ngx/paperless-ngx | `faa6f09f` | 1 | 1 | `documents/migrations/0016_sha256_checksums.py` reads every original file with `documents_document` locked |
+| HumanSignal/label-studio | `2f42caec` | 0 | | |
+| makeplane/plane | `723bb178` | 18 | 17 | `0045_…`: every `issueactivity` row rewritten after AddField; not real: `0063_state_is_triage_alter_state_group.py` (a filtered update of "Triage" states) |
+| inventree/InvenTree | `939df605` | 4 | 2 | `audit/0002_actor_username.py`, `part/0149_bomitem_raw_amount.py`; not real: `part/0145_…` (parameter templates), `users/0017_…` (API tokens) |
+| pretix/pretix | `40ea9097` | 29 | 22 | `0252_logentry_organizer.py` every log entry; not real: `team` ×4, `eventmetaproperty`, pretixdroid's app configuration, sendmail's rules |
+| mozilla/addons-server | `7e3374fe` | 0 | | MySQL only: skipped by design |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 5 | 4 | `0263_language_type_unique_language.py` (pending-trigger failure), `0286_cicd_infrastructure.py`, `0291_dojometa_location_product.py`; not real: `0272_…` (tool configurations) |
+| saleor/saleor | `e1ccf4d5` | 31 | 18 | order, order line, order event, cart line, checkout, transaction item, variant and product (×5) backfills; not real: menus ×3, pages and page translations ×4, attribute, attribute variant, app extension, plugin configuration, product type, warehouse |
+| **Total** | | **89** | **65 (73%)** | |
+
+Against the review's run (85 matches, 60 real, 71%): saleor's `sitesettings` backfill is gone (the current site's
+row is one row: `Site.objects.get_current().settings`), and five backfills of saleor's `product` table under the lock
+are new and real: the review's run had taken `product` for a one-row table, from a bare `Product.objects.first()`
+in a `.semgrep` example file, which the one-row test no longer accepts. DefectDojo's `0286_cicd_infrastructure.py`
+runs `SET CONSTRAINTS ALL IMMEDIATE` before its `RemoveField`s, now read as the fix for the pending-trigger case; its
+`LockedBackfill` on `engagement` stays. No corpus RunPython writes a single row by key under a lock, so that
+exemption changes no corpus count. Precision is 73%, the misses are configuration tables the rule cannot tell apart
+from large ones: `log`, off.
+
+**On #1120's engine (benchmark).** The 24 findings on the measured repositories it ran on are unchanged; on the
+benchmark's new repositories, 25 of 30 sampled matches (of 65) are real (83%). With the corpus, 90 of 119 (76%).
+
+### `django-practice-alterfield-rewrites-table`
+
+Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an ACCESS EXCLUSIVE lock and "will normally
+cause the entire table and its indexes to be rewritten", unless the old type is binary coercible to the new one
+(PostgreSQL, ALTER TABLE notes; Squawk "changing-column-type": int → bigint rewrites, varchar → text and a longer
+varchar do not). On a large table that blocks every read and write for minutes. A migration's `AlterField` names only
+the new field, so the rule reads the old one from the app's migration history (the library's `dj_field_src`): the
+nearest earlier definition of the same model and field (a `CreateModel` `fields` item, an `AddField` or an
+`AlterField`, followed back through a `RenameField` onto the name) in a migration applied before this one (by
+`dependencies`, transitively, a dependency on a migration a squash replaces reaching the squash too) or earlier in the
+same migration, with no other definition of that field between them. A `SeparateDatabaseAndState`'s
+`state_operations` count as definitions (saleor declares an M2M through table there before widening its key), but an
+`AlterField` among them changes no table and is not reported.
+
+Column types are resolved, not matched by class name alone: a field class is Django's own (`django.db.models`,
+`django.contrib.postgres.fields`, ...) or a class of the project derived from one, through its bases, with no
+`db_type` override on the way (`class MoneyField(models.DecimalField)` is numeric). A `ForeignKey` or
+`OneToOneField` column has its target's primary key type: for the new field, the key as the target's migration
+history has it at that point; for the old one, the type every definition of the key has (unknown when the key was
+widened, since the relation's column was widened with it). It reports:
+
+- **Integers of another width**: `AutoField`/`IntegerField`/`PositiveIntegerField` (integer),
+  `SmallAutoField`/`SmallIntegerField`/`PositiveSmallIntegerField` (smallint),
+  `BigAutoField`/`BigIntegerField`/`PositiveBigIntegerField` (bigint), either way. The `DEFAULT_AUTO_FIELD` switch to
+  `BigAutoField` is one; Django changes the foreign key columns that point at a widened key in the same statement, so
+  the key's `AlterField` stands for them. An `IntegerField` made a `ForeignKey` to a bigint key, and a relation
+  retargeted to a key of another type, are one too.
+- **A shorter varchar** (`CharField`, `SlugField`, `EmailField`, `URLField`, `FileField`, `ImageField`,
+  `FilePathField`, by `max_length` or Django's default for the class), or a text or unlimited varchar that gets a
+  limit (`TextField` → `CharField(max_length=n)`): PostgreSQL checks every row and rewrites.
+- **A `DecimalField`** whose `decimal_places` change or whose `max_digits` shrink.
+- **Any other change of PostgreSQL type**: `CharField` → `IntegerField`, `IntegerField` → `CharField`, `FloatField`
+  → `DecimalField`, `DateField` → `DateTimeField`, `TextField` → `JSONField`, `CharField` → `UUIDField`, ...
+
+The message (180 characters with its placeholders) names the model, the field and the old and new types, says
+PostgreSQL rewrites the table under a lock that blocks reads and writes, and advises a new column with a backfill and
+a swap on a large table, or keeping the change for a small one.
+
+It leaves alone the changes PostgreSQL makes in the catalog only, and those that are no type change: a longer or
+unlimited varchar, varchar → text, `CharField` ↔ `SlugField`/`EmailField`/`URLField` without a shorter limit, a
+`DecimalField` with more `max_digits` and the same `decimal_places`, the same type with other
+`null`/`blank`/`default`/`choices`/`db_index`/`unique`/`help_text` (other hazards), and a relation whose target key
+keeps its type (the same target, or one with the same key type). It also leaves alone an `AlterField` on a model the
+same migration creates; a model the project's code reads as its one row (`M.objects.get()` with no arguments, a lazy
+singleton `first()` beside a `create()`, `M.get_solo()`, outside migrations and tests: paperless's
+`ApplicationConfiguration`), whose rewrite is instant; a run that configures MySQL and names no PostgreSQL database
+(addons-server), where other changes copy the table and this classification does not hold; a field with no earlier
+definition in the run (a squashed or third-party history, another app's model); a squashed migration
+(`replaces = [...]`: its operations already ran wherever the migrations it replaces did, and its author did not
+choose them); migrations in test directories; a third-party field class
+(`django_countries.fields.CountryField`) or one that sets its own `db_type`; the length or precision of a project
+field class with an `__init__` on the way, which may rewrite its arguments (InvenTree's `InvenTreeURLField` forces
+`max_length=2000` whatever the migration says), so only its type is judged; a `max_length`, `max_digits` or
+`decimal_places` that is no integer literal; a relation whose target key is unknown or has had several types. Model
+names are matched per app (the migrations package), so two apps' `Order` models never mix in a field's history.
+
+django-migration-linter's `ALTER_COLUMN` check flags every `ALTER COLUMN … TYPE` it sees in the SQL, the safe ones
+included, with "Could be backward compatible. You may ignore this migration."; Squawk works on SQL, not on Django
+migrations. This rule's value is the classification from the history: widening a varchar, varchar → text and a
+`DecimalField` precision increase stay silent, so what it reports really rewrites the table.
+
+**Gaps:** a `RunSQL` `ALTER COLUMN … TYPE` is no definition; a renamed model loses its history (silent); a
+relation's target is matched by model name across the run; a table the previous migration created is reported though
+it may still be empty; `ArrayField`, citext and hstore changes are not judged; where a squashed migration sits beside
+the migrations it replaces, a field can have two nearest definitions and one `AlterField` two findings on its line
+(pretix `0120_…`). The field history reads a migration's dependencies by migration name, without their app label: a
+squash that depends on another app's `0001_initial` while replacing its own reads as depending on itself, and its
+fields lose their earlier definitions. On #1120's engine this hid the 10 findings of paperless
+`paperless_mail/migrations/0002_optimize_integer_field_sizes.py` (configuration tables, not real ones) and can hide
+real ones elsewhere; runpython-with-schema-change's `AlterField` judgment reads the same history. The rule cannot see
+a table's size, so a small table's rewrite (a lookup or configuration table) is reported too; and a self-hosted
+product that migrates with the application stopped pays upgrade time, not an outage. That is why it is `log` and
+starts off.
+
+**Corpus** (10 Django repositories of the BRIEF corpus, commits from `MANIFEST.tsv`; runs
+`django-fix-fin-<repo>`, and `django-fix-mig4-<repo>` for linkding and healthchecks, which have no squashed
+migrations). "Real" means the table grows with use or tenants (orders, users, log entries; in multi-tenant plane and
+pretix, per-event and per-project tables too); a table bounded by configuration is not real. Counted by line; pretix's
+78 one-line `id` → `BigAutoField` changes in `*_bigint.py` were judged by table, every other match read in its file.
+
+| Repository | Commit | Matches | Real | Not real |
+|---|---|--:|--:|---|
+| sissbruecker/linkding | `27b7303b` | 0 | | |
+| healthchecks/healthchecks | `c1039ad2` | 1 | 1 | |
+| paperless-ngx/paperless-ngx | `faa6f09f` | 19 | 1 | correspondents, tags, document types, storage paths, saved-view rules, workflows, mail accounts and rules |
+| HumanSignal/label-studio | `2f42caec` | 0 | | |
+| makeplane/plane | `723bb178` | 9 | 9 | |
+| inventree/InvenTree | `939df605` | 5 | 5 | |
+| pretix/pretix | `40ea9097` | 88 | 80 | settings store, staff sessions and their audit log, exchange rates, Apple Pay domains, U2F and WebAuthn devices, medium key sets |
+| mozilla/addons-server | `7e3374fe` | 0 | | MySQL only: skipped (7 matches before, 3 of them real) |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 7 | 6 | `finding_template` |
+| saleor/saleor | `e1ccf4d5` | 43 | 27 | categories, collections, pages and their translations, sales, shipping methods, warehouses |
+| **Total** | | **172** | **129 (75%)** | |
+
+Against the review's run (153 matches, 112 real, 73%): paperless's four `ApplicationConfiguration` changes are gone
+(its lazy singleton), and addons-server's seven (MySQL only). Resolution found 30 more, 20 of them real: saleor's
+`_amount` money fields after their `RenameField` (`order`, `orderline`, `voucher`, `giftcard`, `productvariant`:
+numeric(12,2) → (12,3)) and its `TextField` → `SanitizedJSONField` descriptions (mostly catalogue tables, not
+real), pretix's `0304_tax_rate_decimals.py` (`NormalizedDecimalField`, a project subclass of `DecimalField`, on
+`orderposition`, `invoiceline`, `orderfee`, `cartposition`, `transaction` and `taxrule`), InvenTree's
+`stockitemtestresult.attachment` (`ForeignKey` → `FileField`: integer to varchar). InvenTree's `stockitem.link`
+stays silent: `InvenTreeURLField`'s `__init__` forces `max_length=2000`, so the
+migration's 125 is not its length. Precision stays below 90% because table size is out of reach: `log`, off.
+
+**On #1120's engine (benchmark).** On the benchmark's new repositories, 22 of 30 sampled matches (of 87) are real
+(73%). With the corpus, 151 of 202 (75%).
+
+### `django-practice-runpython-live-model`
+
+Rerail's own rule, not a port. A `RunPython` function receives `apps`, whose `get_model()` returns each model as it
+stood at that migration. Django's migration docs ("Historical models"): "If you import models directly rather than
+using the historical models, your migrations may work initially but will fail in the future." The live class has
+today's fields: once a later migration adds a column, a fresh database (a new install, CI from an empty database, a
+teammate's database) runs this old migration with a model that selects or inserts a column that does not exist yet,
+and the migration fails. label-studio's `tasks/functions.py` says so in a comment on the helper its migrations call:
+"Don't load full Organization objects bc some columns ... aren't created until after a migration calls this code".
+
+The rule follows a migration's RunPython code (its `code` and its `reverse_code`, and the migration-file defs they
+call) out of the migration and through the cross-file call graph. It reports the call that leaves the migration's
+code for a def in another, non-migration module (or the `RunPython(helper)` argument itself, when the helper is the
+code), when that def or a def it reaches uses a model class of the run in its own frame:
+
+- its manager: `M.objects…`, `M._default_manager…`, `M._base_manager…`;
+- a saved instance: `M(...).save()`, or `m = M(...)` and `m.save()` in the same function.
+
+M must resolve to the class (an import, a local import inside the function, a module attribute such as
+`common.tasks.rebuild_attachment`), not to a parameter. A def of the run passed as an argument
+(`start_job_async_or_sync(fill_counts)`, a job runner that calls what it is given) counts as called, unless the call
+connects a signal receiver (`post_migrate.connect(fill)`, which saleor uses to run its search backfills once
+`migrate` has finished, on the full schema). Imports written relative to an import root inside the repository
+(`from tasks.functions import x` for `label_studio/tasks/functions.py`) resolve by the end of the qualified name
+when the call graph has no target. The message names the helper the migration calls, the model, and the file and
+line of the use.
+
+It leaves alone:
+
+- the live model written in the migration file itself (`from shop.models import Book` and `Book.objects` in the
+  RunPython function): django-migration-linter's `RUNPYTHON_MODEL_IMPORT` reports that shape from the function's own
+  source; this rule adds what it cannot see, the helper in another module;
+- helpers that use only their parameters (`normalize_url(url)` in linkding's
+  `bookmarks/migrations/0047_populate_url_normalized_field.py`), and helpers that receive the historical model
+  (`fill(apps.get_model("shop", "Book"))`, plane's `migrate_models_filters_to_rich_filters(models_to_migrate, ...)`)
+  and use nothing else (DefectDojo's `clean_hosts_run(apps, ...)` uses the models it is given but calls
+  `endpoint_filter`, which queries the live `Endpoint`, and is reported);
+- a model class used only for `isinstance`, a constant or its exceptions (`Book.STATUS_DONE`, `Book.DoesNotExist`),
+  and an unsaved instance (DefectDojo's `Endpoint.from_uri()` builds an `Endpoint(...)` to parse a URL);
+- a query that runs only when the caller leaves a parameter out: a call or use in an `if p is None:` body, `p` a
+  parameter of its function, is not followed when the call into that function passes `p` (not `None`), by keyword or
+  by position, counted after `self`/`cls` for a method called on an object (addons-server's `get_review_due_date`
+  passes `target_per_day=1` so the staggering generator skips its `Config` lookup). The walk is kept per call out of
+  the migration, so one call's arguments never stand in for another's;
+- raw SQL (DefectDojo's `dojo.vulnerability.backfill.run_backfill`), a task dispatched with `.delay()` (it runs later,
+  in a worker, on the current schema), models outside the run (`django.contrib.auth`'s `User`), helpers in test code
+  and migrations under a test directory.
+
+**Gaps:** a call the call graph cannot resolve (`getattr`, a method on an instance, a callable from a registry), a
+management command run with `call_command`, operations a factory builds at import (label-studio's
+`make_sql_migration(...)`), the global `django.apps.apps.get_model`, and related managers or instance methods reached
+from a row are not followed. A None test written other than `p is None` (`if not p:`, `p or …`) is not read. The
+use the message names is the first one in the helper's chain; it can be a narrow one (label-studio's
+`Organization.objects…values_list("id")`) while a wider one sits further down the same chain.
+
+**Sources:** Django documentation, "Migrations" → "Historical models", and the `RunPython` operation reference (the
+function receives `apps` with historical models); django-migration-linter's `RUNPYTHON_MODEL_IMPORT` check (the
+single-file form).
+
+**Corpus** (10 Django repositories of the BRIEF corpus, at the commits in `MANIFEST.tsv`; re-run after the per-exit
+walk and the positional None guard as `django-fix-fin-<repo>` and `django-fix-mig4-<repo>`, the same 8 matches as the
+review's run; every match read). "Real" means the code runs today's model inside an old migration.
+
+| Repository | Commit | Matches | Real |
+|---|---|--:|--:|
+| sissbruecker/linkding | `27b7303b` | 0 | |
+| healthchecks/healthchecks | `c1039ad2` | 0 | |
+| paperless-ngx/paperless-ngx | `faa6f09f` | 0 | |
+| HumanSignal/label-studio | `2f42caec` | 5 | 5 |
+| makeplane/plane | `723bb178` | 0 | |
+| inventree/InvenTree | `939df605` | 2 | 2 |
+| pretix/pretix | `40ea9097` | 0 | |
+| mozilla/addons-server | `7e3374fe` | 0 | |
+| DefectDojo/django-DefectDojo | `cd0a4483` | 1 | 1 |
+| saleor/saleor | `e1ccf4d5` | 0 | |
+
+8 matches, 8 real (100%), so the rule starts in `steer`. The matches:
+
+- label-studio `data_manager/migrations/0008_manual_counters_update.py:27` and
+  `tasks/migrations/0024_manual_migrate_counters_again.py:27` (`calculate_stats_all_orgs` → `Organization.objects`,
+  then `Project.objects…values(...)`), `tasks/migrations/0030_auto_20221102_1118.py:8` (`fill_annotations_project`),
+  `0042_auto_20230810_2304.py:7` and `0043_auto_20230825.py:7` (`fill_predictions_project`, whose
+  `AsyncMigrationStatus.objects.create(...)` inserts every column today's model has). Three of these queries name
+  only columns that exist at that migration, so they work today and the finding is latent; the `create(...)` and
+  full-row loads can fail now.
+- InvenTree `common/migrations/0043_auto_20260518_1206.py:47` (`common.tasks.rebuild_attachment` loads and saves the
+  live `Attachment`) and `0041_auto_20251203_1244.py:18` (`convert_physical_value` → `CustomUnit.objects.all()`
+  inside `try/except Exception`; on PostgreSQL a failed query aborts the migration's transaction, so the `except`
+  does not save it).
+- DefectDojo `dojo/db_migrations/0105_endpoint_host_migration.py:7`: `clean_hosts_run(apps=apps, …)` calls
+  `endpoint_filter` (`dojo/endpoint/utils.py`), which queries the live `Endpoint.objects`.
+
+**On #1120's engine (benchmark).** The 7 findings on the measured repositories it ran on are unchanged, and the
+benchmark's new repositories have no match: still 100%.
+
+### `django-practice-settings-in-test`
+
+Rerail's own rule, not a port. A value a test writes on `django.conf.settings` stays there: Django does not put the
+old value back after the test and sends no `setting_changed` signal for the write, so the value leaks into the tests
+that run after it, and caches built from the setting (DRF's throttle rates, storage backends, template engines) go
+stale. `override_settings`, `modify_settings`, a TestCase's `self.settings()` and pytest-django's `settings` fixture
+revert their changes and send the signal. The rule reads Django's test runner and pytest alike: unittest/TestCase
+classes, pytest functions, fixtures through the conftest.py files.
+
+```python
+from django.conf import settings
+
+def test_svg_upload_sanitize(client):
+    settings.SVG_SECURITY_CLEANUP = True        # reported: every later test runs with it on
+    ...
+
+@override_settings(SVG_SECURITY_CLEANUP=True)  # the fix; with pytest-django, the `settings` fixture parameter
+def test_svg_upload_sanitize(client):
+    ...
+```
+
+It matches, in a test document (a `tests`/`test`/`testing`/`unittests` directory, `test_*.py`, `*_test.py`,
+`*_tests.py`, `tests.py`, `test.py`, `conftest.py`), a write to an upper-case attribute of `django.conf.settings`,
+resolved through imports (`from django.conf import settings as s`, `django.conf.settings.X`), made inside a test (a
+test, fixture, set-up hook, or a helper a test calls): an assignment, augmented assignment or `del` of the setting, or
+of an item or attribute inside it (`settings.CACHES["default"]["LOCATION"] = ...`), a list/dict/set mutator called on
+it (`settings.MIDDLEWARE.append(...)`), and `setattr`/`delattr` on settings with a literal name. A def reports each
+setting once, at its first write.
+
+It leaves alone:
+- pytest-django's `settings` fixture parameter (it resolves to no import, so it is not `django.conf.settings`);
+- `override_settings`, `modify_settings` and `self.settings()`, and a plain write inside one of them (as a `with`, a
+  decorator of the test or its class, or an override the test starts with `.enable()`): it lands on the override's
+  copy, which is dropped with it. An item write inside an override still changes the shared value and is reported,
+  unless the override replaces that setting;
+- a write that is put back: by a write of the same setting, or of a container it runs through, in undo code (after
+  the yield of a fixture or `@contextmanager`, in a `finally`, in a `tearDown`/`tearDownClass` or `__exit__` of the
+  class or a base class, in `teardown_module`, in an `addCleanup`/`addfinalizer` callback such as
+  `self.addCleanup(setattr, settings, "X", old)`, in a def that undo code calls, in the teardown of a fixture the test
+  requests or of an autouse one), or by a patch active where the write runs (`patch.object(settings, "X", ...)`,
+  `monkeypatch.setattr(settings, "X", ...)`); the restoring write itself;
+- module-level code of a test module or `conftest.py`: it runs once at import, before the first test, so every test
+  sees one value;
+- session-wide set-up: pytest hooks and helpers only hooks call, autouse session fixtures and the session fixtures
+  they request, pytest-django's database set-up fixtures (`django_db_setup`, `django_db_modify_db_settings*`). A
+  session-scoped fixture that is not autouse is reported: the tests that run before the first one requesting it see
+  another value;
+- a def no test calls: a runner script's `main()` under `tests/`;
+- lower-case attributes (`settings._wrapped`) and calls (`settings.configure(...)`), reads, `setattr` with a computed
+  name;
+- code outside test documents: `django-practice-settings-runtime-assignment` reports it there;
+- another library's `settings` (Dynaconf, a pydantic settings object).
+
+**Gaps:** an alias (`apps = settings.INSTALLED_APPS; apps.append(x)`) is not followed; `setattr(settings, name, v)`
+with a computed name is not read. A restore by hand without `finally` is reported on purpose: it leaks whenever the
+test fails before it. A plain write while an autouse fixture's pytest-django `settings` override is active (a
+conftest fixture that writes through its `settings` parameter, which keeps an override on for every test under it) is
+reported, though the write lands on that override and is dropped at teardown.
+
+**Overlap:** none in Ruff (its PT family, PGH005 and B003 do not look at Django settings), pylint, flake8-django or
+pylint-django. `django-practice-settings-runtime-assignment` reports the same writes outside test documents and skips
+them on purpose; both rules read the library's `dj_test_doc`, so a write is reported by exactly one of them. A helper
+in a non-test module such as `shop/testing.py` is that rule's.
+
+**Sources:**
+- Django docs, [Testing tools: Overriding settings](https://docs.djangoproject.com/en/5.2/topics/testing/tools/#overriding-settings):
+  "Don't manipulate django.conf.settings directly as Django won't restore the original values after such
+  manipulations"; `setting_changed` is sent only by `override_settings` and its kin.
+- pytest-django docs, [the `settings` fixture](https://pytest-django.readthedocs.io/en/latest/helpers.html#settings):
+  it will "automatically revert any changes made to the settings (modifications, additions and deletions)".
+- flakytest.dev, [Keep tests independent of each other](https://flakytest.dev/guides/test-isolation): order-dependent
+  tests come from shared state such as module globals, the environment and shared fixtures.
+
+**Corpus** (the 10 Django repositories of the second corpus; written and reviewed in the pytest pack, whose
+[review](../pytest/REVIEW-pytest.md) moved it here). 24 matches in 4 repositories, every match read. The review
+counted all 24 real; label-studio's 5 are not (see below), so 19 are real (79%). label-studio and InvenTree were
+re-run after the rule's last rework, with the same matches; pretix and DefectDojo hold the review's reading.
+
+| Repository | Matches | Real |
+|---|--:|--:|
+| HumanSignal/label-studio | 5 | 0 |
+| inventree/InvenTree | 2 | 2 |
+| pretix/pretix | 2 | 2 |
+| DefectDojo/django-DefectDojo | 15 | 15 |
+| linkding, healthchecks, paperless-ngx, plane, addons-server, saleor | 0 | |
+
+- label-studio `label_studio/tests/test_upload_svg.py:13`, `:43`, `:67` (`SVG_SECURITY_CLEANUP`) and its conftest's
+  `enable_sentry` fixture at `label_studio/tests/conftest.py:83`, `:85`: not real. The same conftest's autouse
+  `disable_sentry(settings)` writes through pytest-django's `settings` fixture, so every test under it runs inside an
+  override; these plain writes land on that override and are dropped at teardown.
+- InvenTree `src/backend/InvenTree/common/test_tasks.py:35` sets `USE_TZ = True` in `setUp` while `tearDown` restores
+  another setting.
+- pretix `src/tests/base/test_mail.py:691`: a forgotten `settings` fixture parameter.
+- DefectDojo `unittests/test_cleanup_alerts.py:24` never restores `MAX_ALERTS_PER_USER`; seven
+  `DEDUPE_ALGO_ENDPOINT_FIELDS` writes are restored by hand at the end of the test, which leak when it fails; three
+  writes (`unittests/test_generic_meta_import.py:23`, `unittests/test_tags.py:418`, `:435`) set
+  `SECURE_SSL_REDIRECT = False`, the value the test settings already have: a leak with no effect today, still worth
+  `override_settings`. DefectDojo has no pytest dependency or `conftest.py`: a pytest pack never installs there.
+
+**On #1120's engine (benchmark).** 16 matches, label-studio's 5 above among them, 8 real (50%): InvenTree
+`InvenTree/tests.py:1319` and `common/test_tasks.py:35`, lookit, taiga ×3 (hand restores without `finally`) and
+wger ×2. All 8 false matches are
+writes under an autouse `settings` override: label-studio's 5 and readux `apps/templates/tests/test_ga_id.py:12`,
+`:19`, `:23` (under `apps/conftest.py`'s `media_storage(settings, tmpdir)`). It starts off (Log): below 90%; turn it
+on where no autouse fixture writes through pytest-django's `settings` fixture.
+
 ## The corpus
 
 31 open-source Django apps, cloned shallow at these commits. The numbers below were measured with two exclusions the
@@ -1173,8 +1963,12 @@ working tree; main runs the whole pack over netbox with it in 164 s.
 
 | Path | What it is |
 |---|---|
-| `rules/django-practice-<id>.rerail` | The 27 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
-| [`rules/lib/django.rerail`](rules/lib/django.rerail) | `lib/django`, the shared vocabulary: models and their fields, querysets, transactions, views, test and migration files, settings |
-| `cases/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`). Not published |
+| `rules/django-practice-<id>.rerail` | The 34 rules, written by hand. Each opens with a comment on what it matches and leaves alone, with an example of each |
+| [`rules/lib/django.rerail`](rules/lib/django.rerail) | `lib/django`, the shared vocabulary: models and their fields, querysets, transactions, views, test and migration files, migration history (a field's definition at a point, through renames and squashes; a relation's key type), one-row tables, settings |
+| [`rules/lib/django_tests.rerail`](rules/lib/django_tests.rerail) | `lib/django_tests`, test code under Django's runner and pytest: tests, fixtures and set-up hooks, the helpers they call, fixture lookup through conftest.py, active patches, and the changes to state and the code that undoes them |
+| `upstream/django-practice/authored/<id>/` | Each rule's cases, a small repository: a line ending in `# caught` must be reported, no other line may be (the rule file's `.test cases`). Pack test data in S3 (`npm run fixtures:pull -- --pack django`), not in git |
 | [`NOTES-django.md`](NOTES-django.md) | The batch notes: dropped candidates, open library proposals, overlaps with other tools |
+| [`NOTES-django-stack.md`](NOTES-django-stack.md) | The notes of the six later rules |
+| [`REVIEW-django-stack.md`](REVIEW-django-stack.md) | The independent review of the six later rules, and what was applied |
 | [`ENGINE-BUGS.md`](ENGINE-BUGS.md) | Engine and library bugs found while writing and measuring these rules |
+

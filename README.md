@@ -117,6 +117,15 @@ Packs that port a linter are [linter-equivalent](docs/rule-packs.md#linter-equiv
 | `php` | PHP_CodeSniffer v4, PHPStan v2, Psalm v6 |
 | `complexity` | none: counts like lizard v1, for cyclomatic complexity above 6 in Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue and Java |
 | `django` | none: Rerail's own rules for Django models, querysets, transactions, views and settings, from the Django docs and maintainers' review advice |
+| `drf` | none: Rerail's own rules for Django REST framework serializers, permissions, querysets and pagination |
+| `fastapi` | none: Rerail's own rules for FastAPI dependencies, sessions, response models, auth and async routes |
+| `pydantic` | none: Rerail's own rules for Pydantic 2 models, validators, settings and serialization |
+| `sqlalchemy` | none: Rerail's own rules for SQLAlchemy sessions, transactions, relationship loading and bulk writes |
+| `alembic` | none: Rerail's own rules for Alembic migrations that run safely against a live PostgreSQL database |
+| `celery` | none: Rerail's own rules for Celery tasks dispatched after commit, serializable, retry-safe and registered |
+| `pytest` | none: Rerail's own rules for isolated tests, sound fixtures and mocks that patch what the code uses |
+| `python-practice` | none: Rerail's own rules for Python async code, cancellation, timeouts, retries and resource cleanup |
+| `python-security` | none: Rerail's own rules for untrusted request data that reaches SQL, shells, URLs, files or deserializers |
 
 A ported rule ships only once it passes the conformance check: it is scored against the original tool's own findings on the tool's tests, at the exact release the pack pins, and on real-code samples. Ports that are not ready yet sit in each pack's `candidates/`, scored but never shipped. Each pack is versioned with changesets and released separately from core. See [Rule packs](docs/rule-packs.md), the [pack format](docs/pack-format.md) and [the conformance check](conformance/README.md#the-gate).
 
