@@ -509,13 +509,14 @@ fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alon
 /// policy that asks for other guests runs in its own pack (`rr::guest_asks`): C408 finds what it finds alone, and a
 /// policy that asks the same as C408 still shares its pack.
 /// Empty calls are C408; wrapping a literal (`dict({})`) is C418 and must not supply this test's positives.
+/// Each positive is an annotation root the library requests; unrelated string contexts are not implicitly parsed.
 #[test]
 fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrguestpack");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("c.py"),
-        "from typing import List, Literal, cast\n\na: \"dict()\" = 1\nb: \"dict(\" \")\" = 1\nc: List[\"dict()\"] = []\nd: Literal[\"dict()\"] = 1\ne = cast(\"(dict)()\", None)\n",
+        "from typing import List, Literal\n\na: \"dict()\" = 1\nb: \"dict(\" \")\" = 1\nc: List[\"dict()\"] = []\nd: Literal[\"dict()\"] = 1\ne: \"(dict)()\" = None\n",
     )
     .unwrap();
     let c408 = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
