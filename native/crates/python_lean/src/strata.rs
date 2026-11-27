@@ -66,6 +66,8 @@ struct B {
     depth0: u64,
     /// Stratum 2: a string's first byte (its prefix's, or its quote's), in code or in an interior.
     sstart: u64,
+    /// Stratum 2: a string's closer's first byte (in variant B, of the strings in code only).
+    send: u64,
 }
 
 /// A quote's mask.
@@ -128,6 +130,7 @@ fn block(v: V) -> B {
         code: !0,
         depth0: 0,
         sstart: 0,
+        send: 0,
     }
 }
 
@@ -529,6 +532,7 @@ impl<'s> Text<'s> {
                             return Err(refuse(base + e as usize));
                         }
                         let end = e + k;
+                        self.b[bi].send |= 1 << e;
                         nc |= from(rel as u32) & !from(end);
                         if end > 64 {
                             taken = !from(end - 64);
@@ -634,6 +638,7 @@ impl<'s> Text<'s> {
                             continue;
                         }
                         let k = if triple { 3 } else { 1 };
+                        self.b[bi].send |= 1 << c;
                         top = stack.pop().expect("a frame");
                         if top == F::Code {
                             let end = c + k;
@@ -803,6 +808,30 @@ fn run_from(f: &[[u64; 2]; 3], s: u8) -> (u64, u64, u8) {
     (lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8)
 }
 
+/// Bit `i` the parity of `x`'s bits `0..=i`: six shifted XORs.
+#[inline(always)]
+fn prefix_xor(x: u64) -> u64 {
+    let x = x ^ (x << 1);
+    let x = x ^ (x << 2);
+    let x = x ^ (x << 4);
+    let x = x ^ (x << 8);
+    let x = x ^ (x << 16);
+    x ^ (x << 32)
+}
+
+/// The one-line strings' machine's shortcut: each kind's strings by a prefix XOR of its quotes (simdjson's), where
+/// no quote of one kind lies in a string of the other and no string is open at a bare line end; else none.
+#[inline(always)]
+fn by_parity(ex: u64, ey: u64, r: u64, s: u8) -> Option<(u64, u64, u8)> {
+    let lo = prefix_xor(ex) ^ if s == 1 { !0 } else { 0 };
+    let hi = prefix_xor(ey) ^ if s == 2 { !0 } else { 0 };
+    let (lb, hb) = (lo << 1 | u64::from(s == 1), hi << 1 | u64::from(s == 2));
+    if (ex & hb) | (ey & lb) | (r & (lo | hi)) != 0 {
+        return None;
+    }
+    Some((lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8))
+}
+
 /// The planes of a state that holds from `s` until the first bit of `r` (where it becomes C), with no other events.
 #[inline(always)]
 fn hold(s: u8, r: u64) -> (u64, u64, u8) {
@@ -856,7 +885,11 @@ impl<'s> Text<'s> {
             tr_taken = t_close >> 62 | t_close >> 63;
             // 2. One-line strings, outside the triples.
             let (ex, ey) = (qs & !tr, qd & !tr);
-            let (sl, sh, s1) = if ex | ey == 0 { hold(s0, b.bare_lf) } else { run_from(&machine(ex, ey, b.bare_lf), s0) };
+            let (sl, sh, s1) = if ex | ey == 0 {
+                hold(s0, b.bare_lf)
+            } else {
+                by_parity(ex, ey, b.bare_lf, s0).unwrap_or_else(|| run_from(&machine(ex, ey, b.bare_lf), s0))
+            };
             let sa = sl | sh;
             let sb = sa << 1 | u64::from(s0 != 0);
             // 3. Comments: a `#` in C outside the triples generates, every byte but a line end propagates.
@@ -888,6 +921,7 @@ impl<'s> Text<'s> {
             }
             self.b[bi].code = !(comment | s_region | tr | (pre >> 64) as u64);
             self.b[bi].sstart = (starts >> 64) as u64;
+            self.b[bi].send = ((qs | qd) & !tr & sb & !sa & !comment) | t_close;
             (t0, s0, prev) = (t1, s1, b);
         }
         t0 == 0 && s0 == 0
@@ -1500,15 +1534,19 @@ impl<'s> Walk<'s> {
         let mut text = j;
         let mut content = false;
         let (quote, format) = (q.quote, q.format);
+        // The string's closer is stratum 2's (`send`), so its text stops only at its backslashes and a format
+        // string's braces: not at each quote and line end of it. Variant B finds no closer of a string in an
+        // interior, which is read by its quotes and line ends.
+        let known = !(self.b && self.depth > 0);
         loop {
-            let s = self.t.next(j, |b| quotes(b, quote) | b.bs | b.lf | if format { b.lb | b.rb } else { 0 });
+            let s = self.t.next(j, |b| if known { b.send } else { quotes(b, quote) | b.lf } | b.bs | if format { b.lb | b.rb } else { 0 });
             if s >= src.len() {
                 return Err(refuse(s));
             }
             content |= s > j;
             let c = src[s];
             if c == q.quote {
-                if !q.triple || (self.at(s + 1) == q.quote && self.at(s + 2) == q.quote) {
+                if known || !q.triple || (self.at(s + 1) == q.quote && self.at(s + 2) == q.quote) {
                     let close = if q.triple { 3 } else { 1 };
                     if content {
                         self.text(text, s);
