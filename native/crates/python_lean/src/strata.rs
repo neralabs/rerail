@@ -9,16 +9,16 @@
 //!    end, the quote's own mask, or for a triple the quote's mask and its two next bytes'. An f-string's
 //!    interiors are code read by the same steps, their bracket depth by popcounts between the steps. Out comes
 //!    `code`. An f-string inside an interior is refused, to tree-sitter.
-//! 3. **Depth** (`Text::depth`): the bracket depth after each byte of code, a prefix sum and a prefix minimum of
-//!    the block's 64 steps (the minimum clamps it at 0, as the lean lexer's counter is), with the depth carried
-//!    in; out comes `depth0`. A block with no bracket is one test. A depth past 31 is refused (a rule).
+//! 3. **Depth** (`Text::depth`): the bracket depth after each byte of code, by the block's brackets' bits, with the
+//!    depth carried in (clamped at 0, as the lean lexer's counter is); out comes `depth0`. A block with no bracket
+//!    is one test. A depth past 31 is refused (a rule).
 //! 4. **Tokens** (`Walk`): the lean lexer's tokens and layout read from the masks: an item's start the next byte
 //!    past the blanks, a name's end its run's, a string's stops one mask of its own kind, and whether a line end
 //!    is inside brackets one bit of `depth0`, not a count.
 
 use crate::lex::{self, Extra, Lexed, MAX_NESTING, Quote, Refusal, T, Tok};
 use rerail_simd::prelude::*;
-use rerail_simd::{Mask, Simd};
+use rerail_simd::Simd;
 
 type V = Simd<u8, 64>;
 
@@ -35,8 +35,6 @@ struct B {
     skip: u64,
     /// `'\n'`, `'\r'`: a comment's end.
     eol: u64,
-    /// `'\n'`, `'\r'`, `'\f'`: what makes a gap a line's end.
-    brk: u64,
     lf: u64,
     /// A `'\n'` no backslash escapes (nor a `'\r'` an escaped one): a one-line string's refusal.
     bare_lf: u64,
@@ -53,15 +51,12 @@ struct B {
     ob: u64,
     /// `)`, `]`, `}`.
     cb: u64,
-    colon: u64,
-    bang: u64,
-    /// A string prefix's letters (`rRbBfFtTuU`), and the format ones (`fFtT`).
-    pfx: u64,
-    fmt: u64,
     /// Stratum 2: not in a comment or a string (an f-string's interiors are in its string).
     code: u64,
     /// Stratum 3: the bracket depth after this byte is 0.
     depth0: u64,
+    /// Stratum 2: a string's first byte (its prefix's, or its quote's), in code or in an interior.
+    sstart: u64,
 }
 
 /// A quote's mask.
@@ -93,21 +88,20 @@ fn block(v: V) -> B {
     let s = V::splat;
     let eq = |x: u8| v.simd_eq(s(x));
     // A letter is `b | 0x20` in `a..=z`; a digit `b - '0'` below 10 (wrapping).
-    let low = v | s(0x20);
-    let alpha = (low - s(b'a')).simd_lt(s(26));
+    let alpha = ((v | s(0x20)) - s(b'a')).simd_lt(s(26));
     let digit = (v - s(b'0')).simd_lt(s(10));
     let word = (alpha | digit | eq(b'_')).to_bitmask();
-    let (space, tab, ff, lf, cr) = (eq(b' ').to_bitmask(), eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\n').to_bitmask(), eq(b'\r').to_bitmask());
+    let (space, lf) = (eq(b' ').to_bitmask(), eq(b'\n').to_bitmask());
+    // Tabs, form feeds and `'\r'` are rare: one mask, and each its own only in a block that has one.
+    let rare = (eq(b'\t') | eq(0x0c) | eq(b'\r')).to_bitmask();
+    let (tab, ff, cr) = if rare == 0 { (0, 0, 0) } else { (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask()) };
     let (lb, rb) = (eq(b'{').to_bitmask(), eq(b'}').to_bitmask());
-    let leq = |x: u8| low.simd_eq(s(x));
-    let fmt = leq(b'f') | leq(b't');
     B {
         word,
         space,
         sptab: space | tab,
         skip: space | tab | ff | lf,
         eol: lf | cr,
-        brk: lf | cr | ff,
         lf,
         bare_lf: cr,
         sq: eq(b'\'').to_bitmask(),
@@ -120,13 +114,26 @@ fn block(v: V) -> B {
         rb,
         ob: (eq(b'(') | eq(b'[')).to_bitmask() | lb,
         cb: (eq(b')') | eq(b']')).to_bitmask() | rb,
-        colon: eq(b':').to_bitmask(),
-        bang: eq(b'!').to_bitmask(),
-        pfx: (fmt | leq(b'r') | leq(b'b') | leq(b'u')).to_bitmask(),
-        fmt: fmt.to_bitmask(),
         code: !0,
         depth0: 0,
+        sstart: 0,
     }
+}
+
+/// Block `bi`'s `:` and `!`: made from its bytes where an f-string's interior asks, not for every block.
+#[inline(always)]
+fn colon_bang(src: &[u8], bi: usize) -> u64 {
+    let at = bi * 64;
+    let v = match src.get(at..at + 64) {
+        Some(b) => V::from_slice(b),
+        None => {
+            let mut b = [0u8; 64];
+            let k = src.len().saturating_sub(at).min(64);
+            b[..k].copy_from_slice(&src[at..at + k]);
+            V::from_array(b)
+        }
+    };
+    (v.simd_eq(V::splat(b':')) | v.simd_eq(V::splat(b'!'))).to_bitmask()
 }
 
 /// Stratum 1 over `src`: a block's masks each, and one block past the end (all clear) for a look at the next
@@ -159,61 +166,26 @@ fn classes(src: &[u8]) -> Vec<B> {
     out
 }
 
-/// Byte `i / 8` of `m` in lane `i`, tested at its bit `i % 8`: a block's mask as a mask of lanes.
+/// One block's depths, by its brackets' bits (`up` and `down`, in code): the bits where the depth after the byte is
+/// 0, the depth carried out, and whether any is past the bound. Between two brackets the depth is the one after the
+/// first, so each bracket sets the bits of the run before it where that run's depth is 0, the depth clamped at 0 as
+/// the lean lexer's counter is. A few operations a bracket: fewer than a prefix sum over the block's 64 lanes.
 #[inline(always)]
-fn lanes(m: u64) -> Mask<i8, 64> {
-    const IDX: [u8; 64] = {
-        let mut t = [0u8; 64];
-        let mut i = 0;
-        while i < 64 {
-            t[i] = (i / 8) as u8;
-            i += 1;
-        }
-        t
-    };
-    const BIT: [u8; 64] = {
-        let mut t = [0u8; 64];
-        let mut i = 0;
-        while i < 64 {
-            t[i] = 1 << (i % 8);
-            i += 1;
-        }
-        t
-    };
-    let mut t = [0u8; 16];
-    t[..8].copy_from_slice(&m.to_le_bytes());
-    let table = Simd::<u8, 16>::from_array(t);
-    let mut o = [0u8; 64];
-    for k in 0..4 {
-        table.swizzle_dyn(Simd::from_slice(&IDX[16 * k..])).copy_to_slice(&mut o[16 * k..16 * k + 16]);
+fn depth_bits(up: u64, down: u64, carry: i8) -> (u64, i8, bool) {
+    let (mut zero, mut d, mut from, mut deep) = (0u64, i32::from(carry), 0u32, false);
+    let mut m = up | down;
+    while m != 0 {
+        let k = m.trailing_zeros();
+        // Bytes `from..k` lie at depth `d`.
+        let run = (!0u64 << from) & !(!0u64 << k);
+        zero |= if d == 0 { run } else { 0 };
+        d = (d + if up >> k & 1 == 1 { 1 } else { -1 }).max(0);
+        deep |= d > i32::from(MAX_DEPTH);
+        from = k;
+        m &= m - 1;
     }
-    (V::from_array(o) & V::from_array(BIT)).simd_ne(V::splat(0))
-}
-
-/// One block's depths: the bits where the depth after the byte is 0, the depth carried out, and whether any is
-/// past the bound. `up` and `down` are the block's opening and closing brackets in code.
-#[inline(always)]
-fn depth_block(up: u64, down: u64, carry: i8) -> (u64, i8, bool) {
-    type D = Simd<i8, 64>;
-    // +1 at an opener, -1 at a closer (a set lane is -1).
-    let mut s: D = lanes(down).to_int() - lanes(up).to_int();
-    s += s.shift_elements_right::<1>(0);
-    s += s.shift_elements_right::<2>(0);
-    s += s.shift_elements_right::<4>(0);
-    s += s.shift_elements_right::<8>(0);
-    s += s.shift_elements_right::<16>(0);
-    s += s.shift_elements_right::<32>(0);
-    s += D::splat(carry);
-    // The depth clamped at 0 as it goes: the sum less its least value so far, where that is below 0.
-    let mut m = s;
-    m = m.simd_min(m.shift_elements_right::<1>(i8::MAX));
-    m = m.simd_min(m.shift_elements_right::<2>(i8::MAX));
-    m = m.simd_min(m.shift_elements_right::<4>(i8::MAX));
-    m = m.simd_min(m.shift_elements_right::<8>(i8::MAX));
-    m = m.simd_min(m.shift_elements_right::<16>(i8::MAX));
-    m = m.simd_min(m.shift_elements_right::<32>(i8::MAX));
-    let d = s - m.simd_min(D::splat(0));
-    (d.simd_eq(D::splat(0)).to_bitmask(), d[63], d.simd_gt(D::splat(MAX_DEPTH)).any())
+    zero |= if d == 0 { !0u64 << from } else { 0 };
+    (zero, d as i8, deep)
 }
 
 /// The bracket depth's bound: a file past it is refused (decision 0698, item 93).
@@ -303,22 +275,31 @@ impl<'a> Masks<'a> {
         }
     }
 
+    /// The first byte from `at` whose bit is set in the mask `f` makes of a block and its index.
+    #[inline(always)]
+    fn next_in(&self, at: usize, f: impl Fn(usize, &B) -> u64) -> usize {
+        let n = self.src.len();
+        if at >= n {
+            return n;
+        }
+        let mut bi = at >> 6;
+        let mut m = f(bi, self.blk(bi)) & (!0u64 << (at & 63));
+        loop {
+            if m != 0 {
+                return (bi * 64 + m.trailing_zeros() as usize).min(n);
+            }
+            bi += 1;
+            if bi * 64 >= n {
+                return n;
+            }
+            m = f(bi, self.blk(bi));
+        }
+    }
+
     /// The first byte from `at` whose bit is clear in a mask: a run's end.
     #[inline(always)]
     fn run_end(&self, at: usize, f: impl Fn(&B) -> u64) -> usize {
         self.next(at, |b| !f(b))
-    }
-
-    /// Whether any byte of `[a, b)` is set in a mask (`a < b`, both at most the text's length).
-    #[inline(always)]
-    fn any(&self, a: usize, b: usize, f: impl Fn(&B) -> u64) -> bool {
-        let (ba, bb) = (a >> 6, (b - 1) >> 6);
-        let lo = !0u64 << (a & 63);
-        let hi = !0u64 >> (63 - ((b - 1) & 63));
-        if ba == bb {
-            return f(self.blk(ba)) & lo & hi != 0;
-        }
-        (ba + 1..bb).any(|x| f(self.blk(x)) != 0) || f(self.blk(ba)) & lo != 0 || f(self.blk(bb)) & hi != 0
     }
 }
 
@@ -367,6 +348,12 @@ impl<'s> Text<'s> {
         c as i32
     }
 
+    /// A string starts at `i`.
+    #[inline(always)]
+    fn mark(&mut self, i: usize) {
+        self.b[i >> 6].sstart |= 1 << (i & 63);
+    }
+
     /// Bytes `[a, b)` are not code.
     fn fill(&mut self, a: usize, b: usize) {
         if a >= b {
@@ -403,6 +390,7 @@ impl<'s> Text<'s> {
                 continue;
             }
             let (start, format) = self.prefix(o);
+            self.mark(start);
             let end = self.string_end(o, format, 0)?;
             self.fill(start, end);
             pos = end;
@@ -410,26 +398,10 @@ impl<'s> Text<'s> {
     }
 
     /// Where the string whose quote is at `o` starts (its prefix's first letter), and whether it is a format
-    /// string: the run of prefix letters just below the quote, where no word byte is below it.
+    /// string: the run of prefix letters just below the quote (a few bytes read at the quote), where no word byte is
+    /// below it.
     #[inline(always)]
     fn prefix(&self, o: usize) -> (usize, bool) {
-        let (bi, q) = (o >> 6, o & 63);
-        let b = &self.b[bi];
-        let below = (1u64 << q) - 1;
-        let not_prefix = !b.pfx & below;
-        if not_prefix == 0 {
-            // The run may go on into the block before (or the quote is the block's first byte).
-            return self.prefix_slow(o);
-        }
-        let top = 63 - not_prefix.leading_zeros() as usize;
-        let run = below & !((2u64 << top) - 1);
-        if run == 0 || b.word >> top & 1 == 1 || self.src[bi * 64 + top] >= 0x80 {
-            return (o, false);
-        }
-        (bi * 64 + top + 1, b.fmt & run != 0)
-    }
-
-    fn prefix_slow(&self, o: usize) -> (usize, bool) {
         let pfx = |c: u8| matches!(c | 0x20, b'r' | b'b' | b'f' | b't' | b'u');
         let mut j = o;
         while j > 0 && pfx(self.src[j - 1]) {
@@ -443,7 +415,7 @@ impl<'s> Text<'s> {
 
     /// The end of the string whose quote is at `o`: its terminator found by one mask search a step. A format
     /// string's text stops at a brace too, its interiors read as code (`interior_end`).
-    fn string_end(&self, o: usize, format: bool, nest: u32) -> Result<usize, Refusal> {
+    fn string_end(&mut self, o: usize, format: bool, nest: u32) -> Result<usize, Refusal> {
         let n = self.src.len();
         let q = self.src[o];
         let triple = self.at(o + 1) == q && self.at(o + 2) == q;
@@ -489,14 +461,15 @@ impl<'s> Text<'s> {
     /// The end of an interpolation whose code starts at `i`: the first `}` at its own depth 0 outside its own
     /// strings, or a format specifier's end after a `:` at depth 0. The depth is the brackets' popcounts between
     /// the stops.
-    fn interior_end(&self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
+    fn interior_end(&mut self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
         if nest > MAX_NESTING {
             return Err(refuse(i));
         }
         let n = self.src.len();
         let mut depth = 0i32;
         loop {
-            let c = self.next(i, |b| b.sq | b.dq | b.bt | b.rb | b.colon | b.bang | b.hash | b.bs);
+            let src = self.src;
+            let c = self.m().next_in(i, |bi, b| b.sq | b.dq | b.bt | b.rb | b.hash | b.bs | colon_bang(src, bi));
             if c >= n {
                 return Err(refuse(c));
             }
@@ -514,10 +487,11 @@ impl<'s> Text<'s> {
                 b':' | b'!' => {}
                 _ => {
                     // A string in the interior: a nested f-string is refused (to tree-sitter).
-                    let (_, format) = self.prefix(c);
+                    let (start, format) = self.prefix(c);
                     if format {
                         return Err(refuse(c));
                     }
+                    self.mark(start);
                     i = self.string_end(c, false, nest)?;
                 }
             }
@@ -525,7 +499,7 @@ impl<'s> Text<'s> {
     }
 
     /// The end of a format specifier from `i` (after its `:`): its `}`, past its own interpolations.
-    fn spec_end(&self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
+    fn spec_end(&mut self, mut i: usize, nest: u32) -> Result<usize, Refusal> {
         let n = self.src.len();
         loop {
             let c = self.next(i, |b| b.lb | b.rb | b.lf);
@@ -553,7 +527,7 @@ impl<'s> Text<'s> {
                 b.depth0 = if carry == 0 { !0 } else { 0 };
                 continue;
             }
-            let (zero, out, deep) = depth_block(up, down, carry);
+            let (zero, out, deep) = depth_bits(up, down, carry);
             if deep {
                 return Err(refuse(bi * 64));
             }
@@ -562,6 +536,151 @@ impl<'s> Text<'s> {
         }
         Ok(())
     }
+}
+
+/// A byte's class for the token reader's dispatch.
+const C_OP: u8 = 0;
+const C_NAME: u8 = 1;
+const C_DIGIT: u8 = 2;
+const C_QUOTE: u8 = 3;
+const C_DOT: u8 = 4;
+const C_HIGH: u8 = 5;
+static CLASS: [u8; 256] = {
+    let mut t = [C_OP; 256];
+    let mut c = 0;
+    while c < 256 {
+        let b = c as u8;
+        t[c] = match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => C_NAME,
+            b'0'..=b'9' => C_DIGIT,
+            b'\'' | b'"' | b'`' => C_QUOTE,
+            b'.' => C_DOT,
+            0x80.. => C_HIGH,
+            _ => C_OP,
+        };
+        c += 1;
+    }
+    t
+};
+
+/// The bytes that start a token at once after spaces and tabs: not a line's end, a comment, a continuation, a form
+/// feed, or a byte past ASCII (an odd blank or a name's character, read by the lean lexer's path).
+static FAST: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut c = 0;
+    while c < 128 {
+        t[c] = !matches!(c as u8, b'\n' | b'\r' | b'#' | b'\\' | 0x0c | b' ' | b'\t');
+        c += 1;
+    }
+    t
+};
+
+/// A table of a token kind a byte below 128, of a `const fn` of the byte.
+macro_rules! table {
+    ($f:ident) => {{
+        let mut t = [None; 128];
+        let mut c = 0;
+        while c < 128 {
+            t[c] = $f(c as u8);
+            c += 1;
+        }
+        t
+    }};
+}
+
+/// A byte's operator alone, the operator it makes with a `=` after it, and with itself after it.
+const fn op1(c: u8) -> Option<T> {
+    Some(match c {
+        b'(' => T::LParen,
+        b')' => T::RParen,
+        b'[' => T::LBracket,
+        b']' => T::RBracket,
+        b'{' => T::LBrace,
+        b'}' => T::RBrace,
+        b',' => T::Comma,
+        b':' => T::Colon,
+        b';' => T::Semi,
+        b'.' => T::Dot,
+        b'=' => T::Eq,
+        b'@' => T::At,
+        b'+' => T::Plus,
+        b'-' => T::Minus,
+        b'*' => T::Star,
+        b'/' => T::Slash,
+        b'%' => T::Percent,
+        b'&' => T::Amp,
+        b'|' => T::Pipe,
+        b'^' => T::Caret,
+        b'~' => T::Tilde,
+        b'<' => T::Lt,
+        b'>' => T::Gt,
+        _ => return None,
+    })
+}
+static OP1: [Option<T>; 128] = table!(op1);
+const fn op_eq(c: u8) -> Option<T> {
+    Some(match c {
+        b'<' => T::Le,
+        b'>' => T::Ge,
+        b'=' => T::EqEq,
+        b'!' => T::Ne,
+        b':' => T::Walrus,
+        b'+' => T::PlusEq,
+        b'-' => T::MinusEq,
+        b'*' => T::StarEq,
+        b'/' => T::SlashEq,
+        b'@' => T::AtEq,
+        b'%' => T::PercentEq,
+        b'&' => T::AmpEq,
+        b'^' => T::CaretEq,
+        b'|' => T::PipeEq,
+        _ => return None,
+    })
+}
+static OP_EQ: [Option<T>; 128] = table!(op_eq);
+const fn op_twice(c: u8) -> Option<T> {
+    Some(match c {
+        b'*' => T::Pow,
+        b'/' => T::DSlash,
+        b'>' => T::RShift,
+        b'<' => T::LShift,
+        _ => return None,
+    })
+}
+static OP_TWICE: [Option<T>; 128] = table!(op_twice);
+const fn op_twice_eq(c: u8) -> Option<T> {
+    Some(match c {
+        b'*' => T::PowEq,
+        b'/' => T::DSlashEq,
+        b'>' => T::RShiftEq,
+        b'<' => T::LShiftEq,
+        _ => return None,
+    })
+}
+static OP_TWICE_EQ: [Option<T>; 128] = table!(op_twice_eq);
+
+/// The operator at bytes `a`, `b`, `c` and its length, by the tables (the lean lexer's `operator_at`, the longest).
+#[inline(always)]
+fn operator(a: u8, b: u8, c: u8) -> Option<(T, usize)> {
+    if a >= 0x80 {
+        return None;
+    }
+    let ai = usize::from(a);
+    if b == b'=' {
+        if let Some(t) = OP_EQ[ai] {
+            return Some((t, 2));
+        }
+    } else if b == a {
+        if let Some(t) = OP_TWICE[ai] {
+            return Some(if c == b'=' { (OP_TWICE_EQ[ai].expect("an operator and its `=`"), 3) } else { (t, 2) });
+        }
+        if a == b'.' && c == b'.' {
+            return Some((T::Ellipsis, 3));
+        }
+    } else if b == b'>' && (a == b'-' || a == b'<') {
+        return Some((if a == b'-' { T::Arrow } else { T::LtGt }, 2));
+    }
+    OP1[ai].map(|t| (t, 1))
 }
 
 /// Stratum 4: the walk that writes the tokens.
@@ -693,16 +812,15 @@ impl<'s> Walk<'s> {
         let (mut open, mut header) = (false, false);
         let src = self.t.src;
         loop {
-            // The usual case: the gap to the next item holds no line's end (one test of a mask), and the item is a
-            // token; the scanner gives nothing, so the token is read at once.
-            let i = self.t.run_end(self.p, |b| b.skip);
-            if i < n && (i == self.p || !self.t.any(self.p, i, |b| b.brk)) && !matches!(src[i], b'#' | b'\\' | b'\r') && src[i] < 0x80 {
-                let kind = self.token(i)?;
+            // The first byte past the spaces and tabs (one mask search). In the usual case it starts a token, and
+            // the scanner gives nothing: the token is read at once.
+            let k = self.t.run_end(self.p, |b| b.sptab);
+            if k < n && FAST[usize::from(src[k])] {
+                let kind = self.token(k)?;
                 open = true;
-                header = kind == T::Colon && !self.in_brackets(i + 1);
+                header = kind == T::Colon && !self.in_brackets(k + 1);
                 continue;
             }
-            let k = self.t.run_end(self.p, |b| b.sptab);
             let line_end = k >= n || matches!(self.t.src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c);
             if line_end {
                 if self.in_brackets(self.p) {
@@ -792,36 +910,44 @@ impl<'s> Walk<'s> {
             }
     }
 
-    /// The token at `i`, and those of a string it starts.
+    /// The token at `i`, and those of a string it starts: dispatched on the byte's class (one table load).
     #[inline(always)]
     fn token(&mut self, i: usize) -> Result<T, Refusal> {
         let src = self.t.src;
         let c = src[i];
-        if self.t.bit(i, |b| b.word) && !c.is_ascii_digit() || c >= 0x80 {
-            if self.t.bit(i, |b| b.pfx)
-                && let Some((prefix, q)) = lex::string_prefix_at(src, i)
-            {
-                self.string(i, prefix, q)?;
-                return Ok(T::StrEnd);
+        match CLASS[usize::from(c)] {
+            C_NAME | C_HIGH => {
+                // A string's prefix only where stratum 2 found a string's start: a name is read at once.
+                if self.t.bit(i, |b| b.sstart)
+                    && let Some((prefix, q)) = lex::string_prefix_at(src, i)
+                {
+                    self.string(i, prefix, q)?;
+                    return Ok(T::StrEnd);
+                }
+                let end = self.name_end(i)?;
+                let (kind, soft) = lex::keyword(src, i, end);
+                self.toks.push(Tok { kind, soft, start: i as u32, end: end as u32 });
+                self.p = end;
+                Ok(kind)
             }
-            let end = self.name_end(i)?;
-            let (kind, soft) = lex::keyword(src, i, end);
-            self.toks.push(Tok { kind, soft, start: i as u32, end: end as u32 });
-            self.p = end;
-            return Ok(kind);
+            C_QUOTE => {
+                let (prefix, q) = lex::string_prefix_at(src, i).expect("a quote");
+                self.string(i, prefix, q)?;
+                Ok(T::StrEnd)
+            }
+            C_DIGIT => self.number(i),
+            C_DOT if self.at(i + 1).is_ascii_digit() => self.number(i),
+            _ => {
+                let (kind, len) = operator(c, self.at(i + 1), self.at(i + 2)).ok_or_else(|| refuse(i))?;
+                self.push(kind, i, i + len);
+                Ok(kind)
+            }
         }
-        if c.is_ascii_digit() || (c == b'.' && self.at(i + 1).is_ascii_digit()) {
-            let (kind, end) = lex::number_at(src, i);
-            self.push(kind, i, end);
-            return Ok(kind);
-        }
-        if c == b'\'' || c == b'"' || c == b'`' {
-            let (prefix, q) = lex::string_prefix_at(src, i).expect("a quote");
-            self.string(i, prefix, q)?;
-            return Ok(T::StrEnd);
-        }
-        let (kind, len) = lex::operator_at(src, i).ok_or_else(|| refuse(i))?;
-        self.push(kind, i, i + len);
+    }
+
+    fn number(&mut self, i: usize) -> Result<T, Refusal> {
+        let (kind, end) = lex::number_at(self.t.src, i);
+        self.push(kind, i, end);
         Ok(kind)
     }
 
@@ -1195,6 +1321,19 @@ mod tests {
             long.push_str(&format!("x{k} = f(a, '{}', \"\"\"q\n{}\"\"\", # c ( {k}\n  [{}])  # e\n", "s".repeat(k), "t".repeat(k * 3), "1, ".repeat(k)));
         }
         assert_eq!(check(long.as_bytes()), Check::Same);
+    }
+
+    #[test]
+    fn operators_are_the_lean_lexers() {
+        let bytes = b"*/<>=!:+-@%&^|.()[]{},;~ax";
+        for &a in bytes {
+            for &b in bytes {
+                for &c in bytes {
+                    let s = [a, b, c];
+                    assert_eq!(operator(a, b, c).map(|(t, n)| (t as u8, n)), lex::operator_at(&s, 0).map(|(t, n)| (t as u8, n)), "{:?}", String::from_utf8_lossy(&s));
+                }
+            }
+        }
     }
 
     #[test]
