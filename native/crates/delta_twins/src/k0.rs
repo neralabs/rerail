@@ -531,3 +531,37 @@ fn docs_of_rows(c: &mut Ctx<'_, '_, '_>, _: Tile) {
 
 /// `docs_of`: one item.
 pub const DOCS_OF: &[TwinPhase] = &[TwinPhase { name: "docs_of", items: |_| 1, run: docs_of_rows, again: None }];
+
+/// `room_of`'s slots: L1's cache (read, holding the run's before), the documents gone (read: a parts block), the
+/// documents read (read: a docs block) and the room (write: control, a word a K-form relation at `BODY_AT`).
+pub const O_CACHE: usize = 0;
+pub const O_GONE: usize = 1;
+pub const O_DOCS: usize = 2;
+pub const O_ROOM: usize = 3;
+
+/// The room a run's runs need, from L1's cache: each gone document's kept rows, and each read one's as they were, by
+/// relation (the sizes `keep` kept), an eighth more for an edit that grew.
+pub fn room(bytes: &[u8]) -> [u64; R] {
+    core::array::from_fn(|r| word::<u64>(bytes, BODY_AT + 8 * r))
+}
+
+/// `room_of`'s one item.
+fn room_of(c: &mut Ctx<'_, '_, '_>, _: Tile) {
+    let ([cache, gone, docs], [room]) = c.views([O_CACHE, O_GONE, O_DOCS], [O_ROOM]);
+    let mut need = [0u64; R];
+    let mut add = |d: i64| {
+        if let Some(s) = crate::cache::sizes(cache, d as u32) {
+            for (n, &k) in need.iter_mut().zip(s) {
+                *n += u64::from(k);
+            }
+        }
+    };
+    crate::drop::parts(gone).for_each(&mut add);
+    (0..docs_n(docs)).for_each(|i| add(docs_module(docs, i)));
+    for (r, n) in need.into_iter().enumerate() {
+        set_word::<u64>(room, BODY_AT + 8 * r, n + n / 8);
+    }
+}
+
+/// `room_of`: one item.
+pub const ROOM_OF: &[TwinPhase] = &[TwinPhase { name: "room_of", items: |_| 1, run: room_of, again: None }];

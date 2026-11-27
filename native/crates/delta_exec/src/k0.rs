@@ -90,6 +90,37 @@ pub fn docs_of_facts(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> 
     rows
 }
 
+static ROOM_OF_PHASE: [Phase; 1] = [ph("room_of", Across::Nothing, Output::InPlace)];
+
+/// `room_of`: read L1's cache · read the documents gone (a parts block) · read the documents read (a docs block) ·
+/// write the room each K-form relation's runs need (control).
+pub static ROOM_OF: Signature = Signature::new(
+    "room_of",
+    &[
+        SlotSpec { name: "cache", mode: Mode::Read, kind: kind::CACHE },
+        SlotSpec { name: "gone", mode: Mode::Read, kind: kind::CONTROL },
+        SlotSpec { name: "docs", mode: Mode::Read, kind: kind::CONTROL },
+        SlotSpec { name: "room", mode: Mode::Write, kind: kind::CONTROL },
+    ],
+    ParamsLayout::of::<rerail_delta_twins::NoParams>(),
+    &ROOM_OF_PHASE,
+    Independence::Not("a sum over every document"),
+    room_of_facts,
+);
+
+pub fn room_of_facts(_: &Table<'_>, _: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
+    vec![twin::room(bytes).iter().map(|&n| n as i64).collect()] // copy: derived (a check's reading of facts)
+}
+
+/// The room each K-form relation's runs need for a run that retracts `gone` and reads `docs`, from L1's cache
+/// `cache` (holding the run's before): one launch of `room_of`.
+pub fn room_of(reg: &Registry, ops: &K0Ops, dir: &mut Directory, cache: BlockId, gone: &Parts, docs: &DocsIn) -> Result<[u64; RELATIONS.len()], String> {
+    let room = dir.make(kind::CONTROL, 8 * RELATIONS.len());
+    let ran = run_cpu(reg, dir, ops.room_of, &[cache, gone.id(), docs.first, room], &[], Tiling::WHOLE).and_then(|()| Ok(twin::room(dir.read("room_of", &[room])?.block(0))));
+    dir.release(room);
+    ran
+}
+
 /// The written slots' facts by meaning: control's refusal and rows placed; a relation's runs, its `(row, diff)`s; L1's
 /// cache, its entries.
 pub fn k0_facts(table: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
@@ -111,6 +142,7 @@ pub fn k0_facts(table: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
 pub struct K0Ops {
     pub k0_pass: OpId,
     pub docs_of: OpId,
+    pub room_of: OpId,
 }
 
 impl K0Ops {
@@ -119,7 +151,9 @@ impl K0Ops {
         reg.register_reference(Version::twin(k0_pass, "k0_pass twin", twin::K0_PASS, &K0_PHASES))?;
         let docs_of = reg.declare(&DOCS_OF)?;
         reg.register_reference(Version::twin(docs_of, "docs_of twin", twin::DOCS_OF, &DOCS_OF_PHASE))?;
-        Ok(K0Ops { k0_pass, docs_of })
+        let room_of = reg.declare(&ROOM_OF)?;
+        reg.register_reference(Version::twin(room_of, "room_of twin", twin::ROOM_OF, &ROOM_OF_PHASE))?;
+        Ok(K0Ops { k0_pass, docs_of, room_of })
     }
 }
 

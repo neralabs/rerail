@@ -33,7 +33,7 @@ use crate::semi::{self, SemiOps, Side};
 use crate::trace::open_runs;
 use rerail_blocks::layer::Runs;
 use crate::files::{BlobId, DocIds};
-use crate::k0::{DocsIn, K0Ops, RowCols, k0_pass};
+use crate::k0::{DocsIn, K0Ops, RowCols, k0_pass, room_of};
 use crate::kform::{self, RELATIONS};
 use rerail_blocks::bistate::{Bistate, Read};
 use rerail_blocks::layer::{ColType, Shape};
@@ -242,23 +242,12 @@ impl L1 {
             // Only its demand moved (or a document no one wants): nothing to read or retract.
             return Ok(work);
         }
-        // The room the run needs, from the cache's sizes: each gone document's kept rows, and each added one's as they
-        // were, an eighth more for an edit that grew.
-        let dir: &Directory = cx.dir;
-        let need = cache.body(cx, |sizes| {
-            let mut need = [0usize; RELATIONS.len()];
-            let mut add = |d: i64| {
-                for (k, &n) in sizes.of(d as u32).unwrap_or(&[]).iter().enumerate() {
-                    need[k] += n as usize;
-                }
-            };
-            parts.each(dir, &mut add)?;
-            docs.each_module(dir, &mut add)?;
-            Ok::<_, String>(need)
-        })?;
-        if let Some(need) = need.transpose()? {
+        // The room the run needs, from the cache's sizes (`room_of`): each gone document's kept rows, and each added
+        // one's as they were, an eighth more for an edit that grew. A cache read as ∅ names none.
+        if let Some(c) = cache.read(cx)? {
+            let need = room_of(cx.reg, &self.ops, cx.dir, c, parts, docs)?;
             for (k, n) in need.into_iter().enumerate() {
-                out.room(cx.dir, L1Ports::relation(k), n + n / 8)?;
+                out.room(cx.dir, L1Ports::relation(k), n as usize)?;
             }
         }
         let cache = cache.write(cx)?;
