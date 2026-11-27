@@ -555,13 +555,16 @@ struct St<'a> {
     /// The row last found (`row`) and its number: a binding reads several columns of each row it walks. Its reads
     /// point into the launch's buffers, which outlive every stage.
     last: core::cell::Cell<(u32, Option<Row<'static>>)>,
+    /// The document of the view row last found (`ViewDir::doc_of_row`'s memo): a bucket's rows are in id order, so a
+    /// walk's next candidate is mostly in its last's document, found without a search.
+    doc: core::cell::Cell<u32>,
 }
 
 impl<'a> St<'a> {
     /// Stage `s` over bindings `l` and relation `r`, its far base in `rf` (none: `r`'s own block, `rel_b`).
     fn new(s: &'a Stage, l: *const i64, r: *const i64, rf: *const u8) -> Self {
         let rf = if rf.is_null() { r as *const u8 } else { rf };
-        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)) }
+        St { s, l, r, rf, last: core::cell::Cell::new((NONE, None)), doc: core::cell::Cell::new(NONE) }
     }
 }
 
@@ -573,7 +576,7 @@ impl St<'_> {
         if let (q, Some(row)) = self.last.get() && q == r {
             return row;
         }
-        let mut memo = NONE;
+        let mut memo = self.doc.get();
         let row = if s.v_has != 0 {
             vrow(1, s.v_dir, r, &mut memo)
         } else if s.r_view != 0 {
@@ -581,6 +584,7 @@ impl St<'_> {
         } else {
             return Row::Rel(self.r as *const u8, s.r_at, r, self.rf);
         };
+        self.doc.set(memo);
         self.last.set((r, Some(row)));
         row
     }
