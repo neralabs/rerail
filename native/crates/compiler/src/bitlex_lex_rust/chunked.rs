@@ -304,14 +304,372 @@ fn chunked_nest(out: &str) -> Result<String, String> {
         .replace("@LOCALS@", &locals)
         .replace("@LOOP@", &lp)
         .replace("@FINISH@", &finish)
-        .replace("@MAXD@", &maxd.to_string())
-        .replace("@NKINDS@", &(kinds.len() + 1).to_string())
-        .replace("@KINDS@", &kinds_s)
         .replace("@ALL@", &names.iter().map(|n| format!("{n}, ")).collect::<String>())
         .replace("@NREGIONS@", &regions.len().to_string())
         .replace("@REGIONS@", &regions.iter().map(|(o, r, k, lv)| format!("({o}, {r}, {k}, {lv})")).collect::<Vec<_>>().join(", "));
-    Ok(t)
+    // The lanes: a chunk's code, each place a token it starts in ends, each region's end, each split by its nest's class.
+    Ok(t + &core(maxd, &kinds_s, kinds.len() + 1, 64, false))
 }
+
+/// The three passes' summary for nesting, one for every token loop's chunked form (`chunked_nest`'s, `chunked_lean`'s):
+/// lanes by the class of nest below their entry, their composition as typed bracket sequences, and pass 3's prefix sum.
+/// A loop's form gives its `Entry` (its `at`, its nest's fields `nest`, `depth`, `template`, `held`, `opened`, and
+/// `START`), and makes its chunks' summaries.
+fn core(maxd: usize, kinds: &str, nkinds: usize, l: usize, code_anywhere: bool) -> String {
+    CORE.replace("@MAXD@", &maxd.to_string()).replace("@NKINDS@", &nkinds.to_string()).replace("@KINDS@", kinds).replace("@L@", &l.to_string()).replace("@CODE_ANYWHERE@", &code_anywhere.to_string())
+}
+
+const CORE: &str = r#"
+/// A level the lane's entry has open, of a kind it has read none of yet: a bracket's or a template's.
+pub const OPEN: usize = usize::MAX - 1;
+
+/// A string's record a lane keeps from its entry (a tail resumes the string of the level it closes): `INHERIT + i`, the
+/// `i`th level the lane closes (innermost first), where a lane's own are the records it counts.
+pub const INHERIT: usize = 1 << 62;
+
+/// The deepest the nest goes (the serial lexer refuses past it), and the kinds a level can be: a bracket's (255), then
+/// each template's string kind.
+pub const MAXD: usize = @MAXD@;
+pub const LEVEL_KINDS: [u8; @NKINDS@] = [@KINDS@];
+
+/// Whether an entry in a range's code that no lane starts at goes on in its code lanes: where the loop's tokens from any
+/// byte of the code come to the same place (rr's, whose regions alone hold their openers), the code lane's place.
+const CODE_ANYWHERE: bool = @CODE_ANYWHERE@;
+
+/// The lanes a summary holds at most; a chunk that needs more is unresolved (`Summary::over`): pass 2 enters it from the
+/// entry the chunks before it leave.
+pub const L: usize = @L@;
+
+/// A level's kind in a lane (`LEVEL_KINDS`, or 254: open, of no kind yet), its value in `nest`.
+#[inline]
+fn kind_of(k: usize) -> u8 {
+    match k {
+        usize::MAX => 255,
+        OPEN => 254,
+        k => k as u8,
+    }
+}
+
+#[inline]
+fn level_of(k: u8) -> usize {
+    match k {
+        255 => usize::MAX,
+        254 => OPEN,
+        k => usize::from(k),
+    }
+}
+
+/// Whether a lane's level of kind `k` (254: any) meets a level of kind `m`.
+#[inline]
+fn meets(k: u8, m: u8) -> bool {
+    k == 254 || k == m
+}
+
+/// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
+/// (innermost first), all of them where `exact` (it read the bottom: "nothing open" below them). It leaves `p[..pn]`
+/// open (outermost first) above what is left of the entry, the strings of those that are templates at the records
+/// `ph` (from the range's first), and goes `high` levels above what is left. `exit`'s `at` and kept values are its
+/// end's; its nest fields are not read (`p` is).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lane {
+    pub at0: usize,
+    pub kc: [u8; MAXD],
+    pub kcn: u8,
+    pub exact: bool,
+    /// The levels the entry has open below those the lane closes, which it never comes to: it holds for an entry with
+    /// at least these (a lane with fewer is another's, the one that read the bottom). None where `exact`.
+    pub need: u8,
+    pub p: [u8; MAXD],
+    pub pn: u8,
+    pub ph: [usize; MAXD],
+    pub high: u8,
+    pub recs: usize,
+    pub exit: Entry,
+    pub refused: bool,
+    /// Whether it lexes a token: one that lexes none leaves its entry as it was.
+    pub moved: bool,
+}
+
+/// A range's summary: its lanes (an entry past the range's head, its first chunk, at one of its later chunks' places,
+/// the lanes of those); its bytes (`start..end`, from the first that lexes a token), an entry at or past whose end goes
+/// through it as it came; where its code lanes start (`code`: past the blanks before `start`, the lanes for an entry
+/// before it) and the end of their chunk (`head`); and
+/// whether an entry may have gone on in a lane past `L` (`over`, how the range was made of its parts, not a fact of the
+/// range: its lanes are those).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub lanes: [Lane; L],
+    pub n: u8,
+    pub start: usize,
+    pub end: usize,
+    pub code: usize,
+    pub head: usize,
+    pub over: bool,
+}
+
+impl Summary {
+    fn push(&mut self, l: Lane) {
+        if self.lanes[..usize::from(self.n)].contains(&l) {
+            return;
+        }
+        if usize::from(self.n) == L {
+            self.over = true;
+            return;
+        }
+        self.lanes[usize::from(self.n)] = l;
+        self.n += 1;
+    }
+
+    pub fn lanes(&self) -> &[Lane] {
+        &self.lanes[..usize::from(self.n)]
+    }
+
+    /// Whether no lane lexes a token: every entry goes through it as it came (the chunk is blank past its code entry,
+    /// or inside a region to past its end).
+    pub fn transparent(&self) -> bool {
+        self.n > 0 && !self.over && self.lanes().iter().all(|l| !l.moved)
+    }
+}
+
+const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false };
+
+/// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
+/// code's (a token from before `b` ends in its code).
+fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
+    // An entry before the range's first byte comes through blanks to where its code lanes start.
+    // (Where `b` dropped lanes past `L`, an entry with none may have had one: no code lane for it.)
+    let at0 = if at < b.start || (CODE_ANYWHERE && !b.over && at < b.head && !b.lanes().iter().any(|l| l.at0 == at)) { b.code } else { at };
+    b.lanes().iter().filter(move |l| l.at0 == at0)
+}
+
+/// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
+/// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
+fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    // `b` lexes no token: what `a` leaves goes through it.
+    if !b.moved {
+        return Some(*a);
+    }
+    if !a.moved {
+        let mut l = *b;
+        l.at0 = a.at0;
+        return Some(l);
+    }
+    let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
+    let j = bn.min(pn);
+    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last.
+    if (0..j).any(|i| !meets(b.kc[i], a.p[pn - 1 - i])) {
+        return None;
+    }
+    let mut l = *b;
+    l.at0 = a.at0;
+    if bn > pn {
+        // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
+        // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
+        if a.exact || an + bn - pn > MAXD {
+            return None;
+        }
+        l.kc = [0; MAXD];
+        l.kc[..an].copy_from_slice(&a.kc[..an]);
+        l.kc[an..an + bn - pn].copy_from_slice(&b.kc[pn..bn]);
+        l.kcn = (an + bn - pn) as u8;
+        l.exact = b.exact;
+        l.need = b.need.max(a.need.saturating_sub((bn - pn) as u8));
+    } else {
+        // `b` read the bottom with levels `a` left open below its own: no such entry.
+        if b.exact && pn > bn {
+            return None;
+        }
+        l.kc = a.kc;
+        l.kcn = a.kcn;
+        l.exact = a.exact || b.exact;
+        // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
+        l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
+    }
+    // An entry with exactly `kn` levels open can have none more below.
+    if l.exact && l.need > 0 {
+        return None;
+    }
+    let kn = usize::from(l.kcn);
+    // Open: `a`'s below what `b` closed, then `b`'s; `b`'s strings' records after `a`'s.
+    let keep = pn - j;
+    let mut p = [0u8; MAXD];
+    let mut ph = [0usize; MAXD];
+    p[..keep].copy_from_slice(&a.p[..keep]);
+    ph[..keep].copy_from_slice(&a.ph[..keep]);
+    let bp = usize::from(b.pn);
+    if keep + bp > MAXD {
+        return None;
+    }
+    for i in 0..bp {
+        p[keep + i] = b.p[i];
+        ph[keep + i] = if b.p[i] == 255 {
+            0
+        } else if b.ph[i] >= INHERIT {
+            // A record `b` keeps from a level it closes: `a`'s, where `a` left it open; else one below `a`'s entry.
+            let q = b.ph[i] - INHERIT;
+            if q < j { a.ph[pn - 1 - q] } else { INHERIT + an + q - pn }
+        } else {
+            b.ph[i] + a.recs
+        };
+    }
+    l.p = p;
+    l.ph = ph;
+    l.pn = (keep + bp) as u8;
+    // The deepest, above the combined base (the entry less its `kn` closed levels): `a` starts `kn - an` above it, and
+    // `b` where `a` leaves it, `kn + pn - an - bn` above it (none where `b` closes past `a`'s open levels).
+    let ha = usize::from(a.high) + (kn - an);
+    let hb = usize::from(b.high) + (kn + pn) - (an + bn);
+    l.high = ha.max(hb) as u8;
+    l.recs = a.recs + b.recs;
+    l.refused = a.refused || b.refused;
+    Some(l)
+}
+
+/// Two ranges' summaries, one after the other: each lane of the first, on through the lanes of the second it meets.
+/// Associative, so a prefix sum composes them in any tree.
+pub fn compose(a: &Summary, b: &Summary) -> Summary {
+    let (start, end) = (a.start, b.end);
+    if b.transparent() {
+        return Summary { start, end, over: a.over || b.over, ..*a };
+    }
+    if a.transparent() {
+        // Every entry goes through `a` as it came, to `b`: `b`'s lanes, an entry before `b` at its code lanes.
+        let _ = start;
+        return Summary { end, over: a.over || b.over, ..*b };
+    }
+    let mut s = Summary { lanes: [NO_LANE; L], n: 0, start, end, code: a.code, head: a.head, over: a.over };
+    for la in a.lanes() {
+        // A lane that leaves at or past `b`'s end goes through `b` as it is.
+        if la.exit.at >= b.end {
+            s.push(*la);
+            continue;
+        }
+        let mut met = false;
+        for lb in next_lanes(b, la.exit.at) {
+            if let Some(l) = then(la, lb) {
+                met = true;
+                s.push(l);
+            }
+        }
+        // A lane of `a` may go on in one `b` dropped.
+        s.over |= !met && b.over;
+    }
+    // An entry at or past `a`'s end goes through `a` to `b`'s lanes there.
+    for lb in b.lanes().iter().filter(|l| l.at0 >= a.end) {
+        s.push(*lb);
+    }
+    s.over |= b.over && b.lanes().iter().any(|l| l.at0 >= a.end);
+    s
+}
+
+/// The entry a range leaves after entry `e` (`e` at its first byte, the records before it `recs`): its lane for `e`'s
+/// nest, and whether the file is refused on the way. None where no lane meets it (one past `L` would have).
+pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)> {
+    // Each lane holds for its class of entries, and the lanes of a range split them apart: a lane kept where others went
+    // past `L` still holds, and no other lane meets its entries.
+    if s.transparent() || e.at >= s.end {
+        return Some((*e, recs, false));
+    }
+    let d = e.depth;
+    let l = next_lanes(s, e.at).find(|l| {
+        let kn = usize::from(l.kcn);
+        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(e.nest[d - 1 - i]))) && (!l.exact || d == kn)
+    })?;
+    if !l.moved {
+        return Some((*e, recs, false));
+    }
+    let rest = d - usize::from(l.kcn);
+    // Past the deepest nest: the serial lexer refuses the file there.
+    if rest + usize::from(l.high) > MAXD || rest + usize::from(l.pn) > MAXD {
+        return Some((Entry::START, recs + l.recs, true));
+    }
+    let mut x = l.exit;
+    let strings = (0..rest).filter(|&i| e.nest[i] != usize::MAX).count();
+    x.nest = [usize::MAX; MAXD];
+    x.nest[..rest].copy_from_slice(&e.nest[..rest]);
+    x.held = [0; MAXD];
+    x.held[..strings].copy_from_slice(&e.held[..strings]);
+    x.opened = strings;
+    for i in 0..usize::from(l.pn) {
+        x.nest[rest + i] = level_of(l.p[i]);
+        if l.p[i] != 255 {
+            x.held[x.opened] = if l.ph[i] >= INHERIT {
+                // The string of the entry's level the lane closed `q`th: its record, the entry's.
+                let lv = d - 1 - (l.ph[i] - INHERIT);
+                e.held[(0..lv).filter(|&i| e.nest[i] != usize::MAX).count()]
+            } else {
+                recs + l.ph[i]
+            };
+            x.opened += 1;
+        }
+    }
+    x.depth = rest + usize::from(l.pn);
+    x.template = if x.depth == 0 { usize::MAX } else { x.nest[x.depth - 1] };
+    Some((x, recs + l.recs, l.refused))
+}
+
+/// The chunks pass 3 has in flight at once (`entries`): each composes the summaries of those before it in flight.
+pub const IN_FLIGHT: usize = 32;
+
+/// Pass 3: each chunk's entry and the records before it, by a single-pass prefix sum with decoupled look-back (Merrill
+/// and Garland's): a chunk whose predecessor's entry is known applies its predecessor's summary to it; one whose
+/// predecessor is still in flight composes the summaries back to the last known entry and applies that, and where no
+/// lane of the composition meets it (one went past `L`, `over`), waits for its predecessor's entry instead. None for a chunk no lane
+/// reaches; and the chunks that waited.
+pub fn entries_waits(ends: &[Summary]) -> (Vec<Option<(Entry, usize, bool)>>, usize) {
+    let after = |out: &[Option<(Entry, usize, bool)>], c: usize| out[c - 1].and_then(|(e, r, x)| if x { None } else { apply(&ends[c - 1], &e, r) });
+    let mut out: Vec<Option<(Entry, usize, bool)>> = Vec::with_capacity(ends.len());
+    let mut waits = 0;
+    let mut w = 0;
+    while w < ends.len() {
+        // The chunks `w..w + IN_FLIGHT` in flight. The last chunk whose entry is known (`k`: the wave's first, or one
+        // that waited), and the summaries composed from it.
+        let mut k = w;
+        let mut known = if w == 0 { Some((Entry::START, 0, false)) } else { after(&out, w) };
+        let top = (w + IN_FLIGHT).min(ends.len());
+        let mut agg: Option<Summary> = None;
+        out.push(known);
+        for c in w + 1..top {
+            let a = match agg {
+                None => ends[c - 1],
+                Some(a) => compose(&a, &ends[c - 1]),
+            };
+            agg = Some(a);
+            // A lane that meets the entry is its own, whatever lanes went past `L` (a lane holds for its class alone).
+            let e = match known {
+                Some((ke, kr, _)) => apply(&a, &ke, kr),
+                _ => None,
+            };
+            let e = match e {
+                Some(e) => e,
+                None => {
+                    // Its predecessor's entry, when known: from it on, the chunks after look back to this one.
+                    waits += 1;
+                    let e = after(&out, c);
+                    (k, known, agg) = (c, e, None);
+                    out.push(e);
+                    continue;
+                }
+            };
+            let _ = k;
+            out.push(Some(e));
+        }
+        w = top;
+    }
+    (out, waits)
+}
+
+/// Pass 3's entries (`entries_waits`).
+pub fn entries(ends: &[Summary]) -> Vec<Option<(Entry, usize, bool)>> {
+    entries_waits(ends).0
+}
+
+/// The first block of each chunk of `blocks` blocks of a file of `n` bytes.
+pub fn chunk_starts(n: usize, blocks: usize) -> Vec<usize> {
+    (0..n.div_ceil(64).max(1)).step_by(blocks.max(1)).collect()
+}
+
+"#;
 
 const TEMPLATE: &str = r#"
 // Lexing from the middle (the chunk-summaries design): the token loop's state between two tokens, the loop from any of
@@ -363,13 +721,6 @@ pub struct Reads {
     pub low: usize,
     pub high: usize,
 }
-
-/// A level the lane's entry has open, of a kind it has read none of yet: a bracket's or a template's.
-pub const OPEN: usize = usize::MAX - 1;
-
-/// A string's record a lane keeps from its entry (a tail resumes the string of the level it closes): `INHERIT + i`, the
-/// `i`th level the lane closes (innermost first), where a lane's own are the records it counts.
-pub const INHERIT: usize = 1 << 62;
 
 /// A read of `opened` (the strings open): none, the bottom (the lane's entry may have more); with a level of no kind
 /// yet below, which it counts as a string, that level's kind.
@@ -439,109 +790,9 @@ fn finish(src: &[u8], e: &Entry, refused_io: &mut bool) {
 /// The regions a chunk can start inside (`Force`): each its number, its row, its closer's offset and its level.
 const REGIONS: [(usize, usize, usize, usize); @NREGIONS@] = [@REGIONS@];
 
-/// The deepest the nest goes (the serial lexer refuses past it), and the kinds a level can be: a bracket's (255), then
-/// each template's string kind.
-pub const MAXD: usize = @MAXD@;
-pub const LEVEL_KINDS: [u8; @NKINDS@] = [@KINDS@];
-
-/// The lanes a summary holds at most; a chunk that needs more is unresolved (`Summary::over`): pass 2 enters it from the
-/// entry the chunks before it leave.
-pub const L: usize = 64;
-
 /// The blocks before a chunk's first that its stage 1 starts at: its windows and its carries are the serial run's again
 /// past them.
 pub const PRIME: usize = 8;
-
-/// A level's kind in a lane (`LEVEL_KINDS`, or 254: open, of no kind yet), its value in `nest`.
-#[inline]
-fn kind_of(k: usize) -> u8 {
-    match k {
-        usize::MAX => 255,
-        OPEN => 254,
-        k => k as u8,
-    }
-}
-
-#[inline]
-fn level_of(k: u8) -> usize {
-    match k {
-        255 => usize::MAX,
-        254 => OPEN,
-        k => usize::from(k),
-    }
-}
-
-/// Whether a lane's level of kind `k` (254: any) meets a level of kind `m`.
-#[inline]
-fn meets(k: u8, m: u8) -> bool {
-    k == 254 || k == m
-}
-
-/// One lane of a summary: what a range of chunks does for the entries at `at0` whose innermost `kcn` levels are `kc`
-/// (innermost first), all of them where `exact` (it read the bottom: "nothing open" below them). It leaves `p[..pn]`
-/// open (outermost first) above what is left of the entry, the strings of those that are templates at the records
-/// `ph` (from the range's first), and goes `high` levels above what is left. `exit`'s `at` and kept values are its
-/// end's; its nest fields are not read (`p` is).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Lane {
-    pub at0: usize,
-    pub kc: [u8; MAXD],
-    pub kcn: u8,
-    pub exact: bool,
-    /// The levels the entry has open below those the lane closes, which it never comes to: it holds for an entry with
-    /// at least these (a lane with fewer is another's, the one that read the bottom). None where `exact`.
-    pub need: u8,
-    pub p: [u8; MAXD],
-    pub pn: u8,
-    pub ph: [usize; MAXD],
-    pub high: u8,
-    pub recs: usize,
-    pub exit: Entry,
-    pub refused: bool,
-    /// Whether it lexes a token: one that lexes none leaves its entry as it was.
-    pub moved: bool,
-}
-
-/// A range's summary: its lanes; its bytes (`start..end`, from the first that lexes a token), an entry at or past whose
-/// end goes through it as it came; where its code lanes start (`code`: past the blanks before `start`, the lanes for an
-/// entry before it); and
-/// whether an entry may have gone on in a lane past `L` (`over`, how the range was made of its parts, not a fact of the
-/// range: its lanes are those).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Summary {
-    pub lanes: [Lane; L],
-    pub n: u8,
-    pub start: usize,
-    pub end: usize,
-    pub code: usize,
-    pub over: bool,
-}
-
-impl Summary {
-    fn push(&mut self, l: Lane) {
-        if self.lanes[..usize::from(self.n)].contains(&l) {
-            return;
-        }
-        if usize::from(self.n) == L {
-            self.over = true;
-            return;
-        }
-        self.lanes[usize::from(self.n)] = l;
-        self.n += 1;
-    }
-
-    pub fn lanes(&self) -> &[Lane] {
-        &self.lanes[..usize::from(self.n)]
-    }
-
-    /// Whether no lane lexes a token: every entry goes through it as it came (the chunk is blank past its code entry,
-    /// or inside a region to past its end).
-    pub fn transparent(&self) -> bool {
-        self.n > 0 && self.lanes().iter().all(|l| !l.moved)
-    }
-}
-
-const NO_LANE: Lane = Lane { at0: 0, kc: [0; MAXD], kcn: 0, exact: false, need: 0, p: [0; MAXD], pn: 0, ph: [0; MAXD], high: 0, recs: 0, exit: Entry::START, refused: false, moved: false };
 
 /// Stage 1 for a chunk from block `from`: started `PRIME` blocks before it (none at the file's start).
 fn stage1_at(src: &[u8], s1: &mut Stage1, from: usize) -> Stage1Run {
@@ -665,7 +916,7 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
     let mut e = Entry::START;
     e.at = if from == 0 { 0 } else { code_entry(src, from) };
     let start = 64 * from;
-    let mut sum = Summary { lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(src.len()).max(start), code: e.at, over: false };
+    let mut sum = Summary { lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(src.len()).max(start), code: e.at, head: (64 * to).min(src.len()).max(start), over: false };
     // A token the chunk starts inside, of code: blanks part the tokens of code, so the serial lexer's tokens from the
     // first byte of the run of bytes before the chunk (a block at most) are its, the last of them the one it starts in.
     let mut crossed = None;
@@ -759,235 +1010,6 @@ fn chunk_ends(src: &[u8], s1: &mut Stage1, from: usize, to: usize) -> Summary {
     sum
 }
 
-/// The lanes of `b` a lane of the range before it goes on in: those entered where it leaves the next token, else the
-/// code's (a token from before `b` ends in its code).
-fn next_lanes(b: &Summary, at: usize) -> impl Iterator<Item = &Lane> {
-    // An entry before the range's first byte comes through blanks to where its code lanes start.
-    let at0 = if at < b.start { b.code } else { at };
-    b.lanes().iter().filter(move |l| l.at0 == at0)
-}
-
-/// Lane `a` then lane `b` (entered where `a` leaves), as typed bracket sequences: `b`'s closed levels matched against
-/// what `a` leaves open, the rest of them closed below `a`'s entry. None where they do not meet.
-fn then(a: &Lane, b: &Lane) -> Option<Lane> {
-    // `b` lexes no token: what `a` leaves goes through it.
-    if !b.moved {
-        return Some(*a);
-    }
-    if !a.moved {
-        let mut l = *b;
-        l.at0 = a.at0;
-        return Some(l);
-    }
-    let (an, bn, pn) = (usize::from(a.kcn), usize::from(b.kcn), usize::from(a.pn));
-    let j = bn.min(pn);
-    // `b`'s first `j` closed levels, innermost first, are `a`'s open ones, innermost last.
-    if (0..j).any(|i| !meets(b.kc[i], a.p[pn - 1 - i])) {
-        return None;
-    }
-    let mut l = *b;
-    l.at0 = a.at0;
-    if bn > pn {
-        // `b` closes past what `a` left open: below `a`'s entry, where `a` read none (`exact`) there is none.
-        // (No entry has more than `MAXD` levels open: the serial lexer refuses past them.)
-        if a.exact || an + bn - pn > MAXD {
-            return None;
-        }
-        l.kc = [0; MAXD];
-        l.kc[..an].copy_from_slice(&a.kc[..an]);
-        l.kc[an..an + bn - pn].copy_from_slice(&b.kc[pn..bn]);
-        l.kcn = (an + bn - pn) as u8;
-        l.exact = b.exact;
-        l.need = b.need.max(a.need.saturating_sub((bn - pn) as u8));
-    } else {
-        // `b` read the bottom with levels `a` left open below its own: no such entry.
-        if b.exact && pn > bn {
-            return None;
-        }
-        l.kc = a.kc;
-        l.kcn = a.kcn;
-        l.exact = a.exact || b.exact;
-        // `b` holds where `a` leaves at least `bn + b.need` open: `a`'s entry at least that less what `a` opens.
-        l.need = a.need.max((usize::from(b.need) + bn).saturating_sub(pn) as u8);
-    }
-    // An entry with exactly `kn` levels open can have none more below.
-    if l.exact && l.need > 0 {
-        return None;
-    }
-    let kn = usize::from(l.kcn);
-    // Open: `a`'s below what `b` closed, then `b`'s; `b`'s strings' records after `a`'s.
-    let keep = pn - j;
-    let mut p = [0u8; MAXD];
-    let mut ph = [0usize; MAXD];
-    p[..keep].copy_from_slice(&a.p[..keep]);
-    ph[..keep].copy_from_slice(&a.ph[..keep]);
-    let bp = usize::from(b.pn);
-    if keep + bp > MAXD {
-        return None;
-    }
-    for i in 0..bp {
-        p[keep + i] = b.p[i];
-        ph[keep + i] = if b.p[i] == 255 {
-            0
-        } else if b.ph[i] >= INHERIT {
-            // A record `b` keeps from a level it closes: `a`'s, where `a` left it open; else one below `a`'s entry.
-            let q = b.ph[i] - INHERIT;
-            if q < j { a.ph[pn - 1 - q] } else { INHERIT + an + q - pn }
-        } else {
-            b.ph[i] + a.recs
-        };
-    }
-    l.p = p;
-    l.ph = ph;
-    l.pn = (keep + bp) as u8;
-    // The deepest, above the combined base (the entry less its `kn` closed levels): `a` starts `kn - an` above it, and
-    // `b` where `a` leaves it, `kn + pn - an - bn` above it (none where `b` closes past `a`'s open levels).
-    let ha = usize::from(a.high) + (kn - an);
-    let hb = usize::from(b.high) + (kn + pn) - (an + bn);
-    l.high = ha.max(hb) as u8;
-    l.recs = a.recs + b.recs;
-    l.refused = a.refused || b.refused;
-    Some(l)
-}
-
-/// Two ranges' summaries, one after the other: each lane of the first, on through the lanes of the second it meets.
-/// Associative, so a prefix sum composes them in any tree.
-pub fn compose(a: &Summary, b: &Summary) -> Summary {
-    let (start, end) = (a.start, b.end);
-    if b.transparent() {
-        return Summary { start, end, over: a.over || b.over, ..*a };
-    }
-    if a.transparent() {
-        // Every entry goes through `a` as it came, to `b`: `b`'s lanes, an entry before `b` at its code lanes.
-        let _ = start;
-        return Summary { end, over: a.over || b.over, ..*b };
-    }
-    let mut s = Summary { lanes: [NO_LANE; L], n: 0, start, end, code: a.code, over: a.over };
-    for la in a.lanes() {
-        // A lane that leaves at or past `b`'s end goes through `b` as it is.
-        if la.exit.at >= b.end {
-            s.push(*la);
-            continue;
-        }
-        let mut met = false;
-        for lb in next_lanes(b, la.exit.at) {
-            if let Some(l) = then(la, lb) {
-                met = true;
-                s.push(l);
-            }
-        }
-        // A lane of `a` may go on in one `b` dropped.
-        s.over |= !met && b.over;
-    }
-    s
-}
-
-/// The entry a range leaves after entry `e` (`e` at its first byte, the records before it `recs`): its lane for `e`'s
-/// nest, and whether the file is refused on the way. None where no lane meets it (one past `L` would have).
-pub fn apply(s: &Summary, e: &Entry, recs: usize) -> Option<(Entry, usize, bool)> {
-    // Each lane holds for its class of entries, and the lanes of a range split them apart: a lane kept where others went
-    // past `L` still holds, and no other lane meets its entries.
-    if s.transparent() || e.at >= s.end {
-        return Some((*e, recs, false));
-    }
-    let d = e.depth;
-    let l = next_lanes(s, e.at).find(|l| {
-        let kn = usize::from(l.kcn);
-        kn + usize::from(l.need) <= d && (0..kn).all(|i| meets(l.kc[i], kind_of(e.nest[d - 1 - i]))) && (!l.exact || d == kn)
-    })?;
-    if !l.moved {
-        return Some((*e, recs, false));
-    }
-    let rest = d - usize::from(l.kcn);
-    // Past the deepest nest: the serial lexer refuses the file there.
-    if rest + usize::from(l.high) > MAXD || rest + usize::from(l.pn) > MAXD {
-        return Some((Entry::START, recs + l.recs, true));
-    }
-    let mut x = l.exit;
-    let strings = (0..rest).filter(|&i| e.nest[i] != usize::MAX).count();
-    x.nest = [usize::MAX; MAXD];
-    x.nest[..rest].copy_from_slice(&e.nest[..rest]);
-    x.held = [0; MAXD];
-    x.held[..strings].copy_from_slice(&e.held[..strings]);
-    x.opened = strings;
-    for i in 0..usize::from(l.pn) {
-        x.nest[rest + i] = level_of(l.p[i]);
-        if l.p[i] != 255 {
-            x.held[x.opened] = if l.ph[i] >= INHERIT {
-                // The string of the entry's level the lane closed `q`th: its record, the entry's.
-                let lv = d - 1 - (l.ph[i] - INHERIT);
-                e.held[(0..lv).filter(|&i| e.nest[i] != usize::MAX).count()]
-            } else {
-                recs + l.ph[i]
-            };
-            x.opened += 1;
-        }
-    }
-    x.depth = rest + usize::from(l.pn);
-    x.template = if x.depth == 0 { usize::MAX } else { x.nest[x.depth - 1] };
-    Some((x, recs + l.recs, l.refused))
-}
-
-/// The chunks pass 3 has in flight at once (`entries`): each composes the summaries of those before it in flight.
-pub const IN_FLIGHT: usize = 32;
-
-/// Pass 3: each chunk's entry and the records before it, by a single-pass prefix sum with decoupled look-back (Merrill
-/// and Garland's): a chunk whose predecessor's entry is known applies its predecessor's summary to it; one whose
-/// predecessor is still in flight composes the summaries back to the last known entry and applies that, and where the
-/// composition went past `L` lanes (`over`), waits for its predecessor's entry instead. None for a chunk no lane
-/// reaches; and the chunks that waited.
-pub fn entries_waits(ends: &[Summary]) -> (Vec<Option<(Entry, usize, bool)>>, usize) {
-    let after = |out: &[Option<(Entry, usize, bool)>], c: usize| out[c - 1].and_then(|(e, r, x)| if x { None } else { apply(&ends[c - 1], &e, r) });
-    let mut out: Vec<Option<(Entry, usize, bool)>> = Vec::with_capacity(ends.len());
-    let mut waits = 0;
-    let mut w = 0;
-    while w < ends.len() {
-        // The chunks `w..w + IN_FLIGHT` in flight. The last chunk whose entry is known (`k`: the wave's first, or one
-        // that waited), and the summaries composed from it.
-        let mut k = w;
-        let mut known = if w == 0 { Some((Entry::START, 0, false)) } else { after(&out, w) };
-        let top = (w + IN_FLIGHT).min(ends.len());
-        let mut agg: Option<Summary> = None;
-        out.push(known);
-        for c in w + 1..top {
-            let a = match agg {
-                None => ends[c - 1],
-                Some(a) => compose(&a, &ends[c - 1]),
-            };
-            agg = Some(a);
-            let e = match known {
-                Some((ke, kr, _)) if !a.over => apply(&a, &ke, kr),
-                _ => None,
-            };
-            let e = match e {
-                Some(e) => e,
-                None => {
-                    // Its predecessor's entry, when known: from it on, the chunks after look back to this one.
-                    waits += 1;
-                    let e = after(&out, c);
-                    (k, known, agg) = (c, e, None);
-                    out.push(e);
-                    continue;
-                }
-            };
-            let _ = k;
-            out.push(Some(e));
-        }
-        w = top;
-    }
-    (out, waits)
-}
-
-/// Pass 3's entries (`entries_waits`).
-pub fn entries(ends: &[Summary]) -> Vec<Option<(Entry, usize, bool)>> {
-    entries_waits(ends).0
-}
-
-/// The first block of each chunk of `blocks` blocks of a file of `n` bytes.
-pub fn chunk_starts(n: usize, blocks: usize) -> Vec<usize> {
-    (0..n.div_ceil(64).max(1)).step_by(blocks.max(1)).collect()
-}
-
 /// Pass 1 over `src`: each chunk of `blocks` blocks' summary (`chunk_ends`).
 pub fn summaries(src: &[u8], blocks: usize) -> Vec<Summary> {
     let mut s1 = Stage1::new(src.len().div_ceil(64));
@@ -1049,6 +1071,367 @@ pub fn lex_chunked(src: &[u8], blocks: usize) -> (Lexed, usize) {
     (Lexed { recs, extras, refused }, again)
 }
 "#;
+
+/// Lexing from the middle for a token loop that reads its blocks' bytes (rr's): `lex_on`'s block as a function
+/// (`lex_block`, its writes on in pass 2 alone), each region's end from inside it (`enters`), and the three passes.
+/// What crosses a chunk's end is where the next token starts (`at`), so a chunk's summary maps its entry `at` to its
+/// exit: a lane from the chunk's first byte (code) and one from inside each region. Lanes share each block's classes,
+/// and lanes at the same `at` are one. None where `lex_on` is not that loop.
+pub(super) fn chunked_lean(out: &str, enters: &[(String, String)], opens: &[bool; 256]) -> Option<String> {
+    let head = "unsafe fn lex_on(src: &[u8], n: usize) -> Lexed {\n";
+    let f = out.find(head)?;
+    let open = "    'tokens: while b < nw {\n";
+    let a = f + out[f..].find(open)? + open.len();
+    let close = "    }\n    // SAFETY: `len` records written.";
+    let z = a + out[a..].find(close)?;
+    let k: usize = {
+        let sig = "unsafe fn block_classes(src: &[u8], n: usize, base: usize) -> [u64; ";
+        let at = out.find(sig)? + sig.len();
+        out[at..].split(']').next()?.parse().ok()?
+    };
+    let cur = "        let cur = unsafe { block_classes(src, n, base) };\n";
+    let body = &out[a..z];
+    if !body.contains(cur) {
+        return None;
+    }
+    let mut lines = String::new();
+    for l in body.replace(cur, "").lines() {
+        let t = l.trim_start();
+        let pad = &l[..l.len() - t.len()];
+        let l = l.replace("continue 'tokens;", "break 'blk;").replace("break 'tokens;", "break 'blk;");
+        if t.starts_with("unsafe { out.add(len).write(") || t == "len += 1;" || t == "extras.push(rec);" {
+            let _ = writeln!(lines, "{pad}if WRITE {{\n    {l}\n{pad}}}");
+        } else if t == "while run != 0 {" {
+            let _ = writeln!(lines, "{pad}// Pass 1 writes no record: of the run, only its last token, which may run past the block.\n{pad}if !WRITE && run != 0 {{\n{pad}    run = 1u64 << (63 - run.leading_zeros());\n{pad}}}\n{l}");
+        } else {
+            let _ = writeln!(lines, "{l}");
+        }
+    }
+    // Pass 1: the regions' tokens alone (`walk_block`).
+    let serial = body.replace(cur, "");
+    let (walk, skip, picks, refusing) = walk_block(&serial)?;
+    // The bytes a block's rare mask holds, from its classes (`block_classes`).
+    let rare_of = if out.contains("s::or(s::test(c, s::splat(RARE)), s::ge(v, 0x80))") {
+        "LO[c & 15] & HI[c >> 4] & RARE != 0 || c >= 0x80"
+    } else if out.contains("s::test(c, s::splat(RARE))") {
+        "LO[c & 15] & HI[c >> 4] & RARE != 0"
+    } else {
+        return None;
+    };
+    let refusing = if refusing.is_empty() { "u8::MAX".to_owned() } else { refusing };
+    let open_bytes: Vec<usize> = (0..256).filter(|&c| opens[c]).collect();
+    if open_bytes.is_empty() || open_bytes.len() > 8 {
+        return None;
+    }
+    let opens_table = format!("/// The bytes of the block at `base` a region's opener can start at: pass 1 reads only the tokens that start at one, and\n/// the block's last. One load, a compare a byte, for every lane.\n#[inline(always)]\nfn open_mask(src: &[u8], base: usize) -> u64 {{\n    let v = s::load(src[base..base + 64].try_into().expect(\"the padded source\"));\n    {}\n}}\n\n", open_bytes.iter().map(|c| format!("s::eq_mask(v, {c:#04x})")).collect::<Vec<_>>().join(" | "));
+    let lanes = 1 + enters.len();
+    let entries: Vec<String> = std::iter::once("start".to_owned()).chain(enters.iter().map(|(name, _)| format!("{name}(src, n, start, 64 * to)"))).collect();
+    let entries = entries.join(", ");
+    let checks = format!("/// Pass 1 reads only the tokens at opener bytes, so it sees each refusal the token loop makes: every rare byte's pick has\n/// an arm (`_` refuses none), and an arm that can refuse is an opener byte's.\nconst _: () = {{\n    let mut c = 0;\n    while c < 256 {{\n        let pick = TOKEN[c].0;\n        assert!(!({rare_of}) || matches!(pick, {picks}), \"a rare byte no arm takes\");\n        assert!(!matches!(pick, {refusing}) || matches!(c, {}), \"an arm that refuses at a byte no region opens at\");\n        c += 1;\n    }}\n}};\n\n", open_bytes.iter().map(|c| format!("{c:#04x}")).collect::<Vec<_>>().join(" | "));
+    let fns: String = checks + &opens_table + &enters.iter().map(|(_, f)| f.as_str()).collect::<String>();
+    let mut t = String::new();
+    let _ = write!(
+        t,
+        r#"
+/// The token loop's block `b` (`lex_on`'s), its classes `cur`, from `at`: its records written where `WRITE` (pass 2),
+/// none where not (pass 1's chunk end, which reads only where the next token starts after it).
+#[inline(always)]
+unsafe fn lex_block<const WRITE: bool>(src: &[u8], n: usize, b: usize, cur: [u64; {k}], at_io: &mut usize, refused_io: &mut bool, out: *mut Rec, len_io: &mut usize, extras: &mut Vec<Rec>) {{
+    let nw = n.div_ceil(64);
+    let (mut at, mut len, mut refused, mut b) = (*at_io, *len_io, *refused_io, b);
+    'blk: loop {{
+{lines}        break 'blk;
+    }}
+    (*at_io, *len_io, *refused_io) = (at, len, refused);
+}}
+
+/// The token loop from `at` to block `to` (pass 2, `WRITE`; a chunk's last token in pass 1): where the next token
+/// starts after it.
+#[inline(always)]
+unsafe fn lex_range<const WRITE: bool>(src: &[u8], n: usize, mut at: usize, to: usize, refused: &mut bool, out: *mut Rec, len: &mut usize, extras: &mut Vec<Rec>) -> usize {{
+    let nw = n.div_ceil(64).min(to);
+    let mut b = at / 64;
+    while b < nw && !*refused {{
+        // SAFETY: `b` is a block of the padded file.
+        let cur = unsafe {{ block_classes(src, n, b * 64) }};
+        // SAFETY: `out` has room for a record a byte where `WRITE`.
+        unsafe {{ lex_block::<WRITE>(src, n, b, cur, &mut at, refused, out, len, extras) }};
+        b = (b + 1).max(at / 64);
+    }}
+    at.max(64 * to)
+}}
+
+/// The token loop's state between two tokens (lexing from the middle): where the next token starts. The loop keeps no
+/// nest, so its nest's fields hold none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Entry {{
+    pub at: usize,
+    pub template: usize,
+    pub held: [usize; 0],
+    pub opened: usize,
+    pub nest: [usize; 0],
+    pub depth: usize,
+}}
+
+impl Entry {{
+    /// The file's first byte, in code.
+    pub const START: Entry = Entry {{ at: 0, template: usize::MAX, held: [], opened: 0, nest: [], depth: 0 }};
+
+    #[inline]
+    fn at(at: usize) -> Entry {{
+        Entry {{ at, ..Entry::START }}
+    }}
+}}
+
+/// A chunk's places (`chunk_ends`): code, then one inside each region.
+pub const LANES: usize = {lanes};
+
+/// A region's place where its closer is not in the chunk: the region runs through it, and an entry past its end goes
+/// through (`Summary::end`).
+const NONE: usize = usize::MAX;
+
+/// The backslashes before byte `start`.
+#[inline]
+fn run_before(src: &[u8], start: usize, b: u8) -> usize {{
+    let mut k = 0;
+    while k < start && src[start - 1 - k] == b {{
+        k += 1;
+    }}
+    k
+}}
+
+{fns}/// Pass 1's block `b` from `at` (a token's start), the block's opener bytes `open`: only the tokens that start at one, each
+/// read as the token loop reads it (a region's to its end): `at` the start after the last read (on past the block where a
+/// region runs on), or a refusal. The
+/// regions are the grammar's by their bytes (`regions`): one opens at each opener byte outside them, and no token
+/// other than a region's holds an opener byte past its first, so the token loop's starts are not read.
+#[inline(always)]
+#[allow(unused_variables, unused_assignments)]
+fn walk_block(src: &[u8], n: usize, b: usize, open: u64, at: &mut usize, refused: &mut bool) {{
+    let base = 64 * b;
+{walk}}}
+
+/// Where the next token starts after block `to`, a lane in code at `at` with no opener byte after it in the chunk: the
+/// token loop from the byte after the chunk's last byte `skip` holds (no token's outside the regions), or from `at`.
+#[inline]
+fn tail(src: &[u8], n: usize, at: usize, to: usize, refused: &mut bool) -> usize {{
+    let end = (64 * to).min(n);
+    let mut lo = at;
+    if at < end {{
+        let mut b = (end - 1) / 64;
+        loop {{
+            let base = 64 * b;
+            // SAFETY: `base` is a block of the padded file.
+            let skip = unsafe {{ block_classes(src, n, base) }}[{skip}];
+            let below = if end - base >= 64 {{ !0u64 }} else {{ (1u64 << (end - base)) - 1 }};
+            let from = if at > base {{ !0u64 << (at - base) }} else {{ !0u64 }};
+            let m = skip & below & from;
+            if m != 0 {{
+                lo = base + 64 - m.leading_zeros() as usize;
+                break;
+            }}
+            if base <= at {{
+                break;
+            }}
+            b -= 1;
+        }}
+    }}
+    let (mut len, mut extras) = (0usize, Vec::new());
+    // SAFETY: no record written (`WRITE` false).
+    unsafe {{ lex_range::<false>(src, n, lo, to, refused, core::ptr::null_mut(), &mut len, &mut extras) }}
+}}
+
+/// Pass 1: chunk `from..to` (blocks) walked from each lane's entry (`walk_block`), writing nothing: each lane's exit, as the core's summary (`Summary`).
+/// Each lane walks alone, and keeps where it is after each block it reads (the first `SEEN`): a later lane at a place an
+/// earlier one was after the same block is that lane from there on.
+pub fn chunk_ends(src: &[u8], n: usize, from: usize, to: usize) -> Summary {{
+    const SEEN: usize = 32;
+    let start = 64 * from;
+    // The file's first chunk starts in code.
+    let at0: [usize; LANES] = if start == 0 {{ [0; LANES] }} else {{ [{entries}] }};
+    let end = n.div_ceil(64).min(to);
+    let mut seen = [[0u32; SEEN]; LANES];
+    let mut seen_len = [0usize; LANES];
+    let mut lanes = [(NONE, 0usize, false); LANES];
+    for k in 0..LANES {{
+        let (mut at, mut refused) = (at0[k], false);
+        let mut b = at / 64;
+        // Each earlier lane's place to compare with next, and the one this lane is.
+        let mut ptr = [0usize; LANES];
+        let mut same = (0..k).find(|&j| at0[j] == at);
+        if at == NONE {{
+            continue;
+        }}
+        while same.is_none() && b < end && !refused {{
+            walk_block(src, n, b, open_mask(src, 64 * b), &mut at, &mut refused);
+            if seen_len[k] < SEEN {{
+                seen[k][seen_len[k]] = at as u32;
+                seen_len[k] += 1;
+            }}
+            for j in 0..k {{
+                while ptr[j] < seen_len[j] && (seen[j][ptr[j]] as usize) < at {{
+                    ptr[j] += 1;
+                }}
+                if ptr[j] < seen_len[j] && seen[j][ptr[j]] as usize == at && !lanes[j].2 {{
+                    same = Some(j);
+                    break;
+                }}
+            }}
+            b = (b + 1).max(at / 64);
+        }}
+        lanes[k] = match same {{
+            Some(j) => (at0[k], lanes[j].1, lanes[j].2),
+            None => {{
+                // In code at the chunk's end: its last token, which may run past it.
+                let exit = if !refused && at < (64 * to).min(n) {{ tail(src, n, at, to, &mut refused) }} else {{ at }};
+                (at0[k], exit.max(64 * to), refused)
+            }}
+        }};
+    }}
+    // The core's summary: each place's lane, none for a region whose closer is not in the chunk (it runs through).
+    let mut sum = Summary {{ lanes: [NO_LANE; L], n: 0, start, end: (64 * to).min(n).max(start), code: at0[0], head: (64 * to).min(n).max(start), over: false }};
+    for (k, &(a, exit, refused)) in lanes.iter().enumerate() {{
+        if k > 0 && a == NONE {{
+            continue;
+        }}
+        let mut l = NO_LANE;
+        l.at0 = a;
+        l.exit = Entry::at(exit);
+        l.refused = refused;
+        l.moved = exit != a || refused;
+        sum.push(l);
+    }}
+    sum
+}}
+
+/// Pass 2 of one chunk: the token loop from its entry `at` to block `to`, its records appended to `recs` and `extras`.
+/// Where the next token starts after it, and whether the file is refused.
+pub fn lex_chunk(buf: &[u8], n: usize, at: usize, to: usize, recs: &mut Vec<Rec>, extras: &mut Vec<Rec>) -> (usize, bool) {{
+    // A record a byte of the chunk from `at` at most: each starts in it.
+    recs.reserve((64 * to).min(n).saturating_sub(at) + 1);
+    let (mut len, mut refused) = (recs.len(), false);
+    // SAFETY: room for a record a byte of the chunk past `len`.
+    let exit = unsafe {{ lex_range::<true>(buf, n, at, to, &mut refused, recs.as_mut_ptr(), &mut len, extras) }};
+    // SAFETY: `len` records written.
+    unsafe {{ recs.set_len(len) }};
+    (exit, refused)
+}}
+
+/// `buf[..n]` lexed in chunks of `blocks` blocks: pass 1, the prefix sum, then each chunk from its entry, which checks
+/// its exit is the next chunk's entry. The records, and the chunks entered again where pass 3's entry was not the one
+/// the chunk before left (or no lane gave one).
+pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> (Lexed, usize) {{
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
+    let starts = chunk_starts(n, blocks);
+    let ends: Vec<Summary> = starts.iter().map(|&q| chunk_ends(buf, n, q, q + blocks.max(1))).collect();
+    let entry = entries(&ends);
+    let (mut recs, mut extras) = (Vec::with_capacity(n + 1), Vec::new());
+    let (mut refused, mut again, mut at) = (false, 0, 0usize);
+    for c in 0..starts.len() {{
+        if entry[c].is_none_or(|(e, _, _)| e.at != at) {{
+            again += 1;
+        }}
+        let (exit, r) = lex_chunk(buf, n, at, starts[c] + blocks.max(1), &mut recs, &mut extras);
+        if r {{
+            refused = true;
+            break;
+        }}
+        at = exit;
+    }}
+    (Lexed {{ recs, extras, refused }}, again)
+}}
+"#
+    );
+    // The summaries' lanes, by place alone (the loop keeps no nest), and pass 3's prefix sum: the core's.
+    // (A range's lanes are its head's and those of its later chunks' places: room for several chunks'.)
+    Some(t + &core(0, "", 0, 32.max(lanes), true))
+}
+
+/// The statement of `text` that starts at the line starting with `start` (trimmed), to the `;` its braces close at.
+fn statement_at(text: &str, start: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let i = lines.iter().position(|l| l.trim_start().starts_with(start))?;
+    let mut depth = 0i32;
+    let mut out = String::new();
+    for l in &lines[i..] {
+        out.push_str(l);
+        out.push('\n');
+        // Braces outside character and string literals.
+        let (mut in_chr, mut in_str, mut prev) = (false, false, ' ');
+        for c in l.chars() {
+            match c {
+                '"' if !in_chr && prev != '\\' => in_str = !in_str,
+                '\'' if !in_str && prev != '\\' => in_chr = !in_chr,
+                '{' if !in_chr && !in_str => depth += 1,
+                '}' if !in_chr && !in_str => depth -= 1,
+                _ => {}
+            }
+            prev = if prev == '\\' && c == '\\' { ' ' } else { c };
+        }
+        if depth == 0 && l.trim_end().ends_with(';') {
+            return Some(out);
+        }
+    }
+    None
+}
+
+/// Pass 1's block (`walk_block`'s body) from the token loop `serial` (`lex_on`'s): at each opener byte from `at` on, the
+/// token there read as the loop reads a rare token (its `pick`'s arm), the block masks it reads none (an operator of one
+/// byte: no opener byte is a pair's). And the index of `skip`'s mask in the block's classes, the picks an arm takes, and
+/// those whose arm can refuse. None where the loop is not of that shape.
+fn walk_block(serial: &str) -> Option<(String, String, String, String)> {
+    let skip_mask = serial.lines().find_map(|l| l.trim().strip_prefix("let s = !").and_then(|r| r.split(' ').next()))?.to_owned();
+    let skip = serial.lines().find_map(|l| l.trim().strip_prefix(&format!("let {skip_mask} = cur[")).and_then(|r| r.strip_suffix("];")))?.to_owned();
+    let rare = statement_at(serial, "let (pick, kind1, word1) = TOKEN[")?;
+    let arms = statement_at(serial, "let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {")?;
+    // The picks an arm takes whatever its byte's tests: each rare byte's must be one, or `_` refuses where the serial
+    // loop's run of the block would.
+    let arms_d = super::dedent(&arms);
+    let picks: Vec<String> = arms_d
+        .lines()
+        .filter(|l| l.starts_with("    ") && !l.starts_with("     ") && l.ends_with("=> {") && !l.contains(" if "))
+        .filter_map(|l| l.trim().strip_suffix(" => {").filter(|p| p.chars().all(|c| c.is_ascii_digit() || c == ' ' || c == '|')).map(str::to_owned))
+        .collect();
+    if picks.is_empty() {
+        return None;
+    }
+    // The picks whose arm can refuse: each must be an opener byte's alone, where pass 1 reads it.
+    let mut refusing: Vec<String> = Vec::new();
+    let mut arm: Option<String> = None;
+    for l in arms_d.lines() {
+        if l.starts_with("    ") && !l.starts_with("     ") && l.contains("=> {") {
+            arm = l.trim().split(" if ").next().and_then(|p| p.split(" =>").next()).map(str::to_owned);
+        }
+        if l.contains("refused = true;")
+            && let Some(a) = &arm
+            && a != "_"
+            && !refusing.contains(a)
+        {
+            refusing.push(a.clone());
+        }
+    }
+    let snippet = (rare + &arms).replace("break 'tokens;", "break 'blk usize::MAX;");
+    // The block masks the arms read, none: the token at an opener byte that opens no region is one byte (`at` past it).
+    let mut masks: Vec<String> = Vec::new();
+    for (i, _) in snippet.match_indices("k_") {
+        let name: String = snippet[i..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        let before = snippet[..i].chars().last().unwrap_or(' ');
+        if !(before.is_ascii_alphanumeric() || before == '_') && !masks.contains(&name) {
+            masks.push(name);
+        }
+    }
+    let zeros: String = masks.iter().map(|m| format!("    let {m} = 0u64;\n")).collect();
+    let re = |t: &str, k: usize| super::indent(&super::dedent(t), &" ".repeat(k));
+    Some((
+        format!(
+            "{zeros}    let mut open = if *at > base {{ open & (!0u64 << (*at - base)) }} else {{ open }};\n    let mut refused_now = false;\n    while open != 0 {{\n        let s = base + open.trailing_zeros() as usize;\n        let l = 'blk: loop {{\n{}            break 'blk l;\n        }};\n        if refused_now {{\n            *refused = true;\n            return;\n        }}\n        *at = l + 1;\n        if *at >= base + 64 {{\n            return;\n        }}\n        open &= !0u64 << (*at - base);\n    }}\n",
+            re(&snippet.replace("refused = true;", "refused_now = true;"), 12),
+        ),
+        skip,
+        picks.join(" | "),
+        refusing.join(" | "),
+    ))
+}
 
 #[cfg(test)]
 mod tests {

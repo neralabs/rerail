@@ -2,7 +2,7 @@
 //! or inside each region), the entries joined by a prefix sum, then each chunk from its entry, is the serial lexer's
 //! (`lex`), record for record.
 
-use rerail_rr_aot::{Lexed, lex, lex_chunked, padded};
+use rerail_rr_aot::{Entry, IN_FLIGHT, Lexed, apply, chunk_ends, compose, entries, entries_waits, lex, lex_chunked, padded};
 
 /// The cases: the samples, and regions cut by chunk edges at every offset.
 fn files() -> Vec<String> {
@@ -45,25 +45,34 @@ fn chunked_is_the_serial_lexer() {
     eprintln!("{} files, each in chunks of 1, 2, 3 and 16 blocks: the serial lexer's records; {again} chunks entered again", files.len());
 }
 
-/// Summaries compose in any tree: each chunk's entry by the prefix sum is the one composed left to right.
+/// Summaries compose in any tree: each chunk's entry by the prefix sum is the one composed left to right, and
+/// `(A·B)·C = A·(B·C)` as functions of the entry (at each place a lane of `A` starts, before `A` and past `C`).
 #[test]
 fn summaries_compose_in_any_order() {
     for f in files().iter().filter(|f| f.len() > 256) {
         let buf = padded(f.as_bytes());
         let n = f.len();
-        let mut ends: Vec<_> = (0..n.div_ceil(64)).map(|q| rerail_rr_aot::chunk_ends(&buf, n, q, q + 1)).collect();
-        let scanned = rerail_rr_aot::entries(&ends);
-        rerail_rr_aot::fill_far(&mut ends);
+        let ends: Vec<_> = (0..n.div_ceil(64)).map(|q| chunk_ends(&buf, n, q, q + 1)).collect();
+        let scanned = entries(&ends);
         let mut left = ends[0];
         for c in 1..ends.len() {
-            let at = left.iter().find(|l| l.at0 == 0).unwrap_or(&left[0]);
-            assert_eq!(scanned[c], (at.exit, at.refused), "chunk {c}");
-            left = rerail_rr_aot::compose(&left, &ends[c]);
+            assert_eq!(scanned[c], apply(&left, &Entry::START, 0), "chunk {c}");
+            left = compose(&left, &ends[c]);
         }
-        // (A·B)·C = A·(B·C) for each three chunks in a row.
         for w in ends.windows(3) {
             let (a, b, c) = (&w[0], &w[1], &w[2]);
-            assert_eq!(rerail_rr_aot::compose(&rerail_rr_aot::compose(a, b), c), rerail_rr_aot::compose(a, &rerail_rr_aot::compose(b, c)));
+            let (l, r) = (compose(&compose(a, b), c), compose(a, &compose(b, c)));
+            let ats = a.lanes().iter().map(|l| l.at0).chain([a.start.saturating_sub(1), c.end]);
+            for at in ats {
+                let e = Entry { at, ..Entry::START };
+                // (None: no lane met it, one went past `L`; pass 3 waits for the entry before.)
+                if let (Some(x), Some(y)) = (apply(&l, &e, 0), apply(&r, &e, 0))
+                    && x != y
+                {
+                    let show = |s: &rerail_rr_aot::Summary| s.lanes().iter().map(|l| (l.at0, l.exit.at, l.refused, l.moved)).collect::<Vec<_>>();
+                    panic!("(A·B)·C is not A·(B·C) at {at}: {:?} {:?}\nA {} {} {:?}\nB {} {} {:?}\nC {} {} {:?}\nl {:?}\nr {:?}", apply(&l, &e, 0).map(|x| x.0.at), apply(&r, &e, 0).map(|x| x.0.at), a.start, a.end, show(a), b.start, b.end, show(b), c.start, c.end, show(c), show(&l), show(&r));
+                }
+            }
         }
     }
 }
@@ -72,13 +81,16 @@ fn summaries_compose_in_any_order() {
 #[ignore = "the corpus: run by name"]
 fn corpus_chunked_is_the_serial_lexer() {
     let files = crate::tests::corpus();
-    let mut again = [0usize; 4];
+    let (mut again, mut waits) = ([0usize; 4], [0usize; 4]);
     for f in &files {
+        let buf = padded(f.as_bytes());
         for (i, blocks) in [1, 2, 16, 256].into_iter().enumerate() {
             again[i] += same(f, blocks);
+            let ends: Vec<_> = (0..f.len().div_ceil(64)).step_by(blocks).map(|q| chunk_ends(&buf, f.len(), q, q + blocks)).collect();
+            waits[i] += entries_waits(&ends).1;
         }
     }
-    eprintln!("{} files: the serial lexer's records in chunks of 1, 2, 16 and 256 blocks; chunks entered again: {again:?}", files.len());
+    eprintln!("{} files: the serial lexer's records in chunks of 1, 2, 16 and 256 blocks; chunks entered again: {again:?}; pass 3's waits ({IN_FLIGHT} in flight): {waits:?}", files.len());
 }
 
 #[test]
@@ -103,9 +115,9 @@ fn report_chunked_speed() {
     eprintln!("{} files, {:.1} MB; serial {:.2} GB/s", bufs.len(), bytes as f64 / 1e6, bytes as f64 / serial / 1e9);
     for blocks in [16, 64, 256, 1 << 30] {
         let chunks = |n: usize| (0..n.div_ceil(64)).step_by(blocks);
-        let ends = time(&|b, n| chunks(n).map(|q| rerail_rr_aot::chunk_ends(b, n, q, q + blocks)[0].exit as usize).sum());
-        let all: Vec<Vec<(u32, bool)>> = bufs.iter().map(|(b, n)| rerail_rr_aot::entries(&chunks(*n).map(|q| rerail_rr_aot::chunk_ends(b, *n, q, q + blocks)).collect::<Vec<_>>())).collect();
-        let scan = time(&|b, n| rerail_rr_aot::entries(&chunks(n).map(|q| rerail_rr_aot::chunk_ends(b, n, q, q + blocks)).collect::<Vec<_>>()).len()) - ends;
+        let ends = time(&|b, n| chunks(n).map(|q| chunk_ends(b, n, q, q + blocks).lanes()[0].exit.at).sum());
+        let all: Vec<Vec<Option<(Entry, usize, bool)>>> = bufs.iter().map(|(b, n)| entries(&chunks(*n).map(|q| chunk_ends(b, *n, q, q + blocks)).collect::<Vec<_>>())).collect();
+        let scan = time(&|b, n| entries(&chunks(n).map(|q| chunk_ends(b, n, q, q + blocks)).collect::<Vec<_>>()).len()) - ends;
         let from = {
             let mut best = f64::MAX;
             for _ in 0..5 {
@@ -113,7 +125,7 @@ fn report_chunked_speed() {
                 for ((b, n), e) in bufs.iter().zip(&all) {
                     let (mut recs, mut extras) = (Vec::with_capacity(n + 1), Vec::new());
                     for (c, q) in chunks(*n).enumerate() {
-                        _ = rerail_rr_aot::lex_chunk(b, *n, e[c].0 as usize, q + blocks, &mut recs, &mut extras);
+                        _ = rerail_rr_aot::lex_chunk(b, *n, e[c].map_or(64 * q, |x| x.0.at), q + blocks, &mut recs, &mut extras);
                     }
                     std::hint::black_box(recs.len());
                 }
@@ -137,7 +149,7 @@ fn profile_pass_1() {
     while t.elapsed().as_secs() < 4 {
         for (b, n) in &bufs {
             for q in (0..n.div_ceil(64)).step_by(blocks) {
-                c += rerail_rr_aot::chunk_ends(b, *n, q, q + blocks)[0].exit as usize;
+                c += chunk_ends(b, *n, q, q + blocks).lanes()[0].exit.at;
             }
         }
     }

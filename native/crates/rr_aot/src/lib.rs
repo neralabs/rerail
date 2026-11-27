@@ -20,7 +20,7 @@ mod tier2;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
 mod tier2_loop;
 
-pub use tier1::{LANES, Lane, Lexed, PADDING, chunk_ends, compose, entries, fill_far, lex, lex_chunk, lex_chunked};
+pub use tier1::{Entry, IN_FLIGHT, LANES, Lane, Lexed, PADDING, Summary, apply, chunk_ends, compose, entries, entries_waits, lex, lex_chunk, lex_chunked};
 
 /// The tape of `buf[..n]`, written to `finish`'s target and finished by it (decision 0434: format 16 as the parse
 /// goes), or the byte the parser refused it at (0: tier 1 sends it to the engine). `buf` is the file padded, as

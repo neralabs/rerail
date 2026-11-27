@@ -114,6 +114,25 @@ test builds only. Python's grammar did not compile under it:
 - **Pass 2 (`lex_chunked`)** lexes each chunk from its entry, writing the records, and counts the chunks whose entry
   was not the one the chunk before left.
 
+### One summary for every loop's chunked form (the fold)
+
+The three passes' summary for nesting is one definition, `bitlex_lex_rust::chunked`'s core: `Lane`, `Summary`,
+`then`, `compose`, `apply` and pass 3's look-back (`entries`). Each token loop's form gives its `Entry` and makes its
+chunks' summaries:
+
+- `chunked_nest` (Kotlin's loop, which keeps a nest): `MAXD` 4, `L` 64, the lanes above.
+- `chunked_lean` (rr's loop, which reads its blocks' bytes; moved into `chunked`): no nest (`MAXD` 0), lanes by place
+  alone from its opener-byte walk, `L` 32.
+  - An entry in a range's head with no lane at its place goes on in the code lane (`CODE_ANYWHERE`): rr's tokens from
+    any byte of code come to the same place. That never holds on a summary that dropped lanes.
+  - `fill_far`, the suffix scan that gave a region running through a chunk its far end, is gone. An entry at or past a
+    range's end goes through it, and `compose(a, b)` keeps `b`'s lanes at or past `a`'s end.
+- A lane that meets an entry is its own on a summary that went past `L`: lanes are disjoint classes. Pass 3 waits only
+  where no lane meets the entry.
+
+rr's corpus (1953 files): the serial lexer's records, 0 chunks entered again at 1, 2, 16 and 256 blocks, as before
+the fold. Pass 3 waits for 2095, 965, 48 and 0 chunks (32 in flight). rr's speed report was not rerun after the fold.
+
 ### Numbers (Kotlin)
 
 - **The test files** (1133 files at 1, 2, 3 and 16 blocks, 7780 chunks): the serial lexer's records, 0 chunks entered
@@ -122,10 +141,10 @@ test builds only. Python's grammar did not compile under it:
 
 | Chunk size (blocks) | Chunks | Entered again | Chunks past `L` | Pass 3's waits (32 in flight) |
 |---|---|---|---|---|
-| 1 | 57,029 | 0 | 725 | 900 |
-| 2 | 28,642 | 0 | 819 | 876 |
-| 16 | 3,815 | 0 | 381 | 213 |
-| 256 | 558 | 0 | 13 | 2 |
+| 1 | 57,029 | 0 | 725 | 91 |
+| 2 | 28,642 | 0 | 819 | 49 |
+| 16 | 3,815 | 0 | 381 | 2 |
+| 256 | 558 | 0 | 13 | 0 |
 
 Tests (`rerail-kotlin-parser`, `chunked_tests`):
 
