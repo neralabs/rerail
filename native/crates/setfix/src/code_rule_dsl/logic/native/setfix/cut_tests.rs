@@ -630,7 +630,7 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
 /// works keeps its time. Measured on the clock itself, one thread, in ticks.
 #[test]
 fn a_step_clocks_switches_are_no_steps_time() {
-    let fresh = |cost: f64| StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost };
+    let fresh = |cost: f64| StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost, word: None };
     // Empty steps 0 and 1, entered in turn: their charge is the switches'. They are made by the code the cost is
     // measured on (`switch_between_empty`): a loop here costs what this module's code costs, and that time is between
     // the switches, the steps' own. Ticks are the wall's: each round measures the cost just before its switches, and

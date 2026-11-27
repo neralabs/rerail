@@ -11030,7 +11030,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                                       factor, screen, batch: kinds::batches(j, share == u64::MAX || !collecting, screen.map(|f| f.step), None), screening: Default::default(), tally: [0; 10], failed, snap: rerail_blocks::vector::Vector::new(), skipped: 0, deep: 0, work: 0, budget: share, stop: false,
                                       only_step: usize::MAX, only: None, list0: None, cut_from,
                                       counts: j.counts.iter().map(|_| Default::default()).collect(), first: Some((rows_of_first(j, src, store), first)),
-                                      left0: None, clock: StepClock::start(j, &store.rels[head].table), extreme: extremes(j) };
+                                      left0: None, clock: StepClock::start(j, store.rels.get(head).map_or("?", |r| r.table.as_str())), extreme: extremes(j) };
                     let mut slots = slots.to_vec();
                     go(&mut w, 0, &mut slots);
                     flush_batches(&mut w);
@@ -11235,7 +11235,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None,
                        cut_from: usize::MAX, counts: j.counts.iter().map(|_| Default::default()).collect(), first: None, left0: None,
-                       clock: StepClock::start(j, &store.rels[head].table), extreme: extremes(j) };
+                       clock: StepClock::start(j, store.rels.get(head).map_or("?", |r| r.table.as_str())), extreme: extremes(j) };
     if cx.collect.is_none() { cx.cut_from = tail(j); }
     let t_setup = t_call.map(|t| t.elapsed());
     let mut slots = vec![0i64; j.nslots];
