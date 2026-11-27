@@ -966,6 +966,21 @@ impl Source for Layered {
     fn complete_rows(&self) -> bool {
         self.base.complete_rows()
     }
+    /// A `has` axis or containment read off the tapes (decision 0353 step 5): the base's walk where no value is
+    /// admitted, else the walk over the directory of the chunk's batch and its values (`views_over`), each node found
+    /// in its document there by its key, as `solved_in_block`'s solve reads them; pairs never cross documents.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        let w = self.base.has_walk()?;
+        if self.values.total(&self.name) == 0 {
+            return Some(w);
+        }
+        let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
+        let dir = self.values.dir(base.batch())?;
+        let nodes = dir.views.nodes(&base.batch().block);
+        let view = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)?;
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes, view, ..w })
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.base.expect_lookups(column, keys)
     }

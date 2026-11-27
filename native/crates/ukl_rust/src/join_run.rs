@@ -690,6 +690,10 @@ impl St<'_> {
     /// Whether node row `q`'s kind atom is in the stage's set (ascending).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
+        // Containment's set is every node (`v_nset` `NONE`, `DevRel::has`).
+        if s.v_nset == NONE {
+            return true;
+        }
         // A `has` stage's rows are `node`'s (`row`): a walk's candidate is the row it holds.
         let k = self.row(q).get(2);
         let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
@@ -756,6 +760,27 @@ impl St<'_> {
         Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
     }
 
+    /// A `has` axis or containment probed by both its columns (`Stage::v_has` 3, `Batch::by_has`): node `n`'s one row
+    /// where it lies strictly inside ancestor `a`'s subtree, its document's preorder interval of `a`'s numbered
+    /// descendants, else none; as the host's `Within::below`. `n`'s membership is `matches`'.
+    unsafe fn has_pair(&self, kv: &[i64; 8]) -> Walk {
+        let s = self.s;
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        // Its two keys, its ancestor's first (`bind_right`), as the kernels read them.
+        let (n, a) = (kv[1], kv[0]);
+        if n < 0 || (n as u64) >> 32 != (a as u64) >> 32 {
+            return none;
+        }
+        let Some((e, la)) = self.doc_node(a) else { return none };
+        let d = doc(s.v_dir, e);
+        let ln = d.number(n as u32);
+        if ln == NONE || ln <= la || ln >= d.end(la) {
+            return none;
+        }
+        let r = (*e).rows[0].wrapping_add(ln);
+        Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
+    }
+
     /// The candidates of keys `kv`: [lo, hi) and how they are walked (0 rows, 1 an index's entries, 2 a parent's
     /// children by their next siblings, 3 a node's numbered ancestors).
     unsafe fn probe(&self, kv: &[i64; 8]) -> Walk {
@@ -765,6 +790,9 @@ impl St<'_> {
         }
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         let d = s.v_dir;
+        if s.v_has == 3 {
+            return self.has_pair(kv);
+        }
         if s.v_has != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[0];

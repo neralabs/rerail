@@ -626,8 +626,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
-    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
-    has: Option<Words>,
+    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each, and their
+    /// count (`Stage::v_nset`; `NONE`: every node, containment's).
+    has: Option<(Words, u32)>,
     /// Its rows are its length as the device claims it, `rows` at most (`live`): a recursive component's relation that
     /// grows round after round within one launch (decision 0603 step 3).
     live: bool,
@@ -690,20 +691,22 @@ impl DevRel {
     }
 
     /// A `has` axis read off the tape (decision 0353 step 5): the batch's `node` view in place (`view`, of `nodes`
-    /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
-    /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
-    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
+    /// rows) and its set's kind atoms `kinds`, ascending, or every node (`every`: containment, `within`). It has no
+    /// rows of its own: a stage probes it by its columns (`Batch::by_has`), each binding's rows walked on the tape.
+    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64], every: bool) -> Result<DevRel, Error> {
         // Nothing indexes it (`Batch::by_has` walks the tape): its relation of no columns has no room for an index.
         let part = crate::code_rule_dsl::facts::rows::Part::for_device_unindexed(nodes).map_err(|_| Error::BackendCapacity)?;
         let mut dev = DevRel::of_part(part, 0, nodes)?;
         dev.cols = 2;
         dev.view = Some(view);
-        let set = Words::zeroed(2 * kinds.len())?;
+        let kinds = if every { &[][..] } else { kinds };
+        // A set of none still has a buffer for its stage to bind.
+        let set = Words::zeroed(2 * kinds.len().max(1))?;
         for (i, &k) in kinds.iter().enumerate() {
             set.set(2 * i, k as u32);
             set.set(2 * i + 1, (k >> 32) as u32);
         }
-        dev.has = Some(set);
+        dev.has = Some((set, if every { NONE } else { kinds.len() as u32 }));
         Ok(dev)
     }
 
@@ -738,7 +741,7 @@ impl DevRel {
                 pass.use_read_write(cache);
             }
         }
-        if let Some(set) = &self.has {
+        if let Some((set, _)) = &self.has {
             pass.use_read(&[&set.buffer.buffer]);
         }
     }
@@ -1107,17 +1110,30 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
-    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |(set, n)| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), *n, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
         // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
-        // row by its id (4).
+        // row by its id (4), a `has` pair's test (5).
         stage.v_parent = match ix.walk {
             1 => 1,
             4 => 2,
             _ => 0,
         };
-        stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
+        stage.v_has = match ix.walk {
+            2 | 3 => ix.walk - 1,
+            5 => 3,
+            _ => 0,
+        };
+        // A pair's keys in one order, its ancestor's (column 1) first, so a stage reads each at a constant index:
+        // chosen between at run time, the M1's back end read neither (`join_stages`' `walk_key`). Its keys are its two
+        // columns (`Batch::by_has`); `matches` reads none of them.
+        if ix.walk == 5 && stage.key_rcol[0] == 0 {
+            stage.key_kind.swap(0, 1);
+            stage.key_slot.swap(0, 1);
+            stage.key_const.swap(0, 1);
+            stage.key_rcol.swap(0, 1);
+        }
     }
 }
 
@@ -2272,9 +2288,10 @@ impl Batch {
         Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
-    /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
-    /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
-    /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
+    /// A `has` axis or containment probed by its columns (decision 0353 step 5): no index, each binding's rows walked
+    /// on the tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree, by both the
+    /// node's own row where it lies in the ancestor's subtree. `None` for any other relation; an error for a probe of
+    /// none, which reads it off the tape or not at all.
     pub(in crate::code_rule_dsl) fn by_has(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
         if !rel.is_has() {
             return Ok(None);
@@ -2282,7 +2299,8 @@ impl Batch {
         let walk = match cols {
             [0] => 2,
             [1] => 3,
-            _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
+            [0, 1] | [1, 0] => 5,
+            _ => return Err(Error::UnsupportedFeature("a has axis probed by none of its columns")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
         Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
@@ -2591,8 +2609,9 @@ impl Batch {
         };
         self.bind_node_texts(&mut stage)?;
         let fbuf = self.screen(&mut stage, screen);
-        // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
-        let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some();
+        // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order. Not a `has`
+        // walk's: its candidates are the walk's, not every row with its keys tested (`matches` takes them as found).
+        let from_one = left.room() == 1 && !left.placed() && stage.mode == JOIN && right.is_some() && stage.v_has == 0;
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer()
         } else {

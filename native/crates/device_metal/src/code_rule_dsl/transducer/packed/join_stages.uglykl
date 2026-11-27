@@ -358,6 +358,8 @@ UKL_INLINE uint32_t child_next(StageP s, uint32_t r) {
 
 // Whether node row `q`'s kind atom is in the set (the stage's, ascending), by bisection.
 UKL_INLINE bool has_member(StageP s, uint32_t q) {
+    // Containment's set is every node (`v_nset` `NONE`, `DevRel::has`).
+    if (s->v_nset == NONE) return true;
     uint32_t memo = NONE;
     int64_t k = vread(1u, s->v_dir, q, 2u, &memo);
     uint32_t lo = 0u, hi = s->v_nset;
@@ -395,6 +397,26 @@ UKL_INLINE void by_has(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_PRIV
     *hi = first + clif_view_end(ch, e->entry, t, e->view, ls, la, l);
 }
 
+// Probed by both columns (3, `join_run::St::has_pair`): node `n`'s one row where it lies strictly inside ancestor
+// `a`'s subtree (its document's preorder interval), as the host's `Within::below`; `n`'s membership is `matches`'.
+UKL_INLINE void has_pair(StageP s, int64_t a, int64_t n, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi, UKL_PRIVATE uint32_t* how) {
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    *lo = 0u; *hi = 0u; *how = 0u;
+    if (n < 0 || a < 0 || d->ndocs == 0u || ((uint64_t)n >> 32) != ((uint64_t)a >> 32)) return;
+    uint32_t at = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)a >> 32), NONE);
+    if (at == NONE) return;
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[at];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint64_t la = e->lines;
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)a & 0xfffffffful));
+    if (l == NONE) return;
+    uint32_t m = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)n & 0xfffffffful));
+    if (m == NONE || m <= l || m >= clif_view_end(ch, e->entry, t, e->view, ls, la, l)) return;
+    *lo = e->rows[0] + m; *hi = *lo + 1u;
+}
+
 // The next numbered ancestor's row of node row `q`, or `NONE`: its document as `vread` finds it, then the climb.
 UKL_INLINE uint32_t has_up(StageP s, uint32_t q) {
     UKL_GLOBAL const ViewDir* d = s->v_dir;
@@ -422,6 +444,8 @@ UKL_INLINE uint32_t stage_rows(StageP s, RelB R) {
 UKL_INLINE void probe(StageP s, RelB R, UKL_PRIVATE const int64_t* kv, UKL_PRIVATE uint32_t* lo, UKL_PRIVATE uint32_t* hi,
                       UKL_PRIVATE uint32_t* how) {
     if (s->nkeys == 0) { *lo = s->r_from; *hi = s->r_from + stage_rows(s, R); *how = 0u; return; }
+    // A pair's two keys, its ancestor's first (`bind_right`), each read at a constant index (`walk_key`).
+    if (s->v_has == 3u) { has_pair(s, kv[0], kv[1], lo, hi, how); return; }
     if (s->v_has != 0u) { by_has(s, kv[0], lo, hi, how); return; }
     if (s->v_parent != 0u) { by_parent(s, walk_key(s, kv), lo, hi, how); return; }
     *how = 1u;

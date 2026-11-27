@@ -464,9 +464,11 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 /// whole (no keys), the CPU makes them all too, and the device takes it.
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
-        // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
-        // A `has` axis probed by one key is read off the tape (decision 0353 step 5, `resident`): nothing is made.
-        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys == 1 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
+        // A `has` axis or containment probed by its keys is read off the tape (decision 0353 step 5, `resident`):
+        // nothing is made. Asked first: `complete_rows` chooses the batch's solve.
+        Some(v) if (1..=2).contains(&keys) && rel.ndead == 0 && v.src.has_walk().is_some() => Ok(()),
+        // A kind-set axis is made whole by the batch's solve, and read so (decision 0277).
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
@@ -1748,6 +1750,19 @@ fn with_consts(mut d: mj::Stage, consts: &[(u32, i64)]) -> mj::Stage {
 /// runs on the CPU.
 #[allow(clippy::type_complexity)]
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vector<u32>, Consts), String> {
+    // A `has` axis or containment probed by its columns is read off the tape (decision 0353 step 5): a stage walks
+    // each binding's rows there (`mj::Batch::by_has`), nothing made, uploaded or indexed. Asked before the rows in a
+    // block: containment's are its batch's solve, which a walk needs none of. Read otherwise, its rows are those.
+    let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1] | [0, 1] | [1, 0]);
+    if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
+        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds, w.every).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
+        rep.in_place += 1;
+        crate::code_rule_dsl::prof::count(if w.every { "device.view_read.within" } else { "device.view_read.has" }, 1);
+        let place: Vector<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
+        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
+    }
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
@@ -1761,18 +1776,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         return Ok((dev, Some(ix), place, Vec::new()));
-    }
-    // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5): a stage walks each
-    // binding's rows there (`mj::Batch::by_has`), nothing made or uploaded. Read otherwise, its rows are uploaded.
-    let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1]);
-    if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
-        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
-        rep.in_place += 1;
-        crate::code_rule_dsl::prof::count("device.view_read.has", 1);
-        let place: Vector<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
-        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
-        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     // A view filtered by constants is read in place whole (decision 0353 step 4): its constants are keys its stage adds
     // (`with_consts`), so a probe's index is over its key columns and theirs and every candidate is checked against

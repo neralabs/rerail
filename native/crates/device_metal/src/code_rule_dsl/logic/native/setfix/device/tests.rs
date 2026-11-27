@@ -2587,19 +2587,40 @@ use rerail_blocks::vector::Vector;
     /// Decision 0353 step 5: a `has` axis is read off the tape by the device, not uploaded. Probed by its node, a
     /// stage climbs the node's numbered ancestors where the node is in the set; by its ancestor, it reads the
     /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
-    /// neither column alone (whole), its rows are uploaded as before.
+    /// neither column alone (whole), its rows are uploaded as before. Probed by both, a stage reads the node's own
+    /// row where it lies in the ancestor's subtree. On the process's device where it has one, and the join program's
+    /// Rust on the host (`on_host`) wherever it runs.
     #[test]
     fn a_has_axis_on_the_device_is_walked_on_the_tape() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            walked_on_the_tape(false);
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        walked_on_the_tape(false);
+    }
+
+    /// Containment (`within`, every node's ancestors) is `has` of every node: probed by its node, its ancestor or
+    /// both, read off the tape as a `has` axis is, with no solve of the batch and no index of its rows; its rows
+    /// the host's lookups. Read whole, it is the batch's solve, read in its block.
+    #[test]
+    fn containment_on_the_device_is_walked_on_the_tape() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            walked_on_the_tape(true);
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        walked_on_the_tape(true);
+    }
+
+    /// A `has` axis's (or with `within`, containment's) rows by its node, its ancestor, both and none, on the CPU and
+    /// the device, against the host's lookups.
+    fn walked_on_the_tape(within: bool) {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
-        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::model::FileInput;
         use std::sync::Arc;
-        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
-            return;
-        }
         crate::test_languages();
         let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
         let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
@@ -2617,7 +2638,8 @@ use rerail_blocks::vector::Vector;
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
-        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu));
+        let axis = Arc::new(if within { Within::new(Arc::clone(&batch), Mode::Tree) } else { Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu) });
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::clone(&axis) as _;
         assert!(has.has_walk().is_some(), "the batch's views are read in place");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
         // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
@@ -2640,9 +2662,11 @@ use rerail_blocks::vector::Vector;
         let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
         let h = format!("r:{}", hex("has_t"));
         // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
-        // h0(n, a) :- has(n, a): whole, not read in place: refused, on the CPU (`None`; nothing is uploaded).
-        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
-            let want = expect(col.unwrap_or(0));
+        // h0(n, a) :- q(n), q(a), has(n, a): by both. h0(n, a) :- has(n, a): whole, not read in place: a has axis
+        // refused, on the CPU (`None`; nothing is uploaded); containment the batch's solve, read in its block.
+        let both = format!("pos {q} v0\npos {q} v1\npos {h} v0 v1\nhead v0 v1");
+        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (Some(2), both), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
+            let want = expect(col.unwrap_or(0).min(1));
             assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
             let mut got = Vec::new();
             for device in [false, true] {
@@ -2659,14 +2683,18 @@ use rerail_blocks::vector::Vector;
                 super::super::close(&db, "has_test").unwrap();
                 if device {
                     let r = report.as_ref().expect("a device run");
-                    assert_eq!(r.refused.is_none(), col.is_some(), "by column {col:?}: refused only whole: {r:?}");
+                    assert_eq!(r.refused.is_none(), within || col.is_some(), "by column {col:?}: refused only whole: {r:?}");
+                }
+                // Walked, containment needs no solve of the batch (`resident`, before its rows in a block).
+                if within && col.is_some() {
+                    assert!(!axis.is_solved(), "by column {col:?}: containment walked on the tape, not solved");
                 }
                 let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();
                 got.push(rows);
             }
             assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
-            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's (on the host: {})", rerail_accel::gpu::shared::is_on_host());
         }
     }
 

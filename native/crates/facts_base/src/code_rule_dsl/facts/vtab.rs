@@ -87,12 +87,14 @@ pub struct ViewInPlace {
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
-/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending; or every node
+/// (`every`: containment, `within`, whose pairs are each node and each of its ancestors).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
     pub kinds: Arc<[i64]>,
+    pub every: bool,
 }
 
 /// A batch's 16z cache as its views' directory names it (decision 0353 step 4b, `view::cache`): the batch's one cache

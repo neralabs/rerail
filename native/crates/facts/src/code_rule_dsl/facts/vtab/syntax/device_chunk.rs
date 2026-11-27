@@ -169,6 +169,12 @@ impl ViewsInPlace {
         read.failed = read.cache_failed();
         Some(read)
     }
+    /// Its `node` view's rows in all (`ViewDir::ends`), read in `block` (the batch's, which the directory lies in).
+    pub fn nodes(&self, block: &rerail_blocks::Block) -> usize {
+        // SAFETY: the directory lies in `block` at `at` (`build_views`, `views_over`), its counts written.
+        unsafe { (*block.ptr::<rerail_clif::view_reads::ViewDir>(self.at)).ends[0] as usize }
+    }
+
     /// Its `node` view as a stage reads it in place, `keep` keeping its directory's rows, and the view's rows in all
     /// (`ViewDir::ends`), read in `block` (the batch's, which the directory lies in): `None` where the device reads
     /// none of it (`dir`).

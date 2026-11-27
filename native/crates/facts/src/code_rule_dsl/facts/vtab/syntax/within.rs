@@ -1123,13 +1123,15 @@ impl Source for Within {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
         use super::device_chunk::{VIEW_NODE, views_in_place};
-        if self.mode != Mode::Axis(Axis::Has) {
+        // Containment is `has` of every node: its pairs by `a` its subtree, by `n` its ancestors (`contained`,
+        // `containers`), with no solve of the batch and no index of it.
+        if !matches!(self.mode, Mode::Axis(Axis::Has) | Mode::Tree) {
             return None;
         }
         let v = views_in_place(&self.batch)?;
         // The node view as the join programs here read it: at the host's addresses where they run on the host.
         let view = v.read_of(VIEW_NODE, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
-        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
+        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds), every: self.mode == Mode::Tree })
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
