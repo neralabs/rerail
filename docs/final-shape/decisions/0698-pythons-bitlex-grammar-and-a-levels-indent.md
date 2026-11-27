@@ -682,3 +682,19 @@ statements and blocks end.
       and 8.5, A 28.5 and 8.9, B 28.1 and 8.8; timed a pass each in turn, A 0.95x the lean lexer's speed, B 0.96x.
       Classes 1.26 cycles a byte, regions A 0.92 and B 0.78, depth 0.45, the walk about 6.3 (the sampled profile:
       the walk 71% of the time, classes 14%, regions 9%, depth 5%).
+
+96. **The walk's tokens from their start bits; stratum 1 by nibble tables** (as built, after a profile of B).
+    - **Profiled** (the M1's bottleneck counters per stratum, the time profile by line): the walk took 6.3 of B's
+      8.8 cycles a byte, 2.4 of them discarded (mispredicted) work; stratum 1 was bound by its vector operations.
+    - **A run's tokens are its start bits taken one by one** (`starts &= starts - 1`), so no token's end waits on
+      the one before: a name ends at its run of word bits (on into the next block's where it reaches the end), an
+      operator after its byte. Which of the two a token is, and a name's keyword (a perfect hash of its first 8
+      bytes, its hit a mask of the comparison), are selections. A token at stratum 1's `slow` bit is read by the
+      step: a digit, a quote, a byte past ASCII, and a byte a two- or three-byte operator may start at. A run goes
+      on into the next block while it meets no stop.
+    - **Stratum 1 makes two class bytes a block by simdjson's nibble tables** (`rerail_simd`'s `lookup16`), so
+      that a mask made of several bytes (`word`, the brackets, `slow`) is one bit test.
+    - **A line's end read inside the run** (its layout one newline where the next line has the same indent) was
+      measured equal and is not kept.
+    - **As measured:** 1635 the same, 0 differ. B 1.01x to 1.04x the lean lexer's speed in turn (was 0.96x), A
+      0.99x to 1.02x; stratum 1 1.34 cycles a byte with the `slow` mask, the walk about 5.5.
