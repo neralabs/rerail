@@ -12228,3 +12228,31 @@ the rest one test at a time 215), rerail-tree-watch (23), rerail-rules-base (29)
 rerail-engine built. Still red on the hub alone, as before: headless-scan, git-guard and first-events-git, against a
 built engine older than the tree. The engine's git_access tests fail here only because this machine's guard refuses
 their fixtures' `git add .`. Relax has no clippy: none run. No Metal or farm runs.
+
+### Q590. Roll-up 162 (final-rerail-shape 7a41fe4664 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's commit: a fused chunk asks a derived input by its whole key at once (`cands::ask_derived_chunk`:
+its key hashed a word at a time, its candidates by its sorted hash, `SortedHash::candidates_word`, or by its block's
+hashed index, each checked against its row); a chunk's alive words past its rows cleared before a pass over their
+bits (`chunk_rows_only`); RERAIL_PROF counts a chunk's rows asked row by row, by why (`CHUNK_REFUSALS`).
+
+Not taken, by decision A (one batched own-row read, `Source::read_own_batch`; `row_column`, `read_one_at` and
+`View::read_one` removed in roll-up 141), as in roll-up 157:
+- `Source::read_many_at` and `read_many_each` (facts_base), the tape view's, the layered view's and the nearest
+  axis's, all built on `row_column` and `read_one_at`, and tests_lang's
+  a_views_rows_of_a_chunk_read_at_once_are_its_one_rows;
+- `cands::ask_view_chunk` and its `Asked::many` buffer: a view's fused test or lookup is its source's own-row read a
+  chunk at a time (`rowcode::ViewTest`).
+
+Conflicts, resolved by invariant:
+- the fused chunk's `ask` (`flush`, and `span_flush`'s): the hub's, handing a test it cannot ask at once back to
+  `Fused::run`, whose `held` asks it row by row; before handing back, the refusal is counted as the feeder counts it.
+- `ask_chunk` and `ask_derived_chunk` take the chunk as the hub's `rowcode::Ask` (its columns, parameters, alive rows,
+  verdict and looks), not nine and thirteen arguments: no lint allowance, and `ask_chunk`'s old one goes too.
+- `CHUNK_REFUSALS`: the hub's four (other, view, a derived input's part key, a derived input with no index), not the
+  feeder's three view reasons, which name its view read; `SHAPES` 31, the report's columns to match.
+- `chunk_asks`: the hub's node-keyed bit and by value, then by hash (slot 2; the feeder's slot 2 was its view read).
+
+Checked under Relax: rerail-setfix (148, the new a_chunk_asks_a_derived_inputs_whole_key_by_its_hash among them),
+tests-corpus base_tests (54), tests-lang syntax::tests (103), tests-logic native::tests (20) and plan::tests (1 thread,
+115). Relax has no clippy: none run. No Metal or farm runs.

@@ -5698,7 +5698,7 @@ impl Csr {
         !ib.relation().filter_may_hold(*i, rerail_blocks::bloom::key(&buf[..at.len()]))
     }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
-    fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
+    pub(super) fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
         self.hashed.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "probe: sorted hash of a derived input".into());
             let h = sorted_hash::SortedHash::new(rel.n, |id| {
@@ -5710,7 +5710,7 @@ impl Csr {
         })
     }
     /// Whether a probe of it walks an index's runs (`runs`): a derived input's order, or its kept chain.
-    fn runs_kind(&self) -> bool {
+    pub(super) fn runs_kind(&self) -> bool {
         self.ordered.is_some() || self.chain.is_some()
     }
     /// Whether `get` gives a key's rows alone (not a bucket's candidates).
@@ -8481,7 +8481,7 @@ impl JoinRule {
             forms: (0..n).map(|_| table::StepForm::default()).collect(),
             passed_over: Default::default(),
             step_ns: (0..=n).map(|_| Default::default()).collect(),
-            shapes: (0..n).map(|_| Default::default()).collect(),
+            shapes: (0..n).map(|_| std::array::from_fn(|_| Default::default())).collect(),
             est: Vector::new(),
             plan,
         }
@@ -8669,8 +8669,9 @@ impl Count {
 /// every ask of the step by the rows it matched (`20..23`: 0, 1, more), its keys and tests held (a test's first match
 /// ends it, so it counts as 1), its `Rows::each` calls and its one-row reads (a lookup's, a node-keyed bit's, a fused
 /// test's) alike; and of those asks, the one-row reads (`23`); and a fused chunk's rows passed on, by where they go
-/// (`24..27`: the head, a lookup, another step).
-pub const SHAPES: usize = 27;
+/// (`24..27`: the head, a lookup, another step); and a fused chunk's rows asked row by row, by why `ask_chunk` has no
+/// read for them (`27..31`, `cands::CHUNK_REFUSALS`).
+pub const SHAPES: usize = 31;
 /// A fused step's gather of its candidates into its chunk.
 const SITE_GATHER: usize = 0;
 /// The walk's step, a candidate at a time.
@@ -10087,8 +10088,9 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         let (j, store) = (cx.j, cx.store);
         let asked = std::cell::RefCell::new(asked);
         // A test of a derived input asked of the chunk at once where it reads so (`cands::ask_chunk`), as `flush`'s.
-        let ask = |rowcode::Ask { test: t, columns, alive, rows: n, verdict: k, looks, .. }: rowcode::Ask<'_>| {
-            cands::ask_chunk(j, &j.steps[i + 1 + f.tests[t].at], &f.tests[t], columns, alive, n, k, looks, &mut asked.borrow_mut()[t]).is_some()
+        let ask = |mut a: rowcode::Ask<'_>| {
+            let t = a.test;
+            cands::ask_chunk(j, &j.steps[i + 1 + f.tests[t].at], &f.tests[t], &mut a, &mut asked.borrow_mut()[t]).is_some()
         };
         let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64], vals: &mut [i64]| {
             let test = &f.tests[t];
@@ -10361,9 +10363,18 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         asked.resize_with(f.tests.len(), Default::default);
                         let asked = std::cell::RefCell::new(asked);
                         let (j, store, profiled) = (cx.j, cx.store, cx.clock.is_some());
-                        let ask = |rowcode::Ask { test: t, columns, alive, rows: n, verdict: k, looks, .. }: rowcode::Ask<'_>| {
-                            let at = i + 1 + f.tests[t].at;
-                            let Some((none, one)) = cands::ask_chunk(j, &j.steps[at], &f.tests[t], columns, alive, n, k, looks, &mut asked.borrow_mut()[t]) else { return false };
+                        let ask = |mut a: rowcode::Ask<'_>| {
+                            let t = a.test;
+                            let (test, at) = (&f.tests[t], i + 1 + f.tests[t].at);
+                            let step = &j.steps[at];
+                            let Some((none, one)) = cands::ask_chunk(j, step, test, &mut a, &mut asked.borrow_mut()[t]) else {
+                                // Asked row by row (`Fused::run`'s `held`): counted by why (`cands::CHUNK_REFUSALS`).
+                                if profiled && let Some(c) = j.shapes.get(at) {
+                                    let live: u32 = a.alive.iter().map(|w| w.count_ones()).sum();
+                                    c[27 + cands::chunk_refusal(j, step)].add(u64::from(live));
+                                }
+                                return false;
+                            };
                             if profiled { count_asks(j, at, none, one); }
                             true
                         };
@@ -12310,8 +12321,9 @@ pub struct SetfixCounts {
     /// Rows of chunks whose row program read a lookup's values with the chunk's others (`setfix::lookups`,
     /// `rowcode::ViewTest::looks`).
     pub view_looks: std::sync::atomic::AtomicU64,
-    /// A fused chunk's tests of derived inputs asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value.
-    pub chunk_asks: [std::sync::atomic::AtomicU64; 2],
+    /// A fused chunk's tests of derived inputs asked of it at once (`cands::ask_chunk`): by a node-keyed bit, by value,
+    /// by the whole key's hash (`cands::ask_derived_chunk`).
+    pub chunk_asks: [std::sync::atomic::AtomicU64; 3],
 }
 
 /// The run's `SetfixCounts`.

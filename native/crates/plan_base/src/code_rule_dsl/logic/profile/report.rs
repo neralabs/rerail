@@ -288,7 +288,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
     // Per join and step, its `Rows::each` calls' shapes (`setfix::SHAPES`), where counted.
-    let mut shapes_tsv = String::from("span\tjoin\tstep\tcalls_gather\tcalls_walk\tcalls_list0\tcands_gather\tcands_walk\tcands_list0\trange\tslice\towned\tshared\truns\tpending\tread\tstream\tn0\tn1\tn2_3\tn4_15\tn16_255\tn256_\tm0\tm1\tm2_\tdirect\tto_head\tto_lookup\tto_other\n");
+    let mut shapes_tsv = String::from("span\tjoin\tstep\tcalls_gather\tcalls_walk\tcalls_list0\tcands_gather\tcands_walk\tcands_list0\trange\tslice\towned\tshared\truns\tpending\tread\tstream\tn0\tn1\tn2_3\tn4_15\tn16_255\tn256_\tm0\tm1\tm2_\tdirect\tto_head\tto_lookup\tto_other\tr_other\tr_view\tr_derived_part_key\tr_derived_no_index\n");
     for ((p, join), steps) in &state.native_shapes {
         for (i, c) in steps.iter().enumerate() {
             if c.iter().all(|&x| x == 0) {

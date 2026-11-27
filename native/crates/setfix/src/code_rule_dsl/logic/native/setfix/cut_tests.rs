@@ -705,3 +705,32 @@ fn a_chunk_asks_a_derived_lookup_and_test_a_chunk_at_a_time() {
     got.sort_unstable();
     assert_eq!(got, want);
 }
+
+/// A chunk asks a derived input by its whole key at once, by hash (`cands::ask_derived_chunk`): `p` by two columns
+/// (`d`, `n`), a lookup of one row each even node; `q` tested by its node and a constant (`!q(n, 7)`), holding the
+/// nodes at places divisible by 3 with 7 and every node with 8. The rows are the rule's.
+#[test]
+fn a_chunk_asks_a_derived_inputs_whole_key_by_its_hash() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let node = |d: i64, l: i64| d << 32 | l;
+    let flat = |rows: Vec<Vec<i64>>| {
+        let (n, k) = (rows.len(), rows.first().map_or(1, Vec::len));
+        InRel::from_flat(rows.into_iter().flatten().collect(), n, vec![b'i'; k])
+    };
+    let db = connection();
+    adopt(&db, "hk_k", flat((0..4).map(|d| vec![d]).collect()));
+    adopt(&db, "hk_m", flat((0..4).flat_map(|d| (0..300).map(move |l| vec![d, node(d, l)])).collect()));
+    adopt(&db, "hk_p", flat((0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0).map(move |l| vec![d, node(d, l), l * 10])).collect()));
+    adopt(&db, "hk_q", flat((0..4).flat_map(|d| (0..300).flat_map(move |l| [vec![node(d, l), 8]].into_iter().chain((l % 3 == 0).then(|| vec![node(d, l), 7])))).collect()));
+    db.execute_batch("CREATE TABLE r(c0, c1);").unwrap();
+    let rel = |t: &str| format!("r:{}", hex(t));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\npos {} v0 v1 v2\nneg {} v1 i:7\nhead v0 v2", rel("hk_k"), rel("hk_m"), rel("hk_p"), rel("hk_q"));
+    open(&db, &format!("name hashed\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    walks_whole(|| run(&db, "hashed", 0).unwrap());
+    close(&db, "hashed").unwrap();
+    assert!(run_counts().chunk_asks[2].load(std::sync::atomic::Ordering::Relaxed) > 0, "asked by hash a chunk at a time");
+    let want: Vec<(i64, i64)> = (0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0 && l % 3 != 0).map(move |l| (d, l * 10))).collect();
+    let mut got = pairs(&db, "SELECT c0, c1 FROM r");
+    got.sort_unstable();
+    assert_eq!(got, want);
+}
