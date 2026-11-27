@@ -48,10 +48,12 @@ grammar's nodes (0058 §2).
    (`corpus::lane::with_other_dialects`, applied in `corpus::scoped` when the run has the `dialect` option). They are
    read as a `.scope text` document is: `doc`, `path_part`, `source`, `src_line`, `src_line_lf`, `tape_line`, and a
    match's spans over them; no tree, so no node. They are in the run's policy scope as its own files are.
-2. **A run writes findings in its own dialect's files, and in files of no dialect of its language**
-   (`corpus::lane::reporter`, as the writer composes each finding's message). A finding in another dialect's file is
-   dropped: that dialect's run parses the file and reports it. A doc-level rule (`doc(d, p, _)` alone) is therefore
-   reported once per file, not once per run, by every reader of the runs' outputs (`run-rr`, a pack's run, `logic`).
+2. **A run writes no finding in another dialect's file it read as text** (`corpus::lane::reporter`, as the writer
+   composes each finding's message): that dialect's run parses the file and reports it. A finding at any other path
+   is written: its own dialect's files, files of no dialect of its language, and a path of another dialect it did not
+   read (a `file` row, a place outside the scope). A doc-level rule (`doc(d, p, _)` alone) is therefore reported once
+   per file, not once per run, by the readers of the runs' findings (`run-rr`, a pack's run). `logic`'s join of its
+   runs' `violation` rows is not filtered.
 3. **A run's `files` leaves out the other dialects' files it read as text**, which their own runs count, so a split
    run's counts add up as before (`corpus::run_in_lane`).
 4. **The facts memo's space names the dialect the run was given** (`memo::space_digest`, through

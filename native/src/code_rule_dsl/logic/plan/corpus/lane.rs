@@ -7,13 +7,15 @@
 //! out the other dialects' it read as text.
 
 use super::CorpusFiles;
-use crate::code_rule_dsl::language::{label, label_of_path, CodeRuleLanguage};
+use crate::code_rule_dsl::language::{label, CodeRuleLanguage};
 use std::cell::RefCell;
 
-/// A run under way on this thread: its dialect, and how many of the other dialects' files it read as text.
+/// A run under way on this thread: its dialect, the other dialects' files it read as text (sorted), and how many of
+/// them it added to its documents.
 #[derive(Clone)]
 struct Run {
     dialect: Option<String>,
+    text: std::sync::Arc<Vec<String>>,
     read_as_text: usize,
 }
 
@@ -36,7 +38,7 @@ impl RunDialect {
     /// The run of `options` begins.
     pub(super) fn enter(options: &serde_json::Value) -> RunDialect {
         let dialect = options.get("dialect").and_then(serde_json::Value::as_str).map(str::to_owned);
-        RUNS.with(|r| r.borrow_mut().push(Run { dialect, read_as_text: 0 }));
+        RUNS.with(|r| r.borrow_mut().push(Run { dialect, text: Default::default(), read_as_text: 0 }));
         RunDialect
     }
 
@@ -57,17 +59,25 @@ impl Drop for RunDialect {
     }
 }
 
-/// `found` with the in-scope files of the other dialects of the run's (`options`' `dialect`) read as text, their number
-/// kept for the run (`RunDialect::read_as_text`).
+/// `found` with the in-scope files of the other dialects of the run's (`options`' `dialect`) read as text, kept for the
+/// run with their number (`RunDialect::read_as_text`, `reporter`).
 pub(super) fn with_other_dialects(mut found: CorpusFiles, options: &serde_json::Value) -> CorpusFiles {
     let Some(dialect) = options.get("dialect").and_then(serde_json::Value::as_str) else { return found };
     let before = found.text.len();
-    let others: Vec<String> = text_dialects(dialect).into_iter().filter_map(|l| found.by_label.get(l)).flatten().cloned().collect();
-    found.text.extend(others);
+    let mut others: Vec<String> = text_dialects(dialect).into_iter().filter_map(|l| found.by_label.get(l)).flatten().cloned().collect();
+    others.sort();
+    others.dedup();
+    found.text.extend(others.iter().cloned());
     found.text.sort();
     found.text.dedup();
     let added = found.text.len() - before;
-    RUNS.with(|r| r.borrow_mut().last_mut().into_iter().for_each(|run| run.read_as_text = added));
+    let others = std::sync::Arc::new(others);
+    RUNS.with(|r| {
+        r.borrow_mut().last_mut().into_iter().for_each(|run| {
+            run.text = others.clone();
+            run.read_as_text = added;
+        })
+    });
     found
 }
 
@@ -81,33 +91,41 @@ fn text_dialects(dialect: &str) -> Vec<&'static str> {
     language.dialects().iter().filter_map(|d| label(*d)).filter(|l| *l != dialect).collect()
 }
 
-/// Whether the innermost run writes a finding in the file at a path: any, where it was given no dialect; else not one in
-/// a file of another dialect of its language, which it read as text only and which that dialect's own run reports.
+/// Whether the innermost run writes a finding in the file at a path: any but one of the other dialects' files it read
+/// as text only (`with_other_dialects`), which that dialect's own run parses and reports.
 pub(super) fn reporter() -> impl Fn(&str) -> bool {
-    let others = RunDialect::current().map(|dialect| text_dialects(&dialect)).unwrap_or_default();
-    move |path| label_of_path(path).is_none_or(|l| !others.contains(&l))
+    let text = RUNS.with(|r| r.borrow().last().map(|run| run.text.clone())).unwrap_or_default();
+    move |path| text.binary_search_by(|p| p.as_str().cmp(path)).is_err()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A run's dialect holds while it lasts, and a run inside it holds its own until it ends; a run of no dialect
-    /// writes every finding.
+    /// A run's dialect holds while it lasts, and a run inside it holds its own until it ends. A run writes no finding in
+    /// another dialect's file it read as text, and any other: one of another dialect it did not read, a file of no
+    /// dialect. A run of no dialect writes every finding.
     #[test]
     fn a_runs_dialect_holds_while_it_lasts() {
         assert!(reporter()("a.tsx"));
-        let outer = RunDialect::enter(&serde_json::json!({"dialect": "typescript"}));
+        let options = serde_json::json!({"dialect": "typescript"});
+        let outer = RunDialect::enter(&options);
         assert_eq!(RunDialect::current().as_deref(), Some("typescript"));
+        let found = CorpusFiles {
+            by_label: [("typescript", vec!["a.ts".to_owned()]), ("tsx", vec!["b.tsx".to_owned()])].into(),
+            text: vec!["README.md".to_owned()],
+        };
+        let found = with_other_dialects(found, &options);
+        assert_eq!(found.text, ["README.md", "b.tsx"]);
+        assert_eq!(outer.read_as_text(), 1);
         let reported = reporter();
-        assert!(reported("a.ts") && reported("README.md") && !reported("b.tsx"));
+        assert!(reported("a.ts") && reported("README.md") && reported("c.tsx") && !reported("b.tsx"));
         {
             let _inner = RunDialect::enter(&serde_json::Value::Null);
             assert_eq!(RunDialect::current(), None);
             assert!(reporter()("b.tsx"));
         }
         assert_eq!(RunDialect::current().as_deref(), Some("typescript"));
-        assert_eq!(outer.read_as_text(), 0);
         drop(outer);
         assert_eq!(RunDialect::current(), None);
     }
