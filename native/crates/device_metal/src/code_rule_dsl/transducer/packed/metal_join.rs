@@ -3772,7 +3772,10 @@ impl Batch {
                 // as they reach it (a park, then a remap). A test's first arena is its own, so its claims map pages as
                 // a larger one's would.
                 let floor = if self.reserve_arena && rerail_device::device::map_commits(device) { 0 } else { self.floor };
-                let room = sizes.arena.unwrap_or((2 * prog.arena).max(floor)).max(16).next_multiple_of(16);
+                // The guess at most the arena's whole: it is its first pages, and its claims map the rest as they reach
+                // it; a guess past it (a recursive component of many heads, each its bound's rows) refused the program
+                // before a claim was made. A floor or a size asked past it is a claim's, refused.
+                let room = sizes.arena.unwrap_or((2 * prog.arena).min(ARENA_MAX).max(floor)).max(16).next_multiple_of(16);
                 if room > ARENA_MAX {
                     return Err(Error::BackendCapacity);
                 }
