@@ -14,7 +14,7 @@ upstream:
   license: MIT
   runtime: lizard-1.24.0
   # lizard has no named configuration; `default` is its command line with no option, which warns about every function
-  # whose cyclomatic complexity is above 15 (`-C`), the rules' default ceiling too. The corpus scores no function above 9,
+  # whose cyclomatic complexity is above 15 (`-C`); the rules' default ceiling is 50. The corpus scores no function above 9,
   # so the ports are judged at the limit of 6 slapkit and the Metrics-in-the-Loop study set (each port's `config` in
   # conformance.json), and score each function as slapkit does, the lower of lizard's standard and modified (`-m`)
   # counts: generate.mjs records lizard's findings on that reading, `lizard -C 6` with a switch or match counted once.

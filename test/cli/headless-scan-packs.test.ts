@@ -326,13 +326,13 @@ const COMPLEXITY_FILES: Record<string, { path: string; text: (ccns: readonly num
   java: { path: "src/main/java/com/example/Ccn.java", text: ccns => `class Ccn {\n${ccns.map(ccn => `    int f${ccn}(int x) {\n${lines(ccn - 1, at => `        if (x == ${at}) {\n            return ${at};\n        }`)}\n        return 0;\n    }\n`).join("\n")}}\n` },
 };
 
-/** A committed checkout with a function at cyclomatic complexity 6, 7, 10, 11, 15 and 16 in each language, listing `packs`. */
+/** A committed checkout with a function at cyclomatic complexity 6, 7, 10, 11, 50 and 51 in each language, listing `packs`. */
 function complexityCheckout(packs: unknown): string {
   const root = folder("rerail-declared-ceiling-");
   git(root, "init", "--quiet", "--initial-branch=main");
   for (const { path, text } of Object.values(COMPLEXITY_FILES)) {
     mkdirSync(join(root, path, ".."), { recursive: true });
-    writeFileSync(join(root, path), text([6, 7, 10, 11, 15, 16]));
+    writeFileSync(join(root, path), text([6, 7, 10, 11, 50, 51]));
   }
   writePacksFile(root, packs);
   git(root, "add", ".");
@@ -356,14 +356,14 @@ function flagged(report: ScanReport): { ccns: Record<string, number[]>; ceilings
 const everyLanguage = (ccns: number[]): Record<string, number[]> => Object.fromEntries(Object.keys(COMPLEXITY_FILES).map(language => [language, ccns]));
 
 describe("the complexity pack's ceiling, set in .rerail/packs.json", () => {
-  it("flags functions over 15 without config, and over the ceiling the file sets with it, in every language, naming the ceiling", async () => {
+  it("flags functions over 50 without config, and over the ceiling the file sets with it, in every language, naming the ceiling", async () => {
     const root = complexityCheckout([complexityPack()]);
     const home = freshHome();
-    expect(flagged(await scanIn(home, root))).toEqual({ ccns: everyLanguage([16]), ceilings: ["15"] });
+    expect(flagged(await scanIn(home, root))).toEqual({ ccns: everyLanguage([51]), ceilings: ["50"] });
 
     writePacksFile(root, [complexityPack({ ceiling: 10 })]);
     const configured = await scanIn(home, root);
-    expect(flagged(configured)).toEqual({ ccns: everyLanguage([11, 15, 16]), ceilings: ["10"] });
+    expect(flagged(configured)).toEqual({ ccns: everyLanguage([11, 50, 51]), ceilings: ["10"] });
     expect(configured.packs).toEqual([{ id: "complexity", packageName: "@neralabs/rerail-pack-complexity", version: COMPLEXITY_VERSION, from: "npm", config: { ceiling: 10 } }]);
   });
 
@@ -384,12 +384,12 @@ describe("the complexity pack's ceiling, set in .rerail/packs.json", () => {
   it("takes the ceiling from the file at --rules-ref, so a change cannot raise the ceiling it is judged by", async () => {
     const root = complexityCheckout([complexityPack({ ceiling: 10 })]);
     const home = freshHome();
-    writePacksFile(root, [complexityPack({ ceiling: 20 })]);
+    writePacksFile(root, [complexityPack({ ceiling: 60 })]);
     git(root, "commit", "--quiet", "-am", "raise the ceiling");
 
     expect(flagged(await scanIn(home, root))).toEqual({ ccns: everyLanguage([]), ceilings: [] });
     const atBase = await scanIn(home, root, { rulesRef: "main~1" });
-    expect(flagged(atBase)).toEqual({ ccns: everyLanguage([11, 15, 16]), ceilings: ["10"] });
+    expect(flagged(atBase)).toEqual({ ccns: everyLanguage([11, 50, 51]), ceilings: ["10"] });
     expect(atBase.packs.map(pack => pack.config)).toEqual([{ ceiling: 10 }]);
   });
 
@@ -400,6 +400,6 @@ describe("the complexity pack's ceiling, set in .rerail/packs.json", () => {
 
     const report = await scanIn(home, root, { packs: ["complexity"] });
     expect(report.packs).toEqual([{ id: "complexity", packageName: "@neralabs/rerail-pack-complexity", version: COMPLEXITY_VERSION, from: "home" }]);
-    expect(flagged(report)).toEqual({ ccns: everyLanguage([16]), ceilings: ["15"] });
+    expect(flagged(report)).toEqual({ ccns: everyLanguage([51]), ceilings: ["50"] });
   });
 });

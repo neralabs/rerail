@@ -157,10 +157,10 @@ async function hook(input: Record<string, unknown>, projectDir: string, extra: N
 
 const contextOf = (answer: HookAnswer): string => answer.output.hookSpecificOutput?.additionalContext ?? "";
 
-/** A Python function at cyclomatic complexity 16, over the pack's default ceiling of 15. */
+/** A Python function at cyclomatic complexity 51, over the pack's default ceiling of 50. */
 function tooComplex(name: string): string {
-  const branches = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"].map((flag, index) => `    if ${flag}:\n        score += ${index + 1}\n`).join("");
-  return `def ${name}(a, b, c, d, e, f, g, h, i, j, k, l, m):\n    score = 0\n${branches}    if a and b:\n        score += 8\n    return score\n`;
+  const branches = Array.from({ length: 48 }, (_, index) => `    if x == ${index}:\n        score += ${index + 1}\n`).join("");
+  return `def ${name}(a, b, x):\n    score = 0\n${branches}    if a and b:\n        score += 8\n    return score\n`;
 }
 
 /** What a session replays: its id, the folder Claude Code was opened in, and extra hook environment. */

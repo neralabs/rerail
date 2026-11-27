@@ -133,8 +133,8 @@ describe("query parity command", () => {
 
   it("finds two sides running the same engine equal over a temporary corpus", async () => {
     const { root, manifest } = await corpus({
-      // Cyclomatic complexity 16, above the bundled complexity rule's default ceiling of 15.
-      "src/app.ts": `export function grade(a: number): number {\n${Array.from({ length: 15 }, (_, index) => `  if (a > ${index + 1}) return ${index + 1};\n`).join("")}  return 0;\n}\n`,
+      // Cyclomatic complexity 51, above the bundled complexity rule's default ceiling of 50.
+      "src/app.ts": `export function grade(a: number): number {\n${Array.from({ length: 50 }, (_, index) => `  if (a > ${index + 1}) return ${index + 1};\n`).join("")}  return 0;\n}\n`,
       "src/util.ts": "export const value = 1;\n",
     });
     const output = join(dirname(root), "report");

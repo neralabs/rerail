@@ -3,7 +3,7 @@
 // - lizard-<VERSION>.tsv, every function's score, which test/engine/code-rule/complexity-rules.test.ts reads;
 // - fixtures.expected.json, lizard's findings as the conformance check reads a tool's (conformance/README.md): one
 //   CYCLOMATIC_COMPLEXITY finding, at the function's first line, per function scored above the parity limit of 6, on
-//   the corpus files some rule's scope covers, a candidate's included. The rules' default ceiling is 15, which no corpus
+//   the corpus files some rule's scope covers, a candidate's included. The rules' default ceiling is 50, which no corpus
 //   function reaches, so each port in conformance.json is judged at a `config` ceiling of 6. The test files the scopes leave out are
 //   complexity-rules.test.ts's.
 // Then it writes provenance.json and LICENSES.md (every file is Rerail's: UPSTREAM.md lists the corpus, and the rest is

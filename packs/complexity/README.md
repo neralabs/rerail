@@ -21,18 +21,17 @@ Every document has `mode: "steer"`: a rule that runs steers the agent and never 
 | `complexity-cyclomatic-vue` | `.vue` |
 | `complexity-cyclomatic-java` | `.java` |
 
-A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds the ceiling, 15
-unless the repository sets another (see "Setting the ceiling"), so at the default 16 or more. 15 is lizard's own
-default warning threshold (`-C 15`).
+A function's cyclomatic complexity is 1 plus its decision points. A function fails when that exceeds the ceiling, 50
+unless the repository sets another (see "Setting the ceiling"), so at the default 51 or more.
 The finding spans the whole function, so under the `ai-output` scope only functions an edit touched are reported. The
-message names the function and its number, as slapkit's advisory does: `` `grade` has cyclomatic complexity 18, over the
-ceiling of 15. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
+message names the function and its number, as slapkit's advisory does: `` `statusText` has cyclomatic complexity 51, over the
+ceiling of 50. Decompose it into smaller functions. `` (code `CYCLOMATIC_COMPLEXITY`). A TypeScript, JavaScript or Vue function with no name of its own takes the variable, class field or object key it is assigned
 to, and a PHP or Blade closure the variable it is assigned to (`` `$format` ``); a callback with none of those is "This
 function" (the `too-complex-anonymous` clause). Every Python and Rust function has a name, and so has every Java
 method; a Java constructor takes its class's name. The number comes from the
 count's `as`/`offset` binding: the rule counts decision points with `count.has` (`stopBy` the function boundary, so a
 nested function is not entered), binds the count plus 1 as `$CCN`, and fires at `min` decisions: the ceiling, read
-with `{ "$option": "ceiling" }`, as the message reads it. Each rule's title and description name the default, 15.
+with `{ "$option": "ceiling" }`, as the message reads it. Each rule's title and description name the default, 50.
 
 Test files are out of scope: Python `**/test_*.py`, `**/*_test.py`, `**/tests/**`, `**/conftest.py`; TypeScript,
 JavaScript and Vue `**/*.test.*`, `**/*.spec.*`, `**/__tests__/**`; PHP `**/test/**`, `**/tests/**`, `**/Test/**`,
@@ -46,7 +45,7 @@ rule details).
 
 ## Setting the ceiling
 
-Every rule declares one option, `ceiling` (an integer, default 15): the highest cyclomatic complexity a function may
+Every rule declares one option, `ceiling` (an integer, default 50): the highest cyclomatic complexity a function may
 have. A repository that lists its packs in `.rerail/packs.json` sets it on the pack's entry, and it applies to all 8
 rules:
 
@@ -64,7 +63,7 @@ the commit the scan's rules come from, so a scan with `--rules-ref` runs the cei
 under review cannot raise the ceiling it is judged by (`docs/repository-packs.md`). A ceiling that is not a whole
 number of 1 or more (`0`, `1.5`, `"10"`) fails the scan, naming the file, the pack and the option. The same option can
 be set for one rule with a rule setting's `config` (`docs/rule-scoping.md`). Without either, every rule flags a function
-over 15. The default was 6, the Metrics-in-the-Loop study's limit, until pack version 0.1.10; a repository that wants
+over 50. The default was 6, the Metrics-in-the-Loop study's limit, through pack version 0.1.9; a repository that wants
 that standard sets `"config": { "ceiling": 6 }`.
 
 ## What counts
@@ -228,7 +227,7 @@ limit. Rerail wrote them; nothing is copied from lizard (`upstream/lizard/UPSTRE
 `upstream/lizard/lizard-1.24.0.tsv` records lizard's score for every function (path relative to the corpus, function
 name as lizard prints it, start line, CCN), and `upstream/lizard/fixtures.expected.json` lizard's findings: one
 `CYCLOMATIC_COMPLEXITY` per function scored above 6, on the corpus files some rule's scope covers. The corpus's
-functions score at most 9, so parity is judged at a ceiling of 6, below the default of 15: each port in
+functions score at most 9, so parity is judged at a ceiling of 6, below the default of 50: each port in
 `conformance.json` sets `"config": { "ceiling": 6 }`, and the test below runs the rules at 6 too. lizard numbers a
 `.vue` file's lines from its first `<script>` block and leaves out the lines between blocks, so each Vue file has one
 script block, before its template, where lizard's line is the file's. The Rust corpus has no char or byte literal
@@ -242,7 +241,7 @@ that:
 - the same counting without the threshold gives every in-scope function the recorded number, apart from the deviations,
   which the test lists with lizard's number and Rerail's;
 - test files produce no finding, even though lizard scores them over the limit;
-- at its default, each rule flags a function at 16 and not one at 15, naming the ceiling of 15.
+- at its default, each rule flags a function at 51 and not one at 50, naming the ceiling of 50.
 
 lizard is also a gated tool-pack (`upstream/lizard/gates.yaml`, `conformance.json`): the conformance check
 (`npm run test:conformance`, [conformance/README.md](../../conformance/README.md#the-gate)) judges each rule on
@@ -316,7 +315,7 @@ scored. The program is TypeScript for `lang="ts"`, TSX for `lang="tsx"` and Java
 
 ### `complexity-cyclomatic-java`
 
-The pack's rule for Java (`.java`), with the other rules' limit, message and counting: a method fails above 15, the
+The pack's rule for Java (`.java`), with the other rules' limit, message and counting: a method fails above 50, the
 finding spans the whole method and names it (a constructor takes its class's name), and a `switch` counts once however
 many cases it has. It reads syntax only, so it needs none of the capabilities Java does not have yet.
 

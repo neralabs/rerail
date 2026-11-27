@@ -2,7 +2,7 @@
  * Parity of the complexity pack (packs/complexity/) with lizard, at the release its conformance.json pins. The corpus
  * under packs/complexity/upstream/lizard/fixtures/<language>/ is scored by lizard once, by hand (that directory's
  * generate.mjs), into lizard-<release>.tsv beside it; lizard is never a test or runtime dependency. Run at a ceiling of
- * 6 (the rules' default is 15, which the corpus never reaches), each rule must report exactly the in-scope functions
+ * 6 (the rules' default is 50, which the corpus never reaches), each rule must report exactly the in-scope functions
  * lizard scores above 6, with lizard's number in the message, apart from the
  * deviations listed here; a measuring variant of each rule (same counting, no threshold) must give every function
  * lizard's number, so functions at the limit and below are checked too. Test files are out of scope even where lizard
@@ -37,7 +37,7 @@ const runtime = loadNativeBinding().CodeRuleDslRuntime;
  */
 const LIMIT = 6;
 /** The rules' default ceiling, which a repository's `.rerail/packs.json` can change. */
-const DEFAULT_CEILING = 15;
+const DEFAULT_CEILING = 50;
 const RULES = {
   python: "complexity-cyclomatic-python",
   typescript: "complexity-cyclomatic-typescript",
@@ -462,7 +462,7 @@ describe("complexity rule pack", () => {
     java: { path: "src/main/java/Ceiling.java", lines: ["class Ceiling {", "    int declared(boolean a) { %D% }", "}"] },
   };
 
-  it.each(LANGUAGES)("%s: at its default, flags a function over a ceiling of 15 and not one at it", language => {
+  it.each(LANGUAGES)("%s: at its default, flags a function over a ceiling of 50 and not one at it", language => {
     const { decision, end } = DECISION[language];
     const { path, lines } = AT_LINE_2[language];
     const source = (ccn: number) => lines.join("\n").replace("%D%", decision.repeat(ccn - 1) + end) + "\n";

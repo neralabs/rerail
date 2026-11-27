@@ -22,6 +22,11 @@ The generators that write the expected findings are outside this directory, on t
 the renamer `scripts/pack-data/rename/`). How the data is snapshotted and published is
 [docs/upstream.md](../docs/upstream.md).
 
+A port in `conformance.json` is scored at its document's option defaults unless it sets `config` (option name to
+value), which the runner applies as a rule setting's `config` would before it compiles the port. A tool's findings
+recorded at another setting than the default use it: the complexity pack's lizard findings are recorded at a ceiling of
+6, below the rules' default of 50, so each of its ports sets `"config": { "ceiling": 6 }`.
+
 Adding a pack or a port: [docs/language-packs.md](../docs/language-packs.md#start-a-pack); the contributor's steps for
 a rule, written for Rerail or ported, and a port's way from candidate to shipped, are
 [docs/adding-rules-to-a-pack.md](../docs/adding-rules-to-a-pack.md).
