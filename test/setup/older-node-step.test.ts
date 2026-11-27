@@ -43,9 +43,9 @@ describe("the hook's step on a Node older than Rerail runs on", () => {
   it("names the launcher's command with node from PATH while the node set-up recorded is still there", async () => {
     const { home, node } = await homeRecording(["system", "bin", NODE]);
     const cli = join(home, "current", "dist", "cli", "cli.js");
-    // The path as a shell takes it: bare, or single-quoted where it holds a sign, as a temp folder whose path holds an
-    // 8.3 short name (such as RUNNER~1) does.
-    const steps = [cli, `'${cli}'`].map(word => `Put Node 24 or newer first on PATH, then run node ${word} install --refresh: the rerail command runs ${node} while that file is there, whatever PATH holds.`);
+    // The path as a shell takes it: for a POSIX shell bare, or single-quoted where it holds a sign; on Windows in double
+    // quotes, which cmd.exe and PowerShell both take.
+    const steps = (WINDOWS ? [`"${cli}"`] : [cli, `'${cli}'`]).map(word => `Put Node 24 or newer first on PATH, then run node ${word} install --refresh: the rerail command runs ${node} while that file is there, whatever PATH holds.`);
     expect(steps).toContain(olderNodeStep(home));
   });
 
@@ -63,10 +63,22 @@ describe("the hook's step on a Node older than Rerail runs on", () => {
     expect(olderNodeStep(home)).toBe(GONE_STEP);
   });
 
-  it("quotes the launcher's command for the shell a person types it in", async () => {
+  it.runIf(!WINDOWS)("quotes the launcher's command for the shell a person types it in", async () => {
     const { home } = await homeRecording(["system", NODE], "runs", "home with space");
     const cli = join(home, "current", "dist", "cli", "cli.js");
     expect(olderNodeStep(home)).toContain(`then run node '${cli}' install --refresh: `);
+  });
+
+  it.runIf(WINDOWS).each(["home with space", "RUNNER~1"])("double-quotes the launcher's command on Windows for a home such as %s, as cmd.exe and PowerShell both take it", async homeName => {
+    const { home } = await homeRecording(["system", NODE], "runs", homeName);
+    const cli = join(home, "current", "dist", "cli", "cli.js");
+    expect(olderNodeStep(home)).toContain(`then run node "${cli}" install --refresh: `);
+  });
+
+  it.runIf(WINDOWS).each(["100%", "a!b", "a$b", "a`b", "a“b"])("names PowerShell on Windows for a home such as %s, which double quotes cannot carry in both shells", async homeName => {
+    const { home } = await homeRecording(["system", NODE], "runs", homeName);
+    const cli = join(home, "current", "dist", "cli", "cli.js");
+    expect(olderNodeStep(home)).toContain(`then in PowerShell run node '${cli}' install --refresh: `);
   });
 });
 

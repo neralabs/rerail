@@ -10,7 +10,7 @@ import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { heldOnWindows, nameTaken, removeWithRetry } from "../engine/file-replace.js";
-import { shellWord } from "../engine/command-line.js";
+import { powershellLiteral, shellWord } from "../engine/command-line.js";
 import { ENTRY_POINTS, REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
@@ -517,13 +517,29 @@ function launchedDirectly(moduleUrl: string): boolean {
  * Node again, so the line names the launcher's own command with `node` from PATH in its place.
  */
 export function olderNodeStep(home: string = defaultRerailHome()): string {
-  const put = `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run`;
+  const put = `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then`;
   const recorded = launcherRecordedNode(home);
-  if (recorded === undefined) return `${put} rerail install --refresh.`;
-  // PowerShell's quoting on Windows, as Rerail's other Windows lines; a path with no space or sign needs none in cmd either.
-  const shell = process.platform === "win32" ? "powershell" : "posix";
-  const command = ["node", join(home, CURRENT_LINK, ENTRY_POINTS.cli), "install", "--refresh"].map(word => shellWord(shell, word)).join(" ");
-  return `${put} ${command}: the rerail command runs ${recorded} while that file is there, whatever PATH holds.`;
+  if (recorded === undefined) return `${put} run rerail install --refresh.`;
+  const step = refreshStep(join(home, CURRENT_LINK, ENTRY_POINTS.cli));
+  return `${put} ${step}: the rerail command runs ${recorded} while that file is there, whatever PATH holds.`;
+}
+
+/**
+ * What cmd.exe or PowerShell reads as more than text inside double quotes, in a path: cmd's `%` and `!` (its variables;
+ * `!` once delayed expansion is on), PowerShell's `$` and backtick, and the typographic double quotes PowerShell ends a
+ * string at. A Windows path holds no `"`.
+ */
+const NOT_TEXT_IN_DOUBLE_QUOTES = /[%!$`“”„]/u;
+
+/**
+ * `run node <cli> install --refresh`, the path quoted for the shell a person types it in: a POSIX shell's quoting on
+ * macOS and Linux; on Windows double quotes, which cmd.exe and PowerShell both take, or for a path that double quotes
+ * cannot carry in both ({@link NOT_TEXT_IN_DOUBLE_QUOTES}), PowerShell's literal, and the step then names PowerShell.
+ */
+function refreshStep(cli: string): string {
+  const command = (path: string): string => `node ${path} install --refresh`;
+  if (process.platform !== "win32") return `run ${command(shellWord("posix", cli))}`;
+  return NOT_TEXT_IN_DOUBLE_QUOTES.test(cli) ? `in PowerShell run ${command(powershellLiteral(cli))}` : `run ${command(`"${cli}"`)}`;
 }
 
 /**

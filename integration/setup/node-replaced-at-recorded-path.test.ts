@@ -1,8 +1,8 @@
 /**
  * An older Node at the path set-up recorded, as a package downgrade or Homebrew's `<prefix>/bin/node` linked to an
  * older formula leaves it: the launcher and the hooks run that path while it is there, whatever PATH holds. The hook
- * then says in one line why Rerail is off and what to run; done as written in a person's shell (`sh` here, PowerShell
- * on Windows) with this Node first on PATH, that step gets Rerail back: the hook gives its start note again.
+ * then says in one line why Rerail is off and what to run; done as written in a person's shell (`sh` here, cmd.exe and
+ * PowerShell on Windows) with this Node first on PATH, that step gets Rerail back: the hook gives its start note again.
  *
  * Set-up records a copy of this Node, which later reports itself as Node 22 (`OLDER_NODE_VERSION`, in
  * `process.versions.node`, which Rerail reads): every node of the run loads a module that changes only that copy, so
@@ -41,10 +41,10 @@ interface Ran {
 /**
  * `command` run to its end. Given no `input` it gets no stdin to read (the null device), so nothing is written to a
  * command that takes none, as git here, which can exit before a write reaches it. Given `input`, it may still end
- * without reading it, as a hook line that starts no node does.
+ * without reading it, as a hook line that starts no node does. With `verbatim`, Windows gets `args` joined as written.
  */
-async function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, input?: string): Promise<Ran> {
-  const options = { cwd, env, windowsHide: true };
+async function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, input?: string, verbatim = false): Promise<Ran> {
+  const options = { cwd, env, windowsHide: true, windowsVerbatimArguments: verbatim };
   const child = input === undefined
     ? spawn(command, [...args], { ...options, stdio: ["ignore", "pipe", "pipe"] })
     : spawn(command, [...args], { ...options, stdio: ["pipe", "pipe", "pipe"] });
@@ -82,7 +82,8 @@ interface Place {
 async function place(): Promise<Place> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-node-replaced-")));
   folders.push(root);
-  const [user, repo] = [join(root, "user"), join(root, "app")];
+  // A home with a space, as C:\Users\John Smith: the step's path is quoted in every shell.
+  const [user, repo] = [join(root, "John Smith"), join(root, "app")];
   const home = join(user, ".rerail");
   await Promise.all([home, repo, join(root, "system")].map(folder => mkdir(folder, { recursive: true })));
   const recorded = join(root, "system", NODE);
@@ -156,15 +157,19 @@ function namedStep(line: string): string {
   return step;
 }
 
-/** `step` typed into a person's shell: `sh` on macOS and Linux, PowerShell on Windows. */
-async function inShell(step: string, cwd: string, env: NodeJS.ProcessEnv): Promise<Ran> {
-  return WINDOWS
+/** The shells a person types the step in: `sh` on macOS and Linux; on Windows cmd.exe and PowerShell, which both take its double quotes. */
+const SHELLS: ReadonlyArray<"sh" | "cmd.exe" | "PowerShell"> = WINDOWS ? ["cmd.exe", "PowerShell"] : ["sh"];
+
+/** `step` typed into `shell`. cmd.exe gets it as written, `/s /c "<step>"`: it reads quotes by its own rules, not the C runtime's. */
+async function inShell(shell: (typeof SHELLS)[number], step: string, cwd: string, env: NodeJS.ProcessEnv): Promise<Ran> {
+  if (shell === "cmd.exe") return await run("cmd.exe", ["/d", "/s", "/c", `"${step}"`], cwd, env, undefined, true);
+  return shell === "PowerShell"
     ? await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", step], cwd, env)
     : await run("/bin/sh", ["-c", step], cwd, env);
 }
 
 describe("an older Node at the path set-up recorded", () => {
-  it.each(AGENTS)("leaves $id's hook naming a step that, done as written with Node 24 first on PATH, gets its start note back", async agent => {
+  it.each(AGENTS.flatMap(agent => SHELLS.map(shell => ({ ...agent, shell }))))("leaves $id's hook naming a step that, done as written in $shell with Node 24 first on PATH, gets its start note back", async ({ shell, ...agent }) => {
     const p = await place();
     const installed = await run(p.recorded, [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "install", "--root", PACKAGE_ROOT, "--agents", agent.id], p.root, p.env);
     expect(installed.code, installed.stderr).toBe(0);
@@ -178,7 +183,7 @@ describe("an older Node at the path set-up recorded", () => {
 
     // Node 24 or newer first on PATH, in a shell of the person's, then the step as the line wrote it.
     const node24First = { ...older, PATH: [dirname(process.execPath), older.PATH].join(delimiter) };
-    const done = await inShell(namedStep(off.stderr), p.root, node24First);
+    const done = await inShell(shell, namedStep(off.stderr), p.root, node24First);
     expect(done.code, `${done.stdout}\n${done.stderr}`).toBe(0);
     const back = await sessionStart(p, agent, node24First);
     expect(back.note, back.stderr).not.toBe("");

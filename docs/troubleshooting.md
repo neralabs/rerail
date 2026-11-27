@@ -485,7 +485,9 @@ rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is of
 ```
 
 Run that with Node 24 or newer first on `PATH`; it records that Node as `rerail install --refresh` does. Putting Node
-24 or newer back at the recorded path works too.
+24 or newer back at the recorded path works too. On Windows the line puts the path in double quotes, which `cmd.exe`
+and PowerShell both take; a path holding `%`, `!`, `$`, a backtick or a typographic double quote gets PowerShell's
+single quotes instead, and the line says to run it in PowerShell.
 
 <details>
 <summary>How Node is found, and no `node` at all</summary>
