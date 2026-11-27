@@ -11817,3 +11817,17 @@ build-and-test-loop-time's one new commit: the shared Relax only moves forward (
 - Taken whole: `scripts/dev/relax/build`, `std.patch` and README §23 (invariant 11). No engine code.
 - The NEON items (`vclzq_s8`, `vtstq`, `vld2q_u32`, …) come from the uglykl-CPU-SIMD-parallelization branch's Relax patch (b5acb69fa9). They are std declarations the installed Relax already carries: this roll-up's and the ones before it checked on that Relax. None of the SIMD branch's engine work comes in.
 - Nothing built or run: the shared Relax is not to be built from here.
+
+### Q572. Roll-up 144 (Typing-support-final-shape 44bf4d6823 onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's two new commits: the generic joins' rows counted by their steps' bindings (once, where the step counts are taken); layouts infer the keys of aggregates, unions and recursions, and a literal says whether it gives at most one row.
+
+- `step_counts`: both lines kept. The hub's `access::observe(j, &c)` (0706's observed counts) and Typing's sum of the steps' out bindings (`generic`, accounted under the component's form) read the same counts.
+- `layouts.rs`, `forms.rs` and tests-rr's `program_image` tests: Typing's, merged without conflict.
+
+Checked with Relax: setfix, tests-logic, plan-base and tests-rr check with 0 errors.
+
+Tests:
+- setfix 145/145.
+- tests-rr `program_image` 54/54. Run in pieces: the module takes over 580 s with 2 threads. Alone, `a_program_reads_back_from_its_image` takes 58 s, `a_versions_fields_say_what_its_readers_say` 85 s and `the_planners_passes_over_a_version_hold` 43 s. Sampling the second shows its time is the Relax binary's type checker (`relax_types::typeck`, the trait solver's goals), checking bodies as the run first reaches them, not the engine. A Relax cost to report, not this merge's.
+- Typing's new layout tests pass (`an_aggregate_keys_its_head_by_its_group`, `a_union_keeps_a_key_where_its_branches_are_apart`, `a_recursion_keeps_a_key_its_rules_prove_supposing_it`, `a_literal_gives_at_most_one_row_where_a_key_is_bound`, `the_shapes_rules_over_the_axes_are_keyed_by_their_node`).

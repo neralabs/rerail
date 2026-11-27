@@ -1978,6 +1978,97 @@ mod layouts {
         assert_eq!(facts(&v, &l, "w"), []);
     }
 
+    /// An aggregate's value is one for its group: the head keyed by the group (`u = max … in its group`, the shape
+    /// executors' S5). A head column outside the group and the value is not.
+    #[test]
+    fn an_aggregate_keys_its_head_by_its_group() {
+        let (v, l) = of(".decl m(p: node, i: number)\n.output m\nm(p, x) :- e(p, _, _), x = max i : { e(p, _, i) }.\n\
+                         .decl n(p: node, c: node, x: number)\n.output n\nn(p, c, x) :- e(p, c, _), x = count : { e(p, _, _) }.\n");
+        assert!(facts(&v, &l, "m").contains(&F::Key(rerail_blocks::vector![0])), "{}", l.show(&v));
+        let n = facts(&v, &l, "n");
+        assert!(n.contains(&F::Key(rerail_blocks::vector![1])) && !n.contains(&F::Key(rerail_blocks::vector![0])), "{}", l.show(&v));
+    }
+
+    /// A union keeps a key every branch gives where its branches are apart: a driver of another kind (two constants
+    /// where `k`'s key fixes one), or a test one branch passes and the other fails (an atom and its negation). Branches
+    /// not apart keep none (decision 0361; the shape executors' "steps that give at most one row").
+    #[test]
+    fn a_union_keeps_a_key_where_its_branches_are_apart() {
+        let (v, l) = of(".decl q(c: node, p: node)\n.output q\nq(c, p) :- e(p, c, _), k(c, \"call\").\nq(c, p) :- e(p, c, _), k(c, \"name\").\n\
+                         .decl t(c: node, p: node)\n.output t\nt(c, p) :- e(p, c, _), k(c, _).\nt(c, c) :- e(_, c, _), !k(c, _).\n\
+                         .decl w(c: node, p: node)\n.output w\nw(c, p) :- e(p, c, _).\nw(c, c) :- k(c, _).\n");
+        assert_eq!(l.0[&v.rel("q").unwrap()].iter().filter(|(f, o)| *f == F::Key(rerail_blocks::vector![0]) && *o == Origin::Rules).count(), 1, "{}", l.show(&v));
+        assert!(facts(&v, &l, "t").contains(&F::Key(rerail_blocks::vector![0])), "{}", l.show(&v));
+        assert!(!facts(&v, &l, "w").iter().any(|f| matches!(f, F::Key(_))), "{}", l.show(&v));
+    }
+
+    /// A recursion keeps a key proved by supposing it: the first ancestor with a `k` (the base where the parent has
+    /// one, the step where it has none, so apart) is keyed by its node. The closure of `e` is not: its base and step
+    /// give one node two ancestors.
+    #[test]
+    fn a_recursion_keeps_a_key_its_rules_prove_supposing_it() {
+        let (v, l) = of(".decl up(n: node, s: symbol)\n.output up\nup(n, s) :- e(p, n, _), k(p, s).\nup(n, s) :- e(p, n, _), !k(p, _), up(p, s).\n\
+                         .decl t(a: node, b: node)\n.output t\nt(a, b) :- e(a, b, _).\nt(a, c) :- t(a, b), e(b, c, _).\n");
+        assert!(l.0[&v.rel("up").unwrap()].contains(&(F::Key(rerail_blocks::vector![0]), Origin::Rules)), "{}", l.show(&v));
+        assert_eq!(facts(&v, &l, "t"), [F::Local]);
+    }
+
+    /// A literal gives at most one row where a key of its relation is bound, or all its columns are; `nearest` where
+    /// its node is; a negation, a comparison and an aggregate always (`Layouts::at_most_one`).
+    #[test]
+    fn a_literal_gives_at_most_one_row_where_a_key_is_bound() {
+        let (v, l) = of(".decl j(c: node, s: symbol)\n.output j\nj(c, s) :- e(p, c, _), k(c, s), !k(p, _).\n");
+        let r = v.heads(v.rel("j").unwrap()).next().unwrap();
+        let c = r.head().args().next().unwrap().var().unwrap();
+        use crate::code_rule_dsl::logic::program_image::handles::Lit;
+        let lit = |rel: &str, neg: bool| r.body().find(|l| matches!(l.view(), Lit::Atom(a) if a.rel() == v.rel(rel).unwrap() && a.neg() == neg)).unwrap();
+        let lits = [lit("e", false), lit("k", false), lit("k", true)];
+        let none = BTreeSet::new();
+        let by_c = BTreeSet::from([c]);
+        assert!(!l.at_most_one(lits[0], &none), "e unbound: many");
+        assert!(l.at_most_one(lits[0], &by_c), "e by its key c");
+        assert!(l.at_most_one(lits[1], &by_c), "k by its key n");
+        assert!(!l.at_most_one(lits[1], &none));
+        assert!(l.at_most_one(lits[2], &none), "a negation is a test");
+    }
+
+    /// The shapes' rules as the design writes them (shape executors §3), over python/ast.rerail's axes: S2's dispatch,
+    /// one head's rules apart by their driver's kind, and S3's inherited context, a recursion up `nearest` whose test
+    /// the base passes and the step fails, are each keyed by their node; S5's latest by its group. Along the axes, a
+    /// step reads at most one row where their keys are bound: `kind` and `text` by the node, `field` and `child` by
+    /// the child, `nearest` by its node.
+    #[test]
+    fn the_shapes_rules_over_the_axes_are_keyed_by_their_node() {
+        let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rerail\"\n\
+                    .decl h1(n: node, o: node)\n.output h1\n\
+                    h1(n, n) :- kind(n, \"call\").\n\
+                    h1(n, n) :- kind(n, \"attribute\"), field(n, \"object\", o), kind(o, \"identifier\"), !field(_, \"function\", n).\n\
+                    .decl stopk(k: symbol)\nstopk(\"function_definition\").\n\
+                    .decl h3(n: node, v: node)\n.output h3\n\
+                    h3(n, v) :- kind(n, _), nearest(n, a, stopk), field(a, \"name\", n), v = a.\n\
+                    h3(n, v) :- kind(n, _), nearest(n, a, stopk), !field(a, \"name\", n), h3(a, v).\n\
+                    .decl a5(p: node, u: number)\n.output a5\na5(p, u) :- kind(p, \"block\"), u = max i : { child(p, _, i) }.\n\
+                    .violation Fn(at: node) \"a call\"\nFn(c) :- h1(c, _), h3(c, _), a5(c, _).\n";
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
+        let key0 = F::Key(rerail_blocks::vector![0]);
+        for rel in ["h1", "h3", "a5"] {
+            assert!(facts(&v, &l, rel).contains(&key0), "{rel}: {}", l.show(&v));
+        }
+        use crate::code_rule_dsl::logic::program_image::handles::Lit;
+        let r = v.heads(v.rel("h1").unwrap()).find(|r| r.body().count() > 1).unwrap();
+        let n = r.head().args().next().unwrap().var().unwrap();
+        let at = |rel: &str, neg: bool| r.body().find(|l| matches!(l.view(), Lit::Atom(a) if a.rel() == v.rel(rel).unwrap() && a.neg() == neg)).unwrap();
+        assert!(l.at_most_one(at("field", false), &BTreeSet::from([n])) == false, "field from its parent: a few");
+        let Lit::Atom(f) = at("field", false).view() else { unreachable!() };
+        let o = f.args().nth(2).unwrap().var().unwrap();
+        assert!(l.at_most_one(at("field", false), &BTreeSet::from([o])), "field by its child");
+        let r3 = v.heads(v.rel("h3").unwrap()).next().unwrap();
+        let n3 = r3.head().args().next().unwrap().var().unwrap();
+        let near = r3.body().find(|l| matches!(l.view(), Lit::Nearest { .. })).unwrap();
+        assert!(l.at_most_one(near, &BTreeSet::from([n3])) && !l.at_most_one(near, &BTreeSet::new()));
+    }
+
     /// Over a Python policy's program (python/ast.rerail's library and core.rerail): the library's derived relations take
     /// facts from core.rerail's base ones. The counts are printed for decision 0361's record.
     #[test]

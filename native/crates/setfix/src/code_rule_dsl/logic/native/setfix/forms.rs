@@ -107,15 +107,19 @@ pub(super) fn framed<R>(form: &'static str, component: &str, f: &mut dyn FnMut()
     super::framed::<super::FormFrames, R>(h, f)
 }
 
-/// The component's rows, by who made them: `form`'s (none: "") rows made and rows walked, and the rows the generic
-/// joins walked. Counted in the run's profile, and written to the frames file (`RERAIL_JOIN_FRAMES`).
+/// The component's rows, by who made them: `form`'s (none: "") rows made and rows walked (nodes reached and rows
+/// made), and the rows the generic joins' steps made (each step's out bindings, as `step_counts`). Counted in the
+/// run's profile, and written to the frames file (`RERAIL_JOIN_FRAMES`).
 pub(super) fn account(form: &'static str, component: &str, rows: u64, visits: u64, generic: u64) {
     use crate::code_rule_dsl::logic::lanes::prof::count;
+    if rows == 0 && visits == 0 && generic == 0 {
+        return;
+    }
     if !form.is_empty() {
         count(form, "rows a specialized executor made", rows);
         count(form, "rows a specialized executor walked", visits);
     }
-    count("generic joins", "rows the generic joins walked", generic);
+    count("generic joins", "rows the generic joins' steps made", generic);
     if super::join_frames() {
         super::join_frame_line(format!("rows {} {component} made {rows} walked {visits} generic {generic}", if form.is_empty() { "-" } else { form }));
     }

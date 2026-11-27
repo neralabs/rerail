@@ -3735,6 +3735,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     cursor.check()?;
     symbols.write().unwrap().check()?;
     let solve = t0.elapsed();
+    // The rows the form made, each return; the generic joins' are counted where their step counts are taken
+    // (`step_counts`), once each.
+    forms::account(form_name, &name, form_rows, form_visits, 0);
     let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
     if was_cut {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 5", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
@@ -3748,7 +3751,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     if !done {
         return Ok(format!("0 {waves} {visits} {runs} {skips} {:.1} {:.1} {} 0", solve.as_secs_f64() * 1e3, t0.elapsed().as_secs_f64() * 1e3, per.join(",")));
     }
-    forms::account(form_name, &name, form_rows, form_visits, visits - form_visits);
     comp.done = true;
     let mut new_rows = 0usize;
     if comp.write {
@@ -4080,14 +4082,20 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     let conn = conn.db();
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
-    Ok(comp.probes.iter().map(|p| match &p.body {
+    let mut generic = 0u64;
+    let out = comp.probes.iter().map(|p| match &p.body {
         Body::Join(j) => {
             let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
             access::observe(j, &c);
+            generic += c.iter().map(|(_, b)| b).sum::<u64>();
             j.plan_counts(&c).into_iter().map(|(a, b)| (a as i64, b as i64)).collect()
         }
         Body::Sql(_) | Body::Unplanned => Vec::new(),
-    }).collect())
+    }).collect();
+    // The rows the generic joins' steps made since the last call (their out bindings), under the component's form.
+    let form = comp.form.as_ref().map(|f| f.name()).or_else(|| comp.waiting.as_ref().map(|(f, _)| f.name())).unwrap_or("");
+    forms::account(form, name, 0, 0, generic);
+    Ok(out)
 }
 
 /// A level's build ahead (decision 0706 step 1): the indexes its membership steps' use so far in the run pays for, on
