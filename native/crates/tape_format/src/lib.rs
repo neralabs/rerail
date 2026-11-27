@@ -43,7 +43,12 @@ pub mod codes_dir {
     const _: () = assert!(align_of::<Aligned<u8>>() == super::codes::ALIGN && LEN.is_multiple_of(super::codes::ALIGN));
     const _: () = assert!(cfg!(target_endian = "little"), "the directory's image is little-endian");
     const _: () = assert!(size_of::<rerail_clif::view_reads::CodesLang>() == super::codes::LANG_BYTES, "a language's place, as the reads read it");
-    static DIR: Aligned<[u8; LEN]> = Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin")));
+    // In a data section of its own on macOS: an immutable static lies in `__TEXT` (code-signed, `r-x`), and once
+    // Metal's no-copy buffer wrapped those pages the host's next read of them faulted (`EXC_BAD_ACCESS` code 2, the
+    // pages still `r-x`; the device views' test on a Mac). `__DATA`'s pages are the binary's as well, read where they
+    // lie, and wrap as any host memory does.
+    #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__rerail_codes"))]
+    static DIR:Aligned<[u8; LEN]> = Aligned(*include_bytes!(concat!(env!("OUT_DIR"), "/codes.bin")));
 
     /// The directory's bytes.
     pub fn bytes() -> &'static [u8] {
