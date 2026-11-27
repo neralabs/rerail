@@ -2763,6 +2763,13 @@ fn run_observed_within(
             // (`lower::atom_columns`, decision 0170).
             // Callable relations (the "Callable Per-file Relations" spike): a callable's rules leave the program, and
             // each reader asks for it (`preparation::callable`); the run answers the asks in their files (`calls`).
+            // `RERAIL_ASKS` (a measurement aid): each exported relation's asks recorded, reader by reader.
+            let version = if preparation::asks::on() {
+                let pre = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+                preparation::asks::recorded(&version, &pre.file_local).map_err(Error::Plan)?.unwrap_or(version)
+            } else {
+                version
+            };
             let version = match preparation::callable::split(&version).map_err(Error::Plan)? {
                 Some(split) => {
                     crate::code_rule_dsl::logic::profile::decision("callable relations", || split.callees.iter().map(|c| format!("{} {}", c.callable.rel, c.callable.pattern())).collect::<Vec<_>>().join(", "));
@@ -8771,6 +8778,9 @@ fn run_observed_within(
         let all: usize = by.iter().map(|b| b.0).sum();
         format!("{all} rows of {} exports; the largest: {}", by.len(), by.iter().take(8).map(|(n, r)| format!("{r} {n}")).collect::<Vec<_>>().join(", "))
     });
+    // Each export's rows, for the asks recorded (`RERAIL_ASKS`): a relation of the files is handed on as itself, or
+    // located (`R_at`).
+    let export_rows: BTreeMap<String, usize> = if preparation::asks::on() { split.exports.iter().filter_map(|r| totals.rows(r).map(|n| (r.clone(), n))).collect() } else { BTreeMap::new() };
     // The exports the cross part could call instead (the callable spike's feedback, first version): by their rows.
     crate::code_rule_dsl::logic::profile::decision("callable candidates: the files' relations every reader asks for by columns", || {
         let located = |r: &str| split.locations.get(r).is_some_and(|l| l.contains(&0));
@@ -9577,6 +9587,21 @@ fn run_observed_within(
                                 crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {gone} gone, {added} added"));
                             }
                         }
+                    }
+                    // The asks recorded (`RERAIL_ASKS`): each reader's keys and rows used, beside its relation's rows made.
+                    if preparation::asks::on() {
+                        crate::code_rule_dsl::logic::profile::decision("asks of the exported relations (RERAIL_ASKS)", || {
+                            let made_of = |rel: &str| export_rows.get(&format!("{rel}_at")).or_else(|| export_rows.get(rel)).map_or_else(|| "?".to_owned(), |n| n.to_string());
+                            let tags: BTreeSet<&str> = got.outputs.keys().filter_map(|r| r.strip_prefix(preparation::asks::KEY).or_else(|| r.strip_prefix(preparation::asks::USED))).collect();
+                            let count = |prefix: &str, tag: &str| got.outputs.get(&format!("{prefix}{tag}")).map_or_else(|| "-".to_owned(), |r| r.len().to_string());
+                            tags.into_iter()
+                                .map(|tag| {
+                                    let rel = tag.split("__").nth(1).unwrap_or("");
+                                    format!("{tag} made {} keys {} used {}", made_of(rel), count(preparation::asks::KEY, tag), count(preparation::asks::USED, tag))
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        });
                     }
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     let read_back: Vec<String> = cross_f.outputs().map(str::to_owned).collect();
