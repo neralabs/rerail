@@ -365,7 +365,10 @@ mod tests {
                 .is_some_and(|o| o.iter().any(|(k, _)| k == "strict"))
         }));
         assert!(wide.is_none(), "its chain reads past its budget");
-        assert!(wide_again.is_none(), "and so on every ask, its bases read before the cut kept");
+        assert!(
+            wide_again.is_none(),
+            "and so on every ask, its bases read before the cut kept"
+        );
         assert!(after.is_some_and(|o| o.iter().any(|(k, _)| k == "strict")));
     }
 }
