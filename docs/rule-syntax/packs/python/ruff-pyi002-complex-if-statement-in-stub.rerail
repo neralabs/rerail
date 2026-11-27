@@ -10,12 +10,12 @@
 //   if sys.version_info >= (3, 8) and sys.platform == "linux":   fine
 //   if sys.platform.startswith("linux"):                         ← PYI002: a call
 //   if a and (b or c):                                           ← PYI002 at `b or c`: nested and/or
-#include "python/typing.rerail"
+#include "python/pt1120-python-01.rerail"
 
 .violation PYI002(at: node) code "PYI002" "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
     suppress ruff "PYI002"
 PYI002(v) :- if_test(_, t), in_stub(t), test_part(t, v), !simple_test(v).
-// simple_test(v): `L op R` with L a subscript (any: PYI003 judges it) or sys.version_info / sys.platform.
+// simple_test(v): `L op R` with L a subscript (any: PYI003 judges it) or sys.version_info / sys.platform. Comments
+// inside the comparison are not operands: `(sys.version_info >=  # c` / `(3, 8))` is simple.
 .decl simple_test(v: node)
-simple_test(v) :- cmp(v, _, l0, _), unparen(l0, l), (kind(l, "subscript") ; sys_attr(l, "version_info") ;
-    sys_attr(l, "platform")).
+simple_test(v) :- one_cmp(v, _, l, _), (kind(l, "subscript") ; sys_attr(l, "version_info") ; sys_attr(l, "platform")).

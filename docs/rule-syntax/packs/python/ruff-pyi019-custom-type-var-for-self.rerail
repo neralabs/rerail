@@ -13,12 +13,30 @@
 //   def m(self: _S) -> _S: ...                  ← PYI019
 //   @classmethod
 //   def make(cls: type[_S]) -> _S: ...          ← PYI019 (typing.Type[_S] and builtins.type[_S] are not checked)
+//   def m[S](cls: "type[S]") -> "type[S]": ...  ← PYI019 in a class method: a string annotation is read as the type
+//                                                 it parses to, once (`self: "'_S'"` and `cls: type["_S"]` are not)
 #include "python/typing.rerail"
 
 .violation PYI019(at: node, x: symbol) code "PYI019" "Replace the custom type variable `{x}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{x}` here."
     suppress ruff "PYI019"
-PYI019(at, x) :- receiver(f, k, t), sig_at(f, at), (k = "instance", self_var(t, x) ; k != "instance", builtin_sub(t, "type"),
-    tsub(t, h, 0, e), kind(h, "identifier"), tsub_n(t, 1), self_var(e, x)).
+PYI019(at, x) :- cand(f, t, e), sig_at(f, at), tvar(f, t, e, x).
+// cand(f, t, e): the name e that would be a type variable: the receiver's type itself in an instance method, the
+// argument of `type[e]` in a class method or `__new__`. t is the annotation as written, e is in t or in the tree
+// t's string parses to (Ruff parses the annotation if it is a string, then matches a Name or `type[Name]`).
+.decl cand(f: node, t: node, e: node)
+cand(f, t, m) :- receiver(f, "instance", t), recv_type(t, m).
+cand(f, t, e) :- receiver(f, k, t), k != "instance", recv_type(t, m), tsub(m, h, 0, e), kind(h, "identifier"),
+    tsub_n(m, 1), builtin_type(f, t, h).
+// builtin_type(f, t, h): h is the builtin `type`. Names in a string's parsed tree do not resolve (pyi_sym gives
+// them nothing), so there h is the name `type` and nothing binds `type` where Ruff looks it up
+// (has_builtin_binding_in_scope): f's class, or a module or def around it.
+.decl builtin_type(f: node, t: node, h: node)
+builtin_type(f, t, h) :- receiver(f, _, t), !str_node(t), pyi_sym(h, "builtins.type"), within(h, t).
+builtin_type(f, t, h) :- receiver(f, _, t), str_node(t), recv_type(t, m), tsub(m, h, 0, _), text(h, "type"),
+    !type_bound(f).
+.decl type_bound(f: node)
+type_bound(f) :- receiver(f, _, _), pyi_method(c, f, _), (binding(c, "type", _, _) ; within(c, s),
+    (kind(s, "module") ; kind(s, "function_definition")), binding(s, "type", _, _)).
 // receiver(f, k, t): method f of kind k (not static) has its first parameter annotated t, bare. `within(t, f)` is
 // true of every row; it tells the engine that t is in f's file (first_param's annotation column is a loc), so the
 // rule runs file by file.
@@ -28,7 +46,13 @@ receiver(f, k, t) :- method_kind(f, k), k != "static", pyi_method(c, f, _), !met
 .decl sig_at(f: node, at: node)
 sig_at(f, at) :- receiver(f, _, _), (field(f, "type_parameters", at) ; !field(f, "type_parameters", _),
     field(f, "parameters", at)).
-// self_var(t, x): t is a type variable x, or a string annotation that parses to one.
-.decl self_var(t: node, x: symbol)
-self_var(t, x) :- typevar_name(t, x).
-self_var(t, x) :- str_node(t), parsed(t, "annotation", r0), type_bare(r0, r), typevar_name(r, x).
+// recv_type(t, m): annotation t, or the type its string parses to, bare.
+.decl recv_type(t: node, m: node)
+recv_type(t, t) :- receiver(_, _, t), !str_node(t).
+recv_type(t, m) :- receiver(_, _, t), str_node(t), parsed(t, "annotation", r0), type_bare(r0, m).
+// tvar(f, t, e, x): e names a type variable x: a TypeVar assigned in the file, or a PEP 695 type parameter of f. A
+// string's parsed tree has no ancestors, so typevar_name cannot find the def around a name in it; f's own
+// parameters are asked directly (`def m[S](cls: "type[S]")`).
+.decl tvar(f: node, t: node, e: node, x: symbol)
+tvar(f, t, e, x) :- cand(f, t, e), typevar_name(e, x).
+tvar(f, t, e, x) :- cand(f, t, e), str_node(t), kind(e, "identifier"), text(e, x), tparam_named(f, x, "typevar").
