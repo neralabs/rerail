@@ -65,6 +65,15 @@ The agent drafts the rule from your description, tests it against the repository
 
 A session in OMP: Rerail steers the agent on `eslint-eqeqeq` from the `javascript` pack, and the line under the edit says so, with `why?` opening the rule on your local dashboard. The agent fixes its edit in the same turn, and the footer counts the steer; `R E R A I L`, the rule count and the steer count link to the session and the rules on the dashboard.
 
+In short:
+
+- **No model judges your code.** Code rules are regex and syntax-tree patterns that Rerail's engine matches.
+- **A fix is checked like any edit.** If it breaks another rule, the agent is steered again. By default a steer is advice, and the edit stays on disk.
+- **Your linters are not run.** Packs port their rules into Rerail's engine, and set-up can read your lint config to turn on the same ones.
+- **Architecture rules work** when the code shows the decision, such as layer boundaries or calls that must go through a service.
+
+[How Rerail checks your agent](docs/how-rerail-checks.md) answers each of these in full.
+
 ## Capabilities
 
 - **Code rules.** A rule you write is a JSON `rerail.policy/v1` document, which `/rerail-create`, `rerail rules add` and a worktree's `.rerail/rules/` take. Rule packs can also ship rules in Rerail's new rule language, `.rerail`, as the Django pack does ([rules written in .rerail](docs/pack-format.md#rules-written-in-rerail)). Each JSON clause is `forbid`, `require_each` or `budget`, built from regex, syntax-tree and relational queries; the [code-rule DSL reference](https://neralabs.github.io/rerail/code-rule-dsl-reference.html) documents every construct. The native engine runs both kinds the same way every time, within set limits on time and size.

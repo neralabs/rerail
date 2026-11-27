@@ -8,6 +8,8 @@ Install Rerail, write rules, and see what it does in a session.
 - [how-setup-works.md](how-setup-works.md): each set-up step and what it writes, the managed-installation layout, the
   database, updates and removal
 - [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
+- [how-rerail-checks.md](how-rerail-checks.md): how Rerail checks an agent's edits, what a rule is under the hood, what
+  happens when a fix breaks another rule, how packs relate to your linters, and architecture rules
 - [reference.md](reference.md): rules and their configuration, the database, updates, the daemon and its API, audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
 - [writing-rules.md](writing-rules.md): which rules are worth having; suggesting, writing, testing and tuning one with
