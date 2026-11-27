@@ -56,8 +56,8 @@ class zero      = '0'
 class x_any     = 'x' 'X'
 class o_any     = 'o' 'O'
 class b_any     = 'b' 'B'
-class not_oct   = '8' '9'
-class not_bin   = '2'..'9'
+class oct_d     = '0'..'7'
+class bin_d     = '0' '1'
 class exp_l     = 'e' 'E'
 class imag_l    = 'j' 'J'
 class punct     = '(' ')' '[' ']' '{' '}' ',' ':' ';' '.' '=' '+' '-' '*' '/' '%' '&' '|' '^' '~' '<' '>' '@' '!'
@@ -195,37 +195,20 @@ escape "a tab or a form feed starting the file" when tab_ff & ~prev(~empty)
 
 mask w          = code & word
 
-# A number (tree-sitter-python's `integer` and `float`): the word from its first digit (a digit
-# after a `.` or an exponent's sign is no number's first), a `.` right after that word and the
-# word after it, or a `.` before a digit not after a word (`.5`); an exponent's sign and the
-# word after it. One token, an `integer`; a float has a `.` or an exponent (`real`, a test of
-# the token's bytes, as Kotlin's).
+# A number (tree-sitter-python's `integer` and `float`), read as the lean lexer's `number`: from its first
+# digit, or a `.` before a digit not after a word (`.5`), the run of its bytes (word bytes, `.`s, an
+# exponent's sign), which its grammar must match at the token (`check`). A digit after a `.` or an
+# exponent's sign is no number's first: the run before it takes it. A number with `0x`, `0o` or
+# `0b` is `based`, never a float; a decimal one with a `.` or an exponent is (`real`, below).
 mask num0       = w & digit & ~prev(w)
 mask e_sign0    = code & sign & prev(exp_l & fill(num0, ~w)) & next(digit)
-mask int_start  = num0 & ~prev(dot) & ~prev(e_sign0)
-mask n_word     = fill(int_start, ~w)
-mask hex_n      = fill(int_start & zero & next(x_any), ~w)
-# An octal or a binary number (`0o7`, `0b1`): its letter after its `0`, then digits of its base.
-mask oct_n      = fill(int_start & zero & next(o_any), ~w)
-mask bin_n      = fill(int_start & zero & next(b_any), ~w)
-mask ob_n       = oct_n | bin_n
+mask num_first  = num0 & ~prev(dot) & ~prev(e_sign0)
+mask based_at   = num_first & zero & next(x_any | o_any | b_any)
+mask int_start  = num_first & ~based_at
 mask dot_start  = code & dot & next(digit) & ~prev(w)
-mask n_dot      = code & dot & prev(n_word & ~hex_n & ~ob_n) | dot_start
-mask f_word     = fill(prev(n_dot) & w, ~w)
-mask d_word     = n_word & ~hex_n & ~ob_n | f_word
-mask n_sign     = code & sign & prev(d_word & exp_l) & next(digit)
-mask e_word     = fill(prev(n_sign) & w, ~w)
-mask number     = n_word | n_dot | f_word | n_sign | e_word
-mask exp_at     = d_word & exp_l & (next(digit) | next(n_sign))
-# The letters a number takes: a hex number's `x` and digits, an octal's `o`, a binary's `b`,
-# an exponent's `e`, a last `j`. `L` and the rest are not read yet.
-mask n_letter   = hex_n & (hex | x_any & prev(int_start)) | ob_n & (o_any | b_any) & prev(int_start) | exp_at | imag_l & (d_word | e_word) & ~next(number)
-escape "a number with a letter it does not take" when number & letter & ~n_letter
-escape "a number with an `_` not between digits" when number & us & ~(prev(digit) & next(digit) & ~hex_n & ~ob_n | hex_n & prev(hex | x_any) & next(hex) | ob_n & prev(digit | o_any | b_any) & next(digit))
-escape "an octal or a binary number with a digit past its base" when oct_n & not_oct | bin_n & not_bin
-escape "an octal or a binary number with no digits" when ob_n & (o_any | b_any) & prev(int_start) & ~next(digit | us)
-escape "a number with more after its exponent" when (exp_at | n_dot) & fill(prev(exp_at) & number, ~number)
-escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~next(hex | us)
+mask num_run    = word | dot | sign & prev(exp_l) & next(digit)
+mask number     = fill(based_at | int_start | dot_start, ~num_run)
+mask based_n    = fill(based_at, ~word)
 
 mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
 mask name_more  = fill(word_start, ~w) & ~word_start
@@ -233,10 +216,18 @@ mask name_more  = fill(word_start, ~w) & ~word_start
 # Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
 assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
 assume "a name runs over its word's bytes" in identifier name_more = word
-assume "a number's bytes are code" in integer code = ~empty
+assume "a number starts at a digit, `0x`, `0o` and `0b` apart: a start is never in a word or a number's run" at starts int_start = digit & ~prev(dot) & ~(zero & next(x_any | o_any | b_any))
+assume "a number starts at `0x`, `0o` or `0b`: a start is never in a word or a number's run" at starts based_at = zero & next(x_any | o_any | b_any) & ~prev(dot)
+assume "a number starts at a `.` before a digit after no word" at starts dot_start = dot & next(digit) & ~prev(word)
+assume "a decimal number's bytes are a number's, and no based number's" in integer number = ~empty
+assume "a decimal number's bytes are no based number's" in integer based_n = empty
 
 token identifier = start word_start run name_more
-token integer   = start int_start | dot_start run number
+token based     = start based_at run word
+token integer   = start int_start | dot_start run num_run
+check based     = zero (x_any [us] hex ([us] hex)* | o_any [us] oct_d ([us] oct_d)* | b_any [us] bin_d ([us] bin_d)*)
+check integer   = digit ([us] digit)* ['.' [digit ([us] digit)*]] [exp_l [sign] digit ([us] digit)*] [imag_l]
+                | '.' digit ([us] digit)* [exp_l [sign] digit ([us] digit)*] [imag_l]
 
 # --- Operators ---------------------------------------------------------------------------------
 
@@ -316,7 +307,7 @@ mark future     = tokens "from" "__future__"
 # A name before `[`: in a type, a generic type's (tree-sitter-python's `generic_type`).
 mark generic    = tokens identifier "["
 # A number with a `.` or an exponent: a float.
-mark real       = empty, at integer when count(n_dot | exp_at) at least 1
+mark real       = empty, at integer when count(dot & number | exp_l & number & ~based_n) at least 1
 # `with (`: the clause's parentheses, not an expression's, where a comma at their depth has more
 # after it (the lean parser's `paren_is_clause`): `(a, b)`, not `(a,)` or `(a as b)`. The lean
 # parser asks for a `:` after them too; where none follows (`with (a, b) as c:`) the clause's
@@ -374,7 +365,7 @@ tree python {
   node case_pattern     = '_' | kw_pat keyword_pattern | case_simple [wrap union_pattern _ ('|' case_simple)+]
   node keyword_pattern  = identifier '=' case_simple [wrap union_pattern _ ('|' case_simple)+]
   choice case_simple    = dotted_name [wrap class_pattern _ '(' (')' | case_item (',' case_item)* (trail_paren | ')'))]
-                        | '-' (real integer as float | integer) | real integer as float | integer
+                        | '-' (real integer as float | integer | based as integer) | real integer as float | integer | based as integer
                         | string [wrap concatenated_string _ string+]
                         | 'None' as none | 'True' as true | 'False' as false
                         | case_list | case_tuple | dict_pattern | splat_pattern
@@ -383,7 +374,7 @@ tree python {
   node case_tuple       = retag tuple_pattern '(' [case_item (',' case_item)*] ')'
   node dict_pattern     = '{' [dict_entry (',' dict_entry)*] '}'
   choice dict_entry     = key: case_key ':' value: case_item | splat_pattern
-  choice case_key       = string [wrap concatenated_string _ string+] | '-' integer | integer | 'None' as none | 'True' as true | 'False' as false
+  choice case_key       = string [wrap concatenated_string _ string+] | '-' (integer | based as integer) | integer | based as integer | 'None' as none | 'True' as true | 'False' as false
   # --- Definitions
   # `async`: a leaf before `def`, `for` or `with`, the node retagged by the word after it.
   node function_definition = 'async' ('def' def_rest | retag for_statement 'for' for_rest | retag with_statement 'with' with_rest)
@@ -529,7 +520,7 @@ tree python {
   node slice            = slice_rest
   choice slice_rest     = ':' [expression] [':' [expression]]
   # Strings side by side: a `concatenated_string` of them.
-  choice atom           = identifier | real integer as float | integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
+  choice atom           = identifier | real integer as float | integer | based as integer | string [wrap concatenated_string _ string+] | list | parenthesized_expression | dictionary
                         | 'True' as true | 'False' as false | 'None' as none | ellipsis
   # The patterns an assignment's target is in (tree-sitter-python's `pattern`), and a loop's
   # target read as one: a name, its attributes and subscripts.

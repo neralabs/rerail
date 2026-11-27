@@ -125,9 +125,6 @@ struct Lp<'g, 'a> {
     end_unread: std::cell::Cell<bool>,
     /// Each checked kind's check (`check K = G`).
     check_of: BTreeMap<String, Gram>,
-    /// Whether the check being written reads its bytes with no bound (`b[j]`): none of its bytes the padding's, so its
-    /// match stops before the padded source's end, as the lean parser's `number_end` reads.
-    direct: std::cell::Cell<bool>,
     /// Whether the code being written is the root's, outside every level: there no level is open (`depth` is 0), and
     /// a call tests no depth, as `walk`'s document.
     at_root: std::cell::Cell<bool>,
@@ -1112,105 +1109,19 @@ impl Lp<'_, '_> {
         Ok(first)
     }
 
-    /// A `check K = G` as a function of the token's bytes: `G` over them, its names byte classes, its literals
-    /// bytes, each decision at the next byte.
-    fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
-        // The padding's byte (a space) none of the check's: its match stops at the padding at the latest.
-        self.direct.set(!self.check_bytes(body)?.contains(&b' '));
-        let code = self.check_code(body, false)?;
-        self.direct.set(false);
-        Ok(format!("/// `check {kind}`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,\n/// to the padded source's end), or none.\nfn check_{}(b: &[u8]) -> Option<usize> {{\nlet mut j = 0usize;\n{}Some(j)\n}}\n\n", ident(kind), code))
+    /// The lexer's checks' writer (`bitlex_check_rust`).
+    fn checks(&self) -> crate::bitlex_check_rust::Checks<'_> {
+        crate::bitlex_check_rust::Checks::new(self.g.x.lexer, "tier 2 as one loop")
     }
 
-    /// Every byte a check's grammar may read.
-    fn check_bytes(&self, g: &Gram) -> Result<Vec<u8>, String> {
-        Ok(match g {
-            Gram::Lit(_) | Gram::Sym(_) => self.check_first(g)?.0,
-            Gram::Seq(gs) | Gram::Alt(gs) => gs.iter().map(|g| self.check_bytes(g)).collect::<Result<Vec<_>, _>>()?.concat(),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) => self.check_bytes(a)?,
-            other => return self.err(format!("a check's {other:?}")),
-        })
+    /// A `check K = G` as a function of the token's bytes (`bitlex_check_rust`), the source padded.
+    fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
+        self.checks().check_fn(&ident(kind), kind, body, true)
     }
 
     /// The bytes a check's grammar may start with, and whether it may match none.
     fn check_first(&self, g: &Gram) -> Result<(Vec<u8>, bool), String> {
-        Ok(match g {
-            Gram::Lit(t) if t.len() == 1 => (vec![t.as_bytes()[0]], false),
-            Gram::Sym(n) => (self.class(n)?, false),
-            Gram::Seq(gs) => {
-                let mut out = Vec::new();
-                for g in gs {
-                    let (f, e) = self.check_first(g)?;
-                    out.extend(f);
-                    if !e {
-                        return Ok((out, false));
-                    }
-                }
-                (out, true)
-            }
-            Gram::Alt(gs) => {
-                let (mut out, mut empty) = (Vec::new(), false);
-                for g in gs {
-                    let (f, e) = self.check_first(g)?;
-                    out.extend(f);
-                    empty |= e;
-                }
-                (out, empty)
-            }
-            Gram::Opt(a) | Gram::Star(a) => (self.check_first(a)?.0, true),
-            Gram::Plus(a) => self.check_first(a)?,
-            other => return self.err(format!("a check's {other:?}")),
-        })
-    }
-
-    fn class(&self, name: &str) -> Result<Vec<u8>, String> {
-        for s in self.g.x.lexer {
-            if let Stmt::Class(n, items) = s
-                && n == name
-            {
-                let mut out: Vec<u8> = items.iter().flat_map(|&(lo, hi)| (lo..=hi).map(|b| b as u8)).collect();
-                out.sort_unstable();
-                out.dedup();
-                return Ok(out);
-            }
-        }
-        self.err(format!("a check's `{name}`: no class"))
-    }
-
-    fn at_byte(&self, g: &Gram) -> Result<String, String> {
-        let (mut f, _) = self.check_first(g)?;
-        f.sort_unstable();
-        f.dedup();
-        Ok(if self.direct.get() { format!("matches!(b[j], {})", pattern(&f)) } else { format!("matches!(b.get(j), Some({}))", pattern(&f)) })
-    }
-
-    /// The code of a check's `g`; `tested`, whether the test before it found its first byte (an `[A]`, `A*`, `A+` or
-    /// `A | B` found it there, so its code reads it as found).
-    fn check_code(&self, g: &Gram, tested: bool) -> Result<String, String> {
-        Ok(match g {
-            Gram::Lit(_) | Gram::Sym(_) if tested => "j += 1;\n".to_owned(),
-            Gram::Lit(_) | Gram::Sym(_) => format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?),
-            Gram::Seq(gs) => gs.iter().enumerate().map(|(k, g)| self.check_code(g, tested && k == 0)).collect::<Result<String, String>>()?,
-            Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
-            Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
-            Gram::Plus(a) => format!("{}while {} {{\n{}}}\n", self.check_code(a, tested)?, self.at_byte(a)?, self.check_code(a, true)?),
-            // Each alternative one byte: one test of them all (`walk`'s exponent sign), none where the test before found it.
-            Gram::Alt(gs) if gs.iter().all(|g| matches!(g, Gram::Lit(_) | Gram::Sym(_))) => {
-                if tested {
-                    "j += 1;\n".to_owned()
-                } else {
-                    format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?)
-                }
-            }
-            Gram::Alt(gs) => {
-                let mut out = String::new();
-                for g in gs {
-                    let _ = write!(out, "if {} {{\n{}}} else ", self.at_byte(g)?, self.check_code(g, true)?);
-                }
-                out + "{\nreturn None;\n}\n"
-            }
-            other => return self.err(format!("a check's {other:?}")),
-        })
+        self.checks().check_first(g)
     }
 }
 
@@ -1412,7 +1323,7 @@ matches!(ROWS[usize::from(b)], {pat})
 
 ")))
     });
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {

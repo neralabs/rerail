@@ -270,6 +270,15 @@ fn f_strings_are_the_lean_parsers() {
 fn numbers_are_the_lean_parsers() {
     same(&["x = 1j\n", "x = 1.5j\n", "x = 0x1F\n", "x = 1_000\n", "x = 1.\n", "x = .5\n", "x = 1e5\n", "x = 1.5e-3\n", "x = 1E+5\n", "x = 0XAB\n"]);
     same(&["x = 1_0.2_5\n", "x = a.b + 1.5\n", "x = 2e-3 - e - 5\n", "x = [1.5, .25]\n", "x = f(1.)\n", "x = 0\n", "x = 007\n", "x = 0x_1\n"]);
+    // A float's `.` past the block's first word, and after a word of digits.
+    same(&["b /= 1024.0\n", "f(l=((2, 3600.0),))\n", "x = 10.5\n", "x = 12.0\n"]);
+    same(&["if b < 1024.0:\n    return f\"{b:.1f} {u}\"\nb /= 1024.0\n", "x = f\"{b:.1f}\"\ny = 2.0\n"]);
+    // Numbers over a block's edge: a float's `.` and exponent after it, a based number's digits.
+    for k in 58..64 {
+        let name = "x".repeat(k);
+        let texts = [format!("{name} = 1024.0\n"), format!("{name} = 1.5e-3\n"), format!("{name} = 0x7e0\n"), format!("{name} = 12_345\n")];
+        same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+    }
 }
 
 #[test]

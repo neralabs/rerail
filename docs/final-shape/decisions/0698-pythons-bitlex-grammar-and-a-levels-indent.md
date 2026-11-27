@@ -411,3 +411,29 @@ statements and blocks end.
     the tests of the shipped answers and of a cold compile call `compile_timed` and still compile.
 
     A test's own work is now Cranelift's code for both tiers, 2.1 s of its 2.3 s.
+72. **A number is a run over a class, and a check at the token.** This is the lean lexer's `number()`: a number's
+    bytes are run, then its grammar is read once. About 15 derived masks and six escapes are gone.
+    - `token based = start based_at run word` and `token integer = start int_start | dot_start run num_run`. The
+      starts are `assume … at starts`, so the loop reads three byte terms.
+    - `check based` and `check integer` hold the numbers' grammar: hex, octal and binary digits after `0x`, `0o` and
+      `0b`; a decimal's `.`, its exponent and its `j`/`l` suffix; `_` between digits.
+    - The float mark is `count(dot & number | exp_l & number & ~based_n)` at `integer`. A `.` operator is no
+      number's byte, so the mark never holds at one.
+    - `based` and `integer` share a kind, as no tree rule tells them apart. The tree reads a based number as
+      `based as integer`.
+    - Tier 1 as Rust is about 420 lines shorter. Its row arm calls `check_K` at the token
+      (`bitlex_check_rust::Checks`), the same writer tier 2 as one loop uses.
+73. **A check may loop through states that its bytes tell apart.** `check_parts` splits the check's machine into
+    its strongly connected parts. A cycle whose states each have their own entering bytes is lowered as one fill
+    over the cycle's bytes. Each state's mask is that fill, masked by its own bytes. A cycle in which one byte
+    enters two states is still refused.
+74. **A kind that two rows share is named by both.** Tier 2's symbols list a moved row's name as a second name of
+    its kind, so a tree rule may name either. A moved row with a check keeps its moved byte in the check's set, when
+    the check takes any of its real first bytes.
+75. **A pass carries a mask's last word only where one of its live masks reads it.** The dead carry warned in
+    Python's tier 1, and Kotlin's had two.
+76. **A token's tests wait for the blocks they read.** The token loop runs a part at a time between blocks, for the
+    tokens that start in the blocks already final. A delayed output's word is final only after the next block is
+    made. A test whose output is read from the rows, not from the bytes, read the token's last block before it was
+    final. A float such as `1024.0` across a block's edge lost its `.` there. `tested` now takes the part's
+    `Limit`: a token whose last block is not final waits for it, as a run's search past the final blocks does.

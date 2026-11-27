@@ -3087,34 +3087,20 @@ impl Lowering {
     ///   one `prev` of their sources' masks ORed.
     /// - a self-loop on bytes `L` keeps it there over a run: `fill(entered, ~L | start)`.
     ///
+    /// - a cycle through two or more states whose state is told by its byte (`check_parts`): it is
+    ///   entered as a state is, and stays over each byte an arm of it takes from the state the
+    ///   byte before told, `fill(entered, ~stays | start)`; each state's mask, its bytes there.
+    ///
     /// The machine cannot be re-entered inside a token once it has no state, so a checked token is
     /// refused where its last byte is outside every accepting state. The states are taken in the order of
-    /// their arms: a cycle through two or more states is refused.
+    /// their arms.
     ///
     /// A token beginning with a byte the machine does not take is tier 2's: its switch refuses
     /// the byte, or takes a keyword by its bytes (`first`, the row's check bytes). A keyword in
     /// `words` beginning with a byte the machine takes is accepted at its own last byte.
     pub fn check(&mut self, start: Val, last: Val, accept: &[bool], arms: &[(u16, ByteSet, u16)], words: &[Vec<u8>]) -> Result<Val, String> {
         let n = accept.len();
-        let mut order: Vec<usize> = Vec::new();
-        let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
-        if ins[0] != 0 {
-            return Err("an arm back to the start: not compiled yet".into());
-        }
-        let mut ready = vec![0usize];
-        while let Some(p) = ready.pop() {
-            order.push(p);
-            for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
-                let q = usize::from(a.2);
-                ins[q] -= 1;
-                if ins[q] == 0 {
-                    ready.push(q);
-                }
-            }
-        }
-        if order.len() != n {
-            return Err("a cycle through two or more states: not compiled yet".into());
-        }
+        let parts = check_parts(n, arms)?;
         let zero = self.leaf(BlockOp::Const(0), false);
         // The tokens the machine checks: those beginning with a byte it takes. Every mask below
         // is made from these starts, so a block with none (and no state carried in) has every
@@ -3123,7 +3109,57 @@ impl Lowering {
         let taken = self.class_set(takes);
         let checked = self.and(start, taken)?;
         let mut masks: Vec<Option<Val>> = vec![None; n];
-        for &q in &order {
+        for part in &parts {
+            if let [_, _, ..] = part.as_slice() {
+                // A cycle: entered from the states before it, as a state is; then over the bytes it stays on.
+                let mut entered = zero;
+                for &q in part {
+                    let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
+                    for a in arms.iter().filter(|a| usize::from(a.2) == q && !part.contains(&usize::from(a.0))) {
+                        match groups.iter_mut().find(|g| g.0 == a.1) {
+                            Some(g) => g.1.push(usize::from(a.0)),
+                            None => groups.push((a.1, vec![usize::from(a.0)])),
+                        }
+                    }
+                    for (bytes, from) in groups {
+                        let bytes = self.class_set(bytes);
+                        if from.contains(&0) {
+                            let here = self.and(checked, bytes)?;
+                            entered = self.or(entered, here)?;
+                        }
+                        let mut sources = zero;
+                        for &p in from.iter().filter(|&&p| p != 0) {
+                            let m = masks[p].expect("a source before its target");
+                            if !self.is_zero(m) {
+                                sources = self.or(sources, m)?;
+                            }
+                        }
+                        if !self.is_zero(sources) {
+                            let back = self.prev(sources, 1)?;
+                            let here = self.and(back, bytes)?;
+                            let inside = self.andnot(here, start)?;
+                            entered = self.or(entered, inside)?;
+                        }
+                    }
+                }
+                let mut stays = zero;
+                for a in arms.iter().filter(|a| part.contains(&usize::from(a.0)) && part.contains(&usize::from(a.2))) {
+                    let from = self.class_set(cycle_bytes(arms, usize::from(a.0)));
+                    let back = self.prev(from, 1)?;
+                    let bytes = self.class_set(a.1);
+                    let here = self.and(back, bytes)?;
+                    stays = self.or(stays, here)?;
+                }
+                let leaves = self.not(stays)?;
+                let stop = self.or(leaves, start)?;
+                let run = self.fill(entered, stop)?;
+                for &q in part {
+                    let bytes = self.class_set(cycle_bytes(arms, q));
+                    masks[q] = Some(self.and(run, bytes)?);
+                }
+                continue;
+            }
+            let q = part[0];
             // The arms into `q`, by their bytes: the sources of each.
             let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
             for a in arms.iter().filter(|a| usize::from(a.2) == q && (a.0 != a.2 || q == 0)) {
@@ -3782,6 +3818,97 @@ fn row_kinds(row: &bitlex_tier2::Row) -> Vec<u16> {
     out
 }
 
+/// The bytes a check's machine enters state `q` on, by any arm (`check_parts`' cycles).
+fn cycle_bytes(arms: &[(u16, ByteSet, u16)], q: usize) -> ByteSet {
+    arms.iter().filter(|a| usize::from(a.2) == q).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]))
+}
+
+/// The order a check's machine's states are made in (`Lowering::check`, `token_check_ops`): its strongly connected
+/// parts, each after the parts its arms come from. A part is one state (with a self-loop at most), or a cycle through
+/// two or more states whose state is told by its byte: no byte enters two of its states, so the state after a byte
+/// in it is the one its byte enters (`_` and a digit in Python's `digit ([us] digit)*`). The start state is entered by
+/// no arm.
+fn check_parts(n: usize, arms: &[(u16, ByteSet, u16)]) -> Result<Vec<Vec<usize>>, String> {
+    if arms.iter().any(|a| a.2 == 0) {
+        return Err("an arm back to the start: not compiled yet".into());
+    }
+    // Tarjan's: each part as it closes, the parts after it closed before it.
+    struct T<'a> {
+        arms: &'a [(u16, ByteSet, u16)],
+        index: Vec<Option<usize>>,
+        low: Vec<usize>,
+        on: Vec<bool>,
+        stack: Vec<usize>,
+        next: usize,
+        parts: Vec<Vec<usize>>,
+    }
+    fn visit(t: &mut T<'_>, v: usize) {
+        t.index[v] = Some(t.next);
+        t.low[v] = t.next;
+        t.next += 1;
+        t.stack.push(v);
+        t.on[v] = true;
+        let outs: Vec<usize> = t.arms.iter().filter(|a| usize::from(a.0) == v).map(|a| usize::from(a.2)).collect();
+        for w in outs {
+            match t.index[w] {
+                None => {
+                    visit(t, w);
+                    t.low[v] = t.low[v].min(t.low[w]);
+                }
+                Some(i) if t.on[w] => t.low[v] = t.low[v].min(i),
+                Some(_) => {}
+            }
+        }
+        if Some(t.low[v]) == t.index[v] {
+            let mut part = Vec::new();
+            while let Some(w) = t.stack.pop() {
+                t.on[w] = false;
+                part.push(w);
+                if w == v {
+                    break;
+                }
+            }
+            part.sort_unstable();
+            t.parts.push(part);
+        }
+    }
+    let mut t = T { arms, index: vec![None; n], low: vec![0; n], on: vec![false; n], stack: Vec::new(), next: 0, parts: Vec::new() };
+    for v in 0..n {
+        if t.index[v].is_none() {
+            visit(&mut t, v);
+        }
+    }
+    let mut parts = t.parts;
+    parts.reverse();
+    if parts.iter().all(|p| p.len() == 1) {
+        // No cycle: the states in the order their arms are taken from the start, one at a time.
+        let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
+        let (mut order, mut ready) = (Vec::new(), vec![0usize]);
+        while let Some(p) = ready.pop() {
+            order.push(vec![p]);
+            for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
+                let q = usize::from(a.2);
+                ins[q] -= 1;
+                if ins[q] == 0 {
+                    ready.push(q);
+                }
+            }
+        }
+        return Ok(order);
+    }
+    for part in parts.iter().filter(|p| p.len() > 1) {
+        for (i, &p) in part.iter().enumerate() {
+            for &q in &part[i + 1..] {
+                let (a, b) = (cycle_bytes(arms, p), cycle_bytes(arms, q));
+                if (0..4).any(|k| a[k] & b[k] != 0) {
+                    return Err("a cycle through two or more states that a byte enters two of: not compiled yet".into());
+                }
+            }
+        }
+    }
+    Ok(parts)
+}
+
 /// A check's byte machine (`grammar::byte_check`) as a token's check (`LocalCheck::token`,
 /// decision 0398): `Lowering::check`'s masks, in the token's frame. Place 0 is the token's first
 /// byte, so a state's mask is entered at `start` from the start state and at `prev(sources, 1)`
@@ -3791,24 +3918,7 @@ fn row_kinds(row: &bitlex_tier2::Row) -> Vec<u16> {
 fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<crate::program::LocalOp>, String> {
     use crate::program::LocalOp as L;
     let n = accept.len();
-    let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
-    if ins[0] != 0 {
-        return Err("an arm back to the start: not compiled yet".into());
-    }
-    let (mut order, mut ready) = (Vec::new(), vec![0usize]);
-    while let Some(p) = ready.pop() {
-        order.push(p);
-        for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
-            let q = usize::from(a.2);
-            ins[q] -= 1;
-            if ins[q] == 0 {
-                ready.push(q);
-            }
-        }
-    }
-    if order.len() != n {
-        return Err("a cycle through two or more states: not compiled yet".into());
-    }
+    let parts = check_parts(n, arms)?;
     let mut ops: Vec<L> = Vec::new();
     let mut push = |ops: &mut Vec<L>, op: L| -> u16 {
         if let Some(k) = ops.iter().position(|o| *o == op) {
@@ -3826,7 +3936,63 @@ fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<
     let taken = push(&mut ops, L::Bytes(takes));
     let checked = push(&mut ops, L::And(start, taken));
     let mut masks: Vec<Option<Option<u16>>> = vec![None; n];
-    for &q in &order {
+    for part in &parts {
+        if let [_, _, ..] = part.as_slice() {
+            // A cycle (`check_parts`), as `Lowering::check` makes it.
+            let mut entered: Option<u16> = None;
+            for &q in part {
+                let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
+                for a in arms.iter().filter(|a| usize::from(a.2) == q && !part.contains(&usize::from(a.0))) {
+                    match groups.iter_mut().find(|g| g.0 == a.1) {
+                        Some(g) => g.1.push(usize::from(a.0)),
+                        None => groups.push((a.1, vec![usize::from(a.0)])),
+                    }
+                }
+                for (bytes, from) in groups {
+                    let b = push(&mut ops, L::Bytes(bytes));
+                    if from.contains(&0) {
+                        let here = push(&mut ops, L::And(checked, b));
+                        entered = Some(or(&mut ops, &mut push, entered, here));
+                    }
+                    let mut sources: Option<u16> = None;
+                    for &p in from.iter().filter(|&&p| p != 0) {
+                        if let Some(m) = masks[p].expect("a source before its target") {
+                            sources = Some(or(&mut ops, &mut push, sources, m));
+                        }
+                    }
+                    if let Some(src) = sources {
+                        let back = push(&mut ops, L::Prev(src, 1));
+                        let here = push(&mut ops, L::And(back, b));
+                        let inside = push(&mut ops, L::AndNot(here, start));
+                        entered = Some(or(&mut ops, &mut push, entered, inside));
+                    }
+                }
+            }
+            let mut stays: Option<u16> = None;
+            for a in arms.iter().filter(|a| part.contains(&usize::from(a.0)) && part.contains(&usize::from(a.2))) {
+                let from = push(&mut ops, L::Bytes(cycle_bytes(arms, usize::from(a.0))));
+                let back = push(&mut ops, L::Prev(from, 1));
+                let b = push(&mut ops, L::Bytes(a.1));
+                let here = push(&mut ops, L::And(back, b));
+                stays = Some(or(&mut ops, &mut push, stays, here));
+            }
+            let run = match (entered, stays) {
+                (Some(e), Some(st)) => {
+                    let leaves = push(&mut ops, L::Not(st));
+                    let stop = push(&mut ops, L::Or(leaves, start));
+                    Some(push(&mut ops, L::Fill(e, stop)))
+                }
+                (e, _) => e,
+            };
+            for &q in part {
+                masks[q] = Some(run.map(|r| {
+                    let b = push(&mut ops, L::Bytes(cycle_bytes(arms, q)));
+                    push(&mut ops, L::And(r, b))
+                }));
+            }
+            continue;
+        }
+        let q = part[0];
         let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
         for a in arms.iter().filter(|a| usize::from(a.2) == q && (a.0 != a.2 || q == 0)) {
             match groups.iter_mut().find(|g| g.0 == a.1) {
@@ -4694,6 +4860,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             rows[r].first = [0; 4];
             rows[r].first[usize::from(f) / 64] |= 1 << (f % 64);
             rows[r].moved = true;
+            // A checked row's moved byte stands for its first bytes the check takes (its token's check refuses the rest).
+            if let Some(check) = rows[r].check.as_mut()
+                && (0..4).any(|i| check[i] & real_first[r][i] != 0)
+            {
+                check[usize::from(f) / 64] |= 1 << (f % 64);
+            }
         }
         // The rows of one kind end alike: at their records' last bytes (`Span::Last`), a one-byte
         // token's its first, so no state tells them apart by how they end (decision 0509).
@@ -5734,7 +5906,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             names.tokens.push((k, token_rows[r].0.clone()));
         }
     }
-    // A reader's or a part's own kind (`records::Retag`): its row's name.
+    // A reader's or a part's own kind (`records::Retag`): its row's name. Rows of two kinds the tree never tells apart
+    // share a record kind (Python's `based` and `integer`, each read `as integer`): each kind's name names it.
     let mut closer_kinds = Vec::new();
     for &(r, f) in &moved {
         let k = records.kinds[usize::from(f)];
@@ -5744,6 +5917,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             if closer_rows.iter().any(|c| c.1 == r) {
                 closer_kinds.push(k);
             }
+        } else if !low.extra.contains(&token_rows[r].0) && !names.tokens.iter().any(|(_, n)| *n == token_rows[r].0) {
+            names.tokens.push((k, token_rows[r].0.clone()));
         }
     }
     // A closer's whose name is another kind's too: the name and `_close` (a template's `"`,

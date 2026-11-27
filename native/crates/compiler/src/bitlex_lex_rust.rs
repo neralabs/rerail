@@ -2056,6 +2056,8 @@ impl Gen<'_> {
                     }
                 }
             }
+            // A carried word (`p_…`) where a live mask of the pass reads it.
+            let carried: Vec<bool> = nodes.iter().zip(&live).map(|(x, l)| *l && x.prev && nodes.iter().zip(&live).any(|(y, ly)| *ly && uses(&y.code, &format!("p_{}", x.name)))).collect();
             let mut decl = String::new();
             let mut step = String::new();
             if live.iter().any(|l| *l) {
@@ -2063,11 +2065,11 @@ impl Gen<'_> {
                 for n in &names {
                     let _ = writeln!(decl, "    let mut {n} = vec![0u64; nw];");
                 }
-                for (x, l) in nodes.iter().zip(&live) {
+                for ((x, l), p) in nodes.iter().zip(&live).zip(&carried) {
                     if *l && x.carry {
                         let _ = writeln!(decl, "    let mut c_{} = 0u64;", x.name);
                     }
-                    if *l && x.prev {
+                    if *p {
                         let _ = writeln!(decl, "    let mut p_{} = 0u64;", x.name);
                     }
                 }
@@ -2084,8 +2086,8 @@ impl Gen<'_> {
                     }
                 }
                 step.push_str(&tests);
-                for (x, l) in nodes.iter().zip(&live) {
-                    if *l && x.prev {
+                for (x, p) in nodes.iter().zip(&carried) {
+                    if *p {
                         let _ = writeln!(step, "            p_{} = w_{};", x.name, x.name);
                     }
                 }
@@ -5696,6 +5698,28 @@ impl Gen<'_> {
                     None => ("one byte".to_owned(), "s".to_owned()),
                 },
                 Some(TokenRule::Inside(..)) => unreachable!(),
+            };
+            // `check KIND = G`: the token's bytes must be `G`'s match, as the lean lexer reads a number by its grammar;
+            // one that is not sends the file to tree-sitter.
+            let (how, l) = match x.stmts.iter().find_map(|t| match t {
+                Stmt::Check { kind: k, body } if k == kind => Some(body),
+                _ => None,
+            }) {
+                Some(body) => {
+                    let f = ident(kind);
+                    if !pair_fns.contains(&format!("fn check_{f}(")) {
+                        pair_fns.push_str(&crate::bitlex_check_rust::Checks::new(x.stmts, "tier 1 as Rust").check_fn(&f, kind, body, false)?);
+                    }
+                    (format!("{how}, checked"), format!("{{
+                let l = {l};
+                if check_{f}(&src[s..]) != Some(l + 1 - s) {{
+                    refused = true;
+                    break;
+                }}
+                l
+            }}"))
+                }
+                None => (how, l),
             };
             let row_shape: Option<String> = match rule {
                 Some(TokenRule::Run(r)) if l == format!("run_last(&{}, s)", self.val(r)?) => Some(format!("run {}", self.val(r)?)),

@@ -4472,7 +4472,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let l = last(f);
                 f.ins().jump(fdone, &[l.into(), nohits.into(), untag.into(), nohits.into()]);
             } else {
-                let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, None, &[], 1, None, None, heads);
+                let (to, _) = tested(f, &tests, rd, c, s, entry, fdone, limit, None, &[], 1, None, None, heads);
                 let l = last(f);
                 f.ins().jump(to, &[l.into(), untag.into(), nohits.into()]);
             }
@@ -4754,7 +4754,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
             _ => None,
         };
         let firsts_k = first_bytes(r, k);
-        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), way_lane.map(|w| (w, firsts_k)), heads) };
+        let (ended, rest) = if tests.is_empty() { (ended, None) } else { tested(f, &tests, rd, c, s, entry, done, limit, most, &pre, pre_stride, lanes.map(|l| (l, firsts_k)), way_lane.map(|w| (w, firsts_k)), heads) };
         debug_assert!(by_way.is_none() || rest.is_some(), "a split's counts by way with no tests' tail");
         // The split's term as the arm runs it, made after `tested`'s blocks (it starts from an
         // empty one).
@@ -5978,7 +5978,7 @@ fn always_hits<'t>(tests: impl Iterator<Item = &'t crate::records::TokenCheck>) 
 /// length, as the lean lexer asks of a number's `.` in its digits' pass. The output is never
 /// set at the token's first byte.
 #[allow(clippy::too_many_arguments)]
-fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, lanes: Option<(crate::native_cpu_bytes::RunLanes, [u64; 4])>, way_lane: Option<([u64; 4], [u64; 4])>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Option<i64>)], rd: &Reads<'_>, c: &FileCols, s: Value, entry: Value, done: cranelift_codegen::ir::Block, limit: Option<Limit>, most: Option<u32>, pre: &[(u16, Value)], pre_stride: u32, lanes: Option<(crate::native_cpu_bytes::RunLanes, [u64; 4])>, way_lane: Option<([u64; 4], [u64; 4])>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (cranelift_codegen::ir::Block, Option<cranelift_codegen::ir::Block>) {
     let here = f.current_block().expect("a rule's block");
     let mut lanes = lanes;
     let ended = f.create_block();
@@ -5988,6 +5988,20 @@ fn tested(f: &mut FunctionBuilder<'_>, tests: &[(crate::records::TokenCheck, Opt
     f.switch_to_block(ended);
     let (mut l, mut tag, no) = (f.block_params(ended)[0], f.block_params(ended)[1], f.block_params(ended)[2]);
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| rd.word(f, c, q, o, heads);
+    // A test of an output not made from the bytes reads its rows to the token's last: a token
+    // that ends past the blocks made (`Limit::ready`; a delayed output's last block is final
+    // only after the next) waits for them, as its run's search would, and the part after reads
+    // it again.
+    if let Some(lim) = limit.filter(|_| tests.iter().any(|(t, _)| !t.always() && !rd.bytewise(t.o))) {
+        let ql = f.ins().ushr_imm(l, 6);
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, ql, lim.ready);
+        let (go, out) = (f.create_block(), f.create_block());
+        f.ins().brif(inside, go, &[], out, &[]);
+        f.switch_to_block(out);
+        f.set_cold_block(out);
+        f.ins().brif(lim.last, go, &[], lim.wait, &[]);
+        f.switch_to_block(go);
+    }
     // The rule's cut first (`run R once D`, `records::cut`): the token ends before it, and the
     // other tests are of the token it leaves.
     // A token of 16 bytes at most whose run's window has `D` (`pre`, `run_tests`) is cut there:

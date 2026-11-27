@@ -1535,7 +1535,6 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut m_s_dollar = vec![0u64; nw];
     let mut m_id_dollar = vec![0u64; nw];
     {
-        let mut p_m_t_brace = 0u64;
         for i in 0..nw {
             // mask opens = ((((o_str | o_chr) | o_tick) | o_tail) | o_rstr) | o_rtail
             let w_m_opens = (((((m_o_str[i] | m_o_chr[i]) | m_o_tick[i]) | m_o_tail[i]) | m_o_rstr[i]) | m_o_rtail[i]);
@@ -1562,7 +1561,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             // mask id_dollar = s_dollar & next(alpha)
             let w_m_id_dollar = w_m_s_dollar & next(&m_alpha, i, 1);
             m_id_dollar[i] = w_m_id_dollar;
-            p_m_t_brace = w_m_t_brace;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_id_last, m_lone, m_w, t8, m_word_run, m_num_start, m_hex_at, m_bin_at, m_hx, m_bx, m_di, m_nb).
@@ -1713,7 +1711,6 @@ pub fn lex(src: &[u8]) -> Lexed {
         let mut p_m_int_last = 0u64;
         let mut c_m_name_tok = 0u64;
         let mut c_m_r_id = 0u64;
-        let mut p_m_r_x = 0u64;
         for i in 0..nw {
             // mask n_last = nb & ~next(nb)
             let w_m_n_last = m_nb[i] & (!next(&m_nb, i, 1) & lv[i]);
@@ -1754,7 +1751,6 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_r_x = m_rbody[i] & (!m_id_dollar[i] & lv[i]) & (!m_lone[i] & lv[i]) & (!w_m_r_id & lv[i]);
             m_r_x[i] = w_m_r_x;
             p_m_int_last = w_m_int_last;
-            p_m_r_x = w_m_r_x;
         }
     }
         // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t98, t101).
