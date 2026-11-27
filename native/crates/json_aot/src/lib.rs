@@ -17,6 +17,11 @@ pub use tier1::{Carries, LANES, Lexed, PADDING, entries, lane_carries, lane_of, 
 /// The code table tier 2's numbers are of: each number's kind, field and supertypes.
 pub use tier2::{ENTRIES, WIDTHS};
 
+/// Tier 2 from the middle (decision 0726): the walk from any place, and the three passes over chunks of records.
+pub mod middle {
+    pub use crate::tier2::{At, CYCLES, Count, Entry, Lane, Out, RETS, SEPS, Stop, Summary, apply, chunk_starts, compose, depths, entries, lanes, run_range, serial_entries, summaries};
+}
+
 /// The tape of `buf[..n]` into `w` (a format 16 writer of a language whose table is `ENTRIES`), or the byte the parser
 /// refused it at (0: tier 1 sends it to tree-sitter). `buf` is the file padded, as simdjson's: `PADDING` spaces after
 /// it, so that tier 1 loads each block where it is and tier 2 reads past the last record unchecked.

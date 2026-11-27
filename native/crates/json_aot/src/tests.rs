@@ -1,5 +1,6 @@
 //! Stage 1 from the middle (`lex_chunked`): a file lexed in chunks, each from every entry state at once, then joined,
-//! is the serial lexer's (`lex`), record for record.
+//! is the serial lexer's (`lex`), record for record. Tier 2 from the middle (`middle`, decision 0726): each chunk's
+//! state at its start, from its summaries composed, is the serial walk's there.
 
 use crate::{lex, lex_chunked, padded};
 
@@ -132,4 +133,78 @@ fn report_chunked_speed() {
         };
         eprintln!("    pass 1 alone {:.2}x the serial time ({:.2} GB/s), pass 3 {:.3}x, pass 2 from the true entries {:.2}x", ends / serial, bytes as f64 / ends / 1e9, scan.max(0.0) / serial, from / serial);
     }
+}
+
+/// Trees whose levels cross chunks: lists of objects and of arrays, deep nests, empty levels, and the refusals tier 2
+/// makes of a level's closer, a separator and a value.
+fn trees() -> Vec<Vec<u8>> {
+    let mut out: Vec<String> = [
+        r#"{"a":{"b":[{"c":1},{"d":[2,3]}]},"e":[],"f":{},"g":[{},[],{"h":[[]]}]}"#,
+        r#"[[1,[2,[3,[4,{"k":[5,6]}]]]],7,{"x":{"y":{"z":"w"}}},8]"#,
+        r#"{"a": [1, 2}"#,
+        r#"[1, 2}"#,
+        r#"{"a": 1]"#,
+        r#"[1,]"#,
+        r#"{"a" 1}"#,
+        r#"[1]]"#,
+        r#"[[1], 2"#,
+        r#"{"a": 1,}"#,
+        r#"[1 2]"#,
+        r#"{"a":[{"b":1},{"b":2}],"c":[[1,2],[3,4]]}"#,
+        r#""just a string""#,
+        r#"[{"a":1},{"a":2},3]"#,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let deep = |n: usize| "[".repeat(n) + "1" + &",2]".repeat(n);
+    out.push(deep(40));
+    // Around the deepest the walk opens (`DEPTH`): refused past it.
+    out.push(deep(1023));
+    out.push(deep(1025));
+    out.push(format!("{{\"k\":{}}}", deep(30)));
+    // An array of records, and an object of arrays, long enough for many chunks.
+    let rows: Vec<String> = (0..60).map(|i| format!(r#"{{"id":{i},"tags":["a","b"],"m":{{"x":[{i},{{}}],"y":null}}}}"#)).collect();
+    out.push(format!("[{}]", rows.join(",")));
+    let cols: Vec<String> = (0..40).map(|i| format!(r#""c{i}":[{},[{i}],{{"n":true}}]"#, i * 3)).collect();
+    out.push(format!("{{{}}}", cols.join(",")));
+    out.into_iter().map(String::into_bytes).collect()
+}
+
+/// Two states the same: the place, the next record, the depth, the levels' places, the nodes before, the file's end
+/// (the last token's end is not read at a list's cycle place, where every chunk starts).
+fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
+    a.end == b.end && a.nodes == b.nodes && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && a.ret == b.ret))
+}
+
+#[test]
+fn tier2_entries_are_the_serial_walks() {
+    let (mut chunks, mut most) = (0, 0);
+    let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
+    let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
+    for (k, f) in all.iter().enumerate() {
+        let buf = padded(f);
+        let lx = lex(&buf, f.len());
+        if lx.refused || lx.count == 0 {
+            continue;
+        }
+        // The serial walk's verdict.
+        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+        let parsed = crate::parse_lexed(&buf, &lx, &mut w);
+        for size in [1, 2, 3, 16] {
+            let sums = crate::middle::summaries(&buf, &lx, size);
+            let got = crate::middle::entries(&sums);
+            let want = crate::middle::serial_entries(&buf, &lx, size);
+            assert_eq!(want.last().and_then(|a| a.end), Some(parsed), "file {k}: the chunks walked one after another are the serial walk");
+            assert_eq!(got.len(), want.len());
+            for (c, (g, w)) in got.iter().zip(&want).enumerate() {
+                let g = g.as_ref().unwrap_or_else(|| panic!("file {k}, chunks of {size}: no lane meets chunk {c}'s entry"));
+                assert!(same_state(g, w), "file {k}, chunks of {size}, chunk {c}: {g:?}, the serial walk's {w:?}");
+            }
+            chunks += sums.len();
+            most = most.max(sums.iter().map(|s| s.lanes.len()).max().unwrap_or(0));
+        }
+    }
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk", all.len());
 }

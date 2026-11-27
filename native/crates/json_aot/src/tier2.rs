@@ -43,28 +43,28 @@ static ROWS: [u8; 256] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 3, 3, 0, 3, 3, 3, 3, 
 /// Node `number` opened at `start`, stored through the walk's hold on the tape (`d`, the lean parser's `Walk`).
 /// `parse` reserved the run's room once (`reserve_run`), for every node and level it can write.
 #[inline(always)]
-fn open(d: &mut Cursor<Cells>, number: u32, start: u64) {
+fn open<D: Out>(d: &mut D, number: u32, start: u64) {
     // SAFETY: the cursor's state's room is reserved for the run (`parse`).
     unsafe { d.open(number, start) }
 }
 
 /// A leaf, as `open`.
 #[inline(always)]
-fn leaf(d: &mut Cursor<Cells>, number: u32, start: u64, end: u64) {
+fn leaf<D: Out>(d: &mut D, number: u32, start: u64, end: u64) {
     // SAFETY: as `open`'s.
     unsafe { d.leaf(number, start, end) }
 }
 
 /// A node of one leaf child, both at once (the writer's `leaf_in`), as `open`.
 #[inline(always)]
-fn leaf_in(d: &mut Cursor<Cells>, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
+fn leaf_in<D: Out>(d: &mut D, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
     // SAFETY: as `open`'s.
     unsafe { d.leaf_in(number, child, start, cs, ce, end) }
 }
 
 /// A token's leaf from `s` to `end`, the next record taken: its end (the lean parser's `leaf`, for each place's arm).
 #[inline(always)]
-fn token(d: &mut Cursor<Cells>, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
+fn token<D: Out>(d: &mut D, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
     *i += 1;
     leaf(d, number, s as u64, end as u64);
     end
@@ -72,7 +72,7 @@ fn token(d: &mut Cursor<Cells>, i: &mut usize, number: u32, s: usize, end: usize
 
 /// The innermost open node closed at `end`, as `open`.
 #[inline(always)]
-fn close(d: &mut Cursor<Cells>, end: u64) {
+fn close<D: Out>(d: &mut D, end: u64) {
     // SAFETY: as `open`'s; a node is open (each close is its open's).
     unsafe { d.close(end) }
 }
@@ -170,7 +170,7 @@ static HEX_VALUE: [u32; 256] = [0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_00
 /// `string`, its pieces leaves, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
 #[inline(always)]
-unsafe fn string(src: &[u8], starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
+unsafe fn string<D: Out>(src: &[u8], starts: &[u32], d: &mut D, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
@@ -263,7 +263,7 @@ Ok(e)
 /// `value`'s alternatives that call no level (`walk`'s `primitive`), read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
 #[inline(always)]
-unsafe fn value_primitive(src: &[u8], starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
+unsafe fn value_primitive<D: Out>(src: &[u8], starts: &[u32], d: &mut D, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
@@ -602,4 +602,622 @@ _ => unreachable!(),
 
 rerail_simd8::kernel! {
     fn run_best(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8) -> Result<(), u32> = run, on run_on;
+}
+
+// Parsing from the middle (decision 0726): the walk's state at a place (`Entry`), the walk from any place to the
+// first place at or past a record (`run_range`), and the three passes over chunks of records. Pass 1 walks each chunk
+// from each place its first record can be at, forking where it closes a level below its entry (`lanes`); pass 3
+// composes the chunks' summaries by a prefix scan (`entries`); pass 2 walks each chunk from its entry.
+
+/// What the walk writes through: the writer's cursor, or pass 1's count of the nodes.
+pub trait Out {
+    unsafe fn open(&mut self, number: u32, start: u64);
+    unsafe fn leaf(&mut self, number: u32, start: u64, end: u64);
+    unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64);
+    unsafe fn close(&mut self, end: u64);
+}
+
+impl Out for Cursor<Cells> {
+    #[inline(always)]
+    unsafe fn open(&mut self, number: u32, start: u64) {
+        unsafe { Cursor::open(self, number, start) }
+    }
+    #[inline(always)]
+    unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
+        unsafe { Cursor::leaf(self, number, start, end) }
+    }
+    #[inline(always)]
+    unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
+        unsafe { Cursor::leaf_in(self, number, child, start, cs, ce, end) }
+    }
+    #[inline(always)]
+    unsafe fn close(&mut self, end: u64) {
+        unsafe { Cursor::close(self, end) }
+    }
+}
+
+/// The nodes a walk writes, counted: what pass 1 keeps of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Count {
+    pub nodes: u32,
+}
+
+impl Out for Count {
+    #[inline(always)]
+    unsafe fn open(&mut self, _: u32, _: u64) {
+        self.nodes += 1;
+    }
+    #[inline(always)]
+    unsafe fn leaf(&mut self, _: u32, _: u64, _: u64) {
+        self.nodes += 1;
+    }
+    #[inline(always)]
+    unsafe fn leaf_in(&mut self, _: u32, _: u32, _: u64, _: u64, _: u64, _: u64) {
+        self.nodes += 2;
+    }
+    #[inline(always)]
+    unsafe fn close(&mut self, _: u64) {}
+}
+
+/// The walk's state at a place: the next record, the last token's end, the levels open, the place. The levels'
+/// places (`ret`) are held beside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Entry {
+    pub i: usize,
+    pub e: usize,
+    pub depth: usize,
+    pub st: u8,
+}
+
+/// Where a walk stops: at a place at or past its end, where it closes a level below what it knows of the nest (its
+/// place then the level's to read), or at the file's end or refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    At(Entry),
+    Read(Entry),
+    Done(Result<(), u32>),
+}
+
+/// The places a level returns to.
+pub const RETS: &[u8] = &[3, 6, 7];
+
+/// Each list's cycle place, where the loop is after its separator: the places a chunk's first record can be at.
+pub const CYCLES: &[u8] = &[2, 5];
+
+/// The lists' separators.
+pub const SEPS: &[u8] = &[44];
+
+/// A record's change of the depth, by its first byte: a level's opener or closer.
+#[inline(always)]
+fn delta(b: u8) -> isize {
+    match b {
+        0x5b | 0x7b => 1,
+        0x5d | 0x7d => -1,
+        _ => 0,
+    }
+}
+
+/// The walk from `en` to the first place at or past record `stop`, through `d`: the levels' places `ret[low..depth]`
+/// known, those below `low` read where the walk closes to them (`Stop::Read`).
+#[inline(always)]
+pub unsafe fn run_range<D: Out>(src: &[u8], lx: &crate::tier1::Lexed, d: &mut D, en: Entry, ret: &mut [u8; DEPTH], low: usize, stop: usize) -> Stop {
+let (starts, count, len) = (&lx.starts[..], lx.count, lx.len);
+let _ = (count, len);
+let mut i = en.i;
+let mut e = en.e;
+let mut depth = en.depth;
+let mut st: u8 = en.st;
+'run: loop {
+if i >= stop {
+return Stop::At(Entry { i, e, depth, st });
+}
+match st {
+0 => {
+open(d, 0, at(src, starts, i) as u64);
+match peek(src, starts, i) {
+0x7b => {
+if src[starts[count - 1] as usize] != 0x7d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 15, s as u64, e as u64);
+} else {
+open(d, 15, at(src, starts, i) as u64);
+ret[depth] = 7;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if src[starts[count - 1] as usize] != 0x5d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 16, s as u64, e as u64);
+} else {
+open(d, 16, at(src, starts, i) as u64);
+ret[depth] = 7;
+depth += 1;
+st = 4;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [3, 4, 5, 6, 7]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+close(d, len as u64);
+if i != count {
+return Stop::Done(Err(at(src, starts, i)));
+}
+return Stop::Done(Ok(()));
+}
+1 | 2 => {
+if st == 1 {
+i += 1;
+}
+// The list: its element, then its separator back to the element, or what follows it.
+'l2: loop {
+open(d, 8, at(src, starts, i) as u64);
+match peek(src, starts, i) {
+0x22 => {}
+_ => return Stop::Done(Err(at(src, starts, i))),
+}
+e = match unsafe { string(src, starts, d, &mut i, [18]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+match peek(src, starts, i) {
+0x3a => {
+i += 1;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+match peek(src, starts, i) {
+0x7b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 14, s as u64, e as u64);
+} else {
+open(d, 14, at(src, starts, i) as u64);
+ret[depth] = 3;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 17, s as u64, e as u64);
+} else {
+open(d, 17, at(src, starts, i) as u64);
+ret[depth] = 3;
+depth += 1;
+st = 4;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [9, 10, 11, 12, 13]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+close(d, e as u64);
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+if i >= stop {
+st = 2;
+continue 'run;
+}
+continue 'l2;
+}
+0x7d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'run;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+}
+3 | 6 | 7 => 'ret: loop {
+if i >= stop {
+return Stop::At(Entry { i, e, depth, st });
+}
+// Where a level returns: its caller's rest, by the place it pushed.
+match st {
+3 => {
+close(d, e as u64);
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+st = 2;
+continue 'run;
+}
+0x7d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'ret;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+6 => {
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+st = 5;
+continue 'run;
+}
+0x5d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'ret;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+7 => {
+close(d, len as u64);
+if i != count {
+return Stop::Done(Err(at(src, starts, i)));
+}
+return Stop::Done(Ok(()));
+}
+_ => unreachable!(),
+}
+},
+4 | 5 => {
+if st == 4 {
+i += 1;
+}
+// The list: its element, then its separator back to the element, or what follows it.
+'l5: loop {
+match peek(src, starts, i) {
+0x7b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 15, s as u64, e as u64);
+} else {
+open(d, 15, at(src, starts, i) as u64);
+ret[depth] = 6;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty.
+let s = starts[i] as usize;
+e = starts[i + 1] as usize + 1;
+i += 2;
+leaf(d, 16, s as u64, e as u64);
+} else {
+open(d, 16, at(src, starts, i) as u64);
+ret[depth] = 6;
+depth += 1;
+st = 4;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [3, 4, 5, 6, 7]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+if i >= stop {
+st = 5;
+continue 'run;
+}
+continue 'l5;
+}
+0x5d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'run;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+}
+_ => unreachable!(),
+}
+}
+
+}
+
+/// Each chunk's first record: every `size` records on to the first after a separator; the first chunk at the file's.
+pub fn chunk_starts(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<usize> {
+    let size = size.max(1);
+    let mut out = vec![0];
+    let mut t = size;
+    while t < lx.count {
+        if SEPS.contains(&src[lx.starts[t - 1] as usize]) {
+            out.push(t);
+            t += size;
+        } else {
+            t += 1;
+        }
+    }
+    out
+}
+
+/// The depth at each chunk's first record: the prefix sum of its records' openers and closers (none below 0: a file
+/// whose closers pass its openers is refused before them).
+pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize]) -> Vec<usize> {
+    let mut out = Vec::with_capacity(chunks.len());
+    let mut d = 0isize;
+    let mut c = 0;
+    for t in 0..lx.count {
+        if c < chunks.len() && chunks[c] == t {
+            out.push(d.max(0) as usize);
+            c += 1;
+        }
+        d += delta(src[lx.starts[t] as usize]);
+    }
+    while out.len() < chunks.len() {
+        out.push(d.max(0) as usize);
+    }
+    out
+}
+
+/// One lane of a summary: what a range does for the entries at place `st0` whose innermost levels return to `kc`
+/// (innermost first; those it closed). It leaves `p` open above what is left of them (outermost first), and leaves at
+/// `exit`, or the file ends in it (`end`), having written `nodes`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lane {
+    pub st0: u8,
+    pub kc: Vec<u8>,
+    pub p: Vec<u8>,
+    pub exit: Entry,
+    pub nodes: u32,
+    pub end: Option<Result<(), u32>>,
+}
+
+/// A range's summary: its lanes, its first record and the record past it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Summary {
+    pub lanes: Vec<Lane>,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Pass 1: chunk `start..stop`'s summary, its first record at depth `depth0`: from each place its first record can be
+/// at, the walk forked where it closes a level below its entry, once for each place a level returns to.
+pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, start: usize, stop: usize, depth0: usize) -> Summary {
+    let places: &[u8] = if start == 0 { &[0] } else { CYCLES };
+    // Deeper than the walk goes: the serial walk refused the file before this chunk.
+    if depth0 > DEPTH {
+        let lanes = places.iter().map(|&st0| Lane { st0, kc: Vec::new(), p: Vec::new(), exit: Entry::default(), nodes: 0, end: Some(Err(lx.starts[start])) }).collect();
+        return Summary { lanes, start, end: stop };
+    }
+    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Count)> =
+        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Count::default())).collect();
+    let mut out = Summary { lanes: Vec::new(), start, end: stop };
+    while let Some((st0, kc, mut ret, low, en, mut count)) = work.pop() {
+        // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
+        match unsafe { run_range(src, lx, &mut count, en, &mut *ret, low, stop) } {
+            Stop::At(x) => out.lanes.push(Lane { st0, kc, p: ret[low..x.depth].to_vec(), exit: x, nodes: count.nodes, end: None }),
+            Stop::Done(r) => out.lanes.push(Lane { st0, kc, p: Vec::new(), exit: Entry::default(), nodes: count.nodes, end: Some(r) }),
+            Stop::Read(x) => {
+                for &k in RETS {
+                    let mut kc = kc.clone();
+                    kc.push(k);
+                    let mut r = ret.clone();
+                    r[x.depth] = k;
+                    work.push((st0, kc, r, x.depth, Entry { st: k, ..x }, count));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Lane `a` then lane `b`, entered where `a` leaves: `b`'s closed levels matched against those `a` leaves open, the
+/// rest of them closed below `a`'s entry. None where they do not meet.
+fn then(a: &Lane, b: &Lane) -> Option<Lane> {
+    if a.end.is_some() {
+        return Some(a.clone());
+    }
+    if b.st0 != a.exit.st {
+        return None;
+    }
+    let m = b.kc.len().min(a.p.len());
+    if (0..m).any(|j| b.kc[j] != a.p[a.p.len() - 1 - j]) {
+        return None;
+    }
+    let mut kc = a.kc.clone();
+    kc.extend_from_slice(&b.kc[m..]);
+    let mut p = a.p[..a.p.len() - m].to_vec();
+    p.extend_from_slice(&b.p);
+    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end })
+}
+
+/// Two ranges' summaries, one after the other. Associative, so a prefix scan composes them in any tree.
+pub fn compose(a: &Summary, b: &Summary) -> Summary {
+    let mut lanes: Vec<Lane> = Vec::new();
+    for la in &a.lanes {
+        if la.end.is_none() {
+            debug_assert_eq!(la.exit.i, b.start, "a lane leaves at the next range's first record");
+        }
+        let next: Vec<Lane> = if la.end.is_some() { vec![la.clone()] } else { b.lanes.iter().filter_map(|lb| then(la, lb)).collect() };
+        for l in next {
+            if !lanes.contains(&l) {
+                lanes.push(l);
+            }
+        }
+    }
+    Summary { lanes, start: a.start, end: b.end }
+}
+
+/// The walk's state at a range's start: its place, the levels' places, the nodes before it; or the file's end.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct At {
+    pub entry: Entry,
+    pub ret: Vec<u8>,
+    pub nodes: u32,
+    pub end: Option<Result<(), u32>>,
+}
+
+impl At {
+    /// The file's first record: the root's place, no level open.
+    pub fn start() -> At {
+        At { entry: Entry::default(), ret: Vec::new(), nodes: 0, end: None }
+    }
+}
+
+/// The state range `s` leaves after state `a` at its start: the lane of `a`'s place whose closed levels are `a`'s.
+/// None where no lane meets it.
+pub fn apply(s: &Summary, a: &At) -> Option<At> {
+    if a.end.is_some() {
+        return Some(a.clone());
+    }
+    let d = a.ret.len();
+    let l = s.lanes.iter().find(|l| l.st0 == a.entry.st && l.kc.len() <= d && (0..l.kc.len()).all(|j| l.kc[j] == a.ret[d - 1 - j]))?;
+    let mut ret = a.ret[..d - l.kc.len()].to_vec();
+    ret.extend_from_slice(&l.p);
+    Some(At { entry: l.exit, ret, nodes: a.nodes + l.nodes, end: l.end })
+}
+
+/// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by a prefix scan of their compositions: round
+/// `r` composes each chunk's summary after the one `2^r` chunks before it (Hillis and Steele's, as tier 1's
+/// `entries`), each chunk on its own in a round.
+pub fn entries(sums: &[Summary]) -> Vec<Option<At>> {
+    let mut acc: Vec<Summary> = sums.to_vec();
+    let mut d = 1;
+    while d < acc.len() {
+        let next: Vec<Summary> = (0..acc.len()).map(|c| if c < d { acc[c].clone() } else { compose(&acc[c - d], &acc[c]) }).collect();
+        acc = next;
+        d *= 2;
+    }
+    (0..=acc.len()).map(|c| if c == 0 { Some(At::start()) } else { apply(&acc[c - 1], &At::start()) }).collect()
+}
+
+/// Every chunk's summary (pass 1), of chunks of about `size` records.
+pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<Summary> {
+    let chunks = chunk_starts(src, lx, size);
+    let ds = depths(src, lx, &chunks);
+    (0..chunks.len()).map(|c| lanes(src, lx, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c])).collect()
+}
+
+/// The serial walk's state at each chunk's start, walked chunk after chunk from the file's, then at the file's end
+/// (the test of pass 3).
+pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<At> {
+    let chunks = chunk_starts(src, lx, size);
+    let mut out = Vec::with_capacity(chunks.len());
+    let mut at = At::start();
+    let mut ret = std::boxed::Box::new([0u8; DEPTH]);
+    for c in 0..chunks.len() {
+        out.push(at.clone());
+        if at.end.is_some() {
+            continue;
+        }
+        let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+        let mut count = Count { nodes: at.nodes };
+        // SAFETY: as `lanes`'.
+        match unsafe { run_range(src, lx, &mut count, at.entry, &mut *ret, 0, stop) } {
+            Stop::At(x) => at = At { entry: x, ret: ret[..x.depth].to_vec(), nodes: count.nodes, end: None },
+            Stop::Done(r) => at = At { entry: Entry::default(), ret: Vec::new(), nodes: count.nodes, end: Some(r) },
+            Stop::Read(_) => unreachable!("the whole nest is known"),
+        }
+    }
+    out.push(at);
+    out
 }

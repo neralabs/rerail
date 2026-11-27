@@ -23,6 +23,9 @@
 // By its path: the `bitlex` crate holds this file by its path too (`#[path]`), where a child module is found beside it.
 #[path = "one_loop/records.rs"]
 mod records;
+// Tier 2's loop from the middle.
+#[path = "one_loop/chunked.rs"]
+mod chunked;
 
 use super::{First, G, Input, Test, ident};
 use ::bitlex::syntax::{Expr, Gram, PartLen, Stmt, TokenRule};
@@ -1463,7 +1466,9 @@ matches!(ROWS[usize::from(b)], {pat})
     if !reads_ident(&methods.replace(sig, "").replace(call, ""), "len") {
         out = out.replace(sig, "src: &[u8], starts: &[u32]").replace(call, "(src, starts, d, &mut i, [");
     }
-    Ok((drop_uncalled(out, &parts), None))
+    // Each level's opener and closer: what the depth's prefix sum counts.
+    let brackets: Vec<(u8, u8)> = lp.levels.borrow().keys().filter_map(|r| lp.brackets(r).ok().flatten()).collect();
+    Ok((chunked::with_chunks(drop_uncalled(out, &parts), &brackets)?, None))
 }
 
 /// Whether `code` names `id` (not as part of a longer name, a field or a method).
