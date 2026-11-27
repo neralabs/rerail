@@ -6,8 +6,8 @@ fleet box. Final: 7 `same`, PYI020 `different` (1 key each way, explained below)
 relation is declared `cross_file`, and a run of all eight with `RERAIL_SHOW_CROSSINGS=1` printed nothing.
 
 New library: `lib/python/pt1120-python-01.rerail` (PYI002–PYI005 share it): `one_cmp` (one comparison, comments
-not operands) and `vi_cmp` (Ruff's ExpectedComparator for `sys.version_info`, read through python/ruff's
-`slice_part` and `ruff_int`).
+and line continuations not operands), `vi_cmp` (Ruff's ExpectedComparator for `sys.version_info`, read through
+python/ruff's `slice_part` and `ruff_int`), `vi_tuple_len`/`vi_int_tuple`, `pyi_test_part` and `bracket_comma`.
 
 ## PYI002 complex-if-statement-in-stub: same
 
@@ -82,21 +82,65 @@ string it parsed. Fixed against Ruff:
 Left, both from the parse:
 
 - ruff/pyupgrade/UP037_2.pyi:32, translation only, **translation right**: `a: '''\\` / `list[int]''' = [42]`.
-  Ruff 0.17.6 reports 32:4; its value is `\`, newline, `list[int]`, a line continuation. [inference] The
-  original's parse refuses that value; the engine's "annotation" guest takes it.
+  Ruff 0.17.6 reports 32:4: the string has an escape, so Ruff parses its value bare, and the value is `\`, newline,
+  `list[int]`, a line continuation. The translation's "python" guest takes that value (one expression statement
+  after a `line_continuation` child). [inference] The original's parse refuses it.
 - ruff/pyupgrade/UP037_2.pyi:41, original only, **original right**: `Foo['''` / `    Bar` / `    [` / … /
   `    ]  # Comment''']`. Ruff reports 41:14. Both guests the translation can ask refuse it: the "annotation" guest
   parses `( value )` and the trailing comment hides the `)`; the "python" guest (a module of one expression, the
   fallback that rescues lines 3, 17 and 22 of that file) refuses the leading indentation. An engine gap, below.
+
+## Review fixes (origin/tbelanger/pt1120-python-01-review)
+
+Each counterexample is now a `.test` case in its rule. All 13 cases pass `rerail-engine-1120 test-rr`, and Ruff
+0.17.6 reports what each case expects (`ruff check --isolated --no-cache` on the fixtures, pt-w03).
+
+1. PYI003/004/005, a `\` inside the comparand tuple was an element. `vi_tuple_len` and `vi_int_tuple` (library)
+   skip `line_continuation` children as they skip comments. `pyi003-cont.pyi`: before PYI003 at 2, 4, 6 and PYI005
+   at 4; after PYI004 at 6 only, as Ruff.
+2. PYI002 (and 004/005 missed), a `\` in a comparison or after an `and`/`or` was an operand. `cmp_operand` skips
+   line continuations, and PYI002 reads `pyi_test_part` (python/typing's test_part without them). `pyi002-cont.pyi`:
+   before PYI002 at 2, 4, 6, 8 and PYI003 at 9; after PYI004 at 4, PYI005 at 6, PYI003 at 9, as Ruff. A `\` in a
+   slice is skipped too (`vi_bound`).
+3. PYI003, `[0,  # c` / `]` read as `[0]`. The trailing-comma regex allowed only whitespace before the `]`. The
+   engine refuses a `,` token in a subscript (`token reads ',', which the tape leaves out in subscript`), and
+   `structural_after` of the index is empty there, so `bracket_comma` still reads the text: a `,` with no `#` before
+   it on its line, then only whitespace, `\` and whole comments up to the `]`. `pyi003-trailcomma.pyi`: before
+   nothing; after PYI003 at 2 and 4, as Ruff. `[0  # a, b` / `]` stays `[0]` (Ruff: nothing).
+4. PYI014, lambda defaults. The rule asks lambdas as well as defs (`sig_param` takes both). `pyi014-lambda.pyi`:
+   before nothing; after PYI014 at 2 and 4, as Ruff.
+5. PYI019, `cls: type[_S,]`. `sub_comma` refuses a subscript or type_parameter ending in a `,` (the same text test),
+   for `cls: "type[_S,]"` too. The test is asked of the node in the rule: the library's `bracket_comma`, which ranges
+   over node kinds, had no rows for a string's parsed tree (engine gap below).
+6. PYI019, an annotated TypeVar assignment. tvar reads Ruff's custom_typevar: a binding site that is a plain
+   `assignment` (no `type` field, not a walrus) whose value, through chained assignments, is a TypeVar call.
+   `pyi019-stub.pyi`: before PYI019 at 6 and 7; after nothing, as Ruff. `_C = _D = TypeVar("_C")` still reports
+   both names, `y = (_X := TypeVar("_X"))` and `(_W := TypeVar("_W"))` neither (Ruff the same).
+7. PYI019, a `.py` TypeVar assigned after the def. Outside a stub, a string, `from __future__ import annotations`
+   and Python 3.14 (python/upgrade's `future_annotations`, `targets(14)`), the binding must start before the def.
+   `pyi019-late.py`: before PYI019 at 3; after nothing, as Ruff; `self: "_L"` there is still reported, as Ruff.
+8. PYI020, a quoted type inside a quoted annotation. `quoted` takes a string of a parsed tree by its prefix (it has
+   no plain_str row). `pyi020-nested.pyi`: before one finding a line; after two a line, as Ruff's four.
+9. PYI020, strings Ruff parses bare. `parses` follows parse_type_annotation: a triple-quoted string without escapes
+   is parsed in parentheses (the "annotation" guest), every other string as a bare expression (the "python" guest:
+   one expression statement, comments and line continuations aside). `pyi020-bare.pyi`: before PYI020 at 1-4;
+   after nothing, as Ruff (F722). `""" int"""`, `"list[\nint]"`, `"int\n"`, `"\x69nt"`, `R"int"` and
+   `"int" "|" "str"` are still reported, `r" int"`, `"""\tint"""` and `""" """` not, as Ruff.
+
+After: translations:check (ptcheck, integration ref c69c35b021): PYI002, 003, 004, 005, 014, 019 `same`; PYI020
+`different` with the same two keys as before (UP037_2.pyi:32 and :41, above).
 
 ## Library changes wanted (not made: existing files)
 
 - `python/scopes`' `cmp`: count operands without comments (`one_cmp` here), so every rule reading `cmp` sees
   `(a ==  # c` / `b)`.
 - `python/typing`: `version_cmp` and `stop_slice` as `vi_cmp` here (bounds by `slice_part`, through parentheses);
-  `simple_value` should not count `line_continuation` children (PYI011, PYI015, PYI052 share it); `ellipsis_stmt`
-  should take `(...)` and refuse `...,`. Then this batch's library folds into typing.
-- `python/typing`'s `type_ctx` could be `string_annotation` plus its parsed trees where a rule asks about strings.
+  `simple_value`, `tuple_len` and `int_tuple` should not count `line_continuation` children (PYI011, PYI015, PYI052
+  share simple_value); `ellipsis_stmt` should take `(...)` and refuse `...,`. Then this batch's library folds into
+  typing.
+- `python/ast`'s `bool_part` should skip `line_continuation` as it skips comments (`pyi_test_part` here), and
+  typing's `typevar_name` should take only a plain assignment's TypeVar, as Ruff (its readers are PYI019's
+  translations: python-main's still reads it, this one no longer does).
 
 ## Engine gaps
 
@@ -106,5 +150,12 @@ Left, both from the parse:
 - A guest node of a decoded string stands at the host string's first line, so a nested quote on a later line of a
   triple-quoted annotation (`x: """list[` / `'int']"""`) is keyed at the host's line; Ruff reports its own line.
   Not in any corpus.
-- The tape keeps no `,` token in a subscript or an expression statement (`token(l, _, ",", _, _)` is refused), so
-  trailing commas are read from text.
+- The engine refuses `op` and `token` reading `,` in a subscript or a type_parameter ("the tape leaves it out"),
+  though a run that binds the text to a variable lists it there (`token(l, i, s, _, _)` gave `,` for `x[0, # c` /
+  `]`), so trailing commas are read from text.
+- A library relation that ranges over node kinds (`bracket_comma(n) :- kind(n, "subscript"), node_text(n, t), …`)
+  had no row for a subscript of a string's parsed tree when the rule read it only under negation, while the same
+  body asked of the node bound in the rule held. PYI019 asks it in place.
+- A nested implicit concatenation, `x: "list['a' 'b']"`: Ruff reports the inner string (2 PYI020 on the line), the
+  translation 1. Asked of that node, quoted and each literal of parses' python clause hold, yet parses has no row
+  for it. Not in any corpus.

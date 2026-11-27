@@ -5,14 +5,16 @@
 .scope include "**/*.pyi"
 
 // Ruff PYI014 (flake8-pyi), stubs only: an unannotated parameter's default that is not a simple value (see
-// python/typing's simple_value: literals, `-1`, `1 + 2j`, math and sys constants, small flat containers).
+// python/typing's simple_value: literals, `-1`, `1 + 2j`, math and sys constants, small flat containers), in a def
+// or a lambda (Ruff checks every Parameters node; a lambda's parameters are never annotated).
 //   def f(a=os.sep, b=[[1]], c=(1, 2)): ...     ← PYI014 at `os.sep` and `[[1]]`; `(1, 2)` is fine
+//   f = lambda a=os.sep: a                       ← PYI014 at `os.sep`
 #include "python/typing.rerail"
 
 .violation PYI014(at: node) code "PYI014" "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple."
     suppress ruff "PYI014"
-PYI014(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), unset(a), kind(d, _),
-    !simple_value(d, "top"), !simple_display(d).
+PYI014(d) :- (kind(f, "function_definition") ; kind(f, "lambda")), in_stub(f), sig_param(f, _, _, _, _, a, d),
+    unset(a), kind(d, _), !simple_value(d, "top"), !simple_display(d).
 // simple_display(e): a list, tuple or set of at most 10 simple items, or a dict of at most 10 simple pairs, counted
 // without line continuations. tree-sitter makes each `\` inside a display a child, which simple_value counts as an
 // item: `[1, …, 9, \` / `10]` has ten items to Ruff, eleven children to simple_value.
@@ -23,3 +25,16 @@ simple_display(e) :- unparen(e, m), (kind(m, "list") ; kind(m, "tuple") ; kind(m
 simple_display(e) :- unparen(e, m), kind(m, "dictionary"),
     count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation") } <= 10,
     count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation"), !simple_pair(x) } = 0.
+
+// Ruff 0.17.6: PYI014 at lines 2 and 4. Before: nothing (only defs were asked).
+.test lambda_defaults exactly
+    .fixture "a.pyi" ```
+        import os
+        f = lambda a=os.sep: a
+        class C:
+            g = lambda self, a=[[1]]: a
+            h = lambda a=1, b=(1, 2): a
+        ```
+    .expect PYI014 at "a.pyi":2
+    .expect PYI014 at "a.pyi":4
+.end
