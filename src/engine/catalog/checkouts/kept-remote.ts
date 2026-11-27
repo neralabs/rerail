@@ -1,9 +1,10 @@
 /**
  * A clone's remote as Git named it, kept while the configuration Git read it from reads the same: the facts it rests on
  * ({@link remoteSource}) are the files and variables Git reads a remote from, read here before Git runs. Where one of
- * them cannot be read or named, no answer is kept and Git is asked each time.
+ * them cannot be read or named, no answer is kept and Git is asked each time. A caller that keeps a remote of its own
+ * keeps it by what the repository's own config files hold ({@link configFilesText}).
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileText, placementInputs } from "./git-placement.js";
 import { learnGitAccess, standingGitAccess } from "../../native/git-access.js";
@@ -167,7 +168,47 @@ const INCLUDE = /include/iu;
  * when it is no regular file, cannot be read or includes another.
  */
 function configText(path: string): string | undefined {
+  const text = textAsGitReads(path);
+  return text === undefined || INCLUDE.test(text) ? undefined : text;
+}
+
+/** A file's text, read now as Git reads it ({@link fileText}); {@link NO_FILE} when nothing is there; undefined when it is no regular file or cannot be read. */
+function textAsGitReads(path: string): string | undefined {
   const read = fileText(path);
-  if (read === "none") return NO_FILE;
-  return read === undefined || INCLUDE.test(read.text) ? undefined : read.text;
+  return read === "none" ? NO_FILE : read?.text;
+}
+
+/**
+ * The repository's own files a checkout's remotes are read from: the common Git folder's `config`, which every
+ * worktree of the clone shares, and the worktree's own `config.worktree` (`gitFolder`, the common one for a main
+ * checkout, a submodule or a clone whose Git folder is kept apart), which Git reads too where
+ * `extensions.worktreeConfig` is on; turning that on writes the first. Without `gitFolder`, the first alone.
+ */
+export function remoteConfigFiles(common: string, gitFolder: string | undefined): readonly string[] {
+  return gitFolder === undefined ? [join(common, "config")] : [join(common, "config"), join(gitFolder, "config.worktree")];
+}
+
+/**
+ * What `files` hold, as one string: each one's text, read now as Git reads it ({@link textAsGitReads}), so a file that
+ * appears or goes changes it, and where its text cannot be read, what the file system says of it ({@link unreadStamp}).
+ * An `include` is not followed, so a file it names changed alone leaves this as it was: a caller that must see that
+ * asks {@link remoteSource}.
+ */
+export function configFilesText(files: readonly string[]): string {
+  return files.map(file => textAsGitReads(file) ?? unreadStamp(file)).join("\0");
+}
+
+/**
+ * What the file system says of a file whose text cannot be read (no regular file, too large, no permission), without
+ * reading it: its size, modification time in nanoseconds and file id, through a link at its name as the read goes, in
+ * `bigint`, which holds an NTFS file id whole; the error's code where it cannot be looked at. A rewrite in place that
+ * keeps the size and the time changes none of them.
+ */
+function unreadStamp(path: string): string {
+  try {
+    const stats = statSync(path, { bigint: true });
+    return `\0stat:${stats.size}:${stats.mtimeNs}:${stats.ino}`;
+  } catch (error) {
+    return `\0error:${(error as NodeJS.ErrnoException).code ?? "unknown"}`;
+  }
 }
