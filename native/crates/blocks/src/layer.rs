@@ -28,9 +28,7 @@ use crate::bistate::{ColStats, ColumnIndex, Flips, Since, WordIndex};
 // A trace's state and its reads in place: the floor's (`rerail_delta_core::trace`).
 pub use rerail_delta_core::trace::{ChainError, ChainFlips, MAX_BELOW, MAX_LAYERS, ProbeIter, Ranges, Scan, State};
 use crate::gens::{BODY_AT, Id, Table, word};
-use crate::relation::layer_write::layer_sketch;
 use crate::relation::{Relation, View};
-use crate::sketch::Sketch;
 
 // The shape's words, its bounds and the δ runs block: the floor's one definition (`rerail_delta_core::runs`).
 pub use rerail_delta_core::runs::{
@@ -415,20 +413,6 @@ impl<'a> OwnRowsIn<'a> for OwnRows<'a> {
     }
 }
 
-/// A layer's sketch decoded, to add to (consolidate's): blocks' own, its arrays in `sketch_room`. A read of its reading
-/// alone takes it in place (`Layer::reading`).
-pub trait LayerSketch {
-    fn sketch(&self, c: usize) -> Option<Sketch>;
-}
-
-impl LayerSketch for Layer<'_> {
-    /// Column `c`'s sketch of the state this layer ends (`Relation::sketches`), read back from its kept form.
-    fn sketch(&self, c: usize) -> Option<Sketch> {
-        let b = layer_sketch(self.rows, c)?;
-        Sketch::decode(&|i| b[i], 0, b.len(), sketch_room())
-    }
-}
-
 /// A layer's rows as a packer reads them (`packed::RowsIn`): row `r` is own row `start + r`.
 impl crate::packed::RowsIn for OwnRows<'_> {
     fn n(&self) -> usize {
@@ -444,11 +428,6 @@ impl crate::packed::RowsIn for OwnRows<'_> {
     fn get(&self, r: usize, c: usize) -> i64 {
         OwnRows::get(self, self.start() + r as u32, c)
     }
-}
-
-/// Where a sketch read back from a layer keeps its arrays while it is read: the heap's (a reader's own, for one read).
-pub fn sketch_room() -> std::sync::Arc<dyn crate::maps::Room> {
-    std::sync::Arc::new(rerail_vector::HeapRoom)
 }
 
 /// A trace's state (`relation::View::chain`; P§12's `Version`, "its View generalized from a base and one delta to n

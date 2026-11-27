@@ -260,10 +260,14 @@ impl<F: Fn(WordIndex) -> u64> Iterator for Bits<F> {
 }
 
 
-/// Column `c`'s statistics read from every live row of `state`: its bounds, and a sketch of its values
-/// (`blocks::sketch`, the one sketch), made for this read and let go.
+/// Column `c`'s statistics read from every live row of `state`: its bounds, and a sketch of its values (the floor's
+/// working form, `SketchW`, over working bytes made for this read and let go).
 pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
-    let mut s = crate::sketch::Sketch::new_in(crate::layer::sketch_room());
+    use rerail_delta_core::sketch::{SketchW, WORK_BYTES};
+    let mut work = vec![0u64; WORK_BYTES.div_ceil(8)];
+    // SAFETY: the vector's own bytes, aligned to 8, held for this call.
+    let bytes = unsafe { std::slice::from_raw_parts_mut(work.as_mut_ptr().cast::<u8>(), WORK_BYTES) };
+    let mut s = SketchW::over(bytes).expect("a sketch's working bytes, aligned");
     let (mut min, mut max) = (i64::MAX, i64::MIN);
     for id in state.live_ids() {
         let v = state.get(id, c);
@@ -271,7 +275,10 @@ pub fn stats_of<R: Read>(state: &R, c: ColumnIndex) -> ColStats {
         min = min.min(v);
         max = max.max(v);
     }
-    let r = s.reading();
+    // Read from its kept bytes, as a layer's is (`sketch::reading`).
+    let mut kept = vec![0u8; s.encoded_len()];
+    s.encode_into(&mut kept);
+    let r = rerail_delta_core::sketch::reading(&kept).expect("a sketch's own kept bytes");
     ColStats { min, max, rows: r.rows, ndv: r.ndv, sq: r.sq }
 }
 
