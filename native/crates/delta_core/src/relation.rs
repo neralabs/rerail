@@ -451,3 +451,16 @@ impl Relation {
         self.base_rows as usize * width
     }
 }
+
+/// The positions of `rel`'s own rows (sorted in place) whose columns `cols`, the order key's first ones, equal
+/// `key`: one range, by binary search on each leading column in turn.
+pub fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> core::ops::Range<u32> {
+    let (mut lo, mut hi) = (0u32, rel.rows.len());
+    for oc in rel.sort_col().into_iter().take(cols.len()).map(|c| c as u16) {
+        let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];
+        let a = rel.rows.lower_bound(oc as usize, lo, hi, k);
+        hi = rel.rows.upper_from(oc as usize, a, hi, k);
+        lo = a;
+    }
+    lo..hi
+}

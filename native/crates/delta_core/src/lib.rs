@@ -15,6 +15,8 @@
 //! - `relation`: a relation's descriptor (`Relation`), its indexes and orders, and its reads.
 //! - `bloom`: a blocked Bloom filter's format, its hash and its reads.
 //! - `ranged`: columns packed per range of rows (`Columns`, `RangedCol`), and their reads.
+//! - `packed`: a packed relation's format (`Packed`: columns whole, split or relative; permutation indexes; levels)
+//!   and its reads.
 
 #![no_std]
 
@@ -23,6 +25,7 @@ pub mod bloom;
 pub mod col;
 pub mod hash;
 pub mod kernel;
+pub mod packed;
 pub mod pod;
 pub mod ranged;
 pub mod refs;

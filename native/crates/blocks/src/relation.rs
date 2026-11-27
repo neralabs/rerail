@@ -25,6 +25,8 @@ use crate::refs::Span;
 use crate::rows::{Rows, RowsW};
 use crate::key_hash;
 // The relation's format and its reads: the floor's one definition (`rerail_delta_core::relation`).
+pub use rerail_delta_core::hash::row_digest;
+pub use rerail_delta_core::relation::leading;
 pub use rerail_delta_core::relation::{
     ADDED, ADDED_INDEXES, ALIASED, CONTINUES, ColStats, DEAD, DELTA, FAR_BASE, FROZEN, HASHED, Index, IndexRoom, Known, MAX_KEY, NO_BLOCK, ORDER,
     ORDER_ROWS, REWRITTEN, Relation,
@@ -1623,24 +1625,7 @@ impl Iterator for Ids<'_> {
     }
 }
 
-/// The positions of `rel`'s own rows (sorted in place) whose columns `cols`, the order key's first ones, equal
-/// `key`: one range, by binary search on each leading column in turn.
-pub fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
-    let (mut lo, mut hi) = (0u32, rel.rows.len());
-    for oc in rel.sort_col().into_iter().take(cols.len()).map(|c| c as u16) {
-        let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];
-        let a = rel.rows.lower_bound(oc as usize, lo, hi, k);
-        hi = rel.rows.upper_from(oc as usize, a, hi, k);
-        lo = a;
-    }
-    lo..hi
-}
 
-/// One row's hash in a set's digest (`View::digest`, `Packed::digest`).
-pub fn row_digest(vals: impl Iterator<Item = i64>) -> u64 {
-    let h = vals.fold(crate::SEED, crate::mix);
-    crate::mix(h, 0x5eed)
-}
 
 /// Two id streams, each in order on the sort column, merged into one.
 struct Merge<'v, A: Iterator<Item = u32>, B: Iterator<Item = u32>> {

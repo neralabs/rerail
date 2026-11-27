@@ -16,3 +16,9 @@ pub fn mix(h: u64, v: i64) -> u64 {
 pub fn key_hash(vals: &[i64]) -> u64 {
     vals.iter().fold(SEED, |h, &v| mix(h, v))
 }
+
+/// One row's hash in a set's digest (`View::digest`, `Packed::digest`).
+pub fn row_digest(vals: impl Iterator<Item = i64>) -> u64 {
+    let h = vals.fold(SEED, mix);
+    mix(h, 0x5eed)
+}
