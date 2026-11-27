@@ -14,7 +14,7 @@ use rerail_delta_twins::NoParams;
 use rerail_delta_twins::samples::{self, SQUARE};
 
 /// The tests' device, chosen before the process opens one: the CPU's vector path, unless `RERAIL_GPU` names another.
-fn device() {
+pub(crate) fn device() {
     static CHOSEN: std::sync::Once = std::sync::Once::new();
     CHOSEN.call_once(|| {
         if std::env::var_os("RERAIL_GPU").is_none() {

@@ -38,6 +38,8 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/histogram.h", include_str!("../lib/ukl/histogram.h")),
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
+    // The flat layer's working forms in place (*Flat Views and Lifecycles* step 7: `rerail_delta_core::flat`).
+    ("ukl/flat.h", include_str!("../lib/ukl/flat.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
     ("ukl/stages.h", include_str!("../lib/ukl/stages.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),

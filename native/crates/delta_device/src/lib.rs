@@ -153,3 +153,6 @@ impl OnDevice for GpuBound {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod flat_tests;
