@@ -1,7 +1,7 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "rust",
-  "equivalent": false,
+  "equivalent": true,
   "untranslated": {},
   "different": {
     "clippy-decimal-literal-representation": {
