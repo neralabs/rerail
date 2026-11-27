@@ -124,3 +124,25 @@ fn interns_hash_then_scan_alike_at_every_tiling_new_ids_in_node_order() {
     assert!(order.windows(2).all(|w| at(w[0]) < at(w[1])), "{:?}", &whole.1[whole.1.len() - order.len()..]);
     assert_eq!(whole.1.len() - at("two.rerail"), order.len(), "each new name once");
 }
+
+/// A string's value is interned unescaped, read as its body streams (no value gathered): two spellings of one value
+/// (`\n` and `\u{0A}`) are one symbol, its name the value itself; a body with no escape is interned as written.
+#[test]
+fn a_strings_value_is_interned_unescaped_where_its_body_lies() {
+    let mut fx = Fx::new();
+    let a = fx.doc("p(\"a\\nb\").\nq(\"a\\u{0A}b\").\nr(\"tab\\tx\\\\\").\ns(\"plain\").\n", "a.rerail");
+    let values: Vec<(String, i64)> = fx.read(&a, |r, syms, names| {
+        let v = TapeView::new(View::Value, 1, r, syms, names);
+        (0..Read::end(&v).get())
+            .map(RowId::new)
+            .filter(|&id| Read::live(&v, id))
+            .map(|id| (r.text(id.get() as usize).to_string(), Read::get(&v, id, ColumnIndex::new(2))))
+            .collect()
+    });
+    let sym = |text: &str| values.iter().find(|v| v.0 == text).unwrap_or_else(|| panic!("{text}: {values:?}")).1;
+    assert_eq!(sym("\"a\\nb\""), sym("\"a\\u{0A}b\""), "one value, two spellings");
+    assert_eq!(fx.atoms.name(&fx.dir, sym("\"a\\nb\"")), "a\nb");
+    assert_eq!(fx.atoms.name(&fx.dir, sym("\"tab\\tx\\\\\"")), "tab\tx\\");
+    assert_eq!(fx.atoms.name(&fx.dir, sym("\"plain\"")), "plain");
+    assert_eq!(fx.atoms.find(&fx.dir, "a\\nb"), None, "the escaped spelling is no value");
+}

@@ -77,6 +77,14 @@ pub fn find_in(bytes: &[u8], s: &str, h: u64) -> Option<u32> {
     raw.find(s, h, raw.first + r.count.load(Acquire) as u32)
 }
 
+/// The id of the string whose hash is `h` and which `eq` accepts, in the atoms block `bytes` (`find_in` for a string
+/// read as it streams, compared where the atom lies).
+pub fn find_in_by(bytes: &[u8], h: u64, eq: impl Fn(&str) -> bool) -> Option<u32> {
+    let r = root_in(bytes);
+    let raw = Raw::of_root(r);
+    raw.find_by(h, eq, raw.first + r.count.load(Acquire) as u32)
+}
+
 /// The string of `id` in the atoms block `bytes`.
 pub fn name_in(bytes: &[u8], id: u32) -> Option<&str> {
     let r = root_in(bytes);
@@ -96,6 +104,13 @@ pub fn count_in(bytes: &[u8]) -> u32 {
 pub fn append_in(bytes: &mut [u8], s: &str, h: u64) -> Option<u32> {
     let r = root_in(bytes);
     AtomsW::append_raw(r, &Raw::of_root(r), s, h)
+}
+
+/// Appends a string of `len` bytes (its hash `h`), which `fill` writes where the atom lies, as UTF-8, to the atoms
+/// block `bytes` (`append_in` for a string read as it streams): its id, or `None` when the block is full.
+pub fn append_in_by(bytes: &mut [u8], len: usize, h: u64, fill: impl FnOnce(&mut [u8])) -> Option<u32> {
+    let r = root_in(bytes);
+    AtomsW::append_raw_by(r, &Raw::of_root(r), len, h, fill)
 }
 
 /// What reads a run of atoms, wherever it lies: one block, or a store's chain of them.
@@ -170,6 +185,10 @@ impl Raw {
     }
 
     fn find(&self, s: &str, h: u64, end: u32) -> Option<u32> {
+        self.find_by(h, |t| t == s, end)
+    }
+
+    fn find_by(&self, h: u64, eq: impl Fn(&str) -> bool, end: u32) -> Option<u32> {
         let tag = h & 0xFFFF_FFFF_0000_0000;
         let mut i = h & self.mask;
         loop {
@@ -180,7 +199,7 @@ impl Raw {
             }
             if v & 0xFFFF_FFFF_0000_0000 == tag {
                 let id = (v as u32).wrapping_sub(1);
-                if id >= self.first && id < end && self.str_at((id - self.first) as usize) == s {
+                if id >= self.first && id < end && eq(self.str_at((id - self.first) as usize)) {
                     return Some(id);
                 }
             }
@@ -356,18 +375,25 @@ impl AtomsW {
     }
 
     fn append_raw(r: &AtomsRoot, raw: &Raw, s: &str, h: u64) -> Option<u32> {
+        // copy: derived (an interned string, written once into the atoms)
+        Self::append_raw_by(r, raw, s.len(), h, |to| to.copy_from_slice(s.as_bytes()))
+    }
+
+    /// `append_raw` of a string `fill` writes, `len` bytes of UTF-8, where the atom lies.
+    fn append_raw_by(r: &AtomsRoot, raw: &Raw, len: usize, h: u64, fill: impl FnOnce(&mut [u8])) -> Option<u32> {
         let n = r.count.load(Relaxed);
         let at = r.bytes_len.load(Relaxed);
-        if n >= u64::from(raw.cap) || at + s.len() as u64 > raw.bytes_cap || r.placed.load(Relaxed) >= (raw.mask + 1) / 4 * 3 {
+        if n >= u64::from(raw.cap) || at + len as u64 > raw.bytes_cap || r.placed.load(Relaxed) >= (raw.mask + 1) / 4 * 3 {
             return None;
         }
         let id = raw.first + n as u32;
-        let end = at + s.len() as u64;
+        let end = at + len as u64;
         // SAFETY: within the regions' room, checked above; this writer is the block's only one, and no reader reads
         // past the end it is told, which this atom is not below yet.
         unsafe {
-            // copy: derived (an interned string, written once into the atoms)
-            std::ptr::copy_nonoverlapping(s.as_ptr(), raw.strings.add(at as usize) as *mut u8, s.len());
+            let to = std::slice::from_raw_parts_mut(raw.strings.add(at as usize) as *mut u8, len);
+            fill(to);
+            assert!(std::str::from_utf8(to).is_ok(), "an atom's bytes are UTF-8");
             *(raw.ends.add(n as usize) as *mut u64) = end;
             *(raw.hashes.add(n as usize) as *mut u64) = h;
         }

@@ -68,6 +68,32 @@ impl Slot<'_> {
     }
 }
 
+/// The most slots an operation binds: Metal's argument table has 31 entries, one of them the params' (D1). A signature
+/// of more is refused where it is declared, so a twin's meter keeps a word a slot in fixed arrays.
+pub const MAX_SLOTS: usize = 30;
+
+/// Why a launch fails, as an item reports it to its meter: a quantity its phase's shape bounds not, or one past its
+/// bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fault {
+    /// An item reports `what`, and its phase's shape bounds none.
+    Unbounded(&'static str),
+    /// An item's `what` reached `n`, past its bound.
+    Past { what: &'static str, n: u32, bound: u32 },
+    /// An item asks room in a slot, and its phase's shape bounds no capacity.
+    RoomUnbounded { slot: usize },
+}
+
+impl core::fmt::Display for Fault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match *self {
+            Fault::Unbounded(what) => write!(f, "an item reports {what}, and its phase's shape bounds none"),
+            Fault::Past { what, n, bound } => write!(f, "an item's {what} reached {n}, past its bound of {bound}"),
+            Fault::RoomUnbounded { slot } => write!(f, "an item asks room in slot {slot}, and its phase's shape bounds no capacity"),
+        }
+    }
+}
+
 /// What a phase's items report of their bounded work (Operations §4, the bounds axis), held by the executor to the
 /// phase's bounds: steps an item, a stack's depth, a sample's size, and the room a written slot needs. The executor
 /// sets the phase's bounds before its first tile and reads the meter after each. A twin reports what it does: an item
@@ -84,22 +110,48 @@ pub struct Meter {
     /// Whether the phase bounds its output's capacity (refuse, grow or rerun).
     pub bounded_room: bool,
     /// Each slot's capacity: how far its block's allocations may reach, from the block's start.
-    pub capacity: Vec<usize>,
+    pub capacity: [usize; MAX_SLOTS],
     /// The first report past a bound, or of what the shape bounds not: the launch fails with it.
-    pub fault: Option<String>,
-    /// Slots an item found too small, each with the capacity it needs; the item wrote nothing past the capacity.
-    pub needs: Vec<(usize, usize)>,
+    pub fault: Option<Fault>,
+    /// Each slot's capacity needed, when an item found it too small (0: none); the item wrote nothing past the
+    /// capacity.
+    pub needs: [usize; MAX_SLOTS],
 }
 
 impl Meter {
-    fn within(&mut self, bound: Option<u32>, n: u32, what: &str) -> bool {
+    /// A meter of slots of capacities `capacity` (at most `MAX_SLOTS`), no phase's bounds set.
+    pub fn new(capacity: impl IntoIterator<Item = usize>) -> Meter {
+        let mut m = Meter::default();
+        for (k, c) in capacity.into_iter().enumerate() {
+            assert!(k < MAX_SLOTS, "an operation binds at most {MAX_SLOTS} slots");
+            m.capacity[k] = c;
+        }
+        m
+    }
+
+    /// The slots an item found too small, ascending, each with the capacity it needs.
+    pub fn needs(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.needs.iter().enumerate().filter(|n| *n.1 > 0).map(|(s, &n)| (s, n))
+    }
+
+    /// Whether no slot was found too small.
+    pub fn no_needs(&self) -> bool {
+        self.needs.iter().all(|&n| n == 0)
+    }
+
+    /// The needs, taken: none are left.
+    pub fn take_needs(&mut self) -> [usize; MAX_SLOTS] {
+        core::mem::take(&mut self.needs)
+    }
+
+    fn within(&mut self, bound: Option<u32>, n: u32, what: &'static str) -> bool {
         match bound {
             None => {
-                self.fault.get_or_insert_with(|| format!("an item reports {what}, and its phase's shape bounds none"));
+                self.fault.get_or_insert(Fault::Unbounded(what));
                 false
             }
             Some(b) if n > b => {
-                self.fault.get_or_insert_with(|| format!("an item's {what} reached {n}, past its bound of {b}"));
+                self.fault.get_or_insert(Fault::Past { what, n, bound: b });
                 false
             }
             Some(_) => true,
@@ -147,16 +199,13 @@ impl<'p> Ctx<'_, 'p, '_> {
     /// bytes, past its allocations): as `room`, the need recorded when not.
     pub fn reach(&mut self, slot: usize, need: usize) -> bool {
         if !self.meter.bounded_room {
-            self.meter.fault.get_or_insert_with(|| format!("an item asks room in slot {slot}, and its phase's shape bounds no capacity"));
+            self.meter.fault.get_or_insert(Fault::RoomUnbounded { slot });
             return false;
         }
         if need <= self.meter.capacity[slot] {
             return true;
         }
-        match self.meter.needs.iter_mut().find(|n| n.0 == slot) {
-            Some(n) => n.1 = n.1.max(need),
-            None => self.meter.needs.push((slot, need)),
-        }
+        self.meter.needs[slot] = self.meter.needs[slot].max(need);
         false
     }
 

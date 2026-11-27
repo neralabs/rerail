@@ -186,6 +186,55 @@ pub fn hash_bytes(b: &[u8]) -> u64 {
     crate::mix(h, b.len() as i64)
 }
 
+/// `hash_bytes` of bytes given a piece at a time, so a value read as it streams (a string's unescaped characters) is
+/// hashed with nothing gathered: the same hash as of the pieces joined.
+#[derive(Clone, Copy, Debug)]
+pub struct HashBytes {
+    h: u64,
+    word: [u8; 8],
+    n: usize,
+    len: usize,
+}
+
+impl Default for HashBytes {
+    fn default() -> HashBytes {
+        HashBytes { h: crate::SEED, word: [0; 8], n: 0, len: 0 }
+    }
+}
+
+impl HashBytes {
+    pub fn push(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.word[self.n] = b;
+            self.n += 1;
+            if self.n == 8 {
+                self.h = crate::mix(self.h, i64::from_le_bytes(self.word));
+                self.n = 0;
+            }
+        }
+        self.len += bytes.len();
+    }
+
+    /// The bytes' length so far.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn finish(&self) -> u64 {
+        let mut h = self.h;
+        if self.n > 0 {
+            let mut w = [0u8; 8];
+            w[..self.n].copy_from_slice(&self.word[..self.n]);
+            h = crate::mix(h, i64::from_le_bytes(w));
+        }
+        crate::mix(h, self.len as i64)
+    }
+}
+
 structure! {
     /// A hash map's descriptor: `2^log` buckets (keys and values each an array, `kbytes` and `vbytes` an entry), then
     /// the guard key's bucket at index `2^log`, full when `guard` is 1. `len` counts the keys, the guard's too.
@@ -1427,6 +1476,20 @@ impl<T: Pod + Copy> Clone for IdTable<T> {
 
 #[cfg(test)]
 mod tests {
+    /// `HashBytes` of pieces is `hash_bytes` of them joined, at every split and length (a word's partial tail too).
+    #[test]
+    fn a_streamed_hash_is_the_hash_of_the_bytes_joined() {
+        let bytes: Vec<u8> = (0..40u8).map(|b| b.wrapping_mul(37)).collect();
+        for n in 0..bytes.len() {
+            for cut in 0..=n {
+                let mut h = super::HashBytes::default();
+                h.push(&bytes[..cut]);
+                h.push(&bytes[cut..n]);
+                assert_eq!((h.finish(), h.len()), (super::hash_bytes(&bytes[..n]), n), "{n} bytes cut at {cut}");
+            }
+        }
+    }
+
     use super::*;
 
     /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,

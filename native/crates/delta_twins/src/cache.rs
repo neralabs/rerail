@@ -93,9 +93,37 @@ pub struct Order<'a> {
     pub fences: &'a [i64],
 }
 
+/// An order's columns: at most four (`order_params`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Cols {
+    n: u8,
+    c: [u16; 4],
+}
+
+impl Cols {
+    pub fn new(cols: &[u16]) -> Cols {
+        assert!(cols.len() <= 4, "an order of at most four columns");
+        let mut c = [0; 4];
+        c[..cols.len()].copy_from_slice(cols);
+        Cols { n: cols.len() as u8, c }
+    }
+}
+
+impl core::ops::Deref for Cols {
+    type Target = [u16];
+
+    fn deref(&self) -> &[u16] {
+        &self.c[..self.n as usize]
+    }
+}
+
 /// The columns `OrderP` packs.
-pub fn cols_of(p: &OrderP) -> Vec<u16> {
-    (0..p.ncols as usize).map(|i| (p.cols >> (16 * i)) as u16).collect()
+pub fn cols_of(p: &OrderP) -> Cols {
+    let mut c = Cols { n: p.ncols as u8, c: [0; 4] };
+    for (i, x) in c.c.iter_mut().enumerate().take(p.ncols as usize) {
+        *x = (p.cols >> (16 * i)) as u16;
+    }
+    c
 }
 
 /// Layer `layer`'s order by `cols`, packed for `OrderP`; at most four columns.
@@ -112,7 +140,7 @@ fn entry_len(n: usize, nf: usize) -> usize {
 pub struct Entry {
     pub at: usize,
     pub layer: u32,
-    pub cols: Vec<u16>,
+    pub cols: Cols,
     pub n: usize,
     pub nf: usize,
 }
@@ -121,13 +149,16 @@ pub struct Entry {
 pub fn entries(cache: &[u8]) -> impl Iterator<Item = Entry> + '_ {
     let end = ENTRIES_AT + used(cache);
     let mut at = ENTRIES_AT;
-    std::iter::from_fn(move || {
+    core::iter::from_fn(move || {
         if at >= end {
             return None;
         }
         let layer = word::<u32>(cache, at);
         let ncols = word::<u32>(cache, at + 4) as usize;
-        let cols = (0..ncols).map(|i| word::<u16>(cache, at + 8 + 2 * i)).collect();
+        let mut cols = Cols { n: ncols as u8, c: [0; 4] };
+        for (i, x) in cols.c.iter_mut().enumerate().take(ncols) {
+            *x = word::<u16>(cache, at + 8 + 2 * i);
+        }
         let (n, nf) = (word::<u32>(cache, at + 24) as usize, word::<u32>(cache, at + 28) as usize);
         let e = Entry { at, layer, cols, n, nf };
         at += entry_len(n, nf);
@@ -137,7 +168,7 @@ pub fn entries(cache: &[u8]) -> impl Iterator<Item = Entry> + '_ {
 
 /// The order of layer `layer` by `cols`, if the cache holds it.
 pub fn order<'a>(cache: &'a [u8], layer: u32, cols: &[u16]) -> Option<Order<'a>> {
-    let Entry { at, n, nf, .. } = entries(cache).find(|e| e.layer == layer && e.cols == cols)?;
+    let Entry { at, n, nf, .. } = entries(cache).find(|e| e.layer == layer && *e.cols == *cols)?;
     let ids = words::<u32>(cache, at + ENTRY_BYTES, n);
     let fences = words::<i64>(cache, at + ENTRY_BYTES + (4 * n).next_multiple_of(8), nf);
     Some(Order { ids, fences })
@@ -229,32 +260,38 @@ fn add_order(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let p = <OrderP as crate::Params>::read(c.params);
     let cols = cols_of(&p);
     let layer_id = p.layer;
-    let (n, ids, fences) = {
-        let l = Layer::new(c.read(LAYER)).expect("a committed layer");
-        if order(c.read(ORDER_CACHE), layer_id, &cols).is_some() {
-            return;
-        }
-        let mut ids: Vec<u32> = l.own.ids().collect(); // copy: derived (an index's row ids, written once into the cache)
-        ids.sort_by_key(|&id| (cols.iter().map(|&k| l.get(id, k as usize)).collect::<Vec<i64>>(), id));
-        let fences: Vec<i64> = ids.iter().step_by(FENCE).map(|&id| l.get(id, cols[0] as usize)).collect(); // copy: derived (the index's fences)
-        (ids.len(), ids, fences)
-    };
+    if order(c.read(ORDER_CACHE), layer_id, &cols).is_some() {
+        return;
+    }
+    let n = Layer::new(c.read(LAYER)).expect("a committed layer").n();
+    let nf = n.div_ceil(FENCE);
     let at = ENTRIES_AT + used(c.read(ORDER_CACHE));
-    let len = entry_len(n, fences.len());
+    let len = entry_len(n, nf);
     if !c.reach(ORDER_CACHE, at + len) {
         return;
     }
-    let ([], [b]) = c.views([], [ORDER_CACHE]);
+    let ([lb], [b]) = c.views([LAYER], [ORDER_CACHE]);
+    let l = Layer::new(lb).expect("a committed layer");
     set_word::<u32>(b, at, layer_id);
     set_word::<u32>(b, at + 4, cols.len() as u32);
     for i in 0..4 {
         set_word::<u16>(b, at + 8 + 2 * i, cols.get(i).copied().unwrap_or(0));
     }
     set_word::<u32>(b, at + 24, n as u32);
-    set_word::<u32>(b, at + 28, fences.len() as u32);
-    words_mut::<u32>(b, at + ENTRY_BYTES, n).copy_from_slice(&ids);
+    set_word::<u32>(b, at + 28, nf as u32);
+    // The layer's own ids, written into the entry where they lie and sorted there by the columns, ties by id (a total
+    // order: an unstable sort gives the one answer); then its fences, every `FENCE`th id's first column.
+    let ids = words_mut::<u32>(b, at + ENTRY_BYTES, n);
+    for (x, id) in ids.iter_mut().zip(l.own.ids()) {
+        *x = id;
+    }
+    let vals = |id: u32| cols.iter().map(move |&k| l.get(id, k as usize));
+    ids.sort_unstable_by(|&p, &q| vals(p).cmp(vals(q)).then(p.cmp(&q)));
     let fat = at + ENTRY_BYTES + (4 * n).next_multiple_of(8);
-    words_mut::<i64>(b, fat, fences.len()).copy_from_slice(&fences);
+    for f in 0..nf {
+        let id = word::<u32>(b, at + ENTRY_BYTES + 4 * f * FENCE);
+        set_word::<i64>(b, fat + 8 * f, l.get(id, cols[0] as usize));
+    }
     // The entry counted last: a reader never finds one half written.
     set_word::<u64>(b, USED_AT, (at + len - ENTRIES_AT) as u64);
 }

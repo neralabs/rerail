@@ -226,40 +226,42 @@ struct Doc<'t> {
     n: usize,
 }
 
-/// The launch's documents, in the docs blocks' order, each read through the descriptor table.
-fn docs_of<'t>(table: &Table<'t>, first: u32) -> Vec<Doc<'t>> {
-    let mut out = Vec::new(); // copy: not block data (the launch's handles on its documents, read where they lie)
-    let mut at = Some(first);
-    while let Some(id) = at {
-        let b = table.block(id).expect("a docs block, reached by reference");
-        for i in 0..word::<u64>(b, DOCS_N_AT) as usize {
-            let w = |k: usize| word::<u64>(b, DOCS_AT + 8 * (DOC_WORDS * i + k));
-            let source = table.block(w(1) as u32).expect("a source's block, reached by reference");
-            let tape = table.block(w(2) as u32).expect("a tape's block, reached by reference");
-            let src = std::str::from_utf8(&source[w(4) as usize..(w(4) + w(5)) as usize]).expect("a source the file layer checked is UTF-8");
-            let t = Reads::in_place(&tape[w(6) as usize..(w(6) + w(7)) as usize], src).expect("a tape the parser wrote");
-            let syms = table.block(w(3) as u32).expect("a symbols block, reached by reference");
-            let n = statements(&t).count();
-            out.push(Doc { module: w(0) as i64, t, syms, n });
+/// The launch's documents, in the docs blocks' order, each read through the descriptor table where it lies, one at a
+/// time.
+fn docs_of<'c, 't>(table: &'c Table<'t>, first: u32) -> impl Iterator<Item = Doc<'t>> + 'c {
+    let (mut at, mut i) = (Some(first), 0usize);
+    core::iter::from_fn(move || {
+        loop {
+            let b = table.block(at?).expect("a docs block, reached by reference");
+            if i < word::<u64>(b, DOCS_N_AT) as usize {
+                let w = |k: usize| word::<u64>(b, DOCS_AT + 8 * (DOC_WORDS * i + k));
+                let source = table.block(w(1) as u32).expect("a source's block, reached by reference");
+                let tape = table.block(w(2) as u32).expect("a tape's block, reached by reference");
+                let src = core::str::from_utf8(&source[w(4) as usize..(w(4) + w(5)) as usize]).expect("a source the file layer checked is UTF-8");
+                let t = Reads::in_place(&tape[w(6) as usize..(w(6) + w(7)) as usize], src).expect("a tape the parser wrote");
+                let syms = table.block(w(3) as u32).expect("a symbols block, reached by reference");
+                let (n, module) = (statements(&t).count(), w(0) as i64);
+                i += 1;
+                return Some(Doc { module, t, syms, n });
+            }
+            let next = word::<u64>(b, DOCS_NEXT_AT) as u32;
+            (at, i) = ((next != NO_NEXT).then_some(next), 0);
         }
-        let next = word::<u64>(b, DOCS_NEXT_AT) as u32;
-        at = (next != NO_NEXT).then_some(next);
-    }
-    out
+    })
 }
 
 /// `f` of each statement whose item (its place among every document's statements, in order) is in `items`: its
 /// document's place, the document, its node and its item.
-fn each(docs: &[Doc<'_>], items: std::ops::Range<usize>, f: &mut dyn FnMut(usize, &Doc<'_>, usize, usize)) {
+fn each<'t>(docs: impl Iterator<Item = Doc<'t>>, items: core::ops::Range<usize>, f: &mut dyn FnMut(usize, &Doc<'t>, usize, usize)) {
     let mut first = 0;
-    for (k, d) in docs.iter().enumerate() {
+    for (k, d) in docs.enumerate() {
         if first >= items.end {
             break;
         }
         if first + d.n > items.start {
             let skip = items.start.saturating_sub(first);
             for (j, s) in statements(&d.t).enumerate().skip(skip).take(items.end - first - skip) {
-                f(k, d, s, first + j);
+                f(k, &d, s, first + j);
             }
         }
         first += d.n;
@@ -309,30 +311,31 @@ pub fn placed(control: &[u8]) -> u64 {
     word::<u64>(control, PLACED)
 }
 
-fn launch_docs<'t>(c: &Ctx<'_, '_, 't>) -> (K0P, Vec<Doc<'t>>) {
-    let p = <K0P as crate::Params>::read(c.params);
-    (p, docs_of(c.table, p.docs as u32))
+/// The launch's params, and its descriptor table its documents are read through.
+fn launch<'c, 't>(c: &Ctx<'c, '_, 't>) -> (K0P, &'c Table<'t>) {
+    (<K0P as crate::Params>::read(c.params), c.table)
 }
 
 fn statement_items(c: &Ctx<'_, '_, '_>) -> u32 {
-    launch_docs(c).1.iter().map(|d| d.n).sum::<usize>() as u32
+    let (p, table) = launch(c);
+    docs_of(table, p.docs as u32).map(|d| d.n).sum::<usize>() as u32
 }
 
 /// `count`: each statement's rows by relation; a refusal, the first by document and node order, into control.
 fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
-    let (_, docs) = launch_docs(c);
-    let atoms = c.read(ATOMS);
-    let mut counts = Vec::with_capacity(tile.items().len()); // copy: not block data (this tile's counts)
+    let (p, table) = launch(c);
+    let ([atoms], [control]) = c.views([ATOMS], [CONTROL]);
+    // Each statement's counts written to its places' words as it is walked.
+    let at = places_at(control);
     let mut first: Option<(usize, usize, &'static str)> = None;
-    each(&docs, tile.items(), &mut |k, d, s, _| {
+    each(docs_of(table, p.docs as u32), tile.items(), &mut |k, d, s, i| {
         let mut n = [0u32; R];
         if let Err((node, why)) = statement(&d.t, d.module, d.syms, atoms, s, &mut |r, _| n[r] += 1) {
             let e = (k, node, why);
             first = Some(first.map_or(e, |f| if (e.0, e.1) < (f.0, f.1) { e } else { f }));
         }
-        counts.push(n);
+        words_mut::<u32>(control, at + 4 * R * i, R).copy_from_slice(&n);
     });
-    let ([], [control]) = c.views([], [CONTROL]);
     if let Some((k, node, why)) = first {
         let was = (word::<u64>(control, REFUSED_NODE) != u64::MAX).then(|| (word::<u32>(control, REFUSED_DOC) as usize, word::<u64>(control, REFUSED_NODE) as usize));
         if was.is_none_or(|w| (k, node) < w) {
@@ -341,10 +344,6 @@ fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
             set_word::<u32>(control, REFUSED_DOC, k as u32);
         }
     }
-    let at = places_at(control);
-    for (i, n) in tile.items().zip(counts) {
-        words_mut::<u32>(control, at + 4 * R * i, R).copy_from_slice(&n);
-    }
 }
 
 /// `scan`: one item. The counts' exclusive prefix sums by relation, from the places claimed in each runs block at once;
@@ -352,7 +351,7 @@ fn count(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
 fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let items = statement_items(c) as usize;
     // Control, then each relation's runs block.
-    let ([], v) = c.views([], std::array::from_fn::<usize, { R + 1 }, _>(|i| if i == 0 { CONTROL } else { RUNS + i - 1 }));
+    let ([], v) = c.views([], core::array::from_fn::<usize, { R + 1 }, _>(|i| if i == 0 { CONTROL } else { RUNS + i - 1 }));
     let control = &mut *v[0];
     if word::<u64>(control, REFUSED_NODE) != u64::MAX {
         return;
@@ -379,7 +378,7 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             n[r] = if base[r] == UNCLAIMED { UNCLAIMED } else { base[r] + n[r] };
         }
     }
-    let ends: [u32; R] = std::array::from_fn(|r| if base[r] == UNCLAIMED { UNCLAIMED } else { base[r] + total[r] });
+    let ends: [u32; R] = core::array::from_fn(|r| if base[r] == UNCLAIMED { UNCLAIMED } else { base[r] + total[r] });
     words_mut::<u32>(control, ENDS, R).copy_from_slice(&ends);
     let placed: u32 = (0..R).filter(|&r| base[r] != UNCLAIMED).map(|r| total[r]).sum();
     set_word::<u64>(control, PLACED, u64::from(placed));
@@ -387,13 +386,13 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
 
 /// `place`: each statement walked again, its rows written at its places with the run's sign.
 fn place(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
-    let (p, docs) = launch_docs(c);
+    let (p, table) = launch(c);
     if word::<u64>(c.read(CONTROL), REFUSED_NODE) != u64::MAX {
         return;
     }
-    let ([atoms, control], mut runs) = c.views([ATOMS, CONTROL], std::array::from_fn::<usize, R, _>(|r| RUNS + r));
+    let ([atoms, control], mut runs) = c.views([ATOMS, CONTROL], core::array::from_fn::<usize, R, _>(|r| RUNS + r));
     let places = places_at(control);
-    each(&docs, tile.items(), &mut |_, d, s, i| {
+    each(docs_of(table, p.docs as u32), tile.items(), &mut |_, d, s, i| {
         let mut at: [u32; R] = words::<u32>(control, places + 4 * R * i, R).try_into().expect("a statement's places");
         let walked = statement(&d.t, d.module, d.syms, atoms, s, &mut |r, row| {
             if at[r] != UNCLAIMED {
@@ -410,33 +409,35 @@ fn place(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
 /// room they name (Operations §6.1: what an operator reads to go fast and could make again). A run refused, or one
 /// whose runs were too small (the driver runs it again from a cache read as ∅), keeps no size.
 fn keep(c: &mut Ctx<'_, '_, '_>, _: Tile) {
-    let (_, docs) = launch_docs(c);
-    let control = c.read(CONTROL);
-    if word::<u64>(control, REFUSED_NODE) != u64::MAX {
+    let (p, table) = launch(c);
+    if word::<u64>(c.read(CONTROL), REFUSED_NODE) != u64::MAX {
         return;
     }
-    let gone: Vec<u32> = words::<u32>(control, GONE, word::<u64>(control, GONE_N) as usize).to_vec(); // copy: not block data (this item's list of the gone)
-    let ends: [u32; R] = words::<u32>(control, ENDS, R).try_into().expect("the relations' ends");
-    let (places, items) = (places_at(control), docs.iter().map(|d| d.n).sum::<usize>());
-    let start = |i: usize, r: usize| if i == items { ends[r] } else { word::<u32>(control, places + 4 * (R * i + r)) };
-    let mut sizes = Vec::with_capacity(docs.len()); // copy: derived (each document's sizes, written once into the cache)
-    if ends.iter().all(|&e| e != UNCLAIMED) {
-        let mut first = 0;
-        for d in &docs {
-            sizes.push((d.module as u32, std::array::from_fn::<u32, R, _>(|r| start(first + d.n, r) - start(first, r))));
-            first += d.n;
-        }
-    }
+    // The documents gone, read where control holds them, let go of their entries.
     {
-        let ([], [cache]) = c.views([], [CACHE]);
-        for &g in &gone {
+        let ([control], [cache]) = c.views([CONTROL], [CACHE]);
+        for &g in words::<u32>(control, GONE, word::<u64>(control, GONE_N) as usize) {
             crate::cache::forget(cache, g);
         }
     }
-    for (d, n) in sizes {
-        if !crate::cache::keep_sizes(c, CACHE, d, &n) {
+    let control = c.read(CONTROL);
+    let ends: [u32; R] = words::<u32>(control, ENDS, R).try_into().expect("the relations' ends");
+    if ends.contains(&UNCLAIMED) {
+        return;
+    }
+    let items = docs_of(table, p.docs as u32).map(|d| d.n).sum::<usize>();
+    let start = |control: &[u8], i: usize, r: usize| if i == items { ends[r] } else { word::<u32>(control, places_at(control) + 4 * (R * i + r)) };
+    // Each document's sizes, from its statements' places, kept as it is read.
+    let mut first = 0;
+    for d in docs_of(table, p.docs as u32) {
+        let n: [u32; R] = {
+            let control = c.read(CONTROL);
+            core::array::from_fn(|r| start(control, first + d.n, r) - start(control, first, r))
+        };
+        if !crate::cache::keep_sizes(c, CACHE, d.module as u32, &n) {
             return;
         }
+        first += d.n;
     }
 }
 

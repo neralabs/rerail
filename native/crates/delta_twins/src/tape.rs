@@ -3,8 +3,56 @@
 //! `F16`) with the rr language's table; nothing is copied.
 
 use rerail_rr_syntax::tape::{FIRST_ANONYMOUS, Kind, entry_kind_field};
-use rerail_rr_syntax::tape_format::f16::{F16, read_in_place};
+use rerail_rr_syntax::syntax::unescape_each;
+use rerail_rr_syntax::tape_format::f16::{F16, read_checked};
 use rerail_rr_syntax::tape_format::tape::Tape as _;
+
+/// A string literal's value, read where its body lies in the source: the body itself when it has no escape, else its
+/// characters unescaped as they are read (`unescape_each`), each time, with nothing gathered.
+#[derive(Clone, Copy, Debug)]
+pub struct Str<'t> {
+    body: &'t str,
+}
+
+impl<'t> Str<'t> {
+    /// The value, when it is its body as written (no escape).
+    pub fn plain(&self) -> Option<&'t str> {
+        (!self.body.contains('\\')).then_some(self.body)
+    }
+
+    /// Each character of the value, in turn.
+    pub fn each(&self, out: impl FnMut(char)) {
+        unescape_each(self.body, out).expect("a string's escapes, checked when it was read");
+    }
+
+    /// Each byte run of the value's UTF-8, in turn.
+    pub fn each_utf8(&self, mut out: impl FnMut(&[u8])) {
+        self.each(|c| out(c.encode_utf8(&mut [0; 4]).as_bytes()));
+    }
+
+    /// Whether the value is `s`.
+    pub fn is(&self, s: &str) -> bool {
+        if let Some(p) = self.plain() {
+            return p == s;
+        }
+        let (mut rest, mut same) = (s.as_bytes(), true);
+        self.each_utf8(|b| {
+            same &= rest.starts_with(b);
+            rest = rest.get(b.len()..).unwrap_or(&[]);
+        });
+        same && rest.is_empty()
+    }
+
+    /// Writes the value's UTF-8 into `to`, exactly as long.
+    pub fn write(&self, to: &mut [u8]) {
+        let mut at = 0;
+        self.each_utf8(|b| {
+            to[at..at + b.len()].copy_from_slice(b);
+            at += b.len();
+        });
+        assert_eq!(at, to.len(), "a string's value written whole");
+    }
+}
 
 /// A tape's reads: a node's kind, field, children and text, where the tape lies.
 #[derive(Clone, Copy)]
@@ -19,9 +67,10 @@ impl<'t> Reads<'t> {
         Reads { r, src }
     }
 
-    /// The reads of a tape's bytes and its source where they lie (a slot's), with the rr language's table.
-    pub fn in_place(tape: &'t [u8], src: &'t str) -> Result<Reads<'t>, String> {
-        Ok(Reads { r: read_in_place(tape, rerail_rr_syntax::tape::lang())?, src })
+    /// The reads of a tape's bytes and its source where they lie (a slot's), with the rr language's table: `None` when
+    /// they are not a tape of it (`read_in_place` says why).
+    pub fn in_place(tape: &'t [u8], src: &'t str) -> Option<Reads<'t>> {
+        Some(Reads { r: read_checked(tape, rerail_rr_syntax::tape::lang())?, src })
     }
 
     pub fn len(&self) -> usize {
@@ -46,7 +95,7 @@ impl<'t> Reads<'t> {
     /// Node `i`'s children, in order.
     pub fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
         let end = self.r.subtree_end(i);
-        std::iter::successors(self.r.first_child(i), move |&c| self.r.next_sibling(c, end))
+        core::iter::successors(self.r.first_child(i), move |&c| self.r.next_sibling(c, end))
     }
 
     /// Whether node `i` is counted by `child`: named, and no comment.
@@ -69,8 +118,8 @@ impl<'t> Reads<'t> {
         &self.src[self.start(i) as usize..self.end(i) as usize]
     }
 
-    /// A string's unescaped contents, when node `i` is one.
-    pub fn string(&self, i: usize) -> Option<String> {
+    /// A string's value, when node `i` is one and its escapes are (`Str`: its body, unescaped as it is read).
+    pub fn string(&self, i: usize) -> Option<Str<'t>> {
         if self.node(i).0 != Kind::String as u16 {
             return None;
         }
@@ -78,7 +127,7 @@ impl<'t> Reads<'t> {
             .text(i)
             .strip_prefix('"')
             .and_then(|b| b.strip_suffix('"'))?;
-        rerail_rr_syntax::syntax::unescape(body).ok()
+        unescape_each(body, |_| {}).ok().map(|()| Str { body })
     }
 
     /// A number's value, when node `i` is one.

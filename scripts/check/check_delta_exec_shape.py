@@ -140,8 +140,9 @@ def b1(failures: list) -> None:
         failures.append(f"{op.relative_to(ROOT)}: register takes the Checked its check gave")
     if not re.search(r"pub struct Checked \{\s*op:", code):
         failures.append(f"{op.relative_to(ROOT)}: Checked's fields are private (only check makes one)")
-    if "pub const MAX_SLOTS: usize = 30;" not in code:
-        failures.append(f"{op.relative_to(ROOT)}: an operation binds at most 30 slots")
+    # One definition, the twins' (a twin's meter keeps a word a slot), which the executor's op.rs re-exports.
+    if "pub const MAX_SLOTS: usize = 30;" not in (TWINS / "src/lib.rs").read_text() or "pub use rerail_delta_twins::MAX_SLOTS;" not in code:
+        failures.append(f"{op.relative_to(ROOT)}: an operation binds at most 30 slots (the twins' MAX_SLOTS)")
 
 
 def b2(failures: list) -> None:

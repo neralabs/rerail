@@ -485,6 +485,12 @@ pub fn read_in_place<'a>(bytes: &'a [u8], lang: &'a Lang) -> Result<F16<'a>, Str
     Ok(F16 { bytes, view: bind(frame, lang)?, lang })
 }
 
+/// `read_in_place`, for a reader whose interface names no heap type (an operation's twin): `None` when it refuses the
+/// bytes (its reason is `read_in_place`'s).
+pub fn read_checked<'a>(bytes: &'a [u8], lang: &'a Lang) -> Option<F16<'a>> {
+    read_in_place(bytes, lang).ok()
+}
+
 /// Where a format 16 tape's parts lie, as its header says, for a reader that reads them there without this crate
 /// (the device's, `device_tape.h`): block 0's start and the blocks' stride (`column`), each side list's start, each
 /// one's part starts (u32s, a part a block and one more at the end), the newline index, the end; the node count, the

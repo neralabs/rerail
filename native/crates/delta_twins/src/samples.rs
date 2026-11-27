@@ -87,12 +87,11 @@ fn evens_place(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let v = vals(input);
     let w = chunk_words(work, v.len());
     let total = w[w.len() - 1] as usize;
-    let at: Vec<u64> = t.items().map(|k| w[k]).collect(); // copy: not block data (a tile's offsets)
     let dst = vals_mut(out, total);
-    for (k, mut o) in t.items().zip(at) {
-        for &x in v[k * CHUNK..((k + 1) * CHUNK).min(v.len())].iter().filter(|&&x| x % 2 == 0) {
-            dst[o as usize] = x;
-            o += 1;
+    for k in t.items() {
+        let o = w[k] as usize;
+        for (j, &x) in v[k * CHUNK..((k + 1) * CHUNK).min(v.len())].iter().filter(|&&x| x % 2 == 0).enumerate() {
+            dst[o + j] = x;
         }
     }
 }

@@ -60,48 +60,84 @@ pub type Spanned<'s> = (Tok<'s>, usize, usize);
 /// A string literal's escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}` and JSON's `\uXXXX`. Any other backslash is
 /// kept with the character after it, so a regex reads as written (`"\d+\.py"`).
 pub fn unescape(body: &str) -> Result<String, String> {
-    let mut out = String::new();
-    let mut chars = body.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut out = String::with_capacity(body.len());
+    unescape_each(body, |c| out.push(c)).map_err(|e| e.to_string())?;
+    Ok(out)
+}
+
+/// Why a string literal's escape is not one (`unescape_each`), naming the escape's hex digits as written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadEscape<'s> {
+    Hex(&'s str),
+    CodePoint(&'s str),
+    Surrogate,
+}
+
+impl core::fmt::Display for BadEscape<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            BadEscape::Hex(h) => write!(f, "bad \\u escape {h:?}"),
+            BadEscape::CodePoint(h) => write!(f, "bad code point {h:?}"),
+            BadEscape::Surrogate => write!(f, "bad surrogate pair"),
+        }
+    }
+}
+
+/// A string literal's body unescaped (`unescape`'s escapes), each character given to `out` in turn, read where the
+/// body lies: nothing gathered.
+pub fn unescape_each<'s>(body: &'s str, mut out: impl FnMut(char)) -> Result<(), BadEscape<'s>> {
+    let mut chars = body.char_indices().peekable();
+    // The byte the next character starts at.
+    let here = |chars: &mut core::iter::Peekable<core::str::CharIndices<'_>>| chars.peek().map_or(body.len(), |x| x.0);
+    while let Some((_, c)) = chars.next() {
         if c != '\\' {
-            out.push(c);
+            out(c);
             continue;
         }
-        match chars.next() {
-            Some('"') => out.push('"'),
-            Some('\\') => out.push('\\'),
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
+        match chars.next().map(|x| x.1) {
+            Some('"') => out('"'),
+            Some('\\') => out('\\'),
+            Some('n') => out('\n'),
+            Some('t') => out('\t'),
+            Some('r') => out('\r'),
             Some('u') => {
-                let hex: String = if chars.peek() == Some(&'{') {
-                    chars.next();
-                    let h: String = chars.by_ref().take_while(|&c| c != '}').collect();
-                    h
+                let at = here(&mut chars);
+                let rest = &body[at..];
+                // `\u{…}`: the digits to its `}` (the rest when it has none), the `}` consumed; else four characters.
+                let (hex, used) = if let Some(r) = rest.strip_prefix('{') {
+                    r.find('}').map_or((r, rest.len()), |e| (&r[..e], e + 2))
                 } else {
-                    chars.by_ref().take(4).collect()
+                    let e = rest.char_indices().nth(4).map_or(rest.len(), |x| x.0);
+                    (&rest[..e], e)
                 };
-                let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("bad \\u escape {hex:?}"))?;
+                while here(&mut chars) < at + used {
+                    chars.next();
+                }
+                let code = u32::from_str_radix(hex, 16).map_err(|_| BadEscape::Hex(hex))?;
                 // A JSON surrogate pair: a high surrogate, then a low one (another escape is its own character).
-                if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
-                    let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
-                        chars.by_ref().take(6).for_each(drop);
+                if (0xD800..0xDC00).contains(&code) && chars.peek().map(|x| x.1) == Some('\\') {
+                    let at = here(&mut chars);
+                    let rest = &body[at..];
+                    let e = rest.char_indices().nth(6).map_or(rest.len(), |x| x.0);
+                    if let Some(low) = rest[..e].strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
+                        for _ in 0..6 {
+                            chars.next();
+                        }
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                        out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);
+                        out(char::from_u32(joined).ok_or(BadEscape::Surrogate)?);
                         continue;
                     }
                 }
-                out.push(char::from_u32(code).ok_or_else(|| format!("bad code point {hex:?}"))?);
+                out(char::from_u32(code).ok_or(BadEscape::CodePoint(hex))?);
             }
             Some(other) => {
-                out.push('\\');
-                out.push(other);
+                out('\\');
+                out(other);
             }
-            None => out.push('\\'),
+            None => out('\\'),
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// A string as an `.rerail` literal, read back by `unescape` as the same string.

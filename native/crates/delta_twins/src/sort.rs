@@ -4,7 +4,7 @@
 //! items being sorted (positions or values), the pass's width and which array holds the runs.
 
 use crate::Tile;
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 /// Items a chunk: the first phase sorts each chunk by itself.
 pub const CHUNK: usize = 256;
@@ -24,12 +24,22 @@ pub fn more(n: usize, width: usize) -> bool {
     width > 0 && width < n
 }
 
-/// The sort's first phase, for its tile of chunks: each chunk of `items` sorted by `cmp`.
+/// The sort's first phase, for its tile of chunks: each chunk of `items` sorted by `cmp`, stably (a tie keeps its
+/// order): a bottom-up merge of runs, through a chunk's buffer of its own on the stack.
 pub fn sort_chunks(items: &mut [u32], tile: Tile, cmp: impl Fn(u32, u32) -> Ordering) {
     let n = items.len();
+    let mut buf = [0u32; CHUNK];
     for c in tile.items() {
-        let r = c * CHUNK..((c + 1) * CHUNK).min(n);
-        items[r].sort_by(|&a, &b| cmp(a, b));
+        let chunk = &mut items[c * CHUNK..((c + 1) * CHUNK).min(n)];
+        let m = chunk.len();
+        let mut width = 1;
+        // Each pass merges pairs of runs into the buffer, then back: the chunk holds the runs between passes.
+        while width < m {
+            let whole = Tile { lo: 0, hi: m.div_ceil(width).div_ceil(2) as u32 };
+            merge_pairs(chunk, &mut buf[..m], whole, width, &cmp);
+            chunk.copy_from_slice(&buf[..m]);
+            width *= 2;
+        }
     }
 }
 

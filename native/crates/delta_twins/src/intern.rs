@@ -17,11 +17,11 @@
 //! A symbol is an atom's id: the same text has the same id across runs and documents. Nothing reads the atoms to
 //! write them but this operation: a view reads the symbols block, and finds names (`find_in`), never interns.
 
-use crate::tape::Reads;
+use crate::tape::{Reads, Str};
 use crate::{Ctx, Tile, TwinPhase};
-use rerail_blocks::atoms::{append_in, find_in};
+use rerail_blocks::atoms::{append_in, append_in_by, find_in, find_in_by};
 use rerail_blocks::gens::{BODY_AT, set_word, word};
-use rerail_blocks::maps::hash_bytes;
+use rerail_blocks::maps::{HashBytes, hash_bytes};
 use rerail_rr_syntax::tape::{FIRST_ANONYMOUS, KIND_NAMES, Kind};
 
 crate::params! {
@@ -78,7 +78,7 @@ pub fn count(syms: &[u8]) -> usize {
 /// The document's path and module, as the answer named them.
 pub fn names(syms: &[u8]) -> (&str, &str) {
     let (p, m) = (word::<u32>(syms, PATH_LEN_AT) as usize, word::<u32>(syms, MODULE_LEN_AT) as usize);
-    let s = |a: usize, b: usize| std::str::from_utf8(&syms[a..b]).expect("names written from a &str");
+    let s = |a: usize, b: usize| core::str::from_utf8(&syms[a..b]).expect("names written from a &str");
     (s(NAMES_AT, NAMES_AT + p), s(NAMES_AT + p, NAMES_AT + p + m))
 }
 
@@ -107,6 +107,30 @@ fn put(atoms: &mut [u8], s: &str) -> u32 {
     find_in(atoms, s, h).or_else(|| append_in(atoms, s, h)).expect("room in the atoms block")
 }
 
+/// A string value's hash and length, of its UTF-8 as it is read.
+fn value_hash(v: &Str<'_>) -> (u64, usize) {
+    let mut h = HashBytes::default();
+    v.each_utf8(|b| h.push(b));
+    (h.finish(), h.len())
+}
+
+/// A string value's id in the atoms, when they hold it: found where its body lies, compared as it is read.
+fn find_value(atoms: &[u8], v: &Str<'_>) -> Option<u32> {
+    match v.plain() {
+        Some(s) => find_in(atoms, s, hash_bytes(s.as_bytes())),
+        None => find_in_by(atoms, value_hash(v).0, |a| v.is(a)),
+    }
+}
+
+/// A string value's id in the atoms, made when it has none: written there as it is read.
+fn put_value(atoms: &mut [u8], v: &Str<'_>) -> u32 {
+    if let Some(s) = v.plain() {
+        return put(atoms, s);
+    }
+    let (h, len) = value_hash(v);
+    find_in_by(atoms, h, |a| v.is(a)).or_else(|| append_in_by(atoms, len, h, |to| v.write(to))).expect("room in the atoms block")
+}
+
 /// A node's symbol the hash phase did not find: a name the scan makes, in node order.
 const NEW: u32 = u32::MAX;
 /// An operator's token the hash phase did not find: the scan finds it once the language's names are in (never made).
@@ -114,13 +138,13 @@ const FIND: u32 = u32::MAX - 1;
 
 /// The document's source and tape, read where they lie.
 fn reads<'b>(source: &'b [u8], tape: &'b [u8], p: &InternP) -> Reads<'b> {
-    let src = std::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
+    let src = core::str::from_utf8(&source[p.src_at as usize..(p.src_at + p.src_len) as usize]).expect("a source the file layer checked is UTF-8");
     Reads::in_place(&tape[p.tape_at as usize..(p.tape_at + p.tape_len) as usize], src).expect("a tape the parser wrote")
 }
 
 /// Node `n`'s two names to intern: its text's (an identifier's or a variable's, made when new; an operator's, found)
 /// and its value's (a string's).
-fn names_of<'r>(r: &'r Reads<'_>, n: usize) -> (Option<(&'r str, bool)>, Option<String>) {
+fn names_of<'r>(r: &'r Reads<'r>, n: usize) -> (Option<(&'r str, bool)>, Option<Str<'r>>) {
     let k = r.node(n).0;
     let t = if k == Kind::Identifier as u16 || k == Kind::Variable as u16 {
         Some((r.text(n), true))
@@ -143,7 +167,7 @@ fn hash(c: &mut Ctx<'_, '_, '_>, tile: Tile) {
     for n in tile.items() {
         let (t, v) = names_of(&r, n);
         let t = t.map_or(0, |(s, make)| find(s).unwrap_or(if make { NEW } else { FIND }));
-        let v = v.map_or(0, |s| find(&s).unwrap_or(NEW));
+        let v = v.map_or(0, |s| find_value(atoms, &s).unwrap_or(NEW));
         let at = node_at(syms, n);
         set_word::<u32>(syms, at, t);
         set_word::<u32>(syms, at + 4, v);
@@ -181,7 +205,7 @@ fn scan(c: &mut Ctx<'_, '_, '_>, _: Tile) {
             set_word::<u32>(syms, at, id);
         }
         if let Some(s) = vn.filter(|_| v == NEW) {
-            set_word::<u32>(syms, at + 4, put(atoms, &s));
+            set_word::<u32>(syms, at + 4, put_value(atoms, &s));
         }
     }
 }

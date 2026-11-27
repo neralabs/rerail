@@ -36,8 +36,8 @@ use std::sync::Arc;
 use rerail_blocks::gens::Table;
 use rerail_delta_twins::{Ctx, Field, Meter, Params, Slot, Tile, Twin};
 
-/// The most slots an operation binds: Metal's argument table has 31 entries, one of them the params' (D1).
-pub const MAX_SLOTS: usize = 30;
+/// The most slots an operation binds: the twins' one definition (`rerail_delta_twins::MAX_SLOTS`).
+pub use rerail_delta_twins::MAX_SLOTS;
 
 /// How an operation uses a slot's block.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -777,7 +777,7 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
         let mut launch = dir.launch(sig.name, &modes)?;
         let drove = match v.imp {
             Impl::Twin(twin) | Impl::Host(twin) => {
-                let mut meter = Meter { capacity: slots.iter().map(|&id| dir.capacity(id)).collect(), ..Meter::default() };
+                let mut meter = Meter::new(slots.iter().map(|&id| dir.capacity(id)));
                 let (pins, table) = launch.parts();
                 let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
                 let ctx = Ctx { slots: &mut slot_views, table: &table, params, meter: &mut meter };
@@ -905,9 +905,10 @@ fn drive(sig: &Signature, v: &Version, tiling: Tiling, dir: &Directory, slots: &
                 }
             }
             if let Some(m) = r.meter()
-                && !m.needs.is_empty()
+                && !m.no_needs()
             {
-                let needs = std::mem::take(&mut m.needs);
+                let taken = m.take_needs();
+                let needs: Vec<(usize, usize)> = taken.iter().enumerate().filter(|n| *n.1 > 0).map(|(s, &n)| (s, n)).collect(); // copy: not block data (the host's list of the slots to grow)
                 let (s, need) = needs[0];
                 match phase.capacity() {
                     Some(Over::Grow) => {
