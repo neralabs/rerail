@@ -114,11 +114,15 @@ fn round_trip(label: &str, path: &str, source: &str, atoms: &Interned) -> (Arc<F
 /// tree and a long list are placed under anchors and still fit their words.
 #[test]
 fn a_node_path_decodes_to_its_node_in_every_language() {
+    // 300 parentheses are one only-child run: its steps fit a word (gamma(300)), no anchor.
     let deep = format!("x = {}1{}\n", "(".repeat(300), ")".repeat(300));
+    // 300 sums each nested in the right of the one above: each level its own steps, so anchors.
+    let sums = format!("x = {}1{}\n", "(1 + ".repeat(300), ")".repeat(300));
     let long = format!("y = [{}]\n", (0..70_000).map(|i| i.to_string()).collect::<Vec<_>>().join(", "));
     let cases: &[(&str, &str, &str)] = &[
         ("python", "pkg/a.py", "import os\nclass C:\n    x = 1\n    def m(self, a, b=2):\n        if a:\n            return b\n        elif b:\n            pass\n        else:\n            raise E()\n        # note\n        return [i for i in a]\n"),
         ("python", "pkg/deep.py", &deep),
+        ("python", "pkg/sums.py", &sums),
         ("python", "pkg/long.py", &long),
         ("typescript", "src/a.ts", "export function A(x: number): string { if (x) { return `${x}`; } return ''; }\nexport class Z { f() { return 1; } }\n"),
         ("rust", "src/a.rs", "impl S { fn a(&self) -> u32 { match self.x { 1 => 2, _ => 3 } } }\nmod m { pub fn g() -> u32 { 1 } }\n"),
@@ -133,8 +137,10 @@ fn a_node_path_decodes_to_its_node_in_every_language() {
     for &(label, path, source) in cases {
         let (_, words, anchored) = round_trip(label, path, source, &atoms);
         assert!(words.len() > 5, "{label}: {} paths", words.len());
-        if path.contains("deep") || path.contains("long") {
+        if path.contains("sums") || path.contains("long") {
             assert!(anchored > 0, "{label} {path}: anchors placed");
+        } else {
+            assert_eq!(anchored, 0, "{label} {path}: no anchor where every path fits its word");
         }
     }
 }
@@ -158,4 +164,27 @@ fn an_edit_in_one_function_leaves_another_functions_paths() {
     let (ga, gb) = (in_g(&fa, &wa), in_g(&fb, &wb));
     assert!(ga.len() > 8, "g's paths: {}", ga.len());
     assert_eq!(ga, gb, "g's paths after an edit to f and a function added");
+}
+
+/// A small file's paths fit their words with no anchor: its steps are coded by its language's tables, none escaped.
+#[test]
+fn a_small_files_paths_need_no_anchor() {
+    let source = "def f(x):\n    return g(x, 1)\n\nclass C:\n    def m(self):\n        return g(2)\n";
+    let atoms = Interned::default();
+    let (facts, words, anchored) = round_trip("python", "a.py", source, &atoms);
+    if anchored > 0 {
+        let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+        let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+        let paths = DocPaths::new(&p, &dialect, "a.py").unwrap();
+        let f = p.f();
+        let mut lines = Vec::new();
+        for (&x, &w) in &words {
+            if let Some(q) = f.parent(x) {
+                let bits = paths.steps(f, &dialect, q).to(x).map(|b| b.len());
+                lines.push(format!("{} > {}: step {bits:?}, base {:?}", dialect.name(f, q), dialect.name(f, x), atoms.text((w >> 32) as u32)));
+            }
+        }
+        lines.sort();
+        panic!("{anchored} paths under anchors:\n{}", lines.join("\n"));
+    }
 }

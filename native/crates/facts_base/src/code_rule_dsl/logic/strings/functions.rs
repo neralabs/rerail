@@ -146,6 +146,11 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // How many spaces, tabs and form feeds a node's, token's or span's text starts with (`LongTexts::indent`), counted
     // in its source: `@indent(n)`.
     ("indent", &[Number], Number),
+    // Node paths (decision 0722, the syntax table's `Batch::node_path`): a node's name across files, its granule's key
+    // atom in the high 32 bits and its steps below; the node a path names in its document; its granule's own path.
+    ("node_path", &[Number], Number),
+    ("path_node", &[Number], Number),
+    ("path_unit", &[Number], Number),
     // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
     // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
     ("rr_node_name", &[Number], Text),

@@ -1960,6 +1960,37 @@ line_ind(l, @indent(sp), @text_len(sp)) :- src_line(_, l, sp).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A node path (decision 0722) names a node by its granule's key and its steps: `@path_node` gives back the node
+/// `@node_path` made it of, `@path_unit` its granule's own path, and an output shows a path as its text (its base's
+/// text, `/` and its steps), the same in every process.
+#[test]
+fn node_paths_name_nodes_and_decode_back_in_rules() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("nodepaths");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "def f(x):\n    return g(x, 1)\n\nclass C:\n    def m(self):\n        return g(2)\n").unwrap();
+    let rule = dir.join("paths.rerail");
+    std::fs::write(&rule, r#"
+.decl named(t: symbol, p: node_path)
+named(t, @node_path(n)) :- kind(n, "call"), text(n, t).
+.decl back(t: symbol, u: symbol)
+back(t, u) :- named(t, p), n = @path_node(p), text(n, u).
+.decl unit(t: symbol, u: node_path)
+unit(t, @path_unit(p)) :- named(t, p).
+.output named, back, unit
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let shown = |r: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap();
+    assert_eq!(shown("back").into_iter().map(|row| row.join(" | ")).collect::<std::collections::BTreeSet<_>>(), ["g(x, 1) | g(x, 1)", "g(2) | g(2)"].map(str::to_owned).into());
+    let named: std::collections::BTreeMap<String, String> = shown("named").into_iter().map(|row| (row[0].clone(), row[1].clone())).collect();
+    assert!(named["g(x, 1)"].starts_with("a.py\t/function_definition:f#0\t/"), "{named:?}");
+    assert!(named["g(2)"].starts_with("a.py\t/class_definition:C#0/function_definition:m#0\t/"), "{named:?}");
+    let unit: std::collections::BTreeMap<String, String> = shown("unit").into_iter().map(|row| (row[0].clone(), row[1].clone())).collect();
+    assert_eq!(unit["g(x, 1)"], "a.py\t/function_definition:f#0\t/1");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `def_digest(n, h)` (decision 0083 §0) hashes each definition unit's own code: the module, each class and each
 /// function, a nested unit standing for its kind and name. A comment or a moved line changes nothing; a method's body
 /// changes the method's digest alone, not its class's or its module's.

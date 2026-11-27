@@ -384,7 +384,7 @@ type StagedSlot = std::sync::Arc<std::sync::Mutex<Option<Result<Vec<StagedFile>,
 /// transaction (`write_chain`); staged alone, the newest wave's record hid every earlier one's, and the next run asked
 /// their entries again and wrote its record, a write in a warm run.
 fn stages(p: &KeptPut) -> bool {
-    p.rel != READERS && matches!(p.what, KeptWhat::Rows(_) | KeptWhat::Picked(_)) && !p.types.contains(&b's')
+    p.rel != READERS && matches!(p.what, KeptWhat::Rows(_) | KeptWhat::Picked(_)) && !p.types.iter().any(|t| matches!(t, b's' | b'p'))
 }
 
 /// A kept gather's rows, written as it closes (`Gather::close`'s `now`): each space's in a file of its own, on the
@@ -506,14 +506,21 @@ impl<'a> Mapped<'a> {
     fn of(rows: &'a dyn RowsIn, types: &[u8], map: MapIds) -> StoreResult<Mapped<'a>> {
         let mut tables = Vec::with_capacity(rows.arity());
         for c in 0..rows.arity() {
-            if types.get(c) != Some(&b's') {
-                tables.push(None);
-                continue;
-            }
-            let mut ids: Vec<i64> = (0..rows.n()).map(|r| rows.get(r, c)).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let path = match types.get(c) {
+                Some(b's') => false,
+                // A node path (decision 0722): its atom is its high 32 bits; its steps are as they are.
+                Some(b'p') => true,
+                _ => {
+                    tables.push(None);
+                    continue;
+                }
+            };
+            let values: std::collections::BTreeSet<i64> = (0..rows.n()).map(|r| rows.get(r, c)).collect();
+            let mut ids: Vec<i64> = if path { values.iter().map(|v| v >> 32).collect::<std::collections::BTreeSet<_>>().into_iter().collect() } else { values.iter().copied().collect() };
             let from = ids.clone();
             map(&mut ids)?;
-            tables.push(Some(from.into_iter().zip(ids).collect()));
+            let atoms: HashMap<i64, i64> = from.into_iter().zip(ids).collect();
+            tables.push(Some(if path { values.into_iter().map(|v| (v, atoms[&(v >> 32)] << 32 | (v & 0xffff_ffff))).collect() } else { atoms }));
         }
         Ok(Mapped { rows, tables })
     }

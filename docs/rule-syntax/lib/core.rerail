@@ -24,6 +24,10 @@
 .type node <: number
 .type span <: number
 .type loc = node | span
+// A node's name across files (decision 0722): its granule's key, an atom, in the high 32 bits, its steps from there
+// below. The one value made from a node that may cross into the cross-file part (0677 as amended); the store maps its
+// atom as a symbol's (column type `p`).
+.type node_path <: number
 
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
@@ -555,6 +559,12 @@
 // @indent(n): how many spaces, tabs and form feeds n's text starts with, counted where the source holds it: a line's
 // text before column k is whitespace when @indent(line) >= k (its whitespace is a byte a character).
 .functor indent(n: loc): number
+// @node_path(n): n's node path (decision 0722), the same in every run while its granule's key and its steps hold;
+// @path_node(p): the node p names, in the per-file part of p's document (another document's gives none);
+// @path_unit(p): the path of p's granule itself (a definition or a statement of a container).
+.functor node_path(n: node): node_path
+.functor path_node(p: node_path): node
+.functor path_unit(p: node_path): node_path
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for

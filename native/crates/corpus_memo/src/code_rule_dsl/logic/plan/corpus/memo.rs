@@ -965,12 +965,23 @@ const MEMO_CONTENTS: usize = 4;
 /// (`core::kind_atom`, `syntax::field_atom`: `node`'s `kind` 1132, `field`'s `f` 65555), not an atom, and so is a
 /// derived relation's column the domains find holds one. Taken as atoms, a forked process would map those codes as
 /// this process's ids, and the check where an entry is made refused it (`symbol 65555 is no atom of this process's`).
+///
+/// Beside them, its node path columns (decision 0722): an atom in a path's high 32 bits, mapped and written so.
 #[derive(Clone, Default)]
-pub struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>);
+pub struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>, std::sync::Arc<HashMap<String, Vec<bool>>>);
 
 impl Syms {
     pub fn of(domains: &super::super::lower::Domains) -> Syms {
-        Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
+        let of = |want: super::super::lower::Domain| std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| *d == want).collect())).collect());
+        Syms(of(super::super::lower::Domain::Name), of(super::super::lower::Domain::Path))
+    }
+
+    /// The node path columns of an entry's rows under `key`, `width` wide: none in the `own:` rows (`columns`).
+    pub fn paths(&self, key: &str, width: usize) -> Option<Vec<bool>> {
+        if key.starts_with("own:") {
+            return Some(vec![false; width]);
+        }
+        self.1.get(key).cloned()
     }
 
     /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own; the `own:`
@@ -1019,10 +1030,13 @@ pub fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(
         for (key, (w, rows)) in &entry.rows {
             let Some(cols) = syms.columns(key, *w) else { continue };
             let at: Vector<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
-            if at.is_empty() || *w == 0 {
+            // A node path's atom is its high 32 bits.
+            let paths = syms.paths(key, *w).unwrap_or_default();
+            let path_at: Vector<usize> = (0..(*w).min(paths.len())).filter(|&c| paths[c]).collect();
+            if (at.is_empty() && path_at.is_empty()) || *w == 0 {
                 continue;
             }
-            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c])).find(|&v| v < 0 || v as u64 >= atoms as u64) {
+            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c]).chain(path_at.iter().map(move |&c| row[c] >> 32))).find(|&v| v < 0 || v as u64 >= atoms as u64) {
                 return Some((key.clone(), v));
             }
         }

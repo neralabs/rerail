@@ -93,3 +93,10 @@ mod tests {
         assert_eq!(field_label(&t, "name"), "name");
     }
 }
+
+/// A node path's text as an output shows it (decision 0722): its base atom's text, a tab, `/`, then its stop bit and
+/// steps (its low 32 bits) in lowercase hex. The same in every process and store, as a symbol's text is: SQL's form of
+/// it is `sym_text(c >> 32) || char(9) || '/' || printf('%x', c & 4294967295)` (`plan::decoded_outputs`).
+pub fn path_text(base: &str, word: i64) -> String {
+    format!("{base}\t/{:x}", word & 0xffff_ffff)
+}

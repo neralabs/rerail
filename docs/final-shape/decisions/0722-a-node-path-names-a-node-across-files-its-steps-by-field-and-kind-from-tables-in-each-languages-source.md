@@ -125,3 +125,30 @@ does not have at run time). Both cost no stability, and both made paths shorter.
    Go, Java, SQL and JSON decodes to itself, a word a node; a 300-deep expression and a 70,000-element list are placed
    under anchors; 0.27 s), `an_edit_in_one_function_leaves_another_functions_paths` (a statement inserted in `f`, a
    function added before `g`: `g`'s paths are the same words).
+   - Fixed with item 3: anchor placement kept an earlier sibling's branch in its chain, so a step's length came out
+     as no coding and every path of a file was put under anchors (a round trip held: encode and decode read the same
+     anchors). A file whose paths fit their words now has none (`a_small_files_paths_need_no_anchor`); 300 nested
+     parentheses are one only-child run and need none either; 300 nested sums and a 70,000-element list do.
+3. **The type, the functions, the store and the outputs** (this commit).
+   - `@node_path(n)`, `@path_node(p)`, `@path_unit(p)`: node reads of the batch (`NODE_READS`, the functions'
+     catalogue, core.rerail's functors). A document's paths are cut over its whole core-shape projection (the
+     batch's own, else made whole for it), once per document in a batch. `@path_node` finds the document by its
+     base's root.
+   - Lowering's domain `Path`, from a declared `node_path` and the functions. A number that is also a path is a path
+     (the type is `<: number`), and a derived number column a path is written to becomes one, so its atom is mapped;
+     a path is never a node, a name, a kind or a field.
+   - The store's `p` column: its high 32 bits are mapped as a symbol's are in a forked process's rows (`Mapped`),
+     counted in `atoms_max`, content-keyed in a row's digest, and kept out of the stages' fast path; the memo's
+     symbol columns carry the program's path columns too (`Syms::paths`), and its image keeps them as `col::PATH`:
+     the base's string by index, the steps as they are.
+   - An output shows a path as its text, `path_tables::path_text`: the base's text, a tab, `/`, its low 32 bits in
+     hex. The native route and SQL's (`sym_text(c >> 32) || char(9) || '/' || printf('%x', c & 4294967295)`) give the
+     same string, so outputs and memo keys are the same in every process. The spelling of §4 is item 4.
+   - The 0677 check (§6): a node path is a value of its node; `@path_node`'s value is a node again, and a cross-file
+     rule that decodes one, in its body or its head, is named.
+   - Differs from §7: a guest document is rooted at its own document key (its path, a tab, `#` and the key), not
+     under its host's node; its host's path and its key name it, the same in every run.
+   - Tests: `node_paths_name_nodes_and_decode_back_in_rules` (two calls' paths, under `function_definition:f#0` and
+     `class_definition:C#0/function_definition:m#0`, decode back to the calls; `@path_unit` is the granule's own path),
+     `a_node_path_columns_atom_is_mapped_and_its_steps_kept`, `a_node_path_crosses_and_the_node_it_decodes_is_named`;
+     the coverage ledger probes the three functions (native; on the device, no computed term, as `@text_len`).

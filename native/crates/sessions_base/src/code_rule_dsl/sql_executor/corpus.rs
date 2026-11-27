@@ -156,7 +156,7 @@ impl Corpus {
         if rows.width() != w {
             return vec![];
         }
-        let integer = |t: &str| matches!(t, "int" | "node" | "loc");
+        let integer = |t: &str| matches!(t, "int" | "node" | "loc" | "node_path");
         // A text column's values, each shown (an integer a text column holds: as it is written).
         let shown: Vec<String> = (0..rows.len())
             .flat_map(|i| (0..w).filter(|&c| !integer(&self.types[c])).map(move |c| (i, c)))

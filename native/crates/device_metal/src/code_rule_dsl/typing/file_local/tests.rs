@@ -2456,3 +2456,39 @@ sig_at(n, f) :- text(n, f), types__sig(f, n).
     let refused = nodes_checked(&p.nodes, true).unwrap_err();
     assert!(refused.contains("decision 0677") && refused.contains("  target: holds a node in target.r, target.d"), "{refused}");
 }
+
+/// A node path may cross into the cross-file part (decision 0722, amending 0677): `@node_path(n)` is a value of the
+/// node, the same whatever the file's ids, as `@doc(n)` is. The node `@path_node(p)` decodes is an id again:
+/// `decoded` carries one.
+#[test]
+fn a_node_path_crosses_and_the_node_it_decodes_is_named() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl def_path(p: node_path, s: symbol)
+def_path(@node_path(n), s) :- node(_, n, "def", _, _), text(n, s).
+.decl ref_name(n: node, s: symbol)
+ref_name(n, s) :- node(_, n, "ref", _, _), text(n, s).
+.decl target(p: node_path) cross_file
+target(p) :- def_path(p, s), ref_name(_, s).
+.decl decoded(n: node) cross_file
+decoded(n) :- target(p), n = @path_node(p).
+.decl hit(p: node_path)
+hit(p) :- target(p).
+.output hit
+.decl seen(n: node)
+seen(n) :- decoded(n), node(_, n, _, _, _).
+.output seen
+.decl decoded_in_head(n: node) cross_file
+decoded_in_head(@path_node(p)) :- target(p).
+.decl seen2(n: node)
+seen2(n) :- decoded_in_head(n), node(_, n, _, _, _).
+.output seen2
+"#;
+    let p = programs_of(read(text)).unwrap();
+    let named: std::collections::BTreeMap<&str, &str> = p.nodes.iter().map(|c| (c.rel.as_str(), c.why.as_str())).collect();
+    assert!(!named.contains_key("target") && !named.contains_key("def_path"), "a node path is no node id: {named:#?}");
+    assert!(named.get("decoded").is_some_and(|w| w.contains("decoded.n") && w.contains("@path_node")), "{named:#?}");
+    assert!(named.get("decoded_in_head").is_some_and(|w| w.contains("@path_node")), "{named:#?}");
+}

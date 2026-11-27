@@ -601,6 +601,9 @@ impl Source for LongTexts {
             "tree_digest_hex" => self.digest_hex(n),
             "text_len" => self.text_len(n).map(|k| k.to_string()),
             "indent" => self.indent(n).map(|k| k.to_string()),
+            "node_path" => self.batch.node_path(n).map(|w| w.to_string()),
+            "path_node" => self.batch.path_node(n).map(|x| x.to_string()),
+            "path_unit" => self.batch.path_unit(n).map(|w| w.to_string()),
             // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
             // last: an operator is never empty).
             "rr_node_op_at" => {
@@ -979,6 +982,25 @@ fn mapped_end(pieces: &[normalized::Piece], x: u32) -> i64 {
         (Some(p), Some(n)) if p.escape => n.s,
         (Some(p), _) => p.s + i64::from(x) - i64::from(p.d),
         (None, _) => i64::from(x),
+    }
+}
+
+/// A document's node paths (`paths::DocPaths`), and the whole projection their granules are cut over where the
+/// batch's is not that (`made::Docs::whole`).
+pub struct NodePaths {
+    paths: paths::DocPaths,
+    whole: Option<Projected>,
+}
+
+/// The run's atoms as node paths' bases are interned in.
+struct RunAtoms<'a>(&'a dyn crate::content_store::AtomTable);
+
+impl paths::Atoms for RunAtoms<'_> {
+    fn atom(&self, text: &str) -> u32 {
+        self.0.intern(text).expect("the run's atoms take a node path's base")
+    }
+    fn text(&self, atom: u32) -> Option<String> {
+        self.0.value(atom).ok().flatten()
     }
 }
 
@@ -2382,6 +2404,10 @@ pub struct Batch {
     /// `made::TAPE_ROWS` on, and each node's row (none: it has no `text` row); and what they are read with
     /// (`core_rows_for`).
     tape_text: parking_lot::Mutex<(Vec<[i64; 2]>, rustc_hash::FxHashMap<i64, Option<u32>>)>,
+    /// Each document's node paths (decision 0722), by its place, made on the first path read of it.
+    node_paths: parking_lot::Mutex<HashMap<usize, Option<Arc<NodePaths>>>>,
+    /// The documents by their paths' root text (`path_root`), for a path read back.
+    path_roots: OnceLock<HashMap<String, usize>>,
     text_rows: OnceLock<core_rr::CoreRows>,
     /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
     by_module: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
@@ -2517,6 +2543,68 @@ fn in_block<T: cells::Cell>(block: &Arc<Block>, items: &[T]) -> Cells<T> {
 }
 
 impl Batch {
+    /// Document `i`'s paths' root text: its path, and a guest's document key after it (a guest shares its host's
+    /// path; its key is a hash of its host node's id, `granules`).
+    fn path_root(&self, i: usize) -> String {
+        match self.docs.guest(i) {
+            Some(_) => format!("{}\t#{:08x}", self.docs.path(i), self.docs.key(i)),
+            None => self.docs.path(i).to_owned(),
+        }
+    }
+
+    /// Document `i`'s node paths, made on the first read: over its projection where that is core.rerail's whole tree
+    /// numbered by definition, else over the document projected so (`made::Docs::whole`), so a path is the same
+    /// whatever a batch narrowed. `None` where ids are not by definition.
+    fn node_paths(&self, i: usize) -> Option<Arc<NodePaths>> {
+        if let Some(made) = self.node_paths.lock().get(&i) {
+            return made.clone();
+        }
+        let p = &self.docs[i];
+        let own = !p.anchored && p.extra.is_some() && p.len() > 0 && p.table().is_some();
+        let whole = if own { None } else { Some(self.docs.whole(i)?) };
+        let q = whole.as_ref().unwrap_or(p);
+        let made = self.dialects.get(q.tag()).and_then(|d| paths::DocPaths::new(q, d, &self.path_root(i))).map(|paths| Arc::new(NodePaths { paths, whole }));
+        self.node_paths.lock().insert(i, made.clone());
+        made
+    }
+
+    /// Node `n`'s path (`@node_path`, decision 0722): its granule's key atom, then its steps. None for a span, an
+    /// extra or a node of a document not in the batch.
+    pub fn node_path(&self, n: i64) -> Option<i64> {
+        let (key, low) = ((n >> 32) as u32, n as u32);
+        let i = self.docs.position(key)?;
+        let p = &self.docs[i];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let made = self.node_paths(i)?;
+        let q = made.whole.as_ref().unwrap_or(p);
+        let word = made.paths.encode(q, self.dialects.get(q.tag())?, &RunAtoms(&*self.atoms), x)?;
+        Some(word as i64)
+    }
+
+    /// The node path `w` names (`@path_node`): its document is the one of the batch whose root text its base starts
+    /// with; none for another's, or one whose granule or steps the tape no longer has.
+    pub fn path_node(&self, w: i64) -> Option<i64> {
+        let atoms = RunAtoms(&*self.atoms);
+        let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
+        let root = paths::root_of(&text)?;
+        let roots = self.path_roots.get_or_init(|| (0..self.docs.len()).map(|i| (self.path_root(i), i)).collect());
+        let i = *roots.get(root)?;
+        let made = self.node_paths(i)?;
+        let p = &self.docs[i];
+        let q = made.whole.as_ref().unwrap_or(p);
+        let x = made.paths.decode(q, self.dialects.get(q.tag())?, &atoms, w as u64)?;
+        let local = p.local_of_node(x);
+        (local != NONE).then(|| p.global(local))
+    }
+
+    /// The path of the granule a node path's base is in (`@path_unit`): its key's atom, no steps.
+    pub fn path_unit(&self, w: i64) -> Option<i64> {
+        let atoms = RunAtoms(&*self.atoms);
+        let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
+        let unit = paths::unit_of(&text)?;
+        Some((i64::from(paths::Atoms::atom(&atoms, unit)) << 32) | 1)
+    }
+
     /// The batch's block: its projections, its views' directory and what the device writes of it (an axis's starts).
     pub fn block(&self) -> &Arc<Block> {
         &self.block
@@ -3796,6 +3884,8 @@ impl Batch {
             given_passed: Default::default(),
             by_path: OnceLock::new(),
             tape_text: Default::default(),
+            node_paths: Default::default(),
+            path_roots: OnceLock::new(),
             text_rows: OnceLock::new(),
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),

@@ -437,6 +437,16 @@ pub trait Atoms {
     fn text(&self, atom: u32) -> Option<String>;
 }
 
+/// A base's text less its anchors' (`\t@<hex>.<bits>` each, after its granule's): its granule's base text.
+pub fn unit_of(text: &str) -> Option<&str> {
+    Some(&text[..text.find("\t@").unwrap_or(text.len())])
+}
+
+/// A base's root text: its document's path (and a guest's key), before its granule's key.
+pub fn root_of(text: &str) -> Option<&str> {
+    unit_of(text)?.rsplit_once('\t').map(|(root, _)| root)
+}
+
 /// One document's node paths (decision 0722): its granules' keys, found by key, and each granule's anchors, placed
 /// the first time a path of the granule is made. Made over a whole projection of the document (`Projected::new`), so
 /// its granules are the numbering's whatever a batch narrowed.
@@ -595,8 +605,9 @@ impl DocPaths {
             self.down(f, dialect, from, &chain[base..=to]).map_or(u32::MAX, |b| b.len())
         };
         while let Some((x, depth)) = stack.pop() {
-            chain.truncate(depth);
-            marks.truncate(depth);
+            // The chain holds x's ancestors below the start, then x (at `depth - 1`): an earlier sibling's branch goes.
+            chain.truncate(depth.saturating_sub(1));
+            marks.truncate(depth.saturating_sub(1));
             if depth > 0 {
                 chain.push(x);
                 marks.push(false);

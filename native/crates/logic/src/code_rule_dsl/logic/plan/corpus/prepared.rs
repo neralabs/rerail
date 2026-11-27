@@ -111,6 +111,7 @@ fn domain_code(d: lower::Domain) -> char {
         lower::Domain::Kind => 'k',
         lower::Domain::Field => 'f',
         lower::Domain::Name => 'm',
+        lower::Domain::Path => 'p',
     }
 }
 
@@ -121,6 +122,7 @@ fn domain_of_code(c: char) -> Option<lower::Domain> {
         'k' => lower::Domain::Kind,
         'f' => lower::Domain::Field,
         'm' => lower::Domain::Name,
+        'p' => lower::Domain::Path,
         _ => return None,
     })
 }
