@@ -588,9 +588,9 @@ type MemberRows<'o> = Vec<std::collections::BTreeMap<String, Vec<crate::code_rul
 /// Each pack member's findings, and its rows.
 type MemberFindings<'o> = (Vec<Vec<serde_json::Value>>, MemberRows<'o>);
 
-/// Each member's findings, less those the linters' comments drop, and its rows of each finding relation, all of them
-/// as a policy run alone leaves its outputs: by the policy each row names (its first column), every dialect's. `None`
-/// when a finding names no member.
+/// Each member's findings, less those the linters' comments drop, and its rows of each finding relation, those dropped
+/// too (a policy run alone keeps them in its outputs; only its reported findings are filtered): by the policy each
+/// row names (its first column), every dialect's. `None` when a finding names no member.
 fn pack_member_rows<'o>(
     group: &PolicyGroup,
     outputs: &'o [crate::code_rule_dsl::logic::plan::output::Outputs],
