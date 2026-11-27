@@ -10,13 +10,18 @@
 //   f"a" "b" F"c"            ← F541 twice, at f"a" and F"c"
 //   f"{n} items" " total"    not reported
 //   f"{v:{f'.2f'}}"          ← F541 at the inner f'.2f', which is a string of its own
+// Ruff reports nothing in a file it cannot parse (an unterminated string, a bracket never closed), so neither does
+// this rule: a file with an ERROR node. Not CPython 3.13's verdict (`syntax_error`): it refuses the t-strings Ruff
+// reads (`t"x"`), and a policy that reads it is not given the files it refuses.
 #include "python/pyflakes.rerail"
 //   fstring(n)  n is an f-string, or adjacent literals one of which is (python/ast)
 
 .violation F541(at: node) code "F541"
     "Remove the `f` prefix and unescape doubled braces to keep this string's runtime value unchanged."
     suppress ruff "F541"
-F541(s) :- kind(s, "string"), fstring(s), !placeholder(s), !concatenated_with_placeholder(s).
+F541(s) :- kind(s, "string"), fstring(s), !placeholder(s), !concatenated_with_placeholder(s), docof(s, d), !broken(d).
+.decl broken(d: number)  // document d does not parse
+broken(d) :- kind(n, "ERROR"), docof(n, d).
 .decl placeholder(s: node)  // an f-string piece with an interpolation of its own, `{x}`
 placeholder(s) :- kind(s, "string"), child(s, i, _), kind(i, "interpolation").
 .decl concatenated_with_placeholder(s: node)

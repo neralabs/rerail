@@ -9,9 +9,11 @@
 //   for x in xs: pass
 //   else: break              ← F701
 //   while c: break           not reported
+// A break inside an ERROR node is not reported: tree-sitter lost the statements around it, so the loop it sits in
+// may be gone from the tree (`match *0, 1, *2:` in a `while` body, which Ruff parses, is an ERROR to tree-sitter).
 #include "python/pyflakes.rerail"
 //   outside_loop(s)  break/continue s has no loop body around it in its def, class or module
 
 .violation F701(at: node) code "F701" "`break` outside loop"
     suppress ruff "F701"
-F701(s) :- kind(s, "break_statement"), outside_loop(s).
+F701(s) :- kind(s, "break_statement"), outside_loop(s), !inside(s, _, "ERROR").

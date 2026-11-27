@@ -6,27 +6,50 @@
 .scope exclude "**/__init__.py", "**/__init__.pyi", "__init__.py", "__init__.pyi"
 
 // Ruff F822 (pyflakes): a name listed in `__all__` that the module never binds, so `from m import *` fails.
-// Not reported when the module has a star import (that is F405), nor in `__init__.py` (scope). In a `.pyi`
-// stub a bare annotation `b: int` binds b. A `# noqa` on the `__all__` statement's first line covers every
-// string in it, as in Ruff.
+// Not reported when the module has a star import (that is F405), nor in `__init__.py` (scope). A bare annotation
+// `b: int` binds b, in a `.py` as in a `.pyi`, and so does `from __future__ import annotations`. A `# noqa` on the
+// `__all__` statement's first line covers every string in it, as in Ruff.
 //   a = 1
 //   __all__ = ["a", "b"]       ← F822 at "b"
-#include "python/pyflakes.rerail"
-//   all_entry(s, x)   string s names x in the module's `__all__` (=, +=, extend, append, list(…), +)
-//   noqa(st, code)    the first line of statement st has `# noqa` or `# noqa: …code…`
+//   __all__ += "c", ("d")      ← F822 at "c" and "d": a bare tuple, parentheses open
+//   __all__.append("e")        not reported: Ruff reads no call as a definition of `__all__`
+#include "python/ruff.rerail"
+//   call_q(c, q), call_only(c, a)   the call's qualified name, its one positional argument (python/ruff)
+//   bare_annotation(a, l, x, s)     `x: T` with no value, in scope s (python/pyflakes)
+//   noqa(st, code)                  the first line of statement st has `# noqa` or `# noqa: …code…` (python/pyflakes)
 
 .violation F822(at: node, x: symbol) code "F822" "Undefined name `{x}` in `__all__`"
     suppress ruff "F822"
-F822(s, x) :- all_entry(s, x), docof(s, d), modnode(d, m), !star(m), !bound_in(m, x), !builtin(x),
-    !stub_annotated(d, x), !deleted(m, x), top_stmt(s, st), !noqa(st, "F822").
+F822(s, x) :- export(m, st, s, x), !star(m), !bound_in(m, x), !builtin(x), !bare_annotation(_, _, x, m),
+    !future(m, x), !deleted(m, x), !noqa(st, "F822").
+// export(m, st, s, x): string s in module m's statement st names x in `__all__`. Ruff's definitions of `__all__`
+// (`extract_all_names`): `=`, `+=` and `__all__: T = …` in the module's own scope, not a chained `x = __all__ = …`.
+// Their value is a list, a tuple (parenthesized or bare), `list(…)` or `tuple(…)` of one, or a `+` of those; a set
+// is not read. An entry is a string, adjacent strings joined, through parentheses; an f-string or bytes is not.
+.decl export(m: node, st: node, s: node, x: symbol)
+export(m, st, s, x) :- all_part(m, st, v), unparen(v, e), sequence(e), child(e, a, _), unparen(a, s), entry(s, x).
+.decl sequence(e: node)
+sequence(e) :- (kind(e, "list") ; kind(e, "tuple") ; kind(e, "expression_list")).
+.decl all_part(m: node, st: node, v: node)
+all_part(m, st, v) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l),
+    kind(l, "identifier"), text(l, "__all__"), field(a, "right", v), !kind(v, "assignment"), !chained(a),
+    nearest(a, m, scope), kind(m, "module"), child(m, st, _), (st = a ; within(a, st)).
+all_part(m, st, v) :- all_part(m, st, b), unparen(b, e), kind(e, "binary_operator"), op(e, "+"), child(e, v, _).
+all_part(m, st, v) :- all_part(m, st, c), unparen(c, e), call_q(e, q), (q = "builtins.list" ; q = "builtins.tuple"),
+    call_only(e, v).
+.decl chained(a: node)  // the inner assignment of `x = __all__ = …`
+chained(a) :- kind(p, "assignment"), field(p, "right", a).
+.decl entry(s: node, x: symbol)
+entry(s, x) :- kind(s, "string"), str(s, x), strprefix(s, p), !match(".*[bfBFtT].*", p).
+entry(s, x) :- kind(s, "concatenated_string"), value(s, x), !fpiece(s).
+.decl fpiece(s: node)  // adjacent strings with an f-string or bytes among them
+fpiece(s) :- kind(s, "concatenated_string"), child(s, c, _), strprefix(c, p), match(".*[bfBFtT].*", p).
+// future(m, x): `from __future__ import x` binds x in module m.
+.decl future(m: node, x: symbol)
+future(m, x) :- kind(i, "future_import_statement"), child(i, n, _), kind(n, "dotted_name"), text(n, x),
+    nearest(i, m, scope).
 // deleted(m, x): module m has `del x` at its top level. Ruff keeps a binding for a deleted name, so `__all__`
 // may list it.
 .decl deleted(m: node, x: symbol)
 deleted(m, x) :- expr_ctx(n, "del"), kind(n, "identifier"), text(n, x), nearest(n, m, scope), kind(m, "module").
-.decl top_stmt(s: node, st: node)  // the module-level statement holding s
-top_stmt(s, st) :- all_entry(s, _), docof(s, d), modnode(d, m), child(m, st, _), within(s, st).
-noqa_ask(st, "F822") :- top_stmt(_, st).
-// stub_annotated(d, x): `.pyi` stub d declares `x: T` at module level.
-.decl stub_annotated(d: number, x: symbol)
-stub_annotated(d, x) :- doc(d, p, _), suffix(".pyi", p), modnode(d, m), child(m, st, _), child(st, a, 0),
-    kind(a, "assignment"), field(a, "type", _), field(a, "left", l), text(l, x).
+noqa_ask(st, "F822") :- export(_, st, _, _).
