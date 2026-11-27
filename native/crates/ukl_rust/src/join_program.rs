@@ -2868,13 +2868,24 @@ unsafe fn ix_place_range(bb: *const u8, places: *const u32, rows: *mut u32, p: &
 }
 
 /// The index's buckets `x0..x1`' first rows (decision 0647), of its `cap + 1` (the last, its rows'): each the first
-/// sorted place whose bucket is `x` or past it, a search of the sorted keys.
+/// sorted place whose bucket is `x` or past it. One search of the sorted keys finds `x0`'s; the range's buckets are
+/// consecutive and the keys sorted by them, so each next bucket's is found walking on from the last. A search for
+/// every bucket was a binary search's scattered reads of all the keys a bucket, the join program's largest cost on
+/// the CPU device.
 unsafe fn ix_offs_range(bb: *const u8, keys: *const u32, offs: *mut u32, p: &IxP, kb: u32, eb: u32, x0: u32, x1: u32) {
     let cap = (p.mask as u32).wrapping_add(1);
     let n = ix_rows(bb, p);
     let sorted = core::slice::from_raw_parts(keys.add(eb as usize), n as usize);
-    for x in x0..x1.min(cap.saturating_add(1)) {
-        *offs.add(x as usize) = sorted.partition_point(|&k| k.wrapping_sub(kb) < x) as u32;
+    let end = x1.min(cap.saturating_add(1));
+    if x0 >= end {
+        return;
+    }
+    let mut at = sorted.partition_point(|&k| k.wrapping_sub(kb) < x0);
+    for x in x0..end {
+        while at < sorted.len() && sorted[at].wrapping_sub(kb) < x {
+            at += 1;
+        }
+        *offs.add(x as usize) = at as u32;
     }
 }
 
