@@ -187,6 +187,9 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_line_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::line_span },
     Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
     Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
+    // `doc` read in place: a file's row of its key and its path's and module's atoms, in its entry. Last, so no other
+    // read's number moves.
+    Read { family: Family::View, name: "view_doc", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::doc },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

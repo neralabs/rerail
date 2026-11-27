@@ -2662,7 +2662,7 @@ mod tests {
     /// generations turn while it reads).
     #[test]
     fn the_rust_16z_reads_are_the_jits() {
-        use crate::reads::f16z::Z;
+        use crate::reads::f16z::slice::Z;
         use rerail_clif::view::cache;
         let jit = rerail_clif::jit::Reads::new();
         // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
@@ -2714,6 +2714,110 @@ mod tests {
         // SAFETY: the Rust reads' cache, which no read uses now.
         assert_eq!(unsafe { cache::Counts::read(own_cache.as_ptr()) }.failed, 0, "no read without room");
         assert!(cache::Spec::check(own_cache).is_ok(), "the cache as its reads leave it");
+    }
+
+    /// The Rust 16z reads (`crate::reads::f16z`, written directly, where the tape lies) read every node and line as
+    /// the CLIF's do through the JIT, each through a cache of its own of two blocks a generation (so it turns and
+    /// promotes), forward and back; then Rust and JIT readers on several threads share one cache, as a batch's
+    /// readers do, and every value read that is not the node's comes with a failure the cache counted (decision 0463).
+    #[test]
+    fn the_16z_rust_reads_are_the_jits() {
+        use crate::reads::{InPlace, f16z};
+        use rerail_clif::view::cache;
+        let jit = rerail_clif::jit::Reads::new();
+        // SAFETY: the read's signature: the tape's base, its view, a node; a u64.
+        let slot: extern "C" fn(*const u8, *const TapeView, u32) -> u64 = unsafe { std::mem::transmute(jit.function("tape_slot")) };
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), crate::newlines::Terminators::Lf, 0, true) else { panic!("16z") };
+        assert!(z.len() > 3 * Z, "the tape spans blocks");
+        let view = z.view(&lang).unwrap();
+        let b = z.as_bytes();
+        // A cache of its own for each reader, named by its address from the tape's (the view's `side[0..2]`), not
+        // shared (`columns[4]` 0).
+        let spec = cache::Spec::new(3, 2, view.columns[3] as usize);
+        let own = || {
+            let mut words = vec![0u128; spec.bytes().div_ceil(16)];
+            // SAFETY: the words just made, as bytes.
+            spec.init(unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), spec.bytes()) }).unwrap();
+            let mut v = view;
+            let rel = (words.as_ptr() as i64).wrapping_sub(b.as_ptr() as i64);
+            (v.side[0], v.side[1], v.columns[4]) = (rel as u32, (rel >> 32) as u32, 0);
+            (words, v)
+        };
+        let ((rust, vr), (cl, vj)) = (own(), own());
+        let vj = &vj;
+        // SAFETY: the tape's bytes, held while the reads run.
+        let t = unsafe { InPlace::new(b.as_ptr()) };
+        let n = vr.nodes;
+        let mut prev = 0;
+        for i in (0..n).chain((0..n).rev()) {
+            let k = i as usize;
+            assert_eq!(f16z::size(t, &vr, i), jit.one("tape_size", b, vj, k), "size of {i}");
+            assert_eq!(f16z::number(t, &vr, i), jit.one("tape_number", b, vj, k), "number of {i}");
+            assert_eq!(f16z::start_stated(t, &vr, i), jit.one("tape_start_stated", b, vj, k), "stated start of {i}");
+            assert_eq!(f16z::start(t, &vr, i), jit.one("tape_start", b, vj, k), "start of {i}");
+            assert_eq!(f16z::end(t, &vr, i), jit.one("tape_end", b, vj, k), "end of {i}");
+            assert_eq!(f16z::length(t, &vr, i), jit.one("tape_length", b, vj, k), "length of {i}");
+            assert_eq!(f16z::parent(t, &vr, i), jit.one("tape_parent", b, vj, k), "parent of {i}");
+            assert_eq!(f16z::slot(t, &vr, i), slot(b.as_ptr(), vj, i), "slot of {i}");
+            assert_eq!(f16z::start_next(t, &vr, i, prev), jit.two("tape_start_next", b, vj, k, prev), "next start of {i}");
+            prev = f16z::start(t, &vr, i);
+        }
+        for x in 0..=vr.source_len {
+            assert_eq!(f16z::line(t, &vr, x), jit.one("tape_line", b, vj, x as usize), "line of byte {x}");
+        }
+        for k in 0..vr.line_count {
+            assert_eq!(f16z::line_start(t, &vr, k), jit.one("tape_line_start", b, vj, k as usize), "line {k}'s start");
+        }
+        // SAFETY: each cache's bytes, which no read uses now.
+        let counts = |w: &Vec<u128>| cache::Counts::checked(unsafe { std::slice::from_raw_parts(w.as_ptr().cast::<u8>(), spec.bytes()) });
+        let (r, j) = (counts(&rust), counts(&cl));
+        assert_eq!((r.failed, r.misses, r.rotated, r.promoted), (j.failed, j.misses, j.rotated, j.promoted), "the caches' counts");
+        assert!(r.rotated > 0 && r.promoted > 0, "the caches turned and promoted: {r:?}");
+        // One cache, shared (the view's `columns[4]`), by Rust and JIT readers on 8 threads, each in an order of its own.
+        let expect: Vec<[u32; 3]> = (0..n).map(|i| [f16z::size(t, &vr, i), f16z::start(t, &vr, i), f16z::parent(t, &vr, i)]).collect();
+        let mut words = vec![0u128; spec.bytes().div_ceil(16)];
+        // SAFETY: the words just made, as bytes.
+        let buf = unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), spec.bytes()) };
+        spec.init(buf).unwrap();
+        let mut shared = view;
+        let rel = (buf.as_ptr() as i64).wrapping_sub(b.as_ptr() as i64);
+        (shared.side[0], shared.side[1], shared.columns[4]) = (rel as u32, (rel >> 32) as u32, 1);
+        let wrong = std::sync::atomic::AtomicU32::new(0);
+        type Read = extern "C" fn(*const u8, *const TapeView, u32) -> u32;
+        // SAFETY: each read's signature: the tape's base, its view, a node.
+        let jits: [Read; 3] = ["tape_size", "tape_start", "tape_parent"].map(|name| unsafe { std::mem::transmute::<*const u8, Read>(jit.function(name)) });
+        let base = b.as_ptr() as usize;
+        std::thread::scope(|s| {
+            for w in 0..8u32 {
+                let (expect, wrong, shared) = (&expect, &wrong, &shared);
+                s.spawn(move || {
+                    let mut x = w.wrapping_mul(0x9E37_79B9) | 1;
+                    for _ in 0..4 * n {
+                        x ^= x << 13;
+                        x ^= x >> 17;
+                        x ^= x << 5;
+                        let i = x % n;
+                        let got = if w % 2 == 0 {
+                            [f16z::size(t, shared, i), f16z::start(t, shared, i), f16z::parent(t, shared, i)]
+                        } else {
+                            jits.map(|f| f(base as *const u8, shared, i))
+                        };
+                        if got != expect[i as usize] {
+                            wrong.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                });
+            }
+        });
+        let counts = cache::Counts::checked(buf);
+        let wrong = wrong.into_inner();
+        assert!(wrong <= 3 * counts.failed, "{wrong} reads wrong with {} failures counted: {counts:?}", counts.failed);
+        assert!(counts.rotated > 0, "the shared cache turned: {counts:?}");
     }
 
     /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a

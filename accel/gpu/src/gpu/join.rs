@@ -100,8 +100,20 @@ pub struct Column {
     pub rows: usize,
 }
 
-/// The process's device (the pool's: `shared::device`).
-pub use super::shared::device;
+/// The device the join programs run on here (`shared::join_layer`): the host's where they run on the host
+/// (`shared::on_host`), else the process's (`shared::device`).
+pub fn device() -> Result<&'static rerail_device::device::Device, String> {
+    shared::join_layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
+}
+
+/// `b` as the join programs' device binds it (`device`): a pooled lease of the process's GPU as the host's wrap of
+/// it by its address, where they run on the host (`shared::on_host`).
+fn bound_here(b: &Buffer) -> Buffer {
+    match device() {
+        Ok(d) => rerail_device::device::on_device(d, b),
+        Err(_) => b.clone(),
+    }
+}
 
 /// Why a command the device failed failed: once a run for each reason (a wave's strata are refused to the CPU with
 /// no more than `BackendFailure` otherwise).
@@ -120,6 +132,7 @@ pub fn say_failure(why: &str) {
 
 /// The threads of a join kernel's group: every launch's (`Pass::run*`) but a SIMD group's (`Pass::run_bytes_simd`).
 pub const GROUP: u64 = 256;
+
 /// The threads of the process's device's SIMD groups (`UKL_SIMD_WIDTH`, as its kernels are compiled).
 pub fn simd_group() -> usize {
     device().map_or(32, |d| d.simd_width() as usize)
@@ -205,12 +218,16 @@ fn pipes() -> Arc<Pipes> {
 /// source is compiled once, into one library, and each of its kernels made from that library. A kernel that does not
 /// compile is fatal (decision 0382): the run stops, naming it, and no caller runs another path on it.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<Arc<Pipe>, String> {
-    let key = format!("join {variant} {name}");
+    let host = shared::is_on_host();
+    let key = format!("join {}{variant} {name}", if host { "host " } else { "" });
     if let Some(p) = pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Ok(Arc::clone(p));
     }
     device()?;
-    let function = rerail_accel::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
+    let function = match host {
+        true => rerail_accel::score::phase("compile", || super::kernels::host_function(&source(), name))?,
+        false => rerail_accel::score::phase("compile", || super::kernels::function_fixed(&source(), name, None)),
+    };
     // Launched at `GROUP` threads a group: a pipeline that allows fewer (its registers, its group's memory) is fatal,
     // as a kernel that does not compile is.
     if let Some(most) = function.max_threads_per_group() {
@@ -445,7 +462,7 @@ fn slot_of(s: &mut Vec<Option<shared::Pooled>>, slot: usize, bytes: usize) -> Re
             shared::kept_change(shared::Kept::Scratch, new.length() as isize);
             s[slot] = Some(new);
         }
-        Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
+        Ok(bound_here(s[slot].as_ref().expect("a scratch buffer").device_buffer()))
     }
 }
 
@@ -495,7 +512,7 @@ impl Held {
 
     /// `lease`, held by its own ledger while it lives (`shared::Pooled`).
     fn pooled(lease: shared::Pooled) -> Held {
-        let buffer = lease.device_buffer().clone();
+        let buffer = bound_here(lease.device_buffer());
         Held { _lease: Lease::Pooled(lease), buffer }
     }
 
@@ -546,7 +563,7 @@ pub struct Pass {
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), stacked: Cell::new(false), resident: RefCell::new(Vec::new()), applied: Cell::new((u64::MAX, 0)), error: RefCell::new(None), key: Box::new(0) })
+        Ok(Pass { queue: shared::Queue::on(shared::join_layer().ok_or("no device")?)?, dispatches: Cell::new(0), stacked: Cell::new(false), resident: RefCell::new(Vec::new()), applied: Cell::new((u64::MAX, 0)), error: RefCell::new(None), key: Box::new(0) })
     }
 
     fn pointer(&self) -> usize {
@@ -1971,7 +1988,6 @@ mod tests {
         assert!(records.iter().filter(|r| r.command == records[0].command).all(|r| r.completed), "the first pass's launches completed");
     }
 
-    /// Pairs sorted on the device come out in (first, second) order: keys of 32 bits and of 64.
     #[test]
     fn pairs_sorted_on_the_device_are_in_row_order() {
         if device().is_err() {

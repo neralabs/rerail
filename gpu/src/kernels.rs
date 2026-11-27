@@ -114,6 +114,8 @@ fn ship(name: &str, text: &str, defines: &[(&str, &str)]) {
 
 /// A compiled program: its library, and its functions as they are asked for.
 pub struct Program {
+    /// The device it is compiled for: the process's, or the host's (`host_program_with`).
+    device: &'static crate::device::Device,
     name: String,
     library: ComputeFunctionLibrary,
     functions: Mutex<HashMap<String, &'static ComputeFunction>>,
@@ -133,6 +135,17 @@ pub fn program(name: &str, text: &str) -> Result<&'static Program, String> {
 /// Each program has a slot of its own: two threads that ask for one program compile it once (the second waits for
 /// it), and two programs compile at once (`compile_ahead` compiles a list so).
 pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
+    program_on(false, name, text, defines)
+}
+
+/// `program_with` for the host as a device (`shared::host`): its rows the vector path's (`crate::vec::library`), its
+/// kernels that are Rust of this text and these defines that Rust, the rest interpreted. No compiler, and no device of
+/// the process's: what a run bound to the CPU runs the device's programs on.
+pub fn host_program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
+    program_on(true, name, text, defines)
+}
+
+fn program_on(host: bool, name: &str, text: &str, defines: &[(&str, &str)]) -> Result<&'static Program, String> {
     type Slot = std::sync::Arc<OnceLock<Result<&'static Program, String>>>;
     static PROGRAMS: OnceLock<Mutex<HashMap<String, Slot>>> = OnceLock::new();
     let digest = {
@@ -141,14 +154,25 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
         text.hash(&mut h);
         h.finish()
     };
-    let key: String = std::iter::once(format!("{name} {digest:016x}")).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
+    let key: String = std::iter::once(format!("{}{name} {digest:016x}", if host { "host " } else { "" })).chain(defines.iter().map(|(n, v)| format!(" -D{n}={v}"))).collect();
     let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
     slot.get_or_init(|| {
-        let shared = crate::shared::get().ok_or("no device")?;
-        ship(name, text, defines);
+        let shared = if host { crate::shared::host() } else { crate::shared::get().ok_or("no device")? };
+        if !host {
+            ship(name, text, defines);
+        }
         let started = std::time::Instant::now();
-        let (library, preprocessed, bytes) = if crate::vec::on(&shared.device) {
-            (crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?, started.elapsed(), text.len())
+        // `RERAIL_CPU_RUST=0` runs a kernel's UKL build in place of its Rust, except the joins': the CPU runs the join
+        // program only as its SIMD Rust (the user's order, until they say otherwise), so it is refused for that.
+        let rust = !std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0");
+        if !rust && rerail_ukl_rust::is_join_program(text, defines) {
+            return Err(format!("{name}: RERAIL_CPU_RUST=0 is refused for the join program: the CPU runs the joins only as their SIMD Rust"));
+        }
+        let (library, preprocessed, bytes) = if host || crate::vec::on(&shared.device) {
+            // Its rows the interpreter's, its kernels that are Rust of this text and these defines that Rust.
+            let library = crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?;
+            let library = if rust { library.with_rust(text, defines)? } else { library };
+            (library, started.elapsed(), text.len())
         } else {
             let source = preprocess_with(name, text, defines)?;
             let preprocessed = started.elapsed();
@@ -158,15 +182,15 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
                 None => ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?,
             };
             // On the CPU, a kernel that is Rust of this very text and these defines runs as that Rust (decision 0567
-            // step 3). `RERAIL_CPU_RUST=0`, a measurement aid: every kernel the compiler's build.
-            let library = if std::env::var("RERAIL_CPU_RUST").is_ok_and(|v| v == "0") { library } else { library.with_rust(text, defines, compiled_reads) };
+            // step 3).
+            let library = if rust { library.with_rust(text, defines)? } else { library };
             (library, preprocessed, source.len())
         };
         // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
         if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
             eprintln!("gpu program {name}: preprocessed {:.3} s ({bytes} bytes), compiled {:.3} s", preprocessed.as_secs_f64(), (started.elapsed() - preprocessed).as_secs_f64());
         }
-        Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
+        Ok(&*Box::leak(Box::new(Program { device: &shared.device, name: key, library, functions: Default::default() })))
     })
     .clone()
 }
@@ -296,8 +320,7 @@ impl Program {
         if let Some(f) = fns.get(name) {
             return Ok(f);
         }
-        let shared = crate::shared::get().ok_or("no device")?;
-        let f = self.library.get_function(&shared.device, name).map_err(|e| format!("{}: {e}", self.name))?;
+        let f = self.library.get_function(self.device, name).map_err(|e| format!("{}: {e}", self.name))?;
         let f: &'static ComputeFunction = Box::leak(Box::new(f));
         fns.insert(name.to_string(), f);
         Ok(f)
@@ -417,12 +440,4 @@ pub fn buffer_of<T: Pod>(data: &[T]) -> Result<Buffer, String> {
 /// The first `n` values of a buffer.
 pub fn read<T: Pod + Clone>(buffer: &BufferRef, n: usize) -> Vec<T> {
     transfer_to_host_sync::<T>(buffer, n)
-}
-
-/// The reads written once in CLIF, compiled for the CPU: what a kernel's Rust calls (`rerail_ukl_rust::Launch::reads`),
-/// made for the library whose kernel calls them.
-fn compiled_reads() -> rerail_ukl_rust::Reads {
-    let reads = rerail_clif::jit::Reads::new();
-    // SAFETY: the table is the JIT's code, which `reads` holds unchanged while it lives.
-    unsafe { rerail_ukl_rust::Reads::new(reads.table(), Box::new(reads)) }
 }

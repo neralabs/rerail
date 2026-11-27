@@ -168,6 +168,37 @@ fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
 ///
 /// # Safety
 /// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
+/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`): the bits of its group not yet
+/// walked, `g`'s.
+#[derive(Clone, Copy)]
+pub struct Nodes<'a> {
+    n: &'a Numbering,
+    item: u32,
+    g: u32,
+    m: u64,
+}
+
+impl Nodes<'_> {
+    /// The next numbered tape node, `NONE` past the last.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn next(&mut self) -> u32 {
+        while self.m == 0 {
+            self.g += 1;
+            if self.g >= self.n.groups.len as u32 {
+                return NONE;
+            }
+            // SAFETY: `g` is a group.
+            self.m = unsafe { self.n.group(self.g) }[self.item as usize];
+        }
+        let x = (self.n.first + self.g) * 64 + self.m.trailing_zeros();
+        self.m &= self.m - 1;
+        x
+    }
+}
+
 impl Numbering {
     /// Run `run`'s items.
     #[inline(always)]
@@ -302,6 +333,24 @@ impl Numbering {
                 g += 1;
             }
         }
+    }
+
+    /// `item`'s numbered tape nodes in order from number `r` on (`Nodes`): one `select`, then each next set bit of
+    /// the groups, where a `select` of each would search from its sample.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn nodes_from(&self, item: u32, r: u32) -> Nodes<'_> {
+        // SAFETY: the caller's.
+        let x = unsafe { self.select(item, r) };
+        if x == NONE {
+            return Nodes { n: self, item, g: self.groups.len as u32, m: 0 };
+        }
+        let g = (x >> 6) - self.first;
+        // SAFETY: `x` is a numbered node, so `g` a group.
+        let m = unsafe { self.group(g) }[item as usize] & !((1u64 << (x & 63)) - 1);
+        Nodes { n: self, item, g, m }
     }
 
     /// The innermost granule holding `item` number `k` (0 or 1), and the last granule starting at or before it, as

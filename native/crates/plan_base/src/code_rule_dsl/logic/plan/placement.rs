@@ -296,6 +296,8 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
         f => match device_fn(f) {
             Some(d) if d.arity() != args.len() => false,
             Some(DeviceFn::Arith(_)) => args.iter().all(|&a| row_term(v, a)),
+            // A node's preorder key, of a variable (a node bound by a row): read off its tape (`ARITH_NODE_ORDER`).
+            Some(DeviceFn::NodeOrder) => args.iter().all(|a| !is_call(a)),
             // The order of two symbols' names (`<` of symbols lowers to it), or a name's characters: of names or
             // cats' texts (compared from their parts, never made), or of texts the device makes.
             Some(DeviceFn::Names { .. }) => args.iter().all(|&a| !is_call(&a) || is_cat_of_rows(v, a) || is_text_fn_of_rows(v, a)),
@@ -588,6 +590,7 @@ pub fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
     {
         use crate::code_rule_dsl::logic::profile;
         let (ran, device): (&'static str, Vec<String>) = match (placed.gpu, &refused) {
+            (true, Some(None)) if placed.host => ("host program", Vec::new()),
             (true, Some(None)) => ("Metal", Vec::new()),
             (true, Some(Some(why))) => ("native CPU", vec![format!("refused at run time: {why}")]),
             (true, None) => ("native CPU", vec!["placed, no device report".into()]),
@@ -627,6 +630,8 @@ pub fn device_on() -> bool {
 pub struct Placement {
     /// Whether it runs on the device.
     pub gpu: bool,
+    /// Whether its device run is the host's (the run bound to the CPU: `host_joins`).
+    pub host: bool,
     /// Whether the GPU's estimate is under `GPU_BIAS` times the CPU's.
     pub(in crate::code_rule_dsl) gpu_cheaper: bool,
     /// The forms the device lacks (none when it has them all).
@@ -737,8 +742,18 @@ pub fn place(shape: &Shape) -> Placement {
     let device = binding != Binding::Cpu;
     // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
     let gpu_cheaper = device_s < cpu_work_s * gpu_bias();
-    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
-    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
+    // Bound to the CPU: the device's join program on the host (`host_joins`), wherever it has every form; the
+    // scalar joins only for what it lacks.
+    let host = !device && host_joins();
+    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper || host);
+    Placement { gpu, host: gpu && host, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
+}
+
+/// Whether a run bound to the CPU runs the device's join program on the host (`rerail_accel::gpu::shared::on_host`):
+/// `rerail_ukl_rust`'s `join_program`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
+/// as before.
+pub fn host_joins() -> bool {
+    !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "scalar"))
 }
 
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
@@ -793,7 +808,9 @@ pub mod tests {
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
         assert_eq!(p.missing, vec![Form::Computed]);
         assert!(p.why().contains("no computed term"), "{}", p.why());
-        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding, the device's
+        // join program on the host (`host_joins`), its Rust SIMD form, which the CPU binding always takes over the
+        // scalar joins wherever it has every form.
         let mut plain = Shape::default();
         adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
@@ -801,7 +818,8 @@ pub mod tests {
         let p = place(&plain);
         drop(device);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
-        assert!(!place(&plain).gpu, "the CPU binding keeps it");
+        let p = place(&plain);
+        assert!(p.gpu && p.host && !p.device, "the CPU binding runs it on the join program: {p:?}");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
         // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
@@ -875,6 +893,13 @@ pub mod tests {
         let wide = at(1.5);
         assert!(wide.gpu && wide.gpu_s > wide.cpu_s, "the GPU taken though priced above the CPU: {wide:?}");
         assert!(!at(2.5).gpu, "{:?}", at(2.5));
+        // Bound to the CPU, the join program is taken whatever its price: at 2.5 times, and at 100.
+        let cpu = set_device(false);
+        for ratio in [2.5, 100.0] {
+            let p = at(ratio);
+            assert!(p.gpu && p.host && p.gpu_s > p.cpu_s, "the CPU binding's join program at {ratio} times the scalar joins' price: {p:?}");
+        }
+        drop(cpu);
         let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
         drop(device);

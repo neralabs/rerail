@@ -80,10 +80,12 @@ fn pack_files() -> Vec<std::path::PathBuf> {
 /// Every seventh pack program, as the text's test samples them, parsed a thread each: one after another they took
 /// most of a minute (two on Windows), and three tests read them.
 fn pack_programs() -> Vec<(std::path::PathBuf, Arc<Version>)> {
-    use rayon::prelude::*;
     let files: Vec<_> = pack_files().into_iter().step_by(7).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::keep_files(&files);
-    files.into_par_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
+    // One file at a time: each file's parse is a parallel loop of its own (`on_cores`). Under a parallel loop over the
+    // files, a thread waiting in one file's loop steals another file's item and parses it on the same stack, and
+    // again, up to every file deep: about 1 MB a file in a Linux debug build, past a pool thread's stack.
+    files.into_iter().filter_map(|p| Some((p.clone(), crate::code_rule_dsl::logic::rr::parse_file_version(&p).ok()?))).collect()
 }
 
 /// Every part of a program reads back from its image as written, and so does every sampled pack program: its image,

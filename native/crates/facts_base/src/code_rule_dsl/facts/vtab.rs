@@ -81,6 +81,9 @@ pub struct ViewInPlace {
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
     pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
+    /// The view's home where its source keeps it (`rows::IndexHome`), made again with more room when a probe's index has
+    /// none in it: `None` for a home no source keeps.
+    pub grows: Option<Arc<super::rows::IndexHome>>,
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
@@ -542,6 +545,13 @@ pub trait Source: Send + Sync {
     fn device_view(&self) -> Option<DeviceView> {
         None
     }
+    /// The node reads' batch's `node` view in place (`syntax::LongTexts`'s): the directory through which a stage reads
+    /// a node's text where its source lies (`@rr_node_text_any`, the join program's `OPND_NODE`), no text made.
+    /// `None`: no node is read so.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<ViewInPlace> {
+        None
+    }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
     /// device reads where they lie (decision 0325 step 3), a probe reads through the relation's own index, and the CPU's
     /// index of a whole source finds or builds in its block (setfix), on every target. `None`: the device copies them
@@ -573,6 +583,11 @@ pub trait Source: Send + Sync {
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
     /// reading every row: a source whose rows are made on lookup.
+    /// Column `column`'s least and greatest value over its rows, where it holds them and can say so without making
+    /// rows (a stored table's cells); `[MAX, MIN]` with no rows. None: not known (an axis made per node).
+    fn col_bounds(&self, _column: usize) -> Option<[i64; 2]> {
+        None
+    }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
@@ -1827,6 +1842,11 @@ pub struct Relation {
     /// Rows a later relation goes on from (`grown`, decision 0431 §6): frozen when they are written into their block,
     /// so that one takes their writer and its rows follow these in the same block relation.
     grows: bool,
+    /// Each column's least and greatest value, measured from its cells when first asked (`Source::col_bounds`).
+    bounds: OnceLock<Vec<[i64; 2]>>,
+    /// Per column, whether its builder writes atoms there (`with_atoms`): a `u32` whatever rows come, so a source
+    /// that makes it later bounds it before its rows are made.
+    atoms: Box<[bool]>,
 }
 /// A column's sorted order, in the relation's block (t56 step 3), searched by the orders' one search
 /// (`rerail_blocks::order`): its rows in value order (then row), the value at every `FENCE`th, and each row's print of
@@ -1912,7 +1932,20 @@ impl Relation {
             cols: columns.iter().map(|_| Col::of(Some(0))).collect(),
             identity: OnceLock::new(),
             grows: false,
+            bounds: OnceLock::new(),
+            atoms: columns.iter().map(|_| false).collect(),
         }
+    }
+
+    /// This relation, its builder writing atoms (`u32`) in each column `atoms` marks.
+    pub fn with_atoms(mut self, atoms: &[bool]) -> Self {
+        assert_eq!(atoms.len(), self.columns.len(), "an atom flag per column");
+        self.atoms = atoms.into();
+        self
+    }
+    /// Whether column `column` holds atoms (`with_atoms`).
+    pub fn atom_column(&self, column: usize) -> bool {
+        self.atoms.get(column).copied().unwrap_or(false)
     }
 
     /// This relation as one a later relation goes on from (`grown`): its rows frozen in their block (`Rows::freeze`),
@@ -1964,6 +1997,9 @@ impl Relation {
             cols: columns.iter().map(|_| Col::of(None)).collect(),
             identity: OnceLock::new(),
             grows: true,
+            bounds: OnceLock::new(),
+            // A column of atoms in every run (`with_atoms`): the runs' relations' own.
+            atoms: (0..k).map(|c| !runs.is_empty() && runs.iter().all(|(r, _)| r.atoms[c])).collect(),
         }
     }
 
@@ -1983,6 +2019,8 @@ impl Relation {
             cols: self.cols.iter().map(|c| Col::of(c.ordered)).collect(),
             identity: OnceLock::new(),
             grows: true,
+            bounds: OnceLock::new(),
+            atoms: self.atoms.clone(),
         };
         let Relation { staged, cells, rows, .. } = more;
         match cells.into_inner() {
@@ -2148,6 +2186,21 @@ fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
 }
 impl Source for Relation {
     fn revision(&self)->Option<u64> {Some(0)}
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        let k = self.columns.len();
+        let b = self.bounds.get_or_init(|| {
+            let mut b = vec![[i64::MAX, i64::MIN]; k];
+            for row in 0..self.rows {
+                for (c, x) in b.iter_mut().enumerate() {
+                    let v = self.value(row, c);
+                    x[0] = x[0].min(v);
+                    x[1] = x[1].max(v);
+                }
+            }
+            b
+        });
+        b.get(column).copied()
+    }
     fn columns(&self) -> Vec<String> {
         self.columns.iter().map(|c| (*c).to_owned()).collect()
     }

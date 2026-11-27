@@ -33,8 +33,9 @@ pub struct Codes {
 impl ViewEntry {
     /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them, and
     /// its codes' names interned in `names` where the batch reads `op`: written whole on the first ask, the same entry
-    /// after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
+    /// after. No `dialect`: a document with no grammar (a text read as text only), which has no nodes: no kind is
+    /// read, and each reads 0.
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
         let (desc, codes) = p.entry();
         codes.get_or_init(|| Self::fill(block, p, dialect, desc, names));
@@ -43,13 +44,13 @@ impl ViewEntry {
 
     /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
     /// table.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Codes {
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Codes {
         let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
         let kinds = Cells::build(block, n.max(1), |out| {
             for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = dialect.kind_of_atom(f.code_entry(c as u32).0);
+                *k = dialect.map_or(0, |d| d.kind_of_atom(f.code_entry(c as u32).0));
             }
             n
         })
@@ -63,7 +64,8 @@ impl ViewEntry {
         .expect("a batch's block holds its entries");
         // Each code's name atom: an interned text, the `op` view's `s` of an anonymous child of that code (decision
         // 0353 row 7), which the host and the kernels read here alone.
-        let names = names.map(|atoms| {
+        // A document with no grammar has no nodes, so no names.
+        let names = names.zip(dialect).map(|(atoms, dialect)| {
             let named: Vec<&str> = (0..n).map(|c| dialect.atom_name(f.code_entry(c as u32).0)).collect();
             let interned = atoms.intern_all(&named).expect("the store's atoms intern the kinds' names");
             Cells::build(block, n.max(1), |out| {
@@ -128,6 +130,8 @@ impl ViewEntry {
         unsafe {
             (*d).preorder = if p.tape_ids() { rerail_clif::view_reads::IDS_TAPE } else { u32::from(p.defs.is_none()) };
             (*d).nodes = p.len();
+            // Every numbered node's tape parent numbered (its root's too): the root's children walked as any parent's.
+            (*d).parented = u32::from(p.parented() == p.len());
             if let Some(t) = &node_table {
                 Run::set(&raw mut (*d).node_table, t.as_ptr(), t.len());
             }

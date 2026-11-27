@@ -360,6 +360,13 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
+    /// Each view's relation of no columns over the chunk's rows and the values' (by its device code,
+    /// `device_chunk::VIEW_*`), its indexes' block (decision 0478 step 3): made the first time a stratum reads the
+    /// layered view, then found by every stratum after it until values are admitted again (a new directory). The base's
+    /// home is of the batch's rows alone: an index of the layered rows was never found there, and with its room taken
+    /// by the base's indexes, each stratum built its own into a fresh home (the data-layer rules over 50 files: about
+    /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
+    homes: [std::sync::OnceLock<Option<(usize, Arc<crate::code_rule_dsl::facts::rows::IndexHome>)>>; 16],
     batches: Vec<Arc<super::Batch>>,
 }
 
@@ -489,7 +496,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -621,6 +628,10 @@ pub struct Layered {
     /// For a base made on lookup, whose rows grow as it is read: the parts' rows, made whole once per admission.
     made: Option<Made>,
     width: usize,
+    /// A placed base's relation over the values' directory (`view_over`), by its rows: made again when values are
+    /// admitted, else kept, so its indexes are found again by every stratum that reads it.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    over: parking_lot::Mutex<Option<(usize, Arc<super::places::Over>)>>,
     /// `has_parts`' last answer and the values admitted then (`admitted << 1 | has`): asked again only when more are.
     seen: AtomicU64,
     /// `part_docs`' last answer and the values admitted then.
@@ -631,7 +642,18 @@ impl Layered {
     pub fn new(name: &str, base: Arc<dyn Source>, values: Arc<Values>) -> Self {
         let made = base.made_on_lookup().then(Made::default);
         let width = base.columns().len();
-        Layered { name: name.to_owned(), base, base_len: std::sync::OnceLock::new(), values, made, width, seen: AtomicU64::new(0), part_docs: parking_lot::Mutex::new((0, Arc::from([]))) }
+        Layered {
+            name: name.to_owned(),
+            base,
+            base_len: std::sync::OnceLock::new(),
+            values,
+            made,
+            width,
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            over: parking_lot::Mutex::new(None),
+            seen: AtomicU64::new(0),
+            part_docs: parking_lot::Mutex::new((0, Arc::from([]))),
+        }
     }
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
@@ -767,18 +789,65 @@ impl Layered {
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
         let v = &mut dv_ref.in_place;
+        // A placed base (`places::Places`: the view's rows, then its spans') is read as a placed relation of the
+        // values' directory: its view's rows every document's there, then the base's spans. A value's own spans
+        // would be rows of no one relation: none read so.
+        let placed = v.kind & super::places::VIEW_PLACED != 0;
+        let places = match placed {
+            true => {
+                let p = self.base.as_any()?.downcast_ref::<super::places::Places>()?;
+                let spanless = |s: &Arc<dyn Source>| s.as_any().and_then(|a| a.downcast_ref::<super::places::Places>()).is_none_or(|p| p.spans_len() == 0);
+                if !self.parts(|ps| ps.list.iter().all(|x| spanless(&x.src))).unwrap_or(true) {
+                    return None;
+                }
+                Some(p)
+            }
+            false => None,
+        };
         let dir = self.values.dir(&batch)?;
-        let views = &dir.views;
-        let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
-        if (dv_ref.view == super::device_chunk::VIEW_LINE && !views.lines) || (loc && !views.locs) {
+        // Each value's batch's entries hold what the view's read reads (`doc`'s atoms), as the chunk's do.
+        if !dir.batches.iter().all(|b| super::tape_rows::entries_hold(dv_ref.view, b)) {
             return None;
         }
-        v.dir = views.dir?;
-        v.buffers = views.buffers.clone();
-        v.caches = views.caches.clone();
-        v.keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
-        v.failed = v.cache_failed();
-        dv_ref.rows = self.len();
+        let views = &dir.views;
+        let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
+        let (lines, locs) = views.holds();
+        if (dv_ref.view == super::device_chunk::VIEW_LINE && !lines) || (loc && !locs) {
+            return None;
+        }
+        // The base's kind, the directory of every document as the join programs here read it (the host's, where
+        // they run on the host).
+        *v = crate::code_rule_dsl::facts::vtab::ViewInPlace { kind: v.kind & !super::places::VIEW_PLACED, ..views.read_of(dv_ref.view, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>)? };
+        let rows = self.len();
+        dv_ref.rows = rows;
+        if let Some(p) = places {
+            let over = {
+                let mut held = self.over.lock();
+                match held.as_ref() {
+                    Some((n, over)) if *n == rows => Arc::clone(over),
+                    _ => {
+                        let over = Arc::new(p.over(v.dir, rows - p.spans_len())?);
+                        *held = Some((rows, Arc::clone(&over)));
+                        over
+                    }
+                }
+            };
+            over.apply(v)?;
+            v.keep = Arc::new((Arc::clone(&dir), Arc::clone(&over)));
+            v.grows = Some(over.home());
+            dv_ref.home = over.home().part();
+            return dv;
+        }
+        // Its own home, of its own rows (`Dir::homes`), not the base's.
+        use crate::code_rule_dsl::facts::rows::{AXIS_KEYS, IndexHome, Part};
+        dv_ref.home = match dir.homes.get(dv_ref.view as usize)?.get_or_init(|| IndexHome::new(rows, AXIS_KEYS).map(|home| (rows, home))) {
+            Some((n, home)) if *n == rows => {
+                v.grows = Some(Arc::clone(home));
+                home.part()
+            }
+            // Rows of another count than the first reader's: a home of its own, as each was before.
+            _ => Part::for_device_indexed(0, rows, AXIS_KEYS).ok()?,
+        };
         dv
     }
 
@@ -835,6 +904,28 @@ impl Source for Layered {
     fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
         self.base.node_text_atom(name, n)
     }
+    /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
+    /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
+    /// source where it lies, as `node_read` finds it through the batch that holds its document.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
+        let why = |w: &'static str| crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || w.to_owned());
+        let Some(batch) = self.base.python_batch() else {
+            why("refused: a layered binding over no batch");
+            return None;
+        };
+        let Some(dir) = self.values.dir(&batch) else {
+            why("refused: a layered binding with no views' directory over its values");
+            return None;
+        };
+        if !super::device_chunk::ViewsInPlace::read_on_host() && !dir.views.sources {
+            why("refused: a document's source the device does not reach (a layered binding)");
+            return None;
+        }
+        let read = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>);
+        why(if read.is_some() { "read in place (a layered binding)" } else { "refused: the layered directory on no device" });
+        read
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }
@@ -843,6 +934,27 @@ impl Source for Layered {
     }
     fn text_column(&self, column: usize) -> bool {
         self.base.text_column(column)
+    }
+    /// Its base's, joined with all a tape value admitted later can hold in a column of its kind: any document's key
+    /// (`1..2^31`: a value is a guest, its key past `GUEST_KEYS`, but a code guest's document and nodes are its
+    /// file's, decision 0431 §4, a file this chunk need not hold). Not known where its base's column has no kind
+    /// (`ColKind`): a value admitted later may hold anything there.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        use super::made::ColKind;
+        let base = self.base.as_any();
+        let kind = base
+            .and_then(|b| b.downcast_ref::<super::Viewed>())
+            .and_then(|v| v.col_kind(column))
+            .or_else(|| base.and_then(|b| b.downcast_ref::<super::made::MadeRows>()).and_then(|m| m.col_kind(column)))
+            .or_else(|| base.and_then(|b| b.downcast_ref::<super::within::Within>()).and_then(|w| w.col_kind(column)))?;
+        let [lo, hi] = self.base.col_bounds(column)?;
+        let keys = [1, (1i64 << 31) - 1];
+        let [alo, ahi] = match kind {
+            ColKind::Key => keys,
+            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
+        };
+        Some([lo.min(alo), hi.max(ahi)])
     }
     fn len(&self) -> usize {
         // Made on lookup, the base's rows grow as it is read; a scan's are every one of them, then the values' made
