@@ -302,6 +302,27 @@ describe("the gap of Pi's events while its in-process start was failing", () => 
       await extension.emit("session_shutdown", {});
     }
   }, 30_000);
+
+  it("keeps the final count of the session Pi left out of the session it then attaches", async () => {
+    const extension = await harness("pi");
+    const openSession = RerailRuntime.prototype.openSession;
+    vi.spyOn(RerailRuntime.prototype, "openSession").mockImplementation(function (this: RerailRuntime, session) {
+      return session.sessionId === "original" ? Promise.reject(failure) : openSession.call(this, session);
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const replacement = { ...extension.context, sessionManager: { getSessionId: () => "replacement", getBranch: () => [] } } as unknown as Context;
+    const markersIn = (session: string) => (extension.entriesBySession.get(session) ?? [])
+      .filter(entry => entry.customType === EVENTS_DROPPED_ENTRY_TYPE).map(entry => entry.data);
+    try {
+      await dropTwo(extension);
+      await extension.emit("session_before_switch", { reason: "new" });
+      await extension.emit("session_start", { reason: "new" }, replacement);
+      expect(markersIn("original")).toEqual([expect.objectContaining({ count: 1, recovered: false }), final]);
+      expect(markersIn("replacement")).toEqual([]);
+    } finally {
+      await extension.emit("session_shutdown", {}, replacement);
+    }
+  }, 30_000);
 });
 
 it("counts an event that waited on the attach that failed, and records it once a retry attaches", async () => {
