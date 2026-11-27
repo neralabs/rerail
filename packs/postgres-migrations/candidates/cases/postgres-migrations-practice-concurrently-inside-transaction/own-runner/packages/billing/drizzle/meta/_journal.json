@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1763630000000,
+      "tag": "0003_invoice_idx",
+      "breakpoints": true
+    }
+  ]
+}

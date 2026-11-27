@@ -409,6 +409,46 @@ No match appeared. The test set's 9 before includes lobe-chat `packages/database
 `channel_message_reactions` to the existing `channels` (real, low impact, like Zero's and dittofeed's); after the fixes
 the test set reads 7 of 7 real. The runner fix removed no corpus or held-out match.
 
+`concurrently-inside-transaction` (candidate; 0 of 25 real on the second test set, 37 apps, all
+`ConcurrentlyInDrizzleMigration` in 2 apps). One false shape, fixed in the rule file; measured as above ("before" the
+rule at the branch head, renamed, "after" the working tree; the shared `rmeasure.sh` globs only `packs/<pack>/*/`, so
+a copy that runs `candidates/rules/<id>.rerail` measured it). It stays a candidate; the next test set decides.
+
+- **A Drizzle project's own runner applies a CONCURRENTLY migration statement by statement, with no transaction.**
+  chatbotx `packages/database/scripts/run-migrations.mjs` reads the folder with drizzle-orm's `readMigrationFiles`,
+  tests each statement with `/\bCONCURRENTLY\b/i` and runs a migration holding one unwrapped (`drizzle/
+  20261125025425_posts_concurrent_indexes/migration.sql:17, 26, 35, 44, 53, 62, 72, 82`, not real); launchstack
+  `packages/store/scripts/migrate.mjs` splits on `--> statement-breakpoint` and skips its `BEGIN` for a file whose
+  first line is `-- launchstack:no-transaction` (`drizzle/20261111052227_storage_reference_indexes.sql:3`–`19`, 17
+  findings, the file carries the marker; not real). The rule took the Drizzle layout as proof of drizzle's
+  transactional migrator. `cit_own_runner` (rule file, after `cit_runs_migrate`), in lock-timeout's
+  `lt_runner_timeout` shape: a JS/TS source file of lib's walk inside the folder's package (no package.json above the
+  folder that is not above the file) that names the folder by its last segment in a string, splits the statements
+  itself (`cit_runner`: a code line with `statement-breakpoint` or `readMigrationFiles`; a whole file sent as one
+  query runs as one transaction anyway), and either tests statements for CONCURRENTLY in a regex or string literal on
+  a code line (`cit_tests_conc`) or holds, on a code line, the same directive token a comment of the migration
+  carries (`cit_marker`, `cit_runner_marker`: `…no-transaction`, `…no_transaction`, `…non-transactional`,
+  `transaction:false`, compared whole). Explicit `BEGIN … COMMIT` stays reported. Cases: `own-runner/` (the chatbotx
+  shape: left alone; its `BEGIN … COMMIT` migration: caught; a sibling package whose runner splits statements but
+  wraps them all in one transaction, naming CONCURRENTLY only in a comment: caught) and `marker-runner/` (the
+  launchstack shape: the marked migration left alone; one with a bare `-- no-transaction` the runner does not read:
+  caught). Checked on the test-set files themselves: the two runners, their package.json files and the reported
+  migrations as one fixture repository give no finding; without the runners, the findings return.
+
+Before → after:
+
+| Set | Before | After | Changed (verdict) |
+|---|--:|--:|---|
+| Second test set, 37 apps (not on the workspace; read from the files, above) | 25 in 2 apps | 0 | the 25 above, all not real |
+| First test set, 20 apps | 0 | 0 | none |
+| Held-out, 8 apps | 0 | 0 | none |
+| Corpus, 33 apps | 0 | 0 | none |
+
+No match it had read as real existed to lose: the rule had no real match on any set. The Drizzle shape it still
+reports (drizzle-kit `migrate`, drizzle-orm's `migrate()`, a runner that wraps every file) is pinned by the `cases`
+test (`packages/db/drizzle/0007_user_email_idx.sql`, `packages/v1/drizzle/…/migration.sql`) and `own_runner`'s
+billing package.
+
 ## Every match read, with its verdict
 
 The writers' runs read each repository's whole migration history (every migration counted as pending, before the

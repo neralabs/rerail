@@ -1,0 +1,8 @@
+{
+  "name": "@chat/db",
+  "private": true,
+  "type": "module",
+  "scripts": { "db:migrate": "node ./scripts/run-migrations.mjs", "db:generate": "drizzle-kit generate" },
+  "dependencies": { "drizzle-orm": "^1.0.0-beta.2", "pg": "^8.13.0" },
+  "devDependencies": { "drizzle-kit": "^1.0.0-beta.2" }
+}

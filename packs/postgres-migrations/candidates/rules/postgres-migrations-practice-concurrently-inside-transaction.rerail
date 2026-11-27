@@ -20,6 +20,12 @@
 //     drizzle/<ts>_x/migration.sql beside a snapshot.json                       reported: drizzle's migrator runs all
 //                                                                               pending migrations in one transaction
 //   DROP INDEX CONCURRENTLY, REINDEX … CONCURRENTLY, ALTER TABLE … DETACH PARTITION … CONCURRENTLY: the same
+//   a Drizzle migration whose package's own runner applies the files statement by statement and leaves this one
+//     outside a transaction (cit_own_runner): a JS/TS source file of the folder's package that names the folder by
+//     its last segment in a string, splits the statements itself (`--> statement-breakpoint`, drizzle-orm's
+//     `readMigrationFiles`) and either tests a statement for CONCURRENTLY in code (`/\bCONCURRENTLY\b/i.test(s)`)
+//     or reads a marker the migration carries in a comment (`-- acme:no-transaction`, and the same token in the
+//     runner: `/^--\s*acme:no-transaction\b/`)                              not reported unless in BEGIN … COMMIT
 //   CREATE INDEX CONCURRENTLY alone in its Prisma migration (comments aside)   not reported: one statement, no batch
 //   the same next to other statements with "prisma": "^7.4.0" or later         not reported: 7.4 runs each statement
 //                                                                               on its own
@@ -33,15 +39,19 @@
 //   a .sql migration of another runner (no Prisma layout, no drizzle journal)  not reported unless in BEGIN … COMMIT
 //   a migration that is not pending (lib/postgres-migrations' pgm_pending: with a Git base, one the base has; without
 //   one, any but the newest of its folder), or of another database's folder   not reported: it has run already
-// Gaps: a Drizzle project that applies its .sql files with its own non-transactional script is reported. A Prisma
-// project that runs `prisma migrate deploy` from a script under another name (`deploy.mjs`), or from a file deeper
-// than four folders, is not reported; one whose migrations are applied by hand but whose repository also holds a
-// helper that runs `prisma migrate dev` or `deploy` (or prints that command) is reported. Any package.json script or
-// configuration file of the checkout counts for every Prisma folder. A Prisma version given as `catalog:`,
-// `workspace:` or a tag is read as before 7.4. Prisma 7.5's shadow database was reported to still reject a mixed file
-// on `migrate dev`; that is not reported for 7.4+. A singular `migration/` folder is outside the scope. Prisma 8
-// `ops.json` migrations and other runners' wrapping (node-pg-migrate, Supabase CLI, golang-migrate) are not read. The
-// Git-base exemption is not covered by the cases: test-rr runs with no base.
+// Gaps: a Drizzle project's own runner is read only as cit_own_runner says: one in another package than the folder,
+// deeper than lib's walk, that names the folder only through a variable or a config file, or that keys on something
+// else (a flag in the journal, a list of tags), is not read and the migration is reported; one that tests a statement
+// for CONCURRENTLY only to refuse it, or whose marker token appears in a string it never matches, exempts the folder.
+// A runner sending a whole file as one query string runs it as one transaction, so the rule asks for one that splits
+// the statements. A Prisma project that runs `prisma migrate deploy` from a script under another name (`deploy.mjs`),
+// or from a file deeper than four folders, is not reported; one whose migrations are applied by hand but whose
+// repository also holds a helper that runs `prisma migrate dev` or `deploy` (or prints that command) is reported. Any
+// package.json script or configuration file of the checkout counts for every Prisma folder. A Prisma version given as
+// `catalog:`, `workspace:` or a tag is read as before 7.4. Prisma 7.5's shadow database was reported to still reject a
+// mixed file on `migrate dev`; that is not reported for 7.4+. A singular `migration/` folder is outside the scope.
+// Prisma 8 `ops.json` migrations and other runners' wrapping (node-pg-migrate, Supabase CLI, golang-migrate) are not
+// read. The Git-base exemption is not covered by the cases: test-rr runs with no base.
 
 #include "lib/postgres-migrations.rerail"
 
@@ -54,7 +64,7 @@ ConcurrentlyInTransactionBlock(s, w) :- cit_conc(s, w), kind(t, "transaction"), 
 ConcurrentlyInPrismaBatch(s, w) :- cit_conc(s, w), !cit_in_tx(s), docof(s, d), doc(d, p, _), pgm_runner(d, "prisma"),
     cit_prisma_migrates(), !cit_prisma_74(p), cit_units(d, n), n > 1, pgm_pending(d).
 ConcurrentlyInDrizzleMigration(s, w) :- cit_conc(s, w), !cit_in_tx(s), docof(s, d), pgm_runner(d, "drizzle"),
-    pgm_pending(d).
+    pgm_pending(d), !cit_own_runner(d).
 
 // cit_conc(s, what): statement node s takes CONCURRENTLY, which PostgreSQL runs only outside a transaction block.
 // REFRESH MATERIALIZED VIEW CONCURRENTLY is allowed inside one, so it is not here.
@@ -94,6 +104,51 @@ cit_prisma_migrates() :- cit_runs_migrate(_).
 cit_runs_migrate(t) :- (package_field(_, k, t), match("scripts/.*", k) ; pgm_config(p), file_line(p, _, t)),
     match("(?i).*\\bprisma(?:@\\S+)?\\s+migrate\\s+(?:deploy|dev)\\b.*", t),
     !match("(?i).*\\bmigrate\\s+dev\\b[^;&|]*--create-only\\b.*", t).
+
+// ---- a Drizzle project's own runner -------------------------------------------------------------------------------
+// cit_own_runner(d): Drizzle migration d holds a CONCURRENTLY statement and a runner of its package applies it outside
+// a transaction: a JS/TS source file that splits the statements itself (cit_runner), names d's folder by its last
+// segment in a string (`join(__dirname, "..", "drizzle")`), unwraps d (cit_unwraps), and lies inside d's package
+// (every folder above d that holds a package.json is above the runner too), as lock-timeout's lt_runner_timeout reads
+// a runner.
+.decl cit_own_runner(d: number)
+cit_own_runner(d) :- cit_conc(s, _), docof(s, d), pgm_runner(d, "drizzle"), doc(d, m, _), pgm_mig(d, g, _),
+    match("(?:.*/)?(?<b>[^/]+)", g), cit_runner_names(p, b), cit_unwraps(p, d),
+    count : { pgm_dir(a, _), a != "", prefix(a, m), !prefix(a, p), dir_entry(a, "package.json", 0) } = 0.
+// cit_unwraps(p, d): runner p leaves migration d outside a transaction: p tests statements for CONCURRENTLY, so a
+// migration holding one runs unwrapped; or d carries a marker comment that p reads.
+.decl cit_unwraps(p: symbol, d: number)
+cit_unwraps(p, d) :- cit_tests_conc(p), cit_conc(s, _), docof(s, d).
+cit_unwraps(p, d) :- cit_marker(d, k), cit_runner_marker(p, k).
+// cit_runner(p): source file p applies Drizzle migrations statement by statement: a code line (not a comment) splits
+// on drizzle-kit's `--> statement-breakpoint` or calls drizzle-orm's `readMigrationFiles`, which does. A runner that
+// sends a whole file as one query string runs it as one transaction, where CONCURRENTLY fails all the same.
+.decl cit_runner(p: symbol)
+cit_runner(p) :- cit_source(p), file_line(p, _, t), !match("\\s*(?://|/?\\*).*", t),
+    match(".*(?:statement-breakpoint|readMigrationFiles).*", t).
+// cit_runner_names(p, b): runner p has a string literal whose last path segment is b (`"drizzle"`, `"./drizzle/"`).
+.decl cit_runner_names(p: symbol, b: symbol)
+cit_runner_names(p, b) :- cit_runner(p), file_line(p, _, t),
+    match_all("[\"'`](?:[^\"'`\\s]*/)?(?<b>[A-Za-z0-9_.-]+)/?[\"'`]", t).
+// cit_tests_conc(p): a code line of runner p has CONCURRENTLY in a regex or string literal (`/\bCONCURRENTLY\b/i`,
+// `"CONCURRENTLY"`); a comment that names it does not count.
+.decl cit_tests_conc(p: symbol)
+cit_tests_conc(p) :- cit_runner(p), file_line(p, _, t), !match("\\s*(?://|/?\\*).*", t),
+    match("(?i).*[/\"'`][^/\"'`]*concurrently(?:[^a-z0-9_].*)?", t).
+// cit_marker(d, k): a comment of Drizzle migration d holds the directive token k (`acme:no-transaction`,
+// `no_transaction`, `transaction:false`); cit_runner_marker(p, k): a code line of runner p holds the same token
+// (`/^--\s*acme:no-transaction\b/`). Tokens compare whole: `-- no-transaction` is not `acme:no-transaction`.
+.decl cit_marker(d: number, k: symbol)
+cit_marker(d, k) :- kind(c, "comment"), docof(c, d), pgm_runner(d, "drizzle"), text(c, t),
+    match_all("(?<k>[A-Za-z0-9_:@!-]*(?i:no[-_]?transactions?|non[-_]?transactional|transaction[:=]false)[A-Za-z0-9_:@!-]*)", t).
+.decl cit_runner_marker(p: symbol, k: symbol)
+cit_runner_marker(p, k) :- cit_runner(p), file_line(p, _, t), !match("\\s*(?://|/?\\*).*", t),
+    match_all("(?<k>[A-Za-z0-9_:@!-]*(?i:no[-_]?transactions?|non[-_]?transactional|transaction[:=]false)[A-Za-z0-9_:@!-]*)", t).
+// cit_source(p): a JS/TS source file of lib's walk (four levels deep, past dependencies, tests and build output), not a
+// test, spec, story or declaration file.
+.decl cit_source(p: symbol)
+cit_source(cat(a, n)) :- pgm_dir(a, _), dir_entry(a, n, 0), match("[^.].*\\.(?:[cm]?[jt]s|[jt]sx)", n),
+    !match(".*\\.(?:test|spec|stories|d)\\.[^.]+", n).
 
 // The cases, `cases/postgres-migrations-practice-concurrently-inside-transaction/`, read as one repository: each
 // line ending in `-- caught` is reported, and no other line. `cases/_git/` is a one-commit repository written as
@@ -163,6 +218,40 @@ cit_runs_migrate(t) :- (package_field(_, k, t), match("scripts/.*", k) ; pgm_con
     .fixture "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/manual/prisma/migrations/20261101120000_model_file_replaced_at/migration.sql"
     .expect ConcurrentlyInPrismaBatch at "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql":3
     .expect ConcurrentlyInTransactionBlock at "prisma/migrations/20261101120000_model_file_replaced_at/migration.sql":7
+.end
+
+// A Drizzle monorepo whose chat package applies its own `drizzle/` folder with its own runner (`cases/…/own-runner/`,
+// `packages/chat/scripts/run-migrations.mjs`: reads the statements with `readMigrationFiles` and runs a migration that
+// holds CONCURRENTLY statement by statement, with no transaction): its CONCURRENTLY migration is left alone, its
+// `BEGIN … COMMIT` one is not. The billing package's runner splits the statements too but runs them all in one
+// transaction, naming CONCURRENTLY only in a comment, and the chat runner lies outside its package: reported.
+.test own_runner exactly uses repo
+    .given pgm_applied
+    .fixture "packages/chat/package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/package.json"
+    .fixture "packages/chat/scripts/run-migrations.mjs" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/scripts/run-migrations.mjs"
+    .fixture "packages/chat/drizzle/20261120093000_posts_idx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/drizzle/20261120093000_posts_idx/migration.sql"
+    .fixture "packages/chat/drizzle/20261120093000_posts_idx/snapshot.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/drizzle/20261120093000_posts_idx/snapshot.json"
+    .fixture "packages/chat/drizzle/20261121093000_tx_idx/migration.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/drizzle/20261121093000_tx_idx/migration.sql"
+    .fixture "packages/chat/drizzle/20261121093000_tx_idx/snapshot.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/chat/drizzle/20261121093000_tx_idx/snapshot.json"
+    .fixture "packages/billing/package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/billing/package.json"
+    .fixture "packages/billing/scripts/migrate.mjs" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/billing/scripts/migrate.mjs"
+    .fixture "packages/billing/drizzle/meta/_journal.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/billing/drizzle/meta/_journal.json"
+    .fixture "packages/billing/drizzle/0003_invoice_idx.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/own-runner/packages/billing/drizzle/0003_invoice_idx.sql"
+    .expect ConcurrentlyInTransactionBlock at "packages/chat/drizzle/20261121093000_tx_idx/migration.sql":3
+    .expect ConcurrentlyInDrizzleMigration at "packages/billing/drizzle/0003_invoice_idx.sql":3
+.end
+
+// A Drizzle package whose runner leaves a migration outside a transaction when its first line is the runner's marker
+// (`cases/…/marker-runner/`, `/^--\s*acme:no-transaction\b/`): the migration that carries it is left alone; the one
+// that carries a bare `-- no-transaction`, which the runner does not read, runs in its BEGIN … COMMIT: reported.
+.test marker_runner exactly uses repo
+    .given pgm_applied
+    .fixture "packages/store/package.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/marker-runner/packages/store/package.json"
+    .fixture "packages/store/scripts/migrate.mjs" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/marker-runner/packages/store/scripts/migrate.mjs"
+    .fixture "packages/store/drizzle/meta/_journal.json" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/marker-runner/packages/store/drizzle/meta/_journal.json"
+    .fixture "packages/store/drizzle/0004_document_url_idx.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/marker-runner/packages/store/drizzle/0004_document_url_idx.sql"
+    .fixture "packages/store/drizzle/0005_upload_url_idx.sql" from "../cases/postgres-migrations-practice-concurrently-inside-transaction/marker-runner/packages/store/drizzle/0005_upload_url_idx.sql"
+    .expect ConcurrentlyInDrizzleMigration at "packages/store/drizzle/0005_upload_url_idx.sql":3
 .end
 
 // Another database's migrations (`cases/_other-databases/`), with statements every rule of the pack reports on a

@@ -153,8 +153,10 @@ CONCURRENTLY-built migrations.").
 
 ### `postgres-migrations-practice-concurrently-inside-transaction`
 
-**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps, so it has matched no app it was not
-tuned on.
+**Why a candidate.** 0 matches on the 20 test apps and 0 on the 8 held-out apps. On the second test set (37 apps) it
+matched 25 times in 2 apps, none real: both were Drizzle projects whose own migration runner applies a migration
+holding `CONCURRENTLY` statement by statement outside a transaction, which the rule now reads (see Leaves alone). The
+next test set decides.
 
 PostgreSQL refuses `CREATE INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY` and `ALTER TABLE …
 DETACH PARTITION … CONCURRENTLY` inside a transaction block. A migration that puts one there fails on deploy: Prisma
@@ -183,9 +185,21 @@ Leaves alone:
   applies nothing and does not count): the team applies migrations another way, by hand, unless the statement sits in
   `BEGIN … COMMIT`;
 - `REFRESH MATERIALIZED VIEW CONCURRENTLY`, which PostgreSQL allows inside a transaction;
-- `.sql` migrations of other runners (no Prisma layout, no Drizzle journal) unless in `BEGIN … COMMIT`.
+- `.sql` migrations of other runners (no Prisma layout, no Drizzle journal) unless in `BEGIN … COMMIT`;
+- a Drizzle migration that its package's own runner applies statement by statement outside a transaction, unless the
+  statement sits in `BEGIN … COMMIT`: a JS/TS source file of the folder's package (found by the library's checkout
+  walk; not a test, spec, story or declaration file) that names the folder by its last segment in a string
+  (`join(__dirname, "..", "drizzle")`), splits the statements itself (a code line with `--> statement-breakpoint` or
+  drizzle-orm's `readMigrationFiles`; a runner that sends a whole file as one query runs it as one transaction), and
+  either tests a statement for `CONCURRENTLY` in a code line (`/\bCONCURRENTLY\b/i.test(statement)`, not a comment)
+  or reads a marker token the migration carries in a comment (`-- acme:no-transaction` in the migration and the same
+  token in a code line of the runner, `/^--\s*acme:no-transaction\b/`; tokens compare whole, so a bare
+  `-- no-transaction` the runner does not read is still reported).
 
-Gaps: a Drizzle project applying its `.sql` files with its own non-transactional script is reported. A Prisma project
+Gaps: a Drizzle project's own runner is read only in that shape: one in another package than the folder, deeper than
+the walk, naming the folder only through a variable or a config file, or keying on something else (a flag in the
+journal, a list of tags), is not read and the migration is reported; one that tests statements for `CONCURRENTLY`
+only to refuse them, or holds the marker token in a string it never matches, exempts the folder. A Prisma project
 that runs `prisma migrate deploy` only from a script under another name (`deploy.mjs`), or from a file more than four
 folders deep, is not reported; a project that applies its migrations by hand but keeps a helper script that runs (or
 prints) `prisma migrate dev`/`deploy` is reported. Any `package.json` script or configuration file of the checkout
