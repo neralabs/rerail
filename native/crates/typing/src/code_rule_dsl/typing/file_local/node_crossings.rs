@@ -189,6 +189,9 @@ pub struct NodeCrossing {
     /// names; `None` where it is cross-file for a reason of its own, or the causes are not known (a split read from
     /// the store keeps none).
     pub under: Option<String>,
+    /// Why it is in the cross-file part, read down the split's causes (`crossing_chain`): `rel: cause`, a line each,
+    /// from the relation to the first one cross-file for a reason of its own. What a fix starts from.
+    pub chain: Vec<String>,
 }
 
 impl NodeCrossing {
@@ -239,7 +242,26 @@ pub fn crossings_under(program: &Version, crossings: &mut [NodeCrossing], causes
     let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
     for c in crossings {
         c.under = crossing_under(&c.rel, causes).map(|u| unprefixed(&super::lowering_source_in(program, &u, &readers).unwrap_or(u)));
+        c.chain = crossing_chain(&c.rel, causes);
     }
+}
+
+/// The split's causes read down from `rel` (`crossing_under`'s path): each relation on it with the first line of its
+/// cause, to the first relation cross-file for a reason of its own.
+fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
+    let mut at = rel.to_owned();
+    let mut out = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    while seen.insert(at.clone()) {
+        let Some(cause) = causes.get(&at) else { break };
+        let cause = cause.lines().next().unwrap_or("");
+        out.push(format!("{at}: {cause}"));
+        match cause.strip_prefix("reads cross-file ") {
+            Some(x) => at = x.split_whitespace().next().unwrap_or("").to_owned(),
+            None => break,
+        }
+    }
+    out
 }
 
 /// Each relation's readers' heads, once, for the helpers' sources (`lowering_source`).
@@ -319,7 +341,7 @@ pub fn node_crossings(program: &Version, f: &Fields<'_>, cross: &Version, local:
     let readers = readers_of(program);
     let readers = |rel: &str| readers.get(rel).map_or_else(Vec::new, |hs| hs.iter().map(|h| (*h).to_owned()).collect());
     // `under` is the split's to say (`crossings_under`, from its causes).
-    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None }).collect()
+    found.into_iter().map(|(rel, why)| NodeCrossing { source: super::lowering_source_in(program, &rel, &readers), rel, why, under: None, chain: Vec::new() }).collect()
 }
 
 /// Column `c` of `rel` by its declared name, else its number.
@@ -354,7 +376,8 @@ pub fn nodes_checked(crossings: &[NodeCrossing], strict: bool) -> Result<(), Str
             .iter()
             .map(|c| {
                 let under = c.under.as_ref().map_or_else(String::new, |u| format!(" (in the cross-file part under {u})"));
-                super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}", c.why))
+                let chain: String = c.chain.iter().map(|l| format!("\n      cross-file because {l}")).collect();
+                super::crossing_shown_with(c.source.as_deref(), &c.rel, &format!("{}{under}{chain}", c.why))
             })
             .collect();
         return Err(format!(

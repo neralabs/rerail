@@ -11885,3 +11885,25 @@ Tests:
   - `the_python_main_pack_is_split_with_its_crossings_declared_6` and `_7`: FAST003's lowering joins two documents with no declaration (0652), and four relations hold node ids across files (0677). They passed at roll-up 137. sync-integration-hub-tape's 9d8911d52f (the crossings 0705 made, fixed) comes next.
   - `a_nested_working_tree_batch_leaves_publication_to_its_caller`: no pending scope rows. Passed in no run of this series.
 - Not run: the device crate's tests (Metal) and `all` (no farm).
+
+### Q575. Roll-up 147 (sync-integration-hub-tape 9d8911d52f onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's four new commits: 0705's tsx_names asks only of workspace modules, points-to's `pt_scope_tm` joins a new scope's term to its definitions by the scope (0691 fix 19), decision 0714 (a profile names the rules that make rows they drop, why, and the rewrite), and 0677's fix of the crossings 0705 made (a whole setting, and a lookup in a setting is made in its file).
+
+- **Placeless inputs to `factorize`: both lines' cases.** The hub's 0709 treats an earlier phase's or a stage's export read by probes (`phased::is_probed`) as a constant of the split. Theirs uses `file_local::placeless_input` (a run's option, or a phase's export declared keyed or whole). Neither covers the other's case, so `constant` takes either. Theirs' `placeless_input` stands elsewhere unchanged.
+
+Fixed on the way (red at the hub's head):
+- **FAST003's rule, as 0677 left it.** Roll-up 138 left `ruff-fast003-…rerail` half in its pre-0677 form: the main rule and two demand rules lost `text(K, KT)`, and their helpers took the capture's node again. The feeder had not touched the file. The lowering then joined the guest's capture to a parameter by value across two documents (0652), and four relations held node ids across files (0677). python-main's split shards 6 and 7 were red from roll-up 138 on. The file is the hub's again (e201b40c3b's, as at roll-up 137), and `json_rules_pack_is_current` agrees that it is the translator's output.
+- **An owned root by its canonical path.** `ThreadStore::owner` compared the caller's root with the run's as written, but a run canonicalizes its root first. On macOS a root under `/tmp` is `/private/tmp/…` to the run, so a nested run found no owner and published under its own directory scope. `select` keeps the owned root canonical, and `owner` also matches a root by its canonical path, since one caller asks with the root as given. boot's `a_nested_working_tree_batch_leaves_publication_to_its_caller` was red in every run of this series and is green now.
+
+Checked with Relax: tests-corpus, tests-logic and boot check with 0 errors.
+
+Tests:
+- boot `tools`: all 51 green, run in parts so each fits the 12 GB cap. That is the git-revision tests 5/5, the other non-split tests, python-main shards 0–11, and every other pack's split.
+- tests-rr `json_rules_pack_is_current` 1/1.
+- The device crate's `typing::file_local` 66/66 (program transforms, no device).
+- logic 311/311 at two threads. At four the run passed the 12 GB cap with 164 ok and none failed.
+- tests-logic `profile::` 6/6, prof 41/41, typing 13/13, plan-base 29/29, corpus-memo 19/19.
+- tests-corpus `phases::` 18/18.
+- tests-lang: every test passes, its cost and census tests ignored as before. The run passed the cap at two threads with 189 ok, and the watchdog tests ran after it at one thread.
+- Not run: the device crate's other tests (Metal) and `all` (no farm).

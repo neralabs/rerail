@@ -74,7 +74,8 @@
 .phase py_names
 // Keyed in a reader's memo (decision 0705): a file's modules, its asks, its own classes and its own receivers, at its
 // path, each naming a key in column 1; its star-imported public names at its path; each ask's symbols by
-// the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0.
+// the ask, naming each symbol in column 1; every fact by the symbol (or module) in column 0; the run's Celery app
+// whole (`dj_app_defers whole`): a setting every file reads all of, where an export with no key is no setting.
 .rounds ask_in
 .export ask_in by_path, reads_at by_path 1, asks_at as asked_at by_path 1, own_at by_path 1, own_rcv_at by_path 1,
     star_public by_path, denotes_k as denotes by_key 1, resolved_k as resolved by_key, h_class as class by_key,
@@ -87,7 +88,7 @@
     h_dj_manager_method as dj_manager_method by_key, h_dj_hook as dj_hook by_key,
     h_dj_receiver_fn as dj_receiver_fn by_key, h_dj_deferred_task as dj_deferred_task by_key,
     h_dj_task_def as dj_task_def by_key, h_dj_view_model as dj_view_model by_key,
-    h_dj_anc_clean_call as dj_anc_clean_call by_key, dj_model_class by_key, dj_app_defers,
+    h_dj_anc_clean_call as dj_anc_clean_call by_key, dj_model_class by_key, dj_app_defers whole,
     h_dj_number_fields as dj_number_fields by_key
 
 // ---- the asks (decision 0705) ---------------------------------------------------------------------------------------

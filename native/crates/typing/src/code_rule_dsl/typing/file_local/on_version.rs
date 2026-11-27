@@ -6,7 +6,7 @@
 //! carried to its output by the manager, which hands `maintain` the edit.
 
 use rerail_blocks::vector::Vector;
-use super::{CHUNK_VALUES, document_column, option_input, path_key_column, setting_input};
+use super::{CHUNK_VALUES, document_column, option_input, path_key_column};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Delta, Reads};
 use crate::code_rule_dsl::logic::program_image::{ArchivedNativeSpec, CmpOp, Lit as L, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
@@ -734,7 +734,7 @@ impl<'v> Program<'v> {
 
     /// An input with one value for the whole run (`file_local::run_constant`).
     fn run_constant(&self, rel: &str) -> bool {
-        option_input(rel) || setting_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && self.f.is_input(rel))
+        super::placeless_input(rel) || (crate::code_rule_dsl::logic::plan::phased::is_phased(rel) && self.f.is_input(rel))
     }
 
     /// An input a file-local rule may join and stay file-local: the run's options and its settings (decision 0665:
@@ -748,7 +748,7 @@ impl<'v> Program<'v> {
     /// Decision 0709 makes them placeless (`Rels::placeless_input`): a file's entry is keyed by the rows of one its
     /// probes read (`memo::StageDigests`), not by every row.
     fn placeless_input(&self, rel: &str) -> bool {
-        option_input(rel) || setting_input(rel)
+        super::placeless_input(rel)
     }
 
     /// A derived relation's key: its columns, whether it is an output, and its rules' hashes, in the program's order.

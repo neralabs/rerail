@@ -39,6 +39,12 @@ one run, and asks keyed per file.
   under each key named in their column `C`. `by_key`: rows keyed by column 0, read where a `by_path` row names the
   key. `by_key C`: those rows, and in turn every `by_key` row under each key named in their column `C`, to the
   closure. Key columns are symbols. An export with a key is a setting to the split (0665): placeless, read per file.
+- `whole` after an export (amended 2026-11-26): every file reads all its rows, and every reader's memo entry is keyed
+  by them (`memo::settings_scopes`, as a read through no key). py_names' `dj_app_defers whole` is the run's Celery
+  app. An export written with no key is no setting, which is a phase's ordinary export (`struct`, `types`, `values`).
+  So `dj_app_defers` was none once this record had each phase declare its keys. It had been on the split's hand
+  list, and its reader `dj_app_defers(d) :- doc(d, _, _), py_names__dj_app_defers(_)` went to the cross part with
+  `dj_task_waits_for_commit`, a node crossing (0677).
 - `R as E` hands on relation `R` as export `E` (`asks_at as asked_at by_path 1`): a phase hands a relation on under
   the name its readers read, where its program makes another of that name, as an included library's.
 - The project's settings are declared the same way, beside their declarations in the library's `core.rerail`:
@@ -235,6 +241,9 @@ not a file that asks the same module for another name.
   follows the answers back through the forwards and stars, as before but for the asked names alone (both `asked`
   and `exports` recurse across files: `cross_file`, 0652). `resolved(t#x, q) by_key` hands on each ask's answer, in
   place of `exports`; a forward to a package names the package's symbol.
+- `asked_at` holds asks of workspace modules alone: a package is asked of no file, and tsx/names names a package's
+  symbol by its target (`!tsx_names__module(t)`). With every import's ask, it was 8,893 rows over tscorp, 5,084 without
+  those of packages.
 - `target_at by_path 2` and `module by_key` are as before. `symbol` and `reexported`, read by no rule, are gone.
 
 tsx/names' `sym_of` reads an imported name under the file's own ask: `tsx_names__asked_at(p, k)`, `k = @qname(t,
@@ -255,6 +264,31 @@ test did not meet it). Now such a round names them in its record, behind the que
 (`prepared::named_late`), as the sources of a queued tape are named (`named_digests`): nothing waits.
 
 ## Measured
+
+**tscorp's 560 TypeScript files** (the sample's 36 `.mjs` files left out, so each run is TypeScript's alone), a
+reader of tsx/names' `sym_of` (`used(p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _)`) through the `logic` command:
+the eager tsx_names of f1a4e24f0f, given the same `.js` resolution, against the asked one; then edits on the same
+stores: A, an export nobody imports added to `src/engine/storage/database.ts`; B, its `defaultRerailDatabasePath`
+renamed, a name 40 files spell. No pack policy reads `sym_of` yet, so the TypeScript policies' findings say nothing
+of the phase: all 59 are the same either way. Load 7 to 19, one run each.
+
+| | Eager | Asked |
+|---|---|---|
+| Rows read, cold | 11,974 | 11,974, the same |
+| Rows handed on, cold | 7,659 | 11,692 |
+| `asked_at` / `exports` | / 2,911 | 5,084 / |
+| `resolved` | | 1,860 |
+| The phase's rounds, cold | 1 | 2: 560 files built, then 254 |
+| Cold run, user CPU | 9.13 s | 8.91 s |
+| Edit A: the reader's files built | 63 | 1 |
+| Edit A: the phase's files built | | 1, in one round |
+| Edit A, user CPU | 0.95 s | 0.40 s |
+| Edit B: the reader's files built | 152 | 38 |
+| Edit B, user CPU | 1.89 s | 0.98 s |
+
+Each edit's rows equal a fresh cold run's of the edited tree, on both sides, and the two sides' are the same. Before
+the held `exported_decl` was stored, each round of the asked phase built all 560 files, in a cold run and in edit A's.
+Before asks of packages were dropped, 15,501 rows were handed on.
 
 The CLI at O0 with `test-hooks`, on this Mac with other runs going (load 14 to 53); user CPU and peak compared, not
 wall time; each set run back to back. A reader's files "built" are those not read from its memo.

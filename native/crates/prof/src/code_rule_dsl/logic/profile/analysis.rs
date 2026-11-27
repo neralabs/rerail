@@ -11,6 +11,9 @@ pub(super) struct Input {
     pub tape_hits: u64,
     pub tape_misses: u64,
     pub late_candidate_rewrite: bool,
+    /// The heads whose plans the rows-dropped analysis read, step by step (`dropped`): their native joins' row counts
+    /// add nothing to it, so they raise no fan-out, late rejection or wasteful rule here.
+    pub covered: std::collections::BTreeSet<String>,
     /// Per-node source attributes made for every node though they can be answered on request (decision 0174):
     /// the attribute and the lowering's reason (`<a> on request`).
     pub eager_attributes: Vec<(String, String)>,
@@ -59,6 +62,8 @@ pub(super) struct Finding {
     pub cpu: Option<f64>,
     pub evidence: String,
     pub action: &'static str,
+    /// The rewrite that removes it, as rule text, where one is known (`dropped`).
+    pub fix: String,
 }
 /// A rule is wasteful when its joins make this many rows between steps ...
 pub(super) const WASTEFUL_ROWS: u64 = 1_000_000;
@@ -94,6 +99,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
             cpu,
             evidence,
             action,
+            fix: String::new(),
         })
     };
     for (attr, why) in &i.eager_attributes {
@@ -204,7 +210,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
             "Inspect function registration and schema changes between cached executions; keep input binding owners alive when removing invalidation.",
         );
     }
-    for j in &i.joins {
+    for j in i.joins.iter().filter(|j| !i.covered.contains(&super::kinds::head(&j.plan))) {
         // A seed scan is not a fanout. Flag expansion only after the seed, and
         // late rejection only inside a join that actually expanded first.
         let expansion = j
@@ -262,6 +268,9 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
         }
     }
     for (head, (made_between, made, cpu, worst)) in heads {
+        if i.covered.contains(&head) {
+            continue;
+        }
         if made_between >= WASTEFUL_ROWS && made.saturating_mul(WASTEFUL_RATIO) < made_between {
             let (worst, _) = worst.expect("a head has a plan");
             let steps: Vec<String> = worst.steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
@@ -348,6 +357,12 @@ pub(super) fn render(findings: &[Finding]) -> String {
             f.evidence,
             f.action
         );
+        if !f.fix.is_empty() {
+            out.push_str("  Fix:\n");
+            for line in f.fix.lines() {
+                let _ = writeln!(out, "    {line}");
+            }
+        }
     }
     if findings.is_empty() {
         out.push_str("No supported structural hazard detected. This is not a completeness or performance guarantee.\n");
@@ -549,6 +564,23 @@ pub mod tests {
         // A rule whose rows are kept is not wasteful, however large.
         i.joins[0].steps = vec![(1, 2_000_000), (2_000_000, 2_000_000)];
         assert!(!codes(&i).contains(&"WASTEFUL_RULE"));
+    }
+    /// A head whose plans the rows-dropped analysis read (`dropped`) raises no fan-out, late rejection or wasteful
+    /// rule from its native joins' counts: that analysis says which rows were kept and why the others were not.
+    #[test]
+    fn a_head_the_plans_cover_raises_no_count_only_finding() {
+        let mut i = Input {
+            joins: vec![Join {
+                path: "local/stratum pt_rbound/native".into(),
+                plan: "seed pt_rbound($s, $x): demand_pt_rbound($s, $x) , rr_nearest_ks8($t, $s) , $x = @rr_node_text_any($t)".into(),
+                steps: vec![(9, 10947), (10947, 7_303_978), (7_303_978, 32172)],
+                cpu: Some(1.9),
+            }],
+            ..Default::default()
+        };
+        assert!(codes(&i).contains(&"JOIN_FANOUT") && codes(&i).contains(&"WASTEFUL_RULE"), "{:?}", codes(&i));
+        i.covered.insert("pt_rbound".into());
+        assert!(codes(&i).is_empty(), "{:?}", codes(&i));
     }
     #[test]
     fn empty_results_and_legitimate_large_scans_are_not_defects() {
