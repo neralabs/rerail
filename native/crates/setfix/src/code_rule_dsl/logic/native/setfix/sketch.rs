@@ -49,29 +49,97 @@ pub(super) fn mix(v: i64) -> u64 {
     crate::code_rule_dsl::logic::bloom::hash(v)
 }
 
+/// A column's values, read in turn where they lie (`Sketch::add_batch`'s).
+pub(super) trait Values {
+    fn each(&self, f: impl FnMut(i64));
+}
+
 impl Sketch {
     pub(super) fn add(&mut self, v: i64) {
         let h = mix(v);
         let ended = self.core.add(v);
-        if let Some(keys) = &mut self.keys {
-            if !self.own_keys {
-                *keys = Arc::new(Kept::clone(keys));
-                self.own_keys = true;
-            }
-            if keys.add_hashed(h) {
-                self.sample.offer(h);
-            }
+        if self.keys.is_some() {
+            self.add_key(h);
         }
-        // Its `SMALL + 1`th value: its keys from here on in a filter, from the values it held and this one.
         if let Some(values) = ended {
-            let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
-            for h in values.into_iter().map(mix) {
-                keys.add_hashed(h);
-                self.sample.offer(h);
-            }
-            self.keys = Some(Arc::new(keys));
+            self.start_keys(values);
+        }
+    }
+
+    /// Key `h` into its filter (its own copy first, where it shares one), and into its sample where it is new there.
+    #[inline]
+    fn add_key(&mut self, h: u64) {
+        let Some(keys) = &mut self.keys else { return };
+        if !self.own_keys {
+            *keys = Arc::new(Kept::clone(keys));
             self.own_keys = true;
         }
+        if keys.add_hashed(h) {
+            self.sample.offer(h);
+        }
+    }
+
+    /// Its `SMALL + 1`th value: its keys from here on in a filter, from the values it held and this one (`values`).
+    fn start_keys(&mut self, values: impl IntoIterator<Item = i64>) {
+        let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
+        for h in values.into_iter().map(mix) {
+            keys.add_hashed(h);
+            self.sample.offer(h);
+        }
+        self.keys = Some(Arc::new(keys));
+        self.own_keys = true;
+    }
+
+    /// Values `batch` (its column's rows past those it has) added, as `add` each then `grow`: their counts first,
+    /// then their keys, and a filter they would outgrow (its distinct values, as the sketch counts them now, past its
+    /// bits) made once at twice them from `all` (every value, theirs too), not written a key at a time first.
+    pub(super) fn add_batch(&mut self, batch: &impl Values, all: &impl Values) {
+        // The batch's first value its filter takes: none it had before its filter was made (they are in it).
+        let mut from = if self.keys.is_some() { 0 } else { usize::MAX };
+        let mut i = 0usize;
+        batch.each(|v| {
+            i += 1;
+            if let Some(values) = self.core.add(v) {
+                self.start_keys(values);
+                from = i;
+            }
+        });
+        let Some(keys) = &self.keys else { return };
+        let words = Words::len(&**keys);
+        if words < bloom::MAX_KEPT_WORDS && self.ndv().saturating_mul(bloom::KEPT_BITS_PER_KEY) > words * 64 {
+            let made = Kept::new(bloom::kept_words_for(2 * self.ndv()));
+            all.each(|v| {
+                let h = mix(v);
+                if made.add_hashed(h) {
+                    self.sample.offer(h);
+                }
+            });
+            self.keys = Some(Arc::new(made));
+            self.own_keys = true;
+            return;
+        }
+        let mut i = 0usize;
+        batch.each(|v| {
+            if i >= from {
+                self.add_key(mix(v));
+            }
+            i += 1;
+        });
+        self.grow_from(all);
+    }
+
+    /// `grow` of values read where they lie.
+    fn grow_from(&mut self, all: &impl Values) {
+        let Some(keys) = &self.keys else { return };
+        if !keys.outgrown() {
+            return;
+        }
+        let made = Kept::new(bloom::kept_words_for(2 * self.ndv().max(Words::keys(&**keys) as usize)));
+        all.each(|v| {
+            made.add_hashed(mix(v));
+        });
+        self.keys = Some(Arc::new(made));
+        self.own_keys = true;
     }
 
     /// A row of value `v` taken out, as `add` put it in (`Sketch::remove`). The row must be one it was given.

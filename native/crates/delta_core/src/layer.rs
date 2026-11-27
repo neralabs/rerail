@@ -360,7 +360,7 @@ impl<'a> Layer<'a> {
     }
 
     /// The own rows whose `cols` equal `key` by a sorted order whose key starts with `cols` (`Relation::add_order`):
-    /// its ids, found by `blocks::order::find` (fences, prints, then bisection). `None` without such an order.
+    /// its ids, found by `order::find` (fences, prints, then bisection). `None` without such an order.
     pub fn order_range(&self, cols: &[u16], key: &[i64]) -> Option<&'a [u32]> {
         let rows = self.rows;
         let x = rows.orders().find(|&x| {
@@ -370,9 +370,9 @@ impl<'a> Layer<'a> {
         })?;
         let ix = rows.index_at(x);
         let ids = ix.rows.as_slice();
-        let cmp = |p: usize| self.cmp_key(ids[p], cols, key);
-        let whole = cols.len() == ix.ncols as usize;
-        let (lo, hi) = crate::order::find(ids.len(), ix.fences.as_slice(), ix.tags.as_slice(), ix.prints.as_slice(), key, whole, cmp);
+        // The order prints its whole key (`ix.ncols` columns): a key of them all is found by the prints.
+        let cmp = |p: usize, m: usize| self.cmp_key(ids[p], &cols[..m], &key[..m]);
+        let (lo, hi) = crate::order::find(ids.len(), ix.fences.as_slice(), ix.tags.as_slice(), ix.prints.as_slice(), ix.ncols as usize, key, cmp);
         Some(&ids[lo..hi])
     }
 

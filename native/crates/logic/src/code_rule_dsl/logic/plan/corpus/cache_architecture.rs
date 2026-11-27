@@ -99,6 +99,9 @@ const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "!leaves.still(c)", 2),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),
+    // `FactStore::derivation_valid`'s implementations, delegating as `facts.rs` does, and the overlay's recovery test.
+    ("code_rule_dsl/facts/overlay/recovery.rs", "derivation_valid(", 2),
+    ("content_store/as_fact_store.rs", "derivation_valid(", 1),
     ("code_rule_dsl/logic/plan/corpus/constants.rs", ".all(|c| leaves.still(c))", 1),
 ];
 
@@ -106,7 +109,8 @@ const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
 fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     let mut files = Vec::new();
     every_source(&mut files);
-    let needles: Vec<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
+    // Each needle once: several files may list the same one.
+    let needles: std::collections::BTreeSet<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
     let mut found: Vec<(String, &str)> = Vec::new();
     for file in &files {
         let rel = relative(file);

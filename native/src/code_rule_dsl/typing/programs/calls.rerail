@@ -700,7 +700,8 @@ star_from(m, n) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wi
     modname(m, _), py_import(i, n).
 .decl starmod(q: symbol, m: node)
 starmod(q, m) :- star_from(m, _), modname(m, q).
-.decl wantx(m: node, x: symbol)
+// Cross-file: the names other files import from module m, asked of m's file (decision 0652).
+.decl wantx(m: node, x: symbol) cross_file
 wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
 wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
 wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).

@@ -73,7 +73,7 @@ mod workspaces;
 pub mod write_back;
 
 pub use held::forget_snapshot as forget_held_snapshot;
-pub use object_segments::{copy_beside, ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
+pub use object_segments::{copy_beside, ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, SourcePlace, TapeBytes, TapeHeld};
 pub use held::{Rel as KeptRel, Stored as KeptStored, local_space, MemoBlob, MemoPut, MemoRow};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;

@@ -106,6 +106,9 @@ unsafe fn zero(p: *mut u8, len: usize) {
 pub struct Extent {
     pub top: AtomicUsize,
     pub free: AtomicUsize,
+    /// The bytes of its free chunks whose pages went to the OS (`Ledger::give_free_pages`), until a chunk handed out
+    /// takes them again: `free` less these is what its free lists keep resident.
+    pub given: AtomicUsize,
 }
 
 pub struct Block {
@@ -128,6 +131,8 @@ pub struct Block {
     /// Its reservation past its length is released at its freeze: a block that kept a free list until then, or an
     /// operation's out block (`trimmed`), which takes exact claims from its top and keeps no list.
     trims: bool,
+    /// A chunk freed under this many bytes keeps its pages (`keeping_pages_below`): 0, every free gives them back.
+    resident_below: usize,
     /// The device buffer this block is read through, kept: a buffer's first use maps it into the GPU's address
     /// space at about 20 ms a GiB (0266 §12), so it is made once and remade only when the block outgrows it.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -217,7 +222,7 @@ impl Block {
         // Its references (`Rel`, `RelSpan`) are read by address: its bytes' provenance is exposed once, here.
         let _ = base.expose_provenance();
         let dirty = backing.is_some();
-        let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
+        let ext = Arc::new(Extent { top: AtomicUsize::new(top), ..Extent::default() });
         // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
         let ledger = crate::ledger::Ledger::new(base, reserved, file.is_none() && backing.is_none(), ext.clone());
         Block {
@@ -232,6 +237,7 @@ impl Block {
             dirty,
             listed: false,
             trims: false,
+            resident_below: 0,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: std::sync::Mutex::new(None),
             desc: std::sync::OnceLock::new(),
@@ -254,6 +260,22 @@ impl Block {
     pub fn trimmed(mut self) -> Block {
         self.trims = true;
         self
+    }
+
+    /// It, a chunk freed under `bytes` keeping its pages for the next chunk of its size: a block whose chunks are
+    /// made and freed often (a thread's large regions, `maps::FreeRoom::large`), where giving each one's pages to the OS and
+    /// marking them in use again cost two calls a chunk. Larger chunks' pages still go back as they are freed.
+    pub fn keeping_pages_below(mut self, bytes: usize) -> Block {
+        self.resident_below = bytes;
+        self
+    }
+
+    /// Its used bytes reach at least `end`: a block whose bytes its holder hands out itself (a thread's stack,
+    /// `scratch::Stack`), so the device's wrap of it (`device_buffer`, its used bytes) covers each region it reads.
+    pub(crate) fn reach(&self, end: usize) {
+        if end > self.ext.top.load(Acquire) {
+            self.ext.top.fetch_max(end, AcqRel);
+        }
     }
 
     /// Its ledger (decision 0487): what is live in it, and what the GPU has queued on it.
@@ -318,7 +340,8 @@ impl Block {
     /// the OS too (Q76: a dead relation's pages otherwise stayed in the footprint until its chunks were taken again),
     /// and are marked in use again when the list hands a chunk in them out. Returns the bytes given to the OS.
     pub fn free_chunk(&self, at: usize, bytes: usize) -> usize {
-        self.release_chunk(at, crate::free::class_of(bytes).1, crate::ledger::Freeing { pages: true })
+        let size = crate::free::class_of(bytes).1;
+        self.release_chunk(at, size, crate::ledger::Freeing { pages: size >= self.resident_below })
     }
 
     /// A live chunk of `len` bytes at `at` freed through the ledger (decision 0487): at once, or when the GPU work
@@ -335,7 +358,7 @@ impl Block {
         if !self.listed || !self.writable {
             return;
         }
-        self.ledger.push_never_live(at, bytes);
+        self.ledger.push_never_live(at, bytes, bytes >= self.resident_below);
     }
 
     /// A chunk of at least `bytes` at `align` that keeps little more (`try_alloc_chunk_any`'s, not zeroed): in a block
@@ -389,7 +412,7 @@ impl Block {
 
     /// Gives back a chunk `try_alloc_chunk_fit` gave (`kept` bytes at `at`): its pieces, each a class's chunk.
     pub fn free_chunk_fit(&self, at: usize, kept: usize) {
-        self.release_chunk(at, kept, crate::ledger::Freeing { pages: true });
+        self.release_chunk(at, kept, crate::ledger::Freeing { pages: kept >= self.resident_below });
     }
 
     /// `bytes` at `at` (a multiple of the least class), never live, to the free list as chunks of classes, each the
@@ -447,8 +470,8 @@ impl Block {
     /// The wrap `device_buffer` keeps as it is now, and its length (none made yet, or a slab's block): what a program
     /// bound before the block grew, for a remap to find again (decision 0603).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub fn kept_device_buffer(&self) -> Option<(rerail_device::device::Buffer, usize)> {
-        if self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
+    pub fn kept_device_buffer(&self, device: &rerail_device::device::Device) -> Option<(rerail_device::device::Buffer, usize)> {
+        if device.is_cpu() || self.backing.as_ref().is_some_and(|b| b.buffer().is_some()) {
             return None;
         }
         self.gpu.lock().unwrap().clone()
@@ -461,6 +484,15 @@ impl Block {
     pub fn device_buffer(&self, device: &rerail_device::device::Device) -> Result<rerail_device::device::Buffer, String> {
         // Its descriptor's stable id, made with its first descriptor.
         let _ = self.desc_id();
+        // The host's (a CPU device, `rerail_accel::gpu::shared::host_layer`): its whole reservation by its address,
+        // which it never outgrows, its used pages committed
+        // (decision 0353: the block's own bytes, read in place).
+        if device.is_cpu() && !self.backing.as_ref().and_then(|b| b.buffer()).is_some_and(|b| matches!(b, rerail_device::device::Buffer::Cpu(_))) {
+            let used = (self.used().div_ceil(1 << 20) << 20).min(self.reserved);
+            crate::mem::commit(self.base, used).map_err(|e| format!("committing a block's {used} bytes for the host: {e}"))?;
+            // SAFETY: the reservation outlives the wrap: a kernel's bind is held by the block's ledger (decision 0487).
+            return unsafe { rerail_device::device::wrap_host_memory(device, self.base, self.reserved) };
+        }
         if let Some(b) = self.backing.as_ref().and_then(|b| b.buffer()) {
             return Ok(b);
         }

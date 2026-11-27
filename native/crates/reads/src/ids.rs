@@ -158,6 +158,37 @@ fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
 ///
 /// # Safety
 /// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
+/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`): the bits of its group not yet
+/// walked, `g`'s.
+#[derive(Clone, Copy)]
+pub struct Nodes<'a> {
+    n: &'a Numbering,
+    item: u32,
+    g: u32,
+    m: u64,
+}
+
+impl Nodes<'_> {
+    /// The next numbered tape node, `NONE` past the last.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn next(&mut self) -> u32 {
+        while self.m == 0 {
+            self.g += 1;
+            if self.g >= self.n.groups.len as u32 {
+                return NONE;
+            }
+            // SAFETY: `g` is a group.
+            self.m = unsafe { self.n.group(self.g) }[self.item as usize];
+        }
+        let x = (self.n.first + self.g) * 64 + self.m.trailing_zeros();
+        self.m &= self.m - 1;
+        x
+    }
+}
+
 impl Numbering {
     /// Run `run`'s items.
     #[inline(always)]
@@ -244,6 +275,24 @@ impl Numbering {
             }
             g += 1;
         }
+    }
+
+    /// `item`'s numbered tape nodes in order from number `r` on (`Nodes`): one `select`, then each next set bit of
+    /// the groups, where a `select` of each would search from its sample.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn nodes_from(&self, item: u32, r: u32) -> Nodes<'_> {
+        // SAFETY: the caller's.
+        let x = unsafe { self.select(item, r) };
+        if x == NONE {
+            return Nodes { n: self, item, g: self.groups.len as u32, m: 0 };
+        }
+        let g = (x >> 6) - self.first;
+        // SAFETY: `x` is a numbered node, so `g` a group.
+        let m = unsafe { self.group(g) }[item as usize] & !((1u64 << (x & 63)) - 1);
+        Nodes { n: self, item, g, m }
     }
 
     /// The innermost granule holding `item` number `k` (0 or 1), and the last granule starting at or before it, as
@@ -382,14 +431,14 @@ impl Numbering {
         }
     }
 
-    /// The item whose id's low 32 bits are `low`, as `(item, number)` (`num_number_of`): the slot's entry, then its
-    /// index among the granule's nodes or tokens. The slots are hashes, about evenly spread: the entry is near
+    /// The item whose id's low 32 bits are `low`, as `(granule, item, index)`: the slot's entry, then its index among
+    /// the granule's own nodes or tokens. The slots are hashes, about evenly spread: the entry is near
     /// `slot`'s share of them, a few steps from a guess there; a run of clashes past `STEPS` is bisected.
     ///
     /// # Safety
     /// As every read's.
     #[inline]
-    pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
+    unsafe fn granule_of_low(&self, low: u32) -> Option<(u32, u32, u32)> {
         const STEPS: u32 = 8;
         let slot = low >> INDEX_BITS;
         // SAFETY: the caller's.
@@ -416,8 +465,68 @@ impl Numbering {
         let g1 = g as usize + 1;
         let own = nodes[g1].wrapping_sub(nodes[g as usize]);
         let (item, k, all) = if index < own { (0, index, own) } else { (1, index - own, tokens[g1].wrapping_sub(tokens[g as usize])) };
+        (k < all).then_some((g, item, k))
+    }
+
+    /// The item whose id's low bits are `low` as `(item, number)` (`num_number_of`): its granule and index there
+    /// (`granule_of_low`), then its number among the granule's.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
         // SAFETY: the caller's.
-        (k < all).then(|| (item, unsafe { self.number_in(g, item, k, None) }))
+        unsafe {
+            let (g, item, k) = self.granule_of_low(low)?;
+            Some((item, self.number_in(g, item, k, None)))
+        }
+    }
+
+    /// SPIKE (local fixes, 1): the node whose id's low bits are `low`, as its place among every granule's own nodes in
+    /// granule order (`nodes[g] + k`); `None` for a token's or no item's. A table by that place (`own_numbers`) is
+    /// then the node's number in one load, with no search of the granule's children (`number_in`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn own_place_of(&self, low: u32) -> Option<u32> {
+        // SAFETY: the caller's.
+        unsafe {
+            let (g, item, k) = self.granule_of_low(low)?;
+            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
+        }
+    }
+
+    /// SPIKE (local fixes, 1): each granule's own nodes' numbers, by place (`own_place_of`), into `out` (as long as
+    /// the last granule's `nodes` entry); returns how many.
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn own_numbers(&self, out: &mut [u32]) -> usize {
+        // SAFETY: the caller's.
+        unsafe {
+            let nodes = Self::of::<u32>(&self.nodes);
+            let mut n = 0;
+            for g in 0..nodes.len().saturating_sub(1) {
+                let (a, b) = (nodes[g], nodes[g + 1]);
+                for k in 0..b.wrapping_sub(a) {
+                    if let Some(o) = out.get_mut((a + k) as usize) {
+                        *o = self.number_in(g as u32, 0, k, None);
+                        n = n.max((a + k) as usize + 1);
+                    }
+                }
+            }
+            n
+        }
+    }
+
+    /// SPIKE: the own places `own_numbers` fills: the last granule's `nodes` entry.
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn own_places(&self) -> usize {
+        // SAFETY: the caller's.
+        unsafe { Self::of::<u32>(&self.nodes).last().copied().unwrap_or(0) as usize }
     }
 
     /// Node number `l`'s order key: its stretch's run rank, then its index in its granule (its number itself where

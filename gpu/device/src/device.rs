@@ -65,7 +65,7 @@ mod native {
     }
 }
 
-/// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
+/// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", "none" (no device), or "" for the target's GPU.
 pub(crate) fn chosen() -> &'static str {
     static CHOSEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     CHOSEN.get_or_init(|| std::env::var("RERAIL_GPU").map(|v| v.to_ascii_lowercase()).unwrap_or_default())
@@ -74,6 +74,12 @@ pub(crate) fn chosen() -> &'static str {
 /// Whether this process runs its kernels on the CPU (`RERAIL_GPU=cpu`).
 pub fn cpu_chosen() -> bool {
     chosen() == "cpu"
+}
+
+/// Whether this process opens no device at all (`RERAIL_GPU=none`): no kernel runs, on a GPU or on the CPU's backend
+/// (UKL's), and every caller takes its path for a machine without one.
+pub fn none_chosen() -> bool {
+    chosen() == "none"
 }
 
 /// Whether this process runs its kernels on an OpenCL GPU (`RERAIL_GPU=opencl`).
@@ -100,6 +106,30 @@ pub fn backend() -> &'static str {
         None if cpu_chosen() => "CPU",
         None if opencl_chosen() => "OpenCL",
         None => native::name(),
+    }
+}
+
+/// A buffer as the CPU's: its own, or another backend's host memory by its address (a pooled lease, a block's
+/// slab), which the host device's work reads in place (decision 0353: no copy).
+fn on_cpu(b: &Buffer) -> cpu::CpuBuffer {
+    match b {
+        Buffer::Cpu(c) => c.clone(),
+        b => {
+            let at = b.contents().cast::<u8>();
+            assert!(!at.is_null(), "a buffer the host cannot address bound to the CPU's work");
+            // SAFETY: the buffer outlives the work, as its own would (the caller's binds hold it).
+            unsafe { cpu::wrap_host_memory(&cpu::CpuDevice::host(), at, b.length() as usize) }.expect("a CPU wrap")
+        }
+    }
+}
+
+/// `b` as `device` binds it: a CPU device's wrap of another backend's host memory by its address (`on_cpu`), else
+/// `b` itself. What a buffer's address (`Buffer::device_address`) is on that device: a pooled lease of the process's
+/// GPU bound by the host's work is its host address there.
+pub fn on_device(device: &Device, b: &Buffer) -> Buffer {
+    match (device, b) {
+        (Device::Cpu(_), Buffer::Cpu(_)) | (Device::Native(_), _) | (Device::OpenCl(_), _) => b.clone(),
+        (Device::Cpu(_), b) => Buffer::Cpu(on_cpu(b)),
     }
 }
 
@@ -432,7 +462,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a copy from the host");
         match (&self.kind, dst) {
             (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
-            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+            (QueueKind::Cpu(q), d) => q.enqueue_copy_from_host(&on_cpu(d), dst_offset, bytes),
             (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
             _ => other(),
         }
@@ -442,7 +472,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a fill");
         match (&self.kind, dst) {
             (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_fill_array(d, value, offset, count),
-            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_fill_array(d, value, offset, count),
+            (QueueKind::Cpu(q), d) => q.enqueue_fill_array(&on_cpu(d), value, offset, count),
             (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_fill_array(d, value, offset, count),
             _ => other(),
         }
@@ -453,7 +483,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a copy's destination");
         match (&self.kind, src, dst) {
             (QueueKind::Native(q), Buffer::Native(s), Buffer::Native(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
-            (QueueKind::Cpu(q), Buffer::Cpu(s), Buffer::Cpu(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+            (QueueKind::Cpu(q), s, d) => q.enqueue_copy_between_device_regions(&on_cpu(s), &on_cpu(d), src_offset, dst_offset, length),
             (QueueKind::OpenCl(q), Buffer::OpenCl(s), Buffer::OpenCl(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
             _ => other(),
         }
@@ -470,12 +500,14 @@ impl ComputeQueue {
 
     /// Which span of its launches a buffer made resident (`GridBindContext::use_buffer`) stays resident over: while
     /// this is the same, a launch after it needs it made resident no more (decision 0641). Metal's is its open
-    /// compute encoder (`useResource` holds for the encoder's life). The other backends keep what a launch uses with
-    /// that launch alone (OpenCL's indirect-access list, the CPU's and CUDA's buffers kept), so each launch is a span.
+    /// compute encoder (`useResource` holds for the encoder's life). The CPU's is its submission: its queue keeps a
+    /// resident buffer until the work flushed with it has run. The other backends keep what a launch uses with that
+    /// launch alone (OpenCL's indirect-access list, CUDA's buffers kept), so each launch is a span.
     pub fn residency_span(&self) -> u64 {
         match &self.kind {
             #[cfg(target_os = "macos")]
             QueueKind::Native(q) => q.encoders(),
+            QueueKind::Cpu(q) => q.flushes(),
             _ => self.launches.get(),
         }
     }
@@ -569,6 +601,20 @@ impl ComputeFunctionLibrary {
             Device::Native(d) => ComputeFunctionLibrary::Native(native::Library::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::Cpu(d) => ComputeFunctionLibrary::Cpu(cpu::CpuComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
             Device::OpenCl(d) => ComputeFunctionLibrary::OpenCl(cl::ClComputeFunctionLibrary::compile_from_source(d, preprocessed_source, file_name_to_appear_in_error_messages)?),
+        })
+    }
+
+    /// This library of the UKL `text` specialized by `defines`, its kernels that are Rust of that very text and those
+    /// defines (`rerail_ukl_rust::kernels`, decision 0567 step 3) run as their Rust on the CPU; on another device,
+    /// or of a text with no kernel that has Rust, the same library. An error on the CPU where the text compiles a
+    /// kernel that has Rust but is not the source that Rust was written from: no other build runs in its place.
+    pub fn with_rust(self, text: &str, defines: &[(&str, &str)]) -> Result<Self, String> {
+        Ok(match self {
+            ComputeFunctionLibrary::Cpu(l) => {
+                let host = rerail_ukl_rust::kernels(text, defines)?;
+                ComputeFunctionLibrary::Cpu(l.with_host(host))
+            }
+            other => other,
         })
     }
 
@@ -687,7 +733,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         self.sees(arg_num, buffer);
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
+            (BindKind::Cpu(c), b) => c.set_buffer(arg_num, &on_cpu(b)),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
             _ => other(),
         }
@@ -700,7 +746,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         self.sees(arg_num, buffer);
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer_at(arg_num, b, offset),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindKind::Cpu(c), b) => c.set_buffer_at(arg_num, &on_cpu(b), offset),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer_at(arg_num, b, offset),
             _ => other(),
         }
@@ -737,7 +783,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         }
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.use_buffer(b),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.use_buffer(b),
+            (BindKind::Cpu(c), b) => c.use_buffer(&on_cpu(b)),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.use_buffer(b),
             _ => other(),
         }
@@ -752,7 +798,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         }
         match (&mut self.kind, groups) {
             (BindKind::Native(c), Buffer::Native(b)) => c.launch_indirect(b, offset, max_groups, block),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindKind::Cpu(c), b) => c.launch_indirect(&on_cpu(b), offset, max_groups, block),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
             _ => other(),
         }

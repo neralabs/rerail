@@ -1,76 +1,261 @@
-//! Scratch: the temporaries of a freeze or a pack, taken from one region kept between uses instead of the heap.
+//! A stack a thread (decision 0342, amended 2026-11-24): the memory of a thread's short-lived structures and of its
+//! scratch uses (a freeze's or a pack's temporaries), one anonymous block reserved once a thread.
 //!
-//! A freeze of 1M rows needs about 45 MB of temporaries (the columns read once, the sort's keys and ids, the
-//! order, the index's buckets). As heap allocations that is a dozen large `malloc`s and `free`s per freeze, each
-//! a fresh mapping faulted in page by page. A scratch region is mapped once and reused: a take is a bump of an
-//! offset, `reset` gives everything back at once, and its pages stay resident for the next use.
+//! - **A region** is a 16-byte header (the previous header's offset, a state word) and its bytes, bumped from the
+//!   top. Its going sets the state free, one atomic store, from any thread. The owning thread pops freed headers off
+//!   the top (`settle`) at its next take, or at the going itself when it is the owner's, and moves the top back. A
+//!   room's region is zeroed, as every room's reads (`Room`); a use's takes are not (`zeroed` where it needs it).
+//! - **A use** (`with`) takes slices tagged with the use; its end frees them, and it may nest. A slice is a region:
+//!   a freeze's temporaries and the room's structures are one memory.
+//! - **The room** (`StackRoom`) gives a structure a region of the calling thread's stack. Where a region lies is a
+//!   block and an offset (`maps::place_of`), so a kernel reads a structure there in place.
+//! - **Pages** past `KEEP` bytes above the top go back to the OS, in steps of `GIVE_STEP`, and a take that reaches
+//!   them marks them in use again.
+//! - **GPU work** (decision 0487): a kernel that binds the stack's bytes holds the block's ledger; while one is
+//!   queued nothing is popped, so no take writes bytes a kernel reads. The pops wait for its fence.
 //!
-//! - **`Scratch::anon`**: address space only; a page costs once it is first written.
-//! - **`Scratch::over`**: a region the caller owns, such as a slab of the engine's GPU buffer pool
-//!   (`rerail_accel::gpu::shared::lease`), so freeze's temporaries count in the one GPU budget and can be read by
-//!   a kernel.
-//! - **Per thread** (`with`): each thread keeps one, made on first use (`Scratch::anon`), or the one
-//!   `install`ed. Past `KEEP` bytes, what a use touched is given back to the OS when it ends.
-//!
-//! A take's contents are whatever the last use left: a caller writes before it reads, or asks for `zeroed`.
-//!
-//! A region has a ledger (decision 0487 step 3): a kernel that binds its bytes holds it, a `reset` or the end of a use
-//! with such work queued fails (the takes after it would write what the kernel reads), and a region dropped under
-//! queued work keeps its memory until the work completes.
+//! A region that outlives what was made after it holds the stack under it until it goes: what lives long belongs in
+//! its owner's room, not here (the census of 0342's amendment finds such regions: `RERAIL_ANON_CENSUS`).
 
 use crate::Pod;
-use crate::block::Backing;
+use crate::block::Block;
 use rerail_delta_core::flat::{Arena, Bucket, Full, Region};
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
+use std::sync::Arc;
+use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 
-/// Address space an anonymous scratch region reserves (nothing resident until written; on Windows nothing committed
-/// until touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a
-/// working size there.
+/// Address space a thread's stack reserves (nothing resident until written; on Windows nothing committed until
+/// touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a working
+/// size there. 4 GiB: a stack's bytes under its top stay resident, so a thread past that holds as much memory; and a
+/// thread's 64 GiB reservation cost the kernel's map, with every thread making its own at once, about a fortieth of
+/// an edit's CPU.
 #[cfg(any(unix, windows))]
-const ANON: usize = 1 << 36;
+const ANON: usize = 1 << 32;
 #[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
-/// Bytes of a thread's scratch kept resident between uses; past them, a use's pages are given back.
-const KEEP: usize = 64 << 20;
+/// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::FreeRoom::large`), not the stack.
+/// A large array is freed out of the stack's order (a writer's parts, a tape) and would hold every region under it; in
+/// the census of an edit, regions of a page and more are about 2% of them, and kept off the stack they leave its
+/// footprint at about a third of what it is with them (decision 0342, amended 2026-11-24).
+pub const LARGE: usize = 4096;
+/// Bytes above the top kept resident; past them, freed pages go back to the OS.
+const KEEP: usize = 1 << 20;
+/// The fewest bytes past `KEEP` given back at once, so a top that swings round it does not advise at each pop.
+const GIVE_STEP: usize = 1 << 20;
+/// A region's header: the previous header's offset (0: none) with, above `PREV_BITS`, the padding between the top
+/// before it and itself; and its state.
+const HEAD: usize = 16;
+const PREV_BITS: u32 = 40;
+/// A region's state: live, freed, or (even, from 2) a live slice of the use with that tag.
+const LIVE: u64 = 0;
+const FREE: u64 = 1;
 
-pub struct Scratch {
-    base: *mut u8,
-    len: usize,
-    top: Cell<usize>,
-    /// The most bytes a use has taken.
-    high: Cell<usize>,
-    /// The bytes `end` gave back to the OS, from and to: marked in use again (`reuse_pages`) when a take reaches them.
-    given: Cell<(usize, usize)>,
-    backing: Option<Box<dyn Backing>>,
-    /// Its ledger: what a kernel's bind of its bytes holds (`Fence::uses_address`). None for a lent scratch (`lend`):
-    /// its bytes are a block's, which keeps its own.
-    ledger: Option<std::sync::Arc<crate::ledger::Ledger>>,
-    /// A lent scratch's arena: the phase bucket's (*Flat Views and Lifecycles* §2), its top in the slot's bytes, so a
-    /// kernel over the same slot claims room as the twin does. `'static` only inside: the scratch never leaves `lend`,
-    /// and `arena` gives it out for the borrow of the scratch.
-    arena: Option<Arena<'static>>,
-    /// A lent scratch's bytes before its arena's header (to the slot's first 64-byte boundary).
-    lead: usize,
+#[repr(C)]
+struct Head {
+    prev: AtomicU64,
+    state: AtomicU64,
 }
 
-fn ledger_of(base: *mut u8, len: usize) -> std::sync::Arc<crate::ledger::Ledger> {
-    let ext = std::sync::Arc::new(crate::block::Extent { top: std::sync::atomic::AtomicUsize::new(0), free: std::sync::atomic::AtomicUsize::new(0) });
-    crate::ledger::Ledger::new(base, len.max(1), false, ext)
+/// A thread's stack. Its top and chain are its owner's to move; any thread frees a region of it.
+pub struct Stack {
+    block: Arc<Block>,
+    base: *mut u8,
+    len: usize,
+    /// The owning thread (`thread_id`); 0, a stack no thread owns (made while its thread went), never popped.
+    owner: u64,
+    /// The first byte past the block's header.
+    floor: usize,
+    top: AtomicUsize,
+    /// The topmost header's offset; 0, none.
+    last: AtomicUsize,
+    /// The highest byte written since pages last went back.
+    touched: AtomicUsize,
+    /// Pages given back, from and to: marked in use again when a take reaches them.
+    given: [AtomicUsize; 2],
+    /// Uses begun, for their tags.
+    uses: AtomicU64,
+}
+
+// SAFETY: its top and chain are moved by its owner only (`owner`); other threads store a header's state, an atomic.
+unsafe impl Send for Stack {}
+unsafe impl Sync for Stack {}
+
+fn thread_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    thread_local! { static ID: u64 = NEXT.fetch_add(1, Relaxed); }
+    ID.try_with(|i| *i).unwrap_or(0)
+}
+
+impl Stack {
+    fn new(reserved: usize, owner: u64) -> Stack {
+        let block = Arc::new(Block::anon(crate::block::kind::SCRATCH, reserved));
+        let (base, len, floor) = (block.base_ptr(), block.reserved(), block.used());
+        Stack { block, base, len, owner, floor, top: AtomicUsize::new(floor), last: AtomicUsize::new(0), touched: AtomicUsize::new(floor), given: [AtomicUsize::new(0), AtomicUsize::new(0)], uses: AtomicU64::new(0) }
+    }
+
+    fn head(&self, at: usize) -> &Head {
+        // SAFETY: a header this stack wrote at `at`, 16-byte aligned, inside its reservation.
+        unsafe { &*self.base.add(at).cast::<Head>() }
+    }
+
+    /// The block it lies in.
+    pub fn block(&self) -> &Arc<Block> {
+        &self.block
+    }
+
+    /// The bytes from its first region to its top.
+    pub fn used(&self) -> usize {
+        self.top.load(Relaxed) - self.floor
+    }
+
+    /// A region of `bytes` at a multiple of `align`, in `state`: its header's offset and its first byte's. The owner's.
+    fn push(&self, bytes: usize, align: usize, state: u64) -> (usize, usize) {
+        self.settle();
+        let top = self.top.load(Relaxed);
+        let at = (top + HEAD).next_multiple_of(align.max(HEAD));
+        let head = at - HEAD;
+        let end = (at + bytes.max(1)).next_multiple_of(HEAD);
+        assert!(end <= self.len, "a thread's stack is full: {end} of {} bytes", self.len);
+        let [from, to] = [self.given[0].load(Relaxed), self.given[1].load(Relaxed)];
+        if to > from && end > from {
+            // SAFETY: the stack's own pages, given back by `settle`.
+            unsafe { crate::mem::reuse_pages(self.base.add(from), to - from) };
+            self.given[0].store(0, Relaxed);
+            self.given[1].store(0, Relaxed);
+        }
+        let h = self.head(head);
+        h.prev.store(self.last.load(Relaxed) as u64 | ((head - top) as u64) << PREV_BITS, Relaxed);
+        h.state.store(state, Relaxed);
+        self.last.store(head, Relaxed);
+        self.top.store(end, Relaxed);
+        if end > self.touched.load(Relaxed) {
+            self.touched.store(end, Relaxed);
+        }
+        // The device wraps a block's used bytes: they reach every region handed out.
+        self.block.reach(end);
+        (head, at)
+    }
+
+    /// The region whose header lies at `head` goes: from any thread; popped now when this is its owner.
+    fn free(&self, head: usize) {
+        self.head(head).state.store(FREE, Release);
+        if self.owner != 0 && self.owner == thread_id() {
+            self.settle();
+        }
+    }
+
+    /// Pops the freed regions off the top, and gives back the pages past `KEEP` above it. The owner's; nothing while
+    /// GPU work that binds the block is queued.
+    fn settle(&self) {
+        let mut last = self.last.load(Relaxed);
+        if last == 0 || self.head(last).state.load(Acquire) != FREE || !self.block.ledger().quiet() {
+            return;
+        }
+        let mut top = self.top.load(Relaxed);
+        while last != 0 {
+            let h = self.head(last);
+            if h.state.load(Acquire) != FREE {
+                break;
+            }
+            let prev = h.prev.load(Relaxed);
+            top = last - (prev >> PREV_BITS) as usize;
+            last = (prev & ((1 << PREV_BITS) - 1)) as usize;
+        }
+        self.last.store(last, Relaxed);
+        self.top.store(top, Relaxed);
+        let keep = (top + KEEP).next_multiple_of(crate::block::PAGE);
+        let touched = self.touched.load(Relaxed);
+        if touched >= keep + GIVE_STEP {
+            // SAFETY: the stack's own pages, above its top: no region reaches them.
+            unsafe { crate::mem::free_pages(self.base.add(keep), touched - keep) };
+            let [from, to] = [self.given[0].load(Relaxed), self.given[1].load(Relaxed)];
+            let (from, to) = if to > from { (from.min(keep), to.max(touched)) } else { (keep, touched) };
+            self.given[0].store(from, Relaxed);
+            self.given[1].store(to, Relaxed);
+            self.touched.store(keep, Relaxed);
+        }
+    }
+}
+
+thread_local! {
+    static THREAD: std::cell::OnceCell<Arc<Stack>> = const { std::cell::OnceCell::new() };
+}
+
+/// This thread's stack, made at its first use; while the thread goes, a stack of `bytes` that no thread owns.
+fn mine(bytes: usize) -> Arc<Stack> {
+    THREAD
+        .try_with(|t| t.get_or_init(|| Arc::new(Stack::new(ANON, thread_id()))).clone())
+        .unwrap_or_else(|_| Arc::new(Stack::new(bytes + crate::block::PAGE * 2, 0)))
+}
+
+/// What holds a region of a stack (`Region`'s owner): its header popped once freed.
+pub struct OnStack {
+    stack: Arc<Stack>,
+    head: usize,
+    at: usize,
+    _census: crate::maps::Keep,
+}
+
+impl OnStack {
+    /// Its block and its first byte's offset there.
+    pub fn place(&self) -> (&Arc<Block>, usize) {
+        (&self.stack.block, self.at)
+    }
+}
+
+impl Drop for OnStack {
+    fn drop(&mut self) {
+        self.stack.free(self.head);
+    }
+}
+
+/// A large region (`LARGE` and more): the calling thread's free-listed blocks' (`maps::FreeRoom::large`), as the
+/// stack's and the long room's large regions are.
+pub(crate) fn large_region(bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+    use crate::maps::Room;
+    thread_local! { static LARGE_ROOM: crate::maps::FreeRoom = crate::maps::FreeRoom::large(); }
+    LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::FreeRoom::large().region(bytes, align, name))
+}
+
+/// The room of a thread's stack: a region of the calling thread's (`Room`; the run's default, decision 0342 amended).
+#[derive(Default)]
+pub struct StackRoom;
+
+impl crate::maps::Room for StackRoom {
+    fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+        if bytes >= LARGE {
+            return large_region(bytes, align, name);
+        }
+        let stack = mine(bytes + align);
+        let (head, at) = stack.push(bytes, align, LIVE);
+        // SAFETY: the stack's bytes past the header just pushed, this region's alone until it goes.
+        let ptr = unsafe { stack.base.add(at) };
+        // Zeroed, as every room's region reads (a free list's chunk, the heap's `alloc_zeroed`).
+        // SAFETY: the region's own `bytes`.
+        unsafe { std::ptr::write_bytes(ptr, 0, bytes) };
+        let census = crate::census::counted(crate::census::STACK, name, bytes);
+        // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked, held by `OnStack` while the region lives.
+        unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, _census: census })) }
+    }
+}
+
+/// A use of scratch: of a thread's stack (`with`), its slices freed at its end; or of the bytes an operation's
+/// scratch slot lends a phase's call (`lend`), a phase arena whose takes are one add of its top.
+pub struct Scratch {
+    from: From,
+}
+
+enum From {
+    Stack { stack: Arc<Stack>, tag: u64, taken: Cell<usize> },
+    /// The phase bucket's arena (*Flat Views and Lifecycles* §2), its top in the slot's bytes, so a kernel over the
+    /// same slot claims room as the twin does. `'static` only inside: the scratch never leaves `lend`, and `arena`
+    /// gives it out for the borrow of the scratch. `lead`: the slot's bytes before its header (to its first 64-byte
+    /// boundary).
+    Lent { arena: Arena<'static>, lead: usize },
 }
 
 impl Scratch {
-    /// An anonymous region of `reserved` bytes of address space.
-    pub fn anon(reserved: usize) -> Scratch {
-        let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: Some(ledger_of(p, reserved)), arena: None, lead: 0 }
-    }
-
-    /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
-    pub fn over(backing: Box<dyn Backing>) -> Scratch {
-        let ledger = ledger_of(backing.base(), backing.len());
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing), ledger: Some(ledger), arena: None, lead: 0 }
-    }
-
     /// `f` with a scratch over `bytes` (an operation's scratch slot's, where its block lies), for the call alone: a
     /// phase arena (`Arena`, its header at their first 64-byte boundary), its takes one atomic add of its top. Nothing
     /// is allocated, mapped, kept or given back: what a phase's call takes is its slot's bytes, as on a device.
@@ -80,55 +265,53 @@ impl Scratch {
         let (base, len) = (bytes.as_mut_ptr(), bytes.len());
         // SAFETY: the bytes are borrowed for this call, and the scratch (with its arena) is dropped before it returns.
         let arena = Arena::init(unsafe { Region::from_raw(base, len) }, Bucket::Phase).expect("a scratch slot of at least an arena's header");
-        let s = Scratch { base, len, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None, ledger: None, arena: Some(arena), lead: skip };
-        f(&s)
+        f(&Scratch { from: From::Lent { arena, lead: skip } })
     }
 
     /// A lent scratch's arena, for structures in flat memory (`rerail_delta_core::flat`): their views live as long as
-    /// this borrow of the scratch. None for an owned scratch.
+    /// this borrow of the scratch. None for a use of a thread's stack.
     pub fn arena(&self) -> Option<&Arena<'_>> {
-        self.arena.as_ref()
+        match &self.from {
+            From::Lent { arena, .. } => Some(arena),
+            From::Stack { .. } => None,
+        }
     }
 
     /// The bytes of the slot a lent scratch is over that the work which ran out (`f`, its arena's) needs: what the
     /// slot's capacity is grown to before the phase runs again (`Ctx::reach`).
     pub fn slot_need(&self, f: &Full) -> usize {
-        self.lead + rerail_delta_core::flat::arena::HEAD + f.wanted as usize
+        let lead = match &self.from {
+            From::Lent { lead, .. } => *lead,
+            From::Stack { .. } => 0,
+        };
+        lead + rerail_delta_core::flat::arena::HEAD + f.wanted as usize
     }
 
-    /// `n` values of `T`, or the room that ran out (`Full`): a lent scratch's claim of its arena.
+    /// `n` values of `T`, or the room that ran out (`Full`, naming `part`): a lent scratch's claim of its arena; a
+    /// stack's take never fails.
     #[allow(clippy::mut_from_ref)]
     pub fn try_take<T: Pod + Copy>(&self, part: u32, n: usize) -> Result<&mut [T], Full> {
-        let Some(a) = &self.arena else { return Ok(self.take(n)) };
-        let bytes = n.saturating_mul(size_of::<T>());
-        let at = a.claim_at(part, bytes, align_of::<T>().max(64))?;
-        self.high.set(self.high.get().max(a.used()));
-        // SAFETY: the arena's claim, in its region and aligned, which no other claim overlaps until a reset (`&mut
-        // self`); every bit pattern is a value of a `Pod` type.
-        Ok(unsafe { std::slice::from_raw_parts_mut(a.region().ptr(at).cast::<T>(), n) })
+        match &self.from {
+            From::Stack { stack, tag, taken } => {
+                let (_, at) = stack.push(n * size_of::<T>(), align_of::<T>().max(64), *tag);
+                taken.set(taken.get() + 1);
+                // SAFETY: the stack's bytes past the header just pushed, this use's alone until it ends (which
+                // outlives the borrow of `self`); every bit pattern is a value of a `Pod` type.
+                Ok(unsafe { std::slice::from_raw_parts_mut(stack.base.add(at).cast::<T>(), n) })
+            }
+            From::Lent { arena, .. } => {
+                let at = arena.claim_at(part, n.saturating_mul(size_of::<T>()), align_of::<T>().max(64))?;
+                // SAFETY: the arena's claim, in its region and aligned, which no other claim overlaps while the
+                // scratch lives; every bit pattern is a value of a `Pod` type.
+                Ok(unsafe { std::slice::from_raw_parts_mut(arena.region().ptr(at).cast::<T>(), n) })
+            }
+        }
     }
 
-    /// `n` values of `T`, their contents whatever the last use left.
+    /// `n` values of `T`, their contents whatever was there.
     #[allow(clippy::mut_from_ref)]
     pub fn take<T: Pod + Copy>(&self, n: usize) -> &mut [T] {
-        if let Some(a) = &self.arena {
-            return self.try_take(0, n).unwrap_or_else(|f| panic!("scratch full: {} of {} bytes", f.wanted, a.cap()));
-        }
-        let align = align_of::<T>().max(64);
-        let start = self.top.get().div_ceil(align) * align;
-        let end = start + n * size_of::<T>();
-        assert!(end <= self.len, "scratch full: {end} of {} bytes", self.len);
-        self.top.set(end);
-        self.high.set(self.high.get().max(end));
-        let (from, to) = self.given.get();
-        if to > from && end > from {
-            // SAFETY: the region's own pages, given back by `end`.
-            unsafe { crate::mem::reuse_pages(self.base.add(from), to - from) };
-            self.given.set((0, 0));
-        }
-        // SAFETY: in bounds, aligned, and no other take overlaps it until `reset`, which takes `&mut self`; every
-        // bit pattern is a value of a `Pod` type.
-        unsafe { std::slice::from_raw_parts_mut(self.base.add(start).cast::<T>(), n) }
+        self.try_take(0, n).unwrap_or_else(|f| panic!("scratch full: {} bytes wanted", f.wanted))
     }
 
     /// `n` zero values of `T`.
@@ -140,86 +323,48 @@ impl Scratch {
         s
     }
 
-    /// Gives every take back. Fails while GPU work that binds its bytes is queued: the next takes would write them.
-    pub fn reset(&mut self) {
-        self.quiet("a reset");
-        self.top.set(0);
-        if let Some(a) = &mut self.arena {
-            a.reset();
-        }
-    }
-
-    fn quiet(&self, what: &str) {
-        if self.top.get() > 0 && self.ledger.as_ref().is_some_and(|l| !l.quiet()) {
-            panic!("scratch: {what} of {} bytes taken, with GPU work that reads them queued (wait for its fence first)", self.top.get());
-        }
-    }
-
-    /// Its ledger (decision 0487): what a fence's use of its bytes holds; none for a lent scratch.
-    pub fn ledger(&self) -> Option<&std::sync::Arc<crate::ledger::Ledger>> {
-        self.ledger.as_ref()
-    }
-
-    /// The most bytes a use has taken.
-    pub fn high_water(&self) -> usize {
-        self.high.get()
-    }
-
-    /// Ends a use: everything given back, and past `keep` bytes, an anonymous region's pages returned to the OS.
-    fn end(&mut self, keep: usize) {
-        self.quiet("the end of a use");
-        let used = self.top.get();
-        self.top.set(0);
-        if self.backing.is_none() && used > keep {
-            let from = keep.div_ceil(crate::block::PAGE) * crate::block::PAGE;
-            // SAFETY: the region's own pages, none taken now.
-            unsafe { crate::mem::free_pages(self.base.add(from), used - from) };
-            let (f, t) = self.given.get();
-            self.given.set(if t > f { (f.min(from), t.max(used)) } else { (from, used) });
+    /// The stack a use of one takes from; None for a lent scratch.
+    pub fn stack(&self) -> Option<&Arc<Stack>> {
+        match &self.from {
+            From::Stack { stack, .. } => Some(stack),
+            From::Lent { .. } => None,
         }
     }
 }
 
 impl Drop for Scratch {
-    /// Its memory goes once no queued work binds it (R5): the mapping it made released, or its backing dropped.
+    /// A stack use's slices go: each found down the chain (they are all on it, live), freed, then popped. A lent
+    /// scratch's bytes are their owner's: nothing to let go.
     fn drop(&mut self) {
-        // A lent scratch's bytes are their owner's: nothing to let go.
-        let Some(ledger) = &self.ledger else { return };
-        let (base, len) = (self.base as usize, self.len);
-        let backing = self.backing.take();
-        ledger.let_go(Box::new(move || match backing {
-            Some(b) => drop(b),
-            // SAFETY: the mapping this region made, which no work reaches now.
-            None => unsafe { crate::mem::release(base as *mut u8, len) },
-        }));
+        let From::Stack { stack, tag, taken } = &self.from else { return };
+        let mut left = taken.get();
+        let mut at = stack.last.load(Relaxed);
+        while left > 0 && at != 0 {
+            let h = stack.head(at);
+            if h.state.load(Relaxed) == *tag {
+                h.state.store(FREE, Release);
+                left -= 1;
+            }
+            at = (h.prev.load(Relaxed) & ((1 << PREV_BITS) - 1)) as usize;
+        }
+        if stack.owner != 0 && stack.owner == thread_id() {
+            stack.settle();
+        }
     }
 }
 
-thread_local! {
-    static THREAD: RefCell<Option<Scratch>> = const { RefCell::new(None) };
-}
-
-/// Runs `f` with this thread's scratch, emptied: made on first use, unless one was `install`ed.
+/// Runs `f` with a use of this thread's stack: its takes go when it ends. Uses nest.
 pub fn with<R>(f: impl FnOnce(&Scratch) -> R) -> R {
-    THREAD.with(|t| {
-        let mut t = t.borrow_mut();
-        let s = t.get_or_insert_with(|| Scratch::anon(ANON));
-        s.reset();
-        let out = f(s);
-        s.end(KEEP);
-        out
-    })
-}
-
-/// Makes `s` this thread's scratch (a pooled slab, say); returns the one it replaces.
-pub fn install(s: Scratch) -> Option<Scratch> {
-    THREAD.with(|t| t.borrow_mut().replace(s))
+    let stack = mine(0);
+    let tag = (stack.uses.fetch_add(1, Relaxed) + 1) << 1;
+    f(&Scratch { from: From::Stack { stack, tag, taken: Cell::new(0) } })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ledger::Fence;
+    use crate::maps::Room;
 
     /// A lent scratch takes from the bytes it is lent, from their first 64-byte boundary, and lets nothing of them go:
     /// the owner's bytes hold what the use wrote after it.
@@ -260,30 +405,136 @@ mod tests {
             assert_eq!(a.failure().map(|f| f.part), Some(7));
             assert!(a.wanted() > a.cap());
         });
-        assert!(Scratch::anon(1 << 20).arena().is_none());
+        assert!(with(|u| u.arena().is_none()), "a use of the stack has no arena");
     }
 
-    /// Decision 0487 step 3 at a scratch region: a kernel's bind of its bytes holds it; a reset (or a use's end) with
-    /// that work queued fails, and passes once it completes; a region dropped under queued work keeps its memory until
-    /// then.
+    fn stack() -> Arc<Stack> {
+        mine(0)
+    }
+
+    /// A use's takes go back at its end, and a nested use's at its own.
     #[test]
-    fn a_scratch_reset_under_a_queued_gpu_use_fails() {
-        let fails = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
-        let mut s = Scratch::anon(1 << 24);
-        let at = s.take::<u64>(512).as_ptr() as usize;
+    fn a_use_takes_and_its_end_gives_back() {
+        let s = stack();
+        let before = s.used();
+        with(|a| {
+            let x = a.zeroed::<u64>(1000);
+            assert!(x.iter().all(|v| *v == 0));
+            x[999] = 7;
+            let mid = s.used();
+            with(|b| {
+                b.take::<u32>(5000)[0] = 1;
+                assert!(s.used() > mid);
+            });
+            assert_eq!(s.used(), mid, "the nested use's slice is popped at its end");
+            assert_eq!(x[999], 7, "and the outer use's is untouched");
+        });
+        assert_eq!(s.used(), before, "every take went back");
+    }
+
+    /// A room's region freed under a live one waits; once the live one goes, both are popped.
+    #[test]
+    fn a_region_outliving_those_after_it_holds_the_stack_under_it() {
+        let s = stack();
+        let before = s.used();
+        let a = StackRoom.region(1024, 8, "a");
+        let b = StackRoom.region(64, 8, "b");
+        let after_b = s.used();
+        drop(a);
+        assert_eq!(s.used(), after_b, "a is freed but b above it is live: nothing is popped");
+        let c = StackRoom.region(64, 8, "c");
+        assert!(s.used() > after_b, "a take goes above b");
+        drop(c);
+        assert_eq!(s.used(), after_b);
+        drop(b);
+        assert_eq!(s.used(), before, "b gone: b and a are popped");
+    }
+
+    /// A region's place is its stack's block and its offset there.
+    #[test]
+    fn a_region_lies_in_its_stacks_block() {
+        let mut r = StackRoom.region(256, 64, "placed");
+        let p = r.as_mut_ptr() as usize;
+        assert_eq!(p % 64, 0, "aligned as asked");
+        let (block, at) = crate::maps::place_of(&r).expect("a stack's region lies in a block");
+        assert_eq!(block.base_ptr() as usize + at, p);
+    }
+
+    /// A region of `LARGE` bytes or more goes to the thread's free-listed blocks, not the stack.
+    #[test]
+    fn a_large_region_is_not_on_the_stack() {
+        let s = stack();
+        let before = s.used();
+        let r = StackRoom.region(LARGE, 8, "large");
+        assert_eq!(s.used(), before, "nothing taken on the stack");
+        let (block, _) = crate::maps::place_of(&r).expect("a large region lies in a block");
+        assert!(!Arc::ptr_eq(block, s.block()), "in a block of its own room");
+        assert!(block.has_free_list());
+        let small = StackRoom.region(LARGE - 1, 8, "small");
+        assert!(s.used() > before, "one byte less is the stack's");
+        drop((r, small));
+        assert_eq!(s.used(), before);
+    }
+
+    /// The block's used bytes reach every region of its stack: the device wraps them (`Block::device_buffer`), so a
+    /// region past them would be read outside the wrap.
+    #[test]
+    fn the_blocks_used_bytes_reach_every_region() {
+        let s = stack();
+        with(|u| {
+            u.take::<u8>(3 << 20);
+            let r = StackRoom.region(1024, 8, "high");
+            let (block, at) = crate::maps::place_of(&r).unwrap();
+            assert!(block.used() >= at + 1024, "the region lies within the used bytes");
+            assert!(Arc::ptr_eq(block, s.block()));
+        });
+    }
+
+    /// A region freed on another thread is popped by its owner at its next take.
+    #[test]
+    fn a_free_from_another_thread_is_settled_by_the_owner() {
+        let s = stack();
+        let before = s.used();
+        let r = StackRoom.region(2048, 8, "sent");
+        assert!(s.used() > before);
+        std::thread::spawn(move || drop(r)).join().unwrap();
+        assert!(s.used() > before, "its owner has not taken since");
+        let t = StackRoom.region(8, 8, "next");
+        drop(t);
+        assert_eq!(s.used(), before, "the owner popped it at its next take");
+    }
+
+    /// Pages more than `KEEP` above the top go back once popped, and are taken (and marked in use) again.
+    #[test]
+    fn pages_past_keep_go_back_and_are_taken_again() {
+        let s = stack();
+        let big = KEEP + 4 * GIVE_STEP;
+        with(|u| {
+            let x = u.take::<u8>(big);
+            x[big - 1] = 1;
+        });
+        let [from, to] = [s.given[0].load(Relaxed), s.given[1].load(Relaxed)];
+        assert!(to > from, "pages past KEEP went back");
+        with(|u| {
+            let x = u.zeroed::<u8>(big);
+            x[big - 1] = 2;
+        });
+    }
+
+    /// Decision 0487 at a stack: while a kernel's bind of its bytes is queued, nothing is popped (the next take would
+    /// write what the kernel reads); once the work completes, the next pop catches up.
+    #[test]
+    fn nothing_is_popped_under_queued_gpu_work() {
+        let s = stack();
+        let before = s.used();
         let f = Fence::new();
-        assert!(f.uses_address(at), "its bytes are found by address");
-        assert!(fails(&mut || s.reset()), "a reset under the queued work");
+        with(|u| {
+            let at = u.take::<u64>(512).as_ptr() as usize;
+            assert!(f.uses_address(at), "its bytes are found by address");
+        });
+        assert!(s.used() > before, "the use's slice stays while the work is queued");
         f.complete();
-        s.reset();
-        // Dropped under queued work: still found, so held, until the work completes.
-        let s = Scratch::anon(1 << 24);
-        let at = s.take::<u64>(8).as_ptr() as usize;
-        let f = Fence::new();
-        assert!(f.uses_address(at));
-        drop(s);
-        assert!(crate::ledger::of_address(at).is_some(), "its memory is held by the queued work");
-        f.complete();
-        assert!(crate::ledger::of_address(at).is_none(), "and goes once it completes");
+        drop(StackRoom.region(8, 8, "after"));
+        assert_eq!(s.used(), before, "and is popped once it completes");
     }
 }

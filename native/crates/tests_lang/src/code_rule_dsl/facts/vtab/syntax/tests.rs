@@ -176,6 +176,30 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// `text` read by its string (`Projected::text_rows_of`: a binary search at each place the text occurs in the source)
+/// gives the rows a scan that compares each row's text finds, in the same order: every text a row has, and texts no
+/// row has.
+#[test]
+fn a_text_read_by_its_string_gives_the_rows_with_that_text() {
+    let store = ContentStore::open(&temp("text-by-s")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let texts: Vec<i64> = db.prepare("SELECT DISTINCT s FROM text").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert!(texts.len() > 100, "{} texts", texts.len());
+    let rows = |sql: &str, s: i64| -> Vec<i64> { db.prepare(sql).unwrap().query_map([s], |r| r.get(0)).unwrap().map(Result::unwrap).collect() };
+    let mut found = 0;
+    for &s in texts.iter().chain(&[-1, 1 << 40]) {
+        let read = rows("SELECT n FROM text WHERE s = ?1", s);
+        let scanned = rows("SELECT n FROM text WHERE +s = ?1", s);
+        assert_eq!(read, scanned, "text {s}");
+        found += read.len();
+    }
+    assert!(found > 1000, "{found} rows found by their text");
+}
+
 /// A view's statistics (`measured`, read through its walk) are those its per-row reads give: rows, ndv, sq and sqd
 /// of every column of `node`, `child`, `field` and `tape` over several documents. The measure of the cross part's
 /// base relations (decision 0458) had read each value by its row, locating it in the batch: 0.9 s of a hogql run.
@@ -421,6 +445,63 @@ fn a_node_columns_counts_are_its_rows_counts() {
         }
     }
     assert!(node_column_counts(&batch, 3).is_none());
+}
+
+/// Every bound a syntax source gives a column (`col_bounds`), asked before its rows are made, holds each value its
+/// rows hold: a stratum's head key packs a value less its least in the bits its bounds need, so a value past them
+/// packs wrong. The columns the strata's keys read are bounded within what their kind needs: a node 32 bits and the
+/// span of the documents' keys, a document's key that span, a text (an atom, a made relation's too: `text.s`), a
+/// kind, a field, a position, a line, a column and a child's place 32 bits. In T's shape and in core.rerail's, the
+/// core-shaped batch's keys far apart (5 and 1000: 42 bits a node, not 64).
+#[test]
+fn a_syntax_sources_column_bounds_hold_its_rows() {
+    let check = |sources: &[(&'static str, Arc<dyn Source>)], keys: [i64; 2], want: &[&str]| {
+        let bits = |span: i64| 64 - (span as u64).leading_zeros();
+        let key_bits = bits(keys[1] - keys[0]);
+        // Asked first, of every source: none of their rows made yet.
+        let bounds: Vec<Vec<Option<[i64; 2]>>> = sources.iter().map(|(_, s)| (0..s.columns().len()).map(|c| s.col_bounds(c)).collect()).collect();
+        let mut bounded = BTreeSet::new();
+        for ((name, s), bounds) in sources.iter().zip(&bounds) {
+            let columns = s.columns();
+            for (c, b) in bounds.iter().enumerate() {
+                let Some([lo, hi]) = *b else { continue };
+                let at = format!("{name}.{}", columns[c]);
+                assert!(lo <= hi, "{at}: no rows bounded [{lo}, {hi}]");
+                assert!(bits(hi - lo) <= 32 + key_bits, "{at}: [{lo}, {hi}] wider than a node's {} bits", 32 + key_bits);
+                bounded.insert(at);
+            }
+            let all: Vec<usize> = (0..columns.len()).collect();
+            s.for_rows(&all, &mut |_, row| {
+                for (c, b) in bounds.iter().enumerate() {
+                    if let Some([lo, hi]) = *b {
+                        assert!((lo..=hi).contains(&row[c]), "{name}.{}: {} past its bounds [{lo}, {hi}]", columns[c], row[c]);
+                    }
+                }
+            });
+        }
+        for w in want {
+            assert!(bounded.contains(*w), "{w} has no bounds: {bounded:?}");
+        }
+    };
+    let store = ContentStore::open(&temp("bounds")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let keys = [docs.iter().map(|d| i64::from(d.key)).min().unwrap(), docs.iter().map(|d| i64::from(d.key)).max().unwrap()];
+    let t = sources(&store, docs).unwrap();
+    check(&t, keys, &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "field.p", "field.f", "field.c", "core_node.d", "core_node.n", "doc.d", "doc.path", "doc.module", "text.n"]);
+    let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
+    let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name", "rr_report_location"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let core = shaped(&store, docs, &projection).unwrap();
+    check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s", "rr_report_location.n", "rr_report_location.line", "rr_report_location.column", "rr_report_location.end_line", "rr_report_location.end_column"]);
+    // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
+    // (decision 0431 §4), a key the batch does not hold.
+    let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
+    let whole = Placement::Copied { delta: 0, within: [0, src.len() as u32] };
+    tree.guest = Some(Arc::new(Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }));
+    let alone = shaped(&store, vec![tree], &projection).unwrap();
+    let node = &alone.iter().find(|(n, _)| *n == "node").unwrap().1;
+    assert!((0..node.len()).any(|r| node.value(r, 0) == 7), "the tree's nodes are its file's");
+    check(&alone, [7, i64::from(HIDDEN_KEYS) + 5], &["node.d", "node.n", "child.p", "child.c"]);
 }
 
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
@@ -2797,7 +2878,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
                 let block = p.ranks().block();
-                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let entry = view_docs::ViewEntry::new(block, &p, Some(&dialect));
                 let n = p.len();
                 let nf = p.ranks().count(Item::Field);
                 let parent = |l: u32| match p.parent(l as usize) {
@@ -2850,7 +2931,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     let zc = cache.as_ref().map_or(std::ptr::null(), |c| c.at().cast_const());
                     // SAFETY: the reader's view, the tape's bytes, the entry in its block, which the projection holds.
                     let rv = unsafe { &*v };
-                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, zc), lines: &words, source: source.as_bytes() };
+                    let doc = Doc::new(unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, Tape::new(tape, rv, zc), &words, source.as_bytes());
                     let rust: Vec<i64> = (0..n)
                         .flat_map(|l| {
                             let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();
@@ -3492,16 +3573,16 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
 #[test]
 fn a_relation_of_runs_reads_them_where_they_lie() {
     let cols = ["a", "b"];
-    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| Vector::from([i, 100 + i]))).growable();
+    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| [i, 100 + i].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>())).growable();
     let names: Vec<String> = cols.iter().map(|c| (*c).to_owned()).collect();
     let runs = Relation::of_runs(&names, &[(&base, 2..5), (&base, 7..9)]);
     let rows = |r: &Relation| -> Vec<(i64, i64)> { (0..Source::len(r)).map(|i| (Source::value(r, i, 0), Source::value(r, i, 1))).collect() };
     assert_eq!(rows(&runs), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108)], "the runs' rows, in order");
     assert!(runs.shares_rows(&base), "read in the base's part, not copied");
-    let grown = runs.grown(Relation::from_rows(&cols, &mut [Vector::from([50, 150]), Vector::from([51, 151])].into_iter()));
+    let grown = runs.grown(Relation::from_rows(&cols, &mut [[50, 150].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>(), [51, 151].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>()].into_iter()));
     assert_eq!(rows(&grown), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108), (50, 150), (51, 151)], "the rows grown after them follow");
     assert_eq!(rows(&base), (0..10).map(|i| (i, 100 + i)).collect::<Vec<_>>(), "the base is as it was");
-    let more = grown.grown(Relation::from_rows(&cols, &mut [Vector::from([52, 152])].into_iter()));
+    let more = grown.grown(Relation::from_rows(&cols, &mut [[52, 152].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>()].into_iter()));
     assert_eq!(Source::len(&more), 8);
     assert_eq!(Source::value(&more, 7, 0), 52);
     assert_eq!(more.bound_rows(), Some(8), "a reader binding it whole reads every row");
@@ -3655,6 +3736,65 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
 
+/// Decision 0707: a chunk with a value admitted (decision 0431 §8: `values::Layered`, its base the chunk's batch and
+/// its parts the value's) is read where it lies by the host's join programs: `within` is the axis solved on the host
+/// into one relation in its block, the batch's rows then the value's, and `docof`, a placed relation (the `Loc` view's
+/// rows, then its spans'), is a placed read over the values' directory. Each was refused in place before, and each
+/// stratum that read it uploaded every row: 1 GB of `within` and 284 MB of `docof` over the data layer's 50 files.
+#[test]
+fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the_host() {
+    struct NoWave;
+    impl AstWave for NoWave {
+        fn len(&self) -> usize {
+            0
+        }
+        fn matched(
+            &self,
+            _: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: &[Option<&Projected>],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &dyn crate::content_store::AtomTable,
+        ) -> StoreResult<Vec<(String, Relation)>> {
+            Ok(Vec::new())
+        }
+    }
+    let store = ContentStore::open(&temp("values-in-place")).unwrap();
+    let matchers = Matchers::new(Arc::new(NoWave) as Arc<dyn AstWave>);
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let reads = ["node", "child", "within", "line", "docof", "source", "src_line"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("# a comment\ndef f{k}(x):\n    return [x for y in x]\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
+    // Each source the chunk binds, layered over its values, as the corpus run binds them.
+    let values = Arc::new(values::Values::default());
+    let src = |name: &str| -> Arc<dyn Source> {
+        let (_, s) = sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name} is bound"));
+        Arc::new(values::Layered::new(name, Arc::clone(s), Arc::clone(&values)))
+    };
+    let (within, docof) = (src("within"), src("docof"));
+    let before = (within.len(), docof.len());
+    // A tape value, as a string annotation is (decision 0431 §8): a guest, so no `Extra` span of its own (a value's
+    // spans would be rows of no one relation, and a layered read refuses them).
+    let mut value = document(3, "m3.py", "python", "List[int]");
+    let whole = Placement::Copied { delta: 0, within: [0, 9] };
+    value.guest = Some(Arc::new(Guest { host: 1, file: 1, at: 1 << 32, grammar: "python".to_owned(), role: "annotation".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::Tape { places: Vec::new() } }));
+    values.add(&[3], &[1], grower.admit(&store, vec![value], &[], &tests, binding, &projection).unwrap());
+    assert!(within.len() > before.0 && docof.len() > before.1, "the value's rows are the chunk's too: {before:?}");
+    let _host = rerail_accel::gpu::shared::on_host();
+    let solved = within.in_block().expect("within: the axis solved on the host into one relation in its block");
+    assert!(solved.rows as usize >= within.len(), "within: every pair, the value's too ({} of {})", solved.rows, within.len());
+    let (_, base) = sources.iter().find(|(n, _)| n == "docof").unwrap();
+    let base_view = base.device_view().expect("docof: the chunk's view read through the views");
+    let base_read = &base_view.in_place;
+    assert!(base_read.kind & places::VIEW_PLACED != 0, "docof: the chunk's spans past its view's rows");
+    let view = docof.device_view().expect("docof: read through the views");
+    let read = &view.in_place;
+    assert!(read.kind & places::VIEW_PLACED != 0, "docof: its spans past the view's rows");
+    assert_eq!(view.rows, docof.len(), "docof: every row, the value's too");
+    assert!(read.grows.is_some(), "docof: a home its source keeps, for its indexes");
+}
+
 /// One answer's values are admitted together (decision 0431 §8): one batch of them, whose sources hold every value's
 /// rows. Admitted one at a time, each paid a batch's fixed work: on corpus0 × B-now, 13,483 values made 40 GB of the
 /// run's peak.
@@ -3723,7 +3863,7 @@ fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
-/// given only where the device reads every home.
+/// given only where the device reads every home; with no device, the host's, which its join programs read it by.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_views_directory_is_the_hosts_too() {
@@ -3747,12 +3887,19 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key());
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
+        assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
-    // The homes its rows name (fixed: a row's tape in `2i`, its lines in `2i + 1`), and the 16z cache's where it has one.
-    assert_eq!(dir.nhomes as usize, 2 * rows.len() + 1, "two homes a row, and the cache's");
-    let named = rows.iter().flat_map(|r| r.homes).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
+    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), and the
+    // 16z cache's where it has one.
+    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 1, "three homes a row, and the cache's");
+    let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
     let all_on_device = crate::code_rule_dsl::tape::placed::device().is_some() && named.into_iter().all(|h| homes[h].gpu != 0);
-    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every home its rows name");
+    assert_eq!(views.dir.is_some(), all_on_device, "the device's address only where it reads every tape, lines and cache its rows name");
+    // Its nodes' texts are read on the device only where it reaches every source too (`ViewsInPlace::sources`).
+    let sources_on_device = all_on_device && rows.iter().all(|r| homes[r.homes[2] as usize].gpu != 0);
+    assert_eq!(views.sources, sources_on_device, "the device reads the sources where it reaches every one");
+    // The host's join programs read the directory at its own address in the block (53a8c256c2), device or none.
+    assert_eq!(views.host.dir, block.base_ptr() as u64 + views.at as u64, "the host's address of the directory");
 }
 
 /// Decision 0353, step 3 on the CPU (step 3): `Viewed` reads each row through its document's directory row
@@ -3856,6 +4003,92 @@ fn the_directorys_searches_are_the_jits() {
         }
     }
     assert!(tried > 100);
+}
+
+/// The join program's reads of the views, written directly in Rust (`rerail_ukl_rust::join_run::reads`, decisions
+/// 0534, 0536), answer what their CLIF answers by the JIT, over a batch's directory where it lies, in each format a
+/// tape is made in (16z's read through the directory's shared cache, by both): every column of every row of every
+/// view of each document, and each walk (`view_child_first`, `child_next`, `up`, `end`, `number`) from every node.
+/// The documents include a docstring alone (no rows in some views), a broken one and a TypeScript one; the last
+/// document's rows are not bounded by a next one's, so a small one comes last and is not read.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn the_join_programs_view_reads_are_the_jits() {
+    use crate::code_rule_dsl::tape::formats::{Format, as_run};
+    use rerail_clif::view::TapeView;
+    use rerail_clif::view_reads::{VIEWS, ViewDir};
+    use rerail_ukl_rust::join_run::reads::Doc;
+    type Row = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> u64;
+    type Walk = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32;
+    let jit = rerail_clif::jit::Reads::new();
+    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, then its arguments.
+    let rows: Vec<Row> = VIEWS.iter().map(|name| unsafe { std::mem::transmute::<*const u8, Row>(jit.function(name)) }).collect();
+    let walks: [Walk; 5] = ["view_child_first", "view_child_next", "view_up", "view_end", "view_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
+    let python = |k: u32| format!("import os\n@dec\ndef f{k}(a, b=2):\n    '''doc'''\n    return [x for x in a if g(x, {k})]\n\nclass C(B):\n    def m(self):\n        return self.x\n");
+    let mut tried = 0usize;
+    for format in Format::ALL {
+        as_run(format, || {
+            let store = ContentStore::open(&temp(&format!("join-reads-{}", format.name()))).unwrap();
+            let mut docs: Vec<Document> = (1..=3).map(|k| document(k * 3, &format!("m{k}.py"), "python", &python(k))).collect();
+            docs.push(document(20, "only.py", "python", "\"\"\"only a docstring\"\"\"\n"));
+            docs.push(document(21, "broken.py", "python", "def f(a, b:\n    return [a for\n"));
+            docs.push(document(22, "k.ts", "typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\n"));
+            docs.push(document(40, "last.py", "python", "x = 1\n"));
+            let batch = Batch::new(&store, docs, &Projection::core(), &[], &[], false, None, &HashMap::new()).unwrap();
+            let views = device_chunk::views_in_place(&batch).expect("a directory");
+            let d = batch.block().ptr::<u8>(views.at).cast_const().cast::<ViewDir>();
+            // SAFETY: the directory in the batch's block, which the batch holds; its documents' tapes and lines.
+            let dir = unsafe { &*d };
+            let firsts = unsafe { dir.rows() };
+            for m in 0..dir.ndocs - 1 {
+                let doc = unsafe { Doc::of(d, m) };
+                let (e, t, v, l) = (std::ptr::from_ref(doc.e).cast::<u8>(), doc.tape.t.base(), &raw const doc.tape.v, doc.lines.0.base());
+                let at = format!("{} document {m}", format.name());
+                for k in 0..VIEWS.len() {
+                    let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
+                    let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 3][k];
+                    for r in 0..n {
+                        for c in 0..cols {
+                            // SAFETY: a row of the document's, of the view's.
+                            let rust = unsafe { doc.view(k as u32, r, c) };
+                            assert_eq!(rust, rows[k](e, t, v, l, r, c), "{at}: {} row {r} column {c}", VIEWS[k]);
+                            tried += 1;
+                        }
+                    }
+                    // Its rows walked in order (an index's key pass), from each first row the walk may start at:
+                    // each found as `Doc::at` finds it.
+                    for from in [0, n / 3, n.saturating_sub(1)].into_iter().filter(|&f| f < n) {
+                        // SAFETY: the document's rows of the view, from `from` on.
+                        let mut w = unsafe { doc.rows_from(k as u32, from) };
+                        for r in from..n {
+                            let walked = unsafe { w.next() };
+                            for c in 0..cols {
+                                assert_eq!(unsafe { walked.col(c) }, unsafe { doc.view(k as u32, r, c) }, "{at}: {} row {r} column {c}, walked from {from}", VIEWS[k]);
+                            }
+                        }
+                    }
+                }
+                let nodes = doc.e.nodes;
+                for x in 0..nodes {
+                    // SAFETY: a node of the document's (a `child` row for each but the last).
+                    unsafe {
+                        assert_eq!(doc.child_first(x), walks[0](e, t, v, l, x), "{at}: child_first {x}");
+                        if x + 1 < nodes {
+                            assert_eq!(doc.child_next(x), walks[1](e, t, v, l, x), "{at}: child_next {x}");
+                        }
+                        assert_eq!(doc.up(x), walks[2](e, t, v, l, x), "{at}: up {x}");
+                        assert_eq!(doc.end(x), walks[3](e, t, v, l, x), "{at}: end {x}");
+                        let low = doc.node_id(x) as u32;
+                        for q in [low, low ^ 1, low.wrapping_add(nodes), u32::MAX - 1] {
+                            assert_eq!(doc.number(q), walks[4](e, t, v, l, q), "{at}: number {q:#x}");
+                        }
+                    }
+                    tried += 1;
+                }
+            }
+        });
+    }
+    assert!(tried > 1000, "{tried} reads");
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches in the kernels (`clif_dir_doc_of_row`,

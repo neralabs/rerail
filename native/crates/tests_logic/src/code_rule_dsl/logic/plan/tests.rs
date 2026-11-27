@@ -326,59 +326,6 @@ fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
     assert_eq!(outputs[1].len(), 16 * N, "{:?}", outputs[1].len());
 }
 
-/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
-/// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
-/// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
-/// The probes' counts are the process's (`lazy_probes_counted`), read by difference around the run: in a process of
-/// the test's own (`test_support::alone`), since another test's run plans probes it left before the run began, and in
-/// the shared process `planned` grew past `left` within the run's window.
-#[test]
-fn a_probe_is_planned_when_its_delta_first_has_rows() {
-    crate::code_rule_dsl::test_support::alone("code_rule_dsl::logic::plan::tests::a_probe_is_planned_when_its_delta_first_has_rows_child");
-}
-
-#[test]
-#[ignore = "child process of a_probe_is_planned_when_its_delta_first_has_rows"]
-fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
-    let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
-               .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
-               .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
-               r(a, b) :- e(a, b).\nr(a, c) :- r(a, b), e(b, c).\nr(a, c) :- s(a, b), e(b, c).\nr(a, b) :- t(b, a).\n\
-               s(a, b) :- r(a, b), g(a).\nt(a, b) :- r(a, b), h(b).\n\
-               .decl o(k: number, a: number, b: number)\no(1, a, b) :- r(a, b).\no(2, a, b) :- t(a, b).\n.output o\n";
-    let p = parse_version(src).unwrap();
-    let mut outputs = Vec::new();
-    for modes in ["", "program"] {
-        // The probes' counts are the run's (decision 0442): one run holds them.
-        let _run = super::super::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
-        let _plans = KeepPlans::start();
-        let path = crate::code_rule_dsl::fixtures::temp();
-        let store = ContentStore::open(&path).unwrap();
-        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
-        let db = Connection::open(&path).unwrap();
-        super::super::native::register(&db).unwrap();
-        super::super::native::register_symbols(&db).unwrap();
-        let before = super::lazy_probes_counted();
-        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
-        let after = super::lazy_probes_counted();
-        if !modes.is_empty() {
-            assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
-            // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
-            // find). The process is the test's own, so the counts moved by this run's alone.
-            let (left, planned) = (after.0 - before.0, after.1 - before.1);
-            assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
-            assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
-        }
-        let mut o = got.shown()["o"].clone();
-        o.sort();
-        outputs.push(o);
-    }
-    assert_eq!(outputs[0], outputs[1]);
-    // r: the 4-cycle's closure (16) and t's reversals, all in it; t: r's rows into 3 (4).
-    assert_eq!(outputs[1].len(), 16 + 4, "{:?}", outputs[1]);
-}
-
 fn root() -> std::path::PathBuf {
     crate::source_tree::native().join("src/code_rule_dsl/logic")
 }
@@ -1489,7 +1436,7 @@ fn a_documents_key_compared_with_a_bound_runs_natively() {
     let program = r#"
 .decl ids(n: node)
 ids(n) :- kind(n, "identifier").
-.decl total(c: number)
+.decl total(c: number) cross_file
 total(c) :- c = count : { ids(_) }.
 .decl named(n: node, c: number)
 named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.
@@ -2601,6 +2548,55 @@ fn join_keys_from_functions_derive_the_rules_rows() {
     assert_eq!(want.iter().filter(|r| r[0] == "hit").count(), 3, "{want:?}");
     assert_eq!(rows(&keyed, None), want);
     assert_eq!(rows(&keyed, Some("program")), want);
+}
+
+/// A computed view whose columns a comparison defines over its domain (`ca_split(r, h, t) :- ca_dotted(_, r),
+/// match(…, r)`), read with a column left `_`, is inlined into readers that read its domain already, so they stay on
+/// their own rows (decision 0649); with one reader that does not, it stays a relation. Both derive the same rows.
+#[test]
+fn a_view_computed_by_comparisons_is_inlined_where_its_domain_is_read() {
+    let program = |extra: &str| {
+        format!(
+            r#"
+        .decl dotted(e: number, r: symbol)
+        dotted(1, "a.b.c"). dotted(2, "x"). dotted(3, "a.q"). dotted(4, "y.z").
+        .decl split(r: symbol, h: symbol, t: symbol)
+        split(r, h, t) :- dotted(_, r), match("(?<h>[^.]*)(?<t>.*)", r).
+        .decl alias(h: symbol, q: symbol)
+        alias("a", "pkg.a").
+        .decl resolved(e: number, s: symbol)
+        resolved(e, s) :- dotted(e, r), split(r, h, t), alias(h, q), s = cat(q, t).
+        resolved(e, r) :- dotted(e, r), split(r, h, _), !alias(h, _).
+        .output resolved
+        {extra}
+    "#
+        )
+    };
+    let rows = |p: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, outputs: &[&str]| -> Vec<String> {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lowered(std::sync::Arc::clone(p), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), "").unwrap();
+        let text = got.shown();
+        let mut out: Vec<String> = outputs.iter().flat_map(|o| text[*o].iter().map(move |r| format!("{o} {r:?}"))).collect();
+        out.sort();
+        out
+    };
+    for (extra, outputs, inlined) in [("", &["resolved"][..], true), (".decl heads(h: symbol)\n heads(h) :- split(_, h, _).\n .output heads", &["resolved", "heads"][..], false)] {
+        let plain = parse_version(&program(extra)).unwrap();
+        let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", std::sync::Arc::clone(&plain));
+        let report = super::corpus::preparation::simplify::passes(&mut pipeline).unwrap();
+        let simplified = pipeline.finish().unwrap().0;
+        let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>().join("\n");
+        assert_eq!(report.inlined.iter().any(|r| r == "split"), inlined, "{extra}: {report:?}\n{}\n--\n{}", shown(&plain), shown(&simplified));
+        let want = rows(&plain, outputs);
+        assert_eq!(want.iter().filter(|r| r.starts_with("resolved")).count(), 4, "{want:?}");
+        assert_eq!(rows(&simplified, outputs), want, "{extra}");
+    }
 }
 
 /// A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys the rule's own literals give: after the

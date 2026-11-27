@@ -20,7 +20,9 @@ pub trait SolverDevice: Device {
     /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
     /// (decision 0307: a `shortlex_min` relation's value; decision 0659: a recursive set head's column of made texts),
     /// `head` the join's head relation among them.
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
+    /// `own_syms`: the component's own relations' columns of symbols (declared `s`, none of `own_texts`): a slot an
+    /// atom over one binds holds an atom, read as a text where the atoms blocks hold it.
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], own_syms: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
     /// The head columns `plan` makes texts into (its arena's), for a component's `own_texts`.
     fn made_columns(&self, plan: &JoinPlan) -> Vec<usize>;
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
@@ -34,6 +36,9 @@ pub trait SolverDevice: Device {
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner) -> Result<Option<u64>, String>;
     /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String>;
+    /// The indexes the stages of `plans` probe their relations by, built in one batch of their own, done before it
+    /// returns: the strata that run the plans find each built (decision 0707). How many it built.
+    fn build_indexes(&self, plans: &[&JoinPlan]) -> Result<usize, String>;
     /// Whether the plan reads its own component's relations (a delta join of a recursive component).
     fn reads_own(&self, plan: &JoinPlan) -> bool;
     /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no

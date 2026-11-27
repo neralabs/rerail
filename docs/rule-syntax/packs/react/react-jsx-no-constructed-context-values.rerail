@@ -25,8 +25,9 @@ context_value(at) :- jsx_prop(o, "value", a), provider(o), child(a, j, 1), kind(
 provider(o) :- jsx_open(_, o), field(o, "name", n), kind(n, "member_expression"), field(n, "property", p),
     text(p, "Provider").
 // isReactContext looks the tag's name up the scope chain (a JSX tag is not a reference to tsx/names).
+// The scope is the tag's own file's (decision 0652: a program root of any file matched it before).
 provider(o) :- jsx_open(_, o), field(o, "name", n), kind(n, "identifier"), text(n, x), decl_site(sc, x, v, _, "value"),
-    (within(o, sc) ; kind(sc, "program")), kind(v, "variable_declarator"), field(v, "value", c), kind(c,
+    (within(o, sc) ; kind(sc, "program"), docof(sc, d), docof(o, d)), kind(v, "variable_declarator"), field(v, "value", c), kind(c,
     "call_expression"), field(c, "function", f),
     (kind(f, "identifier"), text(f, "createContext") ;
      field(f, "object", r), text(r, "React"), field(f, "property", p), text(p, "createContext")).

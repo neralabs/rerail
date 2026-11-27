@@ -124,7 +124,7 @@ fn an_images_places_are_searched_by_value() {
 #[test]
 fn an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through() {
     let dir = crate::code_rule_dsl::fixtures::temp();
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     let mut base = Builder::new(0, false);
     let a = i64::from(base.text("a"));
     base.rows("p", &[col::TEXT], rerail_blocks::vector![a]);
@@ -149,7 +149,7 @@ fn an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through() {
     assert!(read(&dir.join("nowhere")).unwrap().is_empty());
     // An overlay over no stack is refused, and leaves nothing.
     let empty = dir.join("empty");
-    std::fs::create_dir_all(&empty).unwrap();
+    rerail_blocks::mapped::make_folder(&empty).unwrap();
     assert_eq!(write(&empty, &Builder::new(0, true).finish()).unwrap_err().kind(), std::io::ErrorKind::NotFound);
     assert!(!empty.join(FILE).exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -160,7 +160,7 @@ fn an_overlay_replaces_the_relations_it_holds_and_the_rest_read_through() {
 #[test]
 fn a_write_replaces_the_file_whole_and_a_map_keeps_the_old() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("replace");
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     let mut a = Builder::new(0, false);
     a.rows("n", &[col::INT], rerail_blocks::vector![1, 2, 3]);
     write(&dir, &a.finish()).unwrap();
@@ -185,7 +185,7 @@ fn a_write_replaces_the_file_whole_and_a_map_keeps_the_old() {
 fn the_file_holds_each_image_as_a_frozen_block() {
     use rerail_blocks::block::{frozen_at, kind};
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("blocks");
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     let mut base = Builder::new(0, false);
     base.rows("n", &[col::INT], rerail_blocks::vector![1, 2]);
     let base = base.finish();
@@ -417,7 +417,7 @@ fn rows_of_every_shape() {
 fn a_directorys_outputs_are_read_from_its_stack() {
     let dir = std::env::temp_dir().join(format!("rerail-output-readers-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    rerail_blocks::mapped::make_folder(&dir).unwrap();
     // No stack: every relation absent.
     assert_eq!(shown(&dir, "a").unwrap_err().kind(), std::io::ErrorKind::NotFound);
     assert!(Outputs::open(&dir).unwrap().names().is_empty());

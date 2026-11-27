@@ -10,13 +10,18 @@ use std::sync::Arc;
 /// Its region may be another holder's, borrowed (`borrowed`: a relation's rows its directory owns): its room then
 /// below its length, so that any write moves its `T`s to a region of its own first (`own`), and a clone borrows them
 /// again. A region with a guard has each CPU read and write checked by it (decision 0487 R4).
+#[repr(C)]
 pub struct Vector<T: Pod> {
+    ptr: *mut T,
+    len: usize,
+    /// SPIKE (local fixes, 2): its region's guard's count of queued device uses (`Region::queued_ptr`), kept beside
+    /// `ptr` and `len`: a read of an unguarded vector (every one the CPU's run makes) tests this field of the line it
+    /// reads `ptr` from, not the region's. Null with no region or no guard.
+    queued: *const std::sync::atomic::AtomicUsize,
+    cap: usize,
     /// Its region (none while it has no room) and the room it came from.
     mem: Option<Region>,
     room: Option<Arc<dyn Room>>,
-    ptr: *mut T,
-    len: usize,
-    cap: usize,
     _t: PhantomData<T>,
 }
 
@@ -30,7 +35,7 @@ impl<T: Pod> std::panic::RefUnwindSafe for Vector<T> {}
 impl<T: Pod> Vector<T> {
     /// Empty, with no region: the run's room gives one at the first push.
     pub const fn new() -> Self {
-        Vector { mem: None, room: None, ptr: std::ptr::NonNull::dangling().as_ptr(), len: 0, cap: 0, _t: PhantomData }
+        Vector { mem: None, room: None, ptr: std::ptr::NonNull::dangling().as_ptr(), len: 0, queued: std::ptr::null(), cap: 0, _t: PhantomData }
     }
 
     /// Empty, its regions from `room`.
@@ -66,7 +71,7 @@ impl<T: Pod> Vector<T> {
         let cap = if size_of::<T>() == 0 { usize::MAX } else { region.len() / size_of::<T>() };
         debug_assert!(len <= cap);
         let ptr = region.as_mut_ptr().cast::<T>();
-        Vector { mem: Some(region), room, ptr, len, cap, _t: PhantomData }
+        Vector { queued: region.queued_ptr(), mem: Some(region), room, ptr, len, cap, _t: PhantomData }
     }
 
     /// The `len` `T`s of `region`, borrowed: read where they lie, never written there (a write moves them to a region
@@ -79,7 +84,7 @@ impl<T: Pod> Vector<T> {
             return Vector { room, ..Vector::new() };
         }
         let ptr = region.as_mut_ptr().cast::<T>();
-        Vector { mem: Some(region), room, ptr, len, cap: 0, _t: PhantomData }
+        Vector { queued: region.queued_ptr(), mem: Some(region), room, ptr, len, cap: 0, _t: PhantomData }
     }
 
     /// Whether its `T`s are borrowed (`borrowed`), not yet moved by a write.
@@ -95,7 +100,9 @@ impl<T: Pod> Vector<T> {
             return Err(self);
         }
         let len = self.len;
-        let region = self.mem.take().expect("a region");
+        let mut region = self.mem.take().expect("a region");
+        self.queued = std::ptr::null();
+        region.tag.handed();
         Ok((region, len))
     }
 
@@ -105,11 +112,16 @@ impl<T: Pod> Vector<T> {
     }
 
     /// The CPU reads (or writes) `n` `T`s from its `from`th: its region's guard checks them (decision 0487 R4). With
-    /// none, no more than a load.
+    /// none, or none of the device's uses of its block queued, no more than a load: every read of a value through
+    /// `Deref` (each `v[i]`) passes here, and a call to the guard at each was a sixth of a cold PostHog run's
+    /// instructions (0.58 T of 3.70 T, decision 0684).
     #[inline]
     #[track_caller]
     fn check(&self, from: usize, n: usize, write: bool) {
-        if let Some(m) = &self.mem
+        // SAFETY: `queued` is the guard's of the region it holds, which keeps it alive (`Region::queued_ptr`).
+        if !self.queued.is_null()
+            && unsafe { (*self.queued).load(std::sync::atomic::Ordering::Relaxed) } != 0
+            && let Some(m) = &self.mem
             && let Some((g, at)) = m.guard()
         {
             let (at, len) = (at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
@@ -167,6 +179,10 @@ impl<T: Pod> Vector<T> {
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
         }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
+        }
+        self.queued = region.queued_ptr();
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, cap);
     }
 
@@ -185,6 +201,10 @@ impl<T: Pod> Vector<T> {
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
         }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
+        }
+        self.queued = region.queued_ptr();
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, need);
     }
 
@@ -380,10 +400,12 @@ impl<T: Pod> Vector<T> {
         other.clear();
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         self
     }
 
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self
     }
@@ -455,7 +477,7 @@ impl<T: Pod + Copy> Clone for Vector<T> {
         if self.is_borrowed()
             && let Some(region) = self.mem.as_ref().and_then(Region::share)
         {
-            return Vector { mem: Some(region), room: self.room.clone(), ptr: self.ptr, len: self.len, cap: 0, _t: PhantomData };
+            return Vector { queued: region.queued_ptr(), mem: Some(region), room: self.room.clone(), ptr: self.ptr, len: self.len, cap: 0, _t: PhantomData };
         }
         let mut v = Vector { room: self.room.clone(), ..Vector::new() };
         // copy: derived: an array written again for a holder of its own (`Clone`), as a `Vec`'s clone is
@@ -665,18 +687,21 @@ impl<T: Pod + Copy> From<&Vector<T>> for Vector<T> {
 }
 
 impl<T: Pod + Copy> std::borrow::Borrow<[T]> for Vector<T> {
+    #[inline]
     fn borrow(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsRef<[T]> for Vector<T> {
+    #[inline]
     fn as_ref(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsMut<[T]> for Vector<T> {
+    #[inline]
     fn as_mut(&mut self) -> &mut [T] {
         self
     }

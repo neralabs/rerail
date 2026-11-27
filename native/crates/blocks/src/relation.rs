@@ -28,8 +28,8 @@ use crate::key_hash;
 pub use rerail_delta_core::hash::row_digest;
 pub use rerail_delta_core::relation::leading;
 pub use rerail_delta_core::relation::{
-    ADDED, ADDED_INDEXES, ALIASED, CONTINUES, ColStats, DEAD, DELTA, FAR_BASE, FROZEN, HASHED, Index, IndexRoom, Known, MAX_KEY, NO_BLOCK, ORDER,
-    ORDER_ROWS, REWRITTEN, Relation,
+    ADDED, ADDED_INDEXES, ALIASED, CONTINUES, ColStats, DEAD, DELTA, FAR_BASE, FILTER, FILTER_BITS, FROZEN, HASHED, Index, IndexRoom, Known, MARK_REACH,
+    MARK_SAME, MAX_KEY, NO_BLOCK, NODE_BITS, ORDER, ORDER_ROWS, REWRITTEN, Relation, fill_marks, index_rows_bytes, mark_tag,
 };
 use std::cmp::Ordering;
 use std::sync::Mutex;
@@ -267,6 +267,34 @@ pub trait RelationW {
     /// it after.
     unsafe fn try_add_order(&self, block: &Block, cols: &[u16], order: GivenOrder) -> Option<usize>;
 
+    /// Gives this relation a node-keyed index on column `col` of its rows `0..n` (decision 0694 step 1), laid out as
+    /// a node's id is (`packed::ID_SPLIT`): its document's key (the high 32 bits), then its low 32 bits, a granule's
+    /// slot above an index in the granule. Each document is held in the smaller of two forms:
+    /// - **bits**: its slots from its least to its greatest, each a slot entry giving its bits, from its least
+    ///   index's word to its greatest's. A test is the slot's entry and one bit.
+    /// - **lows**: its distinct low halves, sorted. A test is a search of them.
+    ///
+    /// Either is at most a hashed index's bytes (lows: 4 a distinct value); a document takes bits when they are at
+    /// most twice its lows' bytes. Its number; `None` when its directory is full or `block` has no room.
+    ///
+    /// Its `rows` (`u32`s): the documents' count; each document's key, its form's first field, its second, and where
+    /// its form starts; then the forms. A document of bits has its least slot and its slots; their entries, two a
+    /// slot, are its words' offset and its first word's number above its words' count (0 for a slot of none). A
+    /// document of lows has `LOWS` and its lows' count, then its lows. Its `fences`: the words.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    unsafe fn try_add_node_bits(&self, block: &Block, col: u16, n: u32) -> Option<usize>;
+
+    /// Gives this relation a membership filter on `cols` of its rows `0..n` (decision 0706 E2): a blocked Bloom filter
+    /// in `bloom`'s format, `FILTER_BITS` a row at least (its words a power of two), each row's key placed by
+    /// `bloom::key` of its `cols`, in order. A probe whose key it rejects reads no row. Its number; `None` when its
+    /// directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    unsafe fn try_add_filter(&self, block: &Block, cols: &[u16], n: u32) -> Option<usize>;
+
     /// Room for an index on `cols` of rows `0..n` in `block`, which holds this relation: its directory's entry, its
     /// `2^log` buckets (`n`'s power of two at least) and its rows, which a builder fills (`build_index`, or the
     /// device's), then marks built (`index_built`). Its number, its buckets' and rows' offsets in the block, and its
@@ -321,11 +349,19 @@ pub trait RelationW {
 
     /// `build_index`, each row's key hash given (`hash(i)` for its row `i`: `SEED` mixed with its key's values, as
     /// `key_hash`): for a relation whose key values are read elsewhere (a view's home of no columns, decision 0478
-    /// step 5e).
+    /// step 5e). Its keys are not compared: no mark says `MARK_SAME` (decision 0671).
     ///
     /// # Safety
     /// As `build_index`'s.
     unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64);
+
+    /// `build_index` of each row's key hash (`hash(i)` of its `i`th row from its first) and whether two rows (by id)
+    /// hold one key: each row's bucket, the buckets' starts, then the rows in id order within each bucket, as the
+    /// device's builder places them, and their marks (decision 0671).
+    ///
+    /// # Safety
+    /// As `build_index`'s.
+    unsafe fn build_index_with(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64, same: &dyn Fn(u32, u32) -> bool);
 
     /// Every index added forgotten, its buckets and rows given back to `block`'s free list (`try_reserve_index`'s
     /// chunks): for a relation whose rows' values change in place (a lattice's fold, decision 0384 step 5), whose
@@ -596,7 +632,7 @@ impl RelationW for Relation {
                 (*ix).state = DEAD;
                 return;
             }
-            let (offs, rows) = (4 * (*ix).offs.len(), 4 * (*ix).rows.len().max(1));
+            let (offs, rows) = (4 * (*ix).offs.len(), index_rows_bytes((*ix).rows.len()));
             let (o, r) = (block.offset_of((*ix).offs.as_ptr()), block.offset_of((*ix).rows.as_ptr()));
             if self.flags.load(Acquire) & REWRITTEN != 0 {
                 block.free_chunk_resident(o, offs);
@@ -607,6 +643,7 @@ impl RelationW for Relation {
             }
             (*ix).offs.clear();
             (*ix).rows.clear();
+            (*ix).marks.clear();
             (*ix).key = [0; MAX_KEY];
             (*ix).state = DEAD;
         }
@@ -663,6 +700,197 @@ impl RelationW for Relation {
         }
     }
 
+    /// Gives this relation a node-keyed index on column `col` of its rows `0..n` (decision 0694 step 1), laid out as
+    /// a node's id is (`packed::ID_SPLIT`): its document's key (the high 32 bits), then its low 32 bits, a granule's
+    /// slot above an index in the granule. Each document is held in the smaller of two forms:
+    /// - **bits**: its slots from its least to its greatest, each a slot entry giving its bits, from its least
+    ///   index's word to its greatest's. A test is the slot's entry and one bit.
+    /// - **lows**: its distinct low halves, sorted. A test is a search of them.
+    ///
+    /// Either is at most a hashed index's bytes (lows: 4 a distinct value); a document takes bits when they are at
+    /// most twice its lows' bytes. Its number; `None` when its directory is full or `block` has no room.
+    ///
+    /// Its `rows` (`u32`s): the documents' count; each document's key, its form's first field, its second, and where
+    /// its form starts; then the forms. A document of bits has its least slot and its slots; their entries, two a
+    /// slot, are its words' offset and its first word's number above its words' count (0 for a slot of none). A
+    /// document of lows has `LOWS` and its lows' count, then its lows. Its `fences`: the words.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    unsafe fn try_add_node_bits(&self, block: &Block, col: u16, n: u32) -> Option<usize> {
+        use crate::packed::ID_SPLIT;
+        if n == 0 || col as usize >= self.rows.ncols as usize {
+            return None;
+        }
+        // The distinct values, by document then low half (scratch of the build).
+        let mut vals: Vec<u64> = (0..n).map(|id| self.get(id, col as usize) as u64).collect();
+        vals.sort_unstable();
+        vals.dedup();
+        /// A document's values, `vals[a..b]`, and its form: bits (its least slot, its slots, its words) or lows.
+        struct Doc {
+            hi: u32,
+            a: usize,
+            b: usize,
+            bits: Option<(u32, u32, u32)>,
+        }
+        let (mut docs, mut a) = (Vec::new(), 0usize);
+        while a < vals.len() {
+            let hi = (vals[a] >> 32) as u32;
+            let b = a + vals[a..].iter().take_while(|&&v| (v >> 32) as u32 == hi).count();
+            let slot = |v: u64| (v as u32) >> ID_SPLIT;
+            let (s0, s1) = (slot(vals[a]), slot(vals[b - 1]));
+            // Each slot's words: its least index's word to its greatest's.
+            let mut words = 0u32;
+            let mut i = a;
+            while i < b {
+                let s = slot(vals[i]);
+                let j = i + vals[i..b].iter().take_while(|&&v| slot(v) == s).count();
+                let x = |v: u64| (v as u32 & ((1 << ID_SPLIT) - 1)) / 64;
+                words += x(vals[j - 1]) - x(vals[i]) + 1;
+                i = j;
+            }
+            let bits_bytes = 8 * (s1 - s0 + 1) as usize + 8 * words as usize;
+            let bits = (bits_bytes <= 2 * 4 * (b - a)).then_some((s0, s1 - s0 + 1, words));
+            docs.push(Doc { hi, a, b, bits });
+            a = b;
+        }
+        const LOWS: u32 = u32::MAX;
+        let form: usize = docs.iter().map(|d| d.bits.map_or(d.b - d.a, |(_, slots, _)| 2 * slots as usize)).sum();
+        let words: usize = docs.iter().filter_map(|d| d.bits).map(|(_, _, w)| w as usize).sum();
+        let dir = 1 + 4 * docs.len() + form;
+        let (d_at, d_kept) = block.try_alloc_chunk_fit(4 * dir, 8)?;
+        let Some((w_at, w_kept)) = block.try_alloc_chunk_fit(8 * words.max(1), 8) else {
+            block.free_chunk_fit(d_at, d_kept);
+            return None;
+        };
+        let (d, w) = (block.ptr::<u32>(d_at), block.ptr::<i64>(w_at));
+        // SAFETY: both chunks were just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(d, 0, dir);
+            std::ptr::write_bytes(w, 0, words.max(1));
+            d.write(docs.len() as u32);
+            let (mut at, mut off) = ((1 + 4 * docs.len()) as u32, 0u32);
+            for (k, doc) in docs.iter().enumerate() {
+                let e = d.add(1 + 4 * k);
+                e.write(doc.hi);
+                e.add(3).write(at);
+                let values = &vals[doc.a..doc.b];
+                match doc.bits {
+                    None => {
+                        e.add(1).write(LOWS);
+                        e.add(2).write(values.len() as u32);
+                        for (i, &v) in values.iter().enumerate() {
+                            d.add(at as usize + i).write(v as u32);
+                        }
+                        at += values.len() as u32;
+                    }
+                    Some((s0, slots, _)) => {
+                        e.add(1).write(s0);
+                        e.add(2).write(slots);
+                        let mut i = 0;
+                        while i < values.len() {
+                            let low = values[i] as u32;
+                            let s = low >> ID_SPLIT;
+                            let j = i + values[i..].iter().take_while(|&&v| (v as u32) >> ID_SPLIT == s).count();
+                            let x = |v: u64| v as u32 & ((1 << ID_SPLIT) - 1);
+                            let (w0, w1) = (x(values[i]) / 64, x(values[j - 1]) / 64);
+                            let t = d.add(at as usize + 2 * (s - s0) as usize);
+                            t.write(off);
+                            t.add(1).write(w0 << 16 | (w1 - w0 + 1));
+                            for &v in &values[i..j] {
+                                *w.add((off + x(v) / 64 - w0) as usize) |= 1 << (x(v) % 64);
+                            }
+                            off += w1 - w0 + 1;
+                            i = j;
+                        }
+                        at += 2 * slots;
+                    }
+                }
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(d_at, d_kept);
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[0] = col;
+            (*ix).key = key;
+            (*ix).ordered = NODE_BITS;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.clear();
+            (*ix).tags.clear();
+            (*ix).prints.clear();
+            block.span(&raw const (*ix).rows, d, dir);
+            block.span(&raw const (*ix).fences, w, words.max(1));
+            (*ix).held = [d_kept as u64, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, 1);
+            Some(i)
+        }
+    }
+
+    /// Gives this relation a membership filter on `cols` of its rows `0..n` (decision 0706 E2): a blocked Bloom filter
+    /// in `bloom`'s format, `FILTER_BITS` a row at least (its words a power of two), each row's key placed by
+    /// `bloom::key` of its `cols`, in order. A probe whose key it rejects reads no row. Its number; `None` when its
+    /// directory is full or `block` has no room.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change, its rows `0..n` written.
+    unsafe fn try_add_filter(&self, block: &Block, cols: &[u16], n: u32) -> Option<usize> {
+        if n == 0 || cols.is_empty() || cols.len() > MAX_KEY || cols.iter().any(|&c| c as usize >= self.rows.ncols as usize) {
+            return None;
+        }
+        let words = (n as usize * FILTER_BITS).div_ceil(64).next_power_of_two();
+        let (w_at, w_kept) = block.try_alloc_chunk_fit(8 * words, 8)?;
+        let w = block.ptr::<u64>(w_at);
+        // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
+        unsafe {
+            std::ptr::write_bytes(w, 0, words);
+            let mut key = [0i64; MAX_KEY];
+            for id in 0..n {
+                for (k, &c) in key.iter_mut().zip(cols) {
+                    *k = self.get(id, c as usize);
+                }
+                let (i, mask) = crate::bloom::place(crate::bloom::key(&key[..cols.len()]), words);
+                *w.add(i) |= mask;
+            }
+        }
+        // SAFETY: the caller's: this relation's descriptor is ours to change.
+        unsafe {
+            let Some(i) = self.next_entry(block) else {
+                block.free_chunk_fit(w_at, w_kept);
+                return None;
+            };
+            let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
+            (*ix).ncols = 0;
+            (*ix).from = 0;
+            (*ix).state = 0;
+            let mut key = [0u16; MAX_KEY];
+            key[..cols.len()].copy_from_slice(cols);
+            (*ix).key = key;
+            (*ix).ordered = FILTER;
+            (*ix).mask = u64::from(n);
+            (*ix).offs.clear();
+            (*ix).tags.clear();
+            (*ix).prints.clear();
+            block.span(&raw const (*ix).rows, w.cast::<u32>(), 0);
+            block.span(&raw const (*ix).fences, w.cast::<i64>(), words);
+            (*ix).held = [0, w_kept as u64, 0, 0];
+            self.nindex.fetch_max(i as u32 + 1, Release);
+            std::sync::atomic::fence(Release);
+            std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
+            Some(i)
+        }
+    }
+
     unsafe fn try_reserve_index(&self, block: &Block, cols: &[u16], n: u32) -> Option<IndexRoom> {
         // SAFETY: the caller's.
         unsafe { self.try_reserve_index_buckets(block, cols, n, n as usize) }
@@ -700,7 +928,7 @@ impl RelationW for Relation {
         unsafe {
             // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
             // allocation is.
-            let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
+            let (ob, rb) = (4 * (cap + 1), index_rows_bytes(n as usize));
             // In a block of no free list, an index given back keeps its room for one that fits it (`give_back_index`).
             let reused = if block.has_free_list() || self.indexes.is_empty() { None } else { self.dead_room(cap + 1, n as usize) };
             let i = match reused {
@@ -710,9 +938,10 @@ impl RelationW for Relation {
             let (offs_at, rows_at) = if let Some(d) = reused {
                 let d = &self.indexes.as_slice()[d];
                 let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
-                // Zeroed, as a new chunk is (the builders count into the buckets).
+                // Its buckets zeroed, as a new chunk's are. Its rows and marks not: each builder writes every one it
+                // holds before any reader reads it (`build_index_with`, the device's `ix_place`, `ix_mark`), and a
+                // live relation's room is for its bound's rows, most never written.
                 block.ptr::<u8>(o).write_bytes(0, ob);
-                block.ptr::<u8>(r).write_bytes(0, rb);
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
                 let o = block.try_alloc_chunk(ob, 8)?;
@@ -723,7 +952,8 @@ impl RelationW for Relation {
                 (o, r)
             } else {
                 let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
-                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                // Its rows and marks unzeroed, as a reused room's (above).
+                let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
@@ -742,8 +972,11 @@ impl RelationW for Relation {
             (*ix).mask = (cap - 1) as u64;
             block.span(&raw const (*ix).offs, offs, cap + 1);
             block.span(&raw const (*ix).rows, rows, n as usize);
+            // Its marks after its rows, as many (decision 0671: `index_rows_bytes`).
+            block.span(&raw const (*ix).marks, rows.wrapping_add(n as usize), n as usize);
             self.nindex.fetch_max(i as u32 + 1, Release);
-            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
+            let marks = block.offset_of(rows.wrapping_add(n as usize));
+            Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), marks, mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
         }
     }
 
@@ -751,11 +984,11 @@ impl RelationW for Relation {
         let ix = std::ptr::from_ref(&self.indexes.as_slice()[index]).cast_mut();
         // SAFETY: the caller's: the entry is ours, and no reader runs.
         unsafe {
-            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), 4 * (*ix).rows.len().max(1));
+            let (old, len) = (block.offset_of((*ix).rows.as_ptr()), index_rows_bytes((*ix).rows.len()));
             if (n as usize) <= (*ix).rows.len() {
                 return Some(old);
             }
-            let rb = 4 * n as usize;
+            let rb = index_rows_bytes(n as usize);
             let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
             let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
             if rewritten {
@@ -764,19 +997,28 @@ impl RelationW for Relation {
                 block.free_chunk_fit_resident(old, block.fit_kept(len));
             }
             block.span(&raw const (*ix).rows, block.ptr::<u32>(r), n as usize);
+            block.span(&raw const (*ix).marks, block.ptr::<u32>(r).wrapping_add(n as usize), n as usize);
             Some(r)
         }
     }
 
     unsafe fn build_index(&self, room: &IndexRoom) {
         let key = &room.key[..room.ncols];
-        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'.
-        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i, c as usize) };
+        // A continuation's values are of every row it reads (its base's first); a delta's its own rows'. By row id.
+        let value = |i: u32, c: u16| if self.continues() { self.get(i, c as usize) } else { self.rows.get(i - self.base_rows, c as usize) };
+        let first = if self.continues() { 0 } else { self.base_rows };
+        let hash = |i: u32| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(first + i, c)));
+        let same = |a: u32, b: u32| key.iter().all(|&c| value(a, c) == value(b, c));
         // SAFETY: the caller's.
-        unsafe { self.build_index_hashed(room, &|i| key.iter().fold(crate::SEED, |h, &c| crate::mix(h, value(i, c)))) }
+        unsafe { self.build_index_with(room, &hash, &same) }
     }
 
     unsafe fn build_index_hashed(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64) {
+        // SAFETY: the caller's.
+        unsafe { self.build_index_with(room, hash, &|_, _| false) }
+    }
+
+    unsafe fn build_index_with(&self, room: &IndexRoom, hash: &dyn Fn(u32) -> u64, same: &dyn Fn(u32, u32) -> bool) {
         let ix = &self.indexes.as_slice()[room.index];
         let n = room.rows_n as usize;
         // SAFETY: the caller's: the room's spans are ours to write.
@@ -799,6 +1041,10 @@ impl RelationW for Relation {
             rows[at[b as usize] as usize] = base + i as u32;
             at[b as usize] += 1;
         }
+        // SAFETY: the caller's: the marks are the room's, as many as its rows.
+        let marks = unsafe { std::slice::from_raw_parts_mut(ix.marks.as_slice().as_ptr().cast_mut(), ix.marks.len()) };
+        let rows = &rows[..];
+        fill_marks(offs, &mut marks[..n], &|t| mark_tag(hash(rows[t] - base)), &|t, u| same(rows[t], rows[u]));
     }
 
     unsafe fn forget_indexes(&self, block: &Block) {
@@ -813,8 +1059,8 @@ impl RelationW for Relation {
                 unsafe { (*std::ptr::from_ref(ix).cast_mut()).state = 0 };
                 continue;
             }
-            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS {
-                // A sorted order's chunks, each as it was given (`try_add_order`).
+            if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == NODE_BITS || ix.ordered == FILTER {
+                // A sorted order's chunks, each as it was given (`try_add_order`), and a node-keyed index's.
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
                     if kept > 0 {
@@ -823,7 +1069,7 @@ impl RelationW for Relation {
                 }
                 continue;
             }
-            let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
+            let (offs, rows) = (4 * ix.offs.len(), index_rows_bytes(ix.rows.len()));
             let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
             // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
             if self.flags.load(Acquire) & REWRITTEN != 0 {
@@ -1110,12 +1356,16 @@ fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], 
         let mask = (cap - 1) as u64;
         // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
         let bucket: &mut [u32] = scratch.take(live);
-        // Exact claims: the buckets' counts start at zero, written so; every row is written below.
+        let tags: &mut [u32] = scratch.take(live);
+        // Exact claims: the buckets' counts start at zero, written so; every row and mark is written below. The rows,
+        // then their marks (decision 0671).
         let bp: *mut u32 = block.try_claim_clear_t(cap + 1).expect("room in the block for an index's buckets");
-        let rp: *mut u32 = block.try_claim_t(live.max(1)).expect("room in the block for an index's rows");
+        let rp: *mut u32 = block.try_claim_t(2 * live.max(1)).expect("room in the block for an index's rows");
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };
         for (j, b) in bucket.iter_mut().enumerate() {
-            *b = (key_hash(&kv(j)[..nk]) & mask) as u32;
+            let h = key_hash(&kv(j)[..nk]);
+            *b = (h & mask) as u32;
+            tags[j] = mark_tag(h);
             offs[*b as usize + 1] += 1;
         }
         for b in 0..cap {
@@ -1128,10 +1378,16 @@ fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], 
             rows_out[at[b as usize] as usize] = (br + j) as u32;
             at[b as usize] += 1;
         }
+        // SAFETY: the marks' half of the rows' claim, `live` of them, written here alone.
+        let marks = unsafe { std::slice::from_raw_parts_mut(rp.add(live), live) };
+        let rows_out = &rows_out[..live];
+        let j = |t: usize| rows_out[t] as usize - br;
+        fill_marks(offs, marks, &|t| tags[j(t)], &|t, u| kv(j(t))[..nk] == kv(j(u))[..nk]);
         ix.mask = mask;
         unsafe {
             block.span(&raw const ix.offs, bp, cap + 1);
             block.span(&raw const ix.rows, rp, live);
+            block.span(&raw const ix.marks, rp.add(live), live);
         }
     }
 }
@@ -1709,6 +1965,64 @@ mod tests {
     use crate::ids::ColumnIndex;
     use crate::table::Table;
     use std::collections::BTreeSet;
+
+    /// Decision 0671: a place's mark is its key's tag, with `MARK_SAME` where its bucket's previous place of the tag
+    /// (among the `MARK_REACH` before it) holds its key; another key of the tag there, or none, leaves it clear.
+    #[test]
+    fn a_places_mark_says_whether_its_previous_of_its_tag_holds_its_key() {
+        // One bucket of 13 places: keys by place, tags by key (keys 1 and 2 share tag 6).
+        let keys = [1, 1, 2, 2, 1, 3, 3, 4, 5, 6, 7, 8, 3];
+        let tag = |k: i32| if k <= 2 { 6u32 } else { 10 * k as u32 };
+        let offs = [0u32, keys.len() as u32];
+        let mut marks = [0u32; 13];
+        fill_marks(&offs, &mut marks, &|t| tag(keys[t]), &|t, u| keys[t] == keys[u]);
+        let same: Vec<u32> = marks.iter().map(|m| m & MARK_SAME).collect();
+        // A place's previous of its tag: the same key (places 1, 3, 6), another key of the tag (2, 4), none (0, 5, the
+        // single keys); place 12's is place 6, 6 places back.
+        assert_eq!(same, [0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1]);
+        assert!(marks.iter().zip(keys).all(|(m, k)| m & !MARK_SAME == tag(k)), "each place's tag");
+    }
+
+    /// A built index's marks: each place's tag its key's hash's, and each `MARK_SAME` place's key its previous place of
+    /// its tag's.
+    #[test]
+    fn a_built_indexs_marks_are_its_keys() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let r = Relation::try_create(&block, &spec, None).unwrap();
+        let n = 5_000u32;
+        assert!(r.rows.try_reserve(&block, u64::from(n)));
+        unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(i, 0, i64::from(i * 7 % 997));
+                r.rows.put(i, 1, i64::from(i));
+            }
+        }
+        // 1024 buckets for 997 keys, about one key a bucket (as an index is sized), some two or more.
+        let room = unsafe { r.try_reserve_index_buckets(&block, &[0], n, 1024) }.unwrap();
+        unsafe {
+            r.build_index(&room);
+            r.index_built(&room);
+        }
+        let ix = r.index_at(room.index);
+        let (offs, rows, marks) = (ix.offs.as_slice(), ix.rows.as_slice(), ix.marks.as_slice());
+        assert_eq!(marks.len(), rows.len());
+        let key = |t: usize| r.rows.get(rows[t], 0);
+        let mut known = 0;
+        for b in 0..offs.len() - 1 {
+            for t in offs[b] as usize..offs[b + 1] as usize {
+                assert_eq!(marks[t] & !MARK_SAME, mark_tag(key_hash(&[key(t)])), "place {t}'s tag");
+                if marks[t] & MARK_SAME != 0 {
+                    let lo = (offs[b] as usize).max(t.saturating_sub(MARK_REACH));
+                    let prev = (lo..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME).unwrap();
+                    assert_eq!(key(prev), key(t), "place {t}: its previous of its tag's key");
+                    known += 1;
+                }
+            }
+        }
+        assert!(known > n as usize / 2, "most places' keys known by the place before of their tag: {known}");
+    }
 
     /// Decision 0384 step 7: a continuation reads its ids below `base_rows` in its base (in the same block) and its
     /// own after, by the read written once (`rel_get`); its index is of every id; a kills delta of it marks any; its

@@ -539,7 +539,7 @@ pub fn record_copy(asked_by: &mut BTreeMap<String, Vec<BTreeSet<String>>>, heads
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", "sorted"];
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", "sorted", "cross_file"];
 
 /// The request record after a pass that writes `rules` (each a head and the places of the old rules it came from), the
 /// old rules' readers `old` (`readers_of_heads`, taken before the pass took the rules apart): a request rule serves

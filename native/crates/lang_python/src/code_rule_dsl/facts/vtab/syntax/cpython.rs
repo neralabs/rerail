@@ -148,19 +148,19 @@ impl CPython {
     pub(super) fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
         let mut out = Vec::new();
         if self.syntax_error {
-            let mut r = super::Relation::new(&["d", "l", "msg"]);
+            let mut r = super::Relation::new(&["d", "l", "msg"]).with_atoms(&[false, false, true]);
             std::mem::take(&mut self.syntax_errors).into_iter().for_each(|[d, l, m]| r.push(&[d, l, atom(m)]));
             out.push((SYNTAX_ERROR, r));
         }
         if self.literal_json {
-            let mut r = super::Relation::new(&["n", "v"]);
+            let mut r = super::Relation::new(&["n", "v"]).with_atoms(&[false, true]);
             std::mem::take(&mut self.literals).into_iter().for_each(|[n, v]| r.push(&[n, atom(v)]));
             out.push((LITERAL_JSON, r));
         }
         let wanted = [self.want.unparse, self.want.dump, self.want.dump_sha256, self.want.body_sha256, self.want.signature_sha256];
         for ((rel, rows), wanted) in PRINTED.into_iter().zip(self.printed.iter_mut()).zip(wanted) {
             if wanted {
-                let mut r = super::Relation::new(columns(rel));
+                let mut r = super::Relation::new(columns(rel)).with_atoms(&[false, true]);
                 std::mem::take(rows).into_iter().for_each(|[n, s]| r.push(&[n, atom(s)]));
                 out.push((rel, r));
             }

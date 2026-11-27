@@ -78,8 +78,9 @@ pub struct Ranks {
     /// Six words a group: the bits of each item, the nodes before | the tokens before << 32, the fielded nodes
     /// before | the nodes after a sibling before << 32. One group past the last numbered item, so a rank at the end reads a group.
     groups: Cells<[u64; WORDS]>,
-    /// The group of item `SAMPLE * k`, by item.
-    samples: [Cells<u32>; ITEMS],
+    /// The group of item `SAMPLE * k`, by item: item `i`'s are `samples[count[..i]'s samples..]`, one region for all
+    /// (`build`).
+    samples: Cells<u32>,
     count: [u32; ITEMS],
     /// The descriptor the reads written once take (`rerail_clif::ids::Numbering`), in the same block: its runs point
     /// at `groups` and `samples`, and the granule table's at the table's columns (`granules::Table::new`).
@@ -184,22 +185,31 @@ impl Ranks {
             n
         })
         .expect("a batch's block holds its projection");
-        let sample = |item: Item| {
-            Cells::build(block, count[item as usize].div_ceil(SAMPLE) as usize, |out| {
+        // Each item's samples, one after another in one region.
+        const ORDER: [Item; ITEMS] = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Child, Item::Anchor, Item::Text];
+        let mut at = [0usize; ITEMS + 1];
+        for (i, item) in ORDER.iter().enumerate() {
+            at[i + 1] = at[i] + count[*item as usize].div_ceil(SAMPLE) as usize;
+        }
+        // How many each item's are (up to its room).
+        let mut lens = [0usize; ITEMS];
+        let samples = Cells::build(block, at[ITEMS], |all| {
+            for (i, &item) in ORDER.iter().enumerate() {
+                let out = &mut all[at[i]..at[i + 1]];
                 let mut k = 0;
-                for (i, g) in groups.iter().enumerate() {
+                for (j, g) in groups.iter().enumerate() {
                     let before = before_of(g, item);
                     let after = before + g[item as usize].count_ones();
                     while k < out.len() && (SAMPLE * k as u32) < after {
-                        out[k] = i as u32;
+                        out[k] = j as u32;
                         k += 1;
                     }
                 }
-                k
-            })
-            .expect("a batch's block holds its projection")
-        };
-        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Child, Item::Anchor, Item::Text].map(sample);
+                lens[i] = k;
+            }
+            at[ITEMS]
+        })
+        .expect("a batch's block holds its projection");
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live
@@ -208,8 +218,8 @@ impl Ranks {
             (*d).first = first;
             (*d).count = count;
             Run::set(&raw mut (*d).groups, groups.as_ptr(), groups.len());
-            for (i, s) in samples.iter().enumerate() {
-                Run::set(&raw mut (*d).samples[i], s.as_ptr(), s.len());
+            for i in 0..ITEMS {
+                Run::set(&raw mut (*d).samples[i], samples.as_ptr().add(at[i]), lens[i]);
             }
         }
         Ranks { first, groups, samples, count, desc }
@@ -290,7 +300,7 @@ impl Ranks {
 
     /// The bytes the index takes.
     pub fn bytes(&self) -> usize {
-        8 * WORDS * self.groups.len() + 4 * self.samples.iter().map(|s| s.len()).sum::<usize>()
+        8 * WORDS * self.groups.len() + 4 * self.samples.len()
     }
 
     /// The block the index is in.

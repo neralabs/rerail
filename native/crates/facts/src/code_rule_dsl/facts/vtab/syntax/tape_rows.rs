@@ -39,6 +39,8 @@ pub struct Derived {
     visits: OnceLock<Cells<u32>>,
     /// Each node's `tree_digest` atom, by local id.
     digests: OnceLock<Cells<u32>>,
+    /// `doc`'s row of a file: its path's and module's atoms (`DocRow::doc`'s), for its entry (`ViewDoc::doc_path`).
+    doc: OnceLock<[u32; 2]>,
 }
 
 impl Derived {
@@ -46,6 +48,10 @@ impl Derived {
     /// `named`.
     pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 4], Option<&Cells<[u32; 2]>>) {
         ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get(), self.digests.get()], self.named.get())
+    }
+    /// `doc`'s atoms, where its program reads `doc` (`derive`).
+    pub(super) fn doc(&self) -> Option<[u32; 2]> {
+        self.doc.get().copied()
     }
 }
 
@@ -149,6 +155,25 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn statistics(&self, _batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
     }
+    /// Its view's device code (`device_chunk::VIEW_*`), where the views' reads read its rows in place (decision 0353
+    /// step 4), and whether document `doc`'s entry holds what they read: `None` where no read does.
+    fn device_read(&self, _batch: &Batch, _doc: usize) -> Option<(u32, bool)> {
+        None
+    }
+}
+
+/// Whether every entry of `batch`'s documents holds what view `view`'s read reads of it (`TapeRows::device_read`):
+/// `doc`'s atoms where its program reads it. A reader over several batches' directory (`values::Layered`, its tape
+/// values') asks it of each: a batch whose projection reads no `doc` holds none.
+pub(super) fn entries_hold(view: u32, batch: &Batch) -> bool {
+    if view != super::device_chunk::VIEW_DOC {
+        return true;
+    }
+    let held = (0..batch.docs.len()).all(|doc| DocRow.device_read(batch, doc).is_some_and(|(_, held)| held));
+    if !held {
+        crate::code_rule_dsl::prof::count("views.refused.not_derived", 1);
+    }
+    held
 }
 
 /// A document's rows of a `TapeRows`.
@@ -165,12 +190,14 @@ pub(super) struct RowsView<R: TapeRows> {
     batch: Arc<Batch>,
     rows: R,
     per: Box<[OnceLock<Per<R::Doc>>]>,
+    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`).
+    home: OnceLock<Option<Arc<crate::code_rule_dsl::facts::rows::IndexHome>>>,
 }
 
 impl<R: TapeRows> RowsView<R> {
     pub(super) fn new(batch: &Arc<Batch>, rows: R) -> Self {
         let per = (0..batch.docs.len()).map(|_| OnceLock::new()).collect();
-        RowsView { batch: Arc::clone(batch), rows, per }
+        RowsView { batch: Arc::clone(batch), rows, per, home: OnceLock::new() }
     }
 
     fn at(&self, doc: usize) -> At<'_> {
@@ -216,6 +243,26 @@ impl<R: TapeRows> RowsView<R> {
 impl<R: TapeRows> Source for RowsView<R> {
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
         Some(Arc::clone(&self.batch) as _)
+    }
+    /// Its rows read in place through the batch's views' directory (decision 0353 step 4), as a view's
+    /// (`Viewed::device_view`), where a view's read reads them (`TapeRows::device_read`) and every document's entry
+    /// holds what it reads; nothing makes its rows.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
+        if self.batch.docs.len() == 0 {
+            return None;
+        }
+        // The directory first: its documents made, their derived columns with them (`derive`).
+        let in_place = super::device_chunk::views_in_place(&self.batch)?;
+        let (view, _) = self.rows.device_read(&self.batch, 0)?;
+        if !entries_hold(view, &self.batch) {
+            return None;
+        }
+        let mut in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
+        let rows = self.len();
+        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::IndexHome::new(rows, rerail_blocks::relation::ADDED_INDEXES)).clone()?;
+        in_place.grows = Some(Arc::clone(&home));
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home: home.part() })
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -304,25 +351,30 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !self.rows.keyed(column) {
             return None;
         }
-        let firsts = self.firsts();
         let mut rows = Vector::new();
-        for &v in values {
-            self.rows.find(&self.batch, column, v, &mut |doc, x| {
-                let per = self.per(doc);
-                let at = self.at(doc);
-                let rank = match per.rows {
-                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
-                    Rows::Doc => (x == 0).then_some(0),
-                    Rows::None => None,
-                };
-                if let Some(k) = rank {
-                    rows.push(firsts.at(doc) + k as usize);
-                }
-            });
-        }
+        self.found(column, values, &mut |r| rows.push(r));
         rows.sort_unstable();
         rows.dedup();
         Some(rows)
+    }
+    /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        if !self.rows.keyed(column) {
+            return false;
+        }
+        rerail_blocks::frame::op(|fr| {
+            let mut rows = fr.vec::<u64>();
+            self.found(column, values, &mut |r| rows.push(r as u64));
+            rows.sort_unstable();
+            let mut last = None;
+            for &r in rows.iter() {
+                if last != Some(r) {
+                    each(r as usize);
+                    last = Some(r);
+                }
+            }
+        });
+        true
     }
 }
 
@@ -427,6 +479,20 @@ pub(super) fn derive(batch: &Batch, doc: usize) {
     }
     if wants(VISIT) {
         VisitIndex::places(&at);
+    }
+    // `doc`'s row, read in place (`view_doc`): its atoms in its entry, a file's alone (a tape value has none).
+    // Written into the entry here, whenever its other fields were (`view_docs::ViewEntry::fill`): these two are
+    // `derive`'s alone, written once, before a directory over the entry is made.
+    if wants(DOC) && DocRow::is_file(batch, doc) {
+        let p = at.p();
+        p.derived.doc.get_or_init(|| {
+            let [path, module] = DocRow.doc(&at).map(|a| u32::try_from(a).expect("an atom of 32 bits"));
+            let e = p.entry().0.as_ptr();
+            // SAFETY: the entry lies in the projection's block from its making; its `doc_path` and `doc_module` are
+            // written by this alone, inside the `OnceLock`, and read once a directory over it is made, after.
+            unsafe { ((*e).doc_path, (*e).doc_module) = (path, module) };
+            [path, module]
+        });
     }
 }
 
@@ -703,7 +769,7 @@ impl TapeRows for DocRow {
         DOC
     }
     fn slot(&self) -> usize {
-        TAPE + 5
+        rerail_clif::view_reads::DOC_VIEW
     }
     fn columns(&self) -> &'static [&'static str] {
         &["d", "path", "module"]
@@ -735,7 +801,13 @@ impl TapeRows for DocRow {
     /// By its key, its document; by its path or module, the documents the batch's interned paths and modules name.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
         let keys = match column {
-            0 => u32::try_from(value).ok().into_iter().collect(),
+            // By its key: the one document, no list made (a list of the key a probe was 2.06 M on cold PostHog).
+            0 => {
+                if let Ok(k) = u32::try_from(value) && let Some(doc) = batch.docs.position(k) {
+                    each(doc, 0);
+                }
+                return;
+            }
             1 => batch.keys_of_paths(&[value]).unwrap_or_default(),
             _ => batch.keys_of_modules(&[value]).unwrap_or_default(),
         };
@@ -744,6 +816,11 @@ impl TapeRows for DocRow {
                 each(doc, 0);
             }
         }
+    }
+    /// `view_doc`, its atoms in the entry where its program reads it (`derive`); a tape value's entry holds no row.
+    fn device_read(&self, batch: &Batch, doc: usize) -> Option<(u32, bool)> {
+        let held = !Self::is_file(batch, doc) || batch.docs[doc].derived.doc().is_some();
+        Some((super::device_chunk::VIEW_DOC, held))
     }
     fn statistics(&self, batch: &Batch) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         batch.doc_statistics()
@@ -863,5 +940,26 @@ impl TapeRows for TreeDigest {
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
         out[1] = i64::from(Self::atoms(at)[k as usize]);
+    }
+}
+
+impl<R: TapeRows> RowsView<R> {
+    /// The rows `find` gives of `values` on `column` (a keyed one), each given to `each`, unsorted and maybe twice.
+    fn found(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) {
+        let firsts = self.firsts();
+        for &v in values {
+            self.rows.find(&self.batch, column, v, &mut |doc, x| {
+                let per = self.per(doc);
+                let at = self.at(doc);
+                let rank = match per.rows {
+                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
+                    Rows::Doc => (x == 0).then_some(0),
+                    Rows::None => None,
+                };
+                if let Some(k) = rank {
+                    each(firsts.at(doc) + k as usize);
+                }
+            });
+        }
     }
 }

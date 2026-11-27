@@ -18,7 +18,7 @@
 
 use crate::block::Block;
 // The filter's format, its hash and its reads: the floor's one definition (`rerail_delta_core::bloom`).
-pub use rerail_delta_core::bloom::{Bloom, hash, mask, place};
+pub use rerail_delta_core::bloom::{Bloom, hash, key, mask, place};
 
 /// The descriptor's chunk: the smallest class.
 const DESC_BYTES: usize = 64;

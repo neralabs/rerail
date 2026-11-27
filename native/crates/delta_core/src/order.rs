@@ -154,17 +154,35 @@ pub fn fence_span(fences: &[i64], n: usize, lead: i64) -> (usize, usize) {
 }
 
 /// The positions of an order of `n` ids whose rows hold `key` on the order's first `key.len()` columns (`key` not
-/// empty): `cmp(i)` compares position `i`'s row with the key. The span by the tags (a tagged order) or the fences;
-/// within it, by the prints where they are kept and the key is whole (`whole`), else by bisection.
+/// empty): `cmp(i, m)` compares position `i`'s row on the order's first `m` columns with `key[..m]`. The span by the
+/// tags (a tagged order) or the fences; within it, `within`'s.
 #[inline]
-pub fn find(n: usize, fences: &[i64], tags: &[u16], prints: &[u8], key: &[i64], whole: bool, cmp: impl Fn(usize) -> Ordering) -> (usize, usize) {
+pub fn find(n: usize, fences: &[i64], tags: &[u16], prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
     let lead = key[0];
     let (lo, hi) = if !tags.is_empty() { tag_span(tags, tag(lead), 0, true) } else { fence_span(fences, n, lead) };
-    if !prints.is_empty() && whole {
-        return print_span(prints, lo, hi, print_of_key(key), |i| cmp(i).is_eq());
-    }
-    let s = split_at_pos(lo, hi, |i| cmp(i) == Ordering::Less);
-    let e = split_at_pos(s, hi, |i| cmp(i) == Ordering::Equal);
+    within(lo, hi, prints, printed, key, cmp)
+}
+
+/// The positions in `lo..hi` (a span the key's rows lie in) whose rows hold `key`. Where the order prints its first
+/// `printed` columns (`prints`, a print a position) and the key holds them, the span of their print is found by the
+/// prints, eight a word, reading only the rows whose print is the key's (`print_span`); a longer key is then bisected
+/// within that span alone. Else the span is bisected. Bisection reads a row a step, a sealed chunk's decode, and a
+/// span of a tagged order holds every key sharing the lead's tag (about 15 at a million keys): the prints leave one
+/// row read where there were about seven (t56 step 7 C).
+#[inline]
+pub fn within(lo: usize, hi: usize, prints: &[u8], printed: usize, key: &[i64], cmp: impl Fn(usize, usize) -> Ordering) -> (usize, usize) {
+    let m = key.len();
+    let (lo, hi) = if !prints.is_empty() && printed > 0 && m >= printed {
+        let (s, e) = print_span(prints, lo, hi, print_of_key(&key[..printed]), |i| cmp(i, printed).is_eq());
+        if m == printed || s == e {
+            return (s, e);
+        }
+        (s, e)
+    } else {
+        (lo, hi)
+    };
+    let s = split_at_pos(lo, hi, |i| cmp(i, m) == Ordering::Less);
+    let e = split_at_pos(s, hi, |i| cmp(i, m) == Ordering::Equal);
     (s, e)
 }
 

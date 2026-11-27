@@ -232,7 +232,7 @@ fn record_parse(file: &dyn SourceFile, reader: &'static str) {
     if prof::on() {
         use sha2::{Digest as _, Sha256};
         let digest = Sha256::digest(file.source().as_bytes()).into();
-        prof::count_named(format!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
+        prof::count_named_args(format_args!("source_tape.input.{reader}.{}.{}", file.language(), crate::content_store::observe::hex(&digest)), 1);
     }
 }
 
@@ -364,6 +364,12 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
     {
         return TapeImage::from_home((*home).clone(), grammar);
     }
+    // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(image) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<crate::code_rule_dsl::tape::StoredImage>()
+    {
+        return Ok(image.0.clone());
+    }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
     const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
     APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
@@ -379,8 +385,19 @@ fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc
     Ok(image)
 }
 
+/// A parse's tape and the bytes the store's writer takes: in a slab's room where a device reads tapes (one write, read
+/// there by the host and the device), else the image as the parser made it, its bytes taken where they lie
+/// (`StoredImage`): a CPU run copied every tape into a vector for the writer alone (t57 §8, the cost case
+/// `a_tape_is_not_copied_into_its_room`).
 fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
     use crate::code_rule_dsl::tape::TapeImage;
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    let roomless = crate::code_rule_dsl::tape::placed::device().is_none();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let roomless = true;
+    if roomless {
+        return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
+    }
     let home = image.place_stored()?;
     if !home.placed() {
         return Ok((Arc::new(home), image));
@@ -931,8 +948,9 @@ impl<'a> FactsIn<'a> {
             deepest as u32
         })
     }
-    /// The node's children, in order.
-    pub fn children(&self, id: u32) -> Vector<u32> {
+    /// The node's children, in order: on the stack (a node's children are few; past 16, on the heap). A caller that
+    /// reads each once takes `each_child`.
+    pub fn children(&self, id: u32) -> rerail_blocks::frame::InlineVec<u32, 16> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
     /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).
@@ -1282,6 +1300,9 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
+        "tsconfig" => &["dir", "base_url"],
+        "tsconfig_for" => &["path", "dir"],
+        "tsconfig_path" => &["dir", "pattern", "target"],
         "pkg" => &["d", "p"],
         "unpackaged" | "tape_error" => &["d"],
         "path_part" | "file_name" => &["d", "s"],

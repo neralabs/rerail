@@ -224,6 +224,11 @@ impl Keeper {
     fn count_where(&mut self, entry: &memo::Entry, sign: i64, pick: &dyn Fn(&str) -> bool) {
         let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
         let holders = crate::code_rule_dsl::logic::profile::span(|| "statistics: holders".into());
+        // Per export, the value documents whose rows this file's are not: counted in where another file holds them
+        // already, out where another still does. A value document's rows go to every file that asked for it, and the
+        // run holds them once (`Exports`): counted for each file, an export's kept rows were more than its rows held,
+        // and every edit measured it again from every row (a string annotation's in two files).
+        let mut others: HashMap<&str, rustc_hash::FxHashSet<i64>> = HashMap::new();
         for (key, at) in &self.doc_at {
             if !pick(key) {
                 continue;
@@ -239,13 +244,23 @@ impl Keeper {
             let held = self.holders.entry(key.clone()).or_default();
             for o in owners {
                 let n = held.entry(o).or_default();
+                let before = *n;
                 *n += sign;
+                if (sign > 0 && before > 0) || (sign < 0 && *n > 0) {
+                    others.entry(key.as_str()).or_default().insert(o);
+                }
                 if *n == 0 {
                     held.remove(&o);
                 }
             }
         }
         drop(holders);
+        let others = &others;
+        // A file's rows of `key`, less those of the value documents another file holds (`others`).
+        let rows_in = |stats: &mut RelStats, key: &str, values: &[i64], width: usize, at: Option<usize>| match (others.get(key), at) {
+            (Some(skip), Some(at)) => stats.rows_by_except(values, width, sign, Some(at), &|row| skip.contains(&memo::document_of(row[at]))),
+            _ => stats.rows_by(values, width, sign, at),
+        };
         let _rels = crate::code_rule_dsl::logic::profile::span(|| "statistics: relations".into());
         // Each relation's statistics are its rows' alone: counted in parallel, a few relations a task (a file's are
         // about 150 µs in all, on the run's thread: t50 step 8). Traced, in order.
@@ -257,7 +272,7 @@ impl Keeper {
                 rels.par_iter_mut().with_min_len(16).for_each(|(key, stats)| {
                     let (width, values) = &entry.rows[*key];
                     match doc_at.get(*key) {
-                        Some(at) => stats.rows_by(values, *width, sign, *at),
+                        Some(at) => rows_in(stats, key, values, *width, *at),
                         None => stats.documents(values, *width, sign),
                     }
                 })
@@ -280,7 +295,7 @@ impl Keeper {
                                 rows.push((key.clone(), counting.clone(), sign, row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
                             }
                         }
-                        stats.rows_by(values, *width, sign, *at)
+                        rows_in(stats, key, values, *width, *at)
                     }
                     None => stats.documents(values, *width, sign),
                 }
@@ -658,11 +673,12 @@ impl Keeper {
 
 /// The corpus statistics' space: the keepers (`Keeper::into_kept`) and the memo spaces' last programs (`put_last`).
 pub fn space() -> [u8; 32] {
-    sha2::Sha256::digest(b"rerail.corpus-statistics/v1").into()
+    // v2: a value document's rows counted once, not once a file that holds them (`count_where`).
+    sha2::Sha256::digest(b"rerail.corpus-statistics/v2").into()
 }
 
 fn ident(rel: &str) -> [u8; 32] {
-    sha2::Sha256::digest(format!("rerail.corpus-statistics/v1\0{rel}").as_bytes()).into()
+    sha2::Sha256::digest(format!("rerail.corpus-statistics/v2\0{rel}").as_bytes()).into()
 }
 
 /// The partition of what is kept under `key` (a plan, or a memo space's last-program key).

@@ -25,10 +25,10 @@ triple_slash_reference(c, cat("Remove this triple-slash types reference to ", m,
     reference(c, "types", m), setting("types", "prefer-import"), docof(c, d), imports(d, m).
 
 // reference(c, k, m): leading line comment c is `/// <reference k="m" />`. As the rule's regex, the quotes may be
-// either kind and m runs to the last quote.
+// either kind and m runs to the last quote. Over a node the captures are spans (K, M), read as text.
 .decl reference(c: node, k: symbol, m: symbol)
 reference(c, k, m) :- js_comment(c, "Line", _), leading(c),
-    match("///\\s*<reference\\s*(?<k>types|path|lib)\\s*=\\s*[\"|'](?<m>.*)[\"|'].*", c).
+    match("///\\s*<reference\\s*(?<K>types|path|lib)\\s*=\\s*[\"|'](?<M>.*)[\"|'].*", c), text(K, k), text(M, m).
 .decl leading(c: node)  // no token before c, but perhaps a `#!` line (ESLint's Shebang comment)
 leading(c) :- kind(c, "comment"), child(p, c, i), kind(p, "program"),
     count : { child(p, x, j), j < i, !kind(x, "comment"), !kind(x, "hash_bang_line") } = 0.

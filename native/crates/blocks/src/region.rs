@@ -566,12 +566,18 @@ pub fn whole(block: &Arc<Block>) -> Shared<u8> {
 /// The ledger is found once a fence and address (`Fence::held_at`): a stack's thousands of dispatches each bind its
 /// buffers, and each bind was a search of the live blocks (decision 0641).
 pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
+    // Bound before for this access, its region pinned: the pin holds the region (and its memory) for the fence's
+    // life, so nothing else can lie there now.
+    if fence.bound_already(addr, write) {
+        return true;
+    }
     let Some(l) = fence.held_at(addr) else { return false };
     let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();
-    if let Some(r) = root
-        && fence.first_pin(Arc::as_ptr(&r) as usize, write)
-    {
-        r.pin(fence, op, write);
+    if let Some(r) = root {
+        if fence.first_pin(Arc::as_ptr(&r) as usize, write) {
+            r.pin(fence, op, write);
+        }
+        fence.note_bound(addr, write);
     }
     true
 }

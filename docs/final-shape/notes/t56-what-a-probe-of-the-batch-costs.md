@@ -222,6 +222,26 @@ within them. This reaches the kept chains and the dedup order, which were never 
 Predicted, at a million keys: the search from 161 to about 50 ns. Each is measured alone, in the lab at both
 scales and then on `all`.
 
+**B was in place already.** `scan_order` sorts a scan's keys by the lead's tag first when the next order is tagged
+(`key_cmp`). The lab's single-thread search had sorted its keys by value: 139.5 ns a probe, against 101.5 ns by tag
+(1M keys). Both read 7.4 rows a probe: the cost is the compares, sealed reads of rows far apart, not the tags, which
+lie next to each other.
+
+**C (done): an order prints its lead, and a whole-key order its key.** `rerail_blocks::order::within` searches a span
+by the prints of the order's first `printed` columns where the key holds them, and bisects a longer key within their
+span alone. The relations' orders (`Rel`'s first, `Rel::want`'s) print their lead (`Index::led`); a derived input's
+own order prints its key columns, a ranged one's too (`Index::printed_on`). A byte a row an order.
+- The lab at 1M keys: rows compared a probe 7.36 to 1.02 (one-row lookup), the search by tag 101.5 to 33 ns
+  (predicted about 50). The steps: membership 253 to 188 ns, one-row lookup 292 to 202, eight rows 612 to 425 a
+  probe.
+- On `all` (m3, profiled; c21 at load 7 against c20 at 58): the same rows; 1,664 to 1,632 G instructions; the peak
+  2,368 to 2,345 MB. The step lines this change does not touch (the views') fell 10–20% with the load alone; past
+  that, `kind / anti-join` 377 to 292 ns, `kind / lookup on (c0)` 240 to 188, `nameref / lookup` 205 to 134,
+  `rf_expr / lookup` 1,185 to 553. `kind / membership` 221 to 181 is within the load's effect.
+- Open: `text`'s line rose 385 to 688 ns in c21, whose chunks ran more at once (wall 31 s against 81). Its search is
+  the same call as before (one column, printed on it), so something outside the read lands on its step at that
+  load. Looked at next.
+
 ### Step 6: `wstart` priced again
 
 The answer that `wstart`'s rows are cheaper stored than inlined priced its readers' reads by the step table. It is

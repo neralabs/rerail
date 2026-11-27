@@ -299,7 +299,9 @@ impl<'a> Run<'a, '_> {
         if !self.mode_reads.is_empty() {
             return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode());
         }
-        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| s.encode()))
+        // Its section in the memo's room, which keeps it for the run (decision 0342 amended): the planning's own
+        // structures stay on the thread's stack.
+        super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(|s| super::super::derived::placed(|| s.encode())))
     }
 
     #[allow(clippy::too_many_arguments)]

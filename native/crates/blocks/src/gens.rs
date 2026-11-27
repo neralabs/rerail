@@ -93,7 +93,7 @@ pub fn device_rows(rows: &[Desc], pins: &[&BlockPin], device: &rerail_device::de
         let b = pin.block();
         let buffer = b.device_buffer(device)?;
         let addr = buffer.device_address().ok_or_else(|| format!("block #{}: the device gives its buffers no address", d.id))?;
-        let len = b.kept_device_buffer().map_or(d.len, |(_, n)| (n as u64).min(d.len));
+        let len = b.kept_device_buffer(device).map_or(d.len, |(_, n)| (n as u64).min(d.len));
         out.push(Desc { addr, len, ..*d });
         buffers.push(buffer);
     }

@@ -96,6 +96,8 @@ struct L<'a> {
     funcs: Vec<Func>,
     fnames: HashMap<String, Vec<u32>>,
     globals: HashMap<String, Var>,
+    /// The enumerators declared so far: each an `int` constant.
+    enums: HashMap<String, u64>,
     data: Vec<u8>,
     scopes: Vec<HashMap<String, Var>>,
     /// The function being written: its frame's next free byte, its frame's size, its threadgroup memory's, its
@@ -124,6 +126,7 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
         funcs: Vec::new(),
         fnames: HashMap::new(),
         globals: HashMap::new(),
+        enums: HashMap::new(),
         data: Vec::new(),
         scopes: Vec::new(),
         at: 0,
@@ -389,6 +392,7 @@ impl L<'_> {
                 None => self.err(t, "an unknown type"),
             },
             "struct_specifier" | "union_specifier" => self.record(t),
+            "enum_specifier" => self.enumeration(t).map(|()| I32),
             k => self.err(t, format!("a type specifier ({k})")),
         }
     }
@@ -516,6 +520,7 @@ impl L<'_> {
             "declaration" => self.top_declaration(d),
             "type_definition" => self.typedef(d),
             "struct_specifier" | "union_specifier" => self.record(d).map(|_| ()),
+            "enum_specifier" => self.enumeration(d),
             ";" | "comment" => Ok(()),
             "expression_statement" if self.static_assert(d)? => Ok(()),
             k => self.err(d, format!("a declaration at the file's scope ({k})")),
@@ -524,6 +529,24 @@ impl L<'_> {
 
     /// Whether statement `s` is a `_Static_assert`: its condition folded, and the kernel refused with its message
     /// if it is false.
+    /// An enumeration's enumerators, each an `int` constant: its value, or one past the one before (0 the first).
+    fn enumeration(&mut self, e: usize) -> R<()> {
+        let Some(body) = self.c.child(e, "body") else { return Ok(()) };
+        let mut next = 0u64;
+        for x in self.named(body) {
+            if self.c.kind(x) != "enumerator" {
+                continue;
+            }
+            let name = self.c.text(self.c.child(x, "name").expect("an enumerator's name")).to_string();
+            if let Some(v) = self.c.child(x, "value") {
+                next = self.constant(v)?;
+            }
+            self.enums.insert(name, crate::ops::norm(M::I32, next));
+            next = next.wrapping_add(1);
+        }
+        Ok(())
+    }
+
     fn static_assert(&mut self, s: usize) -> R<bool> {
         let [call] = self.named(s)[..] else { return Ok(false) };
         if self.c.kind(call) != "call_expression" || self.c.child(call, "function").is_none_or(|f| self.c.text(f) != "_Static_assert") {
@@ -680,6 +703,7 @@ impl L<'_> {
             "char_literal" => Ok((I32, self.char_literal(e)?)),
             "true" => Ok((I32, 1)),
             "false" => Ok((I32, 0)),
+            "identifier" if self.lookup(self.c.text(e)).is_none() && self.enums.contains_key(self.c.text(e)) => Ok((I32, self.enums[self.c.text(e)])),
             "parenthesized_expression" => {
                 let x = self.inner(e)?;
                 self.constant_typed(x)
@@ -725,6 +749,22 @@ impl L<'_> {
             }
             _ => self.err(e, "a constant expression"),
         }
+    }
+
+    /// A cast to a typedef's name, `(T)(x)`, which the parser, not knowing `T` a type, reads as a call of `(T)`: the
+    /// type, and the value cast.
+    fn typedef_cast(&self, e: usize) -> Option<(Ty, usize)> {
+        let f = self.c.child(e, "function")?;
+        if self.c.kind(f) != "parenthesized_expression" {
+            return None;
+        }
+        let [name] = self.named(f)[..] else { return None };
+        if self.c.kind(name) != "identifier" || self.lookup(self.c.text(name)).is_some() {
+            return None;
+        }
+        let t = self.typedefs.get(self.c.text(name))?.clone();
+        let [v] = self.named(self.c.child(e, "arguments")?)[..] else { return None };
+        Some((t, v))
     }
 
     /// `offsetof(type, field.field...)`: the field's offset in the structure.
@@ -1142,8 +1182,10 @@ impl L<'_> {
             "number_literal" => literal(self.c.text(e)).map_or_else(|| self.err(e, "a number"), Ok)?.0,
             "char_literal" | "true" | "false" => I32,
             "string_literal" => Ty::Array(Box::new(Ty::Int { bits: 8, signed: true }), self.string(e)?.len() as u64 + 1),
+            "call_expression" if self.c.child(e, "function").is_some_and(|f| matches!(self.c.text(f), "__builtin_offsetof" | "offsetof")) => U64,
             "identifier" => match self.lookup(self.c.text(e)) {
                 Some(v) => v.ty.clone(),
+                None if self.enums.contains_key(self.c.text(e)) => I32,
                 None => return self.err(e, "an unknown name"),
             },
             "parenthesized_expression" => {
@@ -1179,6 +1221,7 @@ impl L<'_> {
                 }
             }
             "cast_expression" => self.descriptor(self.c.child(e, "type").expect("a cast's type"))?,
+            "call_expression" if self.typedef_cast(e).is_some() => self.typedef_cast(e).expect("a cast").0,
             "sizeof_expression" => U64,
             "subscript_expression" => {
                 let a = decay(self.ty(self.c.child(e, "argument").expect("an array"))?);
@@ -1439,6 +1482,15 @@ impl L<'_> {
         let t = self.ty(e)?;
         let m = self.m(&t);
         match self.c.kind(e) {
+            "identifier" if self.lookup(self.c.text(e)).is_none() && self.enums.contains_key(self.c.text(e)) => {
+                let v = self.enums[self.c.text(e)];
+                self.konst(&I32, v);
+            }
+            // A field's offset: a constant.
+            "call_expression" if self.c.child(e, "function").is_some_and(|f| matches!(self.c.text(f), "__builtin_offsetof" | "offsetof")) => {
+                let v = self.offsetof(e)?;
+                self.konst(&U64, v);
+            }
             "number_literal" => {
                 let (_, v) = literal(self.c.text(e)).expect("a number");
                 self.b.leaf(Kind::Const, &words_of(m, v));
@@ -1463,6 +1515,10 @@ impl L<'_> {
             }
             "cast_expression" => {
                 let v = self.c.child(e, "value").expect("a cast's value");
+                self.rv_as(v, &t)?;
+            }
+            "call_expression" if self.typedef_cast(e).is_some() => {
+                let (_, v) = self.typedef_cast(e).expect("a cast");
                 self.rv_as(v, &t)?;
             }
             "sizeof_expression" => {
@@ -1657,14 +1713,17 @@ impl L<'_> {
         }
         let ot = if matches!(o, Op::Shl | Op::Shr) { t.promoted() } else { Ty::common(t, &rt) };
         // `x += a * b`, `x -= a * b` of floats: `x = x ± a * b`, contracted (`binary`), where reading `x` twice is once.
-        if matches!(o, Op::Add | Op::Sub) && m.float() && &ot == t && self.pure(l) {
-            if let Some((a, b)) = self.product(r, t)? {
-                let n = self.b.open(Kind::Store, &[m.0]);
-                self.lv(l)?;
-                self.fma(e, t, (a, o == Op::Sub), b, (l, false))?;
-                self.b.close(n);
-                return Ok(());
-            }
+        if matches!(o, Op::Add | Op::Sub)
+            && m.float()
+            && &ot == t
+            && self.pure(l)
+            && let Some((a, b)) = self.product(r, t)?
+        {
+            let n = self.b.open(Kind::Store, &[m.0]);
+            self.lv(l)?;
+            self.fma(e, t, (a, o == Op::Sub), b, (l, false))?;
+            self.b.close(n);
+            return Ok(());
         }
         let n = self.b.open(Kind::Update, &[o as u32, m.0, self.m(&ot).0, 0]);
         self.lv(l)?;

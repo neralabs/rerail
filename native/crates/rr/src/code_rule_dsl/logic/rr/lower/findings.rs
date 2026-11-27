@@ -56,7 +56,7 @@ fn diagnostic_name(policy: &str, clause: &str, location: Location) -> String {
     h.update([0, location as u8]);
     let d: [u8; 32] = h.finalize().into();
     let prefix = if location == Location::Commit { COMMIT_PREFIX } else { PREFIX };
-    format!("{prefix}{}", d[..8].iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!("{prefix}{}", rerail_prof::code_rule_dsl::prof::lower_hex(&d[..8]))
 }
 
 /// The setting that keeps a finding's message template beside the program (`.message B101 "…"`): what `rr::print`

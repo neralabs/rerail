@@ -63,7 +63,7 @@ pub fn components(edges: &[(i64, i64)], own: &[(i64, String)]) -> Vec<(i64, i64,
                 hash.update(item.as_bytes());
             }
         }
-        let key: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        let key: String = rerail_prof::code_rule_dsl::prof::lower_hex(&hash.finalize()[..]);
         let c = members.iter().map(|&m| docs[m]).min().expect("a component has a member");
         rows.extend(members.iter().map(|&m| (docs[m], c, key.clone())));
         keys.push(key);

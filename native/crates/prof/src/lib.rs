@@ -334,6 +334,28 @@ pub fn on() -> bool {
 }
 
 /// `count` with a name made at run time.
+/// `count_named` with its name formatted (`format_args!`) into the thread's buffer, only while stages are counted, and
+/// kept only for a stage new to the counts: a name formatted a count was 4.77 M arrays of a profiled cold PostHog run
+/// (the batch's relations' bytes, a relation a make).
+pub fn count_named_args(stage: std::fmt::Arguments<'_>, amount: usize) {
+    use std::fmt::Write as _;
+    thread_local!(static NAME: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
+    if !stages_on() {
+        return;
+    }
+    NAME.with_borrow_mut(|name| {
+        name.clear();
+        let _ = name.write_fmt(stage);
+        let mut stages = held();
+        match stages.get_mut(name.as_str()) {
+            Some(e) => e.1 += amount,
+            None => {
+                stages.insert(name.clone(), (Duration::default(), amount));
+            }
+        }
+    });
+}
+
 pub fn count_named(stage: String, amount: usize) {
     if stages_on() {
         let mut stages = held();
@@ -686,6 +708,9 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
@@ -694,12 +719,18 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
         unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
             if on() {
                 free(ptr as usize);
+            }
+            if rerail_vector::probe::heap_on() {
+                rerail_vector::probe::heap_free(ptr as usize);
             }
             unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
         }
@@ -709,6 +740,9 @@ pub mod heap {
             if on() && !q.is_null() {
                 free(ptr as usize);
                 alloc(q as usize, new_size);
+            }
+            if rerail_vector::probe::heap_on() && !q.is_null() {
+                rerail_vector::probe::heap_realloc(ptr as usize, q as usize, new_size);
             }
             q
         }

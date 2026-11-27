@@ -232,7 +232,7 @@ pub fn facts_dir(store: &Path) -> PathBuf {
 }
 
 pub fn space_dir(store: &Path, space: &[u8; 32]) -> PathBuf {
-    facts_dir(store).join(space.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    facts_dir(store).join(rerail_prof::code_rule_dsl::prof::lower_hex(&space[..]))
 }
 
 /// A space's chain as its rows name it, oldest first: (seq, name, tag).
@@ -991,8 +991,10 @@ impl super::ContentStore {
                 }
             }
             let written = self.immediate_transaction(|t| {
+                // The mapping `kept_space` made above, where the chain is still the one it mapped: mapped again here,
+                // each space a commit changed was mapped twice a collection.
                 let rows = chain_rows(t, &space)?;
-                let old = KeptSpace::open(&path, &space, &rows)?;
+                let old = self.space_mapped(&space, rows)?;
                 let chain = old.view();
                 // The partitions whose holder the store no longer keeps (`HOLDER`).
                 let mut unheld = HashSet::new();
@@ -1089,6 +1091,22 @@ impl super::ContentStore {
         let kept = Arc::new(kept);
         mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
         Ok(Some(kept))
+    }
+}
+
+impl super::ContentStore {
+    /// Space `space`'s files as `rows` name them, the mapping kept (`MappedSpaces`) where it is of these rows.
+    fn space_mapped(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Arc<KeptSpace>> {
+        let key = (self.database_path.clone(), *space);
+        let mapped = rerail_prof::code_rule_dsl::logic::profile::shared::<MappedSpaces>();
+        if let Some((was, kept)) = mapped.0.lock().unwrap_or_else(|e| e.into_inner()).get(&key)
+            && *was == rows
+        {
+            return Ok(Arc::clone(kept));
+        }
+        let kept = Arc::new(KeptSpace::open(&self.database_path, space, &rows)?);
+        mapped.0.lock().unwrap_or_else(|e| e.into_inner()).insert(key, (rows, Arc::clone(&kept)));
+        Ok(kept)
     }
 }
 

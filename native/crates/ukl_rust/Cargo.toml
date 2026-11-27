@@ -1,0 +1,25 @@
+[package]
+name = "rerail-ukl-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "UKL kernels the engine runs as Rust (decision 0567 step 3): rerail-ukl-vec's Rust of a kernel's vector tape, checked in with the digest of the source it was written from, which the CPU device runs in place of its compiler's build of that source."
+
+[dependencies]
+# std::simd's interface on stable (`lanes`): replaced by std::simd once it is.
+rerail-simd = { path = "../simd" }
+# The reads the join program takes, written directly in Rust (decisions 0534, 0536): the views' entries and
+# directory, the numbering's reads, the rolling cache's lookups and the tape's reads where it lies. The relations'
+# reads are `lanes`' (rerail-blocks and rerail-clif are above this crate: the device crate that runs it is below them).
+rerail-reads = { path = "../reads" }
+# The relations' formats (decision 0686 flat 9: the floor's `RelSpan`s): `lanes`' layouts are its structures'
+# offsets, so they read what the blocks write.
+rerail-delta-core = { path = "../delta_core" }
+
+[dev-dependencies]
+# The JIT of the CLIF reads, which the Rust reads are held to (`lanes::tests`, `join_run::reads::tests`).
+rerail-clif = { path = "../clif", features = ["test-hooks", "ir"] }
+rerail-blocks = { path = "../blocks", features = ["test-hooks"] }
+# The store's hash (`rerail_atoms::hash_str`'s), which `join_run::store_hash` is held to.
+foldhash = "=0.2.0"
+

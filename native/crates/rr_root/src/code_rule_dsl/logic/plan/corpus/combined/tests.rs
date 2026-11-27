@@ -17,7 +17,7 @@ use rerail_store::Canonical as _;
     #[test]
     fn a_combined_program_outlives_a_collection_before_its_run_names_it() {
         let dir = std::env::temp_dir().join(format!("rerail-combined-pins-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        rerail_blocks::mapped::make_folder(&dir).unwrap();
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let program = rr::parse_version(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
         let key = [9u8; 32];
@@ -40,7 +40,7 @@ use rerail_store::Canonical as _;
     #[test]
     fn a_combined_program_is_read_back_until_a_library_file_it_read_changes() {
         let dir = std::env::temp_dir().join(format!("rerail-combined-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        rerail_blocks::mapped::make_folder(&dir).unwrap();
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
         let lib = dir.join("lib.rerail");
         std::fs::write(&lib, "a").unwrap();
@@ -78,8 +78,11 @@ use rerail_store::Canonical as _;
 
     #[test]
     fn a_process_hit_reinstalls_a_collected_program_with_a_surviving_read_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("rule.rerail");
+        let tmp = tempfile::tempdir().unwrap();
+        // The store's folder is the user's alone (decision 0574); a temporary folder is made at the umask.
+        let dir = tmp.path().join("private");
+        rerail_blocks::mapped::make_folder(&dir).unwrap();
+        let path = dir.join("rule.rerail");
         let text = ".decl e(x: int)\n.output e\ne(1).\n";
         std::fs::write(&path, text).unwrap();
         let path = path.canonical().unwrap();
@@ -87,7 +90,7 @@ use rerail_store::Canonical as _;
         let digest = Sha256::digest(text.as_bytes()).into();
         let files = [LibraryFile { path: path.clone(), sha256: Some(digest) }];
         let key = rule_file_key(&path, &rr::library_root(), &digest);
-        let database = dir.path().join("store.sqlite");
+        let database = dir.join("store.sqlite");
         super::super::with_tape_cache_path(&database, None, || {
             let store = ContentStore::open(&database).unwrap();
             rr::retain_read_program(&path, &rr::library_root(), &files, &program);

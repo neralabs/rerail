@@ -47,6 +47,10 @@ pub enum TextFn {
     StrBetween,
     /// A dotted name less its last parts (`pkg_up`).
     PkgUp,
+    /// A regex's capture group (`rx_group`): the text, then a constant regex and a constant group name.
+    RxGroup,
+    /// A node's text (`rr_node_text_any`, of its id): its span of its document's source, read where it lies.
+    NodeText,
 }
 
 /// What a device computes a function with.
@@ -59,6 +63,9 @@ pub enum DeviceFn {
     Text { f: TextFn, texts: usize, nums: usize },
     /// A regex's replacement in a text: the text, then a constant regex and a constant replacement.
     RegexReplace,
+    /// A node's preorder key (`rr_node_order`, of its id: `node_order`'s `k`), read off its document's tape where it
+    /// lies; a comparison of two nodes compares two of them (`lowering_tail::OrderNodes`).
+    NodeOrder,
 }
 
 impl DeviceFn {
@@ -69,6 +76,7 @@ impl DeviceFn {
             DeviceFn::Names { texts, .. } => texts,
             DeviceFn::Text { texts, nums, .. } => texts + nums,
             DeviceFn::RegexReplace => 3,
+            DeviceFn::NodeOrder => 1,
         }
     }
 
@@ -110,6 +118,9 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
         "sql_replace" => text(TextFn::Replace, 3, 0),
         "str_between" => text(TextFn::StrBetween, 3, 0),
         "pkg_up" => text(TextFn::PkgUp, 1, 1),
+        "rx_group" => text(TextFn::RxGroup, 3, 0),
+        "rr_node_text_any" => text(TextFn::NodeText, 0, 1),
+        "rr_node_order" => NodeOrder,
         "replace_all" | "rx_replace" => RegexReplace,
         _ => return None,
     })
@@ -129,12 +140,12 @@ mod tests {
             assert!(device_fn(native(rr)).is_some(), "{rr}");
         }
         for name in ["rr_add", "rr_sub", "rr_mul", "rr_div", "mod", "rr_max", "rr_min", "rr_strlen", "lower", "sql_lower", "sql_upper", "head", "dir",
-                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "replace_all", "rx_replace", "str_cmp"] {
+                     "rr_substr", "sql_substr", "slice", "rr_to_string", "zero_pad", "sql_replace", "str_between", "pkg_up", "replace_all", "rx_replace", "str_cmp",
+                     "rx_group", "rr_node_text_any", "rr_node_order"] {
             let f = device_fn(name).expect(name);
             if let Some((_, kinds, _)) = crate::code_rule_dsl::logic::strings::functions::signature(name) {
                 assert_eq!(kinds.len(), f.arity(), "{name}");
             }
         }
-        assert_eq!(device_fn(native("rx_group")), None);
     }
 }

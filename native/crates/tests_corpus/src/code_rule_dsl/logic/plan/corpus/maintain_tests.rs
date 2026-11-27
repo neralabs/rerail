@@ -151,7 +151,7 @@ const KINDS: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -380,7 +380,7 @@ fn a_finding_s_places_moved_are_maintained() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node)
+.decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl placed(f: node, l: number)
 placed(f, l) :- used(f), line(f, l).
@@ -433,13 +433,14 @@ const AGAIN_THEN_MAINTAINED: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
-.decl a(n: node, q: symbol)
+// `a` is the cross part's stratum the test is about (decision 0652: by its rules it is one file's).
+.decl a(n: node, q: symbol) cross_file
 a(n, q) :- def(n, q), q = "m0.f0".
 .decl b(q: symbol, m: symbol)
 b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(n: node)
+.decl first(n: node) cross_file
 first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
 .output c
 .output first
@@ -512,7 +513,7 @@ fn r6_a_component_that_cannot_cycle_keeps_no_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node)
+.decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl below(a: node, c: node)
 below(a, c) :- used(a), child(a, c, _).

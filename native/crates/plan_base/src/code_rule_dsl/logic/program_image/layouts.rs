@@ -79,11 +79,9 @@ impl Layouts {
             let rules: Vec<RuleRef<'_>> = scc.iter().flat_map(|r| v.heads(*r)).collect();
             if recursive || rules.len() > 1 {
                 // A union is local where each branch is; a recursion where each rule is, supposing its component is
-                // (by induction on the rounds: the base rules read none of it). No other fact is carried.
-                let mut supposed = out.clone();
-                for r in scc {
-                    supposed.entry(*r).or_default().push((LayoutFact::Local, Origin::Declared));
-                }
+                // (by induction on the rounds: the base rules read none of it). No other fact is carried. The
+                // supposition is read beside the facts (`Known`), not written into a copy of them all.
+                let supposed = Known { facts: &out, supposed: &**scc, local: LayoutFact::Local };
                 if !rules.is_empty() && rules.iter().all(|r| infer_rule(v, *r, &supposed).contains(&LayoutFact::Local)) {
                     for r in scc {
                         let facts = out.entry(*r).or_default();
@@ -97,7 +95,7 @@ impl Layouts {
             let rel = &scc[0];
             let [rule] = rules.as_slice() else { continue };
             let rule = *rule;
-            let inferred = infer_rule(v, rule, &out);
+            let inferred = infer_rule(v, rule, &Known { facts: &out, supposed: &[], local: LayoutFact::Local });
             if inferred.is_empty() {
                 continue;
             }
@@ -155,9 +153,25 @@ fn vars_of(t: TermRef<'_>, into: &mut BTreeSet<Var>) {
     }
 }
 
+/// The facts known of each relation, and the relations supposed local besides: a recursive component's or a union's,
+/// supposed while its rules are inferred (`Layouts::infer`).
+struct Known<'a> {
+    facts: &'a BTreeMap<RelId, Vec<(LayoutFact, Origin)>>,
+    supposed: &'a [RelId],
+    /// `LayoutFact::Local`, which a supposed relation's facts end with.
+    local: LayoutFact,
+}
+
+impl Known<'_> {
+    /// `rel`'s facts: its known ones, and `Local` where it is supposed.
+    fn of(&self, rel: RelId) -> impl Iterator<Item = &LayoutFact> + '_ {
+        self.facts.get(&rel).into_iter().flatten().map(|(f, _)| f).chain(self.supposed.contains(&rel).then_some(&self.local))
+    }
+}
+
 /// What one rule gives its head, from the facts known of the relations its body reads (`known`).
-fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFact, Origin)>>) -> Vec<LayoutFact> {
-    let facts_of = |rel: RelId| known.get(&rel).into_iter().flatten().map(|(f, _)| f);
+fn infer_rule(v: &Version, r: RuleRef<'_>, known: &Known<'_>) -> Vec<LayoutFact> {
+    let facts_of = |rel: RelId| known.of(rel);
     let head: Vec<TermRef<'_>> = r.head().args().collect();
     let mut head_vars = BTreeSet::new();
     head.iter().for_each(|t| vars_of(*t, &mut head_vars));
@@ -312,11 +326,11 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
 
 /// Whether a rule's rows are local: every atom is, every node the head holds is an atom's, and the atoms that hold
 /// nodes are one group, joined by their shared nodes or by `nearest`.
-fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], nearest: &[(Var, Var)], head: &[TermRef<'_>], known: &BTreeMap<RelId, Vec<(LayoutFact, Origin)>>) -> bool {
+fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], nearest: &[(Var, Var)], head: &[TermRef<'_>], known: &Known<'_>) -> bool {
     let node_col = |rel: RelId, c: usize| v.decl_of(v.rel_name(rel)).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
     // Local: stated or inferred, or by its shape: a relation of one node column at most crosses no documents.
     let is_local = |rel: RelId| {
-        known.get(&rel).is_some_and(|fs| fs.iter().any(|(f, _)| *f == LayoutFact::Local))
+        known.of(rel).any(|f| *f == LayoutFact::Local)
             || v.decl_of(v.rel_name(rel)).is_some_and(|d| (0..d.cols().len()).filter(|&c| node_col(rel, c)).count() <= 1)
     };
     if atoms.is_empty() || !atoms.iter().all(|(rel, _)| is_local(*rel)) {

@@ -3438,6 +3438,7 @@ dependencies = [
  "cranelift-module",
  "rerail-blocks",
  "rerail-clif",
+ "rerail-reads",
 ]
 
 [[package]]
@@ -3936,7 +3937,9 @@ dependencies = [
  "libc",
  "metal",
  "objc",
+ "rayon",
  "rerail-ukl",
+ "rerail-ukl-rust",
 ]
 
 [[package]]
@@ -4001,6 +4004,7 @@ dependencies = [
  "rerail-store",
  "rerail-tape-format",
  "rerail-transducer",
+ "rerail-ukl-rust",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4353,6 +4357,7 @@ dependencies = [
  "rerail-device",
  "rerail-tape-format",
  "rerail-ukl",
+ "rerail-ukl-rust",
  "rerail-ukl-vec",
 ]
 
@@ -5683,6 +5688,7 @@ dependencies = [
  "rerail-context",
  "rerail-prof",
  "rerail-section",
+ "rerail-vector",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -5728,6 +5734,10 @@ dependencies = [
  "rerail-tape-format",
  "unicode-ident",
 ]
+
+[[package]]
+name = "rerail-reads"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-registry"
@@ -6412,6 +6422,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-simd"
+version = "0.1.0"
+
+[[package]]
 name = "rerail-simd8"
 version = "0.1.0"
 
@@ -6560,6 +6574,7 @@ dependencies = [
  "memchr",
  "rerail-clif",
  "rerail-gpu",
+ "rerail-reads",
  "rerail-simd8",
  "rerail-tape-format",
  "rerail-vector",
@@ -7467,6 +7482,7 @@ dependencies = [
  "rerail-tests-lang",
  "rerail-transducer",
  "rerail-tree-watch",
+ "rerail-ukl-rust",
  "rerail-vue-lean",
  "rerail-workspace",
  "roaring",
@@ -8744,6 +8760,19 @@ dependencies = [
  "rerail-json-aot",
  "rerail-tape-format",
  "rerail-ukl-aot",
+ "rerail-ukl-rust",
+]
+
+[[package]]
+name = "rerail-ukl-rust"
+version = "0.1.0"
+dependencies = [
+ "foldhash",
+ "rerail-blocks",
+ "rerail-clif",
+ "rerail-delta-core",
+ "rerail-reads",
+ "rerail-simd",
 ]
 
 [[package]]
@@ -8756,8 +8785,10 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "rerail-c-lean",
+ "rerail-clif",
  "rerail-tape-format",
  "rerail-ukl",
+ "rerail-ukl-rust",
  "rerail-ukl-vec",
 ]
 

@@ -47,6 +47,9 @@ structure! {
         /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: RelSpan<u32>,
         pub rows: RelSpan<u32>,
+        /// A hashed index's: each place's mark (decision 0671), as many as `rows`, after them in their chunk: its
+        /// key's tag (`mark_tag`) and `MARK_SAME`. Empty in a sorted order.
+        pub marks: RelSpan<u32>,
         /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
         /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
         /// order probed by whole keys). Empty when the order keeps none.
@@ -65,6 +68,42 @@ structure! {
     }
 }
 
+/// `Index::marks`' bit 0 (decision 0671): the place's key is its bucket's previous place of its tag's, that place
+/// among the `MARK_REACH` before it. Clear where there is none or it holds another key. A walk that met that place
+/// has its verdict; one that did not (its first place of the tag, wherever in the group the walk starts) compares.
+pub const MARK_SAME: u32 = 1;
+/// The places before one a builder looks back over for its tag (decision 0671).
+pub const MARK_REACH: usize = 8;
+
+/// A key's tag, from its hash (`key_hash`): its high 32 bits but bit 0, which is `MARK_SAME`'s. A bucket is the
+/// hash's low bits, so the two are independent.
+#[inline]
+pub fn mark_tag(h: u64) -> u32 {
+    (h >> 32) as u32 & !MARK_SAME
+}
+
+/// A hashed index's rows' chunk for `n` rows: the rows, then their marks.
+#[inline]
+pub fn index_rows_bytes(n: usize) -> usize {
+    8 * n.max(1)
+}
+
+/// The marks of an index's places (decision 0671): `tag(t)` of place `t`'s key, `same(t, u)` whether places `t` and
+/// `u` hold one key. Each place's tag, and `MARK_SAME` where its bucket's previous place of the tag is among the
+/// `MARK_REACH` before it and holds its key. The device's builder writes them as these are.
+pub fn fill_marks(offs: &[u32], marks: &mut [u32], tag: &dyn Fn(usize) -> u32, same: &dyn Fn(usize, usize) -> bool) {
+    for (t, m) in marks.iter_mut().enumerate() {
+        *m = tag(t);
+    }
+    for b in 0..offs.len().saturating_sub(1) {
+        let (lo, hi) = (offs[b] as usize, offs[b + 1] as usize);
+        for t in lo..hi {
+            let prev = (t.saturating_sub(MARK_REACH).max(lo)..t).rev().find(|&u| marks[u] & !MARK_SAME == marks[t] & !MARK_SAME);
+            marks[t] |= u32::from(prev.is_some_and(|u| same(u, t)));
+        }
+    }
+}
+
 /// An index entry given back (`Relation::give_back_index`): no reader finds it, and a reservation takes it.
 pub const DEAD: u32 = 1;
 
@@ -75,6 +114,16 @@ pub const ORDER: u32 = 2;
 /// `Index::ordered`: a sorted order of the rows `lo..hi` themselves, already in the key's order (`mask` holds
 /// `lo << 32 | hi`), so no list of them is kept.
 pub const ORDER_ROWS: u32 = 3;
+/// `Index::ordered`: a node-keyed index of one column (`try_add_node_bits`, decision 0694): `rows` its groups'
+/// directory, `fences` their bits, `mask` the rows it holds. No hashed index's or order's finder finds it.
+pub const NODE_BITS: u32 = 4;
+/// `Index::ordered`: a membership filter on `key` (`try_add_filter`, decision 0706 E2): `fences` its words, in
+/// `bloom`'s format (decision 0488, the reads written once in CLIF), `mask` the rows it holds. A key it answers "no" for is in no row; one it answers
+/// "maybe" for is probed. No hashed index's or order's finder finds it.
+pub const FILTER: u32 = 5;
+/// A membership filter's bits a row (`try_add_filter`): a power of two of `bloom`'s words at least this many bits a
+/// row, so about one absent key in 400 passes (`bloom::K` bits a key).
+pub const FILTER_BITS: usize = 16;
 
 structure! {
     pub struct ColStats { pub min: i64, pub max: i64 }
@@ -164,6 +213,8 @@ pub struct IndexRoom {
     pub index: usize,
     pub offs: usize,
     pub rows: usize,
+    /// Its marks' offset in the block (decision 0671): after its rows, as many.
+    pub marks: usize,
     pub mask: u64,
     pub rows_n: u32,
     /// Its key's columns: `ncols` of `key`.
@@ -298,6 +349,82 @@ impl Relation {
         self.dead.as_slice().get((id >> 6) as usize).is_some_and(|w| w >> (id & 63) & 1 != 0)
     }
 
+    /// The membership filter on `cols` over its rows `0..rows` (`try_add_filter`), built: its number.
+    pub fn find_filter(&self, cols: &[u16], rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { core::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == FILTER && built(i) == cols.len() && ix[i].key[..cols.len()] == *cols && ix[i].mask == u64::from(rows));
+        core::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether filter `i` (`find_filter`) may hold the key `bloom::key` places at `h`: `false` is certain (no row has
+    /// it), `true` is to be probed.
+    #[inline]
+    pub fn filter_may_hold(&self, i: usize, h: u64) -> bool {
+        let f = self.index_at(i).fences.as_slice();
+        let (w, mask) = crate::bloom::place(h, f.len());
+        f[w] as u64 & mask == mask
+    }
+
+    /// The node-keyed index on `col` over its rows `0..rows` (`try_add_node_bits`), built: its number.
+    pub fn find_node_bits(&self, col: u16, rows: u32) -> Option<usize> {
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        let ix = self.indexes.as_slice();
+        // SAFETY: as `find_index`'s.
+        let built = |i: usize| unsafe { core::ptr::read_volatile(&raw const ix[i].ncols) } as usize;
+        let found = (0..n).find(|&i| ix[i].ordered == NODE_BITS && built(i) == 1 && ix[i].key[0] == col && ix[i].mask == u64::from(rows));
+        core::sync::atomic::fence(Acquire);
+        found
+    }
+
+    /// Whether node-keyed index `i` (`find_node_bits`) holds value `v`: its document found (`hint` the last one, tried
+    /// first, then the one after it), and then its slot's entry and bit, or a search of its lows.
+    #[inline]
+    pub fn node_bits_has(&self, i: usize, v: i64, hint: &mut u32) -> bool {
+        use crate::packed::ID_SPLIT;
+        let ix = self.index_at(i);
+        let dir = ix.rows.as_slice();
+        let (hi, low) = ((v >> 32) as u32, v as u32);
+        let docs = dir[0] as usize;
+        let at = |k: usize| 1 + 4 * k;
+        let h = *hint as usize;
+        let k = if h < docs && dir[at(h)] == hi {
+            h
+        } else if h + 1 < docs && dir[at(h + 1)] == hi {
+            h + 1
+        } else {
+            let (mut lo, mut top) = (0usize, docs);
+            loop {
+                if lo >= top {
+                    return false;
+                }
+                let mid = (lo + top) / 2;
+                match dir[at(mid)].cmp(&hi) {
+                    core::cmp::Ordering::Less => lo = mid + 1,
+                    core::cmp::Ordering::Greater => top = mid,
+                    core::cmp::Ordering::Equal => break mid,
+                }
+            }
+        };
+        *hint = k as u32;
+        let (first, second, start) = (dir[at(k) + 1], dir[at(k) + 2], dir[at(k) + 3] as usize);
+        if first == u32::MAX {
+            return dir[start..start + second as usize].binary_search(&low).is_ok();
+        }
+        let s = (low >> ID_SPLIT).wrapping_sub(first);
+        if s >= second {
+            return false;
+        }
+        let e = start + 2 * s as usize;
+        let (off, fw) = (dir[e], dir[e + 1]);
+        let x = low & ((1 << ID_SPLIT) - 1);
+        let word = (x / 64).wrapping_sub(fw >> 16);
+        word < fw & 0xffff && ix.fences.as_slice()[(off + word) as usize] >> (x % 64) & 1 != 0
+    }
+
     #[inline]
     pub fn index_at(&self, i: usize) -> &Index {
         &self.indexes.as_slice()[i]
@@ -419,7 +546,7 @@ impl Relation {
             (cap - n) * width,
             0,
             ix.iter().map(|i| i.offs.len() * 4).sum(),
-            ix.iter().map(|i| i.rows.len() * 4).sum(),
+            ix.iter().map(|i| i.rows.len() * 4 + i.marks.len() * 4).sum(),
             self.dead.len() * 8,
             size_of::<Relation>() + self.rows.ncols as usize * size_of::<crate::rows::ColDir>() + size_of::<crate::rows::ColDir>(),
         ]
@@ -430,7 +557,7 @@ impl Relation {
         let cap = crate::rows::capacity(self.rows.nchunks.load(Relaxed), self.rows.min_log) as usize;
         let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
         let ix: usize =
-            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4 + i.marks.len() * 4).sum();
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
@@ -438,7 +565,7 @@ impl Relation {
     /// rows too, decision 0384 step 7).
     pub fn bytes(&self) -> usize {
         let ix: usize =
-            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
+            self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4 + i.marks.len() * 4).sum();
         self.rows.value_bytes() + self.chain_value_bytes() + self.dead.len() * 8 + ix
     }
 

@@ -350,6 +350,7 @@ fn round<'v>(
         decls.push((rel, cols));
     };
     let mut no_inline: Vec<String> = Vec::new();
+    let mut strategy: Vec<String> = Vec::new();
     let mut nullary: Vec<String> = Vec::new();
     let mut lines = Vec::new();
     let mut made: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -497,6 +498,7 @@ fn round<'v>(
             if pair_limit > 0 && cacheable.contains(&rel) {
                 let (pairs, small) = cache(v, f, rule, &atoms, reads[rel.as_str()].len(), pair_limit, &decl_names, &mut program, &mut declare);
                 nullary.push(small.clone());
+                strategy.push(small.clone());
                 no_inline.extend([pairs.clone(), small.clone()]);
                 caches.insert(rel.clone(), (pairs, small));
                 shown.push(format!("cache if factor row counts multiply to at most {pair_limit}"));
@@ -615,7 +617,7 @@ fn round<'v>(
         }
     }
     let choices: FactorCaches = stands.keys().map(|rel| (rel.clone(), caches.get(rel).map(|(pairs, small)| (small.clone(), pairs.clone(), pair_limit)))).collect();
-    Made2 { round: Round { decls, undeclared: stands.keys().cloned().collect(), rules: out, no_inline, nullary }, lines, made, caches: choices }
+    Made2 { round: Round { decls, undeclared: stands.keys().cloned().collect(), rules: out, no_inline, strategy, nullary }, lines, made, caches: choices }
 }
 
 /// The variables a rule being made names: its source rule's, and those its made terms name.

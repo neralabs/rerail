@@ -396,7 +396,8 @@ rf_class_named(m, x, q) :- rf_cls_at(d, x, _), s = min u : { rf_cls_at(d, x, u) 
 rf_from_at(d, x, s, q) :- import_alias(i, a, m, y, x), kind(i, "import_from_statement"), !rf_dead_import(i), y != "",
     docof(a, d), rf_start(a, s),
     q = @dot(m, y).
-.decl rf_imported(m: symbol, x: symbol, q: symbol)
+// Cross-file: by module name, read where another file names that module (decision 0652).
+.decl rf_imported(m: symbol, x: symbol, q: symbol) cross_file
 rf_imported(m, x, q) :- rf_from_at(d, x, _, _), s = max u : { rf_from_at(d, x, u, _) }, rf_from_at(d, x, s, q),
     rf_doc_name(d, m), m != "".
 // The module's and its classes' imports: member `k.x` for the name x a module or class scope binds by import.
@@ -599,7 +600,8 @@ rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), rf_declared(m, x, q), rf_
 rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_link(q, d).
 rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_link(q, d).
 // unqualified: the class's own function of that name, else the module's bare name.
-.decl rf_own_fn(c: symbol, x: symbol)
+// Cross-file: a class's own function, by qualified name, wherever the class is defined (decision 0652).
+.decl rf_own_fn(c: symbol, x: symbol) cross_file
 rf_own_fn(c, x) :- rf_ref(_, "unq", c, x, _), rf_named_def(q, d), rf_is_function(d), q = @concat(c, ".", x).
 rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, _), rf_own_fn(c, x), rf_named_def(q, d), q = @concat(c, ".", x).
 rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, _), !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), rf_declared(m, x, q),

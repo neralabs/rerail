@@ -1,0 +1,8 @@
+[package]
+name = "rerail-simd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The part of std::simd's interface the engine's SIMD kernels use (Simd, Mask, LaneCount, the prelude's traits, pointer gathers), on stable Rust: each operation a loop over the lanes that LLVM vectorizes. Replaced by std::simd once it is stable, by its `use` lines alone."
+
+[dependencies]

@@ -285,7 +285,7 @@ pub fn refusal(store: &Path) -> Option<String> {
     }
 }
 
-/// Removes the files `names` in `dir` (a cleanup's: another build's, unused for a day), each store's whole
+/// Removes the files and folders `names` in `dir` (a cleanup's: another build's, unused for a day), each store's whole
 /// (`remove_store`): a store a live process owns keeps its files.
 pub fn remove_unowned(dir: &Path, names: &[String]) {
     let mut stores: HashMap<&str, Vec<&str>> = HashMap::new();
@@ -309,7 +309,9 @@ fn remove_store(dir: &Path, store: &Path, files: &[&str]) {
     let lock = beside(store, "-owner.lock");
     let lock_name = lock.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     for name in files.iter().filter(|n| **n != lock_name) {
-        let _ = std::fs::remove_file(dir.join(name));
+        // A store's folders (its objects, kept facts, atoms, memo) hold most of its bytes: they go whole.
+        let path = dir.join(name);
+        let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
     }
     if files.contains(&lock_name.as_str()) {
         remove_lock(&lock, held);

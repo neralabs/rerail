@@ -43,6 +43,17 @@ pub fn hash(key: i64) -> u64 {
     (u64::from(w) << 32) | u64::from(h)
 }
 
+/// A key of several columns as a filter places it (decision 0706 E2): one column's value is hashed as `hash` hashes it
+/// (so a one-column relation filter places keys as the kept column filters do); several are folded by the hashed
+/// index's key hash first (`crate::hash::key_hash`), then hashed so.
+#[inline]
+pub fn key(vals: &[i64]) -> u64 {
+    match vals {
+        [v] => hash(*v),
+        _ => hash(crate::hash::key_hash(vals) as i64),
+    }
+}
+
 /// The bits of its word a key of hash `h` sets (the CLIF's `bloom_mask`): five, from 6-bit fields of `h`.
 #[inline(always)]
 pub fn mask(h: u64) -> u64 {

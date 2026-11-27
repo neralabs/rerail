@@ -127,12 +127,12 @@ impl FStrings {
     pub(super) fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         let mut out = Vec::new();
         if self.piece {
-            let mut r = Relation::new(&["n", "i", "kind", "v"]);
+            let mut r = Relation::new(&["n", "i", "kind", "v"]).with_atoms(&[false, false, true, true]);
             std::mem::take(&mut self.pieces).into_iter().for_each(|[n, i, k, v]| r.push(&[n, i, atom(k), atom(v)]));
             out.push(("fstring_piece", r));
         }
         if !self.markers.is_empty() {
-            let mut r = Relation::new(&["n", "marker", "v"]);
+            let mut r = Relation::new(&["n", "marker", "v"]).with_atoms(&[false, true, true]);
             std::mem::take(&mut self.templates).into_iter().for_each(|[n, m, v]| r.push(&[n, atom(m), atom(v)]));
             out.push(("fstring_template", r));
         }

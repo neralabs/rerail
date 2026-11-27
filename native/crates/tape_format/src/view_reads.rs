@@ -8,7 +8,7 @@
 //! The views no CLIF reads yet (`tape`, `ast_depth`, `node_order`, `next_sibling`, `rr_report_location`) are read here
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
-use crate::reads::{NONE, f16, f16z::Z};
+use crate::reads::{NONE, f16, f16z::slice::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
 use rerail_clif::view_reads::{NO_ROW, PLACED_AT, PLACED_TABLE, ViewDoc};
@@ -91,63 +91,22 @@ impl<'a> Tape<'a> {
         let after = self.end_of(i);
         if after < end { after } else { NONE }
     }
-    /// Its auxiliary index in its home (decision 0656), after its presence: the presence's bytes from its header
-    /// rounded up to 16 (`f16::presence::aux_at`), as `tape_place` finds it. `None` without a presence, or where the
-    /// bytes there are no index.
-    fn aux(&self) -> Option<crate::aux_index::AuxIndex<'a>> {
-        let (t, v) = match *self {
-            Tape::F16(t, v) => (t, v),
-            Tape::F16Z(z) => (z.t, z.v),
-        };
-        if v.presence == 0 {
-            return None;
-        }
-        let at = v.presence as usize;
-        let head = t.get(at..at + crate::f16::presence::HEAD)?;
-        let w = |k: usize| u32::from_le_bytes([head[4 * k], head[4 * k + 1], head[4 * k + 2], head[4 * k + 3]]) as usize;
-        let len = crate::f16::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
-        crate::aux_index::AuxIndex::read(t.get(crate::f16::presence::aux_at(at, at + len)..)?).ok()
-    }
-    /// Named node `node`'s place among its parent's named children (`tape_place`, `aux_index::place`): 0 for the
-    /// first, and for the root; from the last every-K-th named sibling at or before it, the siblings stepped to it,
-    /// each named one counted. `NONE` where the home holds no index.
+    /// Named node `node`'s place among its parent's named children (`tape_place`): `rerail_reads::tape::place`, the
+    /// one Rust read of it, over this tape's reads. `NONE` where the home holds no index.
     pub fn place(&self, node: u32) -> u32 {
-        use crate::aux_index::{K, NONE as NO_ENTRY};
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_at_or_before(p, node) {
-            (_, NO_ENTRY) => (0, p + 1),
-            (k, e) => (k * K, e),
-        };
-        while c < node {
-            i += u32::from(aux.named(self.number(c)));
-            c = self.end_of(c);
-        }
-        i
+        self.place_by(node, false)
     }
     /// Named node `node`'s place among its parent's named children that are no comment (`tape_place_past_comments`,
-    /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
-    /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
+    /// T's shape's places), as `place`.
     pub fn place_past_comments(&self, node: u32) -> u32 {
-        use crate::aux_index::K;
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_past_comments(p, node) {
-            None => (0, p + 1),
-            Some((k, e, q)) => (k * K - q, e),
+        self.place_by(node, true)
+    }
+    fn place_by(&self, node: u32, past_comments: bool) -> u32 {
+        let t = match *self {
+            Tape::F16(t, _) => t,
+            Tape::F16Z(z) => z.t,
         };
-        while c < node {
-            let code = self.number(c);
-            i += u32::from(aux.named(code) && !aux.comment(code));
-            c = self.end_of(c);
-        }
-        i
+        rerail_reads::tape::place(t, self.view(), node, past_comments, |x| self.parent(x), |x| self.number(x), |x| self.end_of(x))
     }
 }
 
@@ -165,31 +124,80 @@ pub enum Place {
 /// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
 /// one, `newlines`, with its word's room after it), where its directory row places them; and its source where it
 /// lies, whose bytes say where a line's text ends (its terminator's length: `Report`'s end column).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
+    /// The numbered node last selected and its tape node (`tape_node`), and the `field` view's row it is the node of
+    /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
+    /// yet.
+    last: std::cell::Cell<Selected>,
+}
+
+/// What a `Doc` last selected (`Doc::selected`): numbered node `l`, its tape node `x`, and the `field` view's row
+/// `field_row` whose node it is (`u32::MAX`: none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub l: u32,
+    pub x: u32,
+    pub field_row: u32,
+}
+
+impl Selected {
+    /// Nothing selected.
+    pub const NONE: Selected = Selected { l: u32::MAX, x: 0, field_row: u32::MAX };
 }
 
 impl<'a> Doc<'a> {
+    /// The document's reads, through its directory row's `entry`.
+    #[inline]
+    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
+        Doc { entry, tape, lines, source, last: std::cell::Cell::new(Selected::NONE) }
+    }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
         // SAFETY: the entry's numbering, one, set where the entry was made (`ViewEntry::new`) to its projection's in
         // the same block, which lives as long as the entry.
         unsafe { &self.entry.numbering.as_slice::<Numbering>()[0] }
     }
+    /// SPIKE (A): the entry's node table, empty where it has none.
+    #[inline(always)]
+    fn node_table(&self) -> &'a [[u32; 2]] {
+        // SAFETY: the entry's run, set where it was made to `[u32; 2]`s in its block, or empty.
+        unsafe { self.entry.node_table.as_slice::<[u32; 2]>() }
+    }
     #[inline(always)]
     fn items(&self, run: &'a rerail_clif::ids::Run) -> &'a [u32] {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
         unsafe { run.as_slice::<u32>() }
     }
+    /// What it last selected: what a caller keeps to read the document again without selecting the node again.
+    #[inline]
+    pub fn selected(&self) -> Selected {
+        self.last.get()
+    }
+    /// It, knowing numbered node `l`'s tape node `x` (a probe's hop found it), and the `field` view's row it is the
+    /// node of (`u32::MAX`: not known).
+    #[inline]
+    pub fn knowing(self, l: u32, x: u32, field_row: u32) -> Self {
+        self.last.set(Selected { l, x, field_row });
+        self
+    }
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
     pub fn tape_node(&self, l: u32) -> u32 {
-        // SAFETY: the entry's numbering (`numbering`).
-        unsafe { self.numbering().select(0, l) }
+        let s = self.last.get();
+        if s.l == l {
+            return s.x;
+        }
+        let x = match self.node_table() {
+            [] => unsafe { self.numbering().select(0, l) },
+            t => t[l as usize][0],
+        };
+        self.last.set(Selected { l, x, field_row: u32::MAX });
+        x
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
@@ -209,8 +217,11 @@ impl<'a> Doc<'a> {
         let low = if self.entry.preorder != 0 {
             l
         } else {
-            // SAFETY: as `tape_node`.
-            unsafe { self.numbering().low_of(0, l) }
+            match self.node_table() {
+                // SAFETY: as `tape_node`.
+                [] => unsafe { self.numbering().low_of(0, l) },
+                t => t[l as usize][1],
+            }
         };
         (i64::from(self.entry.key) << 32) | i64::from(low)
     }
@@ -267,9 +278,15 @@ impl<'a> Doc<'a> {
     /// The numbered node of the `field` view's row `i`, and its tape node.
     #[inline]
     pub fn fielded(&self, i: u32) -> (u32, u32) {
+        let s = self.last.get();
+        if s.field_row == i {
+            return (s.l, s.x);
+        }
         // SAFETY: as `tape_node`.
         let x = unsafe { self.numbering().select(2, i) };
-        (self.rank(x), x)
+        let l = self.rank(x);
+        self.last.set(Selected { l, x, field_row: i });
+        (l, x)
     }
     /// `view_field(i, col)`: the parent's id, the field atom, the child's id.
     #[inline]

@@ -30,7 +30,7 @@ pub fn register() {
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
-        crate::code_rule_dsl::facts::rows::install_run_room();
+        rerail_blocks::maps::install();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
         crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
@@ -84,8 +84,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
-        joins::compile(join, spec, own_texts, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], own_syms: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
+        joins::compile(join, spec, own_texts, own_syms, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn made_columns(&self, plan: &JoinPlan) -> Vec<usize> {
@@ -106,6 +106,11 @@ impl SolverDevice for Metal {
 
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::resume(ticket, &plans(rules)?, store, names, fresh)
+    }
+
+    fn build_indexes(&self, plans: &[&JoinPlan]) -> Result<usize, String> {
+        let plans: Vec<&joins::Plan> = plans.iter().map(|p| p.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())).collect::<Result<_, _>>()?;
+        joins::build_indexes(&plans)
     }
 
     fn reads_own(&self, plan: &JoinPlan) -> bool {

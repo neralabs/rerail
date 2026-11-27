@@ -103,6 +103,14 @@ pub fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
     Inputs::over(&KEYS, inputs)
 }
 
+/// `f`, what it makes with no room made in the thread's long-lived room (`maps::long`, decision 0342 amended
+/// 2026-11-24), where what the memo keeps lies (a kept value's section, `join_spec`'s): `value` gives its maker no
+/// room, so a value's temporaries stay on the thread's stack and only what is kept is made long-lived. On the stack, a
+/// value kept for the run held everything its thread made after it.
+pub fn placed<R>(f: impl FnOnce() -> R) -> R {
+    rerail_blocks::maps::long(f)
+}
+
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
 /// Counted per name as a hit or a miss in the profile's decisions ("derived values").
 pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
@@ -136,6 +144,18 @@ pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// What the run's memo keeps is made in the thread's long-lived room (`placed`, decision 0342 amended), not on its
+    /// stack; what is made outside `placed`, on the stack as ever.
+    #[test]
+    fn a_kept_value_is_made_in_the_long_room() {
+        use rerail_blocks::maps::default_room;
+        let _keep = Keep::start();
+        let kept = placed(|| default_room().region(64, 8, "a test's"));
+        assert!(kept.owner().downcast_ref::<rerail_blocks::long::InLong>().is_some(), "kept: the long room's");
+        let elsewhere = default_room().region(64, 8, "a test's");
+        assert!(elsewhere.owner().downcast_ref::<rerail_blocks::long::InLong>().is_none(), "outside `placed`: not");
+    }
 
     #[test]
     fn a_value_is_kept_by_its_inputs_and_made_again_when_one_changes() {

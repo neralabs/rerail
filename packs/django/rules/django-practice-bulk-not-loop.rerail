@@ -49,30 +49,26 @@ QueryInLoop(c, cat(cat("objects.", m), "()"), "`in_bulk()` or one `filter(..__in
 // on its old value (`v.name = v.name + suffix`) stays reported.
 .decl bnl_counter(body: node, v: symbol)
 bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "augmented_assignment"), within(a, body), (op(a, "+=") ; op(a, "-=")),
-    field(a, "left", l), attr_of(l, o, x), kind(o, "identifier"), text(o, v), field(a, "right", r), bnl_number(x, r).
+    field(a, "left", l), attr_of(l, o, x), kind(o, "identifier"), text(o, v), field(a, "right", r),
+    (bnl_number_lit(r) ; bnl_number_field(x)).
 bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body), field(a, "left", l),
     attr_of(l, o, x), kind(o, "identifier"), text(o, v), text(l, lt), field(a, "right", rr), unparen(rr, r),
     kind(r, "binary_operator"), (op(r, "+") ; op(r, "-")), child(r, e, _), text(e, lt), child(r, n, _), n != e,
-    bnl_number(x, n).
-// bnl_number(x, n): field x moved by step n is a number: n is an int or float literal, or a model of the run declares
-// x as a number field (lib/django's dj_number_field). Only the pairs bnl_step makes: field and step of a `+=`/`-=` or
-// of an `x = x ± n` assignment, so the relation stays as small as the assignments that move a field.
-.decl bnl_number(x: symbol, n: node)
-bnl_number(x, n) :- bnl_step(x, n), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
-bnl_number(x, n) :- bnl_step(x, n), dj_has_field(_, x, _, t), dj_number_field(t).
-// bnl_step(x, n): n is the right side of an augmented assignment to an attribute named x, or an operand of the binary
-// operator assigned to an attribute named x.
-.decl bnl_step(x: symbol, n: node)
-bnl_step(x, r) :- kind(a, "augmented_assignment"), field(a, "left", l), attr_of(l, _, x), field(a, "right", r).
-bnl_step(x, n) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, _, x), field(a, "right", rr), unparen(rr, r),
-    kind(r, "binary_operator"), child(r, n, _).
+    (bnl_number_lit(n) ; bnl_number_field(x)).
+// Field x moved by step n is a number: n is an int or float literal (bnl_number_lit), or a model of the run declares
+// x as a number field (bnl_number_field, python/django's dj_number_field).
+.decl bnl_number_lit(n: node)
+bnl_number_lit(n) :- unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
+// Cross-file: the run's models, in any file (decision 0652).
+.decl bnl_number_field(x: symbol) cross_file
+bnl_number_field(x) :- dj_has_field(_, x, _, t), dj_number_field(t).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may
 // query another table, which no bulk method joins.
 .decl bnl_model_is(c: node, body: node)
 bnl_model_is(c, body) :- dj_qs_call(c, _), field(c, "function", f), dj_manager(mg), within(mg, f), attr_of(mg, o, _),
-    kind(o, "identifier"), text(o, v), bnl_loop(v, body).
+    kind(o, "identifier"), text(o, v), bnl_loop(v, body), within(c, body).
 bnl_model_is(c, body) :- dj_qs_call(c, _), bnl_loop(_, body), within(c, body), field(c, "function", f), dj_manager(mg),
     within(mg, f), attr_of(mg, o, _), kind(o, "identifier"), text(o, v), kind(a, "assignment"), within(a, body),
     field(a, "left", l), kind(l, "identifier"), text(l, v).

@@ -221,6 +221,34 @@ pub fn layer() -> Option<Layer> {
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
 }
 
+/// The host as a device (`rerail_device::shared::host`): the CPU's, its queue's work run on the flushing thread. What
+/// a run bound to the CPU runs the device's join programs on (`on_host`), beside the process's device.
+pub fn host_layer() -> Layer {
+    crate::blocks::install();
+    let one = rerail_device::shared::host();
+    Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() }
+}
+
+/// Whether the device's join programs run on the host here (`on_host`): the run's context's.
+#[derive(Clone, Copy, Default)]
+struct OnHost(bool);
+
+/// The device's join programs run on the host (`host_layer`) until the guard drops: on this thread, and in every job
+/// taken here. A run bound to the CPU's.
+pub fn on_host() -> rerail_context::Bound {
+    rerail_context::bind(OnHost(true))
+}
+
+/// Whether the device's join programs run on the host here.
+pub fn is_on_host() -> bool {
+    rerail_context::bound::<OnHost>().0
+}
+
+/// The device the join programs run on here: the host's (`on_host`), else the process's.
+pub fn join_layer() -> Option<Layer> {
+    if is_on_host() { Some(host_layer()) } else { layer() }
+}
+
 /// The process's device in the device layer, whatever its backend.
 pub fn device() -> Result<&'static rerail_device::device::Device, String> {
     layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
@@ -251,7 +279,11 @@ pub struct Queue {
 
 impl Queue {
     pub fn new() -> Result<Queue, String> {
-        let layer = layer().ok_or("no device")?;
+        Queue::on(layer().ok_or("no device")?)
+    }
+
+    /// One submission on `layer`'s queue (the process's, or the host's: `host_layer`).
+    pub fn on(layer: Layer) -> Result<Queue, String> {
         let fence = rerail_blocks::ledger::Fence::new();
         let queue = rerail_device::device::ComputeQueue::watched(layer.queue, std::sync::Arc::new(Holds(fence.clone())));
         Ok(Queue { queue, fence })
@@ -581,14 +613,6 @@ pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blo
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
-/// A scratch region (`rerail_blocks::scratch`) in a pooled slab of at least `bytes`: freeze's and pack's
-/// temporaries counted in the one Metal budget, and readable by a kernel. Install it on a thread
-/// (`rerail_blocks::scratch::install`) for that thread's freezes; it goes back to the pool when dropped.
-pub fn lease_scratch(bytes: usize) -> Result<rerail_blocks::scratch::Scratch, String> {
-    let slab = lease_within(bytes.max(SLAB_MIN))?;
-    Ok(rerail_blocks::scratch::Scratch::over(Box::new(slab)))
-}
-
 /// Moves an open block into a pooled slab of at least `bytes`: one copy of what it holds. No command may be
 /// reading the block (it is moved between passes, as its chunks are made).
 pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks::Block, String> {
@@ -713,7 +737,12 @@ fn traced_new(bytes: usize) {
 
 /// A buffer of at least `bytes`. Its contents are a previous lease's: every reader writes it first.
 pub fn lease(bytes: usize) -> Result<Pooled, String> {
-    let shared = layer().ok_or("no device")?;
+    // The process's device's memory, which the host's work reads in place too; the host's where it has none.
+    let shared = match layer() {
+        Some(l) => l,
+        None if is_on_host() => host_layer(),
+        None => return Err("no device".to_owned()),
+    };
     let class = class(bytes);
     if class as u64 > shared.max_buffer {
         if bytes as u64 > shared.max_buffer {
@@ -1242,7 +1271,7 @@ mod tests {
         }
         let _big = big_leases();
         set_slab_idle_limit(1 << 30);
-        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
+        let spec = Spec { widths: vec![4, 4], sort: Some(0), indexes: vec![vec![1]], min_log: 10 };
         let lock = Mutex::new(());
         // 23 MiB: a class (24 MiB) no other test leases.
         let b = lease_block(kind::FACTS, 23 << 20).unwrap();
@@ -1260,40 +1289,6 @@ mod tests {
         let at = b.alloc(1 << 20, 64);
         // SAFETY: the block's own allocation, 1 MiB long.
         assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
-    }
-
-    /// A freeze whose temporaries come from a pooled scratch slab: the same relation as from the thread's own, and
-    /// the slab back in the pool after.
-    #[test]
-    fn a_freeze_takes_its_scratch_from_a_pooled_slab() {
-        use rerail_blocks::block::kind;
-        use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if layer().is_none() {
-            return;
-        }
-        let _big = big_leases();
-        set_slab_idle_limit(1 << 30);
-        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
-        let rows: Vec<i64> = (0..200_000).flat_map(|i| [i % 3_000, i % 17]).collect();
-        let lock = Mutex::new(());
-        let digest = |scratch: Option<rerail_blocks::scratch::Scratch>| {
-            let was = scratch.map(rerail_blocks::scratch::install);
-            let b = rerail_blocks::Block::anon(kind::FACTS, 64 << 20);
-            let r = Relation::create(&b, &spec, None);
-            RelW { block: &b, rel: r, lock: &lock }.extend(&rows);
-            relation::freeze(&b, r, &spec, None);
-            if let Some(was) = was {
-                // Put the thread's own back; the pooled one drops here.
-                drop(was.map(rerail_blocks::scratch::install));
-            }
-            View::full(r).digest()
-        };
-        let own = digest(None);
-        // 29 MiB: a class (32 MiB) no other test leases.
-        let s = lease_scratch(29 << 20).unwrap();
-        assert_eq!(digest(Some(s)), own, "the same relation");
-        let back = dev().pool.lock().unwrap().idle.get(&class(29 << 20)).is_some_and(|v| !v.is_empty());
-        assert!(back, "the scratch slab went back to the pool");
     }
 
     /// A lease handed to a command buffer goes back to the pool when it completes.
@@ -1330,7 +1325,7 @@ mod tests {
             return;
         }
         let _big = big_leases();
-        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
+        let spec = Spec { widths: vec![4, 4], sort: Some(0), indexes: vec![vec![1]], min_log: 10 };
         let lock = Mutex::new(());
         let b = lease_block(kind::FACTS, 17 << 20).unwrap();
         let off = {

@@ -238,7 +238,10 @@ impl Pool {
         epoch: (usize, usize, usize, usize),
         build: impl FnOnce(Option<usize>) -> Summary,
     ) -> Summary {
-        let mut selected = bag.clone();
+        // SPIKE (local fixes, 3): no clone of `bag` and no count of the hit on the hit's path, the common one: each is
+        // an atomic write to a line every thread evaluating the same bag shares. The count is the profile's alone
+        // (`explain`).
+        let counted = crate::code_rule_dsl::logic::profile::on();
         let shard = self.shard(key);
         // A hit: under the read lock.
         {
@@ -252,10 +255,13 @@ impl Pool {
                 && memo.epoch == epoch
                 && let Some(summary) = memo.groups.get(key)
             {
-                memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if counted {
+                    memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 return summary;
             }
         }
+        let mut selected = bag.clone();
         {
             let mut pool = shard.write();
             if selected.value.is_none() {
@@ -606,7 +612,7 @@ pub mod tests {
         Connection::open(path).unwrap()
     }
     fn hex(s: &str) -> String {
-        s.bytes().map(|b| format!("{b:02x}")).collect()
+        rerail_prof::code_rule_dsl::prof::lower_hex(s.as_bytes())
     }
     #[test]
     fn native_join_shares_summaries_across_rules_and_independent_slots() {

@@ -705,7 +705,7 @@ pub fn sources(
     // Its frame, for a later process: where the run consulted what it read (a run that read nothing it can name is
     // not comparable, `changes_of`) and a store keeps it.
     let frame = (store.is_some() && !report.consulted.is_empty())
-        .then(|| super::Summary::of(&[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
+        .then(|| super::Summary::of(&[], &[], &[], Some(&handed), root, &options).ok().and_then(|s| s.encode()))
         .flatten()
         .map(|summary| (identity, Some(super::frame::Frame { reads: report.consulted.clone(), plans: report.plans.clone(), summary, image: image.clone(), then: None })));
     let (one, exports) = one_of_rows(root, label, files, &declared, rows);

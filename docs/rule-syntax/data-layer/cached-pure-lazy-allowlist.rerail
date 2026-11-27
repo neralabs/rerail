@@ -44,7 +44,8 @@
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_msg(m), !cpl_crash(_).
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_sign_msg(m).
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_crash(m).
-.decl cpl_msg(m: symbol)
+// Cross-file: the verifier's messages over every file's items: a duplicate is counted across files (decision 0652).
+.decl cpl_msg(m: symbol) cross_file
 .decl cpl_sign_msg(m: symbol)
 
 // ---- 1. names ---------------------------------------------------------------------------------------------------
@@ -488,7 +489,8 @@ cpl_top_name(s, x) :- asgstmt(a, s), assign_target(a, t), cpl_name(t, x).
 cpl_runtime_last(src, x, s) :- cpl_runtime_def(src, x, s), count : { cpl_runtime_def(src, x, s2), precedes(s, s2) } = 0.
 // A missing one is the verifier's RuntimeError: it ends the run, so its text is the only finding (cpl_crash), the
 // names as a sorted Python tuple.
-.decl cpl_missing(x: symbol)
+// Cross-file: the runtime's symbols checked once a constant exists in any file (decision 0652).
+.decl cpl_missing(x: symbol) cross_file
 cpl_missing(x) :- cpl_const("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", _), cpl_runtime_symbol(src, x),
     !cpl_runtime_last(src, x, _).
 repr_want(x) :- cpl_missing(x).
