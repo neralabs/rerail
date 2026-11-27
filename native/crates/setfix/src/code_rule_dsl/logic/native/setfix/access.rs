@@ -84,7 +84,7 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
         // A keyed probe of a held input (E5): the index it reads on its key's columns, whatever its form (the order a
         // probe makes, an index in the input's block, a kept chain): its probes, the rows its input held, and this
         // plan as a reader. The search prices the probe by it (`orders_available`); a membership test's is E2's.
-        if let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. }) = &j.steps[i]
+        if let Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. } = &j.steps[i]
             && !keys.is_empty()
             && needs(j, i).is_none()
             && order_prices()

@@ -516,7 +516,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     let at = |k: usize| cols.get(keys[k].0).copied();
     let row = |v: Val| matches!(v, Val::Row(Word::Col(_) | Word::Look(..)));
     let known = |v: Val| row(v) || matches!(v, Val::Param(Param { doc: false, .. }));
-    let mut side = |b: &mut Build, v: Val| match v {
+    let side = |b: &mut Build, v: Val| match v {
         Val::Row(w) => PairKey::Col(usize::from(b.column(w))),
         Val::Param(p) => PairKey::Param(usize::from(b.param(p))),
     };
