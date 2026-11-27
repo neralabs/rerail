@@ -457,18 +457,23 @@ impl LongTexts {
         Some(f.text(core).to_owned())
     }
 
-    /// `text_any`'s text as the atom it already has, read where it lies (no text made): from the document's atoms of
-    /// its tape terms (`Projected::text_atom`'s memo) where the node is a term, else `existing`, which makes none. `None`
-    /// for a comment's id, a node not in the batch, or a text with no atom yet. 7.6 M reads of an idc run took 282 ns
-    /// each, a text made and then looked up among the atoms.
-    pub fn text_atom_any(&self, n: i64, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+    /// `text_any`'s text as its atom, read where it lies (no text made): with `make`, the `text` view's read
+    /// (`Projected::text_atom`: the document's atoms of its tape terms, made where a term has none); else from that
+    /// memo where the node is a term, then `existing`, which makes none. `None` for a comment's id, a node not in the
+    /// batch, or a text with no atom and none made. 7.6 M reads of an idc run took 282 ns each, a text made and then
+    /// looked up among the atoms; in a cold run, most of those texts had no atom yet.
+    pub fn text_atom_any(&self, n: i64, make: bool, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
         use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
         let (key, low) = ((n >> 32) as u32, n as u32);
         if granules::comment_of(low).is_some() {
             return None;
         }
         let p = &self.batch.docs[*self.docs.get(&key)?];
-        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let local = p.local_of(low)?;
+        if make {
+            return Some(p.text_atom(&*self.batch.atoms, local, NONE)).filter(|&a| a >= 0);
+        }
+        let x = p.ranks().select(Item::Node, local)?;
         let f = p.f();
         let index = f.index();
         let Some(term) = index.term(x) else { return existing(f.text(x)) };
@@ -554,8 +559,8 @@ impl Source for LongTexts {
             _ => None,
         }
     }
-    fn node_atom(&self, name: &str, n: i64, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
-        (name == "rr_node_text_any").then(|| self.text_atom_any(n, existing)).flatten()
+    fn node_atom(&self, name: &str, n: i64, make: bool, existing: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        (name == "rr_node_text_any").then(|| self.text_atom_any(n, make, existing)).flatten()
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)

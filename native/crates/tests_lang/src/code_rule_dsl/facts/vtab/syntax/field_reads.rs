@@ -111,10 +111,35 @@ fn a_nodes_text_read_as_its_atom_is_the_atom_of_its_text() {
     for _ in 0..2 {
         for &n in &ids {
             let want = text_of(n).and_then(|t| atom.get(&t).copied());
-            assert_eq!(texts.node_atom("rr_node_text_any", n, &existing), want, "node {n:#x} ({:?})", text_of(n));
+            assert_eq!(texts.node_atom("rr_node_text_any", n, false, &existing), want, "node {n:#x} ({:?})", text_of(n));
             held += usize::from(want.is_some());
         }
     }
     assert!(held > 10 && ids.len() > 50, "{held} held of {}", ids.len());
-    assert_eq!(texts.node_atom("rr_node_text", ids[1], &existing), None, "another read: none");
+    assert_eq!(texts.node_atom("rr_node_text", ids[1], false, &existing), None, "another read: none");
+}
+
+/// Made where it has none (`make`), a node's text atom is the store's atom of the text `node_read` reads, for every
+/// node, twice (the second from the terms' memo).
+#[test]
+fn a_nodes_text_atom_made_is_the_stores_atom_of_its_text() {
+    use crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES;
+    let store = ContentStore::open(&temp("text-atoms-made")).unwrap();
+    let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y):\n    z = x + y + f{k}(x)\n    return \"s{k}\" if z else x.y\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "rr_long_text_node", "doc"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
+    let ids: Vec<i64> = (0..batch.docs.len()).flat_map(|d| { let p = &batch.docs[d]; (0..p.len()).map(|l| p.global(l)).collect::<Vec<_>>() }).collect();
+    let none = |_: &str| None;
+    let mut made = 0;
+    for _ in 0..2 {
+        for &n in &ids {
+            let Some(rusqlite::types::Value::Text(t)) = texts.node_read("rr_node_text_any", n) else { continue };
+            let got = texts.node_atom("rr_node_text_any", n, true, &none).expect("made");
+            assert_eq!(Some(got), store.atom(&t).unwrap().map(i64::from), "node {n:#x} ({t:?})");
+            made += 1;
+        }
+    }
+    assert!(made > 50, "{made}");
 }

@@ -9602,18 +9602,23 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                 // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
                 let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
                 let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
-                // A node's text as the atom it has, read where it lies (`Source::node_atom`): the atom every way of
-                // reading the text out gives an existing text, but a scratch text's or an unread one's.
+                // A node's text as its atom, read where it lies (`Source::node_atom`), for every way of reading the text
+                // out but a scratch text's or an unread one's. Bound, the atom is made where it has none, as the `text`
+                // view's reads make it (`id` would make it, or defer it in a morsel: the same atom once made); a probe
+                // takes only the one it has (`held`), else reads the text as before.
                 if found.is_none()
                     && j.probes[i] & (TEXT_OUT | UNREAD_OUT) == 0
                     && let Some(h) = texts.as_ref()
                 {
+                    // Made only while the walk has deferred no text: a text it deferred keeps its deferred value,
+                    // which an atom made now would not be.
+                    let make = j.probes[i] & PROBE_OUT == 0 && cx.syms.deferred.as_ref().is_none_or(|d| d.texts.is_empty());
                     let atoms = cx.syms.atoms();
                     let existing = |s: &str| atoms.existing(s).map(i64::from);
                     let n = val(slots, args[0]);
                     let atom = match &**j.bound(h) {
-                        NodeTexts::Held(nodes) => nodes.node_atom(name, n, &existing),
-                        NodeTexts::At(at) => at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES)).and_then(|nodes| nodes.node_atom(name, n, &existing)),
+                        NodeTexts::Held(nodes) => nodes.node_atom(name, n, make, &existing),
+                        NodeTexts::At(at) => at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES)).and_then(|nodes| nodes.node_atom(name, n, make, &existing)),
                     };
                     if let Some(v) = atom {
                         if *bind { slots[*out] = v } else if slots[*out] != v { return }
