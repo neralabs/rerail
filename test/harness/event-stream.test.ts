@@ -40,6 +40,8 @@ import { startTestRepository } from "../support/started-repository.js";
 import { countingDaemon } from "../support/hook-events.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
+// The wait the stream takes, read where it is defined: the runtime layer's index does not export it.
+const { HOOK_DAEMON_WAIT_MS } = await vi.importActual<typeof import("../../src/runtime/daemon/daemon-waits.js")>("../../src/runtime/daemon/daemon-waits.js");
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -219,8 +221,8 @@ describe("rerail events in a main build", () => {
     // Each event waits for a busy daemon until 12 s after it arrived, the start check's read of the daemon included, as
     // a hook does; without a deadline it waited 2 s for the start check, then 2 s and 10 s for the endpoint.
     for (const [, deadline] of routing.daemonEngineEndpoint.mock.calls) {
-      expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
-      expect(deadline).toBeLessThanOrEqual(after + 12_000);
+      expect(deadline).toBeGreaterThanOrEqual(before + HOOK_DAEMON_WAIT_MS);
+      expect(deadline).toBeLessThanOrEqual(after + HOOK_DAEMON_WAIT_MS);
     }
   });
 
@@ -320,8 +322,8 @@ describe("rerail events in a main build", () => {
     // A stream that outlives `rerail update` keeps the newer daemon: only its first event may replace another package's.
     expect(routing.runningDaemonEngineEndpoint.mock.calls.map(([, machine, replaceOtherPackage]) => [machine, replaceOtherPackage])).toEqual([[undefined, false]]);
     const [deadline] = routing.runningDaemonEngineEndpoint.mock.calls[0]!;
-    expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
-    expect(deadline).toBeLessThanOrEqual(after + 12_000);
+    expect(deadline).toBeGreaterThanOrEqual(before + HOOK_DAEMON_WAIT_MS);
+    expect(deadline).toBeLessThanOrEqual(after + HOOK_DAEMON_WAIT_MS);
     expect(routing.launchAutostart).not.toHaveBeenCalled();
     expect(existsSync(join(root, "home", HOOK_FAILURES_FILE))).toBe(false);
   });
@@ -536,8 +538,8 @@ describe("rerail events in a main build", () => {
     // Each event's lookup of the named socket is handed the deadline the event got when it arrived, 12 s on.
     expect(routing.engineEndpointAt.mock.calls.map(([named]) => named)).toEqual([socketPath, socketPath]);
     for (const [, deadline] of routing.engineEndpointAt.mock.calls) {
-      expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
-      expect(deadline).toBeLessThanOrEqual(after + 12_000);
+      expect(deadline).toBeGreaterThanOrEqual(before + HOOK_DAEMON_WAIT_MS);
+      expect(deadline).toBeLessThanOrEqual(after + HOOK_DAEMON_WAIT_MS);
     }
   });
 
