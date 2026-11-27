@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 1163 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #1163</div>
+  <h1>Windows tests: one PowerShell start per file, and scripts allowed per process</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Should the privilege helper start PowerShell once per file, outside every case&#x27;s limit, and the host steps&#x27; helper bypass the execution policy for its process?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: no case that turns these privileges off holds a PowerShell start in its limit, and the host steps&#x27; three cases pass where nobody set PowerShell&#x27;s execution policy.</p>
+  <div class="big">
+    <div><b class="w">586 lines</b><span>in 8 files. 0 ship, 449 are the tests it changes, 137 are other tests and text.</span></div><div><b class="w">Fast review</b><span>Test files only; no high-risk path.</span></div><div><b class="w">Waits on nothing</b><span>It stands alone on <code>main</code> ef885f6e1c.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/1163">GitHub</a> on 26 November 2026, at head a7f6330935.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>A case within limit</b></td><td class="in" data-l="Intended">&quot;a test that starts git, a session runtime and a daemon takes 2 to 9 s there ... so the limits are wider&quot; <span class="tagx">code comment</span></td><td class="fo" data-l="Found">A first PowerShell start took one of these cases to 32,767 ms against its 30 s limit. <span class="tagx">a CI job, #1141</span></td><td class="now" data-l="Now"><b>Closes the gap</b> by starting one PowerShell per file in a set-up hook and keeping it open.</td></tr><tr><td class="k"><span class="lb">B</span><b>Windows tests run anywhere</b></td><td class="in" data-l="Intended">&quot;Test a change to how Rerail starts processes, resolves paths, replaces files or writes commands on Windows yourself&quot; <span class="tagx">contributor guide</span></td><td class="fo" data-l="Found">On Windows 11 where nobody set an execution policy, 3 of <code>windows-host.test.ts</code>&#x27;s 4 cases fail on <code>main</code>. <span class="tagx">Windows 11 runs, #1148</span></td><td class="now" data-l="Now"><b>Closes the gap</b> by passing <code>-ExecutionPolicy Bypass</code> to that one process.</td></tr></tbody></table>
+<figcaption>Found on 26 November 2026, in a Windows unit job on GitHub&#x27;s runner and in runs on a Windows 11 machine.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. A case within limit</td><td data-l="Where main states the intent"><code>vitest.config.ts</code> at <code>main</code> e29282a55f, the comment above <code>testTimeout: 30_000</code>; <code>withoutBackupPrivileges</code> in <code>test/support/platform/backup-privileges.ts</code> calls <code>setPrivileges</code>, an <code>execFileSync</code> of <code>powershell.exe -EncodedCommand</code>, before and after the body.</td><td data-l="The cause, and what was measured">Each call started PowerShell twice, and each start compiled the C# type with <code>Add-Type</code>, inside the case&#x27;s own limit. A new runner&#x27;s first start prepares PowerShell&#x27;s modules for first use, which the job&#x27;s log showed at that case.</td></tr><tr><td class="k">B. Windows tests run anywhere</td><td data-l="Where main states the intent"><code>CONTRIBUTING.md</code> at <code>main</code> e29282a55f, &quot;Developing on Windows&quot;, line 354. The same guide runs its own script with <code>powershell -NoProfile -ExecutionPolicy Bypass -File popups.ps1</code>, line 445.</td><td data-l="The cause, and what was measured"><code>hostPowerShell</code> dot-sources <code>scripts/host/windows-host.ps1</code> from an encoded command and gave PowerShell no <code>-ExecutionPolicy</code>, so the machine&#x27;s policy decided. With every scope <code>Undefined</code> it is <code>Restricted</code>, which loads no script file.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 228" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, One kept PowerShell per file, low risk, 443 lines; B, The host steps under any policy, low risk, 6 lines. Read first: privilege-switch.ts, backup-privileges.ts, windows-host.test.ts. To skim: 137 lines of tests and 0 lines of no text changes.." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk low"/><text x="49" y="38" class="t s">Low risk, 443 lines</text><text x="336" y="38" text-anchor="end" class="t s">the tests it changes</text><text x="128" y="59" text-anchor="end" class="t s">privilege-switch.ts</text><g><title>privilege-switch.ts: 179 changed lines, low risk</title><path d="M134 50h49.7a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-49.7z" class="rk low"/></g><text x="192.7" y="59" class="t n">179</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">backup-privileges.ts</text><g><title>backup-privileges.ts: 81 changed lines, low risk</title><path d="M134 67h20.3a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-20.3z" class="rk low"/></g><text x="163.3" y="76" class="t n">81</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">2</text><text x="128" y="93" text-anchor="end" class="t s">stand-ins, moved cases</text><g><title>stand-ins, moved cases: 183 changed lines, low risk</title><path d="M134 84h50.9a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-50.9z" class="rk low"/></g><text x="193.9" y="93" class="t n">183</text><rect x="4.5" y="107.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="121" text-anchor="middle" class="t b">B</text><rect x="30" y="112" width="14" height="10" rx="2" class="rk low"/><text x="49" y="121" class="t s">Low risk, 6 lines</text><text x="336" y="121" text-anchor="end" class="t s">the tests it changes</text><text x="128" y="142" text-anchor="end" class="t s">windows-host.test.ts</text><g><title>windows-host.test.ts: 6 changed lines, low risk</title><path d="M134 133h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk low"/></g><text x="140.8" y="142" class="t n">6</text><text x="336" y="142" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="138" r="8.5" class="nc"/><text x="254" y="142" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="156" x2="336" y2="156" class="ar thin"/><text x="4" y="176" class="t b">Skim: tests and text</text><text x="128" y="196" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 137 changed lines, skim</title><path d="M134 187h37.1a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-37.1z" class="rk skim"/></g><text x="180.1" y="196" class="t n">137</text><rect x="4" y="212" width="14" height="10" rx="2" class="rk high"/><text x="22" y="221" class="t s">High</text><rect x="62.8" y="212" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="221" class="t s">Medium</text><rect x="133" y="212" width="14" height="10" rx="2" class="rk low"/><text x="151" y="221" class="t s">Low risk</text><rect x="214.6" y="212" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="221" class="t s">Skim</text></svg>
+<figcaption>Test files only: the kept PowerShell first, then one argument.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>privilege-switch.ts</code>: <code>PrivilegeSwitch</code>, <code>powerShellWords</code>, <code>startPrivilegeSwitch</code></b><span class="min">10 min</span><span class="x">Does every reply settle the request it answers, and does every way it ends leave no process?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>backup-privileges.ts</code>: <code>backupPrivilegeSwitch</code></b><span class="min">3 min</span><span class="x">Does each describe block start one switch in <code>beforeAll</code> and end it in <code>afterAll</code>?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>windows-host.test.ts</code>: <code>hostPowerShell</code></b><span class="min">1 min</span><span class="x">Does <code>-ExecutionPolicy Bypass</code> reach only the PowerShell this helper starts?</span></div></li><li><div><b><code>held-start.mjs</code>, <code>switch-holder.mjs</code>, <code>scrub-cli.test.ts</code>, <code>session-records-gitignore.test.ts</code></b><span class="min">4 min</span><span class="x">Read the two test files with whitespace ignored: one describe block each, and one case moved beside the other.</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">4 min</span><span class="x">The new cases: a held start under a short limit, a body that throws, the privileges&#x27; states, a failed start, and no process left after three kinds of end.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 191" role="img" aria-label="The changes by risk, high on top, against six checks. A, One PowerShell, low risk: independent review holds with a limit, rules scan: nothing new holds with a limit. B, Policy bypass, low risk: independent review holds with a limit, rules scan: nothing new holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="82" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">One PowerShell</text><g><title>One PowerShell, fails without the fix: A case under a 2 s limit, with PowerShell&#x27;s start held back 4 s: over `main`&#x27;s helper it fails with `Test timed out in 2000ms` at 4,542 ms on Windows 11; here it passes in 29 ms.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>One PowerShell, independent review: Our own runs found two defects, both fixed here with a case: a start that failed left PowerShell waiting on its input, so the set-up ran to its 120 s bound (129 s, Windows 11); and no case made the real script fail. No independent review ran.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>One PowerShell, users lose nothing: The four cases&#x27; bodies are unchanged (`git diff -w`); both files pass on Linux x64 and Windows 11 at `main` and here, and no other case of theirs changes.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>One PowerShell, rules scan: nothing new: The rule pack&#x27;s review against `main`, Rerail built from `main`, found nothing new; every added or edited function counts 3 or less. Rerail as published could not run the pack.</title><circle cx="252" cy="52" r="7.4" class="ml"/><path d="M252 44.6A7.4 7.4 0 0 0 252 59.4Z" class="mlf"/></g><g><title>One PowerShell, Windows 11: no new failure: The new test file and the two changed files: 30 of 30 runs each on Windows 11 beside the files next to each in its CI shard; once each on Linux x64.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>One PowerShell, CI at this head: CI on GitHub runs once the pull request opens.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Policy bypass</text><g><title>Policy bypass, fails without the fix: Windows 11, every execution policy scope `Undefined`: at be4a1b825e, the commit before it, the three cases fail with &quot;running scripts is disabled on this system&quot;; with the argument all four pass.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Policy bypass, independent review: No independent review ran: one argument and its comment in a test helper.</title><circle cx="184" cy="84" r="7.4" class="ml"/><path d="M184 76.6A7.4 7.4 0 0 0 184 91.4Z" class="mlf"/></g><g><title>Policy bypass, users lose nothing: Users lose nothing: no source file changes. The argument holds for the test&#x27;s own PowerShell process and sets nothing on the machine.</title><circle cx="218" cy="84" r="8" class="mh"/><path d="M214 84l3 3l5 -6" class="mt"/></g><g><title>Policy bypass, rules scan: nothing new: The rule pack&#x27;s review did not run for this change: one argument in a test file, which adds no function.</title><circle cx="252" cy="84" r="7.4" class="ml"/><path d="M252 76.6A7.4 7.4 0 0 0 252 91.4Z" class="mlf"/></g><g><title>Policy bypass, Windows 11: no new failure: Windows 11: 30 of 30 runs of the file beside its CI shard neighbours, on the machine whose policy refused the file.</title><circle cx="286" cy="84" r="8" class="mh"/><path d="M282 84l3 3l5 -6" class="mt"/></g><g><title>Policy bypass, CI at this head: CI on GitHub runs once the pull request opens.</title><circle cx="320" cy="84" r="7.4" class="ml"/><path d="M320 76.6A7.4 7.4 0 0 0 320 91.4Z" class="mlf"/></g><text x="8" y="121" class="t s">1  fails without the fix</text><text x="168" y="121" class="t s">2  independent review</text><text x="8" y="137" class="t s">3  users lose nothing</text><text x="168" y="137" class="t s">4  rules scan: nothing new</text><text x="8" y="153" class="t s">5  Windows 11: no new failure</text><text x="168" y="153" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="177" r="8" class="mh"/><path d="M10 177l3 3l5 -6" class="mt"/></g><text x="28" y="181" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="177" r="7.4" class="ml"/><path d="M92 169.6A7.4 7.4 0 0 0 92 184.4Z" class="mlf"/></g><text x="106" y="181" class="t s">holds with a limit</text></svg>
+<figcaption>Two changes, both low risk, test code only: start at <code>PrivilegeSwitch</code>, the one long-lived process.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. One PowerShell</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">Our own runs found two defects, both fixed here with a case: a start that failed left PowerShell waiting on its input, so the set-up ran to its 120 s bound (129 s, Windows 11); and no case made the real script fail. No independent review ran.</td></tr><tr><td class="k">A. One PowerShell</td><td data-l="Check">rules scan: nothing new</td><td data-l="It holds with this limit">The rule pack&#x27;s review against <code>main</code>, Rerail built from <code>main</code>, found nothing new; every added or edited function counts 3 or less. Rerail as published could not run the pack.</td></tr><tr><td class="k">B. Policy bypass</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">No independent review ran: one argument and its comment in a test helper.</td></tr><tr><td class="k">B. Policy bypass</td><td data-l="Check">rules scan: nothing new</td><td data-l="It holds with this limit">The rule pack&#x27;s review did not run for this change: one argument in a test file, which adds no function.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">CI on GitHub runs once the pull request opens.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>One kept PowerShell per file</b><span class="chip low"><i></i>Low risk</span><span class="sx">The two scrub cases&#x27; medians on Windows 11: 1,386 ms at <code>main</code>, 389 ms here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>A Windows unit job fails on a change that touches none of these cases: the first PowerShell start on a new runner took a case past its 30 s limit (32,767 ms) inside <code>withoutBackupPrivileges</code>.</dd>
+<dt>Who meets it</dt><dd>Contributors whose pull request runs the Windows unit tests on a new GitHub runner; it passes when run again (#1141).</dd>
+<dt>What it does</dt><dd><code>backupPrivilegeSwitch</code> registers a <code>beforeAll</code> that starts one <code>PrivilegeSwitch</code> and waits for its <code>ready</code> line, and an <code>afterAll</code> that ends it. The switch reads requests through <code>$input</code> and answers each with the privileges that were on. The four cases move into a describe block of their own per file.</dd>
+<dt>Risk</dt><dd>Low. Test code only; the same C# type and token calls run in one PowerShell instead of two per case, and the cases&#x27; bodies are unchanged.</dd>
+<dt>Check</dt><dd>Does <code>PrivilegeSwitch</code> answer each request in order, and end on its input&#x27;s end? Does a failed start fail the set-up once, in PowerShell&#x27;s words, and leave no process? Do the moved cases run as before?</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="On Windows 11, the sum of the medians of scrub-cli&#x27;s two cases was 1,386 ms at main and 389 ms here; of the session records file&#x27;s two cases, 1,918 ms at main and 964 ms here; 10 runs each." class="dg pic"><text x="4" y="17" class="t b">scrub-cli&#x27;s two cases</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>scrub-cli&#x27;s two cases, main: 1,386 ms</title><path d="M80 24h133.299a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-133.299z" class="rk was"/></g><text x="223.299" y="34" class="t n">1,386 ms</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>scrub-cli&#x27;s two cases, this change: 389 ms</title><path d="M80 41h34.5349a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-34.5349z" class="rk now"/></g><text x="124.535" y="51" class="t n">389 ms</text><text x="4" y="75" class="t b">session records&#x27; two cases</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>session records&#x27; two cases, main: 1,918 ms</title><path d="M80 82h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="92" class="t n">1,918 ms</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>session records&#x27; two cases, this change: 964 ms</title><path d="M80 99h91.4953a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-91.4953z" class="rk now"/></g><text x="181.495" y="109" class="t n">964 ms</text></svg><figcaption>Method: The two test files ran 10 times at <code>main</code> and 10 times here, in turn, on one Windows 11 x64 machine; each case&#x27;s time is vitest&#x27;s own, and each figure is the sum of the two cases&#x27; medians.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>The host steps under any policy</b><span class="chip low"><i></i>Low risk</span><span class="sx">Windows 11 with no execution policy set: 3 of 4 cases failed before; 4 of 4 pass here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>Three cases of <code>windows-host.test.ts</code> fail with &quot;running scripts is disabled on this system&quot; on a Windows 11 machine where nobody set PowerShell&#x27;s execution policy, on <code>main</code> and on every branch.</dd>
+<dt>Who meets it</dt><dd>Contributors who run the unit tests on such a machine (#1148). GitHub&#x27;s Windows runner sets a policy that runs local scripts, so CI does not show it.</dd>
+<dt>What it does</dt><dd><code>hostPowerShell</code> passes <code>-ExecutionPolicy Bypass</code> to the one Windows PowerShell it starts, so that process may dot-source <code>scripts/host/windows-host.ps1</code>.</dd>
+<dt>Risk</dt><dd>Low. One argument in a test helper; it holds for that process alone and sets nothing on the machine. A policy set through group policy still outranks it.</dd>
+<dt>Check</dt><dd>Does the argument reach only the PowerShell that <code>hostPowerShell</code> starts, and do the three cases test the shared steps as before?</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="On a Windows 11 machine whose execution policy is Undefined at every scope, 3 of the file&#x27;s 4 cases failed at the commit before this change and none fail here." class="dg pic"><text x="4" y="17" class="t b">cases failed of 4</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>cases failed of 4, main: 3 of 4</title><path d="M80 24h138.5a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-138.5z" class="rk was"/></g><text x="228.5" y="34" class="t n">3 of 4</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>cases failed of 4, this change: 0 of 4</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 of 4</text></svg><figcaption>Method: The file once at the commit before it and once here, then 30 times here beside its CI shard neighbours, on one Windows 11 x64 machine whose execution policy is <code>Undefined</code> at every scope.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Where should the PowerShell start happen, so no helper case&#x27;s limit holds it?</h3>
+<p><b>We chose</b> in the set-up of a describe block that holds only the cases that need it, one per file, kept open.</p>
+<p><b>Would change our mind:</b> A vitest hook bound that cannot be set per hook, or a way to change a token&#x27;s privileges from Node without a child process.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A <code>beforeAll</code> per file, PowerShell kept open <span class='tag new'>chosen</span></td><td data-l="What a user gets">No start and no compile in the limit of any case that uses the helper; one wait, bounded once; a failed start fails once.</td><td data-l="Cost">A process that lives as long as the block; it ends on its input&#x27;s end.</td><td data-l="What it breaks">Nothing found: the cases&#x27; bodies run as before.</td></tr><tr><td class="k">Two starts per case, with a longer limit</td><td data-l="What a user gets">The smallest change.</td><td data-l="Cost">Two starts and two compiles per case: 624 to 972 ms per case on Windows 11.</td><td data-l="What it breaks">The limit is a guess from one stall; the next new runner may pass it.</td></tr><tr><td class="k">A file-scoped vitest fixture</td><td data-l="What a user gets">No hook to place.</td><td data-l="Cost">Nothing more than the hook.</td><td data-l="What it breaks">vitest 5.1 sets a fixture up inside the first case that asks for it, under that case&#x27;s limit.</td></tr></tbody></table></div><p><b>Evidence.</b> The case with a held start fails at <code>main</code> and passes here on Windows 11; vitest 5.1&#x27;s runner wraps a case&#x27;s fixtures in its timeout, and fails a suite whose <code>beforeAll</code> throws once, skipping its cases.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 130" role="img" aria-label="The pull request stands on main at ef885f6e1c, which Git merged into it with no conflict; nothing else has to merge first, and nothing waits on it." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at ef885f6e1c</text><text x="14" y="38" class="t s">merged with no conflict</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">Two test helpers</text><text x="170" y="116" text-anchor="middle" class="t s">one start, any policy</text></svg></figure>
+<div><p>It stands alone on <code>main</code> ef885f6e1c, which Git merged into it with no conflict, and needs no other pull request.</p>
+<p>#1076, #1126 and #1143 share no file with it, and Git merges each with it alone.</p>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS and Linux</b> both helpers&#x27; PowerShell cases run only on Windows; the four changed test files ran on Linux x64; macOS never ran.</li>
+<li><b>A first start past 120 s</b> fails the set-up once and skips the block&#x27;s cases. A first start here took 425 to 456 ms; the bound rests on the 32.8 s seen on GitHub&#x27;s runner.</li>
+<li><b>The privileges&#x27; states</b> the case that reads them skips where the token holds neither, as on the machine these runs used; it runs on GitHub&#x27;s Windows runner.</li>
+<li><b>A policy set through group policy</b> outranks the process&#x27;s own: where one sets <code>AllSigned</code> or <code>Restricted</code>, the host steps&#x27; three cases still fail. No machine here had one.</li>
+</ul>
+<details class="ev"><summary>One limit that stays</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The issue&#x27;s third case starts PowerShell for <code>Get-Acl</code> under its own 60 s limit; it never used this helper and is unchanged.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Windows 11, Linux x64</td><td data-l="What ran">At this head, the merge of <code>main</code> ef885f6e1c: the four changed test files, 15 runs on each of two Windows machines, once on Linux</td><td data-l="Result">30 of 30 on Windows 11, 36 passed and 8 skipped in each; 35 passed and 9 skipped on Linux x64.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The held-start case over <code>main</code>&#x27;s helper with the program as a parameter, and here</td><td data-l="Result">Fails at <code>main</code>: <code>Test timed out in 2000ms</code>, at 4,542 ms. Passes here in 29 ms.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The two files 10 times at <code>main</code> and 10 times here, in turn</td><td data-l="Result">0 of 20 failed; the four cases&#x27; medians 624 to 972 ms at <code>main</code>, 125 to 504 ms here.</td></tr><tr><td class="k">Windows 11, no execution policy set</td><td data-l="What ran"><code>windows-host.test.ts</code> at the commit before its change, and here</td><td data-l="Result">3 failed and 1 passed before, with &quot;running scripts is disabled on this system&quot;; 4 passed here.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">Each changed or added file 30 times beside the files next to it in its CI shard</td><td data-l="Result">30 of 30 for each of the four files.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The two files at <code>main</code>; the three files of #1141 before the merge</td><td data-l="Result">31 passed at <code>main</code>; 34 passed and 6 skipped before the merge, the six cases that need Windows PowerShell.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The branch at a7f6330935, Git&#x27;s merge of <code>main</code> ef885f6e1c into cd0ac36bd1, and its diff against that <code>main</code>, read on 26 November 2026; runs on Windows 11 x64 machines and one Linux x64 machine; vitest 5.1&#x27;s runner and pool code.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
