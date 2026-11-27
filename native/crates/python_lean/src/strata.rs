@@ -763,6 +763,164 @@ impl<'s> Text<'s> {
     }
 }
 
+/// A machine of three states over a block's 64 bytes, C (0), X (1) and Y (2): at a bit of `ex` C and X swap, at
+/// one of `ey` C and Y, at one of `r` X and Y become C. Each byte's function is two bit planes a start state (the
+/// state's code after the byte, low bit and high bit), and the functions of the bytes are composed by Kogge–Stone:
+/// six rounds, in each every byte's function after the function of the bytes `d` below it, by masks. Out comes
+/// each start state's planes of the state after each byte.
+#[inline(always)]
+fn machine(ex: u64, ey: u64, r: u64) -> [[u64; 2]; 3] {
+    let mut f = [[ex, ey], [!(ex | r), 0], [0, !(ey | r)]];
+    macro_rules! round {
+        ($d:expr) => {{
+            let low = !(!0u64 << $d);
+            let mut g = [[0u64; 2]; 3];
+            for (s, gs) in g.iter_mut().enumerate() {
+                // The state after the bytes `d` below, from start state `s` (`s` itself below the block's start).
+                let wl = (f[s][0] << $d) | if s == 1 { low } else { 0 };
+                let wh = (f[s][1] << $d) | if s == 2 { low } else { 0 };
+                let wc = !(wl | wh);
+                for k in 0..2 {
+                    gs[k] = (wc & f[0][k]) | (wl & f[1][k]) | (wh & f[2][k]);
+                }
+            }
+            f = g;
+        }};
+    }
+    round!(1);
+    round!(2);
+    round!(4);
+    round!(8);
+    round!(16);
+    round!(32);
+    f
+}
+
+/// The planes of the state after each byte from start state `s`, and the state after the block's last byte.
+#[inline(always)]
+fn run_from(f: &[[u64; 2]; 3], s: u8) -> (u64, u64, u8) {
+    let [lo, hi] = f[usize::from(s)];
+    (lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8)
+}
+
+/// The planes of a state that holds from `s` until the first bit of `r` (where it becomes C), with no other events.
+#[inline(always)]
+fn hold(s: u8, r: u64) -> (u64, u64, u8) {
+    let until = if r == 0 { !0 } else { !(!0u64 << r.trailing_zeros()) };
+    let (lo, hi) = (if s == 1 { until } else { 0 }, if s == 2 { until } else { 0 });
+    (lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8)
+}
+
+impl<'s> Text<'s> {
+    /// Stratum 2 with no step inside a block (variant B): each block's comments and strings from a fixed sequence of
+    /// bit operations. Three layers, each a machine of `machine`'s, carried from block to block:
+    ///
+    /// 1. triples: runs of exactly three quotes no backslash escapes, a machine of C and the two triples;
+    /// 2. one-line strings: each quote outside the triples swaps C and its string, a bare line end ends one;
+    /// 3. comments: from each `#` in C to its line's end, by one addition's carries (generate at the `#`,
+    ///    propagate up to the line end).
+    ///
+    /// Each layer takes what the one below makes as if the one above were not there; where that would be wrong a
+    /// mask says so (a triple's opener in a one-line string or a comment; a comment whose line end a backslash
+    /// escapes inside a quote it holds; a run of four quotes; a backtick in code; a string open at a line end or
+    /// at the text's end), and the text is read by variant A instead: false. A format string is read as a plain
+    /// string, its interiors left to the walk, which says where that is wrong (an interior's string of the
+    /// enclosing one-line string's quote).
+    #[inline(never)]
+    fn regions_b(&mut self) -> bool {
+        let n = self.src.len();
+        let blocks = n.div_ceil(64);
+        let (mut t0, mut s0) = (0u8, 0u8);
+        let (mut ccarry, mut cext_prev, mut tr_taken) = (0u64, 0u64, 0u64);
+        let mut prev = B::default();
+        for bi in 0..blocks {
+            let (b, b1) = (self.b[bi], self.b[bi + 1]);
+            let (qs, qd) = (b.sq & !b.esc, b.dq & !b.esc);
+            let runs = |q: u64, nq: u64, pq: u64| {
+                let (q1, q2, q3) = (q >> 1 | nq << 63, q >> 2 | nq << 62, q >> 3 | nq << 61);
+                (q & q1 & q2 & !(q << 1 | pq >> 63) & !q3, q & q1 & q2 & q3)
+            };
+            let (r3s, r4s) = runs(qs, b1.sq & !b1.esc, prev.sq & !prev.esc);
+            let (r3d, r4d) = runs(qd, b1.dq & !b1.esc, prev.dq & !prev.esc);
+            if r4s | r4d != 0 {
+                return false;
+            }
+            // 1. Triples.
+            let r3 = r3s | r3d;
+            let (tl, th, t1) = if r3 == 0 { hold(t0, 0) } else { run_from(&machine(r3s, r3d, 0), t0) };
+            let ta = tl | th;
+            let tb = ta << 1 | u64::from(t0 != 0);
+            let t_close = r3 & tb & !ta;
+            let t_open = r3 & !tb;
+            let tr = tb | ta | t_close << 1 | t_close << 2 | tr_taken;
+            tr_taken = t_close >> 62 | t_close >> 63;
+            // 2. One-line strings, outside the triples.
+            let (ex, ey) = (qs & !tr, qd & !tr);
+            let (sl, sh, s1) = if ex | ey == 0 { hold(s0, b.bare_lf) } else { run_from(&machine(ex, ey, b.bare_lf), s0) };
+            let sa = sl | sh;
+            let sb = sa << 1 | u64::from(s0 != 0);
+            // 3. Comments: a `#` in C outside the triples generates, every byte but a line end propagates.
+            let g = b.hash & !tr & !sb;
+            let a = !b.eol | g;
+            let (x, o1) = a.overflowing_add(g);
+            let (x, o2) = x.overflowing_add(ccarry);
+            ccarry = u64::from(o1 | o2);
+            let carries = x ^ a ^ g;
+            let comment = g | (a & carries);
+            // A comment reaches a line end where the byte below it is the comment's (or a `'\r'` just past it).
+            let cext = comment | (b.eol & !b.lf & (comment << 1 | cext_prev >> 63));
+            let lend = cext << 1 | cext_prev >> 63;
+            cext_prev = cext;
+            // The layers' guesses, checked.
+            let wrong = (t_open & (sb | comment))
+                | (b.bare_lf & sb & !tr & !lend)
+                | (b.lf & b.esc & sb & lend)
+                | (b.bt & !b.esc & !tr & !sb & !comment);
+            if wrong != 0 {
+                return false;
+            }
+            let s_open = (qs | qd) & !tr & !sb & !comment;
+            let s_region = (sb | sa) & !comment & !tr;
+            let Some((pre, starts)) = self.prefixes_b(bi, s_open | t_open) else { return false };
+            if bi > 0 {
+                self.b[bi - 1].code &= !(pre as u64);
+                self.b[bi - 1].sstart |= starts as u64;
+            }
+            self.b[bi].code = !(comment | s_region | tr | (pre >> 64) as u64);
+            self.b[bi].sstart = (starts >> 64) as u64;
+            (t0, s0, prev) = (t1, s1, b);
+        }
+        t0 == 0 && s0 == 0
+    }
+
+    /// The prefixes of the strings that open at `openers` (block `bi`): in a window of the block and the one below
+    /// it, the run of prefix letters just below each, by one addition in the window's reverse (carried up a run
+    /// from the opener's byte below it, stopped by the first byte not a letter), less the runs that stand on a word
+    /// byte (one more addition, from each such run's first byte): the runs' bits, and each string's first byte.
+    /// None where a run reaches the window's bottom (rare).
+    #[inline(always)]
+    fn prefixes_b(&self, bi: usize, openers: u64) -> Option<(u128, u128)> {
+        let o = win(0, openers);
+        let pw = if bi > 0 { self.b[bi - 1].word } else { 0 };
+        if (win(pw, self.b[bi].word) << 1) & o == 0 {
+            return Some((0, o));
+        }
+        let c = prefix_masks(self.src, bi, self.b[bi].word);
+        let p = if bi > 0 { prefix_masks(self.src, bi - 1, pw) } else { Pfx::default() };
+        let x = win(p.pfx, c.pfx).reverse_bits();
+        let g = (o.reverse_bits() << 1) & x;
+        let (sum, over) = x.overflowing_add(g);
+        if over {
+            return None;
+        }
+        let run = (x & !sum).reverse_bits();
+        let stop = (sum & !x).reverse_bits();
+        let bad = ((stop & win(p.ident, c.ident)) << 1) & run;
+        let run = run & run.wrapping_add(bad);
+        Some((run, (run & !(run << 1)) | (o & !(run << 1))))
+    }
+}
+
 /// A byte's class for the token reader's dispatch.
 const C_OP: u8 = 0;
 const C_NAME: u8 = 1;
@@ -920,16 +1078,50 @@ struct Walk<'s> {
     indents: Vec<u32>,
     /// As the lean lexer's (the scanner's flag).
     inside_interpolated_string: bool,
+    /// The format string being read (its quote, whether a triple), while its interiors are.
+    outer: Option<(u8, bool)>,
+    /// Whether stratum 2 was variant B's, which reads format strings as plain ones: where an interior holds a string
+    /// of the enclosing one-line string's quote, that reading is wrong, and the walk says so (`b_wrong`).
+    b: bool,
+    b_wrong: bool,
 }
 
-/// `src` lexed by the strata: the lean lexer's `lex`.
-pub(crate) fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
+/// Which stratum 2 a lexer of strata reads with: the plan's step, block by block (A), or no step inside a block
+/// (B).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Variant {
+    A,
+    B,
+}
+
+/// `src` lexed by the strata (the lean lexer's `lex`), stratum 2 by `v`. Where variant B's layers or the walk say B's reading is wrong
+/// (rare), the text is read by A.
+pub(crate) fn lex_with(src: &[u8], v: Variant) -> Result<Lexed, Refusal> {
     let mut t = Text { src, b: classes(src) };
-    t.regions()?;
+    let b = v == Variant::B && t.regions_b();
+    if !b {
+        if v == Variant::B {
+            t = Text { src, b: classes(src) };
+        }
+        t.regions()?;
+    }
     t.depth()?;
-    let mut w = Walk { t: t.m(), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false };
-    w.module()?;
-    Ok(Lexed { toks: w.toks, extras: w.extras })
+    let mut w = Walk { t: t.m(), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b, b_wrong: false };
+    match w.module() {
+        Err(_) if w.b_wrong => lex_with(src, Variant::A),
+        Err(r) => Err(r),
+        Ok(()) => Ok(Lexed { toks: w.toks, extras: w.extras }),
+    }
+}
+
+/// Whether variant B reads `src` itself, not by A (for a measurement of how often it does not).
+pub fn b_reads(src: &[u8]) -> bool {
+    let mut t = Text { src, b: classes(src) };
+    if !t.regions_b() || t.depth().is_err() {
+        return false;
+    }
+    let mut w = Walk { t: t.m(), toks: Vec::new(), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b: true, b_wrong: false };
+    w.module().is_ok() || !w.b_wrong
 }
 
 impl<'s> Walk<'s> {
@@ -1210,8 +1402,9 @@ impl<'s> Walk<'s> {
         let c = src[i];
         match CLASS[usize::from(c)] {
             C_NAME | C_HIGH => {
-                // A string's prefix only where stratum 2 found a string's start: a name is read at once.
-                if self.t.bit(i, |b| b.sstart)
+                // A string's prefix only where stratum 2 found a string's start (or, in an interior, where the name's
+                // run of prefix letters reaches a quote): a name is read at once.
+                if (self.t.bit(i, |b| b.sstart) || (self.depth > 0 && self.prefix_to_quote(i)))
                     && let Some((prefix, q)) = lex::string_prefix_at(src, i)
                 {
                     self.string(i, prefix, q)?;
@@ -1236,6 +1429,20 @@ impl<'s> Walk<'s> {
                 Ok(kind)
             }
         }
+    }
+
+    /// Whether the name at `i` (in an interior) is a string's prefix, by masks: its run of word bytes ends at a quote,
+    /// and each byte of the run is a prefix letter.
+    fn prefix_to_quote(&self, i: usize) -> bool {
+        let e = self.t.run_end(i, |b| b.word);
+        if !self.t.bit(e, |b| b.sq | b.dq | b.bt) || e - i > 64 {
+            return false;
+        }
+        let src = self.t.src;
+        let (bi, be) = (i >> 6, e >> 6);
+        let x = win(prefix_masks(src, bi, self.t.blk(bi).word).pfx, if be > bi { prefix_masks(src, be, self.t.blk(be).word).pfx } else { 0 });
+        let run = !(!0u128 << (e - i)) << (i & 63);
+        x & run == run
     }
 
     fn number(&mut self, i: usize) -> Result<T, Refusal> {
@@ -1274,6 +1481,19 @@ impl<'s> Walk<'s> {
     fn string(&mut self, i: usize, prefix: usize, q: Quote) -> Result<(), Refusal> {
         let src = self.t.src;
         let open = prefix + if q.triple { 3 } else { 1 };
+        if self.depth > 0 {
+            // A string in an interior: a format string there is refused (to tree-sitter), and one of the enclosing
+            // one-line string's quote is where B's plain reading of that string is wrong.
+            if q.format {
+                return Err(refuse(i));
+            }
+            if self.b && self.outer.is_some_and(|(oq, triple)| !triple && oq == q.quote) {
+                self.b_wrong = true;
+                return Err(refuse(i));
+            }
+        } else if q.format {
+            self.outer = Some((q.quote, q.triple));
+        }
         self.push(T::StrStart, i, i + open);
         self.inside_interpolated_string = q.format;
         let mut j = i + open;
@@ -1467,13 +1687,18 @@ pub enum Check {
     Differ(String, String),
 }
 
-/// The lexer of strata against the lean lexer on `src`.
+/// The lexer of strata (variant A) against the lean lexer on `src`.
 pub fn check(src: &[u8]) -> Check {
+    check_with(src, Variant::A)
+}
+
+/// The lexer of strata, stratum 2 by `v`, against the lean lexer on `src`.
+pub fn check_with(src: &[u8], v: Variant) -> Check {
     let at = |r: Refusal| match r {
         Refusal::Lex(at) | Refusal::Parse(at) => at,
         Refusal::TooLarge => u32::MAX,
     };
-    match (lex::lex(src), lex(src)) {
+    match (lex::lex(src), lex_with(src, v)) {
         (Err(_), Err(_)) => Check::BothRefuse,
         (Err(r), Ok(_)) => Check::LeanRefuses(at(r)),
         (Ok(_), Err(r)) => Check::StrataRefuses(at(r)),
@@ -1491,25 +1716,31 @@ pub fn check(src: &[u8]) -> Check {
     }
 }
 
-/// The strata up to `upto` alone (1: classes, 2: regions, 3: depth, 4: the whole lexer), for a measurement of
-/// each: a sum that keeps the work.
-pub fn upto(src: &[u8], upto: u8) -> usize {
+/// The strata up to `upto` alone (1: classes, 2: regions, 3: depth, 4: the whole lexer), stratum 2 by `v`, for a
+/// measurement of each: a sum that keeps the work.
+pub fn upto(src: &[u8], upto: u8, v: Variant) -> usize {
     let mut t = Text { src, b: classes(src) };
-    if upto >= 2 && t.regions().is_err() {
+    if upto >= 2 && v == Variant::B && t.regions_b() {
+    } else if upto >= 2 && t.regions().is_err() {
         return 0;
     }
     if upto >= 3 && t.depth().is_err() {
         return 0;
     }
     if upto >= 4 {
-        return token_count(src).unwrap_or(0);
+        return token_count_with(src, v).unwrap_or(0);
     }
     t.b.iter().map(|b| (b.code ^ b.depth0 ^ b.word) as usize).fold(0, usize::wrapping_add)
 }
 
 /// How many tokens and extras the strata lex `src` to (the lexer alone, for a measurement).
 pub fn token_count(src: &[u8]) -> Result<usize, Refusal> {
-    let l = lex(src)?;
+    token_count_with(src, Variant::A)
+}
+
+/// How many tokens and extras the strata lex `src` to, stratum 2 by `v`.
+pub fn token_count_with(src: &[u8], v: Variant) -> Result<usize, Refusal> {
+    let l = lex_with(src, v)?;
     Ok(l.toks.len() + l.extras.len())
 }
 
@@ -1606,14 +1837,80 @@ mod tests {
             "s = f'''\n{\n  x\n}\n'''\n",
             "é = 1\nxf'a'\n",
         ];
-        let bad: Vec<_> = texts.iter().map(|t| (t, check(t.as_bytes()))).filter(|(_, c)| *c != Check::Same).collect();
-        assert!(bad.is_empty(), "{bad:#?}");
+        for v in [Variant::A, Variant::B] {
+            let bad: Vec<_> = texts.iter().map(|t| (t, check_with(t.as_bytes(), v))).filter(|(_, c)| *c != Check::Same).collect();
+            assert!(bad.is_empty(), "{v:?}: {bad:#?}");
+        }
         // A text across many blocks: each region and bracket crossing a block's edge somewhere.
         let mut long = String::new();
         for k in 0..40 {
             long.push_str(&format!("x{k} = f(a, '{}', \"\"\"q\n{}\"\"\", # c ( {k}\n  [{}])  # e\n", "s".repeat(k), "t".repeat(k * 3), "1, ".repeat(k)));
         }
         assert_eq!(check(long.as_bytes()), Check::Same);
+        assert_eq!(check_with(long.as_bytes(), Variant::B), Check::Same);
+        assert!(b_reads(long.as_bytes()));
+    }
+
+    /// Variant B's layers on texts of quotes, comments and line ends, against the lean lexer: the same tokens, or
+    /// both refusing, whether B reads the text itself or A does.
+    #[test]
+    fn variant_b_is_the_lean_lexer() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let (mut own, mut all) = (0, 0);
+        for len in [10usize, 63, 64, 65, 130, 400] {
+            for _ in 0..300 {
+                let src: Vec<u8> = (0..len)
+                    .map(|_| {
+                        x ^= x << 13;
+                        x ^= x >> 7;
+                        x ^= x << 17;
+                        b"''''\\\"\"\"\"#\n\n  ab(rf{}x)"[(x >> 8) as usize % 23]
+                    })
+                    .collect();
+                let (a, b) = (check_with(&src, Variant::A), check_with(&src, Variant::B));
+                let ok = |c: &Check| matches!(c, Check::Same | Check::BothRefuse | Check::StrataRefuses(_));
+                assert!(ok(&b) && (a == b || matches!((&a, &b), (Check::StrataRefuses(_), Check::StrataRefuses(_)))), "{:?}: A {a:?}, B {b:?}", String::from_utf8_lossy(&src));
+                if a == Check::Same {
+                    all += 1;
+                    own += usize::from(b_reads(&src));
+                }
+            }
+        }
+        // Of the texts the lean lexer reads, B reads most itself.
+        assert!(own * 2 > all, "B read {own} of {all} itself");
+    }
+
+    /// The three-state machine against the same machine stepped byte by byte.
+    #[test]
+    fn the_machine_is_the_stepped_machine() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        let mut r = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        for _ in 0..2000 {
+            let (a, b2, c, d, e) = (r(), r(), r(), r(), r());
+            let (ex, ey, rs) = (a & b2 & !c, a & !b2 & c, !a & b2 & d & e);
+            let f = machine(ex, ey, rs);
+            for s0 in 0..3u8 {
+                let (lo, hi, last) = run_from(&f, s0);
+                let mut s = s0;
+                for i in 0..64 {
+                    let bit = |m: u64| m >> i & 1 == 1;
+                    s = match s {
+                        0 if bit(ex) => 1,
+                        0 if bit(ey) => 2,
+                        1 if bit(ex) || bit(rs) => 0,
+                        2 if bit(ey) || bit(rs) => 0,
+                        _ => s,
+                    };
+                    assert_eq!((lo >> i & 1) as u8 | ((hi >> i & 1) as u8) << 1, s, "from {s0}, byte {i}");
+                }
+                assert_eq!(last, s);
+            }
+        }
     }
 
     #[test]
