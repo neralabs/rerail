@@ -59,6 +59,7 @@ pub mod normalized;
 use core_rr::Family;
 pub mod guests;
 pub mod granules;
+pub mod paths;
 mod units;
 pub mod ranks;
 pub mod tokens;
@@ -1491,6 +1492,8 @@ pub struct Dialect {
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rerail` file's).
     values: bool,
+    /// Its node path tables as its codes (`paths::Codes`, decision 0722).
+    pub paths: paths::Codes,
     /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
     /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
     grammar: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
@@ -1525,7 +1528,8 @@ impl Dialect {
             .collect();
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, grammar })
+        let paths = paths::Codes::new(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).path_tables(), &names, &|f| catalog.field_id(f), catalog.field_count());
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, paths, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {

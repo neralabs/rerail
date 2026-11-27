@@ -827,6 +827,8 @@ pub trait LanguageBase: Send + Sync {
     fn parsed_by_forte(&self) -> bool;
     /// The kinds of its parenthesized expressions (`ScopeRules::PAREN_KINDS`).
     fn paren_kinds(&self) -> &'static [&'static str];
+    /// Its node path tables (`Adapter::NODE_PATH`, decision 0722).
+    fn path_tables(&self) -> &'static crate::code_rule_dsl::path_tables::PathTables;
 }
 
 /// `family`'s base, where its pack is registered (a family left out of the build has none).

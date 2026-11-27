@@ -48,6 +48,13 @@ impl Adapter for Rr {
     const STRIPS_BOM: bool = false;
     /// `.rerail` files have no suppression comments, so no `rerail-ignore` directives either.
     const COMMENT_KINDS: &'static [&'static str] = &[];
+    // Node paths' tables (decision 0722): the slots generated into `rr_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("rr_paths.rs"),
+        lists: &[],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;

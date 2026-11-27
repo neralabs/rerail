@@ -21,6 +21,13 @@ impl Adapter for Blade {
     /// A template's `<!-- -->` (`comment`) and `{{-- --}}` (`blade_comment`); its embedded PHP's
     /// are read with PHP's family.
     const COMMENT_KINDS: &'static [&'static str] = &["comment", "blade_comment"];
+    // Node paths' tables (decision 0722): the slots generated into `blade_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("blade_paths.rs"),
+        lists: &[],
+        labels: &[],
+    };
     /// A `{{-- --}}` counts as a token of the template.
     const WALK_COMMENT_KINDS: &'static [&'static str] = &["comment"];
     const PARSED_BY_FORTE: bool = true;
