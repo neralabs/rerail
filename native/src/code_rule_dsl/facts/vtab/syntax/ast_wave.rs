@@ -101,7 +101,8 @@ struct MatcherWave {
 }
 
 /// What a wave's launch returns: per matcher, per tape, the matched roots; how it ran; its wall seconds on the lane.
-type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
+type WaveOutput = (Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64);
+type WaveFound = Result<WaveOutput, String>;
 
 /// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
 /// executor's learned rates once it has measured the form. Measured over the data layer (M5, under load): the cores
@@ -224,6 +225,8 @@ fn runs_on(m: &Matcher, tape: &WaveTape, errors: &crate::code_rule_dsl::soundnes
     m.gates.iter().all(|g| g.holds(&tape.3, source)) && m.captor.grammar.admits_source(source, errors, &mut rustc_hash::FxHashMap::default())
 }
 
+type RootsAndLimits = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
+
 /// The wave's roots per matcher, per tape of `docs`, and the (matcher, tape) pairs over the work limit; no roots
 /// where no matcher runs.
 fn launch(
@@ -233,7 +236,7 @@ fn launch(
     metal: bool,
     nodes: u64,
     matchers: usize,
-) -> StoreResult<(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>)> {
+) -> StoreResult<RootsAndLimits> {
     use crate::code_rule_dsl::logic::profile;
     if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         return Ok((vec![vec![BTreeSet::new(); docs.len()]; matchers], Vec::new()));
@@ -251,7 +254,7 @@ fn launch(
 }
 
 /// `program` launched on the executor (the GPU's lane where `metal`): its roots, how it ran, its wall seconds.
-fn run_wave(program: MatcherWave, metal: bool) -> StoreResult<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64)> {
+fn run_wave(program: MatcherWave, metal: bool) -> StoreResult<WaveOutput> {
     let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
     let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
     let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;
