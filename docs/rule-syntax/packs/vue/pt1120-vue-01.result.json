@@ -1,0 +1,6 @@
+[
+  { "id": "eslint-plugin-vue-no-watch-after-await", "status": "same" },
+  { "id": "eslint-plugin-vue-require-valid-default-prop", "status": "same" },
+  { "id": "eslint-plugin-vue-return-in-computed-property", "status": "same" },
+  { "id": "eslint-plugin-vue-valid-v-for", "status": "same" }
+]

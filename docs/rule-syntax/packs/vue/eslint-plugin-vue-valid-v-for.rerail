@@ -1,10 +1,11 @@
-.policy "eslint-plugin-vue-valid-v-for" revision 2
+.policy "eslint-plugin-vue-valid-v-for" revision 3
 .description "Write v-for directives with a value, valid aliases and no argument or modifiers, and key components in a loop with the loop variables."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rerail"
-//   vdir(e, a, d, arg), vmods(a, m), vval(a, v), vfor_alias(a, i, p), tvar(e, x, id, k), tref(r, x, a)
+#include "vue/template.rerail"
+#include "vue/vue-02.rerail"
+//   vdir(e, a, d, arg), vmods(a, m), vval(a, v), vel_parent(e, p), vcustom(e), vv_binding(n), host_node(n, h)
 
 // eslint-plugin-vue's valid-v-for. On each v-for:
 //   v-for:arg="…"  v-for.mod="…"  v-for=""                no argument, no modifier, a value (a value that is not
@@ -14,6 +15,8 @@
 // and on the element it repeats (a keyless <template> hands the check to each child element):
 //   <my-item v-for="x in xs" />                             a custom component needs :key
 //   <li v-for="x in xs" :key="id" />                        :key must read a variable of this v-for
+// The aliases, the :key's names and a child v-for's list are read in the component's view (vue/view): a v-for is
+// `(SRC), (ALIAS) => { E };` there. A clause reaches the view by naming `guest` (vue/vue-02).
 .violation valid_v_for(at: node, msg: symbol) code "vue/valid-v-for" "{msg}"
     suppress eslint "vue/valid-v-for"
 valid_v_for(n, "'v-for' directives require no argument.") :- vfor_dir(_, a), child(a, n, _), kind(n, "directive_value").
@@ -21,7 +24,9 @@ valid_v_for(m, "'v-for' directives require no modifier.") :- vfor_dir(_, a), vmo
 valid_v_for(a, "'v-for' directives require that attribute value.") :- vfor_dir(_, a), !has_value(a).
 valid_v_for(v, msg) :- alias_text(a, _), vval(a, v), !option("allowEmptyAlias", "true"), empty_alias(a, w),
     empty_message(w, msg).
-valid_v_for(p, cat("Invalid alias '", t, "'.")) :- slot(a, p, n), (n = 1 ; n = 2), !kind(p, "identifier"), text(p, t).
+valid_v_for(p, cat("Invalid alias '", t, "'.")) :- alias_item(a, _, t), docof(p, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), host_node(p, h),
+    within(h, a), for_alias(p), text(p, t), !plain_alias(p).
 valid_v_for(t, "Custom elements in iteration require 'v-bind:key' directives.") :- checked(_, e), vcustom(e),
     !vhas_dir(e, "bind", "key"), vel_tag(e, t).
 valid_v_for(k, "Expected 'v-bind:key' directive to use the variables which are defined by the 'v-for' directive.") :-
@@ -45,6 +50,21 @@ empty_alias(a, "index") :- alias_text(a, s),
 empty_message("value", "Name the empty value alias in this v-for, such as `(item, index) in items`.").
 empty_message("key", "Name the empty key alias in this v-for, such as `(value, key) in object`.").
 empty_message("index", "Name the empty index alias in this v-for, such as `(value, key, index) in object`.").
+// alias_item(a, n, t): the alias in slot n (1: the key, 2: the index) of v-for a, as written, trimmed, holes counted:
+// `{k}` is slot 1 of `(v, {k})`, `i` slot 2 of `(v, , i)`. Its view parameter is the one with that text.
+.decl alias_item(a: node, n: number, t: symbol)
+alias_item(a, 1, t) :- alias_text(a, s),
+    match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*(?<t>(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*?)\\s*(?:,[\\s\\S]*)?", s), t != "".
+alias_item(a, 2, t) :- alias_text(a, s),
+    match("(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*,\\s*(?<t>(?:[^,{}\\[\\]]|\\{[^{}]*\\}|\\[[^\\[\\]]*\\])*?)\\s*(?:,[\\s\\S]*)?", s), t != "".
+// for_alias(p): p is a parameter of a v-for's arrow; plain_alias(p): it is a name (ESTree's Identifier).
+.decl for_alias(p: node)
+for_alias(p) :- child(ps, p, _), kind(ps, "formal_parameters"), field(arr, "parameters", ps), for_arrow(arr).
+.decl plain_alias(p: node)
+plain_alias(p) :- kind(p, "identifier").
+plain_alias(p) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), !field(p, "value", _).
+.decl for_arrow(arr: node)  // a v-for's arrow: `(SRC), (ALIAS) => { E }`, a slot's is a statement's own
+for_arrow(arr) :- kind(arr, "arrow_function"), child(s, arr, _), kind(s, "sequence_expression").
 
 // checked(a, e): checkKey(v-for a, e) runs: e has a, or e is a child element of a checked keyless <template>, unless
 // the child's own v-for reads a's variables (its own v-for then checks it).
@@ -52,26 +72,105 @@ empty_message("index", "Name the empty index alias in this v-for, such as `(valu
 checked(a, e) :- vfor_dir(e, a).
 checked(a, c) :- checked(a, e), vel_name(e, "template"), !vhas_dir(e, "bind", "key"), vel_parent(c, e),
     !child_for_uses(a, c).
+// child_for_uses(a, c): c, inside a's element, has a v-for whose list reads a variable of a (by name, as the plugin).
+// c is in a's element, as its reader's child is: without it, every v-for of the corpus naming x (decision 0652).
 .decl child_for_uses(a: node, c: node)
-// c is in e, as its reader's child is: without it, every v-for of the corpus naming x (decision 0652).
-child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), within(c, e), tref(_, x, b), tvar(e, x, _, "v-for").
+child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, _), within(c, e), docof(r, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), src_reads(r, x),
+    host_node(r, h), within(h, c), for_var(a, x).
+// key_uses(k, a): the :key directive k reads a variable of v-for a, by name.
 .decl key_uses(k: node, a: node)
-key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), tref(_, x, k), vfor_dir(f, a), tvar(f, x, _, "v-for").
+key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), docof(r, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), reads(r, x),
+    host_node(r, h), (h = k ; within(h, k)), !local(r, k), for_var(a, x).
+// for_var(a, x): v-for a declares x (vue-eslint-parser's variables of kind "v-for": every name its alias binds).
+// The arrow's host node is the element, or its self-closing tag, which spans the same bytes (host_node is the
+// innermost node).
+.decl for_var(a: node, x: symbol)
+for_var(a, x) :- vfor_dir(f, a), docof(arr, g),
+    (guest(g, _, _, "javascript") ; guest(g, _, _, "typescript") ; guest(g, _, _, "tsx")), host_node(arr, h),
+    (h = f ; vel_tag(f, h)), for_arrow(arr), field(arr, "parameters", ps), within(n, ps), vv_binding(n), text(n, x).
+// reads(r, x): r reads the name x: an identifier, or a shorthand `{ x }`, that declares nothing.
+.decl reads(r: node, x: symbol)
+reads(r, x) :- (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), text(r, x), !vv_binding(r).
+// src_reads(r, x): r reads x in the list of a v-for: the first of its sequence `(SRC), (ALIAS) => …`.
+.decl src_reads(r: node, x: symbol)
+src_reads(r, x) :- reads(r, x), within(r, p), child(s, p, 0), kind(s, "sequence_expression"), child(s, arr, _),
+    for_arrow(arr).
+// local(r, k): r reads a parameter of a function inside the :key's own code: `:key="ids.find(i => i)"` reads no i.
+.decl local(r: node, k: node)
+local(r, k) :- reads(r, x), within(r, f), (field(f, "parameters", ps), within(n, ps), vv_binding(n) ;
+    field(f, "parameter", n)), text(n, x), host_node(f, h), (h = k ; within(h, k)).
 
-// slot(a, p, n): alias p is written in slot n of v-for a, holes counted: in `(v, , {i})`, {i} is in slot 2. The slot
-// is the number of commas before p at the top of the alias list: the commas between each item and the one before.
-.decl slot(a: node, p: node, n: number)
-slot(a, p, k) :- vfor_alias(a, 0, p), commas(p, k).
-slot(a, p, n + k) :- slot(a, q, n), vfor_pattern(a, l), child(l, q, i), child(l, p, i + 1), commas(p, k).
-.decl commas(p: node, k: number)
-// The commas in the source before p (a single separator the tape leaves out), and the stored ones between p and the
-// item before it (or the list's start): a gap holding a hole is not the implied word, so the tape keeps its commas.
-commas(p, k) :- vfor_alias(_, _, p), item_from(p, l, lo), node(_, p, _, ps, _), structural_before(p, g),
-    x = strlen(g) - strlen(@replace_all(g, ",", "")), y = count : { list_comma(l, s), s >= lo, s < ps }, k = x + y.
-.decl item_from(p: node, l: node, lo: number)
-item_from(p, l, lo) :- vfor_pattern(_, l), child(l, p, 0), node(_, l, _, lo, _).
-item_from(p, l, lo) :- vfor_pattern(_, l), child(l, q, i), child(l, p, i + 1), node(_, q, _, _, lo).
-.stored list_comma "a gap holding a hole is not the implied word, so the tape keeps its commas"
-.decl list_comma(l: node, s: number)
-list_comma(l, s) :- vfor_pattern(_, l), token(l, _, ",", s, _).
-
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected line is ESLint's. The same-name `:key`
+// reads its name; a :key's own arrow parameter is no v-for variable; slots 1 and 2 must be names (a multi-line alias
+// is reported on its own line); a keyless <template>'s children are checked against its v-for, unless their own
+// v-for's list reads its variables; self-closing elements (the view's arrow is placed at their tag).
+.test pt1120_keys_and_aliases exactly
+    .fixture "v1.vue" ```
+        <template>
+          <div>
+            <li v-for="key in xs" :key />
+            <li v-for="item in xs" :key="ids.find(item => item)" />
+            <li v-for="item in xs" :key="ids.find(i => i === item)" />
+            <li v-for="a, b in xs" :key="b" />
+            <li v-for="(a, {b}) in xs" :key="a" />
+            <li v-for="(a,
+               [c]) in xs" :key="a" />
+            <li v-for="({ id }, i) in xs" :key="id" />
+            <li v-for="(a, b = 1) in xs" :key="a" />
+            <li v-for="(a, b, c = 1) in xs" :key="a" />
+            <li v-for="({ k: [m] }) in xs" :key="m" />
+            <li v-for="x in xs" :key="{ x }" />
+            <li v-for="x in xs" :key="obj.x" />
+          </div>
+        </template>
+        ```
+    .fixture "v2.vue" ```
+        <template>
+          <div>
+            <template v-for="x in xs">
+              <li :key="x.id" />
+              <my-comp />
+              <li v-for="y in x.ys" :key="y" />
+              <li v-for="z in zs" :key="z" />
+              <template v-for="w in x.ws"><span :key="x" /></template>
+              <template><b :key="q" /></template>
+            </template>
+            <template v-for="x in xs" :key="x"><my-comp /></template>
+            <my-comp v-for="x in xs" v-slot="{ x: y }" :key="y" />
+            <div v-for="(, i) in xs" :key="i" />
+            <div v-for="(a, , i) in xs" :key="i" />
+            <div v-for="(a, i,) in xs" :key="i" />
+          </div>
+        </template>
+        ```
+    .fixture "v3.vue" ```
+        <script setup lang="ts">
+        const xs = [1]
+        </script>
+        <template>
+          <div>
+            <li v-for="(x, i) in xs" :key="i as number" />
+            <li v-for="(x, {i}) in xs" :key="x" />
+            <Comp v-for="x in xs" />
+            <Comp v-for="x in xs" :key="foo(x)" />
+          </div>
+        </template>
+        ```
+    .expect "vue/valid-v-for" at "v1.vue":4
+    .expect "vue/valid-v-for" at "v1.vue":7
+    .expect "vue/valid-v-for" at "v1.vue":9
+    .expect "vue/valid-v-for" at "v1.vue":11
+    .expect "vue/valid-v-for" at "v1.vue":12
+    .expect "vue/valid-v-for" at "v1.vue":15
+    .expect "vue/valid-v-for" at "v2.vue":5
+    .expect "vue/valid-v-for" at "v2.vue":7
+    .expect "vue/valid-v-for" at "v2.vue":8
+    .expect "vue/valid-v-for" at "v2.vue":9
+    .expect "vue/valid-v-for" at "v2.vue":12
+    .expect "vue/valid-v-for" at "v2.vue":13
+    .expect "vue/valid-v-for" at "v2.vue":14
+    .expect "vue/valid-v-for" at "v3.vue":7
+    .expect "vue/valid-v-for" at "v3.vue":8
+.end

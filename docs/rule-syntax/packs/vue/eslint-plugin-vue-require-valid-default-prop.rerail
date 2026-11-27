@@ -1,10 +1,10 @@
-.policy "eslint-plugin-vue-require-valid-default-prop" revision 2
+.policy "eslint-plugin-vue-require-valid-default-prop" revision 3
 .description "Give each Vue prop a default value of the type it declares; an Object, Array or Function default must come from a factory function."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vopt(o, x, h, v), vprops_call(c), vmacro(c, x), vunwrap(e, x), key_static(k, x), call_arg(c, a, i)
+#include "vue/vue-01.rerail"
+//   vopt(o, x, h, v), vprops_call(c), vmacro(c, x), vunwrap(e, x), key_static(k, x), call_arg(c, a, i), vjs(n), vts(n)
 
 // eslint-plugin-vue's require-valid-default-prop. No options. A prop is checked when its type names one of the
 // native constructors (String, Number, Boolean, Function, Object, Array, Symbol, BigInt) and it has a default:
@@ -15,16 +15,21 @@
 // second argument and from destructuring, `const { n = 1 } = defineProps(…)`, where a factory is reported too),
 // and defineModel's options. Props declared only by a TypeScript type (defineProps<T>(), defineModel<T>()) are not
 // read: their runtime types need type inference.
+// The component's code is its view (vue/vue-01): a relation read with a seeded node is copied for the view's grammar,
+// with every relation it reads, so the search is seeded once per grammar, here; bad(at, x, t) is the rule.
 .violation invalid(at: node, x: symbol, t: symbol) code "vue/require-valid-default-prop"
     "Type of the default value for '{x}' prop must be a {t}." suppress eslint "vue/require-valid-default-prop"
-invalid(e, x, t) :- dflt(p, e, src), fn_type(e, _), !native(p, _, "Function"), src = "assignment", says(p, "plain", x, t).
-invalid(b, x, t) :- dflt(p, e, _), fn_type(e, "expression"), !native(p, _, "Function"), field(e, "body", w),
+invalid(at, x, t) :- vjs(at), bad(at, x, t).
+invalid(at, x, t) :- vts(at), bad(at, x, t).
+.decl bad(at: node, x: symbol, t: symbol)
+bad(e, x, t) :- dflt(p, e, src), fn_type(e, _), !native(p, _, "Function"), src = "assignment", says(p, "plain", x, t).
+bad(b, x, t) :- dflt(p, e, _), fn_type(e, "expression"), !native(p, _, "Function"), field(e, "body", w),
     deparen(w, b), default_type(b, y), !native(p, _, y), src_not_assignment(p, e), says(p, "plain", x, t).
-invalid(a, x, t) :- dflt(p, e, _), fn_type(e, "block"), !native(p, _, "Function"), src_not_assignment(p, e),
+bad(a, x, t) :- dflt(p, e, _), fn_type(e, "block"), !native(p, _, "Function"), src_not_assignment(p, e),
     returns(e, a), default_type(a, y), !native(p, _, y), says(p, "plain", x, t).
-invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), !native(p, _, y), mode(src, m),
+bad(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), !native(p, _, y), mode(src, m),
     says(p, m, x, t).
-invalid(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), native(p, _, y), src != "assignment",
+bad(e, x, t) :- dflt(p, e, src), default_type(e, y), !fn_type(e, _), native(p, _, y), src != "assignment",
     factory_type(y), says(p, "factory", x, t).
 .decl src_not_assignment(p: node, e: node)
 src_not_assignment(p, e) :- dflt(p, e, src), src != "assignment".
@@ -121,3 +126,69 @@ joined(p, m, j, cat(t, " or ", u)) :- joined(p, m, i, t), once(p, j, y), j > i, 
 shown("plain", y, @lower(y)) :- native_type(y).
 shown("factory", y, "function") :- factory_type(y).
 shown("factory", y, @lower(y)) :- native_type(y), !factory_type(y).
+
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected finding is ESLint's, one per default (two
+// on d2's line 2: n and s; three on d3's: a, b and c). Every source of a default, in JavaScript and TypeScript views.
+.test pt1120_defaults_by_source exactly
+    .fixture "d1.vue" ```
+        <script setup lang="ts">
+        const props = defineProps({
+          a: { type: Number, default: '' },
+          b: { type: Object, default: {} },
+          c: { type: Array, default: () => 1 },
+          d: { type: [String, Number], default: true },
+          e: { type: Function, default: 1 },
+          f: { type: Object as PropType<X>, default: [] },
+          g: { type: BigInt, default: 1n },
+          h: { type: Number, default() { return 'x' } },
+        })
+        </script>
+        ```
+    .fixture "d2.vue" ```
+        <script setup>
+        const { n = 'x', o = {}, s = () => 'y', ok = 1 } = defineProps({ n: Number, o: Object, s: String, ok: Number })
+        </script>
+        ```
+    .fixture "d3.vue" ```
+        <script setup lang="ts">
+        const p = withDefaults(defineProps({ a: Number, b: Array, c: { type: String } }), { a: 'z', b: [], c: () => 1 })
+        const m = defineModel('m', { type: String, default: 1 })
+        const v = defineModel({ type: Array, default: [] })
+        const t = defineProps<{ q?: number }>()
+        </script>
+        ```
+    .fixture "d4.vue" ```
+        <script>
+        export default {
+          props: {
+            a: { type: String, default: 1 },
+            b: { type: Object, default: () => [] },
+            c: { type: Array, default: function () { if (x) { return {} } return [] } },
+            d: { type: Boolean, default: 'no' },
+            e: { type: Symbol, default: Symbol('x') },
+            f: { type: String, default: `t` },
+            g: { type: Number, default: (1) },
+            h: { type: RegExp, default: /x/ },
+          }
+        }
+        </script>
+        ```
+    .expect "vue/require-valid-default-prop" at "d1.vue":3
+    .expect "vue/require-valid-default-prop" at "d1.vue":4
+    .expect "vue/require-valid-default-prop" at "d1.vue":5
+    .expect "vue/require-valid-default-prop" at "d1.vue":6
+    .expect "vue/require-valid-default-prop" at "d1.vue":7
+    .expect "vue/require-valid-default-prop" at "d1.vue":8
+    .expect "vue/require-valid-default-prop" at "d1.vue":10
+    .expect "vue/require-valid-default-prop" at "d2.vue":2
+    .expect "vue/require-valid-default-prop" at "d2.vue":2
+    .expect "vue/require-valid-default-prop" at "d3.vue":2
+    .expect "vue/require-valid-default-prop" at "d3.vue":2
+    .expect "vue/require-valid-default-prop" at "d3.vue":2
+    .expect "vue/require-valid-default-prop" at "d3.vue":3
+    .expect "vue/require-valid-default-prop" at "d3.vue":4
+    .expect "vue/require-valid-default-prop" at "d4.vue":4
+    .expect "vue/require-valid-default-prop" at "d4.vue":5
+    .expect "vue/require-valid-default-prop" at "d4.vue":6
+    .expect "vue/require-valid-default-prop" at "d4.vue":7
+.end
