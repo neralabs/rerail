@@ -13,7 +13,20 @@
 
 .violation PYI005(at: node, msg: symbol) code "PYI005" "{msg}"
     suppress ruff "PYI005"
-PYI005(c, m) :- stub_test(c), vi_cmp(c, f, o, r), (o = "==" ; o = "!="), tuple_len(r, k), wants(f, n, m), k != n.
+PYI005(c, m) :- stub_test(c), vi_cmp(c, f, o, r), (o = "==" ; o = "!="), vi_tuple_len(r, k), wants(f, n, m), k != n.
 .decl wants(form: symbol, n: number, msg: symbol)  // the slice, the tuple length it compares with
 wants("slice1", 1, "Match the slice to the tuple length: use `sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`; as written the result ignores the version.").
 wants("slice2", 2, "Match the slice to the tuple length: use `sys.version_info[0] == 3` for the major version only, or a tuple such as `(3, 9)` with `[:2]`; as written the result ignores the version.").
+
+// Ruff 0.17.6: PYI005 at line 2 only. Before: PYI005 at line 4 (the `\` a third element), nothing at line 2 (the
+// `\` split the comparison).
+.test line_continuations exactly
+    .fixture "a.pyi" ```
+        import sys
+        if sys.version_info[:2] \
+                == (3,): ...
+        if sys.version_info[:2] == (3, \
+            8): ...
+        ```
+    .expect PYI005 at "a.pyi":2
+.end

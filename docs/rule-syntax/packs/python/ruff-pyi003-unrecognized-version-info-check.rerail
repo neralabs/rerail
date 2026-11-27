@@ -21,8 +21,53 @@ PYI003(c, "Index `sys.version_info` only with `[0]`, `[:1]` or `[:2]`, or compar
 PYI003(c, "Compare `sys.version_info[0]` against an integer literal such as `3`; type checkers do not understand other comparands.") :-
     stub_version_test(c, "major", r), !pyi_int(r).
 PYI003(c, "Compare `sys.version_info` against a tuple of integer literals such as `(3, 10)`; type checkers do not understand other comparands.") :-
-    stub_version_test(c, f, r), f != "other", f != "major", !int_tuple(r, _).
+    stub_version_test(c, f, r), f != "other", f != "major", !vi_int_tuple(r, _).
 // stub_version_test(c, form, r): the stub `if` test c (or an operand of its and/or) compares sys.version_info. The
 // index is read as Ruff's AST has it: `[:(1)]` is `[:1]`, and a comment in the slice or the comparison is nothing.
 .decl stub_version_test(c: node, form: symbol, r: node)
 stub_version_test(c, f, r) :- stub_test(c), vi_cmp(c, f, _, r).
+
+// Ruff 0.17.6: no PYI003 (line 6 is PYI004). Before: PYI003 at lines 2, 4 and 6 (the `\` an element, not an int).
+.test a_line_continuation_is_no_element
+    .fixture "a.pyi" ```
+        import sys
+        if sys.version_info >= (3, \
+            8): ...
+        if sys.version_info[:2] == (3, \
+            8): ...
+        if sys.version_info >= (3, 8, \
+            1): ...
+        ```
+    .expect no PYI003
+.end
+
+// Ruff 0.17.6: PYI003 at line 9 only.
+.test line_continuations_in_tests exactly
+    .fixture "b.pyi" ```
+        import sys
+        if sys.version_info >= (3, 8) and \
+                sys.platform == "linux": ...
+        if sys.version_info >= \
+                (3, 8, 1): ...
+        if sys.version_info[:2] \
+                == (3,): ...
+        if sys.version_info[:2] == (3, 8) or \
+                sys.version_info[0] == "3": ...
+        ```
+    .expect PYI003 at "b.pyi":9
+.end
+
+// Ruff 0.17.6: PYI003 at lines 2 and 4 (a tuple index). Before: nothing (the comment hid the trailing comma).
+.test a_trailing_comma_before_a_comment_is_a_tuple exactly
+    .fixture "c.pyi" ```
+        import sys
+        if sys.version_info[0,  # c
+            ] == 3: ...
+        if sys.version_info[:2,  # c
+            ] == (3, 8): ...
+        if sys.version_info[0  # a, b
+            ] == 3: ...
+        ```
+    .expect PYI003 at "c.pyi":2
+    .expect PYI003 at "c.pyi":4
+.end

@@ -13,4 +13,20 @@
 
 .violation PYI004(at: node) code "PYI004" "Compare against the major and minor version only, such as `(3, 8)` instead of `(3, 8, 1)`, picking the minor version this branch should cover; type checkers ignore patch versions."
     suppress ruff "PYI004"
-PYI004(c) :- stub_test(c), vi_cmp(c, f, _, r), f != "other", f != "major", int_tuple(r, k), k > 2.
+PYI004(c) :- stub_test(c), vi_cmp(c, f, _, r), f != "other", f != "major", vi_int_tuple(r, k), k > 2.
+
+// Ruff 0.17.6: PYI004 at lines 2 and 6. Before: nothing (line 2's `\` split the comparison, line 6's was an
+// element that is no int).
+.test line_continuations exactly
+    .fixture "a.pyi" ```
+        import sys
+        if sys.version_info >= \
+                (3, 8, 1): ...
+        if sys.version_info >= (3, \
+            8): ...
+        if sys.version_info >= (3, 8, \
+            1): ...
+        ```
+    .expect PYI004 at "a.pyi":2
+    .expect PYI004 at "a.pyi":6
+.end
