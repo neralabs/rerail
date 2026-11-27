@@ -21,8 +21,8 @@ pub struct Masks {
     pub o_fd3: Vec<u64>,
     pub i_open: Vec<u64>,
     pub rd0_part0: Vec<u64>,
-    pub e_any: Vec<u64>,
-    pub e_last: Vec<u64>,
+    pub rd0_part1: Vec<u64>,
+    pub escape_sequence_last: Vec<u64>,
     pub rd0_part2: Vec<u64>,
     pub esc_ib: Vec<u64>,
     pub rd0_closes0: Vec<u64>,
@@ -307,6 +307,7 @@ struct Stage1 {
     m_exp_l: Vec<u64>,
     m_punct: Vec<u64>,
     m_junk: Vec<u64>,
+    m_pair_byte_5c: Vec<u64>,
     m_p1: Vec<u64>,
     m_p2: Vec<u64>,
     m_raw_q: Vec<u64>,
@@ -330,35 +331,36 @@ struct Stage1 {
     t19: Vec<u64>,
     t20: Vec<u64>,
     m_b_open: Vec<u64>,
-    t39: Vec<u64>,
-    t43: Vec<u64>,
+    t37: Vec<u64>,
+    t41: Vec<u64>,
     m_num_run: Vec<u64>,
-    t45: Vec<u64>,
-    t46: Vec<u64>,
+    t43: Vec<u64>,
+    t44: Vec<u64>,
     m_two_start: Vec<u64>,
     m_two_start_three: Vec<u64>,
-    t50: Vec<u64>,
-    t61: Vec<u64>,
-    t62: Vec<u64>,
-    t66: Vec<u64>,
+    t48: Vec<u64>,
+    m_escape_sequence_ok: Vec<u64>,
     t67: Vec<u64>,
     t68: Vec<u64>,
-    t77: Vec<u64>,
+    t72: Vec<u64>,
+    t73: Vec<u64>,
+    t74: Vec<u64>,
     t84: Vec<u64>,
-    t86: Vec<u64>,
-    t85: Vec<u64>,
-    t87: Vec<u64>,
-    t92: Vec<u64>,
+    t91: Vec<u64>,
     t93: Vec<u64>,
+    t92: Vec<u64>,
     t94: Vec<u64>,
-    t95: Vec<u64>,
-    t96: Vec<u64>,
-    t97: Vec<u64>,
-    t99: Vec<u64>,
     t100: Vec<u64>,
     t101: Vec<u64>,
     t102: Vec<u64>,
     t103: Vec<u64>,
+    t104: Vec<u64>,
+    t105: Vec<u64>,
+    t107: Vec<u64>,
+    t108: Vec<u64>,
+    t109: Vec<u64>,
+    t110: Vec<u64>,
+    t111: Vec<u64>,
     fw_rd0_close: Vec<u64>,
     fw_rd1_close: Vec<u64>,
     refused: bool,
@@ -411,6 +413,16 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut p_m_eq = 0u64;
     let mut v_m_conv_l = 0u64;
     let mut p_m_conv_l = 0u64;
+    let mut v_m_esc_one = 0u64;
+    let mut p_m_esc_one = 0u64;
+    let mut v_m_hex = 0u64;
+    let mut p_m_hex = 0u64;
+    let mut v_m_x_l = 0u64;
+    let mut p_m_x_l = 0u64;
+    let mut v_m_u_l = 0u64;
+    let mut p_m_u_l = 0u64;
+    let mut v_m_uu_l = 0u64;
+    let mut p_m_uu_l = 0u64;
     let mut v_m_sign = 0u64;
     let mut p_m_sign = 0u64;
     let mut v_m_zero = 0u64;
@@ -449,6 +461,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut p_m_pair_byte_40 = 0u64;
     let mut v_m_pair_byte_3a = 0u64;
     let mut p_m_pair_byte_3a = 0u64;
+    let mut v_m_pair_byte_5c = 0u64;
+    let mut p_m_pair_byte_5c = 0u64;
     let mut v_m_pw = 0u64;
     let mut p_m_pw = 0u64;
     let mut v_m_p2 = 0u64;
@@ -471,24 +485,24 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut v_t27 = 0u64;
     let mut v_t28 = 0u64;
     let mut v_t29 = 0u64;
-    let mut v_t43 = 0u64;
-    let mut p_t43 = 0u64;
-    let mut v_t48 = 0u64;
-    let mut p_t48 = 0u64;
-    let mut c_t47 = 0u64;
+    let mut v_t41 = 0u64;
+    let mut p_t41 = 0u64;
+    let mut v_t46 = 0u64;
+    let mut p_t46 = 0u64;
+    let mut c_t45 = 0u64;
     let mut v_m_two_start = 0u64;
     let mut p_m_two_start = 0u64;
     let mut r_m_two_start = [0u64; RING];
     let mut v_m_two_start_three = 0u64;
     let mut p_m_two_start_three = 0u64;
-    let mut v_t61 = 0u64;
-    let mut v_t63 = 0u64;
-    let mut v_t64 = 0u64;
-    let mut v_t65 = 0u64;
-    let mut c_t80 = 0u64;
-    let mut v_t86 = 0u64;
-    let mut p_t86 = 0u64;
-    let mut r_t86 = [0u64; RING];
+    let mut v_t67 = 0u64;
+    let mut v_t69 = 0u64;
+    let mut v_t70 = 0u64;
+    let mut v_t71 = 0u64;
+    let mut c_t87 = 0u64;
+    let mut v_t93 = 0u64;
+    let mut p_t93 = 0u64;
+    let mut r_t93 = [0u64; RING];
     let mut m_blank = vec![0u64; nw];
     let mut m_lf = vec![0u64; nw];
     let mut m_ws = vec![0u64; nw];
@@ -523,6 +537,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_exp_l = vec![0u64; nw];
     let mut m_punct = vec![0u64; nw];
     let mut m_junk = vec![0u64; nw];
+    let mut m_pair_byte_5c = vec![0u64; nw];
     let mut m_p1 = vec![0u64; nw];
     let mut m_p2 = vec![0u64; nw];
     let mut m_raw_q = vec![0u64; nw];
@@ -546,35 +561,36 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut t19 = vec![0u64; nw];
     let mut t20 = vec![0u64; nw];
     let mut m_b_open = vec![0u64; nw];
-    let mut t39 = vec![0u64; nw];
-    let mut t43 = vec![0u64; nw];
+    let mut t37 = vec![0u64; nw];
+    let mut t41 = vec![0u64; nw];
     let mut m_num_run = vec![0u64; nw];
-    let mut t45 = vec![0u64; nw];
-    let mut t46 = vec![0u64; nw];
+    let mut t43 = vec![0u64; nw];
+    let mut t44 = vec![0u64; nw];
     let mut m_two_start = vec![0u64; nw];
     let mut m_two_start_three = vec![0u64; nw];
-    let mut t50 = vec![0u64; nw];
-    let mut t61 = vec![0u64; nw];
-    let mut t62 = vec![0u64; nw];
-    let mut t66 = vec![0u64; nw];
+    let mut t48 = vec![0u64; nw];
+    let mut m_escape_sequence_ok = vec![0u64; nw];
     let mut t67 = vec![0u64; nw];
     let mut t68 = vec![0u64; nw];
-    let mut t77 = vec![0u64; nw];
+    let mut t72 = vec![0u64; nw];
+    let mut t73 = vec![0u64; nw];
+    let mut t74 = vec![0u64; nw];
     let mut t84 = vec![0u64; nw];
-    let mut t86 = vec![0u64; nw];
-    let mut t85 = vec![0u64; nw];
-    let mut t87 = vec![0u64; nw];
-    let mut t92 = vec![0u64; nw];
+    let mut t91 = vec![0u64; nw];
     let mut t93 = vec![0u64; nw];
+    let mut t92 = vec![0u64; nw];
     let mut t94 = vec![0u64; nw];
-    let mut t95 = vec![0u64; nw];
-    let mut t96 = vec![0u64; nw];
-    let mut t97 = vec![0u64; nw];
-    let mut t99 = vec![0u64; nw];
     let mut t100 = vec![0u64; nw];
     let mut t101 = vec![0u64; nw];
     let mut t102 = vec![0u64; nw];
     let mut t103 = vec![0u64; nw];
+    let mut t104 = vec![0u64; nw];
+    let mut t105 = vec![0u64; nw];
+    let mut t107 = vec![0u64; nw];
+    let mut t108 = vec![0u64; nw];
+    let mut t109 = vec![0u64; nw];
+    let mut t110 = vec![0u64; nw];
+    let mut t111 = vec![0u64; nw];
     let mut fw_rd0_close = vec![0u64; nw];
     let mut fw_rd1_close = vec![0u64; nw];
     let mut lv_1 = 0u64;
@@ -743,28 +759,33 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 m_conv_l[q] = v_m_conv_l;
             }
+            p_m_esc_one = v_m_esc_one;
             // class esc_one
-            let v_m_esc_one = unsafe { S::to_bitmask(S::test(c3, S::splat(0x1f))) & lv };
+            v_m_esc_one = unsafe { S::to_bitmask(S::test(c3, S::splat(0x1f))) & lv };
             if q < nw {
                 m_esc_one[q] = v_m_esc_one;
             }
+            p_m_hex = v_m_hex;
             // class hex
-            let v_m_hex = unsafe { S::to_bitmask(S::test(c3, S::splat(0x60))) & lv };
+            v_m_hex = unsafe { S::to_bitmask(S::test(c3, S::splat(0x60))) & lv };
             if q < nw {
                 m_hex[q] = v_m_hex;
             }
+            p_m_x_l = v_m_x_l;
             // class x_l
-            let v_m_x_l = unsafe { S::eq_mask(v, 0x78) & lv };
+            v_m_x_l = unsafe { S::eq_mask(v, 0x78) & lv };
             if q < nw {
                 m_x_l[q] = v_m_x_l;
             }
+            p_m_u_l = v_m_u_l;
             // class u_l
-            let v_m_u_l = unsafe { S::eq_mask(v, 0x75) & lv };
+            v_m_u_l = unsafe { S::eq_mask(v, 0x75) & lv };
             if q < nw {
                 m_u_l[q] = v_m_u_l;
             }
+            p_m_uu_l = v_m_uu_l;
             // class uu_l
-            let v_m_uu_l = unsafe { S::eq_mask(v, 0x55) & lv };
+            v_m_uu_l = unsafe { S::eq_mask(v, 0x55) & lv };
             if q < nw {
                 m_uu_l[q] = v_m_uu_l;
             }
@@ -857,6 +878,12 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             p_m_pair_byte_3a = v_m_pair_byte_3a;
             // class pair_byte_3a
             v_m_pair_byte_3a = unsafe { S::eq_mask(v, 0x3a) & lv };
+            p_m_pair_byte_5c = v_m_pair_byte_5c;
+            // class pair_byte_5c
+            v_m_pair_byte_5c = unsafe { S::eq_mask(v, 0x5c) & lv };
+            if q < nw {
+                m_pair_byte_5c[q] = v_m_pair_byte_5c;
+            }
             p_m_pw = v_m_pw;
             // mask pw = pfx & ~prev(word)
             v_m_pw = v_m_pfx & (!(v_m_word << 1 | p_m_word >> 63) & lv);
@@ -900,73 +927,73 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                     escaped & lv
                 };
             // (eq | bang) | lt_gt
-            let v_t39 = ((v_m_eq | v_m_bang) | v_m_lt_gt);
+            let v_t37 = ((v_m_eq | v_m_bang) | v_m_lt_gt);
             if q < nw {
-                t39[q] = v_t39;
+                t37[q] = v_t37;
             }
-            p_t43 = v_t43;
+            p_t41 = v_t41;
             // (x_any | o_any) | b_any
-            v_t43 = ((v_m_x_any | v_m_o_any) | v_m_b_any);
+            v_t41 = ((v_m_x_any | v_m_o_any) | v_m_b_any);
             if q < nw {
-                t43[q] = v_t43;
+                t41[q] = v_t41;
             }
             // ~word
-            let v_t46 = !v_m_word & lv;
+            let v_t44 = !v_m_word & lv;
             if q < nw {
-                t46[q] = v_t46;
+                t44[q] = v_t44;
             }
             // ~dot
-            let v_t50 = !v_m_dot & lv;
+            let v_t48 = !v_m_dot & lv;
             if q < nw {
-                t50[q] = v_t50;
+                t48[q] = v_t48;
             }
-            let p_t61 = v_t61;
+            let p_t67 = v_t67;
             // ~empty
-            v_t61 = !0 & lv;
-            if q < nw {
-                t61[q] = v_t61;
-            }
-            // lf & ~escaped(bslash)
-            let v_t67 = v_m_lf & (!v_t3 & lv);
+            v_t67 = !0 & lv;
             if q < nw {
                 t67[q] = v_t67;
             }
-            // lbrace | lf
-            let v_t77 = (v_m_lbrace | v_m_lf);
+            // lf & ~escaped(bslash)
+            let v_t73 = v_m_lf & (!v_t3 & lv);
             if q < nw {
-                t77[q] = v_t77;
+                t73[q] = v_t73;
+            }
+            // lbrace | lf
+            let v_t84 = (v_m_lbrace | v_m_lf);
+            if q < nw {
+                t84[q] = v_t84;
             }
             // prev(lf)
-            let v_t81 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
+            let v_t88 = (v_m_lf << 1 | p_m_lf >> 63) & lv;
             // ~blank
-            let v_t82 = !v_m_blank & lv;
+            let v_t89 = !v_m_blank & lv;
             // fill(prev(lf), ~blank)
-            let v_t80 = {
-                    let (s, e) = (v_t81, v_t82);
+            let v_t87 = {
+                    let (s, e) = (v_t88, v_t89);
                     let b = !e | s;
-                    let into = s.wrapping_add(b).wrapping_add(c_t80) ^ s ^ b;
+                    let into = s.wrapping_add(b).wrapping_add(c_t87) ^ s ^ b;
                     let f = s | (!e & into);
-                    c_t80 = f >> 63;
+                    c_t87 = f >> 63;
                     f & lv
                 };
             // tab_ff & fill(prev(lf), ~blank)
-            let v_t79 = v_m_tab_ff & v_t80;
+            let v_t86 = v_m_tab_ff & v_t87;
             // a tab or a form feed in a line's indentation
             if q < nw {
-                errors |= v_t79;
+                errors |= v_t86;
             }
             // tab_ff & ~prev(~empty)
-            let v_t83 = v_m_tab_ff & (!(v_t61 << 1 | p_t61 >> 63) & lv);
+            let v_t90 = v_m_tab_ff & (!(v_t67 << 1 | p_t67 >> 63) & lv);
             // a tab or a form feed starting the file
             if q < nw {
-                errors |= v_t83;
+                errors |= v_t90;
             }
-            p_t86 = v_t86;
+            p_t93 = v_t93;
             // empty
-            v_t86 = 0;
-            r_t86[q % RING] = v_t86;
+            v_t93 = 0;
+            r_t93[q % RING] = v_t93;
             if q < nw {
-                t86[q] = v_t86;
+                t93[q] = v_t93;
             }
         }
         // The masks 1 block behind the classes.
@@ -1113,27 +1140,27 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_num_run[q] = v_m_num_run;
             }
             // ~num_run
-            let v_t45 = !v_m_num_run & lv;
+            let v_t43 = !v_m_num_run & lv;
             if q < nw {
-                t45[q] = v_t45;
+                t43[q] = v_t43;
             }
-            p_t48 = v_t48;
+            p_t46 = v_t46;
             // (((((((((((((((((((pair_byte_2a & next(pair_byte_2a)) | (pair_byte_2f & next(pair_byte_2f))) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3c))) | (pair_byte_3e & next(pair_byte_3e))) | (pair_byte_2d & next(pair_byte_3e))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_3d))) | (pair_byte_7c & next(pair_byte_3d))) | (pair_byte_5e & next(pair_byte_3d))) | (pair_byte_40 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3e))
-            v_t48 = (((((((((((((((((((p_m_pair_byte_2a & (p_m_pair_byte_2a >> 1 | v_m_pair_byte_2a << 63) | p_m_pair_byte_2f & (p_m_pair_byte_2f >> 1 | v_m_pair_byte_2f << 63)) | p_m_pair_byte_3d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3c >> 1 | v_m_pair_byte_3c << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2b & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2f & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_25 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_26 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_7c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_5e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_40 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63));
-            // escaped(t48)
-            let v_t47 = {
+            v_t46 = (((((((((((((((((((p_m_pair_byte_2a & (p_m_pair_byte_2a >> 1 | v_m_pair_byte_2a << 63) | p_m_pair_byte_2f & (p_m_pair_byte_2f >> 1 | v_m_pair_byte_2f << 63)) | p_m_pair_byte_3d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3c >> 1 | v_m_pair_byte_3c << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2b & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2f & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_25 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_26 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_7c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_5e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_40 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63));
+            // escaped(t46)
+            let v_t45 = {
                     const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
-                    let bs = v_t48;
-                    let potential = bs & !c_t47;
+                    let bs = v_t46;
+                    let potential = bs & !c_t45;
                     let series = ((potential << 1) | ODD).wrapping_sub(potential);
                     let escape_and_terminal = series ^ ODD;
-                    let escaped = escape_and_terminal ^ (bs | c_t47);
-                    c_t47 = (escape_and_terminal & bs) >> 63;
+                    let escaped = escape_and_terminal ^ (bs | c_t45);
+                    c_t45 = (escape_and_terminal & bs) >> 63;
                     escaped & lv
                 };
             p_m_two_start = v_m_two_start;
             // mask two_start = ((((((((((((((((((((pair_byte_2a & next(pair_byte_2a)) | (pair_byte_2f & next(pair_byte_2f))) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3c))) | (pair_byte_3e & next(pair_byte_3e))) | (pair_byte_2d & next(pair_byte_3e))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_3d))) | (pair_byte_7c & next(pair_byte_3d))) | (pair_byte_5e & next(pair_byte_3d))) | (pair_byte_40 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3e))) & ~escaped((((((((((((((((((((pair_byte_2a & next(pair_byte_2a)) | (pair_byte_2f & next(pair_byte_2f))) | (pair_byte_3d & next(pair_byte_3d))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3c))) | (pair_byte_3e & next(pair_byte_3e))) | (pair_byte_2d & next(pair_byte_3e))) | (pair_byte_2b & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3d))) | (pair_byte_2a & next(pair_byte_3d))) | (pair_byte_2f & next(pair_byte_3d))) | (pair_byte_25 & next(pair_byte_3d))) | (pair_byte_26 & next(pair_byte_3d))) | (pair_byte_7c & next(pair_byte_3d))) | (pair_byte_5e & next(pair_byte_3d))) | (pair_byte_40 & next(pair_byte_3d))) | (pair_byte_3a & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3e)))
-            v_m_two_start = (((((((((((((((((((p_m_pair_byte_2a & (p_m_pair_byte_2a >> 1 | v_m_pair_byte_2a << 63) | p_m_pair_byte_2f & (p_m_pair_byte_2f >> 1 | v_m_pair_byte_2f << 63)) | p_m_pair_byte_3d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3c >> 1 | v_m_pair_byte_3c << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2b & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2f & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_25 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_26 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_7c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_5e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_40 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) & (!v_t47 & lv);
+            v_m_two_start = (((((((((((((((((((p_m_pair_byte_2a & (p_m_pair_byte_2a >> 1 | v_m_pair_byte_2a << 63) | p_m_pair_byte_2f & (p_m_pair_byte_2f >> 1 | v_m_pair_byte_2f << 63)) | p_m_pair_byte_3d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3c >> 1 | v_m_pair_byte_3c << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_2b & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2f & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_25 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_26 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_7c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_5e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_40 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3a & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) & (!v_t45 & lv);
             r_m_two_start[q % RING] = v_m_two_start;
             if q < nw {
                 m_two_start[q] = v_m_two_start;
@@ -1144,104 +1171,109 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 m_two_start_three[q] = v_m_two_start_three;
             }
-            let p_t63 = v_t63;
+            // mask escape_sequence_ok = ((((((((((pair_byte_5c & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) | (((((((((pair_byte_5c & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9))) | (((pair_byte_5c & next(x_l)) & next(hex, 2)) & next(hex, 3))) | (((pair_byte_5c & next(digit)) & next(digit, 2)) & next(digit, 3))) | (((pair_byte_5c & next(digit)) & next(digit, 2)) & ~next(digit, 3))) | ((pair_byte_5c & next(digit)) & ~next(digit, 2))) | (pair_byte_5c & next(esc_one))
+            let v_m_escape_sequence_ok = ((((((p_m_pair_byte_5c & (p_m_u_l >> 1 | v_m_u_l << 63) & (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_hex >> 5 | v_m_hex << 59) | p_m_pair_byte_5c & (p_m_uu_l >> 1 | v_m_uu_l << 63) & (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_hex >> 5 | v_m_hex << 59) & (p_m_hex >> 6 | v_m_hex << 58) & (p_m_hex >> 7 | v_m_hex << 57) & (p_m_hex >> 8 | v_m_hex << 56) & (p_m_hex >> 9 | v_m_hex << 55)) | p_m_pair_byte_5c & (p_m_x_l >> 1 | v_m_x_l << 63) & (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61)) | p_m_pair_byte_5c & (p_m_digit >> 1 | v_m_digit << 63) & (p_m_digit >> 2 | v_m_digit << 62) & (p_m_digit >> 3 | v_m_digit << 61)) | p_m_pair_byte_5c & (p_m_digit >> 1 | v_m_digit << 63) & (p_m_digit >> 2 | v_m_digit << 62) & (!(p_m_digit >> 3 | v_m_digit << 61) & lv)) | p_m_pair_byte_5c & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_digit >> 2 | v_m_digit << 62) & lv)) | p_m_pair_byte_5c & (p_m_esc_one >> 1 | v_m_esc_one << 63));
+            if q < nw {
+                m_escape_sequence_ok[q] = v_m_escape_sequence_ok;
+            }
+            let p_t69 = v_t69;
             // p1 & t_l
-            v_t63 = v_m_p1 & p_m_t_l;
-            let p_t64 = v_t64;
+            v_t69 = v_m_p1 & p_m_t_l;
+            let p_t70 = v_t70;
             // p2 & t_l
-            v_t64 = v_m_p2 & p_m_t_l;
-            let p_t65 = v_t65;
+            v_t70 = v_m_p2 & p_m_t_l;
+            let p_t71 = v_t71;
             // t_l & prev(p2)
-            v_t65 = p_m_t_l & (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
+            v_t71 = p_m_t_l & (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
             // (prev(p1 & t_l) | prev(p2 & t_l, 2)) | prev(t_l & prev(p2))
-            let v_t62 = (((v_t63 << 1 | p_t63 >> 63) & lv | (v_t64 << 2 | p_t64 >> 62) & lv) | (v_t65 << 1 | p_t65 >> 63) & lv);
-            if q < nw {
-                t62[q] = v_t62;
-            }
-            // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
-            let v_t66 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
-            if q < nw {
-                t66[q] = v_t66;
-            }
-            // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
-            let v_t68 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+            let v_t68 = (((v_t69 << 1 | p_t69 >> 63) & lv | (v_t70 << 2 | p_t70 >> 62) & lv) | (v_t71 << 1 | p_t71 >> 63) & lv);
             if q < nw {
                 t68[q] = v_t68;
             }
+            // ((pw & next(pfx)) & next(pfx, 2)) & (next(quote, 3) | (next(pfx, 3) & next(quote, 4)))
+            let v_t72 = p_m_pw & (p_m_pfx >> 1 | v_m_pfx << 63) & (p_m_pfx >> 2 | v_m_pfx << 62) & ((p_m_quote >> 3 | v_m_quote << 61) | (p_m_pfx >> 3 | v_m_pfx << 61) & (p_m_quote >> 4 | v_m_quote << 60));
+            if q < nw {
+                t72[q] = v_t72;
+            }
+            // next(quote, 3) & ~((next(quote, 4) & next(quote, 5)) & ~next(quote, 6))
+            let v_t74 = (p_m_quote >> 3 | v_m_quote << 61) & (!((p_m_quote >> 4 | v_m_quote << 60) & (p_m_quote >> 5 | v_m_quote << 59) & (!(p_m_quote >> 6 | v_m_quote << 58) & lv)) & lv);
+            if q < nw {
+                t74[q] = v_t74;
+            }
             // opens | (i_open & prev(empty))
-            let v_t85 = (p_m_opens | v_m_i_open & (p_t86 << 1 | r_t86[(q + RING - 1) % RING] >> 63) & lv);
-            if q < nw {
-                t85[q] = v_t85;
-            }
-            // (opens | (i_open & prev(empty))) | closes
-            let v_t87 = ((p_m_opens | v_m_i_open & (p_t86 << 1 | r_t86[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
-            if q < nw {
-                t87[q] = v_t87;
-            }
-            // ((((((sq_c | dq_c) | sq3_c) | dq3_c) | t13) | t15) | t17) | t19
-            let v_t89 = (((((((p_m_sq_c | p_m_dq_c) | v_m_sq3_c) | v_m_dq3_c) | (p_m_sq_c | v_m_i_open)) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
-            if q < nw {
-                fw_rd0_close[q] = v_t89;
-            }
-            // (((sq_c | i_open) | (dq_c | i_open)) | (sq3_c | i_open)) | (dq3_c | i_open)
-            let v_t91 = ((((p_m_sq_c | v_m_i_open) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
-            if q < nw {
-                fw_rd1_close[q] = v_t91;
-            }
-            // sq_c | sq3_c
-            let v_t92 = (p_m_sq_c | v_m_sq3_c);
+            let v_t92 = (p_m_opens | v_m_i_open & (p_t93 << 1 | r_t93[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t92[q] = v_t92;
             }
-            // dq_c | dq3_c
-            let v_t93 = (p_m_dq_c | v_m_dq3_c);
-            if q < nw {
-                t93[q] = v_t93;
-            }
-            // (alpha & ~p1) & ~p2
-            let v_t94 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
+            // (opens | (i_open & prev(empty))) | closes
+            let v_t94 = ((p_m_opens | v_m_i_open & (p_t93 << 1 | r_t93[(q + RING - 1) % RING] >> 63) & lv) | p_m_closes);
             if q < nw {
                 t94[q] = v_t94;
             }
-            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
-            let v_t95 = p_m_zero & (p_t43 >> 1 | v_t43 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            // ((((((sq_c | dq_c) | sq3_c) | dq3_c) | t13) | t15) | t17) | t19
+            let v_t96 = (((((((p_m_sq_c | p_m_dq_c) | v_m_sq3_c) | v_m_dq3_c) | (p_m_sq_c | v_m_i_open)) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
             if q < nw {
-                t95[q] = v_t95;
+                fw_rd0_close[q] = v_t96;
             }
-            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
-            let v_t96 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t43 >> 1 | v_t43 << 63)) & lv);
+            // (((sq_c | i_open) | (dq_c | i_open)) | (sq3_c | i_open)) | (dq3_c | i_open)
+            let v_t99 = ((((p_m_sq_c | v_m_i_open) | (p_m_dq_c | v_m_i_open)) | (v_m_sq3_c | v_m_i_open)) | (v_m_dq3_c | v_m_i_open));
             if q < nw {
-                t96[q] = v_t96;
+                fw_rd1_close[q] = v_t99;
             }
-            // (dot & next(digit)) & ~prev(word)
-            let v_t97 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
-            if q < nw {
-                t97[q] = v_t97;
-            }
-            // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
-            let v_t99 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
-            if q < nw {
-                t99[q] = v_t99;
-            }
-            // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
-            let v_t100 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            // sq_c | sq3_c
+            let v_t100 = (p_m_sq_c | v_m_sq3_c);
             if q < nw {
                 t100[q] = v_t100;
             }
-            // p1 | p2
-            let v_t101 = (v_m_p1 | v_m_p2);
+            // dq_c | dq3_c
+            let v_t101 = (p_m_dq_c | v_m_dq3_c);
             if q < nw {
                 t101[q] = v_t101;
             }
-            // prev(p2)
-            let v_t102 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
+            // (alpha & ~p1) & ~p2
+            let v_t102 = p_m_alpha & (!v_m_p1 & lv) & (!v_m_p2 & lv);
             if q < nw {
                 t102[q] = v_t102;
             }
-            // next(conv_l)
-            let v_t103 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
+            // (zero & next((x_any | o_any) | b_any)) & ~prev(dot)
+            let v_t103 = p_m_zero & (p_t41 >> 1 | v_t41 << 63) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
             if q < nw {
                 t103[q] = v_t103;
+            }
+            // (digit & ~prev(dot)) & ~(zero & next((x_any | o_any) | b_any))
+            let v_t104 = p_m_digit & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv) & (!(p_m_zero & (p_t41 >> 1 | v_t41 << 63)) & lv);
+            if q < nw {
+                t104[q] = v_t104;
+            }
+            // (dot & next(digit)) & ~prev(word)
+            let v_t105 = p_m_dot & (p_m_digit >> 1 | v_m_digit << 63) & (!(p_m_word << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv);
+            if q < nw {
+                t105[q] = v_t105;
+            }
+            // (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))
+            let v_t107 = p_m_punct & (!(p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv)) & lv) & (!(p_m_bang & (!(p_m_eq >> 1 | v_m_eq << 63) & lv)) & lv);
+            if q < nw {
+                t107[q] = v_t107;
+            }
+            // ((dot & next(dot)) & next(dot, 2)) & ~prev(dot)
+            let v_t108 = p_m_dot & (p_m_dot >> 1 | v_m_dot << 63) & (p_m_dot >> 2 | v_m_dot << 62) & (!(p_m_dot << 1 | r_m_dot[(q + RING - 1) % RING] >> 63) & lv);
+            if q < nw {
+                t108[q] = v_t108;
+            }
+            // p1 | p2
+            let v_t109 = (v_m_p1 | v_m_p2);
+            if q < nw {
+                t109[q] = v_t109;
+            }
+            // prev(p2)
+            let v_t110 = (v_m_p2 << 1 | p_m_p2 >> 63) & lv;
+            if q < nw {
+                t110[q] = v_t110;
+            }
+            // next(conv_l)
+            let v_t111 = (p_m_conv_l >> 1 | v_m_conv_l << 63);
+            if q < nw {
+                t111[q] = v_t111;
             }
         }
         // The masks 2 blocks behind the classes.
@@ -1249,9 +1281,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let q = t - 2;
             let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
             // ((punct & ~prev(two_start)) & two_start_three) & next(two_start_two, 2)
-            let v_t84 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t48 >> 2 | v_t48 << 62);
+            let v_t91 = r_m_punct[q % RING] & (!(p_m_two_start << 1 | r_m_two_start[(q + RING - 1) % RING] >> 63) & lv) & p_m_two_start_three & (p_t46 >> 2 | v_t46 << 62);
             if q < nw {
-                t84[q] = v_t84;
+                t91[q] = v_t91;
             }
         }
         lv_1 = lv_0;
@@ -1293,6 +1325,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_exp_l,
         m_punct,
         m_junk,
+        m_pair_byte_5c,
         m_p1,
         m_p2,
         m_raw_q,
@@ -1316,35 +1349,36 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         t19,
         t20,
         m_b_open,
-        t39,
-        t43,
+        t37,
+        t41,
         m_num_run,
-        t45,
-        t46,
+        t43,
+        t44,
         m_two_start,
         m_two_start_three,
-        t50,
-        t61,
-        t62,
-        t66,
+        t48,
+        m_escape_sequence_ok,
         t67,
         t68,
-        t77,
+        t72,
+        t73,
+        t74,
         t84,
-        t86,
-        t85,
-        t87,
-        t92,
+        t91,
         t93,
+        t92,
         t94,
-        t95,
-        t96,
-        t97,
-        t99,
         t100,
         t101,
         t102,
         t103,
+        t104,
+        t105,
+        t107,
+        t108,
+        t109,
+        t110,
+        t111,
         fw_rd0_close,
         fw_rd1_close,
         refused,
@@ -1366,7 +1400,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_blank, m_lf, m_ws, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t39, t43, m_num_run, t45, t46, m_two_start, m_two_start_three, t50, t61, t62, t66, t67, t68, t77, t84, t86, t85, t87, t92, t93, t94, t95, t96, t97, t99, t100, t101, t102, t103, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
+    let Stage1 { m_blank, m_lf, m_ws, m_hash, m_word, m_alpha, m_digit, m_dot, m_opens, m_closes, m_quote, m_bslash, m_high, m_sq, m_dq, m_cr, m_lbrace, m_rbrace, m_colon, m_bang, m_eq, m_conv_l, m_esc_one, m_hex, m_x_l, m_u_l, m_uu_l, m_nn_l, m_bytes_esc, m_sign, m_zero, m_exp_l, m_punct, m_junk, m_pair_byte_5c, m_p1, m_p2, m_raw_q, t3, m_sq_c, m_dq_c, m_sq3_c, m_dq3_c, m_i_open, t8, t9, t10, t11, t12, t13, t14, t15, t16, t17, t18, t19, t20, m_b_open, t37, t41, m_num_run, t43, t44, m_two_start, m_two_start_three, t48, m_escape_sequence_ok, t67, t68, t72, t73, t74, t84, t91, t93, t92, t94, t100, t101, t102, t103, t104, t105, t107, t108, t109, t110, t111, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
     // regions hidden { … }: the first opener not hidden opens its region, to its closer.
     let mut m_hidden = vec![0u64; nw];
     // `i_deep`: a frame past the level's bound, a template past its nest, or a close with a template's frame on top.
@@ -1905,41 +1939,34 @@ pub fn lex(src: &[u8]) -> Lexed {
             }
         }
     }
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_o_t, t23, m_code, m_body, m_r_body, m_esc, m_e_any, m_e_last, m_r_plain, m_r_none, m_fb, m_i_at, t36, m_icode, m_lb_t, m_rb_t, t37, t38).
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_o_t, m_f_str, m_code, m_body, m_r_body, m_esc, m_r_plain, m_r_none, m_fb, m_i_at, t34, m_icode, m_lb_t, m_rb_t, t35, t36).
     let mut m_o_t = vec![0u64; nw];
-    let mut t23 = vec![0u64; nw];
+    let mut m_f_str = vec![0u64; nw];
     let mut m_code = vec![0u64; nw];
     let mut m_body = vec![0u64; nw];
     let mut m_r_body = vec![0u64; nw];
     let mut m_esc = vec![0u64; nw];
-    let mut m_e_any = vec![0u64; nw];
-    let mut m_e_last = vec![0u64; nw];
     let mut m_r_plain = vec![0u64; nw];
     let mut m_r_none = vec![0u64; nw];
     let mut m_fb = vec![0u64; nw];
     let mut m_i_at = vec![0u64; nw];
-    let mut t36 = vec![0u64; nw];
+    let mut t34 = vec![0u64; nw];
     let mut m_icode = vec![0u64; nw];
     let mut m_lb_t = vec![0u64; nw];
     let mut m_rb_t = vec![0u64; nw];
-    let mut t37 = vec![0u64; nw];
-    let mut t38 = vec![0u64; nw];
+    let mut t35 = vec![0u64; nw];
+    let mut t36 = vec![0u64; nw];
     {
         let mut c_t21 = 0u64;
         let mut c_t24 = 0u64;
         let mut p_m_t_open = 0u64;
         let mut p_m_r_body = 0u64;
-        let mut p_m_e_u = 0u64;
-        let mut p_m_e_uu = 0u64;
-        let mut p_m_e_o2 = 0u64;
-        let mut p_t30 = 0u64;
-        let mut p_t31 = 0u64;
         let mut c_m_r_none = 0u64;
-        let mut p_t34 = 0u64;
+        let mut p_t32 = 0u64;
         let mut p_m_i_at = 0u64;
         let mut c_m_icode = 0u64;
-        let mut c_t37 = 0u64;
-        let mut c_t38 = 0u64;
+        let mut c_t35 = 0u64;
+        let mut c_t36 = 0u64;
         for i in 0..nw {
             // mask o_f = ((o_fs1 | o_fd1) | o_fs3) | o_fd3
             let w_m_o_f = (((m_o_fs1[i] | m_o_fd1[i]) | m_o_fs3[i]) | m_o_fd3[i]);
@@ -1954,10 +1981,10 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_o_str = ((((m_o_s1[i] | m_o_d1[i]) | m_o_s3[i]) | m_o_d3[i]) | w_m_o_f);
             // mask f_str = ((((f_s1 | f_d1) | f_s3) | f_d3) | f_f) | f_t
             let w_m_f_str = (((((m_f_s1[i] | m_f_d1[i]) | m_f_s3[i]) | m_f_d3[i]) | w_m_f_f) | w_m_f_t);
+            m_f_str[i] = w_m_f_str;
             // mask in_raw = fill(raw_q & o_str, ~f_str) | (f_t & fill(raw_q & o_f, o_f & ~raw_q))
             let w_t22 = m_raw_q[i] & w_m_o_str;
             let w_t23 = !w_m_f_str & lv[i];
-            t23[i] = w_t23;
             let w_t21 = {
                 let (s, e) = (w_t22, w_t23);
                 let b = !e | s;
@@ -1995,36 +2022,14 @@ pub fn lex(src: &[u8]) -> Lexed {
             // mask esc = (body & bslash) & ~escaped(bslash)
             let w_m_esc = w_m_body & m_bslash[i] & (!t3[i] & lv[i]);
             m_esc[i] = w_m_esc;
-            // mask e2 = esc & next(esc_one)
-            let w_m_e2 = w_m_esc & next(&m_esc_one, i, 1);
-            // mask e_x = ((esc & next(x_l)) & next(hex, 2)) & next(hex, 3)
-            let w_m_e_x = w_m_esc & next(&m_x_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3);
-            // mask e_u = ((((esc & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)
-            let w_m_e_u = w_m_esc & next(&m_u_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5);
-            // mask e_uu = ((((((((esc & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9)
-            let w_m_e_uu = w_m_esc & next(&m_uu_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5) & next(&m_hex, i, 6) & next(&m_hex, i, 7) & next(&m_hex, i, 8) & next(&m_hex, i, 9);
-            // mask e_o3 = ((esc & next(digit)) & next(digit, 2)) & next(digit, 3)
-            let w_m_e_o3 = w_m_esc & next(&m_digit, i, 1) & next(&m_digit, i, 2) & next(&m_digit, i, 3);
-            // mask e_o2 = ((esc & next(digit)) & next(digit, 2)) & ~next(digit, 3)
-            let w_m_e_o2 = w_m_esc & next(&m_digit, i, 1) & next(&m_digit, i, 2) & (!next(&m_digit, i, 3) & lv[i]);
-            // mask e_o1 = (esc & next(digit)) & ~next(digit, 2)
-            let w_m_e_o1 = w_m_esc & next(&m_digit, i, 1) & (!next(&m_digit, i, 2) & lv[i]);
-            // mask e_any = (((((e2 | e_x) | e_u) | e_uu) | e_o3) | e_o2) | e_o1
-            let w_m_e_any = ((((((w_m_e2 | w_m_e_x) | w_m_e_u) | w_m_e_uu) | w_m_e_o3) | w_m_e_o2) | w_m_e_o1);
-            m_e_any[i] = w_m_e_any;
-            // mask e_last = (((prev(e2 | e_o1) | prev(e_o2, 2)) | prev(e_x | e_o3, 3)) | prev(e_u, 5)) | prev(e_uu, 9)
-            let w_t30 = (w_m_e2 | w_m_e_o1);
-            let w_t31 = (w_m_e_x | w_m_e_o3);
-            let w_m_e_last = (((((w_t30 << 1 | p_t30 >> 63) | (w_m_e_o2 << 2 | p_m_e_o2 >> 62)) | (w_t31 << 3 | p_t31 >> 61)) | (w_m_e_u << 5 | p_m_e_u >> 59)) | (w_m_e_uu << 9 | p_m_e_uu >> 55));
-            m_e_last[i] = w_m_e_last;
             // mask r_plain = (r_body & ~bslash) & ~(escaped(bslash) & ((quote | bslash) | lf))
             let w_m_r_plain = w_m_r_body & (!m_bslash[i] & lv[i]) & (!(t3[i] & ((m_quote[i] | m_bslash[i]) | m_lf[i])) & lv[i]);
             m_r_plain[i] = w_m_r_plain;
             // mask r_none = fill((r_body & ~prev(r_body)) & ~r_plain, r_plain | ~r_body)
-            let w_t32 = w_m_r_body & (!(w_m_r_body << 1 | p_m_r_body >> 63) & lv[i]) & (!w_m_r_plain & lv[i]);
-            let w_t33 = (w_m_r_plain | !w_m_r_body & lv[i]);
+            let w_t30 = w_m_r_body & (!(w_m_r_body << 1 | p_m_r_body >> 63) & lv[i]) & (!w_m_r_plain & lv[i]);
+            let w_t31 = (w_m_r_plain | !w_m_r_body & lv[i]);
             let w_m_r_none = {
-                let (s, e) = (w_t32, w_t33);
+                let (s, e) = (w_t30, w_t31);
                 let b = !e | s;
                 let into = s.wrapping_add(b).wrapping_add(c_m_r_none) ^ s ^ b;
                 let f = s | (!e & into);
@@ -2036,15 +2041,15 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_fb = (w_m_f_f & (!w_m_o_f & lv[i]) & (!w_m_t_more & lv[i]) | w_m_f_t & (!w_m_o_t & lv[i]));
             m_fb[i] = w_m_fb;
             // mask i_at = i_open & prev(f_f | f_t)
-            let w_t34 = (w_m_f_f | w_m_f_t);
-            let w_m_i_at = m_i_open[i] & (w_t34 << 1 | p_t34 >> 63);
+            let w_t32 = (w_m_f_f | w_m_f_t);
+            let w_m_i_at = m_i_open[i] & (w_t32 << 1 | p_t32 >> 63);
             m_i_at[i] = w_m_i_at;
             // mask icode = fill(prev(i_at), o_t | o_spec)
-            let w_t35 = (w_m_i_at << 1 | p_m_i_at >> 63);
-            let w_t36 = (w_m_o_t | m_o_spec[i]);
-            t36[i] = w_t36;
+            let w_t33 = (w_m_i_at << 1 | p_m_i_at >> 63);
+            let w_t34 = (w_m_o_t | m_o_spec[i]);
+            t34[i] = w_t34;
             let w_m_icode = {
-                let (s, e) = (w_t35, w_t36);
+                let (s, e) = (w_t33, w_t34);
                 let b = !e | s;
                 let into = s.wrapping_add(b).wrapping_add(c_m_icode) ^ s ^ b;
                 let f = s | (!e & into);
@@ -2059,102 +2064,105 @@ pub fn lex(src: &[u8]) -> Lexed {
             let w_m_rb_t = w_m_fb & m_rbrace[i];
             m_rb_t[i] = w_m_rb_t;
             // mask esc_ib = ((lb_t & next(lb_t)) & ~escaped(lb_t)) | ((rb_t & next(rb_t)) & ~escaped(rb_t))
-            let w_t37 = {
+            let w_t35 = {
                 const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
                 let bs = w_m_lb_t;
-                let potential = bs & !c_t37;
+                let potential = bs & !c_t35;
                 let series = ((potential << 1) | ODD).wrapping_sub(potential);
                 let escape_and_terminal = series ^ ODD;
-                let escaped = escape_and_terminal ^ (bs | c_t37);
-                c_t37 = (escape_and_terminal & bs) >> 63;
+                let escaped = escape_and_terminal ^ (bs | c_t35);
+                c_t35 = (escape_and_terminal & bs) >> 63;
                 escaped
             };
-            t37[i] = w_t37;
-            let w_t38 = {
+            t35[i] = w_t35;
+            let w_t36 = {
                 const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
                 let bs = w_m_rb_t;
-                let potential = bs & !c_t38;
+                let potential = bs & !c_t36;
                 let series = ((potential << 1) | ODD).wrapping_sub(potential);
                 let escape_and_terminal = series ^ ODD;
-                let escaped = escape_and_terminal ^ (bs | c_t38);
-                c_t38 = (escape_and_terminal & bs) >> 63;
+                let escaped = escape_and_terminal ^ (bs | c_t36);
+                c_t36 = (escape_and_terminal & bs) >> 63;
                 escaped
             };
-            t38[i] = w_t38;
+            t36[i] = w_t36;
             p_m_t_open = w_m_t_open;
             p_m_r_body = w_m_r_body;
-            p_m_e_u = w_m_e_u;
-            p_m_e_uu = w_m_e_uu;
-            p_m_e_o2 = w_m_e_o2;
-            p_t30 = w_t30;
-            p_t31 = w_t31;
-            p_t34 = w_t34;
+            p_t32 = w_t32;
             p_m_i_at = w_m_i_at;
         }
     }
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_esc_ib, m_conv_at, m_number, m_based_n, m_p_start, t51, t52, t69, t70, t71, t73, t74, t75, t76, t78).
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (m_esc_ib, m_conv_at, m_number, m_based_n, m_p_start, m_escape_sequence_last_56, t57, t58, t75, t76, t77, t80, t81, t82, t83, t85).
     let mut m_esc_ib = vec![0u64; nw];
     let mut m_conv_at = vec![0u64; nw];
     let mut m_number = vec![0u64; nw];
     let mut m_based_n = vec![0u64; nw];
     let mut m_p_start = vec![0u64; nw];
-    let mut t51 = vec![0u64; nw];
-    let mut t52 = vec![0u64; nw];
-    let mut t69 = vec![0u64; nw];
-    let mut t70 = vec![0u64; nw];
-    let mut t71 = vec![0u64; nw];
-    let mut t73 = vec![0u64; nw];
-    let mut t74 = vec![0u64; nw];
+    let mut m_escape_sequence_last_56 = vec![0u64; nw];
+    let mut t57 = vec![0u64; nw];
+    let mut t58 = vec![0u64; nw];
     let mut t75 = vec![0u64; nw];
     let mut t76 = vec![0u64; nw];
-    let mut t78 = vec![0u64; nw];
+    let mut t77 = vec![0u64; nw];
+    let mut t80 = vec![0u64; nw];
+    let mut t81 = vec![0u64; nw];
+    let mut t82 = vec![0u64; nw];
+    let mut t83 = vec![0u64; nw];
+    let mut t85 = vec![0u64; nw];
     {
         let mut p_m_esc_ib = 0u64;
         let mut p_m_eq_end = 0u64;
         let mut p_m_w = 0u64;
-        let mut c_t41 = 0u64;
-        let mut p_t40 = 0u64;
+        let mut c_t39 = 0u64;
+        let mut p_t38 = 0u64;
         let mut p_m_e_sign0 = 0u64;
         let mut c_m_number = 0u64;
         let mut c_m_based_n = 0u64;
-        let mut c_t49 = 0u64;
-        let mut c_t72 = 0u64;
+        let mut c_t47 = 0u64;
+        let mut p_t49 = 0u64;
+        let mut p_t50 = 0u64;
+        let mut p_t51 = 0u64;
+        let mut p_t52 = 0u64;
+        let mut p_t53 = 0u64;
+        let mut p_t54 = 0u64;
+        let mut p_t55 = 0u64;
+        let mut c_t78 = 0u64;
         for i in 0..nw {
-            let w_m_esc_ib = (m_lb_t[i] & next(&m_lb_t, i, 1) & (!t37[i] & lv[i]) | m_rb_t[i] & next(&m_rb_t, i, 1) & (!t38[i] & lv[i]));
+            let w_m_esc_ib = (m_lb_t[i] & next(&m_lb_t, i, 1) & (!t35[i] & lv[i]) | m_rb_t[i] & next(&m_rb_t, i, 1) & (!t36[i] & lv[i]));
             m_esc_ib[i] = w_m_esc_ib;
             // mask conv_at = ((code & bang) & next(conv_l)) & next(o_t | o_spec, 2)
-            let w_m_conv_at = m_code[i] & m_bang[i] & next(&m_conv_l, i, 1) & next(&t36, i, 2);
+            let w_m_conv_at = m_code[i] & m_bang[i] & next(&m_conv_l, i, 1) & next(&t34, i, 2);
             m_conv_at[i] = w_m_conv_at;
             // mask eq_end = (icode & eq) & ~prev((eq | bang) | lt_gt)
-            let w_m_eq_end = m_icode[i] & m_eq[i] & (!prev(&t39, i, 1) & lv[i]);
+            let w_m_eq_end = m_icode[i] & m_eq[i] & (!prev(&t37, i, 1) & lv[i]);
             // mask w = code & word
             let w_m_w = m_code[i] & m_word[i];
             // mask num0 = (w & digit) & ~prev(w)
             let w_m_num0 = w_m_w & m_digit[i] & (!(w_m_w << 1 | p_m_w >> 63) & lv[i]);
             // mask e_sign0 = ((code & sign) & prev(exp_l & fill(num0, ~w))) & next(digit)
-            let w_t42 = !w_m_w & lv[i];
-            let w_t41 = {
-                let (s, e) = (w_m_num0, w_t42);
+            let w_t40 = !w_m_w & lv[i];
+            let w_t39 = {
+                let (s, e) = (w_m_num0, w_t40);
                 let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t41) ^ s ^ b;
+                let into = s.wrapping_add(b).wrapping_add(c_t39) ^ s ^ b;
                 let f = s | (!e & into);
-                c_t41 = f >> 63;
+                c_t39 = f >> 63;
                 f
             };
-            let w_t40 = m_exp_l[i] & w_t41;
-            let w_m_e_sign0 = m_code[i] & m_sign[i] & (w_t40 << 1 | p_t40 >> 63) & next(&m_digit, i, 1);
+            let w_t38 = m_exp_l[i] & w_t39;
+            let w_m_e_sign0 = m_code[i] & m_sign[i] & (w_t38 << 1 | p_t38 >> 63) & next(&m_digit, i, 1);
             // mask num_first = (num0 & ~prev(dot)) & ~prev(e_sign0)
             let w_m_num_first = w_m_num0 & (!prev(&m_dot, i, 1) & lv[i]) & (!(w_m_e_sign0 << 1 | p_m_e_sign0 >> 63) & lv[i]);
             // mask based_at = (num_first & zero) & next((x_any | o_any) | b_any)
-            let w_m_based_at = w_m_num_first & m_zero[i] & next(&t43, i, 1);
+            let w_m_based_at = w_m_num_first & m_zero[i] & next(&t41, i, 1);
             // mask int_start = num_first & ~based_at
             let w_m_int_start = w_m_num_first & (!w_m_based_at & lv[i]);
             // mask dot_start = ((code & dot) & next(digit)) & ~prev(w)
             let w_m_dot_start = m_code[i] & m_dot[i] & next(&m_digit, i, 1) & (!(w_m_w << 1 | p_m_w >> 63) & lv[i]);
             // mask number = fill((based_at | int_start) | dot_start, ~num_run)
-            let w_t44 = ((w_m_based_at | w_m_int_start) | w_m_dot_start);
+            let w_t42 = ((w_m_based_at | w_m_int_start) | w_m_dot_start);
             let w_m_number = {
-                let (s, e) = (w_t44, t45[i]);
+                let (s, e) = (w_t42, t43[i]);
                 let b = !e | s;
                 let into = s.wrapping_add(b).wrapping_add(c_m_number) ^ s ^ b;
                 let f = s | (!e & into);
@@ -2164,7 +2172,7 @@ pub fn lex(src: &[u8]) -> Lexed {
             m_number[i] = w_m_number;
             // mask based_n = fill(based_at, ~word)
             let w_m_based_n = {
-                let (s, e) = (w_m_based_at, t46[i]);
+                let (s, e) = (w_m_based_at, t44[i]);
                 let b = !e | s;
                 let into = s.wrapping_add(b).wrapping_add(c_m_based_n) ^ s ^ b;
                 let f = s | (!e & into);
@@ -2177,57 +2185,76 @@ pub fn lex(src: &[u8]) -> Lexed {
             // mask ell_at = (((code & dot) & next(dot)) & next(dot, 2)) & ~prev(dot)
             let w_m_ell_at = m_code[i] & m_dot[i] & next(&m_dot, i, 1) & next(&m_dot, i, 2) & (!prev(&m_dot, i, 1) & lv[i]);
             // mask p_start = ((((code & punct) & ~second) & ~number) & ~conv_at) & ~fill(ell_at, ~dot)
-            let w_t49 = {
-                let (s, e) = (w_m_ell_at, t50[i]);
+            let w_t47 = {
+                let (s, e) = (w_m_ell_at, t48[i]);
                 let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t49) ^ s ^ b;
+                let into = s.wrapping_add(b).wrapping_add(c_t47) ^ s ^ b;
                 let f = s | (!e & into);
-                c_t49 = f >> 63;
+                c_t47 = f >> 63;
                 f
             };
-            let w_m_p_start = m_code[i] & m_punct[i] & (!w_m_second & lv[i]) & (!w_m_number & lv[i]) & (!w_m_conv_at & lv[i]) & (!w_t49 & lv[i]);
+            let w_m_p_start = m_code[i] & m_punct[i] & (!w_m_second & lv[i]) & (!w_m_number & lv[i]) & (!w_m_conv_at & lv[i]) & (!w_t47 & lv[i]);
             m_p_start[i] = w_m_p_start;
+            // mask escape_sequence_last = (((((prev(esc & (((((pair_byte_5c & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)), 5) | prev(esc & (((((((((pair_byte_5c & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9)), 9)) | prev(esc & (((pair_byte_5c & next(x_l)) & next(hex, 2)) & next(hex, 3)), 3)) | prev(esc & (((pair_byte_5c & next(digit)) & next(digit, 2)) & next(digit, 3)), 3)) | prev(esc & (((pair_byte_5c & next(digit)) & next(digit, 2)) & ~next(digit, 3)), 2)) | prev(esc & ((pair_byte_5c & next(digit)) & ~next(digit, 2)))) | prev(esc & (pair_byte_5c & next(esc_one)))
+            let w_t49 = m_esc[i] & m_pair_byte_5c[i] & next(&m_u_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5);
+            let w_t50 = m_esc[i] & m_pair_byte_5c[i] & next(&m_uu_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3) & next(&m_hex, i, 4) & next(&m_hex, i, 5) & next(&m_hex, i, 6) & next(&m_hex, i, 7) & next(&m_hex, i, 8) & next(&m_hex, i, 9);
+            let w_t51 = m_esc[i] & m_pair_byte_5c[i] & next(&m_x_l, i, 1) & next(&m_hex, i, 2) & next(&m_hex, i, 3);
+            let w_t52 = m_esc[i] & m_pair_byte_5c[i] & next(&m_digit, i, 1) & next(&m_digit, i, 2) & next(&m_digit, i, 3);
+            let w_t53 = m_esc[i] & m_pair_byte_5c[i] & next(&m_digit, i, 1) & next(&m_digit, i, 2) & (!next(&m_digit, i, 3) & lv[i]);
+            let w_t54 = m_esc[i] & m_pair_byte_5c[i] & next(&m_digit, i, 1) & (!next(&m_digit, i, 2) & lv[i]);
+            let w_t55 = m_esc[i] & m_pair_byte_5c[i] & next(&m_esc_one, i, 1);
+            // mask escape_sequence_last = (((((prev(esc & (((((pair_byte_5c & next(u_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)), 5) | prev(esc & (((((((((pair_byte_5c & next(uu_l)) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(hex, 8)) & next(hex, 9)), 9)) | prev(esc & (((pair_byte_5c & next(x_l)) & next(hex, 2)) & next(hex, 3)), 3)) | prev(esc & (((pair_byte_5c & next(digit)) & next(digit, 2)) & next(digit, 3)), 3)) | prev(esc & (((pair_byte_5c & next(digit)) & next(digit, 2)) & ~next(digit, 3)), 2)) | prev(esc & ((pair_byte_5c & next(digit)) & ~next(digit, 2)))) | prev(esc & (pair_byte_5c & next(esc_one)))
+            let w_m_escape_sequence_last_56 = (((((((w_t49 << 5 | p_t49 >> 59) | (w_t50 << 9 | p_t50 >> 55)) | (w_t51 << 3 | p_t51 >> 61)) | (w_t52 << 3 | p_t52 >> 61)) | (w_t53 << 2 | p_t53 >> 62)) | (w_t54 << 1 | p_t54 >> 63)) | (w_t55 << 1 | p_t55 >> 63));
+            m_escape_sequence_last_56[i] = w_m_escape_sequence_last_56;
             // mask in_br = depth.frame(…)
-            let w_t51 = (m_code[i] & m_opens[i] | m_i_at[i]);
-            t51[i] = w_t51;
-            let w_t52 = ((m_code[i] & m_opens[i] | m_i_at[i]) | (m_code[i] & m_closes[i] | m_o_t[i]));
-            t52[i] = w_t52;
-            let w_t69 = (m_body[i] | m_r_body[i]) & (!t3[i] & lv[i]) & (((m_f_s3[i] & m_sq[i] & next(&m_sq3_c, i, 1) | m_f_d3[i] & m_dq[i] & next(&m_dq3_c, i, 1)) | (m_f_fs3[i] | m_f_ts3[i]) & m_sq[i] & next(&m_sq3_c, i, 1)) | (m_f_fd3[i] | m_f_td3[i]) & m_dq[i] & next(&m_dq3_c, i, 1));
-            t69[i] = w_t69;
-            let w_t70 = m_esc[i] & next(&m_nn_l, i, 1);
-            t70[i] = w_t70;
-            let w_t72 = {
-                let (s, e) = (m_b_open[i], t23[i]);
+            let w_t57 = (m_code[i] & m_opens[i] | m_i_at[i]);
+            t57[i] = w_t57;
+            let w_t58 = ((m_code[i] & m_opens[i] | m_i_at[i]) | (m_code[i] & m_closes[i] | m_o_t[i]));
+            t58[i] = w_t58;
+            let w_t75 = (m_body[i] | m_r_body[i]) & (!t3[i] & lv[i]) & (((m_f_s3[i] & m_sq[i] & next(&m_sq3_c, i, 1) | m_f_d3[i] & m_dq[i] & next(&m_dq3_c, i, 1)) | (m_f_fs3[i] | m_f_ts3[i]) & m_sq[i] & next(&m_sq3_c, i, 1)) | (m_f_fd3[i] | m_f_td3[i]) & m_dq[i] & next(&m_dq3_c, i, 1));
+            t75[i] = w_t75;
+            let w_t76 = m_esc[i] & next(&m_nn_l, i, 1);
+            t76[i] = w_t76;
+            let w_t79 = !m_f_str[i] & lv[i];
+            let w_t78 = {
+                let (s, e) = (m_b_open[i], w_t79);
                 let b = !e | s;
-                let into = s.wrapping_add(b).wrapping_add(c_t72) ^ s ^ b;
+                let into = s.wrapping_add(b).wrapping_add(c_t78) ^ s ^ b;
                 let f = s | (!e & into);
-                c_t72 = f >> 63;
+                c_t78 = f >> 63;
                 f
             };
-            let w_t71 = m_esc[i] & next(&m_bytes_esc, i, 1) & w_t72;
-            t71[i] = w_t71;
-            let w_t73 = m_r_none[i] & m_r_body[i] & (!next(&m_r_body, i, 1) & lv[i]) & (!m_r_plain[i] & lv[i]);
-            t73[i] = w_t73;
-            let w_t74 = (m_o_t[i] | m_o_spec[i]) & prev(&m_i_at, i, 1);
-            t74[i] = w_t74;
-            let w_t75 = m_fb[i] & m_rbrace[i] & (!w_m_esc_ib & lv[i]) & (!(w_m_esc_ib << 1 | p_m_esc_ib >> 63) & lv[i]);
-            t75[i] = w_t75;
-            let w_t76 = m_icode[i] & m_hash[i];
-            t76[i] = w_t76;
-            let w_t78 = ((m_o_t[i] | m_o_spec[i]) | w_m_conv_at) & ((w_m_eq_end << 1 | p_m_eq_end >> 63) | prev(&m_blank, i, 1) & (w_m_eq_end << 2 | p_m_eq_end >> 62));
-            t78[i] = w_t78;
+            let w_t77 = m_esc[i] & next(&m_bytes_esc, i, 1) & w_t78;
+            t77[i] = w_t77;
+            let w_t80 = m_r_none[i] & m_r_body[i] & (!next(&m_r_body, i, 1) & lv[i]) & (!m_r_plain[i] & lv[i]);
+            t80[i] = w_t80;
+            let w_t81 = (m_o_t[i] | m_o_spec[i]) & prev(&m_i_at, i, 1);
+            t81[i] = w_t81;
+            let w_t82 = m_fb[i] & m_rbrace[i] & (!w_m_esc_ib & lv[i]) & (!(w_m_esc_ib << 1 | p_m_esc_ib >> 63) & lv[i]);
+            t82[i] = w_t82;
+            let w_t83 = m_icode[i] & m_hash[i];
+            t83[i] = w_t83;
+            let w_t85 = ((m_o_t[i] | m_o_spec[i]) | w_m_conv_at) & ((w_m_eq_end << 1 | p_m_eq_end >> 63) | prev(&m_blank, i, 1) & (w_m_eq_end << 2 | p_m_eq_end >> 62));
+            t85[i] = w_t85;
             p_m_esc_ib = w_m_esc_ib;
             p_m_eq_end = w_m_eq_end;
             p_m_w = w_m_w;
-            p_t40 = w_t40;
+            p_t38 = w_t38;
             p_m_e_sign0 = w_m_e_sign0;
+            p_t49 = w_t49;
+            p_t50 = w_t50;
+            p_t51 = w_t51;
+            p_t52 = w_t52;
+            p_t53 = w_t53;
+            p_t54 = w_t54;
+            p_t55 = w_t55;
         }
     }
     // `depth.frame((code & opens) | i_at)`: the frame open before each byte opened by a byte of it.
     let mut m_in_br = vec![0u64; nw];
     {
         let (mut c, mut opened, mut from) = (0u32, 0u64, 0usize);
-        for (q, &word) in t52.iter().enumerate() {
+        for (q, &word) in t58.iter().enumerate() {
             let mut bits = word;
             while bits != 0 {
                 let i = bits.trailing_zeros();
@@ -2236,10 +2263,10 @@ pub fn lex(src: &[u8]) -> Lexed {
                 if c > 0 && c < 64 && opened >> c & 1 == 1 {
                     set(&mut m_in_br, from, x + 1);
                 }
-                if t51[q] >> i & 1 == 1 {
+                if t57[q] >> i & 1 == 1 {
                     c += 1;
                     if c < 64 {
-                        opened = opened & !(1 << c) | (t51[q] >> i & 1) << c;
+                        opened = opened & !(1 << c) | (t57[q] >> i & 1) << c;
                     }
                 } else {
                     c = c.saturating_sub(1);
@@ -2253,38 +2280,41 @@ pub fn lex(src: &[u8]) -> Lexed {
     }
     let mut refused = escapes;
     // a triple-quoted string closed by four quotes or more
-    refused |= any(&t69);
-    // a `\N{…}` escape
-    refused |= any(&t70);
-    // a `\N`, `\u` or `\U` in a bytes string
-    refused |= any(&t71);
-    // a raw string of backslashes only
-    refused |= any(&t73);
-    // an empty interpolation
-    refused |= any(&t74);
-    // a `}` alone in an f-string's text
     refused |= any(&t75);
-    // a comment in an interpolation
+    // a `\N{…}` escape
     refused |= any(&t76);
+    // a `\N`, `\u` or `\U` in a bytes string
+    refused |= any(&t77);
+    // a raw string of backslashes only
+    refused |= any(&t80);
+    // an empty interpolation
+    refused |= any(&t81);
+    // a `}` alone in an f-string's text
+    refused |= any(&t82);
+    // a comment in an interpolation
+    refused |= any(&t83);
     // past 7 frames (f-strings and brackets) or 4 f-strings deep in an interpolation
     refused |= any(&m_i_deep);
     // an interpolation's `=`
-    refused |= any(&t78);
-    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t88, t90, t98, t104).
-    let mut t88 = vec![0u64; nw];
-    let mut t90 = vec![0u64; nw];
+    refused |= any(&t85);
+    // A pass over the file's words: the masks below, each word a local of its step, kept for what reads them later (t95, t97, t98, t106, t112).
+    let mut t95 = vec![0u64; nw];
+    let mut t97 = vec![0u64; nw];
     let mut t98 = vec![0u64; nw];
-    let mut t104 = vec![0u64; nw];
+    let mut t106 = vec![0u64; nw];
+    let mut t112 = vec![0u64; nw];
     {
         for i in 0..nw {
-            let w_t88 = m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i]);
-            t88[i] = w_t88;
-            let w_t90 = m_esc[i] & (!m_e_any[i] & lv[i]);
-            t90[i] = w_t90;
-            let w_t98 = (m_dot[i] & m_number[i] | m_exp_l[i] & m_number[i] & (!m_based_n[i] & lv[i]));
+            let w_t95 = m_lf[i] & m_code[i] & (!m_in_br[i] & lv[i]);
+            t95[i] = w_t95;
+            let w_t97 = m_esc[i] & m_escape_sequence_ok[i];
+            t97[i] = w_t97;
+            let w_t98 = m_esc[i] & (!m_escape_sequence_ok[i] & lv[i]);
             t98[i] = w_t98;
-            let w_t104 = prev(&m_conv_at, i, 1);
-            t104[i] = w_t104;
+            let w_t106 = (m_dot[i] & m_number[i] | m_exp_l[i] & m_number[i] & (!m_based_n[i] & lv[i]));
+            t106[i] = w_t106;
+            let w_t112 = prev(&m_conv_at, i, 1);
+            t112[i] = w_t112;
         }
     }
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
@@ -2411,8 +2441,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 6 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t107, s), "assume p_start at byte {s}");
+                bit(&t107, s)
             } {
                     3
                 } else if bit(&m_conv_at, s) {
@@ -2438,8 +2468,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 9 | 10 | 11 | 12 | 13 => if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t107, s), "assume p_start at byte {s}");
+                bit(&t107, s)
             } {
                     3
                 } else {
@@ -2458,30 +2488,30 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `.`
-                15 => if bit(&t97, s) {
+                15 => if bit(&t105, s) {
                     2
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t107, s), "assume p_start at byte {s}");
+                bit(&t107, s)
             } {
                     3
-                } else if bit(&t100, s) {
+                } else if bit(&t108, s) {
                     4
                 } else {
                     usize::MAX
                 },
                 // `0`
-                16 => if bit(&t95, s) {
+                16 => if bit(&t103, s) {
                     1
-                } else if bit(&t96, s) {
+                } else if bit(&t104, s) {
                     2
                 } else {
                     usize::MAX
                 },
                 // `123456789`
-                17 => if bit(&t96, s) {
+                17 => if bit(&t104, s) {
                     2
                 } else {
                     usize::MAX
@@ -2492,23 +2522,23 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t107, s), "assume p_start at byte {s}");
+                bit(&t107, s)
             } {
                     3
                 } else {
                     usize::MAX
                 },
                 // `ACDEGHIJKLMNOPQSVWXYZ_acdeghijklmnopqsvwxyz`
-                19 | 20 | 21 => if bit(&t94, s) {
+                19 | 20 | 21 => if bit(&t102, s) {
                     0
                 } else {
                     usize::MAX
                 },
                 // `BFRTUbfrtu`
-                22 | 23 => if bit(&t94, s) {
+                22 | 23 => if bit(&t102, s) {
                     0
-                } else if bit(&t101, s) {
+                } else if bit(&t109, s) {
                     6
                 } else {
                     usize::MAX
@@ -2525,8 +2555,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                 } else if {
                 // `assume … at starts p_start = (punct & ~(((dot & next(dot)) & next(dot, 2)) & ~prev(dot))) & ~(bang & ~next(eq))`, not proved: a test build checks it.
                 #[cfg(feature = "test-hooks")]
-                assert_eq!(bit(&m_p_start, s), bit(&t99, s), "assume p_start at byte {s}");
-                bit(&t99, s)
+                assert_eq!(bit(&m_p_start, s), bit(&t107, s), "assume p_start at byte {s}");
+                bit(&t107, s)
             } {
                     3
                 } else {
@@ -2540,7 +2570,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = run_last(&m_word, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
-                    if bit(&t66, s) {
+                    if bit(&t72, s) {
                         refused = true;
                         break 'tokens;
                     }
@@ -2572,11 +2602,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                         l
                     };
                     let l = l.max(s);
-                    if count_in(&t98, s, l) >= 1 {
+                    if count_in(&t106, s, l) >= 1 {
                         hits |= 1 << 6;
                     }
                     // a string prefix of three letters or more
-                    if any_in(&t66, s + 1, l) {
+                    if any_in(&t72, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -2589,8 +2619,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = l.max(s);
                     // scan depth: its bits in the token's bytes, all of them code
                     let mut q = s;
-                    while let Some(i) = first_in(&t87, q, l) {
-                        if bit(&t85, i) {
+                    while let Some(i) = first_in(&t94, q, l) {
+                        if bit(&t92, i) {
                             c_depth += 1;
                             if c_depth > 31 {
                                 refused = true;
@@ -2602,7 +2632,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         q = i + 1;
                     }
                     // punct: a triple's last byte starts a pair
-                    if any_in(&t84, s, l) {
+                    if any_in(&t91, s, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -2645,10 +2675,10 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 6 => {
                     // `str_prefix`: run prev(p2)
-                    let l = run_last(&t102, s);
+                    let l = run_last(&t110, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
-                    if bit(&t66, s) {
+                    if bit(&t72, s) {
                         refused = true;
                         break 'tokens;
                     }
@@ -2662,12 +2692,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else { c + 0 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2687,7 +2717,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t92, s, s);
+                            put(&mut fw_rd1_close, &t100, s, s);
                             last
                         };
                             set(&mut lw_o_s1, s, s + 1);
@@ -2711,12 +2741,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else { c + 0 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2736,7 +2766,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t101, s, s);
                             last
                         };
                             set(&mut lw_o_d1, s, s + 1);
@@ -2760,7 +2790,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else { c + 2 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2770,7 +2800,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a triple-quoted string opened by four quotes or more
-                            if bit(&t68, s) {
+                            if bit(&t74, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2790,7 +2820,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t92, s, s);
+                            put(&mut fw_rd1_close, &t100, s, s);
                             last
                         };
                             set(&mut lw_o_s3, s, s + 1);
@@ -2814,7 +2844,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 2 } else { c + 2 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2824,7 +2854,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a triple-quoted string opened by four quotes or more
-                            if bit(&t68, s) {
+                            if bit(&t74, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2844,7 +2874,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t101, s, s);
                             last
                         };
                             set(&mut lw_o_d3, s, s + 1);
@@ -2878,12 +2908,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2906,7 +2936,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t92, s, s);
+                            put(&mut fw_rd1_close, &t100, s, s);
                             last
                         }
                         };
@@ -2941,12 +2971,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -2969,7 +2999,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t101, s, s);
                             last
                         }
                         };
@@ -3004,7 +3034,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_quote, c) { c + 2 } else if bit(&m_i_open, c) { c + 0 } else { if bit(&m_i_open, c) { c + 0 } else { c + 2 } };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3014,7 +3044,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a triple-quoted string opened by four quotes or more
-                            if bit(&t68, s) {
+                            if bit(&t74, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3037,7 +3067,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t92, s, s);
+                            put(&mut fw_rd1_close, &t100, s, s);
                             last
                         }
                         };
@@ -3072,7 +3102,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             {
                             let last = if bit(&m_quote, c) { c + 2 } else if bit(&m_i_open, c) { c + 0 } else { if bit(&m_i_open, c) { c + 0 } else { c + 2 } };
                             // a template string
-                            if bit(&t62, s) {
+                            if bit(&t68, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3082,7 +3112,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a triple-quoted string opened by four quotes or more
-                            if bit(&t68, s) {
+                            if bit(&t74, s) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3105,7 +3135,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // `rd0_open`, for tier 2
                             set(&mut fw_rd0_open, s, s + 1);
                             // `rd1_close`, for tier 2
-                            put(&mut fw_rd1_close, &t93, s, s);
+                            put(&mut fw_rd1_close, &t101, s, s);
                             last
                         }
                         };
@@ -3131,7 +3161,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3204,7 +3234,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                             let last = {
                             let last = if bit(&m_quote, c) { c + 0 } else if bit(&m_i_open, c) { c + 0 } else { c + 0 };
                             // a line break in a one-line string that no backslash escapes
-                            if any_in(&t67, s + 1, c - 1) {
+                            if any_in(&t73, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3417,7 +3447,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                                 break 'tokens;
                             }
                             // a `{` or a line break in a format spec
-                            if any_in(&t77, s + 1, c - 1) {
+                            if any_in(&t84, s + 1, c - 1) {
                                 refused = true;
                                 break 'tokens;
                             }
@@ -3443,10 +3473,10 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 20 => {
                     // `type_conversion`: run prev(conv_at)
-                    let l = run_last(&t104, s);
+                    let l = run_last(&t112, s);
                     let l = l.max(s);
                     // a string prefix of three letters or more
-                    if any_in(&t66, s + 1, l) {
+                    if any_in(&t72, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3459,8 +3489,8 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = l.max(s);
                     // scan depth: its bits in the token's bytes, all of them code
                     let mut q = s;
-                    while let Some(i) = first_in(&t87, q, l) {
-                        if bit(&t85, i) {
+                    while let Some(i) = first_in(&t94, q, l) {
+                        if bit(&t92, i) {
                             c_depth += 1;
                             if c_depth > 31 {
                                 refused = true;
@@ -3472,7 +3502,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         q = i + 1;
                     }
                     // a string prefix of three letters or more
-                    if any_in(&t66, s + 1, l) {
+                    if any_in(&t72, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3487,7 +3517,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
-                    if any_in(&t84, s + 1, l) {
+                    if any_in(&t91, s + 1, l) {
                         refused = true;
                         break 'tokens;
                     }
@@ -3511,25 +3541,25 @@ pub fn lex(src: &[u8]) -> Lexed {
         }
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
-                if any_in(&t88, from_record, s) {
+                if any_in(&t95, from_record, s) {
                     marks |= 1 << 0;
                 }
-                if any_in(&t88, from_record, s) {
+                if any_in(&t95, from_record, s) {
                     marks |= 1 << 2;
                 }
             pending |= hits & 0xffff | hits >> 16;
         } else {
             let tested = pending | hits;
                 // `newline`
-                if (tested >> 0 & 1 == 1 || any_in(&t88, from, s)) {
+                if (tested >> 0 & 1 == 1 || any_in(&t95, from, s)) {
                     marks |= 1 << 0;
                 }
                 // `indent`
-                if (tested >> 1 & 1 == 1 || any_in(&t88, from, s)) {
+                if (tested >> 1 & 1 == 1 || any_in(&t95, from, s)) {
                     marks |= 1 << 1;
                 }
                 // `dedent`
-                if (tested >> 2 & 1 == 1 || any_in(&t88, from, s)) {
+                if (tested >> 2 & 1 == 1 || any_in(&t95, from, s)) {
                     marks |= 1 << 2;
                 }
                 // `real`
@@ -3609,9 +3639,9 @@ pub fn lex(src: &[u8]) -> Lexed {
             o_fd3: fw_o_fd3,
             i_open: m_i_open,
             rd0_part0: fw_rd0_part0,
-            e_any: m_e_any,
-            e_last: m_e_last,
-            rd0_part2: t90,
+            rd0_part1: t97,
+            escape_sequence_last: m_escape_sequence_last_56,
+            rd0_part2: t98,
             esc_ib: m_esc_ib,
             rd0_closes0: fw_rd0_closes0,
             rd0_closes1: fw_rd0_closes1,

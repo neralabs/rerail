@@ -4240,7 +4240,7 @@ impl<L: Layout> P<'_, L> {
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
             // parts' starts, to the closer.
-            let first = first_of([&m.rd0_part0, &m.e_any, &m.rd0_part2, &m.esc_ib], at, c);
+            let first = first_of([&m.rd0_part0, &m.rd0_part1, &m.rd0_part2, &m.esc_ib], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `quote2`
             if let Some(e) = first.filter(|&e| bit(&m.rd0_part0, e)) {
@@ -4249,7 +4249,7 @@ impl<L: Layout> P<'_, L> {
                 }
             }
             // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.e_any, e)) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd0_part1, e)) {
                 if part.is_none_or(|q| (e, 0, 1) < q) {
                     part = Some((e, 0, 1));
                 }
@@ -4274,7 +4274,7 @@ impl<L: Layout> P<'_, L> {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
                         0 => (e + 1, 10),
-                        1 => (match first_bit(&m.e_last, e) {
+                        1 => (match first_bit(&m.escape_sequence_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 7),
@@ -4340,10 +4340,10 @@ impl<L: Layout> P<'_, L> {
             };
             // The part first after `at`, before the closer: the earliest, the shortest at one byte. One scan of the
             // parts' starts, to the closer.
-            let first = first_of([&m.e_any, &m.rd0_part2, &m.esc_ib], at, c);
+            let first = first_of([&m.rd0_part1, &m.rd0_part2, &m.esc_ib], at, c);
             let mut part: Option<(usize, u8, usize)> = None;
             // `escape_sequence`
-            if let Some(e) = first.filter(|&e| bit(&m.e_any, e)) {
+            if let Some(e) = first.filter(|&e| bit(&m.rd0_part1, e)) {
                 if part.is_none_or(|q| (e, 0, 0) < q) {
                     part = Some((e, 0, 0));
                 }
@@ -4367,7 +4367,7 @@ impl<L: Layout> P<'_, L> {
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (match first_bit(&m.e_last, e) {
+                        0 => (match first_bit(&m.escape_sequence_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 7),

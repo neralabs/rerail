@@ -149,6 +149,11 @@ pub struct Parts {
     /// from the closer's first; the others are the reader's kind (Kotlin's string, closed by
     /// a `"` or by a template's `${`).
     pub closes: Vec<(String, Expr, u8)>,
+    /// `P = E check else K`: the parts read by their `check P = G`, as a lexer reads an escape by its grammar from the
+    /// byte `E` holds at. Each is two of `parts`: `P` where `G` matches from there, through its match's last byte
+    /// (`last`), and `K` one byte where it does not. Its kind, its grammar and `K`, for the writers that read the
+    /// part as the lexer does; the masks path reads the two parts.
+    pub checked: Vec<(String, Gram, String)>,
 }
 
 /// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
@@ -1163,6 +1168,12 @@ struct P {
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<Vec<u8>>, bool)>,
+    /// The classes read so far, by name, and the `check`s: a part read by its check (`Parts::checked`) reads its
+    /// grammar's bytes.
+    classes: Vec<(String, Vec<(u32, u32)>)>,
+    checks: Vec<(String, Gram)>,
+    /// The kinds of the parts read by their checks: their `check` statements are the parts', not a token's.
+    part_checks: Vec<String>,
 }
 
 type R<T> = Result<T, String>;
@@ -1917,6 +1928,148 @@ impl P {
         }
         Ok(out)
     }
+    /// A part read by its check (`Parts::checked`), `P = E check else K` with `check P = G`: the masks of `G`'s match,
+    /// as a lexer reads it from the byte `E` holds at, one byte at a time, each choice at the next byte (LL(1)), with no
+    /// loop, so of a few paths (`check_paths`). Each path is its classes at their offsets, and where it passes a `[A]`
+    /// by, `A`'s first bytes not at the offset, as a lexer takes `A` where it can. Its mask `ok_p` is those, `next`ed to
+    /// the path's first byte; its last byte `prev(E & ok_p, n - 1)`, `n` its bytes. `P_ok`: the paths' `ok_p`, `|`ed;
+    /// `P_last`: their last bytes. Both named, made before the reader's token. A match never holds a byte of `E` after
+    /// its first, so the matches from two of them are apart.
+    fn part_check(&mut self, kind: &str, start: &Expr, g: &Gram) -> R<(Expr, Expr)> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let at = |e: Expr, k: u32| match k {
+            0 => e,
+            1 => Expr::Call("next".into(), vec![Arg::E(e)]),
+            k => Expr::Call("next".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+        };
+        let ident: String = kind.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+        let paths = self.check_paths(g)?;
+        let (mut ok, mut last): (Option<Expr>, Option<Expr>) = (None, None);
+        for (items, n) in paths {
+            let mut p: Option<Expr> = None;
+            for (e, k, is) in items {
+                let x = at(e, k);
+                let x = if is { x } else { Expr::Not(Box::new(x)) };
+                p = Some(match p {
+                    Some(p) => and(p, x),
+                    None => x,
+                });
+            }
+            let p = p.ok_or("a part's check that matches no byte")?;
+            let n = u8::try_from(n).map_err(|_| "a part's check of at most 255 bytes".to_owned())?;
+            last = Some(or_of(last, prev(and(start.clone(), p.clone()), n - 1)));
+            ok = Some(or_of(ok, p));
+        }
+        let (ok_name, last_name) = (format!("{ident}_ok"), format!("{ident}_last"));
+        self.before.push(Stmt::Mask(ok_name.clone(), ok.ok_or("a part's check of no path")?));
+        self.before.push(Stmt::Mask(last_name.clone(), last.ok_or("a part's check of no path")?));
+        Ok((Expr::Name(ok_name), Expr::Name(last_name)))
+    }
+
+    /// A check's grammar's paths (`part_check`): each its tests, a class or a first bytes' mask at an offset, holding
+    /// or not, and its bytes. At most 64.
+    fn check_paths(&mut self, g: &Gram) -> R<Vec<(Vec<(Expr, u32, bool)>, u32)>> {
+        type Path = (Vec<(Expr, u32, bool)>, u32);
+        let shift = |p: &Path, by: u32| -> Path { (p.0.iter().map(|(e, k, is)| (e.clone(), k + by, *is)).collect(), p.1 + by) };
+        let out: Vec<Path> = match g {
+            Gram::Lit(t) if !t.is_empty() => {
+                let items = t.as_bytes().iter().enumerate().map(|(k, &b)| (self.byte_class(b), k as u32, true)).collect();
+                vec![(items, t.len() as u32)]
+            }
+            Gram::Sym(_) => {
+                let (c, _) = self.check_first(g)?;
+                vec![(vec![(c, 0, true)], 1)]
+            }
+            Gram::Seq(v) => {
+                let mut acc: Vec<Path> = vec![(vec![], 0)];
+                for x in v {
+                    let tails = self.check_paths(x)?;
+                    let mut next = Vec::new();
+                    for a in &acc {
+                        for t in &tails {
+                            let t = shift(t, a.1);
+                            next.push((a.0.iter().cloned().chain(t.0).collect(), t.1));
+                        }
+                    }
+                    acc = next;
+                    if acc.len() > 64 {
+                        return self.err("a part's check of more than 64 paths");
+                    }
+                }
+                acc
+            }
+            Gram::Alt(v) => {
+                self.check_first(g)?;
+                let mut out = Vec::new();
+                for x in v {
+                    out.extend(self.check_paths(x)?);
+                }
+                out
+            }
+            Gram::Opt(x) => {
+                let (f, _) = self.check_first(x)?;
+                let mut out = self.check_paths(x)?;
+                out.push((vec![(f, 0, false)], 0));
+                out
+            }
+            _ => return self.err("a part's check of bytes, classes, sequences, choices and `[…]`, no loop"),
+        };
+        if out.len() > 64 {
+            return self.err("a part's check of more than 64 paths");
+        }
+        Ok(out)
+    }
+
+    /// A byte's class, one a byte, made once (`classed`), as a `pairs`' are.
+    fn byte_class(&mut self, b: u8) -> Expr {
+        let name = format!("pair_byte_{b:02x}");
+        if !self.classed.contains(&b) {
+            self.classed.push(b);
+            self.before.push(Stmt::Class(name.clone(), vec![(u32::from(b), u32::from(b))]));
+            self.classes.push((name.clone(), vec![(u32::from(b), u32::from(b))]));
+        }
+        Expr::Name(name)
+    }
+
+    /// A check's grammar's first bytes (`part_check`): their mask and their set. A choice's arms' first bytes are
+    /// apart; no element may match no byte but a `[…]` after another.
+    fn check_first(&mut self, g: &Gram) -> R<(Expr, [bool; 256])> {
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        Ok(match g {
+            Gram::Lit(t) if !t.is_empty() => {
+                let b = t.as_bytes()[0];
+                let mut set = [false; 256];
+                set[usize::from(b)] = true;
+                (self.byte_class(b), set)
+            }
+            Gram::Sym(n) => {
+                let items = self.classes.iter().rev().find(|(k, _)| k == n).map(|(_, v)| v.clone()).ok_or_else(|| format!("a part's check: `{n}` is no class"))?;
+                let mut set = [false; 256];
+                for (lo, hi) in items {
+                    for b in lo..=hi.min(255) {
+                        set[b as usize] = true;
+                    }
+                }
+                (Expr::Name(n.clone()), set)
+            }
+            Gram::Seq(v) if !v.is_empty() => self.check_first(&v[0])?,
+            Gram::Alt(v) if !v.is_empty() => {
+                let (mut e, mut set) = self.check_first(&v[0])?;
+                for a in &v[1..] {
+                    let (f, s) = self.check_first(a)?;
+                    if (0..256).any(|b| set[b] && s[b]) {
+                        return self.err("a part's check whose choices share a first byte (it reads each choice at the next byte)");
+                    }
+                    (0..256).for_each(|b| set[b] |= s[b]);
+                    e = or(e, f);
+                }
+                (e, set)
+            }
+            Gram::Opt(_) => return self.err("a part's check with an optional first element: its first bytes are its own"),
+            _ => return self.err("a part's check of bytes, classes, sequences, choices and `[…]`, no loop"),
+        })
+    }
+
     /// `pairs P = "AB" … "ABC" …`: the mask of the pairs' first bytes, a run's every other from
     /// the left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
     /// hidden classes one a byte; with triples, `P_three` too: where `P` holds and a triple's
@@ -2102,7 +2255,9 @@ impl P {
             "class" => {
                 let n = self.ident()?;
                 self.want_p("=")?;
-                Stmt::Class(n, self.class_items()?)
+                let items = self.class_items()?;
+                self.classes.push((n.clone(), items.clone()));
+                Stmt::Class(n, items)
             }
             "pairs" => {
                 let n = self.ident()?;
@@ -2321,7 +2476,9 @@ impl P {
             "check" => {
                 let kind = self.kind()?;
                 self.want_p("=")?;
-                Stmt::Check { kind, body: self.gram()? }
+                let body = self.gram()?;
+                self.checks.push((kind.clone(), body.clone()));
+                Stmt::Check { kind, body }
             }
             "ending" => {
                 let rule = self.ident()?;
@@ -2601,6 +2758,7 @@ impl P {
                         }
                         self.want_p("{")?;
                         let mut parts = vec![];
+                        let mut checked = vec![];
                         loop {
                             self.nls();
                             if self.eat_p("}") {
@@ -2609,6 +2767,21 @@ impl P {
                             let p = self.kind()?;
                             self.want_p("=")?;
                             let e = self.expr()?;
+                            if self.eat_kw("check") {
+                                self.want_kw("else")?;
+                                let other = self.kind()?;
+                                let g = self.checks.iter().rev().find(|(k, _)| *k == p).map(|(_, g)| g.clone()).ok_or_else(|| format!("part `{p}` read by its check: `check {p} = …` before its reader"))?;
+                                let (ok, last) = self.part_check(&p, &e, &g)?;
+                                parts.push((p.clone(), Expr::And(Box::new(e.clone()), Box::new(ok.clone())), PartLen::Last(last)));
+                                parts.push((other.clone(), Expr::And(Box::new(e), Box::new(Expr::Not(Box::new(ok)))), PartLen::Bytes(1)));
+                                checked.push((p.clone(), g, other));
+                                if !self.part_checks.contains(&p) {
+                                    self.part_checks.push(p);
+                                }
+                                self.nls();
+                                let _ = self.eat_p(",");
+                                continue;
+                            }
                             let len = if self.eat_kw("last") {
                                 PartLen::Last(self.expr()?)
                             } else {
@@ -2646,7 +2819,7 @@ impl P {
                                 let _ = self.eat_p(",");
                             }
                         }
-                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes }))
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes, checked }))
                     } else {
                         Some(TokenRule::Read(regions))
                     }
@@ -2820,7 +2993,7 @@ pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![], classes: vec![], checks: vec![], part_checks: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
@@ -2830,6 +3003,7 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
         out.append(&mut p.after);
         p.nls();
     }
+    out.retain(|s| !matches!(s, Stmt::Check { kind, .. } if p.part_checks.contains(kind)));
     Ok(out)
 }
 

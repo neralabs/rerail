@@ -459,3 +459,16 @@ statements and blocks end.
     are refused to the lean parser, which reads `....` as an ellipsis and a `.`. None is in the corpus.
 80. **The loop skips a class.** `skip ws`, as rr's, Kotlin's and JSON's, in place of `skip code & (blank | lf)`.
     Between tokens the loop is always in code: a region's bytes are its token's.
+81. **A string's escape is a part read by its check.** `check escape_sequence = '\\' (u_l hex hex hex hex | uu_l
+    hex hex hex hex hex hex hex hex | x_l hex hex | digit [digit [digit]] | esc_one)` is the lean lexer's `escape`,
+    one byte at a time. A reader's part `escape_sequence = esc check else '\\'` reads it at a backslash: where the
+    check matches, an escape through the match's last byte; where it does not, a lone `\`. The masks e2 to e_last
+    are gone.
+    - Bitlex (`Parts::checked`) makes two masks of the check: `P_ok`, where the check matches from, and `P_last`,
+      the last byte of each match. The masks path reads the two parts, `E & P_ok` through `P_last` and `E & ~P_ok`
+      one byte.
+    - A check read this way has no loop. A choice's arms start with distinct bytes, and a `[…]` is not first, so
+      the lexer reads each choice at the next byte without going back. Its `check` statement is the part's, not a
+      token's.
+    - The writers that read a part as the lexer does get the kind, the grammar and the other part from
+      `Parts::checked`.
