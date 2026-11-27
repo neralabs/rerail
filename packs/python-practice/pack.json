@@ -27,8 +27,8 @@
         "severity": "high",
         "hazard": "async.cancellation-swallowed"
       },
-      "mode": "steer",
-      "on": true,
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/downloads.py",
@@ -52,7 +52,7 @@
         "hazard": "async.blocking-call-in-async"
       },
       "mode": "log",
-      "on": true,
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/routes.py",
@@ -175,8 +175,8 @@
         "severity": "high",
         "hazard": "async.coroutine-never-awaited"
       },
-      "mode": "steer",
-      "on": true,
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "shop/orders.py",
@@ -212,7 +212,7 @@
         "hazard": "resource.release-skipped-on-error"
       },
       "mode": "log",
-      "on": false,
+      "on": true,
       "examples": {
         "caught": {
           "path": "app/locks.py",

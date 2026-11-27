@@ -22,13 +22,14 @@ ALTERs and ignores indexes on tables the same transaction creates. This pack add
 Ruff, mypy, Bandit and pylint check none of these shapes.
 
 **Who it is for.** The five lock rules (`index-not-concurrent`, `constraint-without-not-valid`, `column-type-rewrite`,
-`set-not-null-scan`, `missing-lock-timeout`) assume migrations run against a database that serves traffic. A project
-that stops the application to migrate has no lock hazard (jupyterhub's upgrade guide says "Shut down JupyterHub"
-before `upgrade-db`; mealie runs `command.upgrade(alembic_cfg, "head")` in `mealie/db/init_db.py` before its one
-process serves): turn those five off together in its repository settings. The rules cannot see the deployment, so the
-corpus figures below give two precisions: **code** (the file holds the shape the message describes) and
-**actionable** (a reviewer of that repository would ask for the change: not on a database that migrates with the app
-stopped, not a no-op).
+`set-not-null-scan`, `missing-lock-timeout`) ship off, in Log mode, because whether they apply depends on how a
+project deploys, which the rules cannot see. Their advice is right when migrations run against a database that serves
+traffic, and fixes nothing when a project stops the application to migrate (jupyterhub's upgrade guide says "Shut down
+JupyterHub" before `upgrade-db`; mealie runs `command.upgrade(alembic_cfg, "head")` in `mealie/db/init_db.py` before
+its one process serves). A team that migrates a live PostgreSQL database turns the five on in its repository settings.
+For the same reason the corpus figures below give two precisions: **code** (the file holds the shape the message
+describes) and **actionable** (a reviewer of that repository would ask for the change: not on a database that migrates
+with the app stopped, not a no-op).
 
 Each rule reads the repository's Python files through the pack's library [`rules/lib/alembic.rerail`](rules/lib/alembic.rerail),
 which resolves what it reads rather than matching spellings: `op.*` and `batch_op.*` operations through `from alembic
@@ -45,44 +46,56 @@ by `npm run fixtures:pull -- --pack alembic`, not in git), where a line ending i
 other line may be (`rerail rules test <file>.rerail`, which reads the case directory as one repository); by a run on the
 8 open-source repositories of the corpus that use Alembic ([the corpus](#the-corpus)), whose matches were read and judged
 (every match, or a spread sample covering every repository); and by an independent review
-([REVIEW-alembic.md](REVIEW-alembic.md)), whose findings were applied (its "Applied" section). A rule starts on only
-when at least 90% of its read matches were code-real; actionable precision is given beside it, and for the lock rules
-it drops for the projects that migrate with the app stopped.
+([REVIEW-alembic.md](REVIEW-alembic.md)), whose findings were applied (its "Applied" section). Each rule was then
+benchmarked on #1120's engine over further repositories (lemur, pyaleph, letta, flaskbb, HaloWebUI, notify-server,
+remnawave-admin, themecp-backend-v2, siema_tech_fastapi); each rule's details give the figures. A rule starts on only
+when at least 90% of its judged matches are actionable, the corpus and the benchmark counted together; the others ship
+in Log mode, off.
 
 Figures are after the review's fixes (runs `alembic-fix-*`), on the 8 Alembic repositories; "read" is every match or
-the spread sample the rule's details name.
+the spread sample the rule's details name. The last column adds the benchmark's judged matches.
 
-| Rule | Mode | Catches | Matches (repos) | Code precision (read) | Actionable (read) |
-|---|---|---|---|---|---|
-| `alembic-practice-index-not-concurrent` | Steer | an index, unique constraint or primary key built on an existing table without CONCURRENTLY (also through `add_column(unique=/index=True)` and project helpers), once per table | 242 (7) | 100% (99 of 99) | 84% (83 of 99); 100% outside mealie |
-| `alembic-practice-concurrent-index-outside-autocommit` | Steer | a concurrent index build or drop run inside the migration's transaction | 0 (0) | no matches; 224 wrapped concurrent calls left alone | n/a |
-| `alembic-practice-not-null-without-server-default` | Steer | a NOT NULL column added to an existing table with no `server_default` (and `default=` mistaken for one) | 13 (3) | 100% (13 of 13) | 100% deploying main; 4 of 13 tag to tag |
-| `alembic-practice-drop-mapped-column` | Steer | a column or table dropped or renamed while a model of the migration's own tree still maps it | 0 (0) | no matches at release commits | n/a |
-| `alembic-practice-constraint-without-not-valid` | Steer | a foreign key or CHECK added validated to an existing table (also through `add_column`) | 223 (8) | 100% (67 of 67) | 63% (42 of 67); 76% outside jupyterhub and mealie |
-| `alembic-practice-column-type-rewrite` | Steer | a column type change that rewrites or scans the table (widenings and same-type spellings left alone) | 34 (6) | 100% (34 of 34) | 94% (32 of 34) |
-| `alembic-practice-set-not-null-scan` | Log | `alter_column(nullable=False)` on an existing table not proven NOT NULL by a validated check | 77 (6) | 95% (53 of 56) | 89% (50 of 56) |
-| `alembic-practice-missing-lock-timeout` | Log | a migration tree whose connection has no lock_timeout (once, at env.py), or a revision that slips in a tree that sets it per revision | 11 (8) | 100% (11 of 11) | 73% (8 of 11) |
-| `alembic-practice-multiple-heads` | Steer | revisions that leave one migration directory with two heads: `alembic upgrade head` refuses to run | 0 (0) | no matches at release commits | n/a |
-| `alembic-practice-rename-as-drop-add` | Log, starts off | one upgrade that drops a column and adds one of the same type on the same table with no data copy | 2 (1) | 50% (1 of 2) | 50% |
-| `alembic-practice-model-import-in-migration` | Steer | a migration that imports an application ORM model instead of declaring the table it needs | 13 (4) | 100% (13 of 13) | 100% |
-| `alembic-practice-empty-downgrade` | Log | a downgrade() that does nothing while upgrade() changes the schema, in a tree whose other revisions implement downgrade | 3 (2) | 100% (3 of 3) | 100% |
+| Rule | Mode | Catches | Matches (repos) | Code precision (read) | Actionable (read) | Actionable, with the benchmark |
+|---|---|---|---|---|---|---|
+| `alembic-practice-index-not-concurrent` | Log, starts off | an index, unique constraint or primary key built on an existing table without CONCURRENTLY (also through `add_column(unique=/index=True)` and project helpers), once per table | 242 (7) | 100% (99 of 99) | 84% (83 of 99); 100% outside mealie | 83% (107 of 129) |
+| `alembic-practice-concurrent-index-outside-autocommit` | Steer | a concurrent index build or drop run inside the migration's transaction | 0 (0) | no matches; 224 wrapped concurrent calls left alone | n/a | n/a (no matches) |
+| `alembic-practice-not-null-without-server-default` | Log, starts off | a NOT NULL column added to an existing table with no `server_default` (and `default=` mistaken for one) | 13 (3) | 100% (13 of 13) | 100% deploying main; 4 of 13 tag to tag | 72% (18 of 25) |
+| `alembic-practice-drop-mapped-column` | Log, starts off | a column or table dropped or renamed while a model of the migration's own tree still maps it | 0 (0) | no matches at release commits | n/a | 0% (0 of 1) |
+| `alembic-practice-constraint-without-not-valid` | Log, starts off | a foreign key or CHECK added validated to an existing table (also through `add_column`) | 223 (8) | 100% (67 of 67) | 63% (42 of 67); 76% outside jupyterhub and mealie | 64% (62 of 97) |
+| `alembic-practice-column-type-rewrite` | Log, starts off | a column type change that rewrites or scans the table (widenings and same-type spellings left alone) | 34 (6) | 100% (34 of 34) | 94% (32 of 34) | 67% (38 of 57) |
+| `alembic-practice-set-not-null-scan` | Log, starts off | `alter_column(nullable=False)` on an existing table not proven NOT NULL by a validated check | 77 (6) | 95% (53 of 56) | 89% (50 of 56) | 74% (64 of 86) |
+| `alembic-practice-missing-lock-timeout` | Log, starts off | a migration tree whose connection has no lock_timeout (once, at env.py), or a revision that slips in a tree that sets it per revision | 11 (8) | 100% (11 of 11) | 73% (8 of 11) | 72% (13 of 18) |
+| `alembic-practice-multiple-heads` | Steer | revisions that leave one migration directory with two heads: `alembic upgrade head` refuses to run | 0 (0) | no matches at release commits | n/a | n/a (no matches) |
+| `alembic-practice-rename-as-drop-add` | Log, starts off | one upgrade that drops a column and adds one of the same type on the same table with no data copy | 2 (1) | 50% (1 of 2) | 50% | 57% (4 of 7) |
+| `alembic-practice-model-import-in-migration` | Steer | a migration that imports an application ORM model instead of declaring the table it needs | 13 (4) | 100% (13 of 13) | 100% | 100% (15 of 15) |
+| `alembic-practice-empty-downgrade` | Log | a downgrade() that does nothing while upgrade() changes the schema, in a tree whose other revisions implement downgrade | 3 (2) | 100% (3 of 3) | 100% | 100% (3 of 3; no new matches) |
 
 Each rule details its gaps and the shapes it leaves alone below. Rules in Log mode record matches without steering
 the agent; the details give the reason.
 
 ## Starting values
 
-11 of 12 rules start on: 8 steer and 3 log, as the review proposed. `set-not-null-scan` logs because about half its
-matches are on tables that stay small and the safe path spans two deploys; `missing-lock-timeout` logs because its
-finding is one decision per tree, which two of the eight repositories make on purpose (they migrate with no traffic);
-`empty-downgrade` logs on a sample of 3. `rename-as-drop-add` starts off (`"on": false`): one of its two corpus matches
-was a deliberate replacement, below the 90% bar. `index-not-concurrent` and `constraint-without-not-valid` steer
-although their actionable precision is under 90%: the misses are projects that migrate with the app stopped (turn the
-five lock rules off there) and tables created earlier in the same release, and following the steer costs little on a
-small table. Three rules have no corpus matches by design (`concurrent-index-outside-autocommit`, `drop-mapped-column`,
-`multiple-heads`): at a release commit every repository already gets these right, and the bug exists only between
-writing a migration and finishing the change, which is when Rerail checks an edit. Each was proven by an edit-window
-test on a copy of a corpus repository (see its details).
+4 of 12 rules start on: 3 steer (`concurrent-index-outside-autocommit`, `multiple-heads`, `model-import-in-migration`)
+and 1 logs (`empty-downgrade`, on a sample of 3). The other 8 ship in Log mode, off, each below 90% actionable with the
+corpus and the benchmark counted together (the table's last column):
+
+- the five lock rules (`index-not-concurrent`, `constraint-without-not-valid`, `column-type-rewrite`,
+  `set-not-null-scan`, `missing-lock-timeout`): their misses are mostly projects that migrate with the app stopped or
+  before they serve (jupyterhub and mealie in the corpus; flaskbb, themecp-backend-v2 and siema_tech_fastapi in the
+  benchmark), which the rules cannot see. A team that migrates a live PostgreSQL database turns them on.
+  `set-not-null-scan`'s message for a column just added also advises one `server_default=` where the backfill is per
+  row;
+- `not-null-without-server-default`: right where the table holds rows when the migration runs; the benchmark's misses
+  add columns to tables created hours earlier;
+- `drop-mapped-column`: its one benchmark match drops a table that only a model nothing imports still maps;
+- `rename-as-drop-add`: 3 of its 7 matches are deliberate replacements.
+
+`concurrent-index-outside-autocommit` and `multiple-heads` have no matches on real code, in the corpus or the
+benchmark, by design: at a release commit every repository already gets these right, and the bug exists only between
+writing a migration and finishing the change, which is when Rerail checks an edit. They keep their starting state;
+each was proven by an edit-window test on a copy of a corpus repository (see its details). On the five corpus
+repositories the benchmark re-ran (the template, jupyterhub, mealie, open-webui, dispatch), #1120's engine reports
+exactly the corpus findings for every rule.
 
 ## The corpus
 
@@ -172,6 +185,15 @@ rows); dispatch `src/dispatch/database/revisions/tenant/versions/2023-10-23_f260
 superset's configuration tables, polar's small tables under `SET LOCAL lock_timeout = '5s'`; the message's "fine for a
 small table" covers them.
 
+**On #1120's engine (benchmark).** 118 matches on 6 repositories, 30 judged: code 29 of 30, actionable 24 of 30. With
+the corpus: code 128 of 129 (99%), actionable 107 of 129 (83%). The misses are mostly real index builds in projects
+that stop the app or migrate before serving (flaskbb
+`flaskbb/migrations/202607102150_1783713047_settings_refactoring.py:30`, themecp-backend-v2), plus letta's
+`f55542f37641:30`, where the team commented out the concurrent build on purpose. One false positive: pyaleph
+`deployment/migrations/versions/0059_b9c4f1e6a2d7_persist_node_metrics.py:168`, whose upgrade creates the table with
+`op.execute(text("CREATE TABLE ..."))`, which the rule does not read as creating it (it reads only a bare string). It
+starts off (Log): below 90%; turn it on where the project migrates against a live database.
+
 **Sources:** PostgreSQL, [CREATE INDEX](https://www.postgresql.org/docs/current/sql-createindex.html) ("locks out
 writes (but not reads) on the table until it's done"; CONCURRENTLY cannot run in a transaction block; a failed
 concurrent build leaves an INVALID index); Alembic,
@@ -196,8 +218,9 @@ outside an autocommit block, it reports:
   one in PostgreSQL's own branch of a dialect test.
 
 The message names the fix, `with op.get_context().autocommit_block():` around the call, and its cost: the block first
-commits what the revision ran before it, so the concurrent work goes last. This rule also guards the steer of
-`alembic-practice-index-not-concurrent`: an agent told to build an index concurrently often adds only the keyword.
+commits what the revision ran before it, so the concurrent work goes last. This rule also guards the advice of
+`alembic-practice-index-not-concurrent` (where a team turns it on): an agent told to build an index concurrently often
+adds only the keyword.
 
 `postgresql_concurrently` is read by value: the literal `True`, or a module constant of the same file or one imported
 from another module (`postgresql_concurrently=CONCURRENT`).
@@ -241,6 +264,9 @@ helper reading: its `_create_index` and `_drop_index` call `op.create_index(...,
 outside any `with`, and `upgrade()` and `downgrade()` call them only inside `autocommit_block()`. The review's
 edit-window test on a copy of the template (a new revision with both calls in `upgrade()` and `downgrade()`) reports
 both lines, and the wrapped version is silent.
+
+**On #1120's engine (benchmark).** No matches on the benchmark repositories, and no new ones on the corpus repositories
+it re-ran.
 
 **Sources:** PostgreSQL, [CREATE INDEX](https://www.postgresql.org/docs/current/sql-createindex.html) ("a regular
 CREATE INDEX command can be performed within a transaction block, but CREATE INDEX CONCURRENTLY cannot") and
@@ -319,7 +345,14 @@ upgrades from tag to tag had no rows there yet; the DDL fails on any database th
 rows (a deployment of the main branch, a development database with data). `161cadc1af8d` shows the intent it
 missed: its comment says "Step 1: Add column without NOT NULL constraint" above `nullable=False`. Precision: code 13 of
 13; actionable 13 of 13 for a team that deploys main, 4 of 13 counting only tag-to-tag upgrades. The fix
-(`server_default=`) is safe either way, so the rule steers.
+(`server_default=`) is safe either way.
+
+**On #1120's engine (benchmark).** 12 matches, all judged: code 12 of 12, actionable 5 of 12 (letta's 3 and pyaleph's
+2, such as `deployment/migrations/versions/0004_82e0f9c7a952_error_codes.py:32` on `rejected_messages`). With the
+corpus: code 25 of 25, actionable 18 of 25 (72%). The other 7 add NOT NULL columns to tables created hours earlier the
+same day, which could hold no rows yet (themecp-backend-v2
+`alembic/versions/a81e39f8ee47_updated_ddl_contest_session.py:24`, an autogenerated rename; siema_tech_fastapi's
+`products`). It starts off (Log): below 90%; turn it on where the table holds rows when the migration runs.
 
 ### `alembic-practice-drop-mapped-column`
 
@@ -404,10 +437,11 @@ Tree resolution after the rework: env.py's imports reach every model module of t
 (through `_all_models`' star imports), polar (117 of 118) and dify, and 14 of 15 of dispatch's; superset falls back to
 its top-level directory (its metadata comes through `flask_appbuilder`, outside the run). The review's two
 counterexamples (the monorepo, `exclude_properties`) give 0 findings, down from 2. The bug lives in the window
-between writing the migration and editing the model, which is when Rerail steers. No historical drop of a column that a
-later revision adds back occurs in these repositories (an independent `ast` survey agrees); the descendant exemption is
-proven on the cases only. The first version reported jupyterhub's `api_tokens` reset (harmless: the hub is stopped for
-`upgrade-db` and `create_all()` rebuilds the table); the both-directions exemption removed it. polar's eight
+between writing the migration and editing the model, which is when Rerail checks an edit. No historical drop of a
+column that a later revision adds back occurs in these repositories (an independent `ast` survey agrees); the
+descendant exemption is proven on the cases only. The first version reported jupyterhub's `api_tokens` reset
+(harmless: the hub is stopped for `upgrade-db` and `create_all()` rebuilds the table); the both-directions exemption
+removed it. polar's eight
 `drop_column(..., "token")`-style revisions of September 2026 stay silent because the models map the replacements under
 explicit names (`mapped_column("token_v2", ...)`). Edit-window check: a new revision added to a copy of mealie that drops
 `shopping_list_items.is_food` (batch), `shopping_list_items.created_at` (declared on the `SqlAlchemyBase` base class)
@@ -415,6 +449,12 @@ and the table `shopping_list_recipe_reference` is reported on all three lines, a
 after `is_food` is removed from the model, its line is silent. The same check on dify reports `op.drop_column("apps",
 "name")`. dify was read as the 306 files the rule needs (`api/models`, `api/migrations`, and every other non-test file
 that declares `__tablename__` or a `Table(...)`), because the shared corpus queue held 90+ runs.
+
+**On #1120's engine (benchmark).** 1 match, judged: code 1 of 1, actionable 0 of 1. letta
+`alembic/versions/567e9fe06270_create_new_runs_table_and_remove_legacy_.py:67` drops `job_messages`, which
+`letta/orm/job_messages.py` still maps; but no module imports that model, so nothing reads the table. The rule counts
+every module of an imported package as the tree's models, which brought the dead model in. It starts off (Log): below
+90%; turn it on where the models of the migration's tree are the ones the application loads.
 
 ### `alembic-practice-constraint-without-not-valid`
 
@@ -477,9 +517,9 @@ The two new matches are open-webui's `add_column` with an inline `sa.ForeignKey(
 `b8e4f0a3c752_add_group_hierarchy.py:18`, `group.parent_group_id`), which Alembic renders as a validated ADD FOREIGN
 KEY. Actionable precision is 63% overall and 76% (42 of 55) outside the two repositories that migrate with the app
 stopped, below the 90% bar: dify's 13 CHECKs on `knowledge_fs_*` tables created hours earlier in the same release are
-on empty tables. The rule still steers, as the review proposes: following the message costs little even on an empty
-table, and the commonest corpus shape (an FK on a column the same `upgrade()` adds, dispatch's) now gets the cheaper
-`inline_references=True` fix.
+on empty tables. The review proposed steering anyway, since following the message costs little even on an empty
+table; with the benchmark below it stays under the bar and starts off. The commonest corpus shape (an FK on a column
+the same `upgrade()` adds, dispatch's) gets the cheaper `inline_references=True` fix.
 
 Every match outside dispatch was read in its whole `upgrade()`; in dispatch, each of the 44 files was read for its
 `upgrade()`'s table creations, column additions and constraint operations (93 matches sit in one autogenerated
@@ -500,6 +540,13 @@ Real matches, for example: dispatch `src/dispatch/database/revisions/tenant/vers
 actionable: dify's 13 checks on `knowledge_fs_*` tables created hours earlier in the same series (likely empty when
 the release deploys), and mealie's and jupyterhub's, which migrate with the app stopped. polar's 5 run under
 `SET LOCAL lock_timeout = '5s'` and still scan; the message's "fine for a small table" covers the cheap ones.
+
+**On #1120's engine (benchmark).** 78 matches on 5 repositories, 30 judged: code 30 of 30, actionable 20 of 30. With
+the corpus: code 97 of 97, actionable 62 of 97 (64%). No false positive; the misses are deployment again: flaskbb's
+autogenerated drop and re-add of foreign keys to change `ondelete`
+(`flaskbb/migrations/201802021027_af3f5579c84d_add_cascades.py:100`), in a project that stops FlaskBB to migrate, and
+siema_tech_fastapi's, which migrates before serving; outside those, 20 of 20. It starts off (Log): below 90%; turn it
+on where the project migrates against a live database.
 
 **Sources:** PostgreSQL, [ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html) (ADD
 table_constraint NOT VALID, VALIDATE CONSTRAINT's SHARE UPDATE EXCLUSIVE lock, ADD FOREIGN KEY's SHARE ROW EXCLUSIVE
@@ -601,6 +648,14 @@ with use: dify `api/migrations/versions/2025_01_01_2000-a91b476a53de_change_work
 short and the message's "keep it for a table that stays small" applies. Precision: code 34 of 34; actionable 32 of 34
 (mealie's 2 migrate before it serves).
 
+**On #1120's engine (benchmark).** 23 matches, all judged: code 23 of 23, actionable 6 of 23 (HaloWebUI's 3 and
+letta's 3, such as letta's BIGINT to Integer at `f7507eab4bb9:57`). With the corpus: code 57 of 57, actionable 38 of
+57 (67%). 17 of the 23 are flaskbb's TIMESTAMP to TIMESTAMPTZ changes
+(`flaskbb/migrations/201606210939_d9530a529b3f_add_timezone_awareness_for_datetime.py:100`), which PostgreSQL 12+ does
+not rewrite when the session time zone is UTC (the gap above), in a project that stops the app to migrate. It starts
+off (Log): below 90%; turn it on where the project migrates against a live database and the change is one PostgreSQL
+rewrites.
+
 ### `alembic-practice-set-not-null-scan`
 
 Rerail's own rule, not a port. `ALTER TABLE t ALTER COLUMN c SET NOT NULL` checks every row of `t` ("by scanning the
@@ -686,7 +741,15 @@ lock anyway. Real matches on large, live tables: polar
 (`celery_taskmeta`); dispatch `tenant/versions/2022-08-29_479024506e05.py:52-55` (`case`, `incident`). About half of
 the matches are on tables that stay small (superset's metadata tables such as `dbs`, `clusters`, `themes`; the
 template's `user` and `item`), where the scan takes milliseconds and the message's "fine for a table that stays small"
-applies; that, and a fix that spans two revisions, is why the rule starts in `log`.
+applies; that, and a fix that spans two revisions, is why the rule logs rather than steers.
+
+**On #1120's engine (benchmark).** 66 matches on 6 repositories, 30 judged: code 21 of 30 (29 of 30 for the scan
+alone), actionable 14 of 30. With the corpus: code 74 of 86, actionable 64 of 86 (74%). The main false-positive shape
+is the message for a column the same upgrade just added: it advises one `server_default=` where the backfill is per
+row (8 of the 14 such rows, e.g. letta `alembic/versions/74e860718e0d_add_archival_memory_sharing.py:374`, filled per
+agent from `archives_agents`), where the NOT VALID check route is the right fix; most other misses are flaskbb's and
+themecp-backend-v2's, which do not migrate a live database. It starts off (Log): below 90%; turn it on where the
+project migrates against a live database.
 
 ### `alembic-practice-missing-lock-timeout`
 
@@ -728,9 +791,10 @@ setting two imports away from env.py, passed in a variable, split across adjacen
 role's or database's default, `PGOPTIONS`) is not seen; a setting the imported module makes for another engine
 counts; a run with revisions but no env.py reports nothing.
 
-**Mode: log.** The finding is one decision per tree, and two of the eight corpus repositories (jupyterhub, mealie)
-migrate with no other traffic by design, which the message's "leave it" covers but the rule cannot see. Steering the
-per-revision slips of convention trees is the next step once more convention trees than polar have been read.
+**Mode: log, off.** The finding is one decision per tree, and two of the eight corpus repositories (jupyterhub, mealie)
+and two of the seven benchmark ones migrate with no other traffic by design, which the message's "leave it" covers but
+the rule cannot see. Steering the per-revision slips of convention trees is the next step once more convention trees
+than polar have been read.
 
 **Corpus** (BRIEF commits; polar, dify and superset on the review's trimmed copies; runs
 `alembic-fix-missing-lock-timeout-*`; every match read):
@@ -753,6 +817,11 @@ inside one finding. polar keeps its three slips: `2026-10-23-1000_add_agents_cla
 `subscriptions`) are real; `2026-08-12-1000_drop_pledge_transactions_table.py:22` drops an index of a table nothing
 reads. Without jupyterhub and mealie, 8 of 9 are actionable. The review's counterexamples: the engine built in
 `app/db.py` with `-c lock_timeout=5000` is silent; the log call and the `'0s'` trees are reported once at their env.py.
+
+**On #1120's engine (benchmark).** 7 matches, all judged, one per env.py: code 7 of 7, actionable 5 of 7. With the
+corpus: code 18 of 18, actionable 13 of 18 (72%). No false-positive shape; the 2 misses migrate before serving, in one
+container (themecp-backend-v2 `alembic/env.py:83`, siema_tech_fastapi `alembic/env.py:38`). It starts off (Log): below
+90%; turn it on where the project migrates against a live database.
 
 **Sources:** Squawk, [Safe migrations](https://squawkhq.com/docs/safe_migrations) and
 [require-lock-timeout](https://squawkhq.com/docs/require-lock-timeout) ("all other reads and writes sent after will
@@ -845,6 +914,9 @@ and unknown-parent readings change nothing at release commits. The review's coun
 is left alone, while a constant bound before its use is resolved. The review's edit-window copies: the fork is
 reported on both lines, the revision written on the head is silent.
 
+**On #1120's engine (benchmark).** No matches on the benchmark repositories, and no new ones on the corpus repositories
+it re-ran.
+
 ### `alembic-practice-rename-as-drop-add`
 
 Rerail's own rule, not a port. Mode `log`, starts off. In an Alembic revision's `upgrade()` (or a module-level function
@@ -917,6 +989,9 @@ so every provider's description is deleted. The other: `2e9819ca5b28_add_tenant_
 `dataset_id` for `tenant_id`, a different reference whose old values are meant to go. Of the 20 (table, `upgrade()`)
 pairs in these repositories that drop and add columns on the same existing table, 13 move data (`op.execute`,
 `UPDATE`, `sa.update`, an ORM `Session`), 5 add and drop different numbers of columns, and the 2 above are reported.
+
+**On #1120's engine (benchmark).** 5 matches, all judged: code and actionable 3 of 5; with the corpus, 4 of 7 (57%).
+The 2 false are letta `567e9fe06270:73,79`, a deliberate replacement (dify `2e9819ca5b28`'s shape); it stays off.
 
 ### `alembic-practice-model-import-in-migration`
 
@@ -1002,6 +1077,9 @@ silent). Edit-window check: a new revision added to a copy of polar that imports
 `polar.models` re-export) and `polar.models.user.User` is reported on both lines and `polar.config.settings` is not; in
 a copy of dify, `from models.model import App` and `models.Account` (through `import models`) are reported, and
 `StringUUID` and `AppTriggerStatus` are not.
+
+**On #1120's engine (benchmark).** 2 matches (pyaleph `0016:17`, `0032:18`), both real and actionable; with the
+corpus, 15 of 15.
 
 ### `alembic-practice-empty-downgrade`
 
@@ -1109,3 +1187,5 @@ and the excused revisions).
 
 Mode: `log`. The read matches are all real (code and actionable 3 of 3), but there are only 3, and the exemptions that
 remove the 13 deliberate no-ops are heuristics (a reflection call, a comment).
+
+**On #1120's engine (benchmark).** No new matches; dispatch's match is reported the same.

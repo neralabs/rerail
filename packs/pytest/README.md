@@ -13,7 +13,7 @@ test runner as well as pytest.
 |---|---|---|---|
 | `pytest-practice-patch-misses-from-import` | Steer | yes | pytest practice: a mock patch on the defining module of a name its callers imported with from-import |
 | `pytest-practice-patch-decorator-order` | Steer | yes | pytest practice: stacked @patch mock parameters named in decorator order, so each holds the other's mock |
-| `pytest-practice-scoped-fixture-mutated` | Steer | yes | pytest practice: a test changes a class-, module- or session-scoped fixture's value |
+| `pytest-practice-scoped-fixture-mutated` | Log | no | pytest practice: a test changes a class-, module- or session-scoped fixture's value |
 | `pytest-practice-environ-without-monkeypatch` | Steer | yes | pytest practice: test code changes os.environ without undoing it |
 | `pytest-practice-module-state-without-monkeypatch` | Log | no | pytest practice: test code changes a module global or class attribute without undoing it |
 
@@ -118,6 +118,8 @@ correct patch of the importer), `saleor/saleor` 5 (`saleor/warehouse/tests/test_
 `saleor/graphql/webhook/tests/mutations/test_webhook_trigger.py:130`). The `create=True` / `raising=False` change
 adds no match on the re-measured repositories.
 
+**On #1120's engine (benchmark).** Findings unchanged from the baseline; no new matches.
+
 ### `pytest-practice-patch-decorator-order`
 
 Rerail's own rule, not a port. Stacked `@mock.patch(...)` / `@mock.patch.object(...)` decorators pass their mocks
@@ -180,6 +182,8 @@ patches) found the same 4 and none more with underscores removed.
 - `saleor/payment/gateways/stripe/tests/test_webhooks.py:1075` and `:1315` (saleor): the `order_voided` /
   `order_refunded` spies swapped; both asserts compare `.called` with the same expectation, so they pass only because
   the two functions are called together.
+
+**On #1120's engine (benchmark).** Findings unchanged from the baseline; no new matches.
 
 ### `pytest-practice-scoped-fixture-mutated`
 
@@ -272,6 +276,13 @@ request, skipped when it fails; `jupyterhub/tests/test_auth.py:397`). The false 
 expected reading there is 47/47 `[not re-measured]`. Re-measured precision 18/19 (95%); with the review's superset
 reading minus the fixed shape, 65/66.
 
+**On #1120's engine (benchmark).** 18/19 earlier + 0/2 gained + 0/1 new = 18/22 (82%). The 19 jupyterhub findings
+are found again; the two gained ones come from the helper-parameter reading: a module-scoped fixture defined in a
+module that collects a single test, so no later test shares the value (letta
+`tests/integration_test_batch_api_cron_jobs.py:227`, `:254`). The new one is a function fixture that writes rebuilt
+state back to a session fixture on purpose (pyaleph `tests/conftest.py:331`). It starts off (Log): below 90%; turn it
+on where broad-scoped fixtures are shared by several tests and never collect state on purpose.
+
 ### `pytest-practice-environ-without-monkeypatch`
 
 Rerail's own rule, not a port. The process environment is global: a variable a test sets or removes on `os.environ`
@@ -348,6 +359,9 @@ pointing at a deleted temporary directory), `apache/superset` 1, real, and `sale
 positive (`saleor/asgi/tests/checks/check_uvicorn_starts.py:31`, a check script no test calls), which the rework
 leaves alone (its shape is a case) `[not re-measured]`; `langgenius/dify` was never measured. Read precision 13/14
 before the rework, 13/13 expected after it.
+
+**On #1120's engine (benchmark).** 17/19 new + 9/9 earlier = 26/28 (93%). The 2 false ones write a value already
+set (10xGraph `tests/publisher/test_openinference.py:121`, a `setdefault` of a key an autouse session fixture set).
 
 ### `pytest-practice-module-state-without-monkeypatch`
 
@@ -431,3 +445,8 @@ registries cleared or popped; the bound-method cleanup in DefectDojo `unittests/
 the bare annotation in superset `hive_tests.py:187`) were 26 of the 41 non-actionable ones, so the sample is expected
 to read about 69/84 (82%) `[not re-measured]`. Below 90%: log, off. Resets by assignment (`policy._cache = None`,
 `registry.errors = {}`) and test fakes are the remaining noise, which a static rule cannot tell from a leak.
+
+**On #1120's engine (benchmark).** 19/30 new (63%), a sample of 164 new rows; the baseline's 43 are reproduced. The
+main false shapes are flaskbb's database-backed settings proxy (`flaskbb_config[...] = v`, a `__setitem__` that
+writes rows the per-test database drops; `tests/unit/auth/test_rate_limit.py:34`) and a rebind undone by `.clear()`
+in an autouse fixture (remnawave `web/backend/tests/test_rbac_db.py:157`). It stays off (Log).

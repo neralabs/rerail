@@ -10,8 +10,8 @@ Rerail's own FastAPI rules, from the FastAPI docs and maintainers' review advice
 | `fastapi-practice-request-session-in-background-task` | Steer | FastAPI practice: a background task gets a database session its middleware, a function-scoped dependency or a with block closes before the task runs |
 | `fastapi-practice-yield-dependency-cleanup` | Steer | FastAPI practice: a yield dependency releases its connection outside finally, or swallows the route's error |
 | `fastapi-practice-cors-wildcard-with-credentials` | Steer | FastAPI practice: CORS middleware allows every origin while it allows credentials |
-| `fastapi-practice-response-exposes-secret-field` | Steer | FastAPI practice: a route's response sends a password hash, key or secret field to clients |
-| `fastapi-practice-route-missing-sibling-auth` | Log | FastAPI practice: one route of a router leaves out the auth dependency every other route requires |
+| `fastapi-practice-response-exposes-secret-field` | Log, starts off | FastAPI practice: a route's response sends a password hash, key or secret field to clients |
+| `fastapi-practice-route-missing-sibling-auth` | Log, starts off | FastAPI practice: one route of a router leaves out the auth dependency every other route requires |
 | `fastapi-practice-route-shadowed` | Steer | FastAPI practice: an earlier route of the same router answers this route's paths first |
 | `fastapi-practice-on-event-handler` | Steer | FastAPI practice: a startup/shutdown handler registered on an app built with lifespan=, which never runs it |
 | `fastapi-practice-lifecycle-event-handler` | Log | FastAPI practice: startup/shutdown code registered as event handlers instead of the app's lifespan |
@@ -117,6 +117,10 @@ session method).
 
 Why Steer: 54 matches, all read, 53 real (98%); the one exception runs no IO and is harmless to fix.
 
+**On #1120's engine (benchmark).** Every earlier finding is unchanged. 253 new matches in 2 `_wild-pydantic-dump`
+repositories (AgentCapture 239, notify-server 14); a spread sample of 30 was judged, 30 real. With the 53/54 above,
+83/84 (99%).
+
 ### `fastapi-practice-request-session-in-background-task`
 
 Rerail's own rule, not a port. Background tasks run after the response is sent. A task handed a SQLAlchemy session
@@ -219,6 +223,8 @@ mealie's bulk scraper (Gaps).
 Why Steer: 4 matches, all read, all real (100%), and the fix (pass ids, open a session in the task) is the one the
 FastAPI release notes give.
 
+**On #1120's engine (benchmark).** The same 4 findings on the measured repositories; no new matches.
+
 ### `fastapi-practice-yield-dependency-cleanup`
 
 Rerail's own rule, not a port. A FastAPI dependency that yields hands its value to the route and runs its exit code
@@ -297,6 +303,8 @@ without matches, so the cases carry the proof. To
 check recall on real code, a copy of Buuntu's backend with `get_db`'s `try`/`finally` taken off
 (`db = SessionLocal(); yield db; db.close()`) gives 1 match, the expected one: `app/db/session.py:19`, through the
 `Depends(get_db)` calls in `app/api/api_v1/routers/*.py` and `app/core/auth.py`.
+
+**On #1120's engine (benchmark).** Still no match on the measured repositories; no new matches.
 
 **Sources:**
 - FastAPI docs, [Dependencies with yield](https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/): "you can use `finally` to make sure the exit steps are executed, no matter if there was an exception or not"; under "Always `raise` in Dependencies with `yield` and `except`": "If you catch an exception using `except` in a dependency with `yield` and you don't raise it again (or raise a new exception), FastAPI won't be able to notice there was an exception" … "the client will see an *HTTP 500 Internal Server Error* response … but the server will not have any logs or any other indication of what was the error".
@@ -397,6 +405,8 @@ Real matches:
 Missed (gap): zenml's example pipeline `examples/deploying_ml_model/pipelines/inference_pipeline.py:42`,
 `CORSConfig(allow_origins=["*"], ..., allow_credentials=True)`, which zenml's deployer turns into CORSMiddleware.
 
+**On #1120's engine (benchmark).** 18 new matches, all real (18/18); with the 2 above, 20/20.
+
 ### `fastapi-practice-response-exposes-secret-field`
 
 Rerail's own rule, not a port. FastAPI's response model is its output filter: what a route returns is validated into
@@ -485,6 +495,12 @@ on real code, a copy of the template with two routes changed back to the unsafe 
 `response_model=User`, `/{user_id}` with no response model returning `session.get(User, user_id)`) gives 3 matches,
 all expected: `backend/app/api/routes/users.py:124`, `:171`, `:179`, through the `CurrentUser` alias in `deps.py` and
 the table model in `models.py`.
+
+**On #1120's engine (benchmark).** 1 new match, not real (0/1). movie-api `routers/user.py:9` declares
+`response_model=UserCreationDto` (the login route's own body type, with `password`) on a route that always returns a
+hand-built `JSONResponse`, so FastAPI never applies the model: case 1 does not check that the response model is
+applied. It starts off (Log): below 90%; turn it on where routes return their rows through FastAPI's response model
+rather than hand-built responses.
 
 **Sources:**
 - FastAPI docs, [Response Model - Return Type](https://fastapi.tiangolo.com/tutorial/response-model/): "Now, whenever a browser is creating a user with a password, the API will return the same password in the response. … we could be sending our user's passwords to every client."
@@ -576,12 +592,20 @@ endpoint behind an IP allowlist (`check_ips(x_forwarded_for)`); polar's `custome
 `claim_seat`, whose body's `invitation_token` is the credential. The other unauthenticated writes beside 3+
 authenticated siblings (open-webui's signin, signup, signout, oauth callbacks, webhook; remnawave-admin's 11 login,
 OAuth, refresh and password-reset routes; we-mp-rss's login, token and password reset; the template's
-`register_user`) are public by name. Precision cannot be measured on zero matches; the rule ships in `log`.
+`register_user`) are public by name. Precision cannot be measured on zero matches here; the benchmark below measures
+it.
 
 Recall, on copies with an outlier put back: the template with `current_user: CurrentUser` taken out of
 `delete_item` gives 1 match (`backend/app/api/routes/items.py:100`); open-webui with `user=Depends(...)` taken out of
 `sessions.py`'s `revoke` and `knowledge.py`'s `delete_knowledge_by_id` gives 2 (`routers/sessions.py:311`,
 `routers/knowledge.py:1789`).
+
+**On #1120's engine (benchmark).** 2 new matches, 1 real (1/2). Real: Pulsar `app/api/chats.py:61`,
+`DELETE /abort/{message_id}` without the `Depends(get_current_user)` its 6 siblings take. Not real: eve
+`eve/api/api.py:418`, a Mailgun inbound-email webhook whose handler (`eve/api/handlers.py:1281`) checks the HMAC
+signature itself; `inbound` is not a public word and the handler's name does not say it verifies. It starts off (Log):
+below 90%; turn it on where public write routes, webhooks included, are named for it or check their credential in a
+dependency.
 
 **Sources:**
 - OWASP API Security Top 10 2023, [API5 Broken Function Level Authorization](https://owasp.org/API-Security/editions/2023/en/0xa5-broken-function-level-authorization/): asks "Can a user perform sensitive actions (e.g. creation, modification, or deletion) that they should not have access to …?", and prevents it with an enforcement that should "deny all access by default, requiring explicit grants to specific roles for access to every function."
@@ -652,6 +676,9 @@ the empty path). Silent where it should be: polar's versioned `POST /organizatio
 (`server/polar/organization/endpoints.py:307`, `:329`). Why Steer: 5 of 5 real, and the fix (declare it first, or
 another path) cannot break a served route.
 
+**On #1120's engine (benchmark).** 11 new matches, all real (11/11): remnawave-admin 8, AgentCapture 2, Phoenix-Agent
+1. With the 5 above, 16/16.
+
 **Sources:**
 - FastAPI docs, Path Parameters, [Order matters](https://fastapi.tiangolo.com/tutorial/path-params/#order-matters):
   "Because path operations are evaluated in order, you need to make sure that the path for `/users/me` is declared
@@ -721,6 +748,8 @@ the corpus registers a handler on an app built with `lifespan=`; letta's four `o
 nothing calls, so they are `fastapi-practice-lifecycle-event-handler`'s. The cases carry the proof; Steer because
 every match is dead code by FastAPI's own source.
 
+**On #1120's engine (benchmark).** Still no match on the measured repositories; no new matches.
+
 ### `fastapi-practice-lifecycle-event-handler`
 
 Rerail's own rule, not a port: the advisory half of `fastapi-practice-on-event-handler`. FastAPI runs startup and
@@ -769,6 +798,9 @@ parameter in `setup_fastapi_instrumentation` and `setup_fastapi_db_instrumentati
 4/4; the other eleven repositories (fastapi-users, the template, open-webui, freqtrade, dispatch, mealie, polar,
 fastapi-react, khoj, zenml, we-mp-rss) give 0.
 
+**On #1120's engine (benchmark).** 8 new matches, all real (8/8), each `@app.on_event("startup"/"shutdown")` on an
+app built without `lifespan=`. With the 4 above, 12/12.
+
 ### `fastapi-practice-http-client-per-request`
 
 Rerail's own rule, not a port. An `httpx.AsyncClient`, `httpx.Client` or `aiohttp.ClientSession` owns a connection
@@ -792,7 +824,8 @@ needs its own transport, proxy, or per-user cookies or credentials.
 It leaves alone:
 
 - clients built at module level, in the lifespan, or anywhere no per-request function reaches: CLI commands, scripts,
-  background work handed to `BackgroundTasks.add_task` or `asyncio.create_task` (an argument, not a call);
+  background work handed to `BackgroundTasks.add_task(f, ...)` (an argument, not a call; the coroutine call in
+  `asyncio.create_task(f(...))` is a call, and is followed: see the benchmark below);
 - a def decorated `@functools.lru_cache`, `@functools.cache` or `@async_lru.alru_cache` (resolved through imports, so
   `from functools import lru_cache as memo` counts), and code reached only through one, also when the cached def is
   itself a dependency (`@lru_cache def get_client(): return httpx.AsyncClient()` with `Depends(get_client)`, the
@@ -881,6 +914,13 @@ Silent where they should be: mealie's `safehttp` clients (`pkgs/safehttp/transpo
 SSRF-pinning transport per call; open-webui's `get_ssrf_safe_session()` (`retrieval/web/utils.py:283`, a custom
 `connector=`) and its shared `get_session()`; freqtrade's `binance_public_data.py` sessions (a custom connector, in a
 download job); zenml's only client is in `examples/`.
+
+**On #1120's engine (benchmark).** Every earlier finding is unchanged. 138 new matches in 17 repositories; a spread
+sample of 30, covering every repository, gave 26 real (87%). With the 39/42 above, 65/72 (90%). Not real: work reached
+only through `asyncio.create_task(...)` (remnawave-admin `web/backend/core/notification_service.py:451`), every
+subclass override of `self._extract` (orbitals `src/orbitals/claim_extractor/extractors/api.py:226`, an unused
+backend), a client behind a hand-written 1-hour cache (dune-weaver `modules/core/version_manager.py:70`), and the
+per-credential client of Gaps (remnawave-admin `web/backend/core/finance/adapters/netlen.py:40`).
 
 Why Log: a performance rule, and the fix is not always free: a shared aiohttp or httpx client keeps cookies across
 requests, so moving per-user calls onto one needs cookie persistence turned off. Many matches sit on low-traffic admin

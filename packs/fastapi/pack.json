@@ -201,8 +201,8 @@
         "severity": "critical",
         "hazard": "data.sensitive-fields-exposed"
       },
-      "mode": "steer",
-      "on": true,
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/api/routes/users.py",
@@ -238,7 +238,7 @@
         "hazard": "auth.mutation-without-auth"
       },
       "mode": "log",
-      "on": true,
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/routes/items.py",

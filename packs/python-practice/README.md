@@ -8,20 +8,24 @@ a requests Session without a timeout, retries that never give up, coroutines tha
 whose cleanup an exception skips. Typing and packaging rules were considered and dropped: mypy, pyright, Ruff and
 deptry already enforce them (`NOTES-python-practice.md`).
 
+It starts with two rules on: `python-practice-requests-session-without-timeout`, the only one that steers, and
+`python-practice-contextmanager-cleanup-skipped`, on in `log` (it records without steering). The other five start off.
+
 ## Rules
 
-In reading order: by value and confidence. A rule starts on only when at least 90% of its read corpus matches were
-real; the others start off, in `log`, until a re-measure clears that bar.
+In reading order: by value and confidence. A rule starts on only when at least 90% of its judged matches are real,
+counting the corpus runs below and the benchmark on #1120's engine together; the others start off, in `log`, until a
+re-measure clears that bar.
 
 | Rule | Mode | On | Catches |
 |---|---|---|---|
-| `python-practice-cancellation-swallowed` | Steer | On | Python practice: asyncio.CancelledError caught or suppressed in an async def and not re-raised |
-| `python-practice-blocking-call-reached-from-async` | Log | On | Python practice: an async def calls a sync helper, in any module, that sleeps, does network I/O, runs a subprocess or starts an event loop |
+| `python-practice-cancellation-swallowed` | Log | Off | Python practice: asyncio.CancelledError caught or suppressed in an async def and not re-raised |
+| `python-practice-blocking-call-reached-from-async` | Log | Off | Python practice: an async def calls a sync helper, in any module, that sleeps, does network I/O, runs a subprocess or starts an event loop |
 | `python-practice-requests-session-without-timeout` | Steer | On | Python practice: an HTTP call on a requests Session without a timeout |
 | `python-practice-retry-without-limit` | Log | Off | Python practice: a tenacity, backoff, retrying or retry decorator without a limit |
 | `python-practice-retry-loop-without-limit` | Log | Off | Python practice: a hand-written retry loop that never gives up |
-| `python-practice-coroutine-never-awaited` | Steer | On | Python practice: coroutine of an async def created and never run |
-| `python-practice-contextmanager-cleanup-skipped` | Log | Off | Python practice: release after an unguarded yield in a @contextmanager is skipped on error |
+| `python-practice-coroutine-never-awaited` | Log | Off | Python practice: coroutine of an async def created and never run |
+| `python-practice-contextmanager-cleanup-skipped` | Log | On | Python practice: release after an unguarded yield in a @contextmanager is skipped on error |
 
 Corpus numbers below are from `~/rerail-bench/python-arch/corpus/` at the commits in its `MANIFEST.tsv`: the brief's
 20 repositories plus the extras named per rule. A match counts as real when the harm the message names can happen at
@@ -129,6 +133,13 @@ named not-real matches: letta `server/rest_api/routers/v1/tools.py:753` (an SSE 
 response, ending in a logging handler) and polar's six in `sdk/python/polar/metering/` and its generator template
 (`__init__.py:222`, a `BaseExceptionGroup` re-raise; `buffered.py:327` and `:361`, `except BaseException` in anyio
 code). dify (`api/`, 4,921 files) is not run: over the fleet's limit, and the review's own runs did not finish.
+
+**On #1120's engine (benchmark).** 16 of 30 sampled matches (of 48) real on repositories the corpus does not cover;
+with the corpus run, 36/51 (71%). The main false shape is an idiom the rule allows within one function, used one call
+away: a saved exception re-raised later (`cancel = e ... raise cancel`, 10xGraph
+`tenxgraph/core/graph/utils/utils.py:132`), or a coroutine only ever run as a task whose cancel ends it (remnawave
+`node-agent/src/pty_provider.py:240`). It starts off (Log): below 90%; turn it on where cancellation handlers re-raise
+in their own function rather than through a saved exception or a task's end.
 
 ### `python-practice-blocking-call-reached-from-async`
 
@@ -239,6 +250,11 @@ async SSRF-pinning transports resolve the host with `socket.getaddrinfo` per req
 (`start()` may `time.sleep` up to 3 s while `init_spawners` runs in the background). Against the review's run, the
 startup fixpoint removed letta `server/server.py:420` (`init_async`, awaited only from the lifespan). dify is not run.
 
+**On #1120's engine (benchmark).** 21 of 30 sampled matches (of 172) real; with the corpus run, 38/48 (79%). The main
+false shape is startup or one-off CLI code the rule cannot tie to a lifespan (pyaleph `src/aleph/api_entrypoint.py:70`:
+`git describe` in the aiohttp app factory), then `time.sleep(0)` (agentic `src/agentic/tools/rest_api_tool.py:189`).
+It starts off (Log): below 90%; turn it on where coroutines serve requests and startup runs through a lifespan.
+
 ### `python-practice-requests-session-without-timeout`
 
 Rerail's own rule, not a port. requests has no default timeout, on a `Session` as on the module functions: a server
@@ -325,6 +341,9 @@ Real, by file: pretix `plugins/paypal2/client/core/paypal_http_client.py:141` (e
 the brief's repositories (linkding, plane, addons-server, label-studio, freqtrade, superset): each passes `timeout=`,
 forwards `**kwargs`, or hands the Session to a library.
 
+**On #1120's engine (benchmark).** 14/14 real (osworld's vendored autogen, eve, wandbot); with the corpus run, 44/44
+(100%).
+
 ### `python-practice-retry-without-limit`
 
 Rerail's own rule, not a port. A retry that never gives up turns a permanent failure (bad credentials, a 4xx, a deleted
@@ -370,6 +389,8 @@ re-run (letta, khoj, lemur, freqtrade, open-webui, jupyterhub, mealie, paperless
 full-stack-fastapi-template, linkding, healthchecks) report nothing; every other tenacity and backoff use the
 review found sets a stop (superset, dify, khoj), and lemur's `retrying` uses set `stop_max_attempt_number`. One
 match is too few to start the rule on: it starts off, in `log`.
+
+**On #1120's engine (benchmark).** 12/18 real (67%); with the corpus run, 13/19 (68%), so it stays off.
 
 ### `python-practice-retry-loop-without-limit`
 
@@ -431,6 +452,8 @@ spins start-up in a hot loop). The review's not-real match, polar `server/script
 `except KeyboardInterrupt`), is gone (run over `server/scripts/`, 105 files). Before the review, the writer's runs
 removed 12 loop matches one exclusion at a time (listed under "It leaves alone"); a shape-based claim with that
 history and two matches starts off, in `log`.
+
+**On #1120's engine (benchmark).** 17/24 real (71%); with the corpus run, 19/26 (73%), so it stays off.
 
 ### `python-practice-coroutine-never-awaited`
 
@@ -495,9 +518,15 @@ freqtrade, open-webui, jupyterhub, mealie, paperless-ngx, label-studio, dispatch
 full-stack-fastapi-template, linkding, healthchecks; commits in `MANIFEST.tsv`). The review's earlier run over the
 other repositories (and polar, which this run did not repeat) found 0 too. Precision cannot be measured on merged
 code, which rarely keeps this bug: the work visibly never happens. A seeded copy of fastapi-users (the writer's check:
-a `Thread(target=self.on_after_login)` and a dropped cross-module `ping()`) reported both. The rule starts in
-`steer` on the strength of its shape: every match is a coroutine that cannot run, and each message's fix only adds an
-`await`, a task or a loop entry.
+a `Thread(target=self.on_after_login)` and a dropped cross-module `ping()`) reported both. Every match's shape is a
+coroutine that cannot run, and each message's fix only adds an `await`, a task or a loop entry; the benchmark's misses
+below come from the call graph binding the wrong function.
+
+**On #1120's engine (benchmark).** 4 of 7 matches real (57%), the rule's first matches on real code. All three false
+ones are call-graph errors: two modules resolving to `src.main` in one run (remnawave `node-agent/src/main.py:418`,
+bound to the root's `async def main` instead of the same module's sync `main`), and `super().__init__` resolved to an
+async base rather than the MRO's sync one. It starts off (Log): below 90%; turn it on where module names are unique
+across the run and no class mixes sync and async `__init__` bases.
 
 **Sources:**
 - Python docs, [Developing with asyncio: Detect never-awaited coroutines](https://docs.python.org/3/library/asyncio-dev.html#detect-never-awaited-coroutines):
@@ -586,7 +615,7 @@ takes place"); pylint
 pylint W0135 `contextmanager-generator-missing-cleanup` warns at a generator that uses such a context manager; none
 reads what a generator context manager runs after its `yield`.
 
-**Corpus:** re-run after this change, every match read: 9 matches, 8 real (89%), so the rule stays off.
+**Corpus:** re-run after this change, every match read: 9 matches, 8 real (89%).
 
 | Repository | Matches | Real | Not real |
 |---|--:|--:|---|
@@ -606,3 +635,7 @@ left); saleor `webhook/observability/utils.py:161` and `:172` (`del _context.api
 yield: on an exception the thread-local stays set for the next request on that thread), newly caught; pretix
 `control/views/users.py:71` (session expiry not restored after a failed hijack). The polar false positive
 (`billing_entry/service.py:134`, `str(meter_id)` read as a restore) is gone.
+
+**On #1120's engine (benchmark).** 3/3 real (osworld's vendored fast_depends `provider.py:35`, cornserve
+`task_executors/utils.py:131`, HaloWebUI `runtime_migrations.py:353`); with the corpus run, 11/12 (92%). It starts on,
+Log: over the 90% bar, but on a small sample, so it records without steering.

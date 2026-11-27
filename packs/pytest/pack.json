@@ -111,8 +111,8 @@
         "severity": "medium",
         "hazard": "test.shared-state-leak"
       },
-      "mode": "steer",
-      "on": true,
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "tests/test_retry.py",

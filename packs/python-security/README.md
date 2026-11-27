@@ -2,19 +2,23 @@
 
 Rerail's own Python security rules, from OWASP and the frameworks' security docs, for untrusted input that reaches SQL, shells, URLs, files or deserializers.
 
+Two of its seven rules start on, both in steer mode: `python-security-code-injection` and
+`python-security-jwt-unverified`. The other five start off in log mode (`"on": false`): fewer than 90% of their judged
+matches on #1120's engine were real. Each rule's details give its numbers and where to turn it on.
+
 ## Rules
 
 Listed by worst outcome: the injection rules first, then authentication, files, outgoing requests and ORM lookups.
 
 | Rule | Mode | Catches |
 |---|---|---|
-| `python-security-sql-injection` | Steer | Don't build SQL from request data |
-| `python-security-command-injection` | Steer | Don't run shell commands or programs built from request data |
+| `python-security-sql-injection` | Log, starts off | Don't build SQL from request data |
+| `python-security-command-injection` | Log, starts off | Don't run shell commands or programs built from request data |
 | `python-security-code-injection` | Steer | Don't run request data as code: eval, pickle, unsafe YAML or template source |
 | `python-security-jwt-unverified` | Steer | Don't trust a JWT you didn't verify |
-| `python-security-path-traversal` | Log | Don't build file paths from request data |
-| `python-security-ssrf` | Log | Don't let request data pick where the server sends HTTP requests |
-| `python-security-orm-lookup-injection` | Steer | Don't let the client choose ORM lookup names |
+| `python-security-path-traversal` | Log, starts off | Don't build file paths from request data |
+| `python-security-ssrf` | Log, starts off | Don't let request data pick where the server sends HTTP requests |
+| `python-security-orm-lookup-injection` | Log, starts off | Don't let the client choose ORM lookup names |
 
 Every rule reads the request through the pack's shared library, `rules/lib/security.rerail` (jwt-unverified uses its
 own small copy): Django, DRF, Flask and Starlette request attributes, FastAPI and Flask route parameters, Django URL
@@ -98,7 +102,7 @@ generated from the model are not typed.
 and the safe placeholder-list shape; S610/S611 and B610/B611 flag every non-literal `extra()` and `RawSQL`. The
 `python` pack ports none of B608/B611. In this lineup, `sqlalchemy-practice-text-interpolation` (sqlalchemy pack,
 log) reports every `text()`/`exec_driver_sql()` built from any non-constant value, a superset of this rule's
-SQLAlchemy sinks; both fire on `text(f"…{request_value}…")`. This rule adds the request source (a steer-worthy signal
+SQLAlchemy sinks; both fire on `text(f"…{request_value}…")`. This rule adds the request source (a security signal
 where the other is a hygiene rule), the Django, DB-API and async-driver sinks, the whole-fragment shape and the walk
 across files. Keep both.
 
@@ -124,9 +128,14 @@ across files. Keep both.
 `~/rerail-bench/python-arch/corpus/MANIFEST.tsv`: 0 matches on rachelos/we-mp-rss `8fe5bf93` (FastAPI),
 sissbruecker/linkding `27b7303b` (Django), lookit/lookit-api `78562b50` (Django) and open-webui/open-webui
 `0666e59d` (FastAPI). The review measured 0 on 23 web repositories with the rule before the rework. With no match,
-precision has no denominator: the rule ships on its cases and sources, and is silent in mature code, which is what a
-team wants from an insurance rule. The other repositories of the review were not re-run: the machine's local engine
-runs were stopped during this fix.
+precision had no denominator there: the rule was silent in mature code. The other repositories of the review were not
+re-run: the machine's local engine runs were stopped during this fix.
+
+**On #1120's engine (benchmark).** 0 of 3 new matches real (0%), all on Case211/remnawave-admin; with none earlier,
+0 of 3 overall. The main false-positive shape is a conditional allow-list not read as one: `valid_order = order if
+order in ('asc', 'desc') else 'desc'`, then `ORDER BY … {valid_order}` (`shared/db/violations.py:264`). The other is
+a check before a project SQL builder (`web/backend/core/admin_accounts.py:415`). It starts off (Log): below 90%; turn
+it on where SQL identifiers are cleared by a mapping or an `if x not in ALLOWED` check, not a conditional expression.
 
 ### `python-security-command-injection`
 
@@ -223,9 +232,15 @@ files. Semgrep's `subprocess-injection` rules are taint rules too, but their onl
 `~/rerail-bench/python-arch/corpus/MANIFEST.tsv`: 0 matches on rachelos/we-mp-rss `8fe5bf93` (FastAPI),
 sissbruecker/linkding `27b7303b` (Django), lookit/lookit-api `78562b50` (Django) and open-webui/open-webui
 `0666e59d` (FastAPI). The review measured 0 on 23 web repositories with the rule before the rework. With no match,
-precision has no denominator: the rule ships on its cases and sources, and is silent in mature code, which is what a
-team wants from an insurance rule. The other repositories of the review were not re-run: the machine's local engine
-runs were stopped during this fix.
+precision had no denominator there: the rule was silent in mature code. The other repositories of the review were not
+re-run: the machine's local engine runs were stopped during this fix.
+
+**On #1120's engine (benchmark).** 2 of 10 new matches real (20%), on osworld and Phoenix-Agent; with none earlier,
+2 of 10 overall. The 8 false ones are endpoints whose purpose is running the client's command as written, where an
+argument list or `shlex.quote` would break the feature: osworld's in-VM `/execute`
+(`desktop_env/server/main.py:98`) and Phoenix-Agent's `/shell/exec` (`sandbox/app/services/shell.py:44`). It starts
+off (Log): below 90%; turn it on where no route exists to run a client's command (no sandbox, VM-control or
+remote-shell API).
 
 ### `python-security-code-injection`
 
@@ -318,6 +333,9 @@ sissbruecker/linkding `27b7303b` (Django), lookit/lookit-api `78562b50` (Django)
 precision has no denominator: the rule ships on its cases and sources, and is silent in mature code, which is what a
 team wants from an insurance rule. The other repositories of the review were not re-run: the machine's local engine
 runs were stopped during this fix.
+
+**On #1120's engine (benchmark).** No matches on the benchmark's repositories either, so no precision yet. It stays on
+(Steer).
 
 ### `python-security-jwt-unverified`
 
@@ -429,6 +447,9 @@ GHSA-r9gp-7f88-9r54 at the pinned commit. Dispatch `src/dispatch/plugins/dispatc
 token; reading `exp` only; peeking `iss` to pick the provider whose JWKS then verifies the token). pretix/pretix,
 netbox-community/netbox and mozilla/addons-server (over 1,000 files) were not re-run: their runs were stopped with
 every local engine run on this machine.
+
+**On #1120's engine (benchmark).** Findings unchanged: 4 of 4 real (100%), including Lemur's published advisory
+(GHSA-r9gp-7f88-9r54); no new repository had matches. It stays on (Steer).
 
 ### `python-security-path-traversal`
 
@@ -600,8 +621,15 @@ appended). Four new matches are real: `apis/tools.py:182` (`zipfile.ZipFile` wri
 client path), `:183` (`os.walk` of the client's `mp_id` directory, whose files are zipped then removed), `:401`
 (`os.walk` of a query `mp_id` joined under `safe_root`, checked with `startswith` and no separator: a sibling
 directory starting with `docs` passes), and `core/exporter.py:109` (PathProbe: `os.path.exists` under the body's
-`mp_id` directory). All matches come from one repository, so the rule stays in `log` mode until a second codebase
-confirms the precision.
+`mp_id` directory). All these matches come from one repository; the benchmark below measured other codebases.
+
+**On #1120's engine (benchmark).** 11 of 11 earlier, 1 of 21 matches gained on the baseline repositories, and 19 of a
+30-match sample of 89 new ones on 9 repositories: 31 of 62 real (50%). The main false-positive shape is an API whose
+purpose is reaching any path: Phoenix-Agent's agent sandbox (`sandbox/app/services/file.py`) and osworld's in-VM
+`/list_directory` (`third_party/osworld/desktop_env/server/main.py:1102`). Next is a helper that contains the path but
+whose name doesn't start with a checking verb: Case211/remnawave-admin's `_safe_backup_path`
+(`web/backend/core/backup_service.py:208`). It starts off (Log): below 90%; turn it on where no API is meant to reach
+any path and path guards are named with a checking verb (`is_safe_path`).
 
 ### `python-security-ssrf`
 
@@ -701,8 +729,15 @@ repositories where the review had matches and two more:
   host's end and the client's `kid` after its `/`) is the shape of case `hosts/aggregates.py`, `server_region`, now
   silent; dispatch was not re-run for the same reason.
 
-On the runs, 2 of 3 read matches were real; with the factory fix, every read match is real (2 of 2). The rule stays
-in `log` mode until the fixes are measured on more repositories, as the review asked.
+On the runs, 2 of 3 read matches were real; with the factory fix, every read match is real (2 of 2). The benchmark
+below measured the fixes on more repositories, as the review asked.
+
+**On #1120's engine (benchmark).** 2 of 3 earlier and 14 of 22 new matches: 16 of 25 real (64%). The main
+false-positive shape (7 of the 9 false) is an admin-only route whose dependency isn't named like `get_admin_user`:
+Case211/remnawave-admin's `/finance/accounts/test`, behind `Depends(require_permission("finance", "edit"))`, sending
+the admin body's `base_url` to `client.post(f"{base}/auth.php")` (`web/backend/core/finance/adapters/hostkey.py:130`).
+It starts off (Log): below 90%; turn it on where every admin-only route depends on a function named for admins
+(`get_admin_user`).
 
 ### `python-security-orm-lookup-injection`
 
@@ -812,3 +847,8 @@ sort)` with `sort` from the study list's `request.GET` in `exp/views/study.py:29
 `_apply_*` helper chain. The review's third match, django-shop `shop/admin/product.py:534` (a `ModelAdmin` view that
 raises `PermissionDenied` unless `request.user.is_staff`), is now silent. pretix/pretix gave 0 on an earlier state of
 this rework; the final rule was not re-run there, because local engine runs were stopped.
+
+**On #1120's engine (benchmark).** 2 of 2 earlier and 0 of 19 gained: 2 of 21 real (10%). All 19 are on plane:
+`.order_by(self.kwargs.get("order_by", "-created_at"))` counted as client data, though no route of plane captures
+`order_by`, so the value is always the default (`apps/api/plane/api/views/cycle.py:93`). It starts off (Log): below
+90%; turn it on where views read only the `self.kwargs` keys their routes capture.

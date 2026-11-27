@@ -570,7 +570,8 @@
         "severity": "medium",
         "hazard": "test.shared-state-leak"
       },
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "tests/test_upload.py",
@@ -673,7 +674,8 @@
         "severity": "critical",
         "hazard": "config.insecure-default"
       },
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "shop/settings.py",
@@ -708,7 +710,8 @@
         "severity": "high",
         "hazard": "migration.default-evaluated-once"
       },
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "shop/migrations/0002_order_web_secret.py",

@@ -79,7 +79,8 @@ A match is real when the file holds the pattern, even if code elsewhere (a calle
 a task class) makes it harmless there; a repository that disagrees turns the rule off. A rule steers where nearly
 every read match was real in that sense. It logs where many matches do not hold the pattern, or where the pattern
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
-A rule starts on only when at least 90% of its read matches were real.
+A rule starts on only when at least 90% of its read matches were real, counting the corpus and the benchmark on
+#1120's engine together.
 
 Each rule also says what it guards against (its risk, such as data safety or performance), where its code lives
 and how badly a violation can go. The Django pack's page in the dashboard filters its rules by risk and shows each
@@ -94,22 +95,28 @@ and the commits. They are listed in reading order: by what a miss costs and how 
 
 | Rule | Mode | Catches | Matches (repos) on 10 apps | Precision of read matches |
 |---|---|---|---|---|
-| `django-practice-settings-env-fails-open` | Steer | DEBUG, ALLOWED_HOSTS or SECRET_KEY that falls back to an insecure value when its environment variable is unset | 6 (5) | 100% (6 of 6) |
-| `django-practice-addfield-default-runs-once` | Steer | an AddField on an existing table whose generated or unique default every existing row shares | 6 (2) | 100% (6 of 6) |
+| `django-practice-settings-env-fails-open` | Log, starts off | DEBUG, ALLOWED_HOSTS or SECRET_KEY that falls back to an insecure value when its environment variable is unset | 6 (5) | 100% (6 of 6) |
+| `django-practice-addfield-default-runs-once` | Log, starts off | an AddField on an existing table whose generated or unique default every existing row shares | 6 (2) | 100% (6 of 6) |
 | `django-practice-bulk-ignore-conflicts-used` | Steer | objects from `bulk_create(ignore_conflicts=True)` used as the inserted rows, on a model a row can conflict on | 8 (3) | 100% (8 of 8) |
 | `django-practice-runpython-with-schema-change` | Log, starts off | a RunPython that writes rows in the same migration transaction as a schema change to that table | 89 (7) | 73% (65 of 89) |
 | `django-practice-alterfield-rewrites-table` | Log, starts off | an AlterField whose column type change makes PostgreSQL rewrite an existing table | 172 (7) | 75% (129 of 172) |
 | `django-practice-runpython-live-model` | Steer | RunPython code that reaches live model classes through a helper in another module | 8 (3) | 100% (8 of 8) |
-| `django-practice-settings-in-test` | Steer | a test that writes `django.conf.settings` directly, outside `override_settings`, `self.settings()` or pytest-django's `settings` fixture, and nothing undoes it | 24 (4) | 100% (24 of 24) |
+| `django-practice-settings-in-test` | Log, starts off | a test that writes `django.conf.settings` directly, outside `override_settings`, `self.settings()` or pytest-django's `settings` fixture, and nothing undoes it | 24 (4) | 79% (19 of 24) |
 
 The two lock rules are worth turning on for a team that migrates under traffic; a self-hosted product that migrates
 with the application stopped pays only upgrade time for what they report.
 
+On #1120's engine, a benchmark on more repositories (judged per rule as above; each rule's details give its figures)
+put three of these rules below 90% once counted with the corpus: settings-env-fails-open 83% (10 of 12),
+addfield-default-runs-once 61% (14 of 23) and settings-in-test (19 of 24 on this corpus once label-studio's matches
+are read right, 8 of 16 on the benchmark). They start off, in Log, like the two lock rules.
+
 ## Starting values and what a run costs
 
-30 of 34 rules start on, in the mode the tables above give them: 27 steer and 3 log. get-handler-writes (72%),
-host-header-without-get-host (83%), runpython-with-schema-change (73%) and alterfield-rewrites-table (75%) start off
-(`"on": false`), because their read-match precision is below 90%; they
+27 of 34 rules start on, in the mode the tables above give them: 24 steer and 3 log. get-handler-writes (72%),
+host-header-without-get-host (83%), runpython-with-schema-change (76%), alterfield-rewrites-table (75%),
+settings-env-fails-open (83%), addfield-default-runs-once (61%) and settings-in-test (79%, 50% on the benchmark) start
+off (`"on": false`), because their read-match precision is below 90%; they
 ship in the pack and log when turned on. To turn one on, use its switch in the On/off column of the Django pack's
 page in the dashboard, or set `on: true` for it with `repository_settings_set` (`PUT /api/repository/settings`) for a
 repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-surfaces)); the same turns any rule off
@@ -1244,6 +1251,13 @@ returned unparsed) and python-decouple's `Config.get` (the default goes through 
 The new DEBUG shapes (str fallback used raw, `bool()` of one, `!=`/`not in` of a read without a fallback) have no
 match in the corpus; they are the shapes a deploy gets wrong, proven by the cases.
 
+**On #1120's engine (benchmark).** The corpus findings are unchanged; on the benchmark's new repositories, 6
+matches, 4 real (the `SECRET_KEY` fallbacks of Tandoor, escriptorium, khoj and lookit): together 10 of 12 (83%). Both
+false matches are a literal `DEBUG = True` with no environment read, reported as falling back "when its environment
+variable is unset" (readux `config/settings/base.py:22`); one of them is in a development module whose name the rule
+does not know (wger `settings/local_dev.py:9`). It starts off (Log): below 90%; turn it on where DEBUG is always read
+from the environment and development settings use the module names listed above.
+
 ### `django-practice-addfield-default-runs-once`
 
 Rerail's own rule, not a port. A migration's `AddField` on a table that already exists fills every existing row with
@@ -1340,6 +1354,14 @@ harm), pretix's two `invite_token` matches below are latent and precision is 4 o
 Silent as intended: pretix's two squashes that repeat `0078` and `0122`; plane's `get_random_color` colours; saleor
 `account/migrations/0020_user_token.py` (backfilled by `0021_unique_token.py`, then made unique) and
 `site/migrations/0044_sitesettings_instance_id_and_more.py` (the current site's settings row).
+
+**On #1120's engine (benchmark).** The corpus findings are unchanged; on the benchmark's new repositories, 17 matches,
+8 real (khoj's `corpus_id`, lookit's four uuid fields made unique later with no backfill, escriptorium's
+`ocrmodel.revision` and wger's two history-mirror tables; the last three harmless, so strictly 5): together 14 of 23
+(61%). The 9 false matches are one shape, the gap above: wger fills each new uuid column afterwards through a project
+helper that takes the historical model as an argument, `backfill_uuid_column(apps.get_model(...))`
+(`wger/weight/migrations/0005_add_uuid.py:23`). It starts off (Log): below 90%; turn it on where backfills name their
+model and field in the migration's own RunPython or RunSQL.
 
 ### `django-practice-bulk-ignore-conflicts-used`
 
@@ -1458,6 +1480,9 @@ generated UUID key is unique; the review's 4 not-real matches) and `app/views/pr
 mailed tokens are stored; the review counted it real under the old reading).
 
 Precision: 10 of 10 read matches are real (100%), so the rule is `steer` and on.
+
+**On #1120's engine (benchmark).** The 8 findings on the measured repositories it ran on are unchanged, and the
+benchmark's new repositories have no match: still 100%.
 
 ### `django-practice-runpython-with-schema-change`
 
@@ -1580,6 +1605,9 @@ runs `SET CONSTRAINTS ALL IMMEDIATE` before its `RemoveField`s, now read as the 
 exemption changes no corpus count. Precision is 73%, the misses are configuration tables the rule cannot tell apart
 from large ones: `log`, off.
 
+**On #1120's engine (benchmark).** The 24 findings on the measured repositories it ran on are unchanged; on the
+benchmark's new repositories, 25 of 30 sampled matches (of 65) are real (83%). With the corpus, 90 of 119 (76%).
+
 ### `django-practice-alterfield-rewrites-table`
 
 Rerail's own rule, not a port. `ALTER TABLE … ALTER COLUMN … TYPE` takes an ACCESS EXCLUSIVE lock and "will normally
@@ -1645,9 +1673,14 @@ migrations. This rule's value is the classification from the history: widening a
 relation's target is matched by model name across the run; a table the previous migration created is reported though
 it may still be empty; `ArrayField`, citext and hstore changes are not judged; where a squashed migration sits beside
 the migrations it replaces, a field can have two nearest definitions and one `AlterField` two findings on its line
-(pretix `0120_…`). The rule cannot see a table's size, so a small table's rewrite (a lookup or configuration table) is
-reported too; and a self-hosted product that migrates with the application stopped pays upgrade time, not an outage.
-That is why it is `log` and starts off.
+(pretix `0120_…`). The field history reads a migration's dependencies by migration name, without their app label: a
+squash that depends on another app's `0001_initial` while replacing its own reads as depending on itself, and its
+fields lose their earlier definitions. On #1120's engine this hid the 10 findings of paperless
+`paperless_mail/migrations/0002_optimize_integer_field_sizes.py` (configuration tables, not real ones) and can hide
+real ones elsewhere; runpython-with-schema-change's `AlterField` judgment reads the same history. The rule cannot see
+a table's size, so a small table's rewrite (a lookup or configuration table) is reported too; and a self-hosted
+product that migrates with the application stopped pays upgrade time, not an outage. That is why it is `log` and
+starts off.
 
 **Corpus** (10 Django repositories of the BRIEF corpus, commits from `MANIFEST.tsv`; runs
 `django-fix-fin-<repo>`, and `django-fix-mig4-<repo>` for linkding and healthchecks, which have no squashed
@@ -1678,6 +1711,9 @@ real), pretix's `0304_tax_rate_decimals.py` (`NormalizedDecimalField`, a project
 `stockitemtestresult.attachment` (`ForeignKey` → `FileField`: integer to varchar). InvenTree's `stockitem.link`
 stays silent: `InvenTreeURLField`'s `__init__` forces `max_length=2000`, so the
 migration's 125 is not its length. Precision stays below 90% because table size is out of reach: `log`, off.
+
+**On #1120's engine (benchmark).** On the benchmark's new repositories, 22 of 30 sampled matches (of 87) are real
+(73%). With the corpus, 151 of 202 (75%).
 
 ### `django-practice-runpython-live-model`
 
@@ -1771,6 +1807,9 @@ review's run; every match read). "Real" means the code runs today's model inside
 - DefectDojo `dojo/db_migrations/0105_endpoint_host_migration.py:7`: `clean_hosts_run(apps=apps, …)` calls
   `endpoint_filter` (`dojo/endpoint/utils.py`), which queries the live `Endpoint.objects`.
 
+**On #1120's engine (benchmark).** The 7 findings on the measured repositories it ran on are unchanged, and the
+benchmark's new repositories have no match: still 100%.
+
 ### `django-practice-settings-in-test`
 
 Rerail's own rule, not a port. A value a test writes on `django.conf.settings` stays there: Django does not put the
@@ -1826,7 +1865,9 @@ It leaves alone:
 
 **Gaps:** an alias (`apps = settings.INSTALLED_APPS; apps.append(x)`) is not followed; `setattr(settings, name, v)`
 with a computed name is not read. A restore by hand without `finally` is reported on purpose: it leaks whenever the
-test fails before it.
+test fails before it. A plain write while an autouse fixture's pytest-django `settings` override is active (a
+conftest fixture that writes through its `settings` parameter, which keeps an override on for every test under it) is
+reported, though the write lands on that override and is dropped at teardown.
 
 **Overlap:** none in Ruff (its PT family, PGH005 and B003 do not look at Django settings), pylint, flake8-django or
 pylint-django. `django-practice-settings-runtime-assignment` reports the same writes outside test documents and skips
@@ -1843,20 +1884,22 @@ in a non-test module such as `shop/testing.py` is that rule's.
   tests come from shared state such as module globals, the environment and shared fixtures.
 
 **Corpus** (the 10 Django repositories of the second corpus; written and reviewed in the pytest pack, whose
-[review](../pytest/REVIEW-pytest.md) moved it here). 24 matches in 4 repositories, every match read, 24 real (100%),
-so the rule starts in `steer`. label-studio and InvenTree were re-run after the rule's last rework, with the same
-matches; pretix and DefectDojo hold the review's reading.
+[review](../pytest/REVIEW-pytest.md) moved it here). 24 matches in 4 repositories, every match read. The review
+counted all 24 real; label-studio's 5 are not (see below), so 19 are real (79%). label-studio and InvenTree were
+re-run after the rule's last rework, with the same matches; pretix and DefectDojo hold the review's reading.
 
 | Repository | Matches | Real |
 |---|--:|--:|
-| HumanSignal/label-studio | 5 | 5 |
+| HumanSignal/label-studio | 5 | 0 |
 | inventree/InvenTree | 2 | 2 |
 | pretix/pretix | 2 | 2 |
 | DefectDojo/django-DefectDojo | 15 | 15 |
 | linkding, healthchecks, paperless-ngx, plane, addons-server, saleor | 0 | |
 
-- label-studio `label_studio/tests/test_upload_svg.py:13`, `:43`, `:67` leave `SVG_SECURITY_CLEANUP` set for later
-  tests, and its conftest's `enable_sentry` fixture at `label_studio/tests/conftest.py:83`.
+- label-studio `label_studio/tests/test_upload_svg.py:13`, `:43`, `:67` (`SVG_SECURITY_CLEANUP`) and its conftest's
+  `enable_sentry` fixture at `label_studio/tests/conftest.py:83`, `:85`: not real. The same conftest's autouse
+  `disable_sentry(settings)` writes through pytest-django's `settings` fixture, so every test under it runs inside an
+  override; these plain writes land on that override and are dropped at teardown.
 - InvenTree `src/backend/InvenTree/common/test_tasks.py:35` sets `USE_TZ = True` in `setUp` while `tearDown` restores
   another setting.
 - pretix `src/tests/base/test_mail.py:691`: a forgotten `settings` fixture parameter.
@@ -1865,6 +1908,13 @@ matches; pretix and DefectDojo hold the review's reading.
   writes (`unittests/test_generic_meta_import.py:23`, `unittests/test_tags.py:418`, `:435`) set
   `SECURE_SSL_REDIRECT = False`, the value the test settings already have: a leak with no effect today, still worth
   `override_settings`. DefectDojo has no pytest dependency or `conftest.py`: a pytest pack never installs there.
+
+**On #1120's engine (benchmark).** 16 matches, label-studio's 5 above among them, 8 real (50%): InvenTree
+`InvenTree/tests.py:1319` and `common/test_tasks.py:35`, lookit, taiga ×3 (hand restores without `finally`) and
+wger ×2. All 8 false matches are
+writes under an autouse `settings` override: label-studio's 5 and readux `apps/templates/tests/test_ga_id.py:12`,
+`:19`, `:23` (under `apps/conftest.py`'s `media_storage(settings, tmpdir)`). It starts off (Log): below 90%; turn it
+on where no autouse fixture writes through pytest-django's `settings` fixture.
 
 ## The corpus
 

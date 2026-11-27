@@ -21,13 +21,14 @@
       "document": "rules/python-security-sql-injection.rerail",
       "title": "Don't build SQL from request data",
       "group": "Python security",
+      "on": false,
       "dimensions": {
         "risk": "security",
         "layer": "data-access",
         "severity": "critical",
         "hazard": "orm.raw-sql-interpolation"
       },
-      "mode": "steer",
+      "mode": "log",
       "examples": {
         "caught": {
           "path": "shop/reports.py",
@@ -56,13 +57,14 @@
       "document": "rules/python-security-command-injection.rerail",
       "title": "Don't run shell commands or programs built from request data",
       "group": "Python security",
+      "on": false,
       "dimensions": {
         "risk": "security",
         "layer": "server",
         "severity": "critical",
         "hazard": "input.command-injection"
       },
-      "mode": "steer",
+      "mode": "log",
       "examples": {
         "caught": {
           "path": "netops/net.py",
@@ -137,6 +139,7 @@
       "document": "rules/python-security-path-traversal.rerail",
       "title": "Don't build file paths from request data",
       "group": "Python security",
+      "on": false,
       "dimensions": {
         "risk": "security",
         "layer": "server",
@@ -172,6 +175,7 @@
       "document": "rules/python-security-ssrf.rerail",
       "title": "Don't let request data pick where the server sends HTTP requests",
       "group": "Python security",
+      "on": false,
       "dimensions": {
         "risk": "security",
         "layer": "server",
@@ -207,13 +211,14 @@
       "document": "rules/python-security-orm-lookup-injection.rerail",
       "title": "Don't let the client choose ORM lookup names",
       "group": "Python security",
+      "on": false,
       "dimensions": {
         "risk": "security",
         "layer": "data-access",
         "severity": "high",
         "hazard": "orm.lookup-injection"
       },
-      "mode": "steer",
+      "mode": "log",
       "examples": {
         "caught": {
           "path": "catalog/views.py",
