@@ -64,10 +64,13 @@ fn with_facts(v: &Arc<Version>, facts: &[(&str, &[Vec<Value>])]) -> Arc<Version>
 struct Files(HashMap<i64, Arc<dyn Source>>, std::cell::RefCell<Vec<i64>>);
 
 impl FileState for Files {
-    fn rows(&self, path: i64, rels: &[String]) -> crate::code_rule_dsl::logic::plan::Result<Option<Vec<(String, Arc<dyn Source>)>>> {
+    fn holder(&self, at: i64) -> Option<u64> {
+        self.0.contains_key(&at).then_some(at as u64)
+    }
+    fn rows(&self, holder: u64, rels: &[String]) -> crate::code_rule_dsl::logic::plan::Result<Vec<(String, Arc<dyn Source>)>> {
         assert_eq!(rels, ["touches"], "a call reads its file's touches alone");
-        self.1.borrow_mut().push(path);
-        Ok(self.0.get(&path).map(|s| vec![("touches".to_owned(), Arc::clone(s))]))
+        self.1.borrow_mut().push(holder as i64);
+        Ok(vec![("touches".to_owned(), Arc::clone(&self.0[&(holder as i64)]))])
     }
 }
 
@@ -140,7 +143,8 @@ fn a_callable_enters_each_file_once_a_batch() {
     let distinct: BTreeSet<i64> = entered.iter().copied().collect();
     assert_eq!(distinct.len(), 2, "a.py and b.py, not c.py: {entered:?}");
     assert_eq!(entered.len(), counts.batches * 2, "once a batch each: {entered:?}, {counts:?}");
-    assert_eq!(counts.files_entered, entered.len());
+    assert_eq!(counts.entered, entered.len());
+    assert_eq!(counts.files, 2, "{counts:?}");
 }
 
 /// The memo holds what was asked, its keys alone: a batch asked again enters no file and adds no rows, for its
@@ -159,11 +163,11 @@ fn a_callables_memo_holds_what_was_asked() {
     let id = |k: usize| i64::from(ids[k]);
     let rows: Vec<Vector<i64>> = vec![[id(0), id(1), id(2)].into_iter().collect(), [id(0), id(2), id(3)].into_iter().collect()];
     let first = calls.answer("same_globals__call", &Asked::rows(rows.clone()), &state).unwrap();
-    assert_eq!(calls.counts.files_entered, 1);
+    assert_eq!(calls.counts.entered, 1);
     assert_eq!(calls.asked(), 2, "the memo holds the two asked");
     assert_eq!(first[0].1.len(), 2, "both pairs share x");
     let again = calls.answer("same_globals__call", &Asked::rows(rows), &state).unwrap();
-    assert_eq!(calls.counts.files_entered, 1, "asked again, no file entered: {:?}", calls.counts);
+    assert_eq!(calls.counts.entered, 1, "asked again, no file entered: {:?}", calls.counts);
     assert_eq!(calls.counts.memo_hits, 2);
     assert!(again[0].1.is_empty(), "nothing added: the answers are the caller's already");
 }

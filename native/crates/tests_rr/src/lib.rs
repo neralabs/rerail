@@ -66,6 +66,8 @@ pub mod code_rule_dsl {
         pub mod rr {
             pub use rerail_boot::code_rule_dsl::logic::rr::*;
             #[cfg(test)]
+            pub mod callable_tests;
+            #[cfg(test)]
             pub mod tape_tests;
             #[cfg(test)]
             pub mod tests;
