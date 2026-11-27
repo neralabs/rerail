@@ -736,6 +736,7 @@ pub fn bloom_may(b: &mut B<'_, '_>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    use rerail_blocks::bloom::BloomW;
     use rerail_blocks::block::{Block, kind};
     use rerail_blocks::relation::{RelW, Relation, RelationW, Spec, freeze};
     use rerail_blocks::rows::RowsW;

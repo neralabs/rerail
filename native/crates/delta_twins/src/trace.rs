@@ -19,6 +19,7 @@
 //! Each phase's items are independent; what one phase leaves for the next lies in the new layer's block: the work
 //! arrays in its body past the header (the freeze trims them where it can), the relations in its chunks.
 
+use rerail_blocks::bloom::BloomW;
 use rerail_blocks::relation::RelationW;
 use crate::sort::{CHUNK, chunks, merge_pairs, more, pairs, sort_chunks};
 use crate::{Ctx, Tile, TwinPhase};

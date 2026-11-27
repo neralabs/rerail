@@ -23,6 +23,7 @@
 //! step 6): a chain of forks reads down its descriptors' jumps (O(log n) steps), and parts in several blocks read as
 //! one relation through links where two blocks hold them; past that they are not bound as one, and are read by part.
 
+use rerail_blocks::bloom::BloomW;
 use rerail_blocks::rows::RowsW;
 use rerail_blocks::relation::RelationW;
 use rerail_blocks::vector::Vector;

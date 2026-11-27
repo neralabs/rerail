@@ -1917,6 +1917,7 @@ impl Fused {
 
 #[cfg(test)]
 mod tests {
+    use rerail_blocks::bloom::BloomW;
     use super::*;
 
     fn rows(n: usize, seed: u64, modulus: i64, high: i64) -> Vec<i64> {

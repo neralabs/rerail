@@ -12,10 +12,13 @@
 //! - `hash`: the hash every index and kernel uses for a key.
 //! - `col`: a frozen integer column's format (`IntCol`) and its reads (`Dec`).
 //! - `rows`: a relation's rows, its columns in chunks that grow by quarter steps (`Rows`, `ColDir`), and their reads.
+//! - `relation`: a relation's descriptor (`Relation`), its indexes and orders, and its reads.
+//! - `bloom`: a blocked Bloom filter's format, its hash and its reads.
 
 #![no_std]
 
 pub mod block;
+pub mod bloom;
 pub mod col;
 pub mod hash;
 pub mod kernel;
