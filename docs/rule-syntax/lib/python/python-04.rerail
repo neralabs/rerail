@@ -117,12 +117,13 @@ guest_q(e, cat("builtins.", x)) :- in_ann_tree(e), kind(e, "identifier"), text(e
     !file_binds(d, x).
 guest_q(e, @dot(q, a)) :- in_ann_tree(e), kind(e, "attribute"), field(e, "object", o), guest_q(o, q),
     field(e, "attribute", n), text(n, a).
-// guest_file(e, d): guest node e stands in file d, through guests of guests.
+// guest_file(e, d): guest node e stands in file d, through guests of guests: the host nodes over e, up to one that
+// is no guest's, and its document. Read by node (host_node), not by joining two documents' guest rows (decision 0652).
 .decl guest_file(e: node, d: number)
-guest_file(e, d) :- in_ann_tree(e), docof(e, g), host_file(g, d).
-.decl host_file(g: number, d: number)
-host_file(g, d) :- guest(g, d, _, _), doc_role(d, "primary").
-host_file(g, d) :- guest(g, h, _, _), host_file(h, d).
+guest_file(e, d) :- ann_host_up(e, h), !host_node(h, _), docof(h, d).
+.decl ann_host_up(e: node, h: node)
+ann_host_up(e, h) :- in_ann_tree(e), host_node(e, h).
+ann_host_up(e, h) :- ann_host_up(e, m), host_node(m, h).
 .decl file_binds(d: number, x: symbol)
 file_binds(d, x) :- bound_in(s, x), docof(s, d).
 // The arguments of a call in an ann_tree. There kind(n, k) has no row for a node n bound by field (an engine gap:
