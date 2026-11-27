@@ -49,6 +49,7 @@ import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { leftOutOn, type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, type WorktreeRead } from "./worktree-notices.js";
 import { WorktreeLooks } from "./worktree-look.js";
+import { NamedWrites } from "./attribution/named-writes.js";
 import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, type EndedCalls, ToolCallWindows } from "./tool-call-windows.js";
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
@@ -2422,6 +2423,8 @@ export class CodeRuleBridge {
   readonly #worktreeView = new WorktreeView();
   /** The walk of the other worktrees this session shares with others (`worktreeWalks`), else its own, made on first use. */
   #worktreeWalks: WorktreeWalks | (() => WorktreeWalks) | undefined;
+  /** The edit-tool calls of every session of the repository (`namedWrites`), else this session's own, made on first use. */
+  #namedWrites: NamedWrites | (() => NamedWrites) | undefined;
   /**
    * The text each source this session changed was last seen with: the preimage of its next change made without one
    * captured, once its digest proves it (`#recoverPreimages`). The baseline is not kept, but for a source a walk first
@@ -2516,6 +2519,11 @@ export class CodeRuleBridge {
        * watch it.
        */
       worktreeWalks?: WorktreeWalks | (() => WorktreeWalks);
+      /**
+       * The edit-tool calls of every session of the bridge's repository, in its runtime or engine service; its own
+       * otherwise. Shared, a session does not take for its own a write another session's edit tool named.
+       */
+      namedWrites?: NamedWrites | (() => NamedWrites);
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
       /** `MAX_SESSION_TEXT_BYTES` by default. */
@@ -2552,6 +2560,7 @@ export class CodeRuleBridge {
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs;
     this.#worktreeWalks = options.worktreeWalks;
+    this.#namedWrites = options.namedWrites;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
     this.#sessionTextBytes = options.sessionTextBytes ?? MAX_SESSION_TEXT_BYTES;
   }
@@ -2754,6 +2763,7 @@ export class CodeRuleBridge {
     const named = paths.flatMap(path => sessionRelativePath(discovery.root, path) ?? []);
     const place = { folder: await this.#callFolder(cwd), paths: named };
     discovery.toolCalls.begin(toolCallId, at, { command: isCommandTool(toolName), place });
+    if (this.#sessionId !== undefined) this.#sharedNamedWrites().begin(this.#sessionId, toolCallId, at, named.map(path => resolve(discovery.root, path)));
     this.refreshCodeRules();
     this.#auditor.refreshOwners?.(paths);
     // The rules of a checkout no lane opened yet compile off the daemon's thread, before the capture asks for them.
@@ -2841,7 +2851,9 @@ export class CodeRuleBridge {
    */
   async finish(toolCallId: string, failed = false, options: FinishOptions = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finish(toolCallId, await this.#toolCallClock());
+    const at = await this.#toolCallClock();
+    discovery.toolCalls.finish(toolCallId, at);
+    if (this.#sessionId !== undefined) this.#sharedNamedWrites().finish(this.#sessionId, toolCallId, at, failed);
     if (this.#commands.delete(toolCallId)) {
       const responses = await this.#reconcile(discovery);
       await this.#noteIgnoreRules([]);
@@ -3093,6 +3105,8 @@ export class CodeRuleBridge {
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
     discovery.toolCalls.finishAll(await this.#toolCallClock());
+    // An edit-tool call still open at the turn's end was interrupted: its result never checked it, so it names no write.
+    if (this.#sessionId !== undefined) this.#sharedNamedWrites().drop(this.#sessionId);
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
     // Once the edits queued so far reached the auditor, runs waiting for their checkout to go quiet start now.
@@ -3169,6 +3183,7 @@ export class CodeRuleBridge {
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#shareOwnObservations(discovery);
+      if (this.#sessionId !== undefined) this.#sharedNamedWrites().drop(this.#sessionId);
       this.#sessionId = undefined;
       this.#pending.clear();
       this.#rewindable.clear();
@@ -3569,6 +3584,12 @@ export class CodeRuleBridge {
     if (typeof this.#worktreeWalks === "function") this.#worktreeWalks = this.#worktreeWalks();
     this.#worktreeWalks ??= new WorktreeWalks(this.#worktreeWalkGapMs === undefined ? {} : { gapMs: this.#worktreeWalkGapMs });
     return this.#worktreeWalks;
+  }
+
+  #sharedNamedWrites(): NamedWrites {
+    if (typeof this.#namedWrites === "function") this.#namedWrites = this.#namedWrites();
+    this.#namedWrites ??= new NamedWrites();
+    return this.#namedWrites;
   }
 
   /**
@@ -4786,7 +4807,20 @@ export class CodeRuleBridge {
     { stamp, deleted, since, until }: { stamp: number | undefined; deleted: boolean; since: number; until: number },
   ): Promise<boolean> {
     const at = stamp ?? (deleted ? await folderStamp(discovery.root, path) : undefined);
-    return at === undefined ? discovery.toolCalls.ranDuring(since, until, asked) : discovery.toolCalls.ranDuring(at, at, asked);
+    if (at === undefined) return discovery.toolCalls.ranDuring(since, until, asked);
+    return discovery.toolCalls.ranDuring(at, at, asked) && !this.#namedByAnother(discovery, path, at);
+  }
+
+  /**
+   * Whether another session's edit tool named `path` in a call that ran at `stamp` and finished, while no call of this
+   * session named it: that call wrote it and was checked at its own result, though a command of this session ran then
+   * too. Two calls that each named the file both wrote it.
+   */
+  #namedByAnother(discovery: SourceDiscovery, path: string, stamp: number): boolean {
+    const session = this.#sessionId;
+    if (session === undefined) return false;
+    const writers = this.#sharedNamedWrites().wroteAt(resolve(discovery.root, path), stamp);
+    return writers.size > 0 && !writers.has(session) && !discovery.toolCalls.named(path, stamp);
   }
 
   /**
