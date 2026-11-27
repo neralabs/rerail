@@ -368,7 +368,8 @@ pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize], order: Ord
 /// (innermost first; those it closed). It leaves `p` open above what is left of them (outermost first), and leaves at
 /// `exit`, or the file ends in it (`end`), having written `nodes`. Of the writer's frames: it closes `fkc` of its
 /// entry's, writes `touch` into those (innermost first, the last the one it is in then), leaves `pf` open (their nodes
-/// and last children from the range's first node), and its last node starts at `last_start`.
+/// and last children from the range's first node), and its last node starts at `last_start`. Where a level it closed
+/// returns to another place than `kc`'s and the walk refuses there, a refusal (`refuse`, by level), not a lane.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lane {
     pub st0: u8,
@@ -381,14 +382,38 @@ pub struct Lane {
     pub touch: Vec<Touch>,
     pub pf: Vec<Frame>,
     pub last_start: Option<u64>,
+    pub refuse: Vec<Refusal>,
+}
+
+/// A refusal of a lane's: the walk, having closed the levels below `level` as the lane did (`kc[..level]`), reads at
+/// level `level` a place in `places` (a bit a place) and refuses the file at byte `err`, having written `nodes`, its
+/// last node starting at `last_start`. One a level the lane closed, so a summary is as long as the levels it closes,
+/// not their square.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub level: usize,
+    pub places: u32,
+    pub err: u32,
+    pub nodes: u32,
+    pub last_start: Option<u64>,
 }
 
 impl Lane {
-    /// A lane from where its walk stopped: its frames from what `sh` kept.
+    /// A lane from where its walk stopped: its frames from what `sh` kept (none where the file ends in it).
     fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow) -> Lane {
-        let mut touch = sh.touch;
-        touch.resize(sh.closed + 1, Touch::default());
-        Lane { st0, kc, p, exit, nodes: sh.n, end, fkc: sh.closed, touch, pf: sh.own, last_start: sh.last_start }
+        let (fkc, touch, pf) = if end.is_some() {
+            (0, vec![Touch::default()], Vec::new())
+        } else {
+            let mut touch = sh.touch;
+            touch.resize(sh.closed + 1, Touch::default());
+            (sh.closed, touch, sh.own)
+        };
+        Lane { st0, kc, p, exit, nodes: sh.n, end, fkc, touch, pf, last_start: sh.last_start, refuse: Vec::new() }
+    }
+
+    /// The lane ended where refusal `x` holds, after `a`.
+    fn refused(a: &Lane, x: &Refusal) -> Lane {
+        Lane { st0: a.st0, kc: a.kc.clone(), p: Vec::new(), exit: Entry::default(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), fkc: 0, touch: vec![Touch::default()], pf: Vec::new(), last_start: x.last_start.or(a.last_start), refuse: a.refuse.clone() }
     }
 }
 
@@ -431,7 +456,31 @@ pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, start: usize, stop: usize, de
             }
         }
     }
+    out.lanes = fold(std::mem::take(&mut out.lanes));
     out
+}
+
+/// A lane refused where its last level returned to a place a kept lane's did not, the levels below as that lane's:
+/// that lane's refusal, with the refusals it had (each of the levels below, so the kept lane's too). So the levels
+/// below are kept once, and a summary holds a refusal a level, not a lane.
+fn fold(mut lanes: Vec<Lane>) -> Vec<Lane> {
+    lanes.sort_by(|a, b| b.kc.len().cmp(&a.kc.len()));
+    let mut kept: Vec<Lane> = Vec::new();
+    for l in lanes {
+        if let (Some(Err(err)), Some(j)) = (l.end, l.kc.len().checked_sub(1)) {
+            if let Some(m) = kept.iter_mut().find(|m| m.st0 == l.st0 && m.kc.len() > j && m.kc[..j] == l.kc[..j] && m.kc[j] != l.kc[j]) {
+                m.refuse.extend_from_slice(&l.refuse);
+                m.refuse.push(Refusal { level: j, places: 1 << l.kc[j], err, nodes: l.nodes, last_start: l.last_start });
+                continue;
+            }
+        }
+        kept.push(l);
+    }
+    for m in &mut kept {
+        m.refuse.sort_by_key(|x| (x.level, x.places, x.err, x.nodes, x.last_start));
+        m.refuse.dedup();
+    }
+    kept
 }
 
 /// Lane `a` then lane `b`, entered where `a` leaves: `b`'s closed levels matched against those `a` leaves open, the
@@ -444,9 +493,23 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
         return None;
     }
     let m = b.kc.len().min(a.p.len());
-    if (0..m).any(|j| b.kc[j] != a.p[a.p.len() - 1 - j]) {
-        return None;
+    // `b`'s closed levels that `a` left open: their places known, each a refusal of `b`'s there or its lane's place.
+    let mut r = 0;
+    for j in 0..m {
+        let place = a.p[a.p.len() - 1 - j];
+        while r < b.refuse.len() && b.refuse[r].level == j {
+            if b.refuse[r].places >> place & 1 != 0 {
+                return Some(Lane::refused(a, &b.refuse[r]));
+            }
+            r += 1;
+        }
+        if b.kc[j] != place {
+            return None;
+        }
     }
+    // The rest, closed below `a`'s entry: refusals at the levels they are of the two.
+    let mut refuse = a.refuse.clone();
+    refuse.extend(b.refuse[r..].iter().map(|x| Refusal { level: a.kc.len() + x.level - m, nodes: a.nodes + x.nodes, last_start: x.last_start.or(a.last_start), ..*x }));
     let mut kc = a.kc.clone();
     kc.extend_from_slice(&b.kc[m..]);
     let mut p = a.p[..a.p.len() - m].to_vec();
@@ -473,7 +536,7 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     }
     pf.extend(b.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
     let last_start = b.last_start.or(a.last_start);
-    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end, fkc: a.fkc + b.fkc - fm, touch, pf, last_start })
+    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end, fkc: a.fkc + b.fkc - fm, touch, pf, last_start, refuse })
 }
 
 /// Two ranges' summaries, one after the other. Associative, so a prefix scan composes them in any tree.
@@ -490,7 +553,7 @@ pub fn compose(a: &Summary, b: &Summary) -> Summary {
             }
         }
     }
-    Summary { lanes, start: a.start, end: b.end }
+    Summary { lanes: fold(lanes), start: a.start, end: b.end }
 }
 
 /// The walk's state at a range's start: its place, the levels' places, the nodes before it; or the file's end.
@@ -519,7 +582,26 @@ pub fn apply(s: &Summary, a: &At) -> Option<At> {
         return Some(a.clone());
     }
     let d = a.ret.len();
-    let l = s.lanes.iter().find(|l| l.st0 == a.entry.st && l.kc.len() <= d && (0..l.kc.len()).all(|j| l.kc[j] == a.ret[d - 1 - j]))?;
+    let mut found = None;
+    'lanes: for l in s.lanes.iter().filter(|l| l.st0 == a.entry.st && l.kc.len() <= d) {
+        let mut r = 0;
+        for j in 0..l.kc.len() {
+            let place = a.ret[d - 1 - j];
+            while r < l.refuse.len() && l.refuse[r].level == j {
+                let x = &l.refuse[r];
+                if x.places >> place & 1 != 0 {
+                    return Some(At { entry: Entry::default(), ret: Vec::new(), nodes: a.nodes + x.nodes, end: Some(Err(x.err)), frames: Vec::new(), prev_start: x.last_start.unwrap_or(a.prev_start) });
+                }
+                r += 1;
+            }
+            if l.kc[j] != place {
+                continue 'lanes;
+            }
+        }
+        found = Some(l);
+        break;
+    }
+    let l = found?;
     let mut ret = a.ret[..d - l.kc.len()].to_vec();
     ret.extend_from_slice(&l.p);
     let at = |x: u32| x + a.nodes;

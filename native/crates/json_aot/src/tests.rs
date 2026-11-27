@@ -236,7 +236,7 @@ fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
 
 #[test]
 fn tier2_entries_are_the_serial_walks() {
-    let (mut chunks, mut most) = (0, 0);
+    let (mut chunks, mut most, mut composed, mut per_record) = (0, 0, 0, 0);
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
@@ -263,9 +263,24 @@ fn tier2_entries_are_the_serial_walks() {
             }
             chunks += sums.len();
             most = most.max(sums.iter().map(|s| s.lanes.len()).max().unwrap_or(0));
+            // Every summary a scan round makes stays as long as the records it spans: a few lanes, each holding a few
+            // entries a record (its levels, frames and refusals), never the square of the levels it closes.
+            let mut acc = sums.clone();
+            let mut d = 1;
+            while d < acc.len() {
+                acc = (0..acc.len()).map(|c| if c < d { acc[c].clone() } else { crate::middle::compose(&acc[c - d], &acc[c]) }).collect();
+                for x in &acc {
+                    let held: usize = x.lanes.iter().map(|l| l.kc.len() + l.p.len() + l.pf.len() + l.touch.len() + l.refuse.len()).sum();
+                    let span = x.end - x.start;
+                    composed = composed.max(x.lanes.len());
+                    per_record = per_record.max(held / (span + 1));
+                    assert!(x.lanes.len() <= 8 && held <= 4 * (span + 1), "file {k}, chunks of {size}: a summary of {span} records holds {} lanes and {held} entries", x.lanes.len());
+                }
+                d *= 2;
+            }
         }
     }
-    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk", all.len());
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk, {composed} a composed summary, {per_record} entries a record", all.len());
 }
 
 /// Pass 2: each chunk's nodes written from its state, every pass's chunks (and every scan round's) in order and in two
