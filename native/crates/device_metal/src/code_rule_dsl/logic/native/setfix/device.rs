@@ -236,6 +236,7 @@ thread_local! {
     static OWN_SYMS: std::cell::RefCell<Vector<usize>> = const { std::cell::RefCell::new(rerail_blocks::vector::Vector::new()) };
     /// The arena slots of the rule being compiled that hold a node's text (`rr_node_text_any` made into the arena),
     /// each with the slot of its node: (text, node).
+    // state: not relation data
     static NODE_TEXT_OF: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
