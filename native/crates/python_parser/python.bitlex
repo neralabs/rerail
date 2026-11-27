@@ -214,12 +214,14 @@ check ellipsis  = '.' '.' '.'
 
 token comment   = start hash & o_cmt read cmt
 
-# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer.
-token str_prefix = start (p1 | p2) & code run prev(p2)
-# One reader of every kind of string, as each starts at its quote; a raw string's body has no
+# A string: its prefix, its opener (a quote, and a triple's two more), its parts, and its closer. It starts at its
+# prefix's first letter, or at its quote where it has none, as the lean lexer's `token` reads a string's prefix
+# before a name; its first piece runs through its quote.
+mask str_at     = (p1 | p2) & code | o_str & ~prev(p1) & ~prev(p2, 2)
+# One reader of every kind of string, each read from its quote; a raw string's body has no
 # escapes (`esc` is a plain string's). An f-string's regions are resumed by its tails; the
 # plain ones have no second closer.
-token string_start = start o_str read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts {
+token string_start = start str_at prefix pfx max 2 read s1 | d1 | s3 | d3 | fs1 | fd1 | fs3 | fd3 parts {
                     quote2 = prev(t_open) bytes 2
                     escape_sequence = esc check else '\\'
                     escape_interpolation = esc_ib bytes 2
@@ -534,10 +536,9 @@ tree python {
   choice trail_paren    = trail ',' ')'
   choice trail_bracket  = trail ',' ']'
   choice trail_brace    = trail ',' '}'
-  # A string: its start (prefix, quote, a triple's two more quotes: one leaf), its content (its
+  # A string: its start (prefix and quote, one leaf; a triple's two more quotes merged in), its content (its
   # text and escapes), its end.
-  node string           = str_prefix merge string_start string_start string_rest
-                        | string_start string_rest
+  node string           = string_start string_rest
   choice string_rest    = [merge string_start quote2] [string_content] (interpolation [string_content])* string_end
   # `{`, its expression, a conversion (`!r`), and its `}` or its format spec (`:` and its text).
   node interpolation    = interp_open expression: expression [type_conversion: type_conversion] [format_specifier: format_specifier] interp_end

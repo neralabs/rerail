@@ -490,3 +490,18 @@ statements and blocks end.
     (`fs1`, closed at the `{` too), their tails (`ts1`, which resume them), `spec`, and their unions (`o_str`,
     `f_str`, `o_f`, `f_f`, `o_t`, `f_t`). The masks path runs the same walk. `Regions::readers` keeps the reader
     for the writers that read strings as the lean lexer does. Kotlin's templates keep `or` and `resumes`.
+84. **A string's token starts at its prefix.** `token string_start = start str_at prefix pfx max 2 read …` reads
+    the prefix letters as the string's own first bytes, as the lean lexer's `string_prefix` is one leaf with its
+    quote. `str_prefix` and the tree's `str_prefix merge string_start` are gone. `word_start` still excludes the
+    prefix letters (`~p1 & ~p2`).
+    - Bitlex (`Parts::prefix`, `Parts::reach`): each region's row starts where its opener is reached,
+      `o | next(o)&P | next(o, 2)&P&next(P)`, and its last is the opener. The content after it is `f_K & ~o_K`.
+      Without a prefix the rows stay as they were (`start & o_K`).
+    - The masks path: the reader's opener is that reach, and its closers exclude the openers, because the search
+      for a closer starts at the byte after the token's start, before the quote. `Reader::open_last` is the
+      openers' output. The first piece runs from the token's start to its first bit, and the parts start after it.
+      Every split reads it: `records::read_parts`, the JIT's `split_enter` and `read_in_parts`, tier 2 as Rust's
+      `split_R`. The JIT's depth bits of a template that nests (`Reader::nest`) are read at the opener, not at
+      the prefix, which lies in the outer template's code. It is renumbered to an output with the readers' other
+      masks and printed as `recopen K O`.
+    - Tier 1 as Rust reads the region from its opener (`first_bit(&o_K, s)`) and the record from the token's start.

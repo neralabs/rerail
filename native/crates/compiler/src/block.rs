@@ -864,6 +864,7 @@ impl BlockProgram {
                 && !self.totals.is_empty()
                 && crate::records::WordTable::new(&r.words).is_ok()
                 && r.marks.len() <= crate::records::MARKS
+                && r.readers.iter().all(|rd| rd.open_last.is_none_or(|o| usize::from(o) < self.outputs.len()))
                 && r.readers.iter().all(|rd| rd.nest.is_none_or(|(a, b, m)| usize::from(a) < self.outputs.len() && usize::from(b) < self.outputs.len() && (2..=4).contains(&m)))
                 && r.marks.iter().all(|&(o, w)| (usize::from(o) < self.outputs.len() || (o == crate::records::WORD_ALONE && w != 0)) && usize::from(w) <= r.words.len())
         });
@@ -2072,6 +2073,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
                 if let Some((a, b, m)) = rd.nest {
                     let _ = writeln!(out, "  block {at} recnest {k} {a} {b} {m}");
+                }
+                if let Some(o) = rd.open_last {
+                    let _ = writeln!(out, "  block {at} recopen {k} {o}");
                 }
                 if rd.split == crate::records::Split::Tier2 {
                     let _ = writeln!(out, "  block {at} recsplit {k} tier2");

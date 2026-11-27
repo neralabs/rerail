@@ -93,6 +93,11 @@ fn strings_are_the_lean_parsers() {
     // An `f'` or a word of prefix letters before a quote, in a string or a comment: no prefix.
     same(&["\"a f'\"\n", "x  # but's\n", "'(f'\n"]);
     same(&["\"#\"\n", "'''a'b''c'''\n", "'a'  # c\n", "\"\u{e9}\"\n", "Rb'x'\n", "u'x'\n", "r'a\\''\n", "r'a\\\\'\n"]);
+    // A prefix is the string's first bytes, one leaf with its quote (lean's `string_prefix`): one letter or two, raw
+    // and bytes together, before a triple, after an operator, in an f-string's interpolation; a name of prefix
+    // letters before no quote is a name.
+    same(&["rb''\n", "BR\"\\d\"\n", "f''\n", "rf'{a}'\n", "b'''x'''\n", "x=r'a'\n", "(u'a', b'b')\n", "f'{r\"x\"}'\n"]);
+    same(&["x = f\"{f'{a}'}\"\n", "x = f'{rb\"a\"}'\n", "rb = 1\n", "f(x)\n", "print(rb)\n", "x = br + u\n", "fr.x = 1\n"]);
 }
 
 #[test]

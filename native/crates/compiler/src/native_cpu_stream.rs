@@ -3416,7 +3416,12 @@ fn split_enter(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, bw
         let (enter, next) = (f.create_block(), f.create_block());
         f.ins().brif(opens, enter, &[], next, &[]);
         f.switch_to_block(enter);
-        let s1 = f.ins().iadd_imm(s, 1);
+        // Past a prefix (`open_last`): the first piece runs through the opener, the parts after it.
+        let o = match rd.open_last {
+            Some(ol) => first_bit_from(f, e, bw, ol, s, heads).0,
+            None => s,
+        };
+        let s1 = f.ins().iadd_imm(o, 1);
         (e.set)(f, Mem::PartAt, s1);
         let kv = f.ins().iconst(types::I64, k as i64);
         (e.set)(f, Mem::PartRd, kv);

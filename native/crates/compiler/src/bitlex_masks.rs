@@ -355,6 +355,9 @@ pub struct Lowering {
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
     /// Each part's start, and its bytes or its last (`ReadPart`).
     pub token_parts: HashMap<String, Vec<(Val, u8, Option<Val>)>>,
+    /// A read in parts with a `prefix` (`Parts::prefix`): its regions' openers, the last byte of its first piece
+    /// (`records::Reader::open_last`).
+    pub token_open_last: HashMap<String, Val>,
     /// A region read in parts: its parts' kinds, in order, and its content's kind.
     pub token_part_names: HashMap<String, (Vec<String>, String)>,
     /// A region read in parts: its fill (`f_R`), by the reader's kind (`Reader::quiet`).
@@ -576,6 +579,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         nest_depths: None,
         region_kinds: Vec::new(),
         token_parts: HashMap::default(),
+        token_open_last: HashMap::default(),
         token_part_names: HashMap::default(),
         token_fills: HashMap::default(),
         read_fills: HashMap::default(),
@@ -799,6 +803,10 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     let v = low.program.masks[usize::from(*k)];
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
                 }
+            }
+            for k in r.readers.iter_mut().filter_map(|rd| rd.open_last.as_mut()) {
+                let v = low.program.masks[usize::from(*k)];
+                *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's opener past its prefix not an output")? as u16;
             }
             for (d0, d1, _) in r.readers.iter_mut().filter_map(|rd| rd.nest.as_mut()) {
                 for k in [d0, d1] {
@@ -1084,6 +1092,18 @@ impl Lowering {
                                         .expect("a region");
                                     (self.expr(&o)?, self.expr(&c)?)
                                 }
+                            };
+                            // A `prefix` before the opener (a string's letters): the token is read from its start, where
+                            // its opener is reached, and its closers are none of the openers (the search starts at the
+                            // byte after the start, before the opener); its first piece runs through the opener.
+                            let (opener, closer) = if parts.prefix.is_some() {
+                                let o = rs.iter().map(|r| Expr::Name(format!("o_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a region");
+                                let ov = self.expr(&o)?;
+                                self.token_open_last.insert(kind.clone(), ov);
+                                let reach = self.expr(&parts.reach(o))?;
+                                (reach, self.andnot(closer, ov)?)
+                            } else {
+                                (opener, closer)
                             };
                             self.token_reads.insert(kind.clone(), vec![(opener, closer, rs[0].bytes as i8 - 1, crate::records::ReadNone::Refuse)]);
                             if let Some(l) = parts.closer_last(rs) {
@@ -2710,6 +2730,17 @@ impl Lowering {
                 let count = self.counts.get(target).cloned().ok_or_else(|| format!("{target}.frame: `{target}` is not a count"))?;
                 let a = self.expr(arg)?;
                 self.frame(&count, a)
+            }
+            // `C.eq(k)`, `C` a count: where its value after the byte is `k`, as a lexer's counter is (a line break at
+            // bracket depth 0 ends a statement).
+            Expr::Test { target, method, k: Some(k), .. } if method == "eq" && (self.counts.contains_key(target) || self.pending_counts.iter().any(|c| &c.0 == target)) => {
+                if let Some(i) = self.pending_counts.iter().position(|c| &c.0 == target) {
+                    let (name, up, down, max) = self.pending_counts.remove(i);
+                    let count = self.count(up, down, max)?;
+                    self.counts.insert(name, count);
+                }
+                let count = self.counts.get(target).cloned().expect("a count");
+                self.equals(&count.planes, *k)
             }
             Expr::Test { target, method, .. } => Err(format!("not compiled yet: {target}.{method}")),
         }
@@ -5579,7 +5610,11 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     }
                     _ => None,
                 };
-                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes, nest };
+                let open_last = match low.token_open_last.get(&kind).copied() {
+                    Some(v) => Some(mask_of(low, v, &mut mark_masks)),
+                    None => None,
+                };
+                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes, nest, open_last };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {

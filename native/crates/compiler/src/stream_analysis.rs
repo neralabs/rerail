@@ -525,6 +525,8 @@ pub struct SplitReader {
     /// no record, its opener's code its tag's (`code`).
     pub resumes: bool,
     pub code: Option<u32>,
+    /// Its first piece's last byte past a prefix (`records::Reader::open_last`); None: its opener's byte.
+    pub open_last: Option<u16>,
 }
 
 /// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
@@ -561,7 +563,7 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
             let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
             parts.sort_by_key(|&(o, n, _, _)| (n, o));
             let code = a.retag.or(rd.retag).map(|(kind, marks)| u32::from(kind) | marks << crate::records::MARK_SHIFT);
-            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some(), template: a.template, last: a.last, off: a.off, resumes: rd.resumes, code }
+            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some(), template: a.template, last: a.last, off: a.off, resumes: rd.resumes, code, open_last: rd.open_last }
         })
         .collect();
     // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.

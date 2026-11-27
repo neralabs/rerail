@@ -870,7 +870,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false, nest: None });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false, nest: None, open_last: None });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -948,6 +948,12 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let k: usize = line.number("")?;
                 let nest = (line.number("")?, line.number("")?, line.number("")?);
                 r.readers.get_mut(k).ok_or(format!("block {at} recnest {k}: no such reader"))?.nest = Some(nest);
+            } else if first == "recopen" {
+                // `recopen K O`: reader K's opener past its prefix, its first piece's last (`Reader::open_last`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recopen before its records"))?;
+                let k: usize = line.number("")?;
+                let o = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} recopen {k}: no such reader"))?.open_last = Some(o);
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;

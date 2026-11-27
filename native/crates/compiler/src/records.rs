@@ -402,6 +402,10 @@ pub struct Reader {
     /// its string's depth: a template's string opens a record at its depth, and a read that
     /// resumes ends the one at its own.
     pub nest: Option<(u16, u16, u8)>,
+    /// A token that starts at a prefix before its region's opener (`Parts::prefix`, a string's letters): the output
+    /// whose first bit at or after its start is the opener, the last byte of its first piece. Its parts and its closer
+    /// come after that. None: the opener is the token's first byte.
+    pub open_last: Option<u16>,
 }
 
 /// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
@@ -578,8 +582,12 @@ pub fn first_bit(outputs: &[Vec<u64>], o: u16, from: usize) -> Option<usize> {
 /// bytes the last token. `None` where the closer never comes (the file is refused).
 pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Option<Vec<(usize, usize)>> {
     let a = reader.arms.first()?;
-    let mut out = vec![(s, s)];
-    let mut at = s + 1;
+    let o = match reader.open_last {
+        Some(x) => first_bit(outputs, x, s)?,
+        None => s,
+    };
+    let mut out = vec![(s, o)];
+    let mut at = o + 1;
     loop {
         let c = first_bit(outputs, a.closer, at)?;
         let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes, p))).min_by_key(|&(e, n, p)| (e, n, p.start));

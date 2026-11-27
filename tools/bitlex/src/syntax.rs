@@ -154,6 +154,10 @@ pub struct Parts {
     /// (`last`), and `K` one byte where it does not. Its kind, `E`, its grammar and `K`, for the writers that read
     /// the part as the lexer does (at `E`, the check's match or `K`); the masks path reads the two parts.
     pub checked: Vec<(String, Expr, Gram, String)>,
+    /// `prefix P max M` before `read`: the token starts at a run of at most `M` bytes of `P` before its region's
+    /// opener, as the lean lexer reads a string's prefix letters with the string. Its own record runs from its start
+    /// through the opener; each region's row starts where that region's opener is reached (`Parts::reach`).
+    pub prefix: Option<(Expr, u8)>,
 }
 
 /// How far a part of a region read in parts runs (`Parts`): `bytes N`, or `last L`, through the
@@ -195,6 +199,23 @@ impl Parts {
         last
     }
 
+    /// Where an opener `o` is reached from a token's start (`prefix P max M`): `o` itself, or the first of a run of
+    /// `k` bytes of `P` before it, `k` up to `M`: `o | next(o) & P | next(o, 2) & P & next(P) | …`. No prefix: `o`.
+    pub fn reach(&self, o: Expr) -> Expr {
+        let Some((p, m)) = &self.prefix else { return o };
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let next = |e: Expr, k: u8| if k == 1 { Expr::Call("next".into(), vec![Arg::E(e)]) } else { Expr::Call("next".into(), vec![Arg::E(e), Arg::N(u64::from(k))]) };
+        let mut out = o.clone();
+        for k in 1..=*m {
+            let mut at = and(next(o.clone(), k), p.clone());
+            for j in 1..k {
+                at = and(at, next(p.clone(), j));
+            }
+            out = Expr::Or(Box::new(out), Box::new(at));
+        }
+        out
+    }
+
     /// The regions' fill: `f_K`, or each's, `|`ed.
     fn fill(rs: &[Region]) -> Expr {
         rs.iter().fold(None, |a, r| Some(or_of(a, Expr::Name(format!("f_{}", r.kind))))).expect("a region")
@@ -229,7 +250,8 @@ impl Parts {
         let not = |a: Expr| Expr::Not(Box::new(a));
         let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
         let f = Expr::Name(format!("f_{}", r.kind));
-        let body = and(f.clone(), not(s.clone()));
+        // After its opener (with a `prefix`, the token's start is before it).
+        let body = if self.prefix.is_some() { and(f.clone(), not(Expr::Name(format!("o_{}", r.kind)))) } else { and(f.clone(), not(s.clone())) };
         let closer = Self::closer(std::slice::from_ref(r));
         let reader = kind;
         let closing = |kind: &str, start: Expr, last: Expr, closes: bool| Stmt::Token { kind: kind.to_owned(), start, through: None, last: Some(last.clone()), rule: Some(TokenRule::Inside(last, reader.to_owned(), closes)) };
@@ -2946,6 +2968,17 @@ impl P {
                 self.want_p("=")?;
                 self.want_kw("start")?;
                 let start = self.expr()?;
+                let prefix = if self.eat_kw("prefix") {
+                    let p = self.expr()?;
+                    self.want_kw("max")?;
+                    let m = self.int()?;
+                    if !(1..=3).contains(&m) || !self.is_kw("read") {
+                        return self.err("`prefix P max M` (1 to 3) before a `read … parts`");
+                    }
+                    Some((p, m as u8))
+                } else {
+                    None
+                };
                 let through = if self.eat_kw("through") { Some(self.expr()?) } else { None };
                 let mut last = if through.is_none() && self.eat_kw("last") { Some(self.expr()?) } else { None };
                 let rule = if through.is_some() || last.is_some() {
@@ -3041,8 +3074,11 @@ impl P {
                                 let _ = self.eat_p(",");
                             }
                         }
-                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes, checked }))
+                        Some(TokenRule::ReadParts(regions, Parts { parts, content, closes, checked, prefix: prefix.clone() }))
                     } else {
+                        if prefix.is_some() {
+                            return self.err("a `prefix` on a region read in parts");
+                        }
                         Some(TokenRule::Read(regions))
                     }
                 } else {
@@ -3064,15 +3100,15 @@ impl P {
                 if let Some(TokenRule::ReadParts(rs, parts)) = &rule {
                     // Several regions: the opener a row in each's mode too, at its own openers
                     // (`start & o_K`), all of the one reader (`ReadParts`).
-                    if rs.len() > 1 {
-                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(Expr::Name(format!("o_{}", r.kind))));
+                    // With a `prefix`, each from where its opener is reached, through the opener.
+                    if rs.len() > 1 || parts.prefix.is_some() {
+                        let at = |r: &Region| Expr::And(Box::new(start.clone()), Box::new(parts.reach(Expr::Name(format!("o_{}", r.kind)))));
+                        let to = |r: &Region| if parts.prefix.is_some() { Expr::Name(format!("o_{}", r.kind)) } else { at(r) };
                         for r in &rs[1..] {
-                            let s = at(r);
-                            self.after.push(Stmt::Token { kind: kind.clone(), start: s.clone(), through: None, last: Some(s), rule: rule.clone() });
+                            self.after.push(Stmt::Token { kind: kind.clone(), start: at(r), through: None, last: Some(to(r)), rule: rule.clone() });
                         }
                         self.after.extend(parts.rows(&kind, rs, &start));
-                        let s = at(&rs[0]);
-                        return Ok(Stmt::Token { kind, start: s.clone(), through: None, last: Some(s), rule });
+                        return Ok(Stmt::Token { kind, start: at(&rs[0]), through: None, last: Some(to(&rs[0])), rule });
                     }
                     self.after.extend(parts.rows(&kind, rs, &start));
                 }

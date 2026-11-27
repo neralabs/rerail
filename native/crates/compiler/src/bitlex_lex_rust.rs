@@ -225,6 +225,8 @@ pub struct Reader {
     /// part's start is `E`; at it the check's match is `P` through its end, else `K` one byte, as the lean lexer reads
     /// an escape at a backslash.
     pub checks: Vec<Option<(Gram, String)>>,
+    /// With a `prefix` (`Parts::prefix`): the field of its regions' openers, where its first piece ends.
+    pub open_last: Option<String>,
     pub content: String,
     /// Each closer of a kind of its own (`closes { K = E bytes N }`): its kind, its field, its bytes.
     pub closes: Vec<(String, String, u8)>,
@@ -588,7 +590,11 @@ pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
             checks.push(None);
         }
         let closes = parts.closes.iter().enumerate().map(|(j, (k, e, n))| (k.clone(), field_of(e, r, &format!("closes{j}"), &mut masks, &mut all), *n)).collect();
-        out.push(Reader { kind: kind.clone(), open: String::new(), close, regions: rs.clone(), region_open, region_or, parts: parts_out, checks, content: parts.content.clone(), closes, masks });
+        let open_last = parts.prefix.as_ref().map(|_| {
+            let o = rs.iter().map(|q| name(format!("o_{}", q.kind))).reduce(or).expect("a region");
+            field_of(&o, r, "open_last", &mut masks, &mut all)
+        });
+        out.push(Reader { kind: kind.clone(), open: String::new(), close, regions: rs.clone(), region_open, region_or, parts: parts_out, checks, open_last, content: parts.content.clone(), closes, masks });
     }
     for (r, rd) in out.iter_mut().enumerate() {
         let open = starts[&rd.kind].iter().cloned().reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a row");
@@ -4938,6 +4944,8 @@ impl Gen<'_> {
                     terms.push(a);
                     terms.push(b);
                 }
+                // Where a `prefix`'s row reaches its opener (`Parts::reach`): `o_K | …`.
+                Expr::Or(a, _) => terms.push(a),
                 Expr::Name(n) => {
                     if let Some(r) = rs.iter().find(|r| *n == format!("o_{}", r.kind)) {
                         return Some(r);
@@ -5703,7 +5711,13 @@ impl Gen<'_> {
                         found
                     };
                     let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
-                    (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
+                    let read = format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}");
+                    // Past a `prefix` (a string's letters): the region read from its opener, the record from the start.
+                    let read = match &parts.prefix {
+                        Some(_) => format!("{{\n                let s = first_bit(&{}, s).unwrap_or(s);\n                {}\n            }}", self.val(&Expr::Name(format!("o_{}", r.kind)))?, indent(&read, "    ").trim_start()),
+                        None => read,
+                    };
+                    (format!("read {} parts, to its closer", r.kind), read)
                 }
                 None => match last {
                     Some(l) => (format!("last {}", show(l)), format!("first_bit(&{}, s).unwrap_or(s)", self.val(l)?)),

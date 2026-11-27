@@ -3250,7 +3250,12 @@ impl<'a> G<'a> {
                 let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_of([&self.m.{}], from, (if self.i + 1 < self.n {{ self.recs[self.i + 1].start }} else {{ u32::MAX }}).min(self.next_x) as usize) {{\n            self.known = 0;\n            self.resume_{r}(p)?;\n            self.cur = self.code_at(self.i);\n            return Ok(());\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
-                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
+                // Past a prefix (`open_last`): the first piece runs through the opener.
+                let (o, at, from) = match &rd.open_last {
+                    Some(f) => (format!("\n        let o = first_bit(&self.m.{f}, s).unwrap_or(s);"), "o", "\n        let s = o;"),
+                    None => (String::new(), "s", ""),
+                };
+                (format!("split_{r}"), "record `j`", format!("j: usize) -> R {{\n        let s = self.recs[j].start as usize;{o}\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, {at} as u32, self.recs[j].code));{from}"))
             };
             let _ = write!(
                 out,
