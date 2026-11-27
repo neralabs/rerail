@@ -130,6 +130,7 @@ rv(x, x) :- kind(x, "member_expression"), field(x, "property", p), !text(p, "cur
     typed_ref(o).
 rv(x, l) :- mem_load(x), field(x, "object", o), rv_base(o, l).
 rv(x, x) :- holder_load(x).
+rv(x, x) :- holder_alias_value(x).
 rv(x, l) :- wrapper(x), child(x, y, 0), rv(y, l).
 rv(x, l) :- passes(x, y), rv_known(y, l).
 rv(x, x) :- passes(x, y), rv(y, _), !known_branch(x).
@@ -212,6 +213,33 @@ jsx_el_kind("jsx_element"). jsx_el_kind("jsx_self_closing_element").
 .decl reads_current(g: node)  // g's own code reads a ref's current, or a member of a typed ref
 reads_current(g) :- kind(m, "member_expression"), rc_own(m, g), field(m, "object", o), ref_obj(o),
     (field(m, "property", p), text(p, "current") ; typed_ref(o)).
+
+// A local holding a member of a ref holder is the holder itself to the compiler: its temporaries sidemap
+// (collectTemporariesSidemap) folds a LoadLocal, a StoreLocal and a PropertyLoad into the place they read, so after
+// `let modalRef = props.modalRef`, modalRef has props's ref state wherever it is read. The holder is a ref from the
+// load passed as `ref={props.x}` on, and a ref value from the next load from it (or from such a local) on; a ref
+// value read is reported where it is used. When the compiler's first pass reports nothing (no load after the
+// attribute, no current read), its second starts with the holder a ref, so any load makes it a value.
+//   let modalRef = props.modalRef;
+//   <div ref={props.overlayRef} data-x={props.isExiting}>
+//     <P values={{ modalRef }}/>        modalRef reported: props.isExiting made props a value
+// `let { modalRef } = props` destructures instead: not folded, so not reported.
+.decl holder_alias(x: node, t: symbol, g: node)  // x reads a local whose value is a member chain of holder name t
+holder_alias(x, t, g) :- named_read(x), ref_site(x, s), kind(s, "variable_declarator"), field(s, "name", n),
+    kind(n, "identifier"), field(s, "value", v), member_root(v, t), rc_own(x, g), ref_attr(_, t, g).
+.decl member_root(v: node, t: symbol)  // v is `t.a`, `t.a.b`, …, without optional chaining
+member_root(v, t) :- kind(v, "member_expression"), !has(v, _, "optional_chain"), field(v, "object", o),
+    (kind(o, "identifier"), text(o, t) ; member_root(o, t)).
+.decl holder_touch(m: node, t: symbol, g: node)  // m, in g's own code, loads a member of t or of a local folded into t
+holder_touch(m, t, g) :- mem_load(m), field(m, "object", o), kind(o, "identifier"), text(o, t), rc_own(m, g),
+    ref_attr(_, t, g).
+holder_touch(m, t, g) :- mem_load(m), field(m, "object", o), holder_alias(o, t, g), rc_own(m, g).
+.decl holder_alias_value(x: node)  // x is read while its holder is a ref value
+holder_alias_value(x) :- holder_alias(x, t, g), at_render(x), ref_attr(a, t, g), holder_touch(m, t, g),
+    node(d, a, _, _, e), node(d, m, _, i, _), node(d, x, _, j, _), e <= i, i < j.
+holder_alias_value(x) :- holder_alias(x, t, g), at_render(x), ref_attr(a, t, g), !reads_current(g),
+    !load_after(a, t, g), holder_touch(m, t, g), node(d, m, _, i, _), node(d, x, _, j, _), i < j.
+holder_alias_value(x) :- holder_alias(x, t, _), at_render(x), in_element(x, t).
 
 // ---- where a value is used ----------------------------------------------------------------------------------------
 // read_use(x, l): ref value x, loaded at l, is used where render code is reported.
@@ -496,4 +524,63 @@ holds_reader_pair(x) :- child(x, p, _), kind(p, "pair"), field(p, "value", v), (
     .expect "react-hooks/refs" at "src/r8.jsx":4
     .expect "react-hooks/refs" at "src/r8.jsx":5
     .expect "react-hooks/refs" at "src/r8.jsx":7
+.end
+
+// The compiler folds `let modalRef = props.modalRef` into props (react-aria-components Modal.tsx:335): after
+// `ref={props.overlayRef}` and a later load from props, the shorthand is reported; a destructured `{ otherRef }` and
+// an object built before the attribute are not. ESLint's lines.
+.test a_local_holding_a_holder_member_is_the_holder exactly
+    .fixture "src/r9.jsx" ```
+        import { useRef } from "react";
+        export function C(props) {
+          let modalRef = props.modalRef;
+          let { otherRef } = props;
+          const early = { modalRef };
+          return (
+            <div ref={props.overlayRef} data-x={props.isExiting}>
+              <P
+                values={{
+                  modalRef,
+                  otherRef,
+                }}
+                early={early}
+              />
+            </div>
+          );
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r9.jsx":7
+    .expect "react-hooks/refs" at "src/r9.jsx":9
+    .expect "react-hooks/refs" at "src/r9.jsx":10
+.end
+
+// With no load after the attribute the compiler's first pass reports nothing; its second starts with props a ref,
+// so the alias's own load makes props a value and the alias is reported where it is used.
+.test a_holder_alias_in_the_second_pass exactly
+    .fixture "src/r10.jsx" ```
+        export function D(props) {
+          const inner = props.box.inner;
+          return (
+            <div ref={props.boxRef}>
+              <P a={[inner]} />
+            </div>
+          );
+        }
+        ```
+    .fixture "src/r11.jsx" ```
+        export function E(props) {
+          const inner = props.inner;
+          return (
+            <div ref={props.boxRef}>
+              <P a={props.x} />
+              <Q b={[inner]} />
+            </div>
+          );
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r10.jsx":4
+    .expect "react-hooks/refs" at "src/r10.jsx":5
+    .expect "react-hooks/refs" at "src/r11.jsx":4
+    .expect "react-hooks/refs" at "src/r11.jsx":5
+    .expect "react-hooks/refs" at "src/r11.jsx":6
 .end

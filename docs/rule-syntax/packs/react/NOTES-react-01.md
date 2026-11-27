@@ -194,3 +194,11 @@ fixes added, which ESLint reports with inline comments honoured and the original
 (`const { current: randomAdblock } = React.useRef(Math.random())`, then `randomAdblock < 0.2`) and react-bootstrap
 Offcanvas.tsx:341 (`manager={getModalManager()}`, a function that reads and writes `modalManager.current`). Right:
 neither.
+
+Since (rule fixes on #1120's line): Modal.tsx:335 is reported. `modalRef` there is no useRef: it is `let modalRef =
+props.modalRef`, and the compiler's temporaries sidemap (ValidateNoRefAccessInRender's collectTemporariesSidemap)
+folds a LoadLocal, a StoreLocal and a PropertyLoad into the place they read, so modalRef has props's ref state.
+props is a ref once `ref={props.overlayRef}` is loaded, and a ref value from the next load from it (`props.isExiting`)
+on. The rule's holder_alias models that fold, with the compiler's two passes; `let { modalRef } = props` (the other
+copy of the file) destructures and is not folded, as ESLint agrees. samples-react: 0 original-only, the same 5
+translation-only; right: translation.
