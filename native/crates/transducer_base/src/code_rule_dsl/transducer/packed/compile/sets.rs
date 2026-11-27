@@ -684,6 +684,9 @@ pub struct Index {
     /// A kind's or field's nodes as a row, made the first time a formula reads it (`Reader::posted`): made at each
     /// read they were a row of the tape each (1.72 M on cold PostHog).
     posted: Mutex<HashMap<(bool, u16), Arc<Vector<u64>>>>,
+    /// A flags test's nodes as a row (`Reader::flagged`), by its mode and arg: made at each read, a scan of every
+    /// node's flags each (1,354 of the matchers' 40,060 samples on all, 2026-11-27).
+    flagged: Mutex<HashMap<(u8, u8), Arc<Vector<u64>>>>,
     /// Steps over every node asked for (`Reader::over_all`), by step.
     over_all: Mutex<HashMap<Set, Arc<Vector<u64>>>>,
     /// What W's facts that are node sets keep of the tape (the matcher's sibling positions and `nthChild` answers),
@@ -782,6 +785,7 @@ impl Reader<'_> {
             Set::And(parts) => Row::Owned(self.and(parts)),
             Set::Kind(kind) => Row::Shared(self.posted(false, *kind)),
             Set::Field(field) => Row::Shared(self.posted(true, *field)),
+            Set::Flags { mode, arg } => Row::Shared(self.flagged(*mode, *arg)),
             set => Row::Owned(self.made(set)),
         }
     }
@@ -874,6 +878,15 @@ impl Reader<'_> {
         Arc::clone(self.index.posted.lock().expect("posted sets").entry((field, id)).or_insert(row))
     }
 
+    /// The nodes whose flags hold `mode` and none of `arg` as a row, kept in the index once made.
+    fn flagged(&self, mode: u8, arg: u8) -> Arc<Vector<u64>> {
+        if let Some(row) = self.index.flagged.lock().expect("flagged sets").get(&(mode, arg)) {
+            return Arc::clone(row);
+        }
+        let row = Arc::new(self.made(&Set::Flags { mode, arg }));
+        Arc::clone(self.index.flagged.lock().expect("flagged sets").entry((mode, arg)).or_insert(row))
+    }
+
     fn class(&self, class: u16) -> Arc<Vector<u64>> {
         let mut classes = self.index.classes.lock().expect("class sets");
         Arc::clone(classes.entry(class).or_insert_with(|| {
@@ -915,11 +928,10 @@ impl Reader<'_> {
             Set::Kind(kind) => self.postings(self.kinds().get(*kind)),
             Set::Field(field) => self.postings(self.fields().get(*field)),
             Set::Flags { mode, arg } => {
+                // A word of 64 nodes' flags at a time, each node's test a bit: no branch a node.
                 let mut bits = rerail_blocks::vector![0_u64; words];
-                for (node, &flags) in self.flags().iter().enumerate() {
-                    if flags & mode == *mode && flags & arg == 0 {
-                        bits[node / 64] |= 1 << (node % 64);
-                    }
+                for (word, flags) in bits.iter_mut().zip(self.flags().chunks(64)) {
+                    *word = flags.iter().enumerate().fold(0, |w, (at, &f)| w | (u64::from(f & mode == *mode && f & arg == 0) << at));
                 }
                 bits
             }
