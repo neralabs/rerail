@@ -27,9 +27,11 @@ publishing.
      same way, so a pull request that breaks this fails there first.
    - A Windows kernel importing the Visual C++ runtime is rejected. The kernels link it statically, so a clean Windows
      install needs no redistributable.
+   - Beside each kernel, the tray icon program for the same system (`scripts/build/release-tray.mjs`). On Linux it is
+     built for musl and must be a static binary; on Windows it is checked for the Visual C++ runtime as the kernel is.
 2. Smoke-test native loading and device storage on each host.
-3. Build the runtime and bundled UI. Pack the six engine packages from the six `native/*.node` files, which fails if
-   one is absent, then pack core against them, so core pins each one's version and integrity
+3. Build the runtime and bundled UI. Pack the six engine packages from the six `native/*.node` files and their tray
+   programs, which fails if one is absent, then pack core against them, so core pins each one's version and integrity
    ([Engine packages](#engine-packages)).
 4. Install core's tarball and the runner's engine package into a scratch prefix; check `rerail --help`, the bundled UI
    and `nativeHealth()`.
@@ -408,10 +410,10 @@ and core names all six as optional dependencies at that exact version.
 <details>
 <summary>What an engine package holds, how it is named and how it is loaded</summary>
 
-- **Contents.** `rerail_engine.<suffix>.node`, `package.json`, `README.md`, `LICENSE`, `NOTICE` and
-  `THIRD_PARTY_NOTICES`. The `package.json` carries `os`, `cpu` and, on Linux, `libc: ["glibc"]`, so npm can skip the
-  package on another platform, and `repository`, which npm's provenance requires to name this repository. It has no
-  scripts, no dependencies and no `exports`.
+- **Contents.** `rerail_engine.<suffix>.node`, the tray icon program `rerail-tray.<suffix>` (`.exe` on Windows),
+  `package.json`, `README.md`, `LICENSE`, `NOTICE` and `THIRD_PARTY_NOTICES`. The `package.json` carries `os`, `cpu`
+  and, on Linux, `libc: ["glibc"]`, so npm can skip the package on another platform, and `repository`, which npm's
+  provenance requires to name this repository. It has no scripts, no dependencies and no `exports`.
 - **Generated, not committed.** `scripts/release/engine/packages.mjs` writes each package as it packs it, from one
   table (`ENGINE_PACKAGES`: suffix, `os`, `cpu`, `libc`, Rust target). No other script spells a package name. The
   runtime cannot import a release script, so it makes the same name from its own platform suffix

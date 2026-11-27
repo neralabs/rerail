@@ -14,8 +14,9 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, dashboardLink, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
+import type { TrayDaemon, TrayHandle, TrayRepository } from "./tray.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
@@ -37,10 +38,12 @@ import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { eventAnswerFacts } from "../api/event-answer.js";
+import { repositoriesWithRuleCounts } from "../api/repository-operations.js";
 import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { repositoryRulesVersionReader } from "../engine/catalog/rule-configuration.js";
 import { defaultRerailDatabasePath, type RerailDatabase } from "../engine/storage/database.js";
 import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-move.js";
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
@@ -69,6 +72,14 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
  * stays below the size V8 can hold as one string to parse.
  */
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
+
+/** {@link RerailDaemon.repositories}' last answer, and the version of the rules and the rule catalog it was read at. */
+interface RepositoriesRead {
+  readonly version: string;
+  readonly catalog: ReturnType<RerailApiStores["ruleCatalog"]>;
+  readonly list: readonly TrayRepository[];
+}
+
 /**
  * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
  * long a handler takes to answer, so no response is cut short: `/mcp` answers each POST with one JSON body (no SSE
@@ -355,7 +366,7 @@ async function closeHttpServer(server: DaemonServer): Promise<void> {
 /** The hosts the daemon binds and answers to, and whether it is reachable off loopback. */
 function daemonHosts(options: RerailDaemonOptions): { bindHost: string; publicHosts: ReturnType<typeof publicHostSet>; remote: boolean } {
   const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
-  const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
+  const loopbackBind = loopbackBindHost(bindHost);
   // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
   // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
   // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
@@ -577,6 +588,10 @@ export class RerailDaemon {
   #untakenFolder: string | undefined;
   /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
   #statusLines: { stop(): Promise<void> } | undefined;
+  /** What {@link repositories} last read, and the version of the rules and the rule catalog it read them at. */
+  #repositoriesRead: RepositoriesRead | undefined;
+  /** What {@link repositories} keys its last answer on, read on the daemon's own connection once the database exists. */
+  #repositoriesVersion: (() => string) | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -888,6 +903,34 @@ export class RerailDaemon {
   }
 
   /**
+   * Every repository Rerail knows on this machine, in the dashboard's order, with how many of its rules run: only its
+   * key, name, whether it is set up, its start state and its counts, the fields `repositoryRulesVersionReader` covers.
+   * The answer is counted again only once any process changed the repositories or their rules, or the installed packs
+   * changed (the cached catalog is another object): a session recording its work changes neither, so a caller that
+   * asks every few seconds costs one read of the rule settings while only sessions run. A repository's aliases,
+   * checkouts and gitignore setting are not in the answer, since a change to them would not count it again. Before the
+   * database exists there is no repository, and asking does not create it.
+   */
+  repositories(): readonly TrayRepository[] {
+    if (!existsSync(this.#databasePath)) return [];
+    this.#repositoriesVersion ??= repositoryRulesVersionReader(this.#stores.database());
+    const version = this.#repositoriesVersion();
+    const catalog = this.#stores.ruleCatalog();
+    const read = this.#repositoriesRead;
+    if (read !== undefined && read.version === version && read.catalog === catalog) return read.list;
+    const list = repositoriesWithRuleCounts(this.#stores).map(({ repository, counts }) => ({
+      key: repository.repositoryKey,
+      name: repository.name,
+      setUp: repository.setUp,
+      state: repository.state,
+      total: counts.total,
+      on: counts.on,
+    }));
+    this.#repositoriesRead = { version, catalog, list };
+    return list;
+  }
+
+  /**
    * Closes every checkout runtime no session uses (`EngineService.closeUnusedRuntimes`), settling once their memory was
    * collected: the heap watch asks it before it restarts the daemon at its ceiling.
    */
@@ -1025,13 +1068,18 @@ interface DaemonArguments {
 
 const LOOPBACK_BIND_HOSTS: readonly string[] = ["127.0.0.1", "localhost", "::1"];
 
+/** Whether a daemon bound to `host` is reached from this computer alone. */
+function loopbackBindHost(host: string): boolean {
+  return LOOPBACK_BIND_HOSTS.includes(host.toLowerCase());
+}
+
 /**
  * Binding off loopback hands the write API to everything on the network, so it is an explicit
  * opt-in (`--allow-remote`), not a side effect of `--host`. Shared by `rerail start` and the daemon
  * itself, so the check holds for whichever launcher ran first.
  */
 export function assertHostBindable(host: string, allowRemote: boolean): void {
-  if (allowRemote || LOOPBACK_BIND_HOSTS.includes(host.toLowerCase())) return;
+  if (allowRemote || loopbackBindHost(host)) return;
   throw new Error(
     `--host ${host} is not a loopback address; every host on the network could then read and write this daemon. `
     + "Pass --allow-remote to bind it anyway, and --public-host <name> for each hostname it should answer to.",
@@ -1458,12 +1506,14 @@ async function packageVersion(): Promise<string> {
 /**
  * What starts the daemon with besides its arguments: what the process entry point (`src/cli/daemon-entry.ts`) supplies
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
- * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
+ * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets. `tray` starts the tray icon
+ * for the daemon once it listens (`startDaemonTray`), and is closed with it: the process's daemon alone has one, never
+ * a `RerailDaemon` a test or a check constructs.
  */
 type RerailDaemonServices = Pick<
   RerailDaemonOptions,
   "codingAgents" | "publishedRulePacks" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
->;
+> & { tray?: (daemon: TrayDaemon) => TrayHandle | undefined };
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
@@ -1621,6 +1671,7 @@ function reportStart(daemon: RerailDaemon): void {
 }
 
 async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  const { tray, ...daemonServices } = services;
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them. Only
@@ -1650,12 +1701,17 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
     accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
-    ...services,
+    ...daemonServices,
     ...optionalDaemonOptions(arguments_, tls),
   });
   reportStart(daemon);
+  let trayHandle: TrayHandle | undefined;
   const way = daemonExit({
-    close: async () => await daemon.close(),
+    // The icon goes first, so it never offers a daemon that is closing.
+    close: async () => {
+      trayHandle?.close();
+      await daemon.close();
+    },
     release: () => mainInstance?.release(),
     // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
     relaunch: () => {
@@ -1665,6 +1721,25 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
     log: line => process.stderr.write(line),
   });
   shutdown = way.stop;
+  // The icon is an extra: a tray that throws as it starts is logged, and the daemon serves on without one.
+  try {
+    trayHandle = tray?.({
+      health: () => daemon.health(),
+      repositories: () => daemon.repositories(),
+      dashboardLink: (view, repository) => {
+        const state = daemon.state();
+        const page = new URL(state.url);
+        if (repository !== undefined) page.searchParams.set("repository", repository);
+        if (view !== undefined) page.hash = view;
+        return dashboardLink(state, page.href);
+      },
+      loopback: loopbackBindHost(arguments_.host),
+      restart: way.restart,
+      stop: way.stop,
+    });
+  } catch (error) {
+    process.stderr.write(`rerail tray: could not start: ${(error as Error).message}\n`);
+  }
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({

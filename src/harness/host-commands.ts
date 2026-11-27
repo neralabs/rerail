@@ -270,6 +270,7 @@ async function removeRerail(options: HostCommandOptions, ctx: HostCommandContext
     await options.reattach?.();
     throw error;
   }
-  if (result.code !== 0) await options.reattach?.();
+  // Said before the reattach, so a reattach that fails too (no daemon) does not hide why the removal failed.
   notifyResult(ctx, "rerail-uninstall", result);
+  if (result.code !== 0) await options.reattach?.();
 }

@@ -1,11 +1,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, type AdapterEvent, type AdapterSession, sendNativeDeliveries } from "../../../src/engine/index.js";
 import { registerPiHostAdapter } from "../../../src/hosts/pi/pi-host-adapter.js";
 
+/** The detach the adapter hands Pi's commands, which `/rerail-uninstall` runs before it removes Rerail. */
+const hostCommands = vi.hoisted(() => ({ detach: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../../../src/harness/host-commands.js", async importOriginal => ({
+  ...await importOriginal<Record<string, unknown>>(),
+  registerHostCommands: (_pi: unknown, options: { detach?(): Promise<void> }) => { hostCommands.detach = options.detach; },
+}));
+
 type Handler = (event: unknown, context: ExtensionContext) => unknown;
 
-function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
+function lifecycleHarness(changeOwnerBeforeFailure: boolean, registerCommand = false) {
   const handlers = new Map<string, Handler>();
   const context = {
     cwd: "/workspace",
@@ -14,6 +21,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
   const session: AdapterSession = { host: "pi", sessionId: "session", cwd: context.cwd };
   let owner: object = {};
   let ingested = 0;
+  let tries = 0;
   const pi = {
     on(name: string, handler: Handler) { handlers.set(name, handler); },
     registerTool() {},
@@ -21,18 +29,21 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
   } as unknown as ExtensionAPI;
   registerPiHostAdapter(pi, {
     registerTool: false,
-    registerCommand: false,
+    registerCommand,
     activeSession: () => session,
     currentContext: () => context,
     owner: () => owner,
     semantic: () => { throw new Error("not used"); },
     initialize: async () => {
+      tries += 1;
       if (changeOwnerBeforeFailure) owner = {};
       throw new Error("retiring the previous owner failed");
     },
     close: async () => undefined,
     shutdown: async () => undefined,
     sessionFor: async () => session,
+    attachGaps: { reportDropped() {}, failed() {}, recorder: () => undefined },
+    markGapFinal() {},
     ingest: async (_event: AdapterEvent) => { ingested += 1; },
     yieldDeliveries: async () => undefined,
     conversationRulesTool: {},
@@ -42,7 +53,7 @@ function lifecycleHarness(changeOwnerBeforeFailure: boolean) {
     sessionNoteRules: async () => ({ setUp: false }),
     openToolResult: () => () => [],
   });
-  return { context, handlers, ingested: () => ingested };
+  return { context, handlers, ingested: () => ingested, tries: () => tries };
 }
 
 const completedMessage = {
@@ -76,6 +87,22 @@ describe("Pi host adapter owner transitions", () => {
     await harness.handlers.get("message_end")?.(completedMessage, harness.context);
 
     expect(harness.ingested()).toBe(1);
+  });
+
+  it("tries no more to attach once Pi detaches for Rerail's removal, after a failed start armed a retry", async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = lifecycleHarness(false, true);
+      await expect(Promise.resolve(harness.handlers.get("session_start")?.({}, harness.context))).rejects.toThrow(
+        "retiring the previous owner failed",
+      );
+      await hostCommands.detach!();
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(harness.tries()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
