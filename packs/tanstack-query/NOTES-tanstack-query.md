@@ -29,14 +29,14 @@ Reuse the engine's existing libraries. Cross-file facts must carry stable docume
 
 ## Decisions after test set #3
 
-| Rule | Unseen real / judged | State |
-|---|---:|---|
-| query-data-copied-to-state | 6/6 | on, steer |
-| fetch-without-ok-check | 6/6 | on, log |
-| server-action-as-query-fn | 6/6, three apps | on, steer |
-| same-key-different-query-fn | no frozen-set match after fixes | candidate |
-| cache-key-matches-no-query | 2/7 | candidate |
-| set-query-data-mutates-cache | 1/1 | candidate, sparse |
+| Rule | Set #1 | Set #2 | Set #3 | State |
+|---|---|---|---|---|
+| query-data-copied-to-state | 5/5 real | 1/1 real | no match | on, steer |
+| fetch-without-ok-check | 5/5 real | no match | 1/1 real | on, log |
+| server-action-as-query-fn | no match | 6/6 real, three apps | no match | on, steer |
+| same-key-different-query-fn | tuning data | no match after fixes | no match | candidate |
+| cache-key-matches-no-query | no match | 2/2 real | 0/5 real | candidate |
+| set-query-data-mutates-cache | no match | no match | 1/1 real | candidate, sparse |
 
 ## Test sets #2 and #3
 

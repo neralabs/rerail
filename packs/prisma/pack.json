@@ -88,12 +88,20 @@
       "dimensions": { "risk": "security", "layer": "server", "severity": "high", "hazard": "input.mass-assignment" },
       "examples": {
         "caught": {
-          "path": "prisma/schema.prisma",
-          "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+          "path": "src/app/api/profile/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { prisma } from \"@/lib/prisma\";\n\nexport async function PATCH(req: NextRequest) {\n  const body = await req.json();\n  const user = await prisma.user.update({ where: { id: body.id }, data: body });\n  return NextResponse.json(user);\n}\n",
+          "with": [{
+            "path": "prisma/schema.prisma",
+            "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+          }]
         },
         "passes": {
-          "path": "prisma/schema.prisma",
-          "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+          "path": "src/app/api/profile/route.ts",
+          "text": "import { NextRequest, NextResponse } from \"next/server\";\nimport { z } from \"zod\";\nimport { prisma } from \"@/lib/prisma\";\n\nconst UpdateProfile = z.object({ id: z.string(), name: z.string().max(80) });\n\nexport async function PATCH(req: NextRequest) {\n  const { id, ...data } = UpdateProfile.parse(await req.json());\n  const user = await prisma.user.update({ where: { id }, data });\n  return NextResponse.json(user);\n}\n",
+          "with": [{
+            "path": "prisma/schema.prisma",
+            "text": "model User {\n  id    String @id @default(cuid())\n  name  String?\n  role  String @default(\"USER\")\n}\n"
+          }]
         }
       }
     },
