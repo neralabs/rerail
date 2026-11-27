@@ -3,9 +3,10 @@
 //! in the TSX library (`tsx/project.rerail`).
 //!
 //! - `tsconfig(dir, base_url)`, `tsconfig_path(dir, pattern, target)`: each `tsconfig.json` or `jsconfig.json`'s
-//!   `compilerOptions`, read as the resolver reads them (`tsconfig::options_of`: get-tsconfig's `extends` chain,
-//!   JSONC as TypeScript reads it), `baseUrl` from the root (each configuration's against its own folder; the
-//!   configuration's folder where none is set), each `paths` target as written.
+//!   `compilerOptions`, read as the resolver reads them (`tsconfig::Chains`: get-tsconfig's `extends` chain, each base
+//!   read once for every configuration of the tree, JSONC as TypeScript reads it), `baseUrl` from the root (each
+//!   configuration's against its own folder; the configuration's folder where none is set), each `paths` target as
+//!   written.
 //! - `tsconfig_for(path, dir)`: a document's nearest `tsconfig.json`, else `jsconfig.json`.
 //! - `npm_ignored(path)`: each file under a `package.json` (its nearest) that npm leaves out of that package:
 //!   eslint-plugin-n's `getNpmignore(path).match`, as `package_manifest::Manifest::publishes` reads the package's
@@ -70,8 +71,9 @@ fn configurations(tree: &Tree<'_>) -> (Vec<Vec<String>>, Vec<Vec<String>>, Vec<V
     }
     let view = View::new(Arc::new(HeldFiles::default()), Some(tree.root));
     let (mut tsconfig, mut tsconfig_path) = (Vec::new(), Vec::new());
+    let mut chains = super::tsconfig::Chains::new(&view, true);
     for (dir, file) in &configs {
-        let Some(options) = super::tsconfig::options_of(&view, &view.absolute(file)) else { continue };
+        let Some(options) = chains.of(&view.absolute(file)) else { continue };
         let option = |key: &str| options.iter().find(|(k, _)| k == key).map(|(_, v)| v);
         let base = option("baseUrl").and_then(Json::as_str).and_then(|url| view.relative(url)).map_or_else(|| dir.clone(), str::to_owned);
         tsconfig.push(vec![dir.clone(), base]);
