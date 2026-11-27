@@ -605,16 +605,36 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
                 }
                 // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
-                // one text made in two rounds has two values.
+                // one text made in two rounds has two values. Keyed by a value besides other keys, the column is bound
+                // into a slot of its own (past the rule's slots), an arena text, and compared with the value as texts
+                // (`TEXTOP`) after the probe by the other keys.
+                let mut own_compared: Vec<(usize, Key)> = Vec::new();
+                let mut unfused = false;
+                let mut text_keyed: Vec<(usize, usize)> = Vec::new();
                 if let Some((rel, _)) = own && own_texts.iter().any(|&(r, _)| r == rel) {
                     let text = |c: usize| own_texts.contains(&(rel, c));
-                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused_at(i).is_some() || *neg {
-                        return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
+                    let other_keys = keys.iter().filter(|&&(c, _)| !text(c)).count();
+                    if keys.iter().any(|&(c, _)| text(c)) && other_keys == 0 {
+                        return Err("a made text across rounds as an own relation's only key (decision 0307: read only as a text)".into());
                     }
+                    if tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused_at(i).is_some() && keys.iter().any(|&(c, _)| text(c)) || *neg && keys.iter().any(|&(c, _)| text(c)) {
+                        return Err("a made text across rounds tested, or matched in a negated or fused atom (decision 0307: read only as a text)".into());
+                    }
+                    // Bound by a fused atom, the text is read by its own steps after the atom's, not in the fused
+                    // program (which reads its columns as values).
+                    unfused = atom_binds.iter().any(|&(c, _)| text(c));
                     for &(_, s) in atom_binds.iter().filter(|&&(c, _)| text(c)) {
                         ARENA.with_borrow_mut(|x| x.push(s));
                     }
+                    for &(c, k) in keys.iter().filter(|&&(c, _)| text(c)) {
+                        let tmp = extra;
+                        extra += 1;
+                        ARENA.with_borrow_mut(|x| x.push(tmp));
+                        text_keyed.push((c, tmp));
+                        own_compared.push((tmp, k));
+                    }
                 }
+                let keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !text_keyed.iter().any(|&(t, _)| t == c)).collect();
                 // A made text as a key (an arena text, a held cat's): no symbol names it yet, so the relation is
                 // probed by its other keys, that column bound into a slot of its own (past the rule's slots), and
                 // compared with the text as texts (`TEXTOP`). Symbols are interned once, so at most one row of a
@@ -624,30 +644,34 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     _ => None,
                 }).collect();
                 let mut keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !by_text.iter().any(|&(t, _)| t == c)).collect();
-                let mut atom_binds: Vec<(usize, usize)> = atom_binds.iter().copied().collect();
+                let mut atom_binds: Vec<(usize, usize)> = atom_binds.iter().copied().chain(text_keyed.iter().copied()).collect();
+                if atom_binds.len() > mj::MAX_BINDS {
+                    return Err("an atom with more keys, tests or binds than a stage holds".into());
+                }
                 let mut compared = None;
                 match by_text[..] {
                     [] => {}
                     [_] => {
-                        if *neg {
-                            return Err("a made text as a negated atom's key has no device form".into());
+                        if *neg && own.is_some() {
+                            return Err("a made text as a negated own atom's key has no device form".into());
                         }
-                        if own.is_some() {
+                        if !*neg && own.is_some() || !own_compared.is_empty() {
                             return Err("a made text as a key of the component's own relation has no device form".into());
                         }
                     }
                     _ => return Err("an atom keyed by several made texts has no device form".into()),
                 }
                 match by_text[..] {
-                    [(c, x)] if keys.is_empty() => {
+                    [(c, x)] if keys.is_empty() || *neg => {
                         // A made text as the atom's only key: the atom it is, found by its hash in the atoms
                         // directory (`ROW_FIND`, decision 0666) into a slot of its own (a stage that counts no step),
                         // and no row where none is: an input relation's column holds atoms, so a text no atom is is in
                         // no row of it, as the CPU's probe by its interned value finds none. The atom is then probed
-                        // by that value.
+                        // by that value. A negated atom's (beside its other keys too): a text no atom is keeps its
+                        // binding (`ROW_FIND_NONE`, value -1, in no row), and the negation passes it.
                         let tmp = extra;
                         extra += 1;
-                        stages.push(find_stage(i, tmp, Key::Slot(x), &deferred, &origin, &known)?);
+                        stages.push(find_stage(i, tmp, Key::Slot(x), *neg, &deferred, &origin, &known)?);
                         if tmp >= bound.len() {
                             bound.resize(tmp + 1, false);
                         }
@@ -665,6 +689,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     _ => {}
                 }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
+                let fused_ok = compared.is_none() && own_compared.is_empty() && !unfused;
                 for (k, &(c, key)) in keys.iter().enumerate() {
                     d.key_rcol[k] = c as u32;
                     match key {
@@ -681,7 +706,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let mut span = 1;
                 let mut npassed = 0;
                 match j.fused_at(i) {
-                    Some(f) if d.mode == mj::JOIN && compared.is_none() => {
+                    Some(f) if d.mode == mj::JOIN && fused_ok => {
                         program(&mut d, f, mj::RIGHT)?;
                         binds(&mut d, f, false);
                         for &(s, _) in &f.binds { bound[s] = true; }
@@ -726,6 +751,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     // The step counted once, by its comparison.
                     stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
                     stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(tmp), Key::Slot(x), &deferred, &origin, &known)?);
+                } else if !own_compared.is_empty() {
+                    // The step counted once, by its last comparison.
+                    stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
+                    let last = own_compared.len() - 1;
+                    for (n, &(tmp, k)) in own_compared.iter().enumerate() {
+                        let mut t = textop(i, mj::TEXT_EQ, true, Key::Slot(tmp), k, &deferred, &origin, &known)?;
+                        if n < last {
+                            t.span = 0;
+                        }
+                        stages.push(t);
+                    }
                 } else {
                     stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 }
@@ -1510,7 +1546,7 @@ fn arena_reader(step: &Step, x: usize) -> bool {
 /// A `ROW_FIND` stage of made text `x` (an arena text, a held cat's, a node's): the atom the text is, found by its
 /// hash in the atoms directory, into slot `out`, and no row where none is (decision 0666). It counts no step: the
 /// atom keyed by it counts its own.
-fn find_stage(first: usize, out: usize, x: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
+fn find_stage(first: usize, out: usize, x: Key, keep_none: bool, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
     let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
     let (keys, xk) = match x {
         Key::Slot(s) if is_arena(s) => ([x, x], mj::OPND_ARENA),
@@ -1518,7 +1554,7 @@ fn find_stage(first: usize, out: usize, x: Key, deferred: &HashMap<usize, (Key, 
         _ => return Err("a made text's atom found of no made text".into()),
     };
     let kind = text_keys(&mut d, &keys, origin, known, "a made text's atom")?;
-    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16 | mj::ROW_FIND, xk];
+    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16 | mj::ROW_FIND | if keep_none { mj::ROW_FIND_NONE } else { 0 }, xk];
     d.bind_slot[0] = out as u32;
     Ok(PStage { first, span: 0, kind, desc: d, npassed: 0 })
 }
@@ -3872,9 +3908,18 @@ impl LiveHead {
         self.mapped - self.len
     }
 
-    /// Its live indexes' buckets: its bound's keys' (at most `LIVE_BUCKETS`), at least its rows mapped's.
+    /// Its live indexes' buckets: its bound's keys' (at most `LIVE_BUCKETS`), at least its rows mapped's. Where its
+    /// whole bound is mapped (a CPU device's, `mj::rooms_mapped` none), at least the rows it held when the program
+    /// began and its first room: a bound of a head of no reach (decision 0659's made texts) is millions of rows, and
+    /// each round's build of each index wrote an offset a bucket (`ix_offs_range`).
     fn buckets(&self) -> usize {
-        self.bound.min(LIVE_BUCKETS).max(self.mapped).next_power_of_two().max(1)
+        let rows = if self.mapped < self.bound { self.mapped } else { (self.len + self.room).min(self.bound) };
+        self.bound.min(LIVE_BUCKETS).max(rows).next_power_of_two().max(1)
+    }
+
+    /// Its live indexes' rows and buckets where they are not its bound's (`DevRel::mapped`): `rows` the relation's.
+    fn indexed(&self, rows: usize) -> Option<(usize, usize)> {
+        (self.mapped < self.bound || self.buckets() < self.bound).then(|| (rows, self.buckets()))
     }
 }
 
@@ -4363,7 +4408,7 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
     }
     lp.own.total.clear();
     for (&h, l) in live {
-        lp.own.total.insert(h, live_rel(&l.total, l.bound, store.rels[h].k, (l.mapped < l.bound).then(|| (l.mapped, l.buckets())))?);
+        lp.own.total.insert(h, live_rel(&l.total, l.bound, store.rels[h].k, l.indexed(l.mapped))?);
     }
     // A lattice head's key map with room for its rows mapped at half full (its bound's, where its rows are not mapped
     // as reached): grown once, before the rounds fold into it, and by the program's tail as its rooms grow.
@@ -4567,7 +4612,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
     lp.own.sorts.clear();
     if let Some(reads) = reads {
         for (&h, l) in live {
-            lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k, (l.mapped < l.bound).then(|| (l.slack_mapped(), l.buckets())))?);
+            lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k, l.indexed(if l.mapped < l.bound { l.slack_mapped() } else { l.slack }))?);
         }
     }
     let lattices = &*lp.lattices;

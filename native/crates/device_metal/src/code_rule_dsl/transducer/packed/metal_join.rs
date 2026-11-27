@@ -138,6 +138,9 @@ pub(in crate::code_rule_dsl) const ROW_KEPT: u32 = 1 << 9;
 /// store's hash in the atoms directory's tables (decision 0666), and no row where no atom is. A symbol, not an arena
 /// text: an atom keyed by it is probed by value.
 pub(in crate::code_rule_dsl) const ROW_FIND: u32 = 1 << 10;
+/// With `ROW_FIND`: a text no atom is keeps its row, its value -1, so a negated atom keyed by it finds no row and
+/// passes, as the CPU's probe by its interned value finds none.
+pub(in crate::code_rule_dsl) const ROW_FIND_NONE: u32 = 1 << 11;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;

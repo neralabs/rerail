@@ -1556,6 +1556,8 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
         // `ROW_FIND` (bit 10): the made text's value is the atom it is, found in the atoms directory D (`atom_of_text`,
         // decision 0666), or no row where none is.
         bool finds = (s->agg[0] & (1u << 10)) != 0;
+        // `ROW_FIND_NONE` (bit 11): a text no atom is keeps its row, its value -1 (a negated atom's key: no row has it).
+        bool keep_none = (s->agg[0] & (1u << 11)) != 0;
         uint32_t ksym = 0;
         if (keeps) {
             int64_t kv = key_value(s, L, row, 7);
@@ -1581,7 +1583,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 if (lane == 0) {
                     if (full) ukl_atomic_or(&ctl[6], 64u);
                     V[row] = value;
-                    counts[row] = (uint32_t)(full || value != -1);
+                    counts[row] = (uint32_t)(full || keep_none || value != -1);
                 }
                 continue;
             }
@@ -1729,7 +1731,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             if (unheld && s->counter != NONE) ukl_atomic_or(&counters[s->counter], 4u);
             V[row] = value;
             // A text no atom is (`ROW_FIND`): no row, as the CPU drops it at the function (`PROBE_OUT`).
-            counts[row] = (uint32_t)(full || value != -1);
+            counts[row] = (uint32_t)(full || keep_none || value != -1);
         }
     }
 }

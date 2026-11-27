@@ -2987,6 +2987,8 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     // (bit 10): a made text's value is the atom it is (`atom_of_text`, decision 0666), no row where none is.
     let (canon, t) = (pw(6) != 0, b.h);
     let finds = s.agg[0] & (1 << 10) != 0;
+    // `ROW_FIND_NONE` (bit 11): a text no atom is keeps its row, its value -1 (a negated atom's key: no row has it).
+    let keep_none = s.agg[0] & (1 << 11) != 0;
     let value_of = |off: u32, len: u32| {
         if finds {
             atom_of_text(a, off, len, d)
@@ -3070,7 +3072,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
                 if !full {
                     core::ptr::copy_nonoverlapping(e.add(16), (a as *mut u8).add(16 + off as usize), len as usize);
                 }
-                made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full);
+                made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full, keep_none);
                 continue;
             }
         }
@@ -3212,7 +3214,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
         if unheld {
             counter(4);
         }
-        made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full);
+        made(ctl, vv, counts, r, if full { -1 } else { value_of(off, len) }, full, keep_none);
     }
 }
 
@@ -3229,13 +3231,14 @@ unsafe fn arena_claim(a: *mut u32, len: u32, canon: bool) -> (u32, bool) {
 }
 
 /// A made text's row: its value (-1 where the arena was full: the phase runs again; or no atom is) and its keep bit:
-/// none for a text no atom is (`ROW_FIND`, as the CPU drops it at the function).
-unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool) {
+/// none for a text no atom is (`ROW_FIND`, as the CPU drops it at the function), unless `keep_none`
+/// (`ROW_FIND_NONE`).
+unsafe fn made(ctl: *mut u32, vv: *mut i64, counts: *mut u32, r: u32, value: i64, full: bool, keep_none: bool) {
     if full {
         at(ctl.add(6)).fetch_or(64, SeqCst);
     }
     *vv.add(r as usize) = value;
-    *counts.add(r as usize) = u32::from(full || value != -1);
+    *counts.add(r as usize) = u32::from(full || keep_none || value != -1);
 }
 
 /// A canonical arena's probes a text at most before its table is called full (`CANON_PROBES`).

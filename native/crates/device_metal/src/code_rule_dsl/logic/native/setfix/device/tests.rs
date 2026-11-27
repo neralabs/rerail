@@ -603,6 +603,74 @@ use rerail_blocks::vector::Vector;
         assert_eq!(got[1], got[0], "the device's rows are the CPU's");
     }
 
+    /// An own column of made texts (decision 0307) keyed by a constant and by a symbol, beside a node: probed by the
+    /// node, the column compared with each as texts. Its rows are the CPU's.
+    #[test]
+    fn an_own_made_text_keyed_beside_a_node_is_compared_as_texts() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE r (c0); CREATE TEMP TABLE u (c0, c1);").unwrap();
+        let parts = ["ab", "c", "def", "g", "hi"];
+        let name = |v: i64| format!("{}{}", parts[(v % 5) as usize], v % 7);
+        for v in 0..40i64 {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![v, name(v)]).unwrap();
+            if v > 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [(v - 1) / 3, v]).unwrap();
+            }
+            // u(y, t): some of the texts a node's parent holds, as symbols.
+            if v > 3 && v % 2 == 0 {
+                db.execute("INSERT INTO u VALUES (?1, ?2)", rusqlite::params![v, format!("{}.s", name((v - 1) / 3))]).unwrap();
+            }
+        }
+        db.execute("INSERT INTO r VALUES (0)", []).unwrap();
+        let n = format!("t:x:{}:{}:is", hex("temp.n"), hex("c0, c1"));
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let root = format!("t:x:{}:{}:i", hex("temp.r"), hex("c0"));
+        let u = format!("t:x:{}:{}:is", hex("temp.u"), hex("c0, c1"));
+        // q(x, t) :- r(x), n(x, t).    q(y, t) :- e(_, y), n(y, t).
+        // q(y, @dot(t, "s")) :- q(x, t), e(x, y).            (q's column 1: made texts)
+        // h(y, t) :- q(x, t), e(x, y), q(x, "ab0.s").        (keyed by the node and a constant)
+        // h(y, w) :- q(x, t), e(x, y), u(y, w), q(y, w).     (keyed by the node and a symbol)
+        // h(y, w) :- q(x, t), e(x, y), q(y, w), w != "c1.s".  (a made text bound, then tested: a fused atom)
+        // h(y, t) :- q(x, t), e(x, y), !u(y, t).             (a made text as a negated atom's key, beside a node;
+        //                                                      most of q's texts are no atom)
+        let seed = format!("pos {root} v0\npos {n} v0 v1\nhead v0 v1");
+        let each = format!("pos {e} v0 v1\npos {n} v1 v2\nhead v1 v2");
+        let down = format!("pos d0 v0 v1\npos {e} v0 v2\neq v3 x:{}\nhead v2 cat:v1:v3", hex("s"));
+        let by_const = format!("pos d0 v0 v1\npos {e} v0 v2\npos c0 v0 x:{}\nhead v2 v1", hex("ab0.s"));
+        let by_sym = format!("pos d0 v0 v1\npos {e} v0 v2\npos {u} v2 v3\npos c0 v2 v3\nhead v2 v3");
+        let bound = format!("pos d0 v0 v1\npos {e} v0 v2\npos c0 v2 v3\nne v3 x:{}\nhead v2 v3", hex("c1.s"));
+        let negated = format!("pos d0 v0 v1\npos {e} v0 v2\nneg {u} v2 v1\nhead v2 v1");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let tag = format!("own_text_key_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1); DROP TABLE IF EXISTS temp.h; CREATE TEMP TABLE h (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {tag}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), "rel h is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("seed 0 {}", hex(&each)), format!("join 0 0 {}", hex(&down)), format!("join 1 0 {}", hex(&by_const)), format!("join 1 0 {}", hex(&by_sym)), format!("join 1 0 {}", hex(&bound)), format!("join 1 0 {}", hex(&negated))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &tag, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed && r.reruns == 0, "the component on the device: {r:?}");
+            }
+            super::super::close(&db, &tag).unwrap();
+            let mut rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.h").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 20, "the CPU's rows of h: {:?}", got[0]);
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
     /// An atom over the component's own relation by two keys (`Src::FullMulti`), beside one over it by one key: two
     /// live indexes of one recursive relation in a round. Its rows are the CPU's.
     #[test]
