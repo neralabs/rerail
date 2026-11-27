@@ -154,6 +154,27 @@ impl LaunchScope {
 /// An evaluation moved from one thread to another (`LaunchScope::carry`).
 pub struct Carried(Evaluation);
 
+/// The evaluation this thread was in when a job started on it (`exec::in_job_scope`), set aside until the job ends.
+/// A job that starts on a thread in the middle of another's work (a wait that runs the pool's jobs, a CPU kernel's
+/// lanes that steal one) is a job of its own (decision 0386): its strata's launches are their own evaluations, not
+/// the outer stratum's (whose ledger held the launches of every chunk a CPU kernel's lanes stole, 24,000 on `all`).
+pub struct SetAside(Option<Rc<RefCell<Evaluation>>>);
+
+impl SetAside {
+    /// The thread's evaluation taken off it: the job starts in none.
+    pub fn take() -> Self {
+        SetAside(EVALUATION.with_borrow_mut(Option::take))
+    }
+}
+
+impl Drop for SetAside {
+    /// The job ended: the thread's evaluation is the outer one again.
+    fn drop(&mut self) {
+        let outer = self.0.take();
+        let _ = EVALUATION.try_with(|slot| *slot.borrow_mut() = outer);
+    }
+}
+
 impl Drop for LaunchScope {
     fn drop(&mut self) {
         if self.owner {
@@ -355,6 +376,34 @@ mod tests {
             Ok(()) => None,
             Err(p) => Some(p.downcast::<crate::exec::OverBudget>().expect("the launch budget's failure").0),
         }
+    }
+
+    /// Decision 0386: a job that starts on a thread inside another's evaluation (a CPU kernel's lanes that steal a
+    /// pool job, a wait that helps) launches in evaluations of its own; the outer one's ledger keeps its own launches,
+    /// and is the thread's again when the job ends, also when it panics.
+    #[test]
+    fn a_job_started_inside_an_evaluation_launches_in_its_own() {
+        let outer = LaunchScope::enter();
+        launch();
+        let mine = available();
+        for _ in 0..3 {
+            crate::exec::in_job_scope(|| {
+                assert_eq!(available(), 0, "the job starts in no evaluation");
+                let _stratum = LaunchScope::enter();
+                for _ in 0..150 {
+                    launch();
+                }
+            });
+            assert_eq!(available(), mine, "the outer evaluation's launches are its own");
+        }
+        assert!(over(|| crate::exec::in_job_scope(|| {
+            let _stratum = LaunchScope::enter();
+            for _ in 0..=KERNEL_LAUNCH_LIMIT {
+                launch();
+            }
+        })).is_some(), "the job's own budget holds");
+        assert_eq!(available(), mine, "restored after the job's panic");
+        assert_eq!(outer.snapshot().len(), 1, "the outer ledger records its one launch");
     }
 
     #[test]
