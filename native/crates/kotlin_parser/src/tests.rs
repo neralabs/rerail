@@ -395,6 +395,32 @@ fn numbers_are_the_lean_parsers() {
     ]);
 }
 
+/// A digit after an exponent's sign is the exponent's (`num_start`), as the lean lexer's `exponent` reads it: no
+/// number starts there, so a `.`, an `e` or a `0x` after one is no number's (`1e+5.5`). An `e` in a name is no
+/// exponent's: `x1e+5` is `x1e + 5`.
+#[test]
+fn an_exponents_digits_start_no_number() {
+    same(&["val a = 1e+5
+", "val a = 1.5e-3f
+", "val a = x1e+5
+", "val a = 1E-10 + 2e+0
+", "val a = x1e-0x1
+"]);
+    // The lean parser refuses these; the grammar too, at the exponent.
+    let lean_refuses = ["val a = 1e+5.5
+", "val a = 1.5e+5.5
+", "val a = 1e+5e5
+", "val a = 1e-0x1
+"];
+    for text in lean_refuses {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+    }
+    refused(&lean_refuses);
+    // The lean parser reads this as a number, `e` and `+5`; the grammar refuses it, which is safe.
+    refused(&["val a = 1e+5e+5
+"]);
+}
+
 /// A number's suffix is the name touching it (`sfx`), as the lean parser's `integer` reads the
 /// token after; elsewhere `L`, `u`, `U`, `uL` and `UL` are names.
 #[test]

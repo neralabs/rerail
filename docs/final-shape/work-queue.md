@@ -12161,3 +12161,20 @@ and 0724).
 Checked under Relax: tests-rr rule_syntax_files_pass_check_rr reports only lib/python/py-names-handed.rerail's 41
 undeclared relations, red before this merge (to fix after the roll-ups); the new pack checks clean. No Metal or farm
 runs.
+
+### Q588. Roll-up 160 (Swift-Kotlin-Scala-support 425d577411 onto Pulling-it-all-together): what the merge chose
+
+Swift-Kotlin-Scala-support at 425d577411, its last commit of its own (decision 0721 step 45, the feeder's 0703: a
+digit after an exponent's sign starts no number, as the lean lexer's `exponent` reads it). Its head, c4feb4d921, is
+a merge of Go-C-and-C-support into it, and Go-C-and-C-support is excluded from the roll-ups: taking the head would
+bring Go-C's eleven commits in, so the head's one further commit is that merge alone and is not taken.
+
+Conflicts, resolved by invariant:
+- bitlex_lex_rust.rs: a token test's value is the hub's (its kind's assumptions substituted where it is regional),
+  and a count-of-one test of a run gets Swift-Kotlin's `ever` mask (`run_terms`, from the unsubstituted test, which
+  substitutes the assumptions itself).
+- kotlin_aot tier1.rs and kotlin.answers are generated: re-blessed from the merged generator and grammar
+  (`RERAIL_BLESS_ANSWERS=1` with the proving budget lifted, then `RERAIL_BLESS=1 rust_is_current`).
+
+Checked under Relax: rerail-kotlin-parser (92), rerail-compiler (46); rr-parser rust_is_current, parser-tests
+json_rust_is_current and python-parser rust_is_current current without a bless. No Metal or farm runs.

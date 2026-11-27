@@ -265,8 +265,13 @@ escape "a `*/*/` in a block comment" when f_block & slash & prev(star) & prev(sl
 
 mask w          = code & (word | high)
 mask word_run       = fill(w & (alpha | high) & ~prev(w), ~w)
-# A digit after a `.` is a fraction's, but after `..` a number's first (`1..2`).
-mask num_start  = w & digit & ~prev(w) & ~prev(dot & ~prev(dot))
+# A word's bytes from its first letter, read over the bytes alone (stage 1's): a region's bytes at
+# its start and end touch no word of code (a quote, a `/`, a line end).
+mask word_span      = fill((word | high) & (alpha | high) & ~prev(word | high), ~(word | high))
+# A digit after a `.` is a fraction's, but after `..` a number's first (`1..2`). After an
+# exponent's sign it is the exponent's (`1e+5`), as the lean lexer's `exponent` reads it: an `e`
+# of code in no word is a number's, as a name's first byte is a letter (`x1e+5` is `x1e + 5`).
+mask num_start  = w & digit & ~prev(w) & ~prev(dot & ~prev(dot)) & ~prev(sign & prev(w & e_letter & ~word_span))
 
 # A number, as the lean lexer reads one: hex (`0x`) and binary (`0b`) digits; else decimal
 # digits, then a fraction (a `.` and digits), an exponent (`e`, a sign, digits) and an `f`,
@@ -392,6 +397,8 @@ assume "a decimal number is no hex number" in integer_literal hx = empty
 assume "a decimal number is no binary number" in integer_literal bx = empty
 assume "a decimal number is no hex number" in real_literal hx = empty
 assume "a decimal number is no binary number" in real_literal bx = empty
+assume "a decimal number is in no name: its digits start after no word byte" in integer_literal word_span = empty
+assume "a decimal number is in no name: its digits start after no word byte" in real_literal word_span = empty
 assume "a hex number is no decimal number" in hex_literal nb = empty
 assume "a hex number is no binary number" in hex_literal bx = empty
 assume "a binary number is no decimal number" in bin_literal nb = empty
