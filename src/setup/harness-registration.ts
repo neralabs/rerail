@@ -204,7 +204,7 @@ async function removeIfEmpty(directory: string): Promise<void> {
 }
 
 /** The path cannot exist: it, or a directory on the way to it, is missing or is not a directory. */
-function isAbsent(error: unknown): boolean {
+export function isAbsent(error: unknown): boolean {
   return isMissing(error) || (error instanceof Error && "code" in error && error.code === "ENOTDIR");
 }
 
