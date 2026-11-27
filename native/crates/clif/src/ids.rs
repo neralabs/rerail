@@ -1,6 +1,6 @@
 //! A projection's numbering as its reads are told where it lies (decision 0353 step 2): the rank index of the tape
 //! nodes it numbers, and its granule table. Each column is a run in the block the descriptor is in, `off` bytes from
-//! the run's own address (`rerail_blocks::refs::Span`'s layout). One definition: the host's `Ranks` and
+//! the run's own address (a 64-bit byte offset, then a 64-bit length). One definition: the host's `Ranks` and
 //! `granules::Table` fill it, its reads read it (`Numbering::is`, …, on the host; `id_reads` in CLIF for the JIT and
 //! the kernels), and its MSL is written from it.
 //!
@@ -32,7 +32,7 @@ pub const ORDER_INDEX_BITS: u32 = 18;
 /// The items a granule jump stands for (`Numbering::jumps`).
 pub const JUMP: u32 = 64;
 
-/// `len` items, `off` bytes from the run's own address (`rerail_blocks::refs::Span`'s layout).
+/// `len` items, `off` bytes from the run's own address (a 64-bit byte offset, then a 64-bit length).
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct Run {

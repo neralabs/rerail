@@ -19,7 +19,7 @@
 //! Reads are arithmetic on the words: the same on a GPU, where a column is read for its bandwidth and the extra
 //! instructions to decode it cost nothing.
 
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::structure;
 
 pub const CONST: u32 = 0;
@@ -53,9 +53,9 @@ structure! {
         pub slope: i64,
         pub rmin: i64,
         /// Packed values (one spare word at the end, so a read never branches on a word boundary).
-        pub data: Span<u64>,
+        pub data: RelSpan<u64>,
         /// `RUNS`: packed first positions.
-        pub runs: Span<u64>,
+        pub runs: RelSpan<u64>,
     }
 }
 

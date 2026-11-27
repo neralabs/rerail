@@ -18,16 +18,16 @@ use cranelift_codegen::ir::{
     condcodes::IntCC,
     types::{I32, I64},
 };
-use rerail_blocks::refs::Span;
+use rerail_blocks::RelSpan;
 use rerail_blocks::bloom::Bloom;
 use rerail_blocks::relation::{Index, Relation};
 use rerail_blocks::col::IntCol;
 use rerail_blocks::rows::{ColDir, Rows};
 use std::mem::{offset_of, size_of};
 
-/// A span's offset from its own address, and its length (`refs::Span`).
-const SPAN_OFF: i32 = offset_of!(Span<u64>, off) as i32;
-const SPAN_LEN: i32 = offset_of!(Span<u64>, len) as i32;
+/// The floor's `RelSpan<T>` (`flat::rel`): a 32-bit offset, then a 32-bit length.
+const SPAN_LEN: i32 = 4;
+const _: () = assert!(size_of::<RelSpan<u64>>() == 8);
 const ROWS_MIN_LOG: i32 = offset_of!(Rows, min_log) as i32;
 const ROWS_COLS: i32 = offset_of!(Rows, cols) as i32;
 const ROWS_LEN: i32 = offset_of!(Rows, len) as i32;
@@ -67,9 +67,40 @@ impl B<'_, '_> {
     pub(crate) fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
         self.f.ins().load(ty, fields(), p, offset)
     }
-    /// The address a span at `p + at` refers to: its own address plus its offset.
+    /// The address the floor's `RelSpan<T>` at `p + at` refers to (`flat::offset`'s `Aligned` unit): its 32-bit
+    /// offset counts `T`'s alignment from its field's address rounded down to it.
+    pub(crate) fn follow_rel<T>(&mut self, p: Value, at: i32) -> Value {
+        let units = self.word_at(I32, p, at);
+        let units = self.f.ins().sextend(I64, units);
+        self.follow_units(p, at, units, align_of::<T>() as i64)
+    }
+
+    /// As `follow_rel`, for a `RelSpan<T, R64, _>` (a 64-bit offset: a directory's span into another block).
+    pub(crate) fn follow_far<T>(&mut self, p: Value, at: i32) -> Value {
+        let units = self.word_at(I64, p, at);
+        self.follow_units(p, at, units, align_of::<T>() as i64)
+    }
+
+    fn follow_units(&mut self, p: Value, at: i32, units: Value, align: i64) -> Value {
+        let field = self.f.ins().iadd_imm(p, i64::from(at));
+        if align == 1 {
+            return self.f.ins().iadd(field, units);
+        }
+        let base = self.f.ins().band_imm(field, !(align - 1));
+        let off = self.f.ins().imul_imm(units, align);
+        self.f.ins().iadd(base, off)
+    }
+
+    /// The length of the floor's `RelSpan<T>` at `p + at` (its u32), as a u64.
+    pub(crate) fn span_len(&mut self, p: Value, at: i32) -> Value {
+        let n = self.word_at(I32, p, at + SPAN_LEN);
+        self.f.ins().uextend(I64, n)
+    }
+
+    /// The address a tape's run (`ids::Run`: a 64-bit byte offset, then its length) at `p + at` refers to: its own
+    /// address plus its offset.
     pub(crate) fn follow(&mut self, p: Value, at: i32) -> Value {
-        let off = self.word_at(I64, p, at + SPAN_OFF);
+        let off = self.word_at(I64, p, at);
         let span = self.f.ins().iadd_imm(p, i64::from(at));
         self.f.ins().iadd(span, off)
     }
@@ -113,7 +144,7 @@ impl B<'_, '_> {
 
 /// `rows_col(rows, c)`: the address of column `c`'s directory.
 pub fn rows_col(b: &mut B<'_, '_>) -> Value {
-    let cols = b.follow(b.tape, ROWS_COLS);
+    let cols = b.follow_rel::<ColDir>(b.tape, ROWS_COLS);
     let c = b.arg(0);
     b.item(cols, c, COL_SIZE)
 }
@@ -252,7 +283,7 @@ pub fn col_sealed(b: &mut B<'_, '_>) -> Value {
         constant,
         |_| base,
         |b| {
-            let data = b.follow(ic, IC_DATA);
+            let data = b.follow_rel::<u64>(ic, IC_DATA);
             let pack = is(b, rerail_blocks::col::PACK);
             b.either(
                 I64,
@@ -304,7 +335,7 @@ fn sealed_runs(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value,
     let rmask = mask_of(b, rbits);
     let nruns = b.word_at(I32, ic, IC_NRUNS);
     let nruns = b.f.ins().uextend(I64, nruns);
-    let starts = b.follow(ic, IC_RUNS);
+    let starts = b.follow_rel::<u64>(ic, IC_RUNS);
     let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I64);
     b.f.append_block_param(head, I64);
@@ -340,7 +371,7 @@ fn sealed_dict(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value,
     let rmask = mask_of(b, rbits);
     let cbit = b.f.ins().imul(i, rbits);
     let k = rd_bit(b, data, cbit, rmask);
-    let values = b.follow(ic, IC_RUNS);
+    let values = b.follow_rel::<u64>(ic, IC_RUNS);
     let vbit = b.f.ins().imul(k, bits);
     let v = rd_bit(b, values, vbit, mask);
     b.f.ins().iadd(base, v)
@@ -354,7 +385,7 @@ fn sealed_groups(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Valu
     let rmask = mask_of(b, rbits);
     let nruns = b.word_at(I32, ic, IC_NRUNS);
     let nruns = b.f.ins().uextend(I64, nruns);
-    let runs = b.follow(ic, IC_RUNS);
+    let runs = b.follow_rel::<u64>(ic, IC_RUNS);
     // The entries start past the minima's words: `(nruns * bits).div_ceil(64) + 1` words.
     let total = b.f.ins().imul(nruns, bits);
     let total = b.f.ins().iadd_imm(total, 63);
@@ -589,7 +620,7 @@ pub fn rel_len(b: &mut B<'_, '_>) -> Value {
 /// `rel_dead(rel, id)`: 1 if the relation's dead bits mark row `id` (a delta's kills of its base, or of its own).
 pub fn rel_dead(b: &mut B<'_, '_>) -> Value {
     let id = b.arg(0);
-    let words = b.word_at(I64, b.tape, REL_DEAD + SPAN_LEN);
+    let words = b.span_len(b.tape, REL_DEAD);
     let w = b.f.ins().ushr_imm(id, 6);
     let w = b.f.ins().uextend(I64, w);
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, w, words);
@@ -597,7 +628,7 @@ pub fn rel_dead(b: &mut B<'_, '_>) -> Value {
         I32,
         inside,
         |b| {
-            let dead = b.follow(b.tape, REL_DEAD);
+            let dead = b.follow_rel::<u64>(b.tape, REL_DEAD);
             let at = b.f.ins().ishl_imm(w, 3);
             let p = b.f.ins().iadd(dead, at);
             let word = b.word_at(I64, p, 0);
@@ -613,7 +644,7 @@ pub fn rel_dead(b: &mut B<'_, '_>) -> Value {
 
 /// The address of the relation's index `idx`.
 fn index(b: &mut B<'_, '_>, idx: Value) -> Value {
-    let indexes = b.follow(b.tape, REL_INDEXES);
+    let indexes = b.follow_rel::<Index>(b.tape, REL_INDEXES);
     b.item(indexes, idx, INDEX_SIZE)
 }
 
@@ -623,7 +654,7 @@ fn index(b: &mut B<'_, '_>, idx: Value) -> Value {
 pub fn rel_group(b: &mut B<'_, '_>) -> Value {
     let (idx, h) = (b.arg(0), b.arg(1));
     let ix = index(b, idx);
-    let buckets = b.word_at(I64, ix, INDEX_OFFS + SPAN_LEN);
+    let buckets = b.span_len(ix, INDEX_OFFS);
     let none = b.f.ins().icmp_imm(IntCC::Equal, buckets, 0);
     b.either(
         I64,
@@ -632,7 +663,7 @@ pub fn rel_group(b: &mut B<'_, '_>) -> Value {
         |b| {
             let mask = b.word_at(I64, ix, INDEX_MASK);
             let bucket = b.f.ins().band(h, mask);
-            let offs = b.follow(ix, INDEX_OFFS);
+            let offs = b.follow_rel::<u32>(ix, INDEX_OFFS);
             let at = b.f.ins().ishl_imm(bucket, 2);
             let p = b.f.ins().iadd(offs, at);
             let start = b.word_at(I32, p, 0);
@@ -650,7 +681,7 @@ pub fn rel_group(b: &mut B<'_, '_>) -> Value {
 pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
     let (idx, k) = (b.arg(0), b.arg(1));
     let ix = index(b, idx);
-    let rows = b.follow(ix, INDEX_ROWS);
+    let rows = b.follow_rel::<u32>(ix, INDEX_ROWS);
     let p = b.item(rows, k, 4);
     b.word_at(I32, p, 0)
 }
@@ -711,7 +742,7 @@ pub fn bloom_mask(b: &mut B<'_, '_>) -> Value {
 /// not: its word `(h >> 32) & (words - 1)` has every bit of `bloom_mask(h)`. A filter of no words holds every key.
 pub fn bloom_may(b: &mut B<'_, '_>) -> Value {
     let h = b.arg(0);
-    let words = b.word_at(I64, b.tape, BLOOM_WORDS + SPAN_LEN);
+    let words = b.span_len(b.tape, BLOOM_WORDS);
     let none = b.f.ins().icmp_imm(IntCC::Equal, words, 0);
     b.either(
         I32,
@@ -721,7 +752,7 @@ pub fn bloom_may(b: &mut B<'_, '_>) -> Value {
             let at = b.f.ins().ushr_imm(h, 32);
             let less = b.f.ins().iadd_imm(words, -1);
             let at = b.f.ins().band(at, less);
-            let base = b.follow(b.tape, BLOOM_WORDS);
+            let base = b.follow_rel::<u64>(b.tape, BLOOM_WORDS);
             let at = b.f.ins().ishl_imm(at, 3);
             let p = b.f.ins().iadd(base, at);
             let word = b.word_at(I64, p, 0);

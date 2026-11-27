@@ -32,7 +32,7 @@ use super::{ADDED_INDEXES, ColStats, FROZEN, Index, Relation, build_one_index};
 use crate::layer::{ENC_DICT, ENC_RANGED, LayerSpec};
 use crate::packed::RowsIn;
 pub use crate::packed::writer::Short;
-use crate::refs::Span;
+use rerail_delta_core::flat::RelSpan;
 use crate::region::BlockPin;
 use crate::scratch::Scratch;
 use std::sync::atomic::Ordering::{Relaxed, Release};
@@ -122,7 +122,7 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, sketched: bool
     // a column's range is written below.
     let (Some(sp), Some(ixp)) = (block.try_claim_t::<ColStats>(a.max(1)), block.try_claim_clear_t::<Index>(room)) else { return false };
     let sk = if sketched {
-        let Some(p) = block.try_claim_clear_t::<Span<u8>>(a.max(1)) else { return false };
+        let Some(p) = block.try_claim_clear_t::<RelSpan<u8>>(a.max(1)) else { return false };
         Some(p)
     } else {
         None
@@ -132,10 +132,10 @@ pub fn open(pin: &mut BlockPin, rel: &Relation, spec: &LayerSpec, sketched: bool
         for c in 0..a {
             *sp.add(c) = ColStats { min: i64::MAX, max: i64::MIN };
         }
-        Span::set(&rel.stats, sp, a);
-        Span::set(&rel.indexes, ixp, room);
+        block.span(&rel.stats, sp, a);
+        block.span(&rel.indexes, ixp, room);
         if let Some(p) = sk {
-            Span::set(&rel.sketches, p.cast::<u8>(), a * size_of::<Span<u8>>());
+            block.span(&rel.sketches, p.cast::<u8>(), a * size_of::<RelSpan<u8>>());
         }
     }
     true
@@ -247,18 +247,18 @@ fn settle_sketch(pin: &mut BlockPin, rel: &Relation, c: usize, s: &rerail_delta_
     let Some(kept) = block.try_settle(s) else { return false };
     // SAFETY: the kept bytes just settled in the block the pin holds to write; entry `c` of the directory is this
     // call's alone.
-    unsafe { Span::set(&dir[c], kept.as_ptr().cast_mut(), kept.len()) };
+    unsafe { block.span(&dir[c], kept.as_ptr().cast_mut(), kept.len()) };
     true
 }
 
-/// The layer's sketches' directory: a `Span<u8>` a column, empty when it keeps none.
-fn sketches(rel: &Relation) -> &[Span<u8>] {
+/// The layer's sketches' directory: a `RelSpan<u8>` a column, empty when it keeps none.
+fn sketches(rel: &Relation) -> &[RelSpan<u8>] {
     let b = rel.sketches.as_slice();
     if b.is_empty() {
         return &[];
     }
-    // SAFETY: `open` laid the directory out as `Span<u8>`s, aligned to 8, in the relation's block.
-    unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<Span<u8>>(), b.len() / size_of::<Span<u8>>()) }
+    // SAFETY: `open` laid the directory out as `RelSpan<u8>`s, aligned to 8, in the relation's block.
+    unsafe { std::slice::from_raw_parts(b.as_ptr().cast::<RelSpan<u8>>(), b.len() / size_of::<RelSpan<u8>>()) }
 }
 
 // Column `c`'s kept sketch in a layer's sketches' directory: the floor's read (`rerail_delta_core::sketch::kept`).

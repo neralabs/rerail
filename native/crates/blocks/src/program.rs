@@ -4,7 +4,7 @@
 
 use crate::block::{Block, Frozen, kind};
 use crate::facts::Range;
-use crate::refs::{Ptr, Span};
+use rerail_delta_core::flat::{Rel, RelSpan};
 use crate::structure;
 
 structure! {
@@ -15,8 +15,8 @@ structure! {
     pub struct Module {
         pub id: u32,
         pub nrules: u32,
-        pub rules: Span<Rule>,
-        pub text: Span<u8>,
+        pub rules: RelSpan<Rule>,
+        pub text: RelSpan<u8>,
     }
 }
 
@@ -24,8 +24,8 @@ structure! {
     pub struct ProgramRoot {
         pub nmod: u32,
         pub pad: u32,
-        pub modules: Span<Ptr<Module>>,
-        pub ranges: Span<Range>,
+        pub modules: RelSpan<Rel<Module>>,
+        pub ranges: RelSpan<Range>,
     }
 }
 
@@ -44,12 +44,12 @@ pub struct Program {
 fn open(nmod: usize, delta: bool) -> Block {
     let b = crate::alloc::host(kind::PROGRAM, 256 << 20);
     let root: *mut ProgramRoot = b.alloc_t(1);
-    let mods: *mut Ptr<Module> = b.alloc_t(nmod);
+    let mods: *mut Rel<Module> = b.alloc_t(nmod);
     let ranges: *mut Range = b.alloc_t(nmod);
     unsafe {
         (*root).nmod = nmod as u32;
-        Span::set(&raw mut (*root).modules, mods, nmod);
-        Span::set(&raw mut (*root).ranges, ranges, nmod);
+        b.span(&raw const (*root).modules, mods, nmod);
+        b.span(&raw const (*root).ranges, ranges, nmod);
         if delta {
             b.header_mut().delta = 1;
         }
@@ -65,7 +65,7 @@ fn root(b: &Block) -> &ProgramRoot {
 fn set_module(b: &Block, i: usize, m: *const Module, start: usize, end: usize) {
     let r = root(b);
     unsafe {
-        Ptr::set(&r.modules.as_slice()[i], m);
+        b.rel(&r.modules.as_slice()[i], m);
     }
     r.ranges.as_slice()[i].set(start, end);
 }
@@ -82,8 +82,8 @@ fn write_module(b: &Block, i: usize, m: &ModuleIn) {
         std::ptr::copy_nonoverlapping(m.text.as_ptr(), tp, m.text.len());
         (*mp).id = m.id;
         (*mp).nrules = m.rules.len() as u32;
-        Span::set(&raw mut (*mp).rules, rp, m.rules.len());
-        Span::set(&raw mut (*mp).text, tp, m.text.len());
+        b.span(&raw const (*mp).rules, rp, m.rules.len());
+        b.span(&raw const (*mp).text, tp, m.text.len());
     }
     set_module(b, i, mp, start, b.used());
 }
@@ -123,7 +123,7 @@ impl Program {
         let base = self.base.as_ref().expect("roll up a delta");
         let b = open(self.nmod(), false);
         for i in 0..self.nmod() {
-            let (src, r) = if root(&self.block).modules.as_slice()[i].is_null() { (&base.block, i) } else { (&self.block, i) };
+            let (src, r) = if root(&self.block).modules.as_slice()[i].is_none() { (&base.block, i) } else { (&self.block, i) };
             let range = &root(src).ranges.as_slice()[r];
             let (start, end) = range.get();
             let moff = src.offset_of(root(src).modules.as_slice()[r].get().unwrap());

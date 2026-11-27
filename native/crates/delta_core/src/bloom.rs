@@ -15,14 +15,14 @@
 //! The descriptor and the words are two chunks of the block (the words a power of two, a free list's class), given
 //! back by `rerail_blocks::bloom::BloomW::release`.
 
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::structure;
 use core::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 structure! {
     /// A filter's words, `words.len()` of them, a power of two (0: a filter that holds every key).
     pub struct Bloom {
-        pub words: Span<u64>,
+        pub words: RelSpan<u64>,
     }
 }
 

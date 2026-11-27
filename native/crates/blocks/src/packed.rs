@@ -17,7 +17,6 @@
 
 use crate::block::Block;
 use crate::col::{Choice, IntCol, IntColW, choose};
-use crate::refs::Span;
 use crate::relation::{Spec, View};
 use crate::scratch::Scratch;
 use rayon::prelude::*;
@@ -448,8 +447,8 @@ fn place_at(block: &Block, plan: &Plan, okey: &[u16]) -> *mut Packed {
             }
         }
         (*p).nindex = plan.indexes.len() as u32;
-        Span::set(&raw mut (*p).cols, cp, plan.arity);
-        Span::set(&raw mut (*p).indexes, ip, plan.indexes.len());
+        block.span(&raw const (*p).cols, cp, plan.arity);
+        block.span(&raw const (*p).indexes, ip, plan.indexes.len());
         if let Some((v, ch)) = &plan.levels {
             let (d, r) = IntCol::lay_out(&raw mut (*p).levels, block, ch);
             jobs.push((ch, JobVals::Made(v), d, r));
@@ -754,8 +753,8 @@ pub mod writer {
                 (*ip.add(x)).col = u32::from(c);
             }
             (*p).nindex = perms.len() as u32;
-            Span::set(&raw mut (*p).cols, cp, arity);
-            Span::set(&raw mut (*p).indexes, ip, perms.len());
+            block.span(&raw const (*p).cols, cp, arity);
+            block.span(&raw const (*p).indexes, ip, perms.len());
         }
         Some(p)
     }
@@ -770,7 +769,7 @@ pub mod writer {
         let words = ch.data_words + ch.runs_words;
         let Some(w) = block.try_claim_clear_t::<u64>(words.max(1)) else { return false };
         // SAFETY: `w` holds `words` clear words, just claimed; `this` is the caller's.
-        let (d, r) = unsafe { IntCol::lay_out_at(this, w, ch) };
+        let (d, r) = unsafe { IntCol::lay_out_at(this, block, w, ch) };
         rerail_delta_core::flat::encode::write(ch, v, d, r, dict, &rerail_delta_core::flat::encode::Serial);
         true
     }

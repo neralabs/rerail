@@ -17,7 +17,6 @@
 //! back by `release`.
 
 use crate::block::Block;
-use crate::refs::Span;
 // The filter's format, its hash and its reads: the floor's one definition (`rerail_delta_core::bloom`).
 pub use rerail_delta_core::bloom::{Bloom, hash, mask, place};
 
@@ -47,7 +46,7 @@ impl BloomW for Bloom {
         };
         let desc: *mut Bloom = block.ptr(at);
         // SAFETY: both chunks are this block's, just taken (zeroed), and nothing else holds them.
-        unsafe { Span::set(&raw const (*desc).words, block.ptr::<u64>(w), words) };
+        unsafe { block.span(&raw const (*desc).words, block.ptr::<u64>(w), words) };
         Some(at)
     }
     fn in_block(block: &Block, at: usize) -> Option<&Bloom> {

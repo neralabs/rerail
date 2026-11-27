@@ -208,6 +208,8 @@ impl Block {
     }
 
     fn make(base: *mut u8, reserved: usize, top: usize, file: Option<File>, writable: bool, backing: Option<Box<dyn Backing>>) -> Block {
+        // Its references (`Rel`, `RelSpan`) are read by address: its bytes' provenance is exposed once, here.
+        let _ = base.expose_provenance();
         let dirty = backing.is_some();
         let ext = Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) });
         // Only an anonymous block's pages go to the OS: a slab's are the device buffer's, and a file's are written back.
@@ -612,6 +614,35 @@ impl Block {
 
     pub fn base_ptr(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Its reserved bytes as the flat layer's region: where a reference inside it is set (`Rel::set`).
+    pub fn region(&self) -> rerail_delta_core::flat::Region<'_> {
+        // SAFETY: its reserved range, mapped while it lives; reached through atomics or by its one writer.
+        unsafe { rerail_delta_core::flat::Region::from_raw(self.base, self.reserved) }
+    }
+
+    /// Points the span at `s` (in this block) at the `n` `T`s from `target` (in this block). Refused (past its
+    /// offset's reach, misaligned, or outside the block) is a writer's bug, and panics naming why.
+    ///
+    /// # Safety
+    /// `s` is a span in this block that nothing else writes meanwhile.
+    pub unsafe fn span<T>(&self, s: *const rerail_delta_core::flat::RelSpan<T>, target: *const T, n: usize) {
+        let s = unsafe { &*s };
+        s.set(&self.region(), target, n).unwrap_or_else(|e| panic!("a span in a block to {n} items at {target:p}: {e:?}"));
+    }
+
+    /// Points the reference at `r` (in this block) at `target` (in this block; null: none), as `span`.
+    ///
+    /// # Safety
+    /// As `span`'s.
+    pub unsafe fn rel<T>(&self, r: *const rerail_delta_core::flat::Rel<T>, target: *const T) {
+        let r = unsafe { &*r };
+        if target.is_null() {
+            r.clear();
+            return;
+        }
+        r.set(&self.region(), target).unwrap_or_else(|e| panic!("a reference in a block to {target:p}: {e:?}"));
     }
 
     /// Whether it may be written: an open block's, not a frozen file's mapping or a shared handle (`share`).

@@ -3,7 +3,7 @@
 //! that is smaller, its permutation indexes, and its rows' levels, each read in place.
 
 use crate::col::{Dec, IntCol};
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::structure;
 
 structure! {
@@ -46,8 +46,8 @@ structure! {
         pub nokey: u32,
         pub nindex: u32,
         pub okey: [u16; 8],
-        pub cols: Span<PCol>,
-        pub indexes: Span<PIndex>,
+        pub cols: RelSpan<PCol>,
+        pub indexes: RelSpan<PIndex>,
         /// Each row's level (decision 0090), in the rows' order; empty when they have none (decision 0456 K1).
         pub levels: IntCol,
     }

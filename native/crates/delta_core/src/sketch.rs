@@ -6,7 +6,7 @@
 //! counts), the rows, `REGISTERS` registers, `BUCKETS` join counters, then how many entries follow and the entries.
 //! Varints throughout, the signed ones zigzagged.
 
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::relation::Relation;
 
 /// What a sketch's state reads: its rows, distinct values and sum of squared rows a value.
@@ -51,16 +51,16 @@ pub fn read_varint(next: &mut impl FnMut() -> Option<u8>) -> Option<u64> {
     None
 }
 
-/// Column `c`'s kept sketch in a layer's relation (its sketches' directory, `Span<u8>`s in its block): `None` when it
+/// Column `c`'s kept sketch in a layer's relation (its sketches' directory, `RelSpan<u8>`s in its block): `None` when it
 /// keeps none.
 pub fn kept(rel: &Relation, c: usize) -> Option<&[u8]> {
     let b = rel.sketches.as_slice();
     if b.is_empty() {
         return None;
     }
-    // SAFETY: its writer laid the directory out as `Span<u8>`s, aligned to 8, in the relation's block, frozen since.
-    let dir = unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<Span<u8>>(), b.len() / size_of::<Span<u8>>()) };
-    dir.get(c).filter(|s| !s.is_empty()).map(Span::as_slice)
+    // SAFETY: its writer laid the directory out as `RelSpan<u8>`s, aligned to 8, in the relation's block, frozen since.
+    let dir = unsafe { core::slice::from_raw_parts(b.as_ptr().cast::<RelSpan<u8>>(), b.len() / size_of::<RelSpan<u8>>()) };
+    dir.get(c).filter(|s| !s.is_empty()).map(RelSpan::as_slice)
 }
 
 /// `2^-rank`, exactly (a power of two's bits).

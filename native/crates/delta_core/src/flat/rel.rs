@@ -200,9 +200,45 @@ impl<T, O: Offset, L: AtomicWord> RelSpan<T, O, L> {
     fn first(&self) -> Option<usize> {
         self.at.target_addr()
     }
+
+    /// Makes it empty, and none.
+    pub fn clear(&self) {
+        self.at.clear();
+        self.len.put(0);
+    }
+
+    /// Points it at the `n` `T`s at address `target` of another reader's address space (a device's buffers'), the
+    /// span's own field being at address `field` there: a directory whose spans reach blocks this process holds no
+    /// region over, written for that reader. Refused past its offset's reach or misaligned, as `set_bits`.
+    pub fn set_in_space(&self, field: u64, target: u64, n: usize) -> Result<(), Refusal> {
+        let () = Self::NO_PADDING;
+        if n as i64 > L::MAX {
+            return Err(Refusal::Reach);
+        }
+        if n == 0 {
+            self.clear();
+            return Ok(());
+        }
+        let u = O::units_to(field as usize, align_of::<T>(), target.checked_mul(8).ok_or(Refusal::Reach)?)?;
+        self.at.0.word().put(u);
+        self.len.put(n as i64);
+        Ok(())
+    }
+
+    /// Its length set to `n`, its target as it is: a writer growing a span in place.
+    pub fn set_len(&self, n: usize) {
+        assert!(n as i64 <= L::MAX, "a span of {n} items past its length's word");
+        self.len.put(n as i64);
+    }
 }
 
 impl<T: Pod, W: AtomicWord, L: AtomicWord> RelSpan<T, Off<W, Aligned>, L> {
+    /// Its first `T`'s address (none: dangling, as an empty slice's).
+    #[inline(always)]
+    pub fn as_ptr(&self) -> *const T {
+        self.first().map_or(core::ptr::dangling(), with_exposed_provenance::<T>)
+    }
+
     /// Its `T`s, where they lie.
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {

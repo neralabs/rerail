@@ -1173,7 +1173,7 @@ impl Building {
         use rerail_blocks::relation::Relation;
         use std::mem::{offset_of, size_of};
         let now = Building::descriptor(self.rel);
-        let fixed = [(offset_of!(Relation, arity), 4), (offset_of!(Relation, base_rows), 4), (offset_of!(Relation, indexes), size_of::<rerail_blocks::Span<rerail_blocks::relation::Index>>())];
+        let fixed = [(offset_of!(Relation, arity), 4), (offset_of!(Relation, base_rows), 4), (offset_of!(Relation, indexes), size_of::<rerail_blocks::RelSpan<rerail_blocks::relation::Index>>())];
         // An index count only grows: another index reserved meanwhile adds one.
         let count = |b: &[u8]| u32::from_le_bytes(b[offset_of!(Relation, nindex)..][..4].try_into().unwrap());
         if fixed.iter().all(|&(at, n)| now[at..at + n] == self.before[at..at + n]) && count(&now) >= count(&self.before) {

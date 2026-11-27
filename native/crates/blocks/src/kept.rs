@@ -15,7 +15,7 @@
 
 use crate::block::{Block, FROZEN, Flush, kind};
 use crate::packed::{Packed, Prepared};
-use crate::refs::{Ptr, Span};
+use rerail_delta_core::flat::{Rel, RelSpan};
 use crate::structure;
 use std::borrow::Borrow;
 use std::collections::BTreeMap;
@@ -66,10 +66,10 @@ structure! {
     pub struct KeptRoot {
         /// Its maker's tag, which the store's row of it records too: a file not the row's is refused.
         pub tag: u64,
-        pub entries: Span<KeptEntry>,
-        pub reads: Span<ReadDigest>,
+        pub entries: RelSpan<KeptEntry>,
+        pub reads: RelSpan<ReadDigest>,
         /// The names of relations, and the entries' value types.
-        pub strings: Span<u8>,
+        pub strings: RelSpan<u8>,
     }
 }
 
@@ -102,7 +102,8 @@ structure! {
         /// `ROWS`, `GONE` or `SAME`.
         pub what: u32,
         pub pad: u32,
-        pub rows: Ptr<Packed>,
+        pub rows: Rel<Packed>,
+        pub rows_pad: u32,
         /// Its rows' range of the file (`ROWS`): what a roll-up copies.
         pub rows_at: u64,
         pub rows_len: u64,
@@ -723,14 +724,14 @@ impl KeptW {
                 (*e).what = p.what;
                 (*e).atoms_max = p.atoms_max;
                 if p.what == ROWS {
-                    Ptr::set(&raw const (*e).rows, self.block.ptr::<Packed>(p.rows.0));
+                    self.block.rel(&raw const (*e).rows, self.block.ptr::<Packed>(p.rows.0));
                     (*e).rows_at = p.rows.0 as u64;
                     (*e).rows_len = p.rows.1 as u64;
                 }
             }
-            Span::set(&raw const (*root).entries, es, self.pending.len());
-            Span::set(&raw const (*root).reads, rs, reads.len());
-            Span::set(&raw const (*root).strings, ss, strings.len());
+            self.block.span(&raw const (*root).entries, es, self.pending.len());
+            self.block.span(&raw const (*root).reads, rs, reads.len());
+            self.block.span(&raw const (*root).strings, ss, strings.len());
         }
         #[cfg(any(unix, windows))]
         {

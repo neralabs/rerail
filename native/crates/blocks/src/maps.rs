@@ -1,6 +1,6 @@
 //! Generic structures in blocks, after MLDB's mapped structures (`mldb/plugins/behavior/mapped_value.h`,
 //! `mldb/utils/lightweight_hash.h`, `mldb/plugins/tabular/frozen_tables.h`): each one region of a block (its
-//! descriptor first, its arrays after it), reached by self-relative spans (`refs::Span`), so the host, the JIT and the
+//! descriptor first, its arrays after it), reached by self-relative spans (`RelSpan`), so the host, the JIT and the
 //! kernels read one layout where it lies. A [`Room`] hands out the region; a structure that outgrows it takes a
 //! bigger one from the same room and gives the old one back to its block's free list, as a vector's growth does.
 //!
@@ -18,12 +18,11 @@
 //! `rerail_vector::vector::Vector`, in the region a room gives (a relation's block: the facts layer's `Home`).
 
 use crate::block::Block;
-use crate::refs::Span;
+use rerail_delta_core::flat::RelSpan;
 use crate::region::Mutable;
 use crate::{Pod, structure};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::Ordering::Relaxed;
 
 
 /// What keeps a region's block leased while a structure holds the region (a facts layer's block handle).
@@ -89,6 +88,16 @@ impl Mem {
         // SAFETY: the region's `bytes`, this structure's alone: zeroed, as a chunk from a free list may not be.
         unsafe { std::ptr::write_bytes(base, 0, bytes) };
         Mem { region, base }
+    }
+
+    /// Points the span at `s` (in its region) at the `n` `T`s from `target` (in its region), as `Block::span`.
+    ///
+    /// # Safety
+    /// `s` is a span in its region that nothing else writes meanwhile.
+    unsafe fn span<T>(&self, s: *const RelSpan<T>, target: *const T, n: usize) {
+        // SAFETY: its region's bytes, which it holds.
+        let region = unsafe { rerail_delta_core::flat::Region::from_raw(self.base, self.region.len()) };
+        unsafe { &*s }.set(&region, target, n).unwrap_or_else(|e| panic!("a span in a structure's region to {n} items: {e:?}"));
     }
 
     #[inline]
@@ -245,8 +254,8 @@ structure! {
         pub vbytes: u32,
         pub guard: u32,
         pub pad: u32,
-        pub keys: Span<u8>,
-        pub vals: Span<u8>,
+        pub keys: RelSpan<u8>,
+        pub vals: RelSpan<u8>,
     }
 }
 
@@ -288,8 +297,8 @@ impl<K: Key, V: Pod + Copy> BlockHash<K, V> {
             (*d).log = log;
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
-            Span::set(&raw const (*d).keys, keys.cast::<u8>(), n * size_of::<K>());
-            Span::set(&raw const (*d).vals, vals.cast::<u8>(), n * size_of::<V>());
+            mem.span(&raw const (*d).keys, keys.cast::<u8>(), n * size_of::<K>());
+            mem.span(&raw const (*d).vals, vals.cast::<u8>(), n * size_of::<V>());
         }
         mem
     }
@@ -633,8 +642,8 @@ structure! {
         pub kbytes: u32,
         pub vbytes: u32,
         pub pad: u32,
-        pub keys: Span<u8>,
-        pub vals: Span<u8>,
+        pub keys: RelSpan<u8>,
+        pub vals: RelSpan<u8>,
     }
 }
 
@@ -679,8 +688,8 @@ impl<K: Pod + Copy + Ord, V: Pod + Copy> BlockSorted<K, V> {
             (*d).len = len as u32;
             (*d).kbytes = size_of::<K>() as u32;
             (*d).vbytes = size_of::<V>() as u32;
-            Span::set(&raw const (*d).keys, keys.cast::<u8>(), len * size_of::<K>());
-            Span::set(&raw const (*d).vals, vals.cast::<u8>(), len * size_of::<V>());
+            mem.span(&raw const (*d).keys, keys.cast::<u8>(), len * size_of::<K>());
+            mem.span(&raw const (*d).vals, vals.cast::<u8>(), len * size_of::<V>());
         }
         BlockSorted { mem: Arc::new(mem), _t: PhantomData }
     }
@@ -811,8 +820,8 @@ structure! {
     pub struct StringsDesc {
         pub len: u32,
         pub pad: u32,
-        pub ends: Span<u64>,
-        pub bytes: Span<u8>,
+        pub ends: RelSpan<u64>,
+        pub bytes: RelSpan<u8>,
     }
 }
 
@@ -845,8 +854,11 @@ impl BlockStrings {
         let d = mem.at::<StringsDesc>(0);
         // SAFETY: the region was just taken for these.
         unsafe {
-            Span::set(&raw const (*d).ends, mem.at::<u64>(eat), 0);
-            Span::set(&raw const (*d).bytes, mem.at::<u8>(bat), 0);
+            // At their room, none of it used yet: an append grows each in place (`set_len`).
+            mem.span(&raw const (*d).ends, mem.at::<u64>(eat), strings);
+            mem.span(&raw const (*d).bytes, mem.at::<u8>(bat), bytes);
+            (*d).ends.set_len(0);
+            (*d).bytes.set_len(0);
         }
         mem
     }
@@ -902,8 +914,8 @@ impl BlockStrings {
                 // copy: growth: as above
                 std::ptr::copy_nonoverlapping(self.bytes().as_ptr(), (*d).bytes.as_ptr().cast_mut(), used);
                 (*d).len = n as u32;
-                (*d).ends.len.store(n as u64, Relaxed);
-                (*d).bytes.len.store(used as u64, Relaxed);
+                (*d).ends.set_len(n);
+                (*d).bytes.set_len(used);
             }
             (self.mem, self.cap) = (Arc::new(mem), cap);
         }
@@ -914,8 +926,8 @@ impl BlockStrings {
             std::ptr::copy_nonoverlapping(s.as_ptr(), (*d).bytes.as_ptr().cast_mut().add(used), s.len());
             *(*d).ends.as_ptr().cast_mut().add(n) = (used + s.len()) as u64;
             (*d).len = n as u32 + 1;
-            (*d).ends.len.store(n as u64 + 1, Relaxed);
-            (*d).bytes.len.store((used + s.len()) as u64, Relaxed);
+            (*d).ends.set_len(n + 1);
+            (*d).bytes.set_len(used + s.len());
         }
         n
     }
@@ -941,8 +953,8 @@ impl BlockStrings {
         // SAFETY: its descriptor.
         unsafe {
             (*d).len = 0;
-            (*d).ends.len.store(0, Relaxed);
-            (*d).bytes.len.store(0, Relaxed);
+            (*d).ends.set_len(0);
+            (*d).bytes.set_len(0);
         }
     }
 }

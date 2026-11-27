@@ -63,7 +63,7 @@ crate::structure! {
     pub struct Pair {
         pub id: u32,
         pub at: u32,
-        pub cells: crate::refs::Span<i64>,
+        pub cells: crate::flat::RelSpan<i64>,
         pub key: [u16; 4],
     }
 }
@@ -106,12 +106,14 @@ fn a_structures_ukl_text_written_with_no_allocator() {
     let text = core::str::from_utf8(&out.buf[..out.len]).expect("text");
     assert_eq!(
         text,
-        "typedef struct Span {\n    int64_t off;\n    uint64_t len;\n} Span;\nUKL_STATIC_ASSERT(sizeof(Span) == 16, \"Span: size\");\n\
-         typedef struct Pair {\n    uint32_t id;\n    uint32_t at;\n    Span cells;\n    uint16_t key[4];\n} Pair;\n\
-         UKL_STATIC_ASSERT(sizeof(Pair) == 32, \"Pair: size\");\n\
+        "typedef struct RelSpan_i32_u32 {\n    int32_t at;\n    uint32_t len;\n} RelSpan_i32_u32;\n\
+         UKL_STATIC_ASSERT(sizeof(RelSpan_i32_u32) == 8, \"RelSpan_i32_u32: size\");\n\
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(RelSpan_i32_u32, len) == 4, \"RelSpan_i32_u32.len\");\n\
+         typedef struct Pair {\n    uint32_t id;\n    uint32_t at;\n    RelSpan_i32_u32 cells;\n    uint16_t key[4];\n} Pair;\n\
+         UKL_STATIC_ASSERT(sizeof(Pair) == 24, \"Pair: size\");\n\
          UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, id) == 0, \"Pair.id\");\n\
          UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, at) == 4, \"Pair.at\");\n\
          UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, cells) == 8, \"Pair.cells\");\n\
-         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, key) == 24, \"Pair.key\");\n"
+         UKL_STATIC_ASSERT(UKL_OFFSETOF(Pair, key) == 16, \"Pair.key\");\n"
     );
 }

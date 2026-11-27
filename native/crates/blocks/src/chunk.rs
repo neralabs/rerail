@@ -9,7 +9,7 @@
 use crate::relation::RelationW;
 use crate::block::{Block, kind};
 use crate::facts::{Facts, Schema, root_of};
-use crate::refs::{Ptr, Span};
+use rerail_delta_core::flat::{Rel, RelSpan};
 use crate::relation::{self, Relation, Spec, View};
 use crate::structure;
 use std::sync::{Arc, Mutex};
@@ -19,9 +19,9 @@ structure! {
     pub struct Doc {
         pub key: u32,
         pub nodes: u32,
-        pub kind: Span<u16>,
-        pub parent: Span<u32>,
-        pub name: Span<u32>,
+        pub kind: RelSpan<u16>,
+        pub parent: RelSpan<u32>,
+        pub name: RelSpan<u32>,
     }
 }
 
@@ -30,7 +30,7 @@ structure! {
         pub key: u32,
         pub nrel: u32,
         pub digest: u64,
-        pub rels: Span<Ptr<Relation>>,
+        pub rels: RelSpan<Rel<Relation>>,
     }
 }
 
@@ -53,7 +53,7 @@ pub fn open(schema: Arc<Schema>, reserve: usize, docs: &[DocIn], nhits: usize) -
     let f = Facts::open(kind::CHUNK, 0, schema, reserve, None);
     let b = &f.block;
     let dp: *mut Doc = b.alloc_t(docs.len().max(1));
-    let hp: *mut Ptr<MemoEntry> = b.alloc_t(nhits.max(1));
+    let hp: *mut Rel<MemoEntry> = b.alloc_t(nhits.max(1));
     for (i, d) in docs.iter().enumerate() {
         let n = d.kind.len();
         let k: *mut u16 = b.alloc_t(n);
@@ -66,15 +66,15 @@ pub fn open(schema: Arc<Schema>, reserve: usize, docs: &[DocIn], nhits: usize) -
             let doc = dp.add(i);
             (*doc).key = d.key;
             (*doc).nodes = n as u32;
-            Span::set(&raw mut (*doc).kind, k, n);
-            Span::set(&raw mut (*doc).parent, p, n);
-            Span::set(&raw mut (*doc).name, m, n);
+            b.span(&raw const (*doc).kind, k, n);
+            b.span(&raw const (*doc).parent, p, n);
+            b.span(&raw const (*doc).name, m, n);
         }
     }
     let root = root_of(b) as *const _ as *mut crate::facts::FactsRoot;
     unsafe {
-        Span::set(&raw mut (*root).docs, dp, docs.len());
-        Span::set(&raw mut (*root).hits, hp, nhits);
+        b.span(&raw const (*root).docs, dp, docs.len());
+        b.span(&raw const (*root).hits, hp, nhits);
     }
     f
 }
@@ -94,19 +94,19 @@ pub fn build_entry(key: u32, digest: u64, rels: &[(&Spec, Vec<i64>)]) -> (Block,
     let s = crate::alloc::host(kind::SCRATCH, 64 << 20);
     let start = s.mark(64);
     let e: *mut MemoEntry = s.alloc_t(1);
-    let tbl: *mut Ptr<Relation> = s.alloc_t(rels.len());
+    let tbl: *mut Rel<Relation> = s.alloc_t(rels.len());
     let lock = Mutex::new(());
     for (i, (spec, flat)) in rels.iter().enumerate() {
         let r = Relation::create(&s, spec, None);
         relation::RelW { block: &s, rel: r, lock: &lock }.extend(flat);
         relation::freeze(&s, r, spec, None);
-        unsafe { Ptr::set(tbl.add(i), r) };
+        unsafe { s.rel(tbl.add(i), r) };
     }
     unsafe {
         (*e).key = key;
         (*e).nrel = rels.len() as u32;
         (*e).digest = digest;
-        Span::set(&raw mut (*e).rels, tbl, rels.len());
+        s.span(&raw const (*e).rels, tbl, rels.len());
     }
     let end = s.used();
     let off = s.offset_of(e);
@@ -120,7 +120,7 @@ pub fn add_hit<'f>(f: &'f Facts, src: &Block, start: usize, end: usize, entry: u
     let root = root_of(&f.block);
     let i = root.nhits.fetch_add(1, std::sync::atomic::Ordering::AcqRel) as usize;
     unsafe {
-        Ptr::set(&root.hits.as_slice()[i], e);
+        f.block.rel(&root.hits.as_slice()[i], e);
         &*e
     }
 }

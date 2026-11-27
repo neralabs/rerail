@@ -17,7 +17,7 @@
 //! ```
 
 use crate::col::IntCol;
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::structure;
 
 /// Rows a range holds: a power of two, so a row's range is a shift.
@@ -33,7 +33,7 @@ structure! {
         /// 1, or 2 when split: the high part's range, then the low part's.
         pub parts: u32,
         pub pad: u32,
-        pub ranges: Span<IntCol>,
+        pub ranges: RelSpan<IntCol>,
     }
 }
 
@@ -42,7 +42,7 @@ structure! {
     pub struct Columns {
         pub arity: u32,
         pub n: u32,
-        pub cols: Span<RangedCol>,
+        pub cols: RelSpan<RangedCol>,
     }
 }
 

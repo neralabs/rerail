@@ -13,7 +13,7 @@
 //! then the slot (a release store), then the count. A reader loads a slot with acquire.
 
 use crate::block::{Block, FROZEN, Flush, PAGE, kind};
-use crate::refs::Span;
+use rerail_delta_core::flat::RelSpan;
 use crate::structure;
 use std::io;
 use std::path::Path;
@@ -40,12 +40,12 @@ structure! {
         /// never cleared, since a reader may be probing past them). An append refuses at three quarters.
         pub placed: AtomicU64,
         /// Each atom's end in `strings`.
-        pub ends: Span<u64>,
+        pub ends: RelSpan<u64>,
         /// Each atom's string's hash, as the store computes it.
-        pub hashes: Span<u64>,
+        pub hashes: RelSpan<u64>,
         /// The slots: a hash's high half, then the id plus one (`0` is empty).
-        pub table: Span<AtomicU64>,
-        pub strings: Span<u8>,
+        pub table: RelSpan<AtomicU64>,
+        pub strings: RelSpan<u8>,
     }
 }
 
@@ -287,10 +287,10 @@ impl AtomsW {
             r.cap = cap64;
             r.bytes_cap = bytes_cap;
             r.mask = n - 1;
-            Span::set(&r.ends, ends, cap64 as usize);
-            Span::set(&r.hashes, hashes, cap64 as usize);
-            Span::set(&r.table, table, n as usize);
-            Span::set(&r.strings, strings, bytes_cap as usize);
+            block.span(&r.ends, ends, cap64 as usize);
+            block.span(&r.hashes, hashes, cap64 as usize);
+            block.span(&r.table, table, n as usize);
+            block.span(&r.strings, strings, bytes_cap as usize);
         }
         block.set_root(root);
         Raw::of(block)
@@ -619,10 +619,14 @@ structure! {
         pub end: u32,
         pub from: u32,
         pub pad: u32,
-        pub ends: Span<u64>,
-        pub strings: Span<u8>,
+        pub ends: Far<u64>,
+        pub strings: Far<u8>,
     }
 }
+
+/// A directory entry's span into another block, in the reader's address space: a 64-bit reach, since the blocks
+/// it names lie anywhere in that space.
+pub type Far<T> = RelSpan<T, rerail_delta_core::flat::R64, AtomicU64>;
 
 structure! {
     /// A directory of runs of atoms (decision 0478 step 2b), sorted by first id and not overlapping: the store's chain
@@ -630,7 +634,7 @@ structure! {
     /// address and find an id's run by a binary search.
     pub struct AtomsDirRoot {
         pub n: u64,
-        pub entries: Span<DirEntry>,
+        pub entries: RelSpan<DirEntry>,
     }
 }
 
@@ -662,23 +666,23 @@ impl AtomsDir {
         let (base, base_at) = (block.base_ptr() as u64, own(&block));
         let here = |p: *const u8| (p as u64).wrapping_sub(base).wrapping_add(base_at);
         // A span's offset: from the span's own address to its target's, both in the reader's space.
-        let set = |span: *const u8, off: &AtomicI64Ref, len: &AtomicU64Ref, target: u64, n: u64| {
-            off.store((target as i64).wrapping_sub(here(span) as i64), Relaxed);
-            len.store(n, Relaxed);
-        };
+        fn set<T>(s: &Far<T>, field: u64, target: u64, n: u64) {
+            s.set_in_space(field, target, n as usize).unwrap_or_else(|e| panic!("a directory's span to {target:#x}: {e:?}"));
+        }
         // SAFETY: the pointers are into this block, which no reader has yet.
         unsafe {
             let r = &mut *root;
             r.n = runs.len() as u64;
-            set(std::ptr::from_ref(&r.entries).cast(), &r.entries.off, &r.entries.len, here(entries.cast()), runs.len() as u64);
+            // Its entries are in its own block: the same difference in every space.
+            block.span(&raw const r.entries, entries, runs.len());
             for (k, run) in runs.iter().enumerate() {
                 let e = &mut *entries.add(k);
                 e.first = run.first;
                 e.end = run.end;
                 e.from = run.from;
                 e.pad = 0;
-                set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, at(run.ends.cast()), u64::from(run.cap));
-                set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, at(run.strings), run.bytes_cap);
+                set(&e.ends, here(std::ptr::from_ref(&e.ends).cast()), at(run.ends.cast()), u64::from(run.cap));
+                set(&e.strings, here(std::ptr::from_ref(&e.strings).cast()), at(run.strings), run.bytes_cap);
             }
         }
         block.set_root(root);
@@ -700,9 +704,6 @@ impl AtomsDir {
         self.block.offset_of(self.root())
     }
 }
-
-type AtomicI64Ref = std::sync::atomic::AtomicI64;
-type AtomicU64Ref = std::sync::atomic::AtomicU64;
 
 /// The string of `id` in the directory at `dir` (host addresses), as the CLIF's `atoms_len` and `atoms_at` read it
 /// (the kernels' and the JIT's): the last run whose first id is at most `id`, if `id` is below its end; its string

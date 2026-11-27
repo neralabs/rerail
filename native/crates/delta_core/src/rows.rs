@@ -10,7 +10,7 @@
 //! Appending: a writer claims rows with one atomic add on `len`. Chunks are made by `reserve` (under the
 //! relation's lock on the host; between passes for a GPU), never while a kernel writes.
 
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::structure;
 use core::sync::atomic::{AtomicI64, AtomicU32, Ordering::*};
 
@@ -58,7 +58,7 @@ structure! {
         /// Rows a writer could not write, past `reserved` (the overflow protocol: rerun at the exact size).
         pub needed: AtomicU32,
         pub ncols: u32,
-        pub cols: Span<ColDir>,
+        pub cols: RelSpan<ColDir>,
     }
 }
 
@@ -247,11 +247,12 @@ impl Rows {
         ColRead { dir: d, width: d.width, min_log: self.min_log }
     }
 
-    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in `region`, its block, as it
+    /// is).
     ///
     /// # Safety
     /// As `init`, and `cols` as said.
-    pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
+    pub unsafe fn init_in(this: *mut Rows, region: &crate::flat::Region<'_>, cols: *mut ColDir, widths: &[u32], min_log: u32) {
         assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
@@ -261,7 +262,7 @@ impl Rows {
             }
             (*this).min_log = min_log;
             (*this).ncols = widths.len() as u32;
-            Span::set(&raw mut (*this).cols, cols, widths.len());
+            (*this).cols.set(region, cols, widths.len()).expect("a relation's column directories in its block");
         }
     }
 

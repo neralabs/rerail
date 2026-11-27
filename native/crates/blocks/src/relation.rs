@@ -21,7 +21,7 @@
 //! (the base's row first on a tie), and probes of both indexes merged.
 
 use crate::block::Block;
-use crate::refs::Span;
+use rerail_delta_core::flat::RelSpan;
 use crate::rows::{Rows, RowsW};
 use crate::key_hash;
 // The relation's format and its reads: the floor's one definition (`rerail_delta_core::relation`).
@@ -119,8 +119,8 @@ pub fn try_create_cols<'b>(block: &'b Block, cols: Cols<'_>, base: Option<&Relat
             Some(b) => b.sort_col(),
             None => cols.sort.map(usize::from),
         });
-        Rows::init_in(&raw mut (*p).rows, dirs, cols.widths, cols.min_log);
-        Rows::init_in(&raw mut (*p).killed, dirs.add(cols.widths.len()), &[4], 6);
+        Rows::init_in(&raw mut (*p).rows, &block.region(), dirs, cols.widths, cols.min_log);
+        Rows::init_in(&raw mut (*p).killed, &block.region(), dirs.add(cols.widths.len()), &[4], 6);
         (*p).base_block = NO_BLOCK;
         Some(&*p)
     }
@@ -417,7 +417,7 @@ impl RelationW for Relation {
             dst.nchunks.store(src.nchunks.load(Acquire), Relaxed);
             dst.reserved.store(len, Relaxed);
             dst.len.store(len, Release);
-            Span::set(&dst.cols, src.cols.as_ptr(), src.cols.len());
+            block.span(&dst.cols, src.cols.as_ptr(), src.cols.len());
         }
         rel.flags.fetch_or(ALIASED | FROZEN, Release);
         Some(rel)
@@ -483,7 +483,7 @@ impl RelationW for Relation {
         let rel = Relation::try_create(block, spec, Some(base))?;
         // SAFETY: `words` lie in `block` (`base`'s), which `base` keeps while its delta lives (the delta's holder keeps
         // `base`).
-        unsafe { Span::set(&rel.dead, words.as_ptr(), words.len()) };
+        unsafe { block.span(&rel.dead, words.as_ptr(), words.len()) };
         Some(rel)
     }
 
@@ -498,7 +498,7 @@ impl RelationW for Relation {
         // SAFETY: `w` holds `words.len()` words, just allocated in `block`, as `rel` is.
         unsafe {
             std::ptr::copy_nonoverlapping(words.as_ptr(), w, words.len());
-            Span::set(&rel.dead, w, words.len());
+            block.span(&rel.dead, w, words.len());
         }
         Some(rel)
     }
@@ -539,7 +539,7 @@ impl RelationW for Relation {
         // SAFETY: the caller's.
         unsafe {
             let me = std::ptr::from_ref(self).cast_mut();
-            Span::set(&raw mut (*me).own_dead, block.ptr::<u64>(at), len);
+            block.span(&raw const (*me).own_dead, block.ptr::<u64>(at), len);
         }
         self.own_dead_kept.store(kept as u64, Release);
         true
@@ -562,7 +562,7 @@ impl RelationW for Relation {
                 p.add(i).write(Known { lo, hi, ncols: cols.len() as u32, cols: c });
             }
             let me = std::ptr::from_ref(self).cast_mut();
-            Span::set(&raw mut (*me).known, p, ranges.len());
+            block.span(&raw const (*me).known, p, ranges.len());
         }
         self.known_kept.store(kept as u64, Release);
         true
@@ -573,7 +573,7 @@ impl RelationW for Relation {
             let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
             let me = std::ptr::from_ref(self).cast_mut();
             // SAFETY: the caller's.
-            unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
+            unsafe { block.span(&raw const (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
             self.flags.fetch_or(ADDED, Release);
         }
         let n = (self.nindex.load(Relaxed) as usize).min(self.indexes.len());
@@ -605,10 +605,8 @@ impl RelationW for Relation {
                 block.free_chunk_fit_resident(o, block.fit_kept(offs));
                 block.free_chunk_fit_resident(r, block.fit_kept(rows));
             }
-            for s in [&(*ix).offs, &(*ix).rows] {
-                s.off.store(0, Relaxed);
-                s.len.store(0, Relaxed);
-            }
+            (*ix).offs.clear();
+            (*ix).rows.clear();
             (*ix).key = [0; MAX_KEY];
             (*ix).state = DEAD;
         }
@@ -627,12 +625,9 @@ impl RelationW for Relation {
             let mut key = [0u16; MAX_KEY];
             key[..cols.len()].copy_from_slice(cols);
             (*ix).key = key;
-            fn clear<T>(dst: *mut Span<T>) {
+            fn clear<T>(dst: *mut RelSpan<T>) {
                 // SAFETY: the caller's: `dst` is the entry's.
-                unsafe {
-                    (*dst).off.store(0, Relaxed);
-                    (*dst).len.store(0, Relaxed);
-                }
+                unsafe { (*dst).clear() }
             }
             clear(&raw mut (*ix).offs);
             let ids = match rows {
@@ -645,17 +640,17 @@ impl RelationW for Relation {
                 OrderRows::Listed(ids) => {
                     (*ix).ordered = ORDER;
                     (*ix).mask = 0;
-                    Span::set(&raw mut (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
+                    block.span(&raw const (*ix).rows, block.ptr::<u32>(ids.at), ids.len);
                     ids
                 }
             };
-            fn set<T>(block: &Block, dst: *mut Span<T>, g: Given) {
+            fn set<T>(block: &Block, dst: *mut RelSpan<T>, g: Given) {
                 if g.len == 0 {
                     clear(dst);
                     return;
                 }
                 // SAFETY: the caller's: `dst` is the entry's, `g` a chunk of `block`.
-                unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
+                unsafe { block.span(dst, block.ptr::<T>(g.at), g.len) }
             }
             set(block, &raw mut (*ix).fences, fences);
             set(block, &raw mut (*ix).tags, tags);
@@ -745,8 +740,8 @@ impl RelationW for Relation {
             key[..cols.len()].copy_from_slice(cols);
             (*ix).key = key;
             (*ix).mask = (cap - 1) as u64;
-            Span::set(&raw mut (*ix).offs, offs, cap + 1);
-            Span::set(&raw mut (*ix).rows, rows, n as usize);
+            block.span(&raw const (*ix).offs, offs, cap + 1);
+            block.span(&raw const (*ix).rows, rows, n as usize);
             self.nindex.fetch_max(i as u32 + 1, Release);
             Some(IndexRoom { index: i, offs: block.offset_of(offs), rows: block.offset_of(rows), mask: (cap - 1) as u64, rows_n: n, key: (*ix).key, ncols: cols.len(), from: 0 })
         }
@@ -768,7 +763,7 @@ impl RelationW for Relation {
             } else {
                 block.free_chunk_fit_resident(old, block.fit_kept(len));
             }
-            Span::set(&raw mut (*ix).rows, block.ptr::<u32>(r), n as usize);
+            block.span(&raw const (*ix).rows, block.ptr::<u32>(r), n as usize);
             Some(r)
         }
     }
@@ -926,7 +921,7 @@ impl<'b> RelW<'b> {
             slots[s] = i + 1;
         }
         rel.pend_used.fetch_add((cap * 4) as u64, Relaxed);
-        unsafe { Span::set(&rel.pending, p, cap) };
+        unsafe { self.block.span(&rel.pending, p, cap) };
     }
 }
 
@@ -1135,8 +1130,8 @@ fn build_one_index(block: &Block, ix: &mut Index, icols: &[u16], every: &[u16], 
         }
         ix.mask = mask;
         unsafe {
-            Span::set(&raw mut ix.offs, bp, cap + 1);
-            Span::set(&raw mut ix.rows, rp, live);
+            block.span(&raw const ix.offs, bp, cap + 1);
+            block.span(&raw const ix.rows, rp, live);
         }
     }
 }
@@ -1319,16 +1314,16 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             }
             let words: *mut u64 = block.alloc_t(base_words);
             std::ptr::copy_nonoverlapping(dead.as_ptr(), words, base_words);
-            Span::set(&rel.dead, words, base_words);
+            block.span(&rel.dead, words, base_words);
         }
         if !changed.is_empty() {
             let cp: *mut u32 = block.alloc_t(changed.len());
             // copy: derived: the change, computed here from the kills, written once where it is kept
             std::ptr::copy_nonoverlapping(changed.as_ptr(), cp, changed.len());
-            Span::set(&rel.changed, cp, changed.len());
+            block.span(&rel.changed, cp, changed.len());
         }
-        Span::set(&rel.indexes, ixp, keys.len());
-        Span::set(&rel.stats, sp, a);
+        block.span(&rel.indexes, ixp, keys.len());
+        block.span(&rel.stats, sp, a);
     }
     rel.nindex.store(keys.len() as u32, Relaxed);
     rel.live.store(live as u32, Relaxed);

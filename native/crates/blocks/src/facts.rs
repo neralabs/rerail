@@ -8,7 +8,7 @@
 use crate::relation::RelationW;
 use crate::block::{Block, Frozen, kind};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed};
-use crate::refs::{Ptr, Span};
+use rerail_delta_core::flat::{Rel, RelSpan};
 use crate::relation::{self, FreezeStats, RelW, Relation, Spec, View};
 use crate::structure;
 use std::sync::{Arc, Mutex};
@@ -45,12 +45,12 @@ structure! {
     pub struct FactsRoot {
         pub phase: u32,
         pub nrel: u32,
-        pub rels: Span<Ptr<Relation>>,
-        pub strata: Span<Range>,
+        pub rels: RelSpan<Rel<Relation>>,
+        pub strata: RelSpan<Range>,
         /// A chunk's documents (empty in a phase's facts).
-        pub docs: Span<crate::chunk::Doc>,
+        pub docs: RelSpan<crate::chunk::Doc>,
         /// A chunk's memo entries copied in, `nhits` of them used.
-        pub hits: Span<Ptr<crate::chunk::MemoEntry>>,
+        pub hits: RelSpan<Rel<crate::chunk::MemoEntry>>,
         pub nhits: AtomicU32,
         pub pad: u32,
     }
@@ -99,13 +99,13 @@ impl Facts {
         }
         let block = crate::alloc::host(kind, reserve);
         let root: *mut FactsRoot = block.alloc_t(1);
-        let rels: *mut Ptr<Relation> = block.alloc_t(schema.rels.len());
+        let rels: *mut Rel<Relation> = block.alloc_t(schema.rels.len());
         let strata: *mut crate::facts::Range = block.alloc_t(schema.nstrata);
         unsafe {
             (*root).phase = phase;
             (*root).nrel = schema.rels.len() as u32;
-            Span::set(&raw mut (*root).rels, rels, schema.rels.len());
-            Span::set(&raw mut (*root).strata, strata, schema.nstrata);
+            block.span(&raw const (*root).rels, rels, schema.rels.len());
+            block.span(&raw const (*root).strata, strata, schema.nstrata);
             if base.is_some() {
                 block.header_mut().delta = 1;
             }
@@ -143,8 +143,8 @@ impl Facts {
     pub fn create(&self, r: usize) -> &Relation {
         assert!(self.rel(r).is_none(), "{} made twice", self.schema.rels[r].name);
         let rel = Relation::create(&self.block, &self.schema.rels[r].spec, self.base_rel(r));
-        let slot = &self.root().rels.as_slice()[r] as *const Ptr<Relation> as *mut Ptr<Relation>;
-        unsafe { Ptr::set(slot, rel) };
+        let slot = &self.root().rels.as_slice()[r] as *const Rel<Relation> as *mut Rel<Relation>;
+        unsafe { self.block.rel(slot, rel) };
         rel
     }
 
@@ -174,7 +174,7 @@ impl Facts {
         for r in self.schema.in_stratum(s) {
             let off = src.block.offset_of(src.rel(r));
             let rel: *const Relation = self.block.ptr(dst + off - start);
-            unsafe { Ptr::set(&self.root().rels.as_slice()[r], rel) };
+            unsafe { self.block.rel(&self.root().rels.as_slice()[r], rel) };
         }
         self.strata()[s].set(dst, dst + end - start);
         self.add_cost(end - start);

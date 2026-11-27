@@ -83,7 +83,7 @@ impl RowsW for Rows {
 
     unsafe fn try_init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) -> bool {
         let Some(cols) = block.try_alloc_t::<ColDir>(widths.len()) else { return false };
-        unsafe { Rows::init_in(this, cols, widths, min_log) };
+        unsafe { Rows::init_in(this, &block.region(), cols, widths, min_log) };
         true
     }
 
@@ -210,7 +210,7 @@ impl RowsW for Rows {
                         std::ptr::write_bytes(block.ptr::<u8>(at), 0, bytes);
                         let this = block.ptr::<crate::col::IntCol>(at);
                         let words = block.ptr::<u8>(at).add(std::mem::size_of::<crate::col::IntCol>()).cast::<u64>();
-                        let (data, runs) = <crate::col::IntCol as crate::col::IntColW>::lay_out_at(this, words, choice);
+                        let (data, runs) = <crate::col::IntCol as crate::col::IntColW>::lay_out_at(this, block, words, choice);
                         crate::col::write(choice, vals, data, runs, dict);
                     }
                     Some((at, bytes))

@@ -15,8 +15,9 @@
 //! - Final forms, in an out block or a kept placement, shaped for reading: [`IntTable`] (integers in the fewest bits,
 //!   `IntCol`'s encodings, its encoder [`encode`]), [`Strings`], [`Sorted`], [`Csr`] and the floor's Bloom filter, each
 //!   settled exactly from a working form ([`Settle`]: `need`, then `settle` into a claim of exactly that).
-//! - [`rel`]: references relative to their own field ([`Rel`], [`RelSpan`], [`BitSpan`]), as the floor's `refs::Ptr`
-//!   and MLDB's `MappedPtr` are: a structure is correct at any address, and a method reaches its parts from `&self`.
+//! - [`rel`]: references relative to their own field ([`Rel`], [`RelSpan`], [`BitSpan`]), as MLDB's `MappedPtr`
+//!   is; every block descriptor's references are these. A structure is correct at any address, and a method reaches
+//!   its parts from `&self`.
 //!
 //! Rule L1: a reference points only within its own [`Region`], and a region is one lifecycle bucket's. `set` checks
 //! it, and refuses ([`Refusal`]) a target outside the region, past the offset's reach, or not at a whole unit.

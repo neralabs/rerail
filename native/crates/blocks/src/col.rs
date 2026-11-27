@@ -23,7 +23,6 @@
 //! The encoder (the choice by exact size, the packers) is the floor's (`rerail_delta_core::flat::encode`), with no
 //! heap; this module is its parallel driver (`Par`, the engine's cores) and the writers that place a column in a block.
 use crate::block::Block;
-use crate::refs::Span;
 // The format and its reads: the floor's one definition (`rerail_delta_core::col`).
 pub use rerail_delta_core::col::{CONST, DICT, Dec, GROUPS, IntCol, LINE, PACK, RUNS, TAG_NAMES};
 // The encoder: the floor's (*Flat Views and Lifecycles* step 4).
@@ -159,12 +158,12 @@ pub trait IntColW {
             if e.tag != CONST {
                 let d: *mut u64 = block.alloc_t(e.data.len());
                 std::ptr::copy_nonoverlapping(e.data.as_ptr(), d, e.data.len());
-                Span::set(&raw mut (*this).data, d, e.data.len());
+                block.span(&raw const (*this).data, d, e.data.len());
             }
             if !e.runs.is_empty() {
                 let r: *mut u64 = block.alloc_t(e.runs.len());
                 std::ptr::copy_nonoverlapping(e.runs.as_ptr(), r, e.runs.len());
-                Span::set(&raw mut (*this).runs, r, e.runs.len());
+                block.span(&raw const (*this).runs, r, e.runs.len());
             }
         }
     }
@@ -189,13 +188,13 @@ pub trait IntColW {
                 return (&mut [], &mut []);
             }
             let d: *mut u64 = block.alloc_t(c.data_words);
-            Span::set(&raw mut (*this).data, d, c.data_words);
+            block.span(&raw const (*this).data, d, c.data_words);
             let data = std::slice::from_raw_parts_mut(d, c.data_words);
             if c.runs_words == 0 {
                 return (data, &mut []);
             }
             let r: *mut u64 = block.alloc_t(c.runs_words);
-            Span::set(&raw mut (*this).runs, r, c.runs_words);
+            block.span(&raw const (*this).runs, r, c.runs_words);
             (data, std::slice::from_raw_parts_mut(r, c.runs_words))
         }
     }
@@ -205,9 +204,9 @@ pub trait IntColW {
     /// one (a relation's sealed chunk, decision 0622).
     ///
     /// # Safety
-    /// `this` and `words` are zeroed memory in one block, `words` holding `c.data_words + c.runs_words` words.
+    /// `this` and `words` are zeroed memory in `block`, `words` holding `c.data_words + c.runs_words` words.
     #[allow(clippy::mut_from_ref)]
-    unsafe fn lay_out_at<'b>(this: *mut IntCol, words: *mut u64, c: &Choice) -> (&'b mut [u64], &'b mut [u64]) {
+    unsafe fn lay_out_at<'b>(this: *mut IntCol, block: &Block, words: *mut u64, c: &Choice) -> (&'b mut [u64], &'b mut [u64]) {
         unsafe {
             (*this).tag = c.tag;
             (*this).bits = c.bits;
@@ -220,13 +219,13 @@ pub trait IntColW {
             if c.tag == CONST {
                 return (&mut [], &mut []);
             }
-            Span::set(&raw mut (*this).data, words, c.data_words);
+            block.span(&raw const (*this).data, words, c.data_words);
             let data = std::slice::from_raw_parts_mut(words, c.data_words);
             if c.runs_words == 0 {
                 return (data, &mut []);
             }
             let r = words.add(c.data_words);
-            Span::set(&raw mut (*this).runs, r, c.runs_words);
+            block.span(&raw const (*this).runs, r, c.runs_words);
             (data, std::slice::from_raw_parts_mut(r, c.runs_words))
         }
     }
@@ -352,7 +351,7 @@ mod tests {
                 let block = crate::block::Block::anon(crate::block::kind::FACTS, 8 << 20);
                 let p: *mut IntCol = block.alloc_t(1);
                 let words: *mut u64 = block.alloc_t(c.data_words + c.runs_words);
-                let (data, runs) = unsafe { IntCol::lay_out_at(p, words, c) };
+                let (data, runs) = unsafe { IntCol::lay_out_at(p, &block, words, c) };
                 write(c, v, data, runs, dict);
                 let col = unsafe { &*p };
                 assert!((0..v.len()).all(|i| col.get(i) == v[i] && col.dec().get(i) == v[i]), "a value read back");
@@ -377,7 +376,7 @@ mod tests {
             let block = crate::block::Block::anon(crate::block::kind::FACTS, 8 << 20);
             let p: *mut IntCol = block.alloc_t(1);
             let words: *mut u64 = block.alloc_t(c.data_words + c.runs_words);
-            let (data, runs) = unsafe { IntCol::lay_out_at(p, words, c) };
+            let (data, runs) = unsafe { IntCol::lay_out_at(p, &block, words, c) };
             write(c, &sorted, data, runs, dict);
             let col = unsafe { &*p };
             for key in spread.iter().copied().chain([0, i64::MIN]) {

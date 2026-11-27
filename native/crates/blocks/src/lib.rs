@@ -6,8 +6,8 @@
 //!
 //! - **The block** (`block`): one mapping (anonymous, or a file), bump-allocated, frozen once, and checked by its
 //!   header (magic, kind, state, length).
-//! - **References** (`refs`): `Ptr<T>` and `Span<T>`, each relative to its own address, so a range of a block
-//!   moves by `memcpy`.
+//! - **References**: the floor's `Rel<T>` and `RelSpan<T>` (`rerail_delta_core::flat`), each relative to its own
+//!   field, so a range of a block moves by `memcpy`.
 //! - **Rows** (`rows`): columns in chunks that double. A row's chunk is one `clz`, and claims are atomic, so
 //!   many host threads or GPU threads can append.
 //! - **Relations** (`relation`): rows, kills, dead bits, a canonical order, hash indexes and statistics, all in
@@ -52,7 +52,6 @@ pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
-pub mod refs;
 pub mod region;
 pub mod order;
 pub mod relation;
@@ -75,7 +74,7 @@ mod windows;
 pub mod gpu;
 
 pub use block::{Block, Cells, Frozen, Header};
-pub use refs::{Ptr, Span};
+pub use rerail_delta_core::flat::{Rel, RelSpan};
 
 /// A type whose bytes are its value (`rerail_vector::Pod`, below the tape format: decision 0628 §3).
 pub use rerail_vector::Pod;

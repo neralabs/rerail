@@ -18,7 +18,6 @@ use super::{BitSpan, RelSpan};
 use crate::Pod;
 use crate::bloom::{self, Bloom};
 use crate::col::{CONST, DICT, Dec, Fields, GROUPS, LINE, RUNS, words};
-use crate::refs::Span;
 
 impl Need {
     /// And `o`.
@@ -445,7 +444,7 @@ impl Settle for BloomFrom<'_> {
         let b = d[0].as_mut_ptr();
         // SAFETY: the descriptor's one field, set to its words beside it in the room: every byte of it written.
         unsafe {
-            Span::set(&raw const (*b).words, w.as_ptr(), w.len());
+            (*b).words.set(room.region(), w.as_ptr(), w.len()).expect("a bloom's words beside its descriptor");
             &*b
         }
     }

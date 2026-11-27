@@ -1,7 +1,7 @@
 //! A relation's format and its reads (moved from `rerail_blocks::relation`, whose writers make, continue, freeze and
 //! index relations): its rows, its kills, its indexes and orders, in one descriptor in its block.
 
-use crate::refs::Span;
+use crate::flat::RelSpan;
 use crate::rows::Rows;
 use crate::structure;
 use core::sync::atomic::{AtomicI64, AtomicU16, AtomicU32, AtomicU64, Ordering::*};
@@ -45,14 +45,14 @@ structure! {
         /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in id
         /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept). In a sorted order
         /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
-        pub offs: Span<u32>,
-        pub rows: Span<u32>,
+        pub offs: RelSpan<u32>,
+        pub rows: RelSpan<u32>,
         /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
         /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
         /// order probed by whole keys). Empty when the order keeps none.
-        pub fences: Span<i64>,
-        pub tags: Span<u16>,
-        pub prints: Span<u8>,
+        pub fences: RelSpan<i64>,
+        pub tags: RelSpan<u16>,
+        pub prints: RelSpan<u8>,
         /// The bytes of the chunks a sorted order's `rows`, `fences`, `tags` and `prints` keep, given back when it is
         /// forgotten; 0 for a span it does not own.
         pub held: [u64; 4],
@@ -97,11 +97,11 @@ structure! {
         pub rows: Rows,
         /// Row ids killed: a delta's of its base, or of its own.
         pub killed: Rows,
-        pub dead: Span<u64>,
-        pub indexes: Span<Index>,
-        pub stats: Span<ColStats>,
+        pub dead: RelSpan<u64>,
+        pub indexes: RelSpan<Index>,
+        pub stats: RelSpan<ColStats>,
         /// An open relation's set test (`insert_unique`): slots holding row id + 1.
-        pub pending: Span<u32>,
+        pub pending: RelSpan<u32>,
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
@@ -116,11 +116,11 @@ structure! {
         pub depth: u32,
         /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
         /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
-        pub known: Span<Known>,
+        pub known: RelSpan<Known>,
         pub known_kept: AtomicU64,
         /// A frozen relation's dead rows (bit `id`; decision 0478 step 5d), given to it once and given back at its
         /// release; the bytes of their chunk. Its kills delta (`try_kills_at`) reads them here.
-        pub own_dead: Span<u64>,
+        pub own_dead: RelSpan<u64>,
         pub own_dead_kept: AtomicU64,
         /// A frozen delta's change (decision 0678 step 4): the base's ids whose liveness it changes (its kills of
         /// live base rows), ascending, each once. A change is read from these and its own rows alone, never from the
@@ -129,17 +129,17 @@ structure! {
         /// A trace's layer (`layer_write`, decision 0686 B2) keeps its kills here alone: rows of the layers below it
         /// that it kills, ascending, each live below. It keeps no dead bits (`dead` empty): a row is live in a state
         /// when no layer above its own, up to the state's, names it here.
-        pub changed: Span<u32>,
+        pub changed: RelSpan<u32>,
         /// A far base's block (`FAR_BASE`, `try_continue_far`): its block id, which a reader resolves through its
         /// launch's descriptor table, `base_off` being the base's descriptor's offset in it (a reference by block id
         /// and offset, decision 0686 B1); `NO_BLOCK` for none.
         pub base_block: u32,
         pub pad_far: u32,
-        /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): a directory of a `Span<u8>` a
+        /// A trace's layer's statistics (P§11.2, O§10 "stats: each layer's sketch"): a directory of a `RelSpan<u8>` a
         /// column, each that column's sketch in its kept form (what its `SketchW` settles), of the state the layer
         /// ends (the state below's sketch with the layer's rows added and its kills taken), each settled by an item of
         /// its own (`layer_write::sketch_change`). Empty for any other.
-        pub sketches: Span<u8>,
+        pub sketches: RelSpan<u8>,
     }
 }
 

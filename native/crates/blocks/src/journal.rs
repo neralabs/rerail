@@ -3,7 +3,7 @@
 //! A journal that does not check when read back (not frozen, or short) is refused, and its wave is redone.
 
 use crate::block::{Block, Frozen, kind};
-use crate::refs::Span;
+use rerail_delta_core::flat::RelSpan;
 use crate::structure;
 use std::path::Path;
 use std::sync::atomic::{AtomicU32, Ordering::{AcqRel, Acquire}};
@@ -24,7 +24,7 @@ structure! {
     pub struct JournalRoot {
         pub n: AtomicU32,
         pub pad: u32,
-        pub entries: Span<EntryLoc>,
+        pub entries: RelSpan<EntryLoc>,
     }
 }
 
@@ -54,7 +54,7 @@ impl Journal {
 pub fn init(block: &Block, cap: usize) {
     let root: *mut JournalRoot = block.alloc_t(1);
     let locs: *mut EntryLoc = block.alloc_t(cap.max(1));
-    unsafe { Span::set(&raw mut (*root).entries, locs, cap.max(1)) };
+    unsafe { block.span(&raw const (*root).entries, locs, cap.max(1)) };
     block.set_root(root);
 }
 

@@ -12,7 +12,7 @@ use cranelift_codegen::ir::{
     types::{I32, I64},
 };
 use rerail_blocks::atoms::{AtomsDirRoot, DirEntry};
-use rerail_blocks::refs::Span;
+use rerail_blocks::atoms::Far;
 use std::mem::{offset_of, size_of};
 
 const DIR_N: i32 = offset_of!(AtomsDirRoot, n) as i32;
@@ -23,7 +23,7 @@ const E_FROM: i32 = offset_of!(DirEntry, from) as i32;
 const E_ENDS: i32 = offset_of!(DirEntry, ends) as i32;
 const E_STRINGS: i32 = offset_of!(DirEntry, strings) as i32;
 const E_SIZE: i64 = size_of::<DirEntry>() as i64;
-const _: () = assert!(size_of::<Span<u8>>() == 16);
+const _: () = assert!(size_of::<Far<u8>>() == 16);
 
 /// No string: an id no run holds.
 const NONE: i64 = u32::MAX as i64;
@@ -34,7 +34,7 @@ impl B<'_, '_> {
     fn atoms_entry(&mut self, id: Value) -> (Value, Value) {
         let n = self.word_at(I64, self.tape, DIR_N);
         let n = self.f.ins().ireduce(I32, n);
-        let entries = self.follow(self.tape, DIR_ENTRIES);
+        let entries = self.follow_rel::<DirEntry>(self.tape, DIR_ENTRIES);
         let k = self.bisect(n, &mut |b, t| {
             let e = b.item(entries, t, E_SIZE);
             let first = b.word_at(I32, e, E_FIRST);
@@ -57,7 +57,7 @@ impl B<'_, '_> {
     fn atoms_bounds(&mut self, e: Value, id: Value) -> (Value, Value) {
         let from = self.word_at(I32, e, E_FROM);
         let i = self.f.ins().isub(id, from);
-        let ends = self.follow(e, E_ENDS);
+        let ends = self.follow_far::<u64>(e, E_ENDS);
         let at = self.item(ends, i, 8);
         let end = self.word_at(I64, at, 0);
         let first = self.f.ins().icmp_imm(IntCC::Equal, i, 0);
@@ -107,7 +107,7 @@ pub fn atoms_at(b: &mut B<'_, '_>) -> Value {
                 held,
                 |b| {
                     let (start, _) = b.atoms_bounds(e, id);
-                    let strings = b.follow(e, E_STRINGS);
+                    let strings = b.follow_far::<u8>(e, E_STRINGS);
                     b.f.ins().iadd(strings, start)
                 },
                 |_| dir,

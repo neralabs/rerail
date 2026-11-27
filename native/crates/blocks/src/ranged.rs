@@ -17,7 +17,6 @@
 
 use crate::block::Block;
 use crate::col::{Choice, IntCol, IntColW, choose, write};
-use crate::refs::Span;
 use rayon::prelude::*;
 
 // The format and its reads: the floor's one definition (`rerail_delta_core::ranged`).
@@ -87,9 +86,9 @@ pub fn pack(cols: &[&[i64]], split: &[u32], kind: u32) -> Block {
                 let (data, runs) = IntCol::lay_out(ic.add(k), &block, choice);
                 jobs.push(Job { col: c, range: k, choice, data, runs });
             }
-            Span::set(&raw mut (*col).ranges, ic, ch.len());
+            block.span(&raw const (*col).ranges, ic, ch.len());
         }
-        Span::set(&raw mut (*root).cols, rc, arity);
+        block.span(&raw const (*root).cols, rc, arity);
     }
     rerail_context::on_cores(|| {
         jobs.into_par_iter().for_each_init(
@@ -128,9 +127,9 @@ pub mod writer {
                 (*col).n = n as u32;
                 (*col).parts = 1;
                 let ic: *mut IntCol = block.try_claim_clear_t(nranges.max(1))?;
-                Span::set(&raw mut (*col).ranges, ic, nranges);
+                block.span(&raw const (*col).ranges, ic, nranges);
             }
-            Span::set(&raw mut (*root).cols, rc, arity);
+            block.span(&raw const (*root).cols, rc, arity);
         }
         Some(root)
     }
