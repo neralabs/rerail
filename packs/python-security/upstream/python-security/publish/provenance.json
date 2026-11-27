@@ -1,0 +1,524 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "python-security",
+  "tool": "python-security",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/python-security-code-injection/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/api.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/api_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/calc.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/codec.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/decoders.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/django_tpl.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/flask_app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/notify.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/services.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/templating.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/titles.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/app/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-code-injection/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/api/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/checks.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/kwviews.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/management/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/management/commands/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/management/commands/runcmd.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/net.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/sysutils.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/typed.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/utils.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/netops/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/webapp/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-command-injection/webapp/app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/algorithms.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/drf_auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/header_alg.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/jose_auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/oauth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/reverify.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/routing_auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/sessions.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/tokens.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/trust.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/utils.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/verifiers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/app/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one/legacy/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one/legacy/auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one/legacy/tokens.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one_setup/setup.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one_setup/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/pyjwt_one_setup/svc/auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-jwt-unverified/tests/test_auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/admin_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/api.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/browse.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/helpers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/keys.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/queries.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/routed.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/validated.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-orm-lookup-injection/catalog/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/cache.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/extensions.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/paths.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/schemas.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/seeding.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/segments.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/api/uploads.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/imaging.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/media_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/readers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/storage.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/docs/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/webapp/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/webapp/app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/webapp/files.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-path-traversal/webapp/pages.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/asyncdb.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/db.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/fragments.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/api/typed_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/legacy/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/legacy/app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/checks.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/kwviews.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/reports.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/sqlbuild.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/typed.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-sql-injection/shop/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/api/clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/api/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/http_client.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/oauth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/security.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/services.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/bookmarks/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/admin.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/aggregates.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/checks.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/guarded.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/hosts/http.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/webapp/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-security-ssrf/webapp/app.py": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}

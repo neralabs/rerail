@@ -1,0 +1,336 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "python-practice",
+  "tool": "python-practice",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/python-practice-blocking-call-reached-from-async/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/decorated.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/decorators.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/dual.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/lookalikes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/providers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/requests.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/safe.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/server.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/guards.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/http.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/loops.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/shell.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/services/wrapped.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/startup.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-blocking-call-reached-from-async/svc/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/anyio_worker.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/background.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/consumer.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/drains.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/endings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/flusher.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/groups.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/jobs.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/runners.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/safe.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/stream.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/app/suppressing.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-cancellation-swallowed/tests/test_stream.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/context.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/decorators.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/other.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/release_near_misses.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/releases.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/resources.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/restores.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/safe.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/app/state.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/tests/conftest.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-contextmanager-cleanup-skipped/tests/test_resources.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/dropped_shapes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/jobs.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/notify.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/service.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-coroutine-never-awaited/app/tests/test_service.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/app/clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/app/locals.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/app/net.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/app/patched.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/examples/start_server.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/scripts/smoke.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-requests-session-without-timeout/tests/test_clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/consumers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/loops.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/names.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/prompts.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/app/variants.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-loop-without-limit/tests/test_clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/backoffs.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/other_retries.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/retry_packages.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/app/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/python-practice-retry-without-limit/tests/test_clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}

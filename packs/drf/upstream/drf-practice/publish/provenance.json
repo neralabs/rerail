@@ -1,0 +1,732 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "drf",
+  "tool": "drf-practice",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/drf-practice-declared-field-meta-ignored/accounts/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/accounts/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/accounts/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/accounts/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/accounts/tests/test_serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/core/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/core/fields.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/core/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/posts/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/posts/constants.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/posts/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/posts/plain.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/posts/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/writes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/writes/fields.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/writes/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/writes/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-declared-field-meta-ignored/writes/users.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/api/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/api/pagination.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/inert/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/library/notes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/library/notes/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/library/notes/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/nulled/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/nulled/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/nulled/notes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/nulled/notes/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/nulled/notes/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/config/settings/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/config/settings/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/config/settings/test.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/api/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/api/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/api/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/open/shop/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/config/settings/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/config/settings/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/config/settings/production.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/notes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/notes/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/notes/pagination.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/paged/notes/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/urls.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/views/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/views/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/views/card.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/board/views/member.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/rooted/backend/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/sized/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/sized/api/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/sized/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/sized/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-list-without-pagination/sized/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/access.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/fn_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/permissions.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/safe_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/api/write_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/library/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/studio/projects/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/studio/projects/api.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/studio/projects/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-object-permission-skipped/studio/projects/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/config/test_settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/shop/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/builtin/shop/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/api/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/api/pagination.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/api/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/api/tests/test_pagination.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/config/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/reports/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/reports/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/reports/pagination.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-page-size-uncapped/custom/reports/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/core/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/core/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/api/list_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/api/mixins.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/api/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-related-field-not-prefetched/shop/utils.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/accounts/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/accounts/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/accounts/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/accounts/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/accounts/tests/test_serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/backend/vault/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/backend/vault/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/backend/vault/api/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/backend/vault/api/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/backend/vault/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/core/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/core/fields.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/core/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/integrations/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/integrations/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/integrations/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/storage/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/storage/constants.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/storage/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-serializer-exposes-secret-field/storage/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/accounts/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/accounts/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/core/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/core/errors.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/core/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/shop/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-validate-returns-value/shop/tests/test_serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/notes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/notes/mixins.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/notes/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/project/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/project/local_settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/allowany/project/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/config/settings/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/config/settings/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/config/settings/production.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/closed/shop/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/library/reviews/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/library/reviews/app_settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/library/reviews/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/config/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/config/settings/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/config/settings/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/config/settings/production.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/config/settings/test.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/api/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/api/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/api/serializers.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/api/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/test_api.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/open/shop/tests/test_views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/unreadable/project/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/unreadable/project/settings.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/unreadable/shop/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/drf-practice-view-without-permission/unreadable/shop/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}

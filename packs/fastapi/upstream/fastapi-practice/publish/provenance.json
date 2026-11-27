@@ -1,0 +1,508 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "fastapi",
+  "tool": "fastapi-practice",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/core/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/core/config.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/middleware.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/app/tests/test_cors.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/backend/webui/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/backend/webui/config.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/backend/webui/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/backend/webui/utils/asgi.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/svc/asgi.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-cors-wildcard-with-credentials/svc/own.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/cli.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/clients.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/services.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/variants.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-http-client-per-request/app/worker.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/lifespan.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/plugins.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/routers/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/routers/items.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/startup.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/app/tests/test_app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/events/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/events/bus.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/svc/custom.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/svc/legacy.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-lifecycle-event-handler/svc/modern.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/lifespan.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/plugins.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/routers/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/routers/items.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/startup.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/app/tests/test_app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/events/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/events/bus.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/svc/custom.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/svc/legacy.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-on-event-handler/svc/modern.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/db.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/jobs.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/tasks.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-request-session-in-background-task/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/api/routes/raw.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/api/routes/users.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/audit.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/crud.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/db/base.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/app/schemas.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-response-exposes-secret-field/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/db.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/accounts.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/items.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/keys.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/near_misses.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/orders.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/projects.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/reads.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/reports.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/routes/seats.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/src/acme/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/src/acme/api.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/src/acme/auth.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/src/acme/billing/views.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/svc/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-missing-sibling-auth/svc/app.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/routes/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/routes/cases.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/routes/files.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/routes/near_misses.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/shared/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/shared/items.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/shared/router.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/shared/search.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-route-shadowed/app/versioning.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/crud.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/db.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/main.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/models.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-sync-session-in-async-route/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/db.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/deps.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/fixtures.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/tests/__init__.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fastapi-practice-yield-dependency-cleanup/app/tests/test_routes.py": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}
