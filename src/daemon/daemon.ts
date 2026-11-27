@@ -1762,7 +1762,8 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
       await daemon.close();
     },
     release: () => mainInstance?.release(),
-    // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
+    // Its own arguments, trying first the port it listens on, and the same launch as `rerail daemon start`, once this
+    // daemon's port, socket and state are free.
     relaunch: () => {
       relaunchDaemon(relaunchArguments(process.argv.slice(1), daemon.port), join(defaultRerailHome(), DAEMON_LOG_FILE));
     },
