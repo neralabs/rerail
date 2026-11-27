@@ -4213,16 +4213,18 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         if programs > PROGRAMS_MAX {
             return Err(format!("a recursive component's rounds encoded past {PROGRAMS_MAX} times"));
         }
-        // Each head's room for the program: the rows it can reach where they fit `REACH_BYTES`, else its rows now and
-        // twice what a round could add, within its reach; its deltas' its room past its rows now. A head of no reach
-        // (a column of made texts, decision 0659: a text grows round after round) has `REACH_BYTES` of rows at least,
-        // reserved and mapped as its rounds reach them, as a bounded head's are.
+        // Each head's room for the program: the rows it can reach where they fit `REACH_BYTES`; else its rows now and
+        // twice what a round could add, and `REACH_BYTES` of rows at least, within its reach; its deltas' its room past
+        // its rows now. A head of no reach (a column of made texts, decision 0659: a text grows round after round) has
+        // `REACH_BYTES` of rows at least too. Reserved and mapped as its rounds reach them, as a bounded head's are: a
+        // bound of its rows now and twice a round's stopped the program past it, and it ran again (decisions 0603,
+        // 0648: the points-to component's three programs).
         for (&h, l) in live.iter_mut() {
             let len = l.total.len() as usize;
             let grown = 2 * (len + l.room);
             l.bound = match reaches.get(&h) {
                 Some(&r) if r.saturating_mul(8 * store.rels[h].k) <= REACH_BYTES => r,
-                Some(&r) => grown.min(r),
+                Some(&r) => grown.max(REACH_BYTES / (8 * store.rels[h].k)).min(r),
                 None => grown.max(REACH_BYTES / (8 * store.rels[h].k)),
             }
             .max(len + 1);

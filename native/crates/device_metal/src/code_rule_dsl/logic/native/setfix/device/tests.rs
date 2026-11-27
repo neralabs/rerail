@@ -683,14 +683,11 @@ use rerail_blocks::vector::Vector;
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         db.execute_batch("CREATE TEMP TABLE e (c0, c1, c2);").unwrap();
-        // Labeled edges of a graph of 30 nodes, 3 labels, each to a later node: e(x, y, l). Its closure, at most
-        // 3 * 435 rows, within the head's first room (its reach is past `REACH_BYTES`, and a CPU device maps no
-        // room as reached: past it, the program would run again).
-        for x in 0..30i64 {
-            for (d, l) in [(1, 0), (2, 1), (3, 2)] {
-                if x + d < 30 {
-                    db.execute("INSERT INTO e VALUES (?1, ?2, ?3)", [x, x + d, l]).unwrap();
-                }
+        // Labeled edges of a graph of 60 nodes, 3 labels: e(x, y, l). Its closure (10,800 rows) is past the head's
+        // first rows and twice a round's: its program's bound is `REACH_BYTES` of rows at least, so it is one program.
+        for x in 0..60i64 {
+            for (d, l) in [(1, 0), (7, 1), (13, 2)] {
+                db.execute("INSERT INTO e VALUES (?1, ?2, ?3)", [x, (x + d) % 60, l]).unwrap();
             }
         }
         let e = format!("t:x:{}:{}:iii", hex("temp.e"), hex("c0, c1, c2"));
@@ -713,14 +710,14 @@ use rerail_blocks::vector::Vector;
             super::super::run(&db, &name, 0).unwrap();
             if device {
                 let r = super::take_report().expect("a device report");
-                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+                assert!(r.refused.is_none() && !r.handed && r.reruns == 0 && r.programs == 1, "the component on the device, one program: {r:?}");
             }
             super::super::close(&db, &name).unwrap();
             let mut rows: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.p").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
             rows.sort_unstable();
             got.push(rows);
         }
-        assert!(got[0].len() > 600, "the CPU's rows: {}", got[0].len());
+        assert!(got[0].len() > 10000, "the CPU's rows: {}", got[0].len());
         assert_eq!(got[1], got[0], "the device's rows are the CPU's");
     }
 

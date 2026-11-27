@@ -1151,9 +1151,10 @@ impl Relation {
             let (offs_at, rows_at) = if let Some(d) = reused {
                 let d = &self.indexes.as_slice()[d];
                 let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
-                // Zeroed, as a new chunk is (the builders count into the buckets).
+                // Its buckets zeroed, as a new chunk's are. Its rows and marks not: each builder writes every one it
+                // holds before any reader reads it (`build_index_with`, the device's `ix_place`, `ix_mark`), and a
+                // live relation's room is for its bound's rows, most never written.
                 block.ptr::<u8>(o).write_bytes(0, ob);
-                block.ptr::<u8>(r).write_bytes(0, rb);
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
                 let o = block.try_alloc_chunk(ob, 8)?;
@@ -1164,7 +1165,8 @@ impl Relation {
                 (o, r)
             } else {
                 let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
-                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                // Its rows and marks unzeroed, as a reused room's (above).
+                let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
