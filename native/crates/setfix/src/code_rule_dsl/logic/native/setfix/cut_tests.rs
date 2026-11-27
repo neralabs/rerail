@@ -699,7 +699,10 @@ fn a_chunk_asks_a_derived_lookup_and_test_a_chunk_at_a_time() {
     walks_whole(|| run(&db, "chunk", 0).unwrap());
     close(&db, "chunk").unwrap();
     let asks = &run_counts().chunk_asks;
-    assert!(asks[0].load(std::sync::atomic::Ordering::Relaxed) > 0 && asks[1].load(std::sync::atomic::Ordering::Relaxed) > 0, "asked a chunk at a time: {asks:?}");
+    // The test asked by its node bits (0) or, where they don't pay their build (decision 0706, `looks_again`), by its
+    // key's hash (2, `cands::ask_derived_chunk`); the lookup by its rows by value (1): each a chunk at a time.
+    let got = |k: usize| asks[k].load(std::sync::atomic::Ordering::Relaxed);
+    assert!(got(0) + got(2) > 0 && got(1) > 0, "asked a chunk at a time: {asks:?}");
     let want: Vec<(i64, i64)> = (0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0 && l % 3 != 0).map(move |l| (d, l * 10))).collect();
     let mut got = pairs(&db, "SELECT c0, c1 FROM r");
     got.sort_unstable();

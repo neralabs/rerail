@@ -85,7 +85,7 @@ air_guarded(e, m, x) :- air_needs_guard(e, m, x), ast_name(e, y), look(e, y, s),
 .decl air_needs_guard(e: node, m: symbol, x: symbol) extensible
 // air_in_handler(n, t): t is the innermost try statement around n, and n is in one of its except clauses.
 .decl air_in_handler(n: node, t: node)
-air_in_handler(n, t) :- nearest(n, t, "try_statement"), child(t, h, _), kind(h, "except_clause"), within(n, h).
+air_in_handler(n, t) :- nearest(n, t, "try_statement", h), child(t, h, _), kind(h, "except_clause").
 // air_catches(t, x): some handler of try t names the builtin exception x, alone or in a tuple.
 .decl air_catches(t: node, x: symbol)
 air_catches(t, x) :- child(t, h, _), kind(h, "except_clause"), field(h, "value", v), air_caught(v, e),

@@ -59,8 +59,8 @@ impl RulePass for Nearest {
         let f = Fields::over(v, &d);
         let kinds = |set: &str| -> Vector<i64> { f.kindset(set).into_iter().flatten().filter_map(|&k| v.text(k).parse::<i64>().ok()).collect() };
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
-        for rel in inputs.iter().filter(|r| is_axis(r)) {
-            let set = rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).expect("an axis");
+        for rel in inputs.iter().filter(|r| is_axis(r) || crate::code_rule_dsl::logic::front::near_child(r).is_some()) {
+            let set = rel.strip_prefix(AXIS).or_else(|| rel.strip_prefix(DESCENDANTS)).or_else(|| crate::code_rule_dsl::logic::front::near_child(rel)).expect("an axis");
             self.sets.push((rel.clone(), kinds(set)));
         }
         let before = inputs.len();

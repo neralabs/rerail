@@ -704,6 +704,27 @@ pub const DESCENDANTS: &str = "rr_has_";
 /// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
 pub const NEAREST: &str = "rr_nearest_";
 
+/// The prefix of the relation of `nearest(n, a, set, c)` and `nearest_in_field(n, a, set, f)`:
+/// `rr_near_child_<set>(n, a, c, f)`, `a` `n`'s nearest strict ancestor in the set, `c` the child of `a` that holds
+/// `n` strictly below it and `f` the field `c` hangs from `a` by (the tape's one sweep, `nearest_child_all`).
+/// `nearest(n, a, S), field(a, F, p), within(n, p)` is `nearest_in_field(n, a, S, F)`: one row of `n`, read by `n`,
+/// no node under `p` listed. A node that is `a`'s child itself has no row.
+pub const NEAREST_CHILD: &str = "rr_near_child_";
+
+/// The set of a `nearest` relation with the child (`NEAREST_CHILD`), or `None`.
+pub fn near_child(rel: &str) -> Option<&str> {
+    rel.strip_prefix(NEAREST_CHILD)
+}
+
+/// The columns of a relation the transducer makes from a kind set: `(n, a)`, or a `nearest` with the child's
+/// `(n, a, c, f)`; all nodes but `f`, a field (`near_child_types`).
+pub fn transduced_columns(rel: &str) -> &'static [&'static str] {
+    if near_child(rel).is_some() { &["n", "a", "c", "f"] } else { &["n", "a"] }
+}
+
+/// A `nearest` with the child's declared column types: three nodes and the child's field.
+pub const NEAR_CHILD_TYPES: [&str; 4] = ["node", "node", "node", "sym"];
+
 /// The layout of a relation the transducer makes from a kind set (an axis's, or `nearest`'s), `(n, a)` rows, wherever
 /// it is declared (decision 0361 step 5): what the planner sizes it by with the program. `nearest` holds one
 /// ancestor a node; `inside` the few of a set above it; `has` every ancestor of a node of the set, about a tree's
@@ -711,7 +732,7 @@ pub const NEAREST: &str = "rr_nearest_";
 /// for another relation.
 pub fn made_from_a_kind_set(rel: &str) -> Option<Vec<LayoutFact>> {
     let ancestors = LayoutFact::Values { col: 1, values: Values::OneIn(4) };
-    if rel.starts_with(NEAREST) {
+    if rel.starts_with(NEAREST) || near_child(rel).is_some() {
         Some(vec![LayoutFact::Key(rerail_blocks::vector![0]), LayoutFact::Local, ancestors])
     } else if rel.starts_with(AXIS) {
         Some(vec![LayoutFact::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::About(2) }, LayoutFact::Local, ancestors])
@@ -727,9 +748,10 @@ pub fn is_axis(rel: &str) -> bool {
     rel.starts_with(AXIS) || rel.starts_with(DESCENDANTS)
 }
 
-/// Whether the transducer makes `rel`: a tree axis's relation or a `nearest` one, `(n, a)` rows.
+/// Whether the transducer makes `rel`: a tree axis's relation or a `nearest` one, `(n, a)` rows (`(n, a, c, f)` for a
+/// `nearest` with the child, `transduced_columns`).
 pub fn is_transduced(rel: &str) -> bool {
-    is_axis(rel) || rel.starts_with(NEAREST)
+    is_axis(rel) || rel.starts_with(NEAREST) || near_child(rel).is_some()
 }
 
 /// A tree axis relation's set, and whether it is `has`'s (`DESCENDANTS`: the set tested on its first column, the

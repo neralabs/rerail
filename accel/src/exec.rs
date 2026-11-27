@@ -183,6 +183,9 @@ pub fn set_job_scope(enter: JobScopeEnter, exit: JobScopeExit) {
 /// Runs `f` in a job scope of its own: the scope set by [`set_job_scope`] is entered before it and exited after it,
 /// also when it panics. Every job of the pool runs in one: [`as_job`]'s and a stream's ([`crate::stream`]).
 pub fn in_job_scope<R>(f: impl FnOnce() -> R) -> R {
+    // The launch ledger is a job's own too: the outer work's evaluation, set aside (restored last, after the exit).
+    #[cfg(gpu_lane)]
+    let _evaluation = crate::gpu::launch::SetAside::take();
     let Some(&(enter, exit)) = JOB_SCOPE.get() else { return f() };
     struct Exit(Option<Box<dyn std::any::Any>>, JobScopeExit);
     impl Drop for Exit {

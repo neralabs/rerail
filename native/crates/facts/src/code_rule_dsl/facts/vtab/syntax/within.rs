@@ -1363,3 +1363,180 @@ impl Source for Within {
         Some(vec![(inner.to_owned(), rows, ndv[0], sq[0], sq[0]), (outer.to_owned(), rows, ndv[1], sq[1], sq[1])])
     }
 }
+
+/// `nearest(n, a, set, c)` (`front::NEAREST_CHILD`, `rr_near_child_<set>(n, a, c)`): `a` the nearest strict ancestor
+/// of `n` in the set, `c` the child of `a` that holds `n` strictly below it. A node that is `a`'s child itself, or has
+/// no ancestor in the set, has no row; every other node has one. `nearest(n, a, S), field(a, F, p), within(n, p)` is
+/// `nearest(n, a, S, p), field(a, F, p)`: one row read by `n`, where the chain listed every node under `p` (`rf_in`'s
+/// `within` by its body, `def_outside`'s by its parameters: 3 s of the joins' CPU of `all`, the sampler's w5).
+///
+/// Solved once for the batch, a derived relation written where it is computed (decision 0353): each tape's one sweep
+/// (`nearest_child_all`), or the batch's parents climbed where a document has no tape. Its rows are the ids of `n`,
+/// `a` and `c`, and per node row its run of them, zero rows or one (`Solved`, as the axis's).
+pub struct NearestChild {
+    /// The set's `nearest` axis: its per-document set of codes and tapes, its statistics.
+    axis: Within,
+    solved: OnceLock<Solved>,
+}
+
+impl NearestChild {
+    /// The relation over the set of kind atoms `kinds`. Nothing is made until a join reads it.
+    pub fn new(batch: Arc<Batch>, kinds: &[i64], binding: Binding) -> Self {
+        NearestChild { axis: Within::axis(batch, Axis::Nearest, kinds, binding), solved: OnceLock::new() }
+    }
+
+    fn solved(&self) -> &Solved {
+        crate::code_rule_dsl::logic::profile::once(&self.solved, "axis: nearest with the child solved", || self.solve())
+    }
+
+    /// Per node row its nearest member, the member's child that holds it (node rows, `nearest::NONE` for none), and
+    /// the child's field atom (`field_atom`, its field 0 where it hangs by none).
+    fn found(&self) -> (Vector<u32>, Vector<u32>, Vector<u32>) {
+        use crate::code_rule_dsl::facts::nearest::NONE as NO;
+        use rerail_tape_format::tape::{NONE as TAPE_NONE, nearest_child_all};
+        let w = &self.axis;
+        let total = w.batch.nodes().total();
+        let (mut near, mut child, mut field) = (Vector::with_capacity(total), Vector::with_capacity(total), Vector::with_capacity(total));
+        let (mut tn, mut tc) = (Vector::new(), Vector::new());
+        for (doc, p) in w.batch.docs.iter().enumerate() {
+            let base = w.batch.nodes().at(doc) as u32;
+            let row = |id: u32| match id {
+                TAPE_NONE => NO,
+                id => match p.local_of_node(id) {
+                    NONE => NO,
+                    l => base + l,
+                },
+            };
+            match w.doc_tape(doc) {
+                Some(dt) => with_tape!(w.tape_of(dt), |t| {
+                    tn.resize(t.len(), 0);
+                    tc.resize(t.len(), 0);
+                    nearest_child_all(&t, &w.set(doc, &t), |id| p.local_of_node(id as u32) != NONE, &mut tn, &mut tc);
+                    for (_, id) in p.nodes() {
+                        let c = tc[id as usize];
+                        near.push(row(tn[id as usize]));
+                        child.push(row(c));
+                        field.push(if c == TAPE_NONE { 0 } else { super::field_atom(p.tag(), t.table().entry(t.code(c as usize)).field) });
+                    }
+                }),
+                None => {
+                    for l in 0..p.len() as u32 {
+                        let (mut below, mut q) = (l, p.parent(l as usize));
+                        while q != NONE && !w.member(doc, q) {
+                            (below, q) = (q, p.parent(q as usize));
+                        }
+                        near.push(if q == NONE { NO } else { base + q });
+                        child.push(if q == NONE || below == l { NO } else { base + below });
+                        field.push(if q == NONE || below == l { 0 } else { super::field_atom(p.tag(), p.f().field(p.node(below))) });
+                    }
+                }
+            }
+        }
+        (near, child, field)
+    }
+
+    fn solve(&self) -> Solved {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::BUILD);
+        use crate::code_rule_dsl::facts::nearest::NONE as NO;
+        use crate::code_rule_dsl::facts::rows::Part;
+        let batch = &self.axis.batch;
+        let (near, child, field) = self.found();
+        let n = near.len();
+        let mut start = Vector::with_capacity(n + 1);
+        let mut len = 0u32;
+        for &c in child.iter() {
+            start.push(len);
+            len += u32::from(c != NO);
+        }
+        start.push(len);
+        // File-local, as the axis's: each document that has rows one run of its key (decision 0494 step 7).
+        let offsets = batch.nodes();
+        let first = |doc: usize| start[offsets.at(doc)];
+        let has_rows = |doc: usize| first(doc + 1) > first(doc);
+        let runs = (0..batch.docs.len()).filter(|&d| has_rows(d)).count();
+        let (rows, keys) = Part::over_key_runs_of(crate::code_rule_dsl::facts::rows::Life::Run, 4, 3, len as usize, runs);
+        for (k, (doc, key)) in batch.docs.keys().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
+            keys.put(k, first(doc), key);
+        }
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let mut at = 0u32;
+        for v in 0..n {
+            if child[v] == NO {
+                continue;
+            }
+            // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
+            unsafe {
+                rows.put(at, 0, batch.id(v, &mut memo));
+                rows.put(at, 1, batch.id(near[v] as usize, &mut memo));
+                rows.put(at, 2, batch.id(child[v] as usize, &mut memo));
+                rows.put(at, 3, i64::from(field[v]));
+            }
+            at += 1;
+        }
+        // SAFETY: rows `0..len` are written.
+        unsafe { rows.written(len) };
+        Solved {
+            start,
+            rows,
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+            start_in_block: None,
+        }
+    }
+
+    /// Node id `value`'s row, if it has one.
+    fn row_of(&self, value: i64, memo: &mut u32) -> Option<usize> {
+        let s = self.solved();
+        let (doc, local) = self.axis.batch.node(value, memo)?;
+        let r = self.axis.batch.nodes().at(doc) + local as usize;
+        (s.start[r] != s.start[r + 1]).then_some(s.start[r] as usize)
+    }
+}
+
+impl Source for NearestChild {
+    fn columns(&self) -> Vec<String> {
+        vec!["n".into(), "a".into(), "c".into(), "f".into()]
+    }
+    fn len(&self) -> usize {
+        let s = self.solved();
+        s.start[s.start.len() - 1] as usize
+    }
+    /// As the axis's `nearest`: about a row a node.
+    fn estimated_len(&self) -> usize {
+        self.axis.estimated_len()
+    }
+    /// By `n`: its one row. By `a` or `c`: as the axis's `a`, the nodes below a member.
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        if column == 0 { 1 } else { self.axis.estimated_matches(1, batch) }
+    }
+    fn indexed(&self, column: usize) -> bool {
+        column == 0
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let v = self.axis.statistics()?;
+        let (rows, (ndv, sq)) = (v[0].1, (v[1].2, v[1].3));
+        // A field's rows: the few fields a member's children hang by.
+        let fields = 8i64.min(rows.max(1));
+        let fsq = rows.saturating_mul(rows) / fields;
+        Some(vec![("n".into(), rows, rows, rows, rows), ("a".into(), rows, ndv, sq, sq), ("c".into(), rows, rows.min(ndv.saturating_mul(4)), sq, sq), ("f".into(), rows, fields, fsq, fsq)])
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        if column == 3 { None } else { self.axis.col_bounds(column.min(1)) }
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vector<usize>> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        if column != 0 {
+            return None;
+        }
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        Some(values.iter().filter_map(|&v| self.row_of(v, &mut memo)).collect())
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.solved().rows.get(row as u32, column)
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let rows = &self.solved().rows;
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = rows.get(row as u32, c);
+        }
+    }
+}

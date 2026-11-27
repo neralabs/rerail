@@ -12461,3 +12461,27 @@ Checked under Relax: rerail-reads, rerail-ukl-rust, rerail-clif (19), rerail-set
 the_join_programs_view_reads_are_the_jits, an_ids_document_and_local_id..., the_kernels_directory_searches...),
 tests-corpus base_tests (54) and phases (23), tests-logic native (20) and plan (113, one thread), tests-rr
 program_image (54), device crate's join_rust digests. No Metal, farm or clippy runs.
+
+### Q601. Roll-up 173 (final-rerail-shape 0a6b97fc04 onto Pulling-it-all-together): what the merge chose
+
+final-rerail-shape's own merge of django-bugs (as roll-up 172 took it), and its new work: `nearest(n, a, set, c)`
+(a node's nearest member and the member's child that holds it, one sweep of the tape, `within::NearestChild`) and
+`nearest_in_field`, read by the Python and tsx libraries; a job started inside another's evaluation launches in
+its own (decision 0386, the launch ledger per job); a layered source's filter its base's scan.
+
+Conflicts, resolved by invariant:
+- Decision A: the one-row reads stay removed. The feeder's `row_column`, `read_one_at`, `read_many_at` (Layered,
+  the within axis, the new NearestChild), the walk's `read_lookup`/`cands::read_one`, `part_row` and `PART_ROW`
+  (their helpers), and the chunk-read tests are not taken. `filter_eq` and its test are the hub's already.
+- The unframed chunk's ask keeps the hub's `rowcode::Ask` form and takes the feeder's additions as `flush` has
+  them: its asks counted (`count_asks`) and the run marked CHUNK.
+- python/names.rerail is the hub's (decision 0677 split it); the feeder's `def_outside` by `nearest_in_field` goes
+  to python/scopes.rerail, where the rule lives.
+- Csr literals and the tally: field order only.
+
+Fix the merge needed: cut_tests' chunk-ask check reads the hub's hash ask (kind 2, `cands::ask_derived_chunk`),
+not the feeder's kind 3.
+
+Checked under Relax: check of rerail-facts, rerail-setfix, rerail-tests-lang; rerail-setfix (150), tests-lang
+syntax (113), tests-corpus base_tests (55) and phases (23), tests-logic native (20), tests-rr tape_tests (21, two
+threads: four passed too but its peak passed the 12 GB cap), tape-format tape (17). No Metal, farm or clippy runs.

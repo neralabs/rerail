@@ -250,6 +250,12 @@ fn base(p: &Prog<'_>) -> Moves {
     for rel in p.v.input_names().iter().filter(|r| is_axis(r)) {
         add(rel, 1, 0);
     }
+    // A `nearest` with the child, `rr_near_child_<set>(n, a, c)`: a is an ancestor of c, and c of n.
+    for rel in p.v.input_names().iter().filter(|r| crate::code_rule_dsl::logic::front::near_child(r).is_some()) {
+        add(rel, 1, 2);
+        add(rel, 2, 0);
+        add(rel, 1, 0);
+    }
     moves
 }
 

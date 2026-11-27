@@ -10207,10 +10207,14 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
         let from = std::mem::take(&mut s.from);
         let (j, store) = (cx.j, cx.store);
         let asked = std::cell::RefCell::new(asked);
+        let profiled = cx.clock.is_some();
         // A test of a derived input asked of the chunk at once where it reads so (`cands::ask_chunk`), as `flush`'s.
         let ask = |mut a: rowcode::Ask<'_>| {
             let t = a.test;
-            cands::ask_chunk(j, &j.steps[i + 1 + f.tests[t].at], &f.tests[t], &mut a, &mut asked.borrow_mut()[t]).is_some()
+            let at = i + 1 + f.tests[t].at;
+            let Some((none, one)) = cands::ask_chunk(j, &j.steps[at], &f.tests[t], &mut a, &mut asked.borrow_mut()[t]) else { return false };
+            if profiled { count_asks(j, at, none, one); }
+            true
         };
         let held = |t: usize, r: usize, columns: &[rerail_blocks::vector::Vector<i64>], params: &[i64], vals: &mut [i64]| {
             let test = &f.tests[t];
@@ -10225,7 +10229,7 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
             cands::holds(j, &j.steps[i + 1 + test.at], store, out, &mut asked.borrow_mut()[t])
         };
         let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
-            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, ask, held).iter().copied().collect();
+            { let _kind = rerail_prof::work::doing(rerail_prof::work::CHUNK); f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }, ask, held) }.iter().copied().collect();
         s.asked = asked.into_inner();
         'rows: for (k, &word) in words.iter().enumerate() {
             let mut m = word;
