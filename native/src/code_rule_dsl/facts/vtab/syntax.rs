@@ -3664,6 +3664,8 @@ pub type WaveTape = (u32, Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, Strin
 pub trait AstWave: Send + Sync {
     /// How many matchers the wave runs.
     fn len(&self) -> usize;
+    /// Whether any compiled matcher reads this tape grammar, for files and guests alike.
+    fn accepts(&self, tag: u8) -> bool;
     /// Each matcher's relation over `tapes` (each a batch document's): its matched nodes, and the captures it binds.
     fn matched(
         &self,
@@ -3687,6 +3689,9 @@ impl Matchers {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    fn accepts(&self, tag: u8) -> bool {
+        self.0.as_ref().is_some_and(|wave| wave.accepts(tag))
     }
     /// Each matcher's relation over `tapes` ([`AstWave::matched`]); none without a matcher.
     fn relations(&self, batch: &Batch, tapes: &[WaveTape], binding: crate::code_rule_dsl::facts::nearest::Binding, atoms: &crate::content_store::atoms::Atoms) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
@@ -3803,18 +3808,15 @@ fn spike_projection(db: &std::ffi::OsStr, out: &[(String, Arc<dyn Source>)], row
     stored_spike::run(db, &read, &keys);
 }
 
-/// The tapes `matchers` run over: each document's that keeps one, a file's or a Python guest's (an annotation, code a
-/// rule parsed). A guest's nodes are `kind`, `field` and `child` rows as a file's are, so the matcher an `ast` atom
-/// stands for those joins with (`corpus::matchers::absorb`) matches them too; the matchers are Python's
-/// (`waves::policies::lower_matcher`), so a guest in another grammar takes no part.
+/// The tapes `matchers` read: every file or guest with a tape in a grammar the compiled matchers accept.
+/// Grammar admission belongs to the matchers, not the fact layer; hosts and guests use the same check.
 fn matcher_tapes(documents: &[Document], matchers: &Matchers) -> Vec<WaveTape> {
     if matchers.is_empty() {
         return Vec::new();
     }
-    let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
     documents
         .iter()
-        .filter(|d| d.guest.is_none() || Some(crate::code_rule_dsl::facts::core::facts_tag(&d.facts)) == python)
+        .filter(|d| matchers.accepts(crate::code_rule_dsl::facts::core::facts_tag(&d.facts)))
         .filter_map(|d| Some((d.key, Arc::clone(&d.facts), d.tape.as_ref()?.0.clone(), d.path.clone())))
         .collect()
 }

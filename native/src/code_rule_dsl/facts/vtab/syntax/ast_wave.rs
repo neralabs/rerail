@@ -34,7 +34,8 @@ fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::
                     .clone()
             };
             let (lowered, gates, captor) = got.map_err(|why| format!("{rel}: the matcher {text} does not lower: {why}"))?;
-            Ok(Matcher { rel: rel.clone(), lowered, gates, captures: captures.clone(), captor })
+            let tag = crate::code_rule_dsl::language::tape_tag(captor.grammar.language).ok_or_else(|| format!("{rel}: the matcher's grammar is not registered"))?;
+            Ok(Matcher { rel: rel.clone(), tag, lowered, gates, captures: captures.clone(), captor })
         })
         .collect::<Result<Vec<_>, String>>()
         .and_then(Wave::new)
@@ -46,6 +47,8 @@ fn compiled(matchers: &[(String, String, Vec<String>)], policies: &[serde_json::
 /// for the transducer, and the conditions on a document's path and text it runs under.
 pub(crate) struct Matcher {
     pub(crate) rel: String,
+    /// The tape grammar the compiled matcher reads, resolved once from its captor.
+    tag: u8,
     pub(in crate::code_rule_dsl) lowered: Arc<crate::code_rule_dsl::transducer::packed::LoweredMatcher>,
     pub(in crate::code_rule_dsl) gates: Vec<crate::code_rule_dsl::matcher::DocumentGate>,
     /// The metavariables the atom captures, in its relation's column order after `n` (decision 0107).
@@ -76,6 +79,9 @@ impl Wave {
 impl AstWave for Wave {
     fn len(&self) -> usize {
         self.list.len()
+    }
+    fn accepts(&self, tag: u8) -> bool {
+        self.list.iter().any(|m| m.tag == tag)
     }
     fn matched(
         &self,
@@ -222,7 +228,9 @@ fn active(matchers: &Wave, ran: &Ran) -> Vec<Vec<bool>> {
 /// text literals.
 fn runs_on(m: &Matcher, tape: &WaveTape, errors: &crate::code_rule_dsl::soundness::SyntaxErrors) -> bool {
     let source = tape.1.source.as_str();
-    m.gates.iter().all(|g| g.holds(&tape.3, source)) && m.captor.grammar.admits_source(source, errors, &mut rustc_hash::FxHashMap::default())
+    m.tag == crate::code_rule_dsl::facts::core::facts_tag(&tape.1)
+        && m.gates.iter().all(|g| g.holds(&tape.3, source))
+        && m.captor.grammar.admits_source(source, errors, &mut rustc_hash::FxHashMap::default())
 }
 
 type RootsAndLimits = (Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>);
