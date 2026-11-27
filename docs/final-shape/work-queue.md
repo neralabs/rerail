@@ -12151,3 +12151,13 @@ Typing-support-final-shape's one commit: a kind-set axis can keep only members w
 spike, off by default), in within.rs and syntax.rs. A clean merge.
 
 Checked under Relax: rerail-facts (18), tests-lang syntax::tests (103). No Metal or farm runs.
+
+### Q587. Roll-up 159 (Native-and-GPU-strata 06ce31b937 onto Pulling-it-all-together): what the merge chose
+
+Native-and-GPU-strata's one commit: decision 0724 (node ids are the batch's; lines, matches and tokens are types
+of their own) and rr's node span columns pack. 0724 is free in the hub; the README keeps both sides' rows (0706, 0721
+and 0724).
+
+Checked under Relax: tests-rr rule_syntax_files_pass_check_rr reports only lib/python/py-names-handed.rerail's 41
+undeclared relations, red before this merge (to fix after the roll-ups); the new pack checks clean. No Metal or farm
+runs.
