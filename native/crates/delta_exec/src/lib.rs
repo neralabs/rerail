@@ -50,6 +50,7 @@ pub mod semi;
 pub mod sym;
 pub mod tape;
 pub mod trace;
+pub mod ukl;
 
 #[cfg(test)]
 mod heap_watch;

@@ -242,3 +242,11 @@ DEFINE_KERNEL2(delta_exec_tests, desc_probe, ROBUFFER, uint8_t, t, "[table]", RO
     }
 }
 
+
+/// Every operation's UKL version, checked on the tests' device against its twin and registered: a runner there.
+#[test]
+fn every_ukl_version_checks_against_its_twin() {
+    device();
+    let gpu = Gpu::host().expect("the tests' device");
+    Runner::on(Box::new(gpu)).unwrap_or_else(|e| panic!("{e}"));
+}

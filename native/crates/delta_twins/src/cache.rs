@@ -45,10 +45,10 @@ crate::params! {
 
 /// The header's body bytes.
 pub const CACHE_BYTES: usize = 40;
-const STATE_AT: usize = BODY_AT + 8;
-const OPEN_AT: usize = BODY_AT + 16;
-const HELD_AT: usize = BODY_AT + 24;
-const USED_AT: usize = BODY_AT + 32;
+pub const STATE_AT: usize = BODY_AT + 8;
+pub const OPEN_AT: usize = BODY_AT + 16;
+pub const HELD_AT: usize = BODY_AT + 24;
+pub const USED_AT: usize = BODY_AT + 32;
 /// Where the entries start.
 pub const ENTRIES_AT: usize = BODY_AT + CACHE_BYTES;
 /// An entry's header: the layer, the columns' count, four columns, the rows' and the fences' counts.

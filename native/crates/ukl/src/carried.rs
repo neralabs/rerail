@@ -63,4 +63,8 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/body/view_reads.h", include_str!("../lib/ukl/body/view_reads.h")),
     // The tape's writer's ops for the kernels, written by hand (decisions 0434 §6, 0524).
     ("ukl/writer.h", include_str!("../lib/ukl/writer.h")),
+    // The delta operations' library (decision 0686): the twins' block layouts (generated from them) and what every
+    // operation's kernel shares; its kernels are `rerail-delta-exec`'s (`delta_exec/ukl/`).
+    ("ukl/delta/layout.h", include_str!("../lib/ukl/delta/layout.h")),
+    ("ukl/delta/op.h", include_str!("../lib/ukl/delta/op.h")),
 ];

@@ -625,7 +625,7 @@ impl Registry {
         self.versions.iter().filter(|v| v.op == op).collect()
     }
 
-    fn reference(&self, op: OpId) -> Option<&Version> {
+    pub(crate) fn reference(&self, op: OpId) -> Option<&Version> {
         self.versions.iter().find(|v| v.op == op && v.status == Status::Reference)
     }
 
@@ -694,6 +694,8 @@ pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Res
 /// CPU; a device's checked UKL version by `run_on`), pins its slots, writes its descriptor table and runs it.
 pub struct Runner {
     reg: Registry,
+    /// The device it runs on (`Runner::on`), each operation's checked UKL version there; none: the CPU, the twins.
+    device: Option<Box<dyn Kernels>>,
 }
 
 impl Runner {
@@ -707,13 +709,22 @@ impl Runner {
         crate::k0::register(&mut reg)?;
         crate::drop::register(&mut reg)?;
         crate::semi::register(&mut reg)?;
-        Ok(Runner { reg })
+        Ok(Runner { reg, device: None })
+    }
+
+    /// A runner on `device`: every operation's UKL version checked there against its twin and registered
+    /// (`crate::ukl::register_on`), so `run` runs it there; an operation with none (a host version's) runs its twin.
+    pub fn on(device: Box<dyn Kernels>) -> Result<Runner, String> {
+        let mut r = Runner::new()?;
+        crate::ukl::register_on(&mut r.reg, &*device)?;
+        r.device = Some(device);
+        Ok(r)
     }
 
     /// A runner of a test's own registry (its own operations and versions).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn of(reg: Registry) -> Runner {
-        Runner { reg }
+        Runner { reg, device: None }
     }
 
     /// Its registry: what is declared and registered (to check a version against the reference, to list versions).
@@ -736,7 +747,10 @@ impl Runner {
     /// Runs the operation `sig` declares on the CPU (`run_cpu`): on the blocks `slots` name, with `params`' bytes,
     /// its phases cut by `tiling`.
     pub fn run(&self, dir: &Directory, sig: &'static Signature, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
-        run_cpu(&self.reg, dir, self.op(sig)?, slots, params, tiling)
+        match &self.device {
+            Some(d) => run_on(&self.reg, dir, self.op(sig)?, &**d, slots, params, tiling),
+            None => run_cpu(&self.reg, dir, self.op(sig)?, slots, params, tiling),
+        }
     }
 
     /// Runs the operation `sig` declares on `device` (`run_on`): its checked UKL version there, else its twin.
