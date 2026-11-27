@@ -1950,7 +1950,7 @@ pub mod tests {
     }
 
     /// A chain of runs of rows in place that meet in order, joined at once (`Index::joined_in_place`), is the run
-    /// `Run::merge` makes of them two at a time: rows, tags, prints and fences, for full-row (tagged), prefix and
+    /// `Run::merge` makes of them two at a time: rows, prints and fences, for full-row, prefix and
     /// printed orders; a run whose first row orders before the last one's ends the chain there.
     #[test]
     fn runs_in_place_joined_at_once_are_the_pairwise_joins() {
@@ -1981,13 +1981,13 @@ pub mod tests {
             assert!(once.len() >= 2, "{cols:?}: the step down ends a chain");
             for (a, b) in once.iter().zip(&pairwise) {
                 assert_eq!(a.ids.to_vec(), b.ids.to_vec(), "{cols:?}");
-                assert_eq!((&a.tags, &a.prints, &a.fences), (&b.tags, &b.prints, &b.fences), "{cols:?}");
+                assert_eq!((&a.prints, &a.fences), (&b.prints, &b.fences), "{cols:?}");
             }
         }
     }
 
     /// Many runs merged at once on their keys (`merged_keyed`, a frozen order's `tier` to one run) are the pairwise
-    /// merge's run (`merged`): ids, tags, prints and fences, for full-row (tagged), prefix and printed orders, runs of
+    /// merge's run (`merged`): ids, prints and fences, for full-row, prefix and printed orders, runs of
     /// rows in place (some meeting, some not) among sorted ones, as a device fixpoint leaves them a round each.
     #[test]
     fn many_runs_merged_on_their_keys_are_the_pairwise_merge() {
@@ -2008,7 +2008,7 @@ pub mod tests {
             let pairwise = Index::merged(&rows[..], k, &cols, parts.clone());
             let keyed = Index::merged_keyed(&rows[..], k, &cols, parts);
             assert_eq!(pairwise.ids.to_vec(), keyed.ids.to_vec(), "{cols:?}");
-            assert_eq!((&pairwise.tags, &pairwise.prints, &pairwise.fences), (&keyed.tags, &keyed.prints, &keyed.fences), "{cols:?}");
+            assert_eq!((&pairwise.prints, &pairwise.fences), (&keyed.prints, &keyed.fences), "{cols:?}");
             let mut tiered = ix.clone();
             tiered.tier(&rows[..], k, 1);
             assert_eq!((tiered.runs.len(), tiered.runs[0].0.ids.to_vec()), (1, pairwise.ids.to_vec()), "{cols:?}: tier");
