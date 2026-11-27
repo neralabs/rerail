@@ -321,12 +321,12 @@ pub fn term_atoms_for_tests() -> u64 {
     TERMS.load(std::sync::atomic::Ordering::Relaxed)
 }
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn count_term_atom_for_tests() {
+pub fn count_term_atom_for_tests() {
     TERMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 #[cfg(not(any(test, feature = "test-hooks")))]
 #[inline(always)]
-pub(super) fn count_term_atom_for_tests() {}
+pub fn count_term_atom_for_tests() {}
 
 /// Tests: keyed batches forced off (`Some(false)`), on (`Some(true)`), or as the environment says (`None`).
 #[cfg(any(test, feature = "test-hooks"))]

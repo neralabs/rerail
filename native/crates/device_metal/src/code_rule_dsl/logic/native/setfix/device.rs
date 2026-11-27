@@ -169,15 +169,20 @@ fn same_nodes(a: &Arc<super::NodeTexts>, b: &Arc<super::NodeTexts>) -> bool {
         }
 }
 
+/// The source the binding of the long-text nodes `nodes` binds, where it is bound.
+fn node_source(nodes: &super::NodeTexts) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    use crate::code_rule_dsl::facts::vtab::{bound_source_in, syntax::LONG_TEXT_NODES};
+    match nodes {
+        super::NodeTexts::Held(source) => Some(Arc::clone(source)),
+        super::NodeTexts::At(at) => at.upgrade().and_then(|d| bound_source_in(&d, LONG_TEXT_NODES)),
+    }
+}
+
 /// The node view the binding of the long-text nodes `nodes` reads nodes' texts through
 /// (`Source::node_texts_in_place`), where it is in place.
 fn node_view(nodes: &super::NodeTexts) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
-    use crate::code_rule_dsl::facts::vtab::{Source, bound_source_in, syntax::LONG_TEXT_NODES};
-    let source = match nodes {
-        super::NodeTexts::Held(source) => Some(Arc::clone(source)),
-        super::NodeTexts::At(at) => at.upgrade().and_then(|d| bound_source_in(&d, LONG_TEXT_NODES)),
-    };
-    let Some(source) = source else {
+    use crate::code_rule_dsl::facts::vtab::Source;
+    let Some(source) = node_source(nodes) else {
         crate::code_rule_dsl::logic::profile::decision("node texts read in place (rr_node_text_any)", || "refused: no long-text source bound".to_owned());
         return None;
     };
@@ -229,6 +234,9 @@ thread_local! {
     /// The slots of the rule being compiled an atom over the component's own relation bound from a column of
     /// symbols (`compile`'s `own_syms`): atoms, read as texts where the atoms blocks hold them.
     static OWN_SYMS: std::cell::RefCell<Vector<usize>> = const { std::cell::RefCell::new(rerail_blocks::vector::Vector::new()) };
+    /// The arena slots of the rule being compiled that hold a node's text (`rr_node_text_any` made into the arena),
+    /// each with the slot of its node: (text, node).
+    static NODE_TEXT_OF: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Whether slot `x` of the rule being compiled holds a symbol of the component's own relation (`OWN_SYMS`).
@@ -338,6 +346,9 @@ pub(in crate::code_rule_dsl) struct Plan {
     head_from: Vec<Option<HeadFrom>>,
     /// Per head column, whether its values are arena texts (a text function's), stored as symbols as the rows are.
     arena: Vec<bool>,
+    /// Per head column of arena texts, the head column of the node whose text it is (`rr_node_text_any`'s), where
+    /// the head holds the node: its symbol is the node's term's atom (decision 0706 E1), with no hash of the text.
+    arena_node: Vec<Option<usize>>,
     nslots: usize,
     nsteps: usize,
     /// The rule's spec, hashed: its stages' observed fanouts are kept by it (`GROWTH`), for the next chunk's guesses.
@@ -569,6 +580,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         }
     });
     ARENA.with_borrow_mut(|a| a.clear());
+    NODE_TEXT_OF.with_borrow_mut(Vec::clear);
     OWN_SYMS.with_borrow_mut(|a| a.clear());
     // Slots whose texts are text functions of an input column's symbols, made once per symbol: the column, the slot
     // that bound the symbol, and the functions.
@@ -1164,6 +1176,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     bound[*out] = true;
                     if !finds {
                         ARENA.with_borrow_mut(|a| a.push(*out));
+                        NODE_TEXT_OF.with_borrow_mut(|t| t.push((*out, n)));
                     }
                 }
                 i += 1;
@@ -1453,7 +1466,12 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         h.finish()
     };
     let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
-    Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est, nodes })
+    let arena_node = j.out.iter().zip(&arena).map(|(t, &a)| {
+        let Term::Slot(s) = *t else { return None };
+        let node = NODE_TEXT_OF.with_borrow(|of| of.iter().find(|&&(x, _)| x == s).map(|&(_, n)| n)).filter(|_| a)?;
+        j.out.iter().position(|t| matches!(*t, Term::Slot(x) if x == node))
+    }).collect();
+    Ok(Plan { stages, head, head_slots, head_from, arena, arena_node, nslots, nsteps: j.steps.len(), key, est, nodes })
 }
 
 /// Whether `step` binds slot `x`.
@@ -2902,7 +2920,21 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
                 return Ok(None);
             }
             let ar = r.arena.as_ref().ok_or("an arena text with no arena")?;
-            let mut vals: Vector<i64> = Vector::from(cols[c]);
+            // A node's text whose node the head holds: its term's atom (decision 0706 E1), the rest interned.
+            let mut symbols: HashMap<i64, i64> = HashMap::new();
+            if let (Some(nc), Some(source)) = (plan.arena_node[c], plan.nodes.as_deref().and_then(node_source)) {
+                use crate::code_rule_dsl::facts::vtab::Source as _;
+                let at = Arc::as_ptr(names.atoms()).cast::<()>();
+                for (&v, &node) in cols[c].iter().zip(cols[nc]) {
+                    if !symbols.contains_key(&v)
+                        && let Some(a) = source.node_text_atom("rr_node_text_any", node, at)
+                    {
+                        super::count_term_atom_for_tests();
+                        symbols.insert(v, a);
+                    }
+                }
+            }
+            let mut vals: Vector<i64> = cols[c].iter().copied().filter(|v| !symbols.contains_key(v)).collect();
             vals.sort_unstable();
             vals.dedup();
             let strs = vals.iter().map(|&v| {
@@ -2911,7 +2943,8 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             }).collect::<Result<Vec<&str>, String>>()?;
             let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the arena texts' symbols: {e}"))?;
             rep.made += strs.len() as u64;
-            Ok(Some(vals.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect()))
+            symbols.extend(vals.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))));
+            Ok(Some(symbols))
         }).collect::<Result<_, _>>()?;
         // Each column's values by row, read in step (a constant head's column is not read).
         let mut values: Vec<_> = cols.iter().map(|col| col.iter().copied()).collect();

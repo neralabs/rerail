@@ -118,6 +118,8 @@ pub use kinds::{batched_rows_for_tests as kind_batched_rows, force_for_tests as 
 pub use scalars::built_whole_for_tests as summaries_built_whole;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use kinds::term_atoms_for_tests as node_text_term_atoms;
+/// A node's text read as its term's atom (decision 0706 E1), counted for the tests: the device's decode's too.
+pub use kinds::count_term_atom_for_tests;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use kinds::{keyed_force_for_tests as keyed_batches_forced, keyed_rows_for_tests as keyed_batched_rows};
 #[cfg(any(test, feature = "test-hooks"))]
