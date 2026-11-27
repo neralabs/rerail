@@ -1,29 +1,97 @@
-.policy "eslint-plugin-vue-no-watch-after-await" revision 2
+.policy "eslint-plugin-vue-no-watch-after-await" revision 3
 .description "Call watch and watchEffect before any await in a Vue setup() function, or keep their stop handle; a watcher made after an await is not tied to the component and leaks."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vsetup(o, f), vvue_import_call(c, x), estree_parent(x, p)
+#include "vue/vue-01.rerail"
+//   vsetup(o, f), vvue_import_call(c, x), vfn_kind(k), estree_parent(x, p), vjs(n), vts(n)
 
 // eslint-plugin-vue's no-watch-after-await: in a component's setup(), a watch() or watchEffect() (imported from Vue)
 // that comes after an `await` of setup's own code, and whose stop handle is dropped. Code of a nested function is
-// its own: an await or watch inside a callback does not count. No options.
+// its own: an await or watch inside a callback does not count. <script setup> is not checked. No options.
 //   async setup() { await load(); watch(a, f) }                   reported
 //   async setup() { await load(); const stop = watch(a, f) }      not reported: the handle is kept
+// The component's code is its view (vue/vue-01): each clause that starts a search is written once per grammar.
 .violation watch_after_await(at: node) code "vue/no-watch-after-await"
     "Move this watch call above the first await in setup(), or keep its stop handle and call it on unmount."
     suppress eslint "vue/no-watch-after-await"
-watch_after_await(c) :- vsetup(_, f), watcher(c), own(c, f), kind(w, "await_expression"), own(w, f), earlier(w, c),
-    !handle_kept(c).
-.decl watcher(c: node)
-watcher(c) :- vvue_import_call(c, x), (x = "watch" ; x = "watchEffect").
-.decl own(n: node, f: node)  // n is in function f's own code
-own(n, f) :- nearest(n, f, vfn_kind).
-// handle_kept(c): isMaybeUsedStopHandle: the result is declared, assigned, passed, put in an object or an array.
+watch_after_await(c) :- watcher(c, _), vjs(c), after_await(c), !handle_kept(c).
+watch_after_await(c) :- watcher(c, _), vts(c), after_await(c), !handle_kept(c).
+// watcher(c, f): watch call c is in setup function f's own code.
+.decl watcher(c: node, f: node)
+watcher(c, f) :- vvue_import_call(c, x), vjs(c), (x = "watch" ; x = "watchEffect"), nearest(c, f, vfn_kind), vsetup(_, f).
+watcher(c, f) :- vvue_import_call(c, x), vts(c), (x = "watch" ; x = "watchEffect"), nearest(c, f, vfn_kind), vsetup(_, f).
+// after_await(c): an await of the setup's own code starts before c, by line and column: the visit order (`earlier`
+// has no row over the view). An await in c's own arguments comes after it: `watch(await src, f)` is not reported.
+.decl after_await(c: node)
+after_await(c) :- awaits(w, c), line(w, lw), line(c, lc), (lw < lc ; lw = lc, col(w, cw), col(c, cc), cw < cc).
+// awaits(w, c): await w is in the own code of watch call c's setup. Each view node a clause names needs its own
+// seed (vue/vue-01): the await's too.
+.decl awaits(w: node, c: node)
+awaits(w, c) :- watcher(c, f), vjs(w), kind(w, "await_expression"), nearest(w, f, vfn_kind).
+awaits(w, c) :- watcher(c, f), vts(w), kind(w, "await_expression"), nearest(w, f, vfn_kind).
+// handle_kept(c): isMaybeUsedStopHandle: the result is declared, assigned, an argument or callee of a call, a
+// property's value or an array element (ESTree parents, through parentheses).
 .decl handle_kept(c: node)
-handle_kept(c) :- watcher(c), holder(c, p), kind(p, k), keeps(k).
-.decl holder(c: node, p: node)  // ESTree parent, through `?.` chains
-holder(c, p) :- watcher(c), estree_parent(c, p).
-.decl keeps(k: symbol)
-keeps("variable_declarator"). keeps("assignment_expression"). keeps("arguments"). keeps("pair"). keeps("array").
+handle_kept(c) :- watcher(c, _), vjs(p), estree_parent(c, p), keeps(p).
+handle_kept(c) :- watcher(c, _), vts(p), estree_parent(c, p), keeps(p).
+.decl keeps(p: node)
+keeps(p) :- kind(p, "variable_declarator") ; kind(p, "assignment_expression") ;
+    kind(p, "augmented_assignment_expression") ; kind(p, "call_expression") ; kind(p, "pair") ; kind(p, "array").
+keeps(p) :- kind(p, "arguments"), child(q, p, _), kind(q, "call_expression").
+
+// ESLint 9.39.5, eslint-plugin-vue 10.11.1 (pt1120-vue-01): each expected line is ESLint's. A kept handle (declared,
+// assigned, `||=`, an argument or callee of a call, a property, an array element) is not reported; `new Use(watch())`,
+// a parenthesised statement and `await watch()` are. An await in the call's own arguments comes after it.
+.test pt1120_watch_handles_and_order exactly
+    .fixture "x1.vue" ```
+        <script>
+        import { watch, watchEffect } from 'vue'
+        export default {
+          async setup() {
+            watch(a, f)
+            await load()
+            const s = watch(a, f)
+            x = watch(a, f)
+            y ||= watch(a, f)
+            use(watch(a, f))
+            new Use(watch(a, f))
+            watch(a, f)()
+            const o = { k: watch(a, f) }, arr = [watch(a, f)]
+            ;(watch(a, f))
+            await watch(a, f)
+            function inner() { watch(a, f) }
+            const cb = async () => { await z; watch(a, f) }
+            watchEffect(f)
+          }
+        }
+        </script>
+        ```
+    .fixture "x2.vue" ```
+        <script lang="ts">
+        import { watch as w } from 'vue'
+        import * as V from 'vue'
+        export default defineComponent({
+          setup: async (props: any) => {
+            w(await x, f)
+            V.watch(a, f)
+            const t: number = 1
+            w(a, f)
+          }
+        })
+        </script>
+        ```
+    .fixture "x3.vue" ```
+        <script setup>
+        import { watch } from 'vue'
+        await load()
+        watch(a, f)
+        </script>
+        ```
+    .expect "vue/no-watch-after-await" at "x1.vue":11
+    .expect "vue/no-watch-after-await" at "x1.vue":14
+    .expect "vue/no-watch-after-await" at "x1.vue":15
+    .expect "vue/no-watch-after-await" at "x1.vue":18
+    .expect "vue/no-watch-after-await" at "x2.vue":7
+    .expect "vue/no-watch-after-await" at "x2.vue":9
+.end
