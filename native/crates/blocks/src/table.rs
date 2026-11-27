@@ -380,13 +380,23 @@ fn merge_join<A: Table, B: Table>(a: &A, b: &B, on: &[(ColumnIndex, ColumnIndex)
 /// A relation read as a table: frozen, its own rows (and its base's) lie sorted on its sort column when it has one
 /// (decision 0678 step 8), and a base and its delta are its two runs. Its probes use its hashed indexes where one is
 /// on exactly the probe's columns, in both relations.
+///
+/// A trace's state (a chain of layers, `View::chain`) is one run of its ids, sorted on no column as a whole (each
+/// layer is, apart): its probes are its layers' (`Read::matching`, by each layer's indexes), never its top layer's
+/// relation alone.
 impl Table for View<'_> {
     fn sort(&self) -> Option<ColumnIndex> {
+        if self.is_chain() {
+            return None;
+        }
         let frozen = self.rel().is_frozen() && self.base.is_none_or(|b| b.is_frozen());
         self.rel().sort_col().filter(|_| frozen).map(|c| ColumnIndex::new(c as u16))
     }
 
     fn runs(&self) -> Runs {
+        if self.is_chain() {
+            return Runs::one(Run::new(0, Read::end(self).get()));
+        }
         let (b, end) = (self.rel().base_rows, View::total(self));
         match self.base {
             Some(_) => Runs::two(Run::new(0, b), Run::new(b, end)),
@@ -395,7 +405,9 @@ impl Table for View<'_> {
     }
 
     fn access(&self, cols: &[ColumnIndex]) -> Access {
-        if self.sort().is_some_and(|s| cols.contains(&s)) {
+        if self.is_chain() {
+            Access::Indexed
+        } else if self.sort().is_some_and(|s| cols.contains(&s)) {
             Access::Sorted
         } else if self.hashed(cols).is_some() {
             Access::Indexed
@@ -405,6 +417,9 @@ impl Table for View<'_> {
     }
 
     fn probe(&self, cols: &[ColumnIndex], key: &[i64], each: &mut dyn FnMut(RowId) -> bool) -> bool {
+        if self.is_chain() {
+            return Read::matching(self, cols, key).all(each);
+        }
         if self.access(cols) != Access::Indexed {
             return probe_by_runs(self, cols, key, each);
         }

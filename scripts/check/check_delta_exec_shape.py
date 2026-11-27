@@ -556,18 +556,21 @@ def b6(failures: list) -> None:
     for n in ("Load", "Parse", "Intern"):
         if not re.search(rf"\({n} \{{[^\n]*?\}}\)\.answer\(", boot_code):
             failures.append(f"boot.rs: the document set does not read through the {n} answerer")
-    # Demand (P§7.1): L1 asks of its tape port (its only rows written in Rust: the demand on its input), restricts its
-    # work to the want, and the boot's run answers only what is asked.
-    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.writer(cx.dir, L1Ports::TAPE)" not in l1 or "Read::matching(s, &[WANT_KEY], &[d])" not in l1:
-        failures.append("l1.rs: L1 neither restricts to its want (read in place) nor asks of its tape port (P§7.1)")
-    # Step 4 (0686): L1's delta holds no set or list of its own. The want is read where its states lie, the asks
-    # pushed as found, the documents gone and read written into the run's parts and docs blocks as found
-    # (`Parts::write`, `Docs`), which `drop_parts` and `k0_pass` read in place.
+    # Demand (P§7.1): L1 asks of its tape port, restricts its work to the want, and the boot's run answers only what
+    # is asked. Its selection is an operation (B6: only operations): `semi_change` of the tape port with the want, on
+    # the document (`change_rows` with no want), writes the parts, the rows read and the asks where they lie; the
+    # host neither reads the want nor pushes a row of its own.
+    if "const ASKED: &'static [usize] = &[0];" not in l1 or "asks.block(L1Ports::TAPE)" not in l1 or "semi::select(cx.reg, &self.semis" not in l1:
+        failures.append("l1.rs: L1's selection (its want, its asks of its tape port, P§7.1) is not the semi_change operation")
+    if re.search(r"asks\.writer\(|\.push\(&\[d\]|Parts::write\(|fn (newly|dropped|moved|wanted)\(", strip_rust(l1)):
+        failures.append("l1.rs: L1 selects on the host (the want read, asks pushed or parts written in Rust): the selection is semi_change's")
+    # Step 4 (0686): L1's delta holds no set or list of its own; the documents read are bound into the run's docs
+    # blocks as the selection's rows are read where they lie (`Docs`), which `k0_pass` reads in place.
     l1_code = strip_rust(l1)
     delta = l1_code[l1_code.find("fn delta("):l1_code.find("fn run(")]
     hits(l1, delta, r"\bBTree\w*|\bHash(Map|Set)\b|\bVec\b|vec!|collect::<|\.collect\(\)|want_rows\(", "a set or list of L1's delta's own (read the want in place; write the parts and docs blocks as found)", failures)
-    if "Parts::write(cx.dir" not in delta or "docs_written(cx" not in delta:
-        failures.append("l1.rs: L1's delta does not write its parts and docs blocks as it finds them")
+    if "self.select(cx" not in delta or "docs_written(cx" not in delta:
+        failures.append("l1.rs: L1's delta does not select by its operation and bind its docs blocks as it reads the rows")
     # Step 5 (0686): demand is the want trace; a want is named (`WantRows`: each row, and whether it holds one), its
     # change written into the trace's runs as found. The boot's run holds no set: its productions are every relation
     # at l0's key (`AtKey`), and the one document it names answered once (a flag).

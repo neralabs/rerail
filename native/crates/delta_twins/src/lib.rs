@@ -39,6 +39,7 @@ pub mod drop;
 pub mod intern;
 pub mod k0;
 pub mod samples;
+pub mod semi;
 pub mod sort;
 pub mod tape;
 pub mod trace;

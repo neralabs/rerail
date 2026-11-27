@@ -45,7 +45,8 @@ impl Disk {
         let iops = InternOps::declare(&mut bench.reg).unwrap();
         let ops = K0Ops::declare(&mut bench.reg).unwrap();
         let drops = crate::drop::DropOps::declare(&mut bench.reg).unwrap();
-        let l1 = L1 { ops, drops };
+        let semis = crate::semi::SemiOps::declare(&mut bench.reg).unwrap();
+        let l1 = L1 { ops, drops, semis };
         let place = bench.dir.lasting();
         let inst = Instance::new(&l1, &mut bench.dir).unwrap().resumed(place, pins.as_ref().map_or(&[][..], |p| &p.1.outs), pins.as_ref().and_then(|p| p.1.want), pins.as_ref().map_or(&[][..], |p| &p.1.asks));
         let docs = DocSet::new(world, iops, drops, &bench.dir, pins.as_ref().and_then(|p| p.1.tape), pins.as_ref().map(|p| p.0)).unwrap();

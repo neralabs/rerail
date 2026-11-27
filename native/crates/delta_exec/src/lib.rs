@@ -46,6 +46,7 @@ pub mod l1;
 pub mod kform;
 pub mod op;
 pub mod residency;
+pub mod semi;
 pub mod sym;
 pub mod tape;
 pub mod trace;

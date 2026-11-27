@@ -202,10 +202,16 @@ pub struct In<'t, P> {
     ports: Vec<Bistate<View<'t>>>,
     heads: Vec<(Option<BlockId>, Option<BlockId>)>,
     globals: Vec<GlobalIn>,
+    want: WantIn,
     of: PhantomData<fn() -> P>,
 }
 
 impl<'t, P> In<'t, P> {
+    /// The heads the want's bistate is between (`None`: every output wanted).
+    pub fn want_heads(&self) -> WantIn {
+        self.want
+    }
+
     /// Input port `p`'s bistate.
     pub fn port(&self, p: PortIn<P>) -> &Bistate<View<'t>> {
         &self.ports[p.0]
@@ -273,6 +279,12 @@ impl<P> Asks<P> {
     /// Whether it asks of no port.
     pub fn is_empty(&self) -> bool {
         self.runs.iter().all(Option::is_none)
+    }
+
+    /// The runs block of its asks of input port `port`, for an operation to write in place: refused for a port its
+    /// port set does not ask of.
+    pub fn block(&self, port: PortIn<P>) -> Result<BlockId, String> {
+        self.runs.get(port.0).copied().flatten().ok_or_else(|| format!("input port {} is not asked of (PortSet::ASKED)", port.0))
     }
 
     /// A writer of its asks of input port `port`, pinned to write while it lives: refused for a port its port set
@@ -644,7 +656,7 @@ impl Instance {
                     Some((None, a)) => Some(Bistate::cold(self.want.state(&table, a)?)),
                     Some((b, a)) => Some(Bistate::new(self.want.state(&table, b)?, self.want.state(&table, a)?)),
                 };
-                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec(), of: PhantomData };
+                let input = In { ports, heads: ins.iter().map(|p| (p.1, p.2)).collect(), globals: globals.to_vec(), want, of: PhantomData };
                 op.delta(cx, &input, w.as_ref(), &mut cache, &mut out, &mut asks)
             };
             let work = match work {

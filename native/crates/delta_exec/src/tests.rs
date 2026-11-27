@@ -26,6 +26,7 @@ pub(crate) struct Fx {
     pub ops: InternOps,
     pub k0: K0Ops,
     pub drops: crate::drop::DropOps,
+    pub semis: crate::semi::SemiOps,
     pub traces: TraceOps,
     pub caches: CacheOps,
     pub answers: crate::answer::AnswerOps,
@@ -46,16 +47,17 @@ impl Fx {
         let ops = InternOps::declare(&mut reg).unwrap();
         let k0 = K0Ops::declare(&mut reg).unwrap();
         let drops = crate::drop::DropOps::declare(&mut reg).unwrap();
+        let semis = crate::semi::SemiOps::declare(&mut reg).unwrap();
         let traces = TraceOps::declare(&mut reg).unwrap();
         let caches = CacheOps::declare(&mut reg).unwrap();
         let answers = crate::answer::AnswerOps::declare(&mut reg).unwrap();
         let mut dir = Directory::default();
         let atoms = Atoms::new(&mut dir);
-        Fx { reg, ops, k0, drops, traces, caches, answers, dir, blobs: BlobRows::new(&traces), atoms }
+        Fx { reg, ops, k0, drops, semis, traces, caches, answers, dir, blobs: BlobRows::new(&traces), atoms }
     }
 
     pub fn l1(&self) -> L1 {
-        L1 { ops: self.k0, drops: self.drops }
+        L1 { ops: self.k0, drops: self.drops, semis: self.semis }
     }
 
     /// A document of `src` answered at `path`, interned: its blobs and its symbols blob.

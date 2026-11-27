@@ -29,6 +29,9 @@ use crate::cache::Sizes;
 use crate::contract::{Asks, At, CacheW, Cx, DeltaOp, In, Out, Port, PortGlobal, PortIn, PortOut, PortSet, Ports, Work, outs};
 use crate::dir::{BlockId, Directory};
 use crate::drop::{DropOps, Parts, drop_parts};
+use crate::semi::{self, SemiOps, Side};
+use crate::trace::open_runs;
+use rerail_blocks::layer::Runs;
 use crate::files::{BlobId, BlobRows, DocIds};
 use crate::k0::{Docs, DocsIn, K0Doc, K0Ops, k0_pass};
 use crate::kform::{self, RELATIONS};
@@ -101,6 +104,7 @@ pub fn row_blobs(row: &[i64]) -> (DocIds, BlobId) {
 pub struct L1 {
     pub ops: K0Ops,
     pub drops: DropOps,
+    pub semis: SemiOps,
 }
 
 fn cell(v: &View<'_>, id: RowId, c: u16) -> i64 {
@@ -133,30 +137,33 @@ fn docs_written(cx: &mut Cx<'_>, push: impl FnOnce(&mut Docs, &mut Cx<'_>) -> Re
 }
 
 /// The want rows' key column (`contract::want_shape`: `(port, key)`, partitioned by key): L1's is a document.
-const WANT_KEY: ColumnIndex = ColumnIndex::new(1);
+const WANT_KEY: usize = 1;
 
-/// Whether document `d` is wanted in want state `s` (none: nothing is), read where it lies, by its partition.
-fn wanted(s: Option<&View<'_>>, d: i64) -> bool {
-    s.is_some_and(|s| Read::matching(s, &[WANT_KEY], &[d]).next().is_some())
+/// The document of tape port row `row` (read where the selection wrote it), its blobs where `blobs` has them: the
+/// blocks a `k0_pass` launch binds for it.
+fn doc_of(blobs: &BlobRows, dir: &Directory, row: &[i64; TAPE_ARITY]) -> Result<K0Doc, String> {
+    let blob = |at: usize| blobs.get(dir, &BlobId::of_words(&row[at..at + 4]))?.ok_or_else(|| "a blob the tape port names, which nothing holds".to_string());
+    Ok(K0Doc { module: row[0], src: blob(TAPE_SOURCE)?, tape: blob(TAPE_TAPE)?, syms: blob(TAPE_SYMS)?.block })
 }
 
-/// The documents whose want rows `ids` of state `to` start, and which state `from` does not want: each once (at its
-/// first row in `to`), read where the states lie. The want's flips into `to` (its rows added, or gone when `to` is
-/// its before) give the documents newly wanted (or no longer wanted).
-fn moved<'a>(ids: impl Iterator<Item = RowId> + 'a, to: &'a View<'a>, from: Option<&'a View<'a>>) -> impl Iterator<Item = i64> + 'a {
-    ids.filter_map(move |id| {
-        let d = cell(to, id, 1);
-        (!wanted(from, d) && Read::matching(to, &[WANT_KEY], &[d]).min() == Some(id)).then_some(d)
-    })
+/// The tape port's arity (`tape_shape`).
+const TAPE_ARITY: usize = 15;
+
+/// L1's selection, written where it lies: which documents a run retracts (a parts block) and reads (a runs block of
+/// their tape rows, +1), and its asks of the tape port, by `semi_change` of the tape port's change with the want's
+/// on the document (`change_rows`, with no want: every document wanted). Each id of the tape port is a row of the
+/// selection once at most, and only a change of the want reaches its kept rows: the room is the change's counts
+/// (the layers', P§1), or the tape's ids when the want moved.
+struct Selected {
+    rows: BlockId,
+    parts: Parts,
 }
 
-/// The documents newly wanted under `w`, and those no longer wanted.
-fn newly<'a>(w: &'a Bistate<View<'a>>) -> impl Iterator<Item = i64> + 'a {
-    moved(w.added(), w.after(), w.before())
-}
-
-fn dropped<'a>(w: &'a Bistate<View<'a>>) -> impl Iterator<Item = i64> + 'a {
-    w.before().into_iter().flat_map(move |b| moved(w.gone(), b, Some(w.after())))
+impl Selected {
+    fn release(self, dir: &mut Directory) {
+        dir.release(self.rows);
+        self.parts.release(dir);
+    }
 }
 
 impl L1 {
@@ -177,47 +184,24 @@ impl DeltaOp for L1 {
 
     fn delta(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, want: Option<&Bistate<View<'_>>>, cache: &mut CacheW<Sizes>, out: &mut Out<L1Ports>, asks: &mut Asks<L1Ports>) -> Result<Work, String> {
         let work = Work::default();
-        // The documents wanted on each side (`None`: all), read where the want's states lie. L1's grain is the
-        // document: a wanted relation of a document is all of that document's relations (over-demand at its grain,
-        // which D1 allows).
+        // L1's grain is the document: a wanted relation of a document is all of that document's relations
+        // (over-demand at its grain, which D1 allows).
         if ins.is_identity() && want.is_none_or(Bistate::is_identity) {
             return Ok(work);
         }
-        let was = |d: i64| want.is_none_or(|w| wanted(w.before(), d));
-        let now = |d: i64| want.is_none_or(|w| wanted(Some(w.after()), d));
-        // Demand out (P§7.1): the documents newly wanted asked of the tape port, those no longer wanted let go, each
-        // pushed as it is found.
-        if let Some(w) = want {
-            let mut asked = None;
-            for (d, diff) in newly(w).map(|d| (d, 1)).chain(dropped(w).map(|d| (d, -1))) {
-                if asked.is_none() {
-                    asked = Some(asks.writer(cx.dir, L1Ports::TAPE)?);
-                }
-                asked.as_ref().expect("a writer").push(&[d], diff);
-            }
-        }
-        let (tape, atoms) = (ins.port(L1Ports::TAPE), ins.global(L1Ports::ATOMS).block);
-        // Retracted: the documents gone from the tape port that were wanted, and those no longer wanted, written into
-        // the run's parts block as they are found (sealed: sorted, each once).
-        let cap = tape.gone().count() + want.map_or(0, |w| w.gone().count());
-        let parts = Parts::write(cx.dir, cap, |put| {
-            if let Some(tb) = tape.before() {
-                tape.gone().map(|id| cell(tb, id, 0)).filter(|&d| was(d)).for_each(&mut *put);
-            }
-            if let Some(w) = want {
-                dropped(w).for_each(put);
-            }
-        })?;
-        // Read: the documents added to the tape port that are wanted, and those newly wanted that it holds unchanged
-        // (a newly wanted relation is an initial run of it, P§5), each written into the run's docs blocks as found.
+        let atoms = ins.global(L1Ports::ATOMS).block;
+        let sel = self.select(cx, ins, want, asks)?;
+        // The documents read: the selection's added rows, each one's blocks bound into the run's docs blocks.
         let docs = docs_written(cx, |docs, cx| {
-            for id in tape.added().filter(|&id| now(cell(tape.after(), id, 0))) {
-                docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape.after(), id)?)?;
-            }
-            for d in want.into_iter().flat_map(newly) {
-                // Its rows the tape port held before: an added one is read above.
-                for id in Read::matching(tape.after(), &[ColumnIndex::new(0)], &[d]).filter(|&id| tape.before().is_some_and(|b| Read::live(b, id))) {
-                    docs.push(cx.dir, &doc_at(cx.blobs, cx.dir, tape.after(), id)?)?;
+            let n = Runs::new(cx.dir.read("L1's selection", &[sel.rows])?.block(0)).len();
+            for i in 0..n {
+                let row = {
+                    let l = cx.dir.read("L1's selection", &[sel.rows])?;
+                    let r = Runs::new(l.block(0));
+                    (r.diff(i) > 0).then(|| core::array::from_fn::<i64, TAPE_ARITY, _>(|c| r.get(i, c)))
+                };
+                if let Some(row) = row {
+                    docs.push(cx.dir, &doc_of(cx.blobs, cx.dir, &row)?)?;
                 }
             }
             Ok(())
@@ -225,13 +209,13 @@ impl DeltaOp for L1 {
         let docs = match docs {
             Ok(d) => d,
             Err(e) => {
-                parts.release(cx.dir);
+                sel.release(cx.dir);
                 return Err(e);
             }
         };
-        let ran = self.retract_and_read(cx, atoms, &docs, &parts, cache, out, work);
+        let ran = self.retract_and_read(cx, atoms, &docs, &sel.parts, cache, out, work);
         docs.release(cx.dir);
-        parts.release(cx.dir);
+        sel.release(cx.dir);
         ran
     }
 
@@ -251,6 +235,40 @@ impl DeltaOp for L1 {
 }
 
 impl L1 {
+    /// The run's selection (`Selected`): one launch.
+    fn select(&self, cx: &mut Cx<'_>, ins: &In<'_, L1Ports>, want: Option<&Bistate<View<'_>>>, asks: &Asks<L1Ports>) -> Result<Selected, String> {
+        let tape = ins.port(L1Ports::TAPE);
+        let (before, after) = ins.heads(L1Ports::TAPE);
+        let a = Side { before, after, arity: TAPE_ARITY, col: 0 };
+        let (gone, added) = tape.counts();
+        let (want_gone, moved) = want.map_or((0, false), |w| (w.counts().0, !w.is_identity()));
+        let rows_cap = if moved { Read::end(tape.after()).get() as usize } else { gone + added };
+        let b = match (want, ins.want_heads()) {
+            (Some(w), Some((before, after))) => Some((Side { before, after, arity: Read::arity(w.after()), col: WANT_KEY }, asks.block(L1Ports::TAPE)?)),
+            _ => None,
+        };
+        let rows = open_runs(cx.dir, &tape_shape().encode()?, rows_cap);
+        let parts = match Parts::open(cx.dir, gone + want_gone) {
+            Ok(p) => p,
+            Err(e) => {
+                cx.dir.release(rows);
+                return Err(e);
+            }
+        };
+        let ran = semi::select(cx.reg, &self.semis, cx.dir, &a, b.as_ref().map(|(s, k)| (s, *k)), rows, parts).and_then(|()| {
+            let r = Runs::new(cx.dir.read("L1's selection", &[rows])?.block(0)).needed();
+            if r > 0 { Err(format!("L1's selection outgrew its room by {r} rows: its bound is wrong")) } else { Parts::sealed(cx.dir, parts) }
+        });
+        match ran {
+            Ok(parts) => Ok(Selected { rows, parts }),
+            Err(e) => {
+                cx.dir.release(rows);
+                cx.dir.release(parts);
+                Err(e)
+            }
+        }
+    }
+
     /// A delta's retractions and reads, its documents `docs` and its parts `parts` written: the room its runs need
     /// from the cache's sizes, then `drop_parts` over each kept output and one `k0_pass`.
     #[allow(clippy::too_many_arguments)]

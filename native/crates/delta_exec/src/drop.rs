@@ -83,6 +83,18 @@ impl Parts {
         Ok(Parts { id, n })
     }
 
+    /// A parts block with room for `cap` partitions, opened (it lists none) for an operation to write in place and
+    /// seal (`semi_change`, `change_rows`); read back as written with `sealed`.
+    pub fn open(dir: &mut Directory, cap: usize) -> Result<BlockId, String> {
+        Parts::write(dir, cap, |_| {}).map(|p| p.id)
+    }
+
+    /// The parts block `id` an operation sealed, as it lies.
+    pub fn sealed(dir: &Directory, id: BlockId) -> Result<Parts, String> {
+        let n = twin::parts(dir.read("a parts block", &[id])?.block(0)).count();
+        Ok(Parts { id, n })
+    }
+
     pub fn id(&self) -> BlockId {
         self.id
     }
