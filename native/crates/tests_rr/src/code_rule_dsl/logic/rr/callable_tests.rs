@@ -180,6 +180,6 @@ fn a_run_names_the_relations_it_could_call() {
     crate::code_rule_dsl::logic::profile::set_directory(&prof);
     findings(&whole(), &dir);
     let lines = decided(&prof, &["callable candidates"]);
-    assert!(lines.iter().any(|l| l.contains("1 of 2 exports: same_globals bbbf (")), "{lines:?}");
+    assert!(lines.iter().any(|l| l.contains("same_globals bbbf by file (")), "{lines:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

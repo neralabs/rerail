@@ -75,18 +75,24 @@ are in the cross part, and the files' part has no demand from them.
 **The cost per batch**: one batch of 48 requests, entering one chunk that holds the 3 files, took 933 to 1,336 µs,
 20 to 28 µs a request, against t61's 47 µs to open one engine run.
 
-**The real cases, by the candidates' line** (the CLI's debug build, cold, on fresh stores):
+**The real cases, by the candidates' line** (the CLI's debug build, cold, on fresh stores). The split hands a
+file's rows of a cross-read relation R on as `R_at(d, ..)`, its document in front, and relays them,
+`R(..) :- R_at(_, ..)`: the line looks through the relay to R's readers.
 
-- The data layer's 224-file sample, `bandit-b113` (17.5 s user CPU, 718 MB): none of `python/names`' 20 exports.
-  `imported_at`, `reads_at_at`, `tc_only_at`, `fwd_any_at` and `fwd_rt_at` (12 k to 17 k rows) are each read by
-  their relation's rule with the file unbound; the factorized `sym_at`, `asks_at` and `spelled_at` (15 k to 19 k)
-  have no file in column 0.
-- The PostHog sample's 291 files, Django's three policies that read points_to (68.4 s user CPU, 1,516 MB): none of
-  `points_to`'s 188 exports, nor any other phase's or the policies'. The largest (`pt_at_at` and `pt_chk_at`,
-  118,867 rows; `pt_vopen_l_0_at` and `pt_vpos_t_at`, 106,654; `pt_look_t_at`, 93,224) are each read by their
-  relation's rule with the file unbound. Of the policies' own, the largest (461,298 rows) have no file in column 0,
-  or readers that bind only the file.
+- Routed by the file (the spike's call): none, in either corpus. The cross part reads a file's exports by symbol,
+  module, qualified name or term (decision 0677's keys), and the read is what finds the file: no reader knows the file
+  before it reads.
+- Routed by the columns the readers bind (by key), over the PostHog sample's 291 files with Django's three policies
+  that read points_to (58.7 s user CPU, 1,459 MB): 133 of `points_to`'s 188 exports, the largest `pt_at_at` (`fbf`,
+  118,867 rows), `pt_chk_at` (`fb`, 118,867), `pt_look_t_at` (`ffbb`, 93,224), `pt_vopen_l_8_at` (`fb`, 79,319) and
+  `pt_btype_l_0_at` (`ffb`, 50,764); 11 of `py_names`' 30, the largest `reads_at_at` (`fbf`, 11,117); 17 of the
+  policies' 38, the largest `violation` (`fbff`, 461,298, with a node column). Not callable: `pt_vopen_l_0_at` and
+  `pt_vpos_t_at` (106,654 each) and `imported_at` (10,505), read with no column bound; `pt_bound_in_t_at` and
+  `pt_rbound_t_at`, negated.
+- Over the data layer's 224-file sample, `bandit-b113` (16.6 s user CPU, 702 MB): 7 of `py_names`' 20 exports by
+  key, the largest `reads_at_at` (`fbf`, 14,521 rows); `imported_at`, `fwd_any_at` and `defined_at` read with no
+  column bound.
 
-In both, the cross part reads a file's exports by symbol, module or definition (decision 0677's keys), and the read
-is what finds the file: no reader knows the file before it reads. The spike's call, a reader binding the file and
-more, is the generated corpus's shape, and neither real program has it.
+A call routed by key needs what the spike does not have: each file's keys, so that a request is sent to the files
+that can answer it. The rows here are the exports' rows, not what readers ask for: how many of the keys a run asks
+for is not measured.

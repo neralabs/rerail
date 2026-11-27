@@ -8776,7 +8776,7 @@ fn run_observed_within(
         let located = |r: &str| split.locations.get(r).is_some_and(|l| l.contains(&0));
         let mut by: Vec<(usize, String, std::result::Result<preparation::callable::Candidate, String>)> = preparation::callable::candidates(&lowered.version, &split.file_local, &split.exports, &located).into_iter().map(|(r, c)| (totals.rows(&r).unwrap_or(0), r, c)).collect();
         by.sort_unstable_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| format!("{} {} ({n} rows, {} readers{})", c.rel, c.pattern(), c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default()))).take(12).collect();
+        let shown: Vec<String> = by.iter().filter_map(|(n, _, c)| c.as_ref().ok().map(|c| format!("{} {} by {} ({n} rows, {} readers{})", c.rel, c.pattern(), if c.by_file { "file" } else { "key" }, c.readers, c.refused.as_ref().map(|w| format!("; {w}")).unwrap_or_default()))).take(12).collect();
         let not: Vec<String> = by.iter().filter_map(|(n, r, c)| c.as_ref().err().map(|why| format!("{r} ({n} rows): {why}"))).take(8).collect();
         format!("{} of {} exports: {}; the largest not: {}", by.iter().filter(|b| b.2.is_ok()).count(), split.exports.len(), shown.join(", "), not.join("; "))
     });

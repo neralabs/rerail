@@ -197,6 +197,9 @@ pub struct Candidate {
     pub readers: usize,
     /// Why `.callable` would refuse it as it stands (a node column), where it would.
     pub refused: Option<String>,
+    /// Whether its readers bind its file (column 0, its location): a call is routed to the file it names. Otherwise
+    /// a call is routed by the bound columns, which needs each file's keys.
+    pub by_file: bool,
 }
 
 impl Candidate {
@@ -207,9 +210,11 @@ impl Candidate {
 }
 
 /// The relations of `v` its files make (`file_local`) that the cross part reads (`exports`), each assessed as a
-/// callable: a [`Candidate`] where column 0 is its file's (`located`), it is not an output, every reader is a rule
-/// of the cross part reading it positively and binding column 0 and every column of the pattern before the read (as
-/// a request binds them, `request_body`), and at least one column is left free; otherwise why not. A node column is
+/// callable: a [`Candidate`] where it is not an output, every reader is a rule of the cross part reading it
+/// positively, they all bind at least one column before the read (as a request binds them, `request_body`), and at
+/// least one column is left free; otherwise why not. A relay the split made (`R(..) :- R_at(_, ..)`, a file's rows
+/// with their document in front) is looked through: R's readers are the relay's. Routed by its file where the
+/// readers bind column 0 and it is the file's location (`located`); by its bound columns otherwise. A node column is
 /// named, not a reason: it is what `.callable` refuses today.
 pub fn candidates(v: &Version, file_local: &BTreeSet<String>, exports: &[String], located: &dyn Fn(&str) -> bool) -> Vec<(String, Result<Candidate, String>)> {
     let outputs: BTreeSet<&str> = v.outputs().map(|a| v.text(a)).collect();
@@ -217,19 +222,40 @@ pub fn candidates(v: &Version, file_local: &BTreeSet<String>, exports: &[String]
 }
 
 fn assessed(v: &Version, rel: &str, file_local: &BTreeSet<String>, outputs: &BTreeSet<&str>, located: &dyn Fn(&str) -> bool) -> Result<Candidate, String> {
-    if outputs.contains(rel) {
-        return Err("an output".to_owned());
-    }
     if !file_local.contains(rel) {
         return Err("not made by its files alone".to_owned());
     }
-    if !located(rel) {
-        return Err("column 0 is not its file's location".to_owned());
-    }
     let decl = v.decl_of(rel).ok_or_else(|| "not declared".to_owned())?;
     let cols: Vec<(String, String)> = decl.cols().map(|(n, t)| (v.text(n).to_owned(), v.text(t).to_owned())).collect();
+    let (bound, readers) = readers_bind(v, rel, file_local, outputs, 3)?;
+    if bound.is_empty() {
+        return Err("its readers bind none of its columns".to_owned());
+    }
+    if bound.len() == cols.len() {
+        return Err("its readers bind every column (a test, not a call)".to_owned());
+    }
+    let by_file = bound.contains(&0) && located(rel);
+    if by_file && bound.len() == 1 {
+        return Err("its readers bind only its file".to_owned());
+    }
+    let refused = cols.iter().find(|(_, t)| t == "node").map(|(n, _)| format!("column `{n}` is a node"));
+    Ok(Candidate { rel: rel.to_owned(), bound: bound.into_iter().collect(), width: cols.len(), readers, refused, by_file })
+}
+
+/// The columns of `rel` every reader binds before its read, and how many rules read it (through relays, `depth`
+/// deep); why not, where a reader is a file's rule, a negation or an output.
+fn readers_bind(v: &Version, rel: &str, file_local: &BTreeSet<String>, outputs: &BTreeSet<&str>, depth: usize) -> Result<(BTreeSet<usize>, usize), String> {
+    if outputs.contains(rel) {
+        return Err(format!("{rel} is an output"));
+    }
     let mut bound: Option<BTreeSet<usize>> = None;
     let mut readers = 0;
+    let mut meet = |here: BTreeSet<usize>| {
+        bound = Some(match bound.take() {
+            None => here,
+            Some(b) => b.intersection(&here).copied().collect(),
+        })
+    };
     for r in v.rules() {
         let lits: Vec<LitRef<'_>> = r.body().collect();
         let mut reads = false;
@@ -246,37 +272,35 @@ fn assessed(v: &Version, rel: &str, file_local: &BTreeSet<String>, outputs: &BTr
             if file_local.contains(head) {
                 return Err(format!("read by {head}, a file's relation"));
             }
-            let (_, vars) = request_body(v, &lits, i, rel);
-            let here: BTreeSet<usize> = a
-                .args()
-                .enumerate()
-                .filter(|(_, t)| !matches!(t, TermRef::Wild | TermRef::Top))
-                .filter(|(_, t)| {
-                    let mut vs = VarSet::new();
-                    term_vars(*t, &mut vs);
-                    vs.is_subset(&vars)
-                })
-                .map(|(k, _)| k)
-                .collect();
-            if !here.contains(&0) {
-                return Err(format!("{head}'s rule reads it with its file unbound"));
+            // A relay: the rule's one literal is this read, and its head's columns are some of the read's variables.
+            let args: Vec<TermRef<'_>> = a.args().collect();
+            let relay: Option<Vec<usize>> = (lits.len() == 1 && depth > 0 && head != rel)
+                .then(|| r.head().args().map(|t| t.var().and_then(|s| args.iter().position(|x| x.var() == Some(s)))).collect::<Option<Vec<usize>>>())
+                .flatten();
+            if let Some(map) = relay {
+                let (theirs, n) = readers_bind(v, head, file_local, outputs, depth - 1)?;
+                readers += n;
+                meet(theirs.into_iter().map(|j| map[j]).collect());
+                continue;
             }
-            bound = Some(match bound {
-                None => here,
-                Some(b) => b.intersection(&here).copied().collect(),
-            });
+            let (_, vars) = request_body(v, &lits, i, rel);
+            meet(
+                args.iter()
+                    .enumerate()
+                    .filter(|(_, t)| !matches!(t, TermRef::Wild | TermRef::Top))
+                    .filter(|(_, t)| {
+                        let mut vs = VarSet::new();
+                        term_vars(**t, &mut vs);
+                        vs.is_subset(&vars)
+                    })
+                    .map(|(k, _)| k)
+                    .collect(),
+            );
+            readers += 1;
         }
-        readers += usize::from(reads);
+        let _ = reads;
     }
-    let bound = bound.ok_or_else(|| "no rule reads it".to_owned())?;
-    if bound.len() == 1 {
-        return Err("its readers bind only its file".to_owned());
-    }
-    if bound.len() == cols.len() {
-        return Err("its readers bind every column (a test, not a call)".to_owned());
-    }
-    let refused = cols.iter().find(|(_, t)| t == "node").map(|(n, _)| format!("column `{n}` is a node"));
-    Ok(Candidate { rel: rel.to_owned(), bound: bound.into_iter().collect(), width: cols.len(), readers, refused })
+    bound.map(|b| (b, readers)).ok_or_else(|| format!("no rule reads {rel}"))
 }
 
 /// `v` split into its caller and its callees (module docs); `None` where it declares no callable.
