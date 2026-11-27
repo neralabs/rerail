@@ -91,10 +91,10 @@ fn npm_ignored(tree: &Tree<'_>) -> Vec<Vec<String>> {
     let read = |dir: &str, name: &str| std::fs::read_to_string(tree.root.join(dir).join(name)).ok();
     let manifests: BTreeMap<String, Manifest> = tree
         .packages
-        .iter()
+        .keys()
         // Every package.json, read or not: npm's nearest manifest decides, and one it cannot read decides nothing
         // (`publishes` is None) rather than handing its files to the package above (review F9).
-        .map(|(dir, _)| {
+        .map(|dir| {
             let bytes = std::fs::read(tree.root.join(dir).join("package.json")).unwrap_or_default();
             (dir.clone(), Manifest::parse(dir.clone(), &bytes).with_ignore_files(read(dir, ".npmignore"), read(dir, ".gitignore")))
         })
