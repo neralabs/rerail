@@ -29,19 +29,20 @@ open_call(c) :- kind(c, "call"), field(c, "function", f), (builtin_at(f, "open")
 .violation mode_only_redundant(at: node) code "UP015"
     "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing."
     suppress ruff "UP015"
-mode_only_redundant(a) :- mode_arg(a, v), redundant(v), @replace_all(v, "[rtU]", "") = "".
+mode_only_redundant(a) :- mode_arg(a, v), redundant(a), @replace_all(v, "[rtU]", "") = "".
 .violation mode_has_redundant_flags(at: node, v: symbol) code "UP015"
     "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`)."
     suppress ruff "UP015"
-mode_has_redundant_flags(a, v) :- mode_arg(a, v), redundant(v), @replace_all(v, "[rtU]", "") != "".
+mode_has_redundant_flags(a, v) :- mode_arg(a, v), redundant(a), @replace_all(v, "[rtU]", "") != "".
 
-.decl redundant(v: symbol)
-redundant(v) :- valid_mode(v), (contains("U", v) ; contains("t", v) ; v = "r").
-// valid_mode(v): Ruff's OpenMode::from_chars accepts v.
-.decl valid_mode(v: symbol)
-valid_mode(v) :- mode_arg(_, v), match("[rwaxbt+U]+", v), count : { flag(re), @count_matches(re, v) > 1 } = 0,
+// redundant(a) and valid_mode(a): of mode argument a, in its own file: keyed by the mode's text, each was a table of
+// every file's modes, joined by text in the cross-file part (decision 0677).
+.decl redundant(a: node)
+redundant(a) :- valid_mode(a), mode_arg(a, v), (contains("U", v) ; contains("t", v) ; v = "r").
+// valid_mode(a): Ruff's OpenMode::from_chars accepts a's mode v.
+.decl valid_mode(a: node)
+// No letter twice: one regex, not a count over the letters (whose helper was keyed by the mode's text, 0677).
+valid_mode(a) :- mode_arg(a, v), match("[rwaxbt+U]+", v), !match("[\\s\\S]*(r[\\s\\S]*r|w[\\s\\S]*w|a[\\s\\S]*a|x[\\s\\S]*x|b[\\s\\S]*b|t[\\s\\S]*t|\\+[\\s\\S]*\\+|U[\\s\\S]*U)[\\s\\S]*", v),
     (!contains("b", v) ; !contains("t", v)),
     ( (contains("r", v) ; contains("U", v)), !match(".*[wax].*", v) ;
       @count_matches("[wax]", v) = 1, !contains("r", v), !contains("U", v) ).
-.decl flag(re: symbol)  // each mode letter, as a regex
-flag("r"). flag("w"). flag("a"). flag("x"). flag("b"). flag("t"). flag("\\+"). flag("U").

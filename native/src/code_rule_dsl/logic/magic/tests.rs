@@ -53,6 +53,34 @@ fn golden_text(p: &Program) -> String {
 
 /// On T's five programs, `.demand` (magic sets), `.demand *` (adornment) and gated negation produce T's programs
 /// rule for rule: the goldens are `rdl.py`'s output, printed by T's repr.
+/// A demand answered through a coarser one keeps no literal that only the demanded atom tied to the key (decision
+/// 0677). `w`'s `un(v, c)` comes after the test of c, so it asks for `un` with both columns bound, which `out`'s
+/// `un(v, u)` answers through `un_bf`, keyed by v alone. The test of c (`kind`, `field`, `named`) reached v only by
+/// the value t of `whole(t, q)`: default-called-once's `magic_unparen_bf(v)`, which the split refused as a relation of
+/// one file joining two. Left out, the demand only widens; `whole` stays, and binds nothing of another file.
+#[test]
+fn a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl field(p: node, x: symbol, c: node)\n.input field\n.decl named(e: node, q: symbol)\n.input named\n\
+        .decl arg(f: node, v: node)\n.input arg\n.decl ftype(f: node, t: symbol)\n.input ftype\n\
+        .decl whole(t: symbol, q: symbol)\nwhole(\"Date\", \"now\").\n\
+        .decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl w(f: node, v: node)\n\
+        w(f, v) :- ftype(f, t), arg(f, v), kind(c, \"call\"), field(c, \"function\", e), named(e, q), whole(t, q), un(v, c).\n\
+        .decl out(f: node, u: node)\n.output out\nout(f, u) :- ftype(f, _), arg(f, v), un(v, u), !w(f, v).\n";
+    for gate in [false, true] {
+        let p = prune(parse(src).unwrap());
+        let got = demand_bound_columns(p, &Options { gate, ..Options::default() }).unwrap_or_else(|e| panic!("gate {gate}: {e}"));
+        let rules: Vec<String> = got.rules.iter().map(|r| r.to_string()).collect();
+        let magic: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_")).collect();
+        assert!(magic.iter().any(|r| r.contains("whole(")), "gate {gate}: the demand of `un` from `w`: {rules:#?}");
+        for r in magic {
+            assert!(!r.contains("named(") && !r.contains("field("), "gate {gate}: joins the call's file to v's by a value: {r}\n{rules:#?}");
+        }
+    }
+}
+
 #[test]
 fn t_programs_transform_like_t() {
     // T's goldens order nodes by their ids, as preorder ids did; by definition the front end compares them by
@@ -71,6 +99,13 @@ fn t_programs_transform_like_t() {
             // `glob` is a `.rerail` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
+            // A demand answered through a coarser one keeps no literal that only the demanded atom tied to its key
+            // (decision 0677): T's `home_bbb`, answered through `home_ffb`, kept `rifrom(s, …)`, which reaches t by the
+            // value x alone and joins s's document to t's.
+            let expected = expected.replace(
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x), rifrom($s, $x, $m, $y)\n",
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x)\n",
+            );
             if got != expected {
                 let line = got.lines().zip(expected.lines()).position(|(a, b)| a != b);
                 let at = line.map_or_else(
@@ -98,4 +133,30 @@ fn a_negative_cycle_through_demand_drops_the_demand() {
     let got = magic_sets(p, &Options::default()).unwrap();
     assert_eq!(got.demand_dropped, [("blocked".to_owned(), "negative cycle through its demand".to_owned())]);
     assert!(got.demand.is_empty() && !got.decls.contains_key("magic_blocked"));
+}
+
+/// A magic rule keeps no literal that the literals it leaves out had tied to its key, and that joins another
+/// document's nodes to the key's by a value alone (decision 0677). `pair(x, y)` ties x and y; kept as an extra it
+/// would close a negative cycle (`!leaf` reads `un`), so it is left out, and `child(y, d, i)` then joined y's file to
+/// c's by the index i: RUF034's `magic_unparen_bf`, which the split refused as a relation of one file joining two.
+/// Left out with it, the demand only widens.
+#[test]
+fn a_demand_joins_no_other_documents_nodes_by_a_value() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl ask(a: node, b: node)\n.input ask\n.decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl leaf(x: node)\nleaf(x) :- kind(x, _), un(x, m), kind(m, \"leaf\").\n\
+        .decl pair(x: node, y: node)\npair(x, y) :- ask(a, b), un(a, x), un(b, y).\n\
+        pair(u, v) :- pair(x, y), !leaf(x), child(x, c, i), child(y, d, i), un(c, u), un(d, v).\n\
+        .decl same(x: node, y: node)\n.output same\nsame(x, y) :- pair(x, y), kind(x, k), kind(y, k).\n";
+    for gate in [false, true] {
+        let p = prune(parse(src).unwrap());
+        let got = demand_bound_columns(p, &Options { gate, ..Options::default() }).unwrap_or_else(|e| panic!("gate {gate}: {e}"));
+        let rules: Vec<String> = got.rules.iter().map(|r| r.to_string()).collect();
+        let demand: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_") && r.contains("child(")).collect();
+        assert!(!demand.is_empty(), "gate {gate}: the demand of `un` from `pair`'s children: {rules:#?}");
+        for r in demand {
+            assert!(r.matches("child(").count() == 1 || r.contains("pair("), "gate {gate}: joins two documents' children by their index: {r}\n{rules:#?}");
+        }
+    }
 }

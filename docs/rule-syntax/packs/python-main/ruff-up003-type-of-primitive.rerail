@@ -40,22 +40,22 @@ up003_sole_primitive_argument(n) :- up003_primitive_literal(n), child(p1, n, _),
     suppress noqa "UP003"
 UP003(n, "`str`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "str").
+    value(c2, v3), value_type_of(c2, "str").
 UP003(n, "`bytes`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "bytes").
+    value(c2, v3), value_type_of(c2, "bytes").
 UP003(n, "`int`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "int").
+    value(c2, v3), value_type_of(c2, "int").
 UP003(n, "`float`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "float").
+    value(c2, v3), value_type_of(c2, "float").
 UP003(n, "`complex`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "complex").
+    value(c2, v3), value_type_of(c2, "complex").
 UP003(n, "`bool`") :- kind(n, "call"), field(n, "arguments", c1),
     kind(c1, "argument_list"), child(c1, c2, _), up003_sole_primitive_argument(c2),
-    value(c2, v3), value_type(v3, "boolean").
+    value(c2, v3), value_type_of(c2, "boolean").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl up003_alt_1(n: node)

@@ -109,7 +109,7 @@
         std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
         std::fs::write(src.join("b.py"),"y = 2\n").unwrap();
         super::super::TEST_TAPE_CACHE.with(|p|*p.borrow_mut()=Some(dir.join("store.sqlite")));
-        let p = "#include \"core.rerail\"\n.decl pairs(a:symbol,b:symbol)\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
+        let p = "#include \"core.rerail\"\n.decl pairs(a:symbol,b:symbol) cross_file\npairs(a,b) :- doc(d,a,_),doc(e,b,_),d!=e.\n.output pairs\n";
         let out=dir.join("out");
         let run=||super::super::run_with_options(&[p],&src,None,&out,"program",Binding::Cpu,1<<18,&Default::default(),&serde_json::json!({"reuse":true})).unwrap();
         let first=run();

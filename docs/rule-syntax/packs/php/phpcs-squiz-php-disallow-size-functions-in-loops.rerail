@@ -51,5 +51,6 @@ array_mutator("array_splice").
 
 // this_changes(l, v): v is `$this->p` and the loop calls a method of $this.
 .decl this_changes(l: node, v: node)
+// v is in l, as its reader's is: without it, every loop of the corpus with every `$this->x` (decision 0652).
 this_changes(l, v) :- size_call(_, v), kind(v, "member_access_expression"), field(v, "object", o), php_this(o),
-    in_loop(l, m), kind(m, "member_call_expression"), field(m, "object", o2), php_this(o2).
+    within(v, l), in_loop(l, m), kind(m, "member_call_expression"), field(m, "object", o2), php_this(o2).

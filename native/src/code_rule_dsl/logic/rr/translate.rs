@@ -492,6 +492,22 @@ impl Translator<'_> {
                 if let Some(k) = widen {
                     self.out.push_str(&format!(" widen {k}"));
                 }
+                // `cross_file` (decision 0652) and a setting's placement (decision 0710), as `.rerail` writes them.
+                loop {
+                    if self.is_id("cross_file") || self.is_id("setting") || self.is_id("keyed") {
+                        let word = self.id()?;
+                        self.out.push_str(&format!(" {word}"));
+                    } else if self.is_id("by_path") {
+                        self.i += 1;
+                        self.out.push_str(" by_path");
+                        if let Tok::Int(c) = self.peek().clone() {
+                            self.i += 1;
+                            self.out.push_str(&format!(" {c}"));
+                        }
+                    } else {
+                        break;
+                    }
+                }
             }
             "input" | "output" => {
                 let mut names = vec![relation(&self.id()?)];

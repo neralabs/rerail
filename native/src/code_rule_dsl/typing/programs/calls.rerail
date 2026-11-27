@@ -35,7 +35,7 @@
 // Libraries (t21): the run's settings, the file system the library rules read, and the documents they load. The
 // rules are Python's (python/modules.rerail, which reads python/env.rerail): an import resolved into typeshed's standard
 // library loads that stub as a document named by its module, so the program reads it as it reads a workspace file.
-.decl env(key: symbol, value: symbol)
+.decl env(key: symbol, value: symbol) setting
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
@@ -697,7 +697,8 @@ star_from(m, n) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wi
     modname(m, _), py_import(i, n).
 .decl starmod(q: symbol, m: node)
 starmod(q, m) :- star_from(m, _), modname(m, q).
-.decl wantx(m: node, x: symbol)
+// Cross-file: the names other files import from module m, asked of m's file (decision 0652).
+.decl wantx(m: node, x: symbol) cross_file
 wantx(m, y) :- starmod(q, m), rifrom(_, _, q, y), !rbound(m, y).
 wantx(m, a) :- starmod(q, m), qn(o, q), attr_of(_, o, a), !rbound(m, a).
 wantx(m2, x) :- wantx(m, x), star_from(m, n), modname(m2, n), star_from(m2, _), !rbound(m2, x).

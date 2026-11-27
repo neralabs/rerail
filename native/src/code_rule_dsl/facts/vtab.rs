@@ -700,7 +700,7 @@ fn quote(s: &str) -> String {
 }
 fn register(db: &Connection, name: &str, binding: Binding, restored:bool) -> Result<()> {
     if name.is_empty() || name.len() > 120 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-        return Err(failure("invalid native table name"));
+        return Err(failure(&format!("invalid native table name: {name:?}")));
     }
     let module = CString::new(name).map_err(|_| failure("invalid module name"))?;
     const MODULE: Module<Table> = Module::eponymous_only_module();

@@ -18,7 +18,7 @@ YTT204(C, n) :- ytt204_in_string(n, C).
 
 // int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
 .decl ytt204_int_literal(n: node)
-ytt204_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+ytt204_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 ytt204_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     ytt204_int_literal(c2).
 

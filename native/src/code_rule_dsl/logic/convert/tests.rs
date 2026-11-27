@@ -619,12 +619,44 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
             committed.insert(name, std::fs::read_to_string(&path).unwrap());
         }
     }
-    let stale: Vec<&String> = fresh.keys().chain(committed.keys()).collect::<BTreeSet<_>>().into_iter().filter(|name| fresh.get(*name) != committed.get(*name)).collect();
+    // Each merged program's `.global library …` names exactly the library relations it uses: none it does not use, and
+    // every relation it uses that the files its authored file includes declare.
+    for (id, c) in &run {
+        let file = authored().join(format!("{id}.rerail"));
+        if !file.exists() {
+            continue;
+        }
+        let declared: BTreeSet<String> = library_line(&crate::code_rule_dsl::logic::rr::parse_file(&file).unwrap()).unwrap_or_default();
+        let merged = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
+        let used = super::used_relations(&merged);
+        let listed = library_line(&merged).unwrap_or_default();
+        let unused: Vec<&String> = listed.difference(&used).collect();
+        let unlisted: Vec<&String> = used.intersection(&declared).filter(|r| !listed.contains(*r)).collect();
+        if !unused.is_empty() || !unlisted.is_empty() {
+            errors.push(format!("{id}: `.global library` lists {unused:?}, which the program does not use, and leaves out {unlisted:?}, which it uses"));
+        }
+    }
+    assert!(errors.is_empty(), "the merged programs' library lines:\n{}", errors.join("\n"));
+    // What the pack holds is compared without the `.global library` line: it is derived from the program (checked
+    // above), and an edit of an included library's relations no other rule reaches changes nothing else.
+    let compared = |text: &String| text.lines().filter(|l| !l.starts_with(&format!(".{} {}", crate::code_rule_dsl::logic::front::GLOBAL, crate::code_rule_dsl::logic::front::LIBRARY))).collect::<Vec<_>>().join("\n");
+    let stale: Vec<&String> =
+        fresh.keys().chain(committed.keys()).collect::<BTreeSet<_>>().into_iter().filter(|name| fresh.get(*name).map(compared) != committed.get(*name).map(compared)).collect();
     assert!(
         stale.is_empty(),
-        "{} differs from the converter's run (missing, extra or stale): {stale:?}; run `cargo test --lib convert_the_data_layer_pack -- --ignored` and commit candidates/datalog",
+        "{} differs from the converter's run (missing, extra or stale): {stale:?}. The pack's test data stays out of git: run `cargo test --lib convert_the_data_layer_pack -- --ignored`, which writes the run into the pulled data, then stage each file that differs under the tool-pack's `publish/` (packs/data-layer/upstream/lint/publish/authored/packs/data-layer/candidates/datalog/) for the publish workflow (docs/upstream.md, \"Publishing pack data\")",
         out.display()
     );
+}
+
+/// A program's `.global library …` names, if it has the line.
+fn library_line(prog: &crate::code_rule_dsl::logic::front::Program) -> Option<BTreeSet<String>> {
+    let prefix = format!("{} ", crate::code_rule_dsl::logic::front::LIBRARY);
+    prog.settings
+        .iter()
+        .filter(|(key, _)| key == crate::code_rule_dsl::logic::front::GLOBAL)
+        .find_map(|(_, value)| value.strip_prefix(&prefix))
+        .map(|names| names.split(',').map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned).collect())
 }
 
 /// One policy's conversion (`RERAIL_CONVERT_POLICY`: its file, or its rule id), under its authored file: each
@@ -2202,4 +2234,15 @@ violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), 
     let at = |l: usize, code: &str| format!("{}:{l}:{code}", EXECUTOR.0);
     assert_eq!(got, [at(1, "SPTA001"), at(2, "SPTA006"), at(2, "SPTA007"), at(4, "SPTA006"), at(4, "SPTA007")]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A merged program's `.global library …` keeps only the relations it still uses (`library_line_used`): reading the
+/// authored file listed every relation its includes declare, and the line went with any edit of them.
+#[test]
+fn a_merged_programs_library_line_names_only_the_relations_it_uses() {
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(x: symbol)\n.decl v(x: symbol)\nv(x) :- a(x).\n.output v\n").unwrap();
+    prog.settings.push((crate::code_rule_dsl::logic::front::GLOBAL.to_owned(), format!("{} a, b, c", crate::code_rule_dsl::logic::front::LIBRARY)));
+    assert_eq!(library_line(&super::library_line_used(prog.clone())), Some(BTreeSet::from(["a".to_owned()])));
+    prog.settings.last_mut().unwrap().1 = format!("{} b, c", crate::code_rule_dsl::logic::front::LIBRARY);
+    assert_eq!(library_line(&super::library_line_used(prog)), None, "no library relation used: no line");
 }

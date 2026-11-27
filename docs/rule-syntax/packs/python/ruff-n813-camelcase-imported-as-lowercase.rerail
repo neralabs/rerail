@@ -12,4 +12,5 @@
 .violation N813(at: node, x: symbol, a: symbol) code "N813"
     "Use a CamelCase alias instead of `{a}` for `{x}` and update its uses; leave it if `{x}` is really a function or variable despite its CamelCase name."
     suppress ruff "N813"
-N813(i, x, a) :- alias_import(i, x, a), camel_name(x), cased_lower(a), !naming_ignored(x), !naming_ignored(a).
+N813(i, x, a) :- alias_import(i, x, a), camel_name(i, x), cased_lower(i, a), !naming_ignored(i, x),
+    !naming_ignored(i, a).

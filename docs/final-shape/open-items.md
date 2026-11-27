@@ -1538,8 +1538,8 @@ tokens have no field.
 - `static_value` is `value`: file-local constants are not followed.
 - `git_*`, `signed_list` and `list_len` are not read. `input_error` has its
   `missing` rows (a `.input` file that is absent, decision 0054); the other kinds wait on reading files (O76).
-  2026-11-24: `tsconfig`, `tsconfig_for`, `tsconfig_path` and `package_export` are made, from the repository walk
-  that makes `package*` (`facts::repository`, decision 0046 item 10).
+  2026-11-24: `package_export` is made, from the repository walk that makes `package*` (`facts::repository`,
+  decision 0046 item 10); `tsconfig`, `tsconfig_for` and `tsconfig_path` by TypeScript's project reader (0710).
 - `earlier` compares `visit_index`, CPython's `ast.NodeVisitor` order, made for Python documents only
   (`facts::vtab::syntax::tree`); other languages have no `visit_index` row, so no `earlier` row.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.

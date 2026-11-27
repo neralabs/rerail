@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Points-to and spec_resolved</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Fraunces:opsz,wght@9..144,600&display=swap">
+<style>
+/* Layout: one reading column; each decision is a section with facts, options as a compared pair, then the recommendation. */
+:root {
+  --bg: #f6f7f5; --panel: #ffffff; --fg: #1d2420; --muted: #5d6862; --rule: #d9dfdb;
+  --accent: #2f6f5e; --accent-soft: #e3efe9; --warn: #9a5b12; --warn-soft: #f7ecdd;
+  --display: "Fraunces", Georgia, serif; --body: "IBM Plex Sans", system-ui, sans-serif; --mono: "IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #141916; --panel: #1b221e; --fg: #e3e9e5; --muted: #9aa7a0; --rule: #2e3833;
+  --accent: #7cc4ad; --accent-soft: #1f332c; --warn: #e2a65a; --warn-soft: #33281a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #141916; --panel: #1b221e; --fg: #e3e9e5; --muted: #9aa7a0; --rule: #2e3833;
+  --accent: #7cc4ad; --accent-soft: #1f332c; --warn: #e2a65a; --warn-soft: #33281a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15.5px; line-height: 1.6; }
+.wrap { max-width: 46rem; margin: 0 auto; padding-block: 2.5rem 4rem;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1 { font-family: var(--display); font-size: 2rem; line-height: 1.15; margin: 0 0 .4rem; text-wrap: balance; }
+h2 { font-family: var(--display); font-size: 1.45rem; margin: 2.6rem 0 .6rem; text-wrap: balance; }
+h3 { font-size: 1rem; font-weight: 600; margin: 1.4rem 0 .4rem; }
+p, li { max-width: 65ch; }
+.lede { color: var(--muted); margin: 0 0 1.6rem; }
+code { font-family: var(--mono); font-size: .88em; background: var(--accent-soft); padding: .05em .3em; border-radius: 3px; }
+.label { font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: .8rem; }
+td.n { text-align: right; }
+.scroll { overflow-x: auto; }
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 1rem; margin: 1rem 0; }
+.option { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; min-width: 0; }
+.option h3 { margin-top: 0; }
+.option.rec { border-color: var(--accent); }
+.tag { display: inline-block; font-size: .72rem; font-weight: 600; padding: .1rem .45rem; border-radius: 99px; background: var(--accent-soft); color: var(--accent); margin-left: .35rem; vertical-align: .1em; }
+.option ul { padding-left: 1.1rem; margin: .4rem 0 0; }
+.note { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: .7rem 1rem; margin: 1rem 0; border-radius: 0 4px 4px 0; }
+.rec-line { font-weight: 500; border-top: 1px solid var(--rule); padding-top: .8rem; margin-top: 1.2rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <p class="label">Split invariants port · decision 0691</p>
+  <h1>Points-to and spec_resolved</h1>
+  <p class="lede">Two pieces of the port that are design choices rather than ports. Everything else you asked for, apart from the data layer, is ported and pushed.</p>
+
+  <h2>Intro: where the port stands</h2>
+  <p>The branch checks three things about how a rule program is split into a per-file part and a cross-file part. Positions are not identities (0649). A relation that spans files is declared (0652). No node id goes into the cross-file part, because every edit of its file renumbers it (0677). Each check fails a pack's test when a rule breaks it, except for the relations in three lists, which may only shrink.</p>
+  <p>Fixes 1 to 10 are on the branch <code>file-local/cross-file-invariants</code>. Fix 9 was the last of the branch's Django fixes (3b to 3d). Fix 10 is new: <code>npm_ignored</code> now has a producer.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>List</th><th class="n">On main before</th><th class="n">Now</th><th>What is left</th></tr></thead>
+    <tbody>
+      <tr><td>Undeclared crossings</td><td class="n">130</td><td class="n">35</td><td>data layer 27, Django 5, Python 2, JavaScript 1</td></tr>
+      <tr><td>Node ids in the cross part</td><td class="n">3,354</td><td class="n">394</td><td>Django 155, data layer 157, Python 33, the rest 49</td></tr>
+      <tr><td>Policies not run</td><td class="n">25</td><td class="n">0</td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Django's 155 entries are the subject of decision 1. Of them, 85 are relations of the engine's Python typing program, not of Django's rules. Most of the other 70 belong to four Django policies that walk the call graph (<code>get-handler-writes</code>, <code>select-for-update-outside-atomic</code>, <code>sync-orm-reached-from-async</code>, <code>dispatch-in-atomic-request</code>).</p>
+
+  <h2>Decision 1: the branch's points-to (fix 3e)</h2>
+  <h3>What it is</h3>
+  <p>Call targets and value types for Python come from a points-to analysis that runs over every file. On main it is the typing program's third phase, <code>typing/programs/calls_p3.rerail</code> (1,625 lines). It hands its answers on by path and byte span. Inside, it joins nodes of different files, which is where the 85 entries come from.</p>
+  <p>On the branch the same analysis took a different road. It is a library, <code>python/points-to.rerail</code>, which several hub merges and t32 changed. Stage 8 of t32 made it read other files by symbol, and main does not have that stage. Fix 3e (<code>b754ec6c93</code>) then split it in two: per-file rules (<code>points-to-file</code>, 847 lines), and a phase <code>points_to</code> over terms (<code>points-to-solve</code>, 1,319 lines) whose nodes are symbols or places. It also rewrote the four policies so that their walk is symbol-only.</p>
+  <p>On the branch, fix 3e took Django from 136 entries to 38. On 143 posthog files it ran 8% fewer instructions, and peak memory went from 1.18 to 1.40 GB.</p>
+  <div class="options">
+    <div class="option">
+      <h3>Port it here</h3>
+      <ul>
+        <li>Main's <code>calls_p3</code> is replaced by the branch's points-to, with t32 stage 8 first.</li>
+        <li>Django's list drops by about 117, as on the branch.</li>
+        <li>This replaces a program the Typing line owns. The two lineages share no history, so this is a rewrite, not a merge.</li>
+        <li>It needs the typing oracle tests rerun, on top of the 30 the commit names.</li>
+      </ul>
+    </div>
+    <div class="option rec">
+      <h3>A pull request of its own <span class="tag">recommended</span></h3>
+      <ul>
+        <li>This PR merges with the 155 listed. The list can only shrink, so no new crossing gets in meanwhile.</li>
+        <li>The P3 swap is reviewed as what it is: the Typing line's program replaced by the branch's.</li>
+        <li>I can start it right after this PR, on top of it.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Decision 2: a producer for <code>spec_resolved</code></h2>
+  <h3>What it is</h3>
+  <p>Node's import rules (<code>n-no-missing-import</code>, <code>n-no-missing-require</code>, <code>n-no-unpublished-*</code>) need to know which file a specifier resolves to. The library declares <code>spec_resolved(n, file)</code> as an input that core should provide. Nothing provides it, on main or on the branch, so it is bound empty.</p>
+  <div class="note">With it empty, <code>n-no-missing-import</code> and <code>n-no-missing-require</code> report every import as missing. Before this PR they did not run at all: they were among the 25 policies not run.</div>
+  <p>Main already has the resolver: <code>import_target</code>, a port of enhanced-resolve with eslint-plugin-n's options, which the JSON rules' <code>importTarget</code> uses. What is missing is a route into a rule program. A file's resolution depends on other files (a target appearing, a package.json, <code>node_modules</code>), so a file's own part cannot answer it without going stale.</p>
+  <div class="options">
+    <div class="option rec">
+      <h3>A phase, like tsx_names <span class="tag">recommended</span></h3>
+      <ul>
+        <li>The per-file part states each file's specifiers by symbol: path, name and style. These are the strings in import and require positions, a superset of the library's <code>node_target</code>.</li>
+        <li>The phase answers them natively through <code>import_target</code>, on the engine's request route (the one <code>dir_entry</code> uses).</li>
+        <li>It hands the answers on by path, a setting such as <code>tsx_names__target_at</code>. <code>node-resolve</code> reads them at the file's own path.</li>
+        <li>No node crosses, and a file's memo entry is keyed by its own rows.</li>
+        <li>Cost: a new phase and a request with a key of three parts.</li>
+      </ul>
+    </div>
+    <div class="option">
+      <h3>Resolve in the cross part</h3>
+      <ul>
+        <li>A request answered in the cross-file part, joined to the specifier node there.</li>
+        <li>Less work.</li>
+        <li>Every import node of every JavaScript and TypeScript file then sits in the cross part: new node-list entries, against 0677.</li>
+      </ul>
+    </div>
+  </div>
+  <p>Until a producer lands, the two rules could go back to not running, so that they report nothing rather than everything. I have not done that: it would add to a list that may only shrink.</p>
+
+  <p class="rec-line">My recommendation: decision 1 as its own pull request after this one, and decision 2 as a phase, built in this PR.</p>
+</div>
+
+</body>
+</html>

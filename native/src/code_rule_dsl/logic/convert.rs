@@ -493,12 +493,15 @@ impl Emitter {
         match p {
             PatternNode::MetaVar { meta_var } => match meta_var {
                 MetaVariable::Capture(name, _) => match captures.get(name).cloned() {
-                    // Bound before: the same name, as ast-grep compares their text.
+                    // Bound before: the same name, as ast-grep compares their text. Both are nodes of one match, so
+                    // of one document (decision 0652): a helper of the comparison alone joins no two files.
                     Some(prior) if prior != n => {
                         self.approx.insert("a metavariable twice: equal names".into());
-                        let t = self.var();
+                        let (t, d) = (self.var(), self.var());
                         body.push(format!("text({prior}, {t})"));
                         body.push(format!("text({n}, {t})"));
+                        body.push(format!("docof({prior}, {d})"));
+                        body.push(format!("docof({n}, {d})"));
                     }
                     Some(_) => {}
                     None => {
@@ -848,6 +851,7 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl file_name(d: int, s: sym)
 .decl value(n: node, v: sym)
 .decl static_value(n: node, v: sym)
+.decl static_value_type_of(n: node, t: sym)
 .decl value_type_of(n: node, t: sym)
 .decl value_type(v: sym, t: sym)
 .decl comment(n: node, s: sym)
@@ -1059,11 +1063,14 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             if !authored.decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
-            // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
-            // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
-            // the library reads (`python/names.rerail`).
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
-                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
+            // An earlier phase's export (`<phase>__<export>`, which python/points-to reads) is the runner's to give; so
+            // are decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none),
+            // which the library reads (`python/names.rerail`), the run's settings (`env`, core.rerail's) and the file system's
+            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read.
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel)
+                || super::plan::corpus::phases::is_phased(rel)
+                || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY || rel == "env"
+                || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(answer, _)| *answer == rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }
@@ -1129,7 +1136,37 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     for round in super::rr::lower::ON_REQUEST {
         super::rr::lower::sources_on_request(&mut converted, round);
     }
-    Ok((reachable(converted), authored_clauses))
+    Ok((library_line_used(reachable(converted)), authored_clauses))
+}
+
+/// The relations a program uses: those its rules make or read, and those it states facts of.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn used_relations(prog: &Program) -> BTreeSet<String> {
+    let mut used: BTreeSet<String> = prog.facts.keys().cloned().collect();
+    for rule in &prog.rules {
+        used.insert(rule.head.rel.to_string());
+        used.extend(rule.body.iter().filter_map(front::Literal::atom).map(|a| a.rel.to_string()));
+    }
+    used
+}
+
+/// `prog` with its `.global library …` naming only the relations it uses (`used_relations`). Reading the authored file
+/// wrote every relation its included files declare (`rr::read_file`), and `reachable` dropped the rules `violation`
+/// does not reach: a relation the program no longer has is no library relation of it, and listed, an edit of an
+/// included file anywhere changed the merged program's text.
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn library_line_used(mut prog: Program) -> Program {
+    let used = used_relations(&prog);
+    let library = format!("{} ", front::LIBRARY);
+    prog.settings = std::mem::take(&mut prog.settings)
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let Some(names) = value.strip_prefix(&library).filter(|_| key == front::GLOBAL) else { return Some((key, value)) };
+            let kept: Vec<&str> = names.split(',').map(str::trim).filter(|n| used.contains(*n)).collect();
+            (!kept.is_empty()).then(|| (key, format!("{library}{}", kept.join(", "))))
+        })
+        .collect();
+    prog
 }
 
 fn quote(s: &str) -> String {

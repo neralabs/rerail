@@ -69,7 +69,7 @@ ruf013_literal_none(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")
 ruf013_literal_none(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c2, _),
     ruf013_generic_head(c2), ruf013_ref_of(c2, "literal"), ruf013_alt_16(n).
 ruf013_literal_none(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v6),
-    value_type(v6, "str"),
+    value_type_of(n, "str"),
     match(".*(?:^$|^\\s|\\w\\s+\\w|^[<>=%/!@#$&|^,:;?\\\\*]|^\\.(?:[^\\d.]|$)|^\\.\\.(?:[^.]|$)|[+\\-*/<>=%&|^:@!~]\\s*$|[A-Za-z_]\\.\\s*$|^\\s*(?:and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)\\s*$|^\\s*[rRuU]?['\"]|^[^(]*\\)|\\([^)]*$|^[^\\[]*\\]|\\[[^\\]]*$|^[^{]*\\}|\\{[^}]*$|[;$?`]|!(?:[^=]|$)|^[^(]*:=|(?:^|[^\\w.])0[\\d_]*[a-df-ik-np-wyzA-DF-IK-NP-WYZ]|(?:^|[^\\w.])[1-9][\\d_]*[a-df-ik-zA-DF-IK-Z]|(?:^|[^\\w.])0[bB][01_]*[2-9a-zA-Z]|(?:^|[^\\w.])0[oO][0-7_]*[89a-zA-Z]|(?:^|[^\\w.])0[xX][\\da-fA-F_]*[g-zG-Z]|(?:^|[^\\w.])0[xXoObB](?:$|[^\\w])|\\.\\.\\.\\.|(?:^|[^\\w.])\\.\\d[\\d_]*[a-df-ik-zA-DF-IK-Z]).*", v6).
 ruf013_literal_none(n) :- kind(n, "tuple"), child(n, c7, _), !ruf013_alt_10(c7), ruf013_literal_none(c7).
 

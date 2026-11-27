@@ -97,10 +97,13 @@ lookup($n, $x, $m) :- kind($n, "identifier"), text($n, $x), nearest($n, $s, scop
 .decl class_ref(n: node, q: sym)
 class_ref($f, $q) :- lookup($f, $x, $s), defines_class($s, $x, $q).
 class_ref($f, $q) :- resolves($f, $q), class_q($q).
-.decl fn_ref(n: node, f: node)
+// Cross-file: a resolved name's function, in whichever file defines it (decision 0652).
+.decl fn_ref(n: node, f: node) cross_file
 fn_ref($n, $f) :- lookup($n, $x, $s), defines_fn($s, $x, $f, _).
 fn_ref($n, $f) :- resolves($n, $q), fn_q($q, $f).
-.decl type_of(n: node, t: sym)
+// Cross-file: a call no file defines takes its declared return (`!fn_q(q, _)`, below), and a call's type
+// is its function's, in any file (decision 0652).
+.decl type_of(n: node, t: sym) cross_file
 .decl returns(f: node, t: sym)
 type_of($n, $t) :- kind($n, $k), lit_type($k, $t).
 type_of($n, $t) :- lookup($n, $x, $s), assigns($s, $x, $r), type_of($r, $t).

@@ -19,7 +19,7 @@ YTT302(C, n) :- ytt302_in_string(n, C).
 // one_byte_string(n): the JSON util `one-byte-string`, used where the JSON says `matches: "one-byte-string"`
 .decl ytt302_one_byte_string(n: node)
 ytt302_one_byte_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
-    value(n, v1), value_type(v1, "str"), match("[\\x00-\\x7f]", v1),
+    value(n, v1), value_type_of(n, "str"), match("[\\x00-\\x7f]", v1),
     count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, !ytt302_alt_1(n).
 ytt302_one_byte_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
     ytt302_one_byte_string(c4).

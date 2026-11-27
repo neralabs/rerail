@@ -5199,6 +5199,10 @@ pub(crate) fn install_languages() {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
+    // What resolves a module specifier (`module_file`, the phase node_resolve's request).
+    logic::plan::corpus::world::install_module_resolver(import_target::resolver);
+    // ECMAScript's project files as rule inputs (`tsconfig*`, `npm_ignored`: decision 0710).
+    facts::repository::install_project_reader(import_target::project::READER);
     // What the evaluator keeps per connection, dropped with it.
     facts::vtab::install_forget(facts::vtab::Forget {
         scope: logic::native::forget_scope,

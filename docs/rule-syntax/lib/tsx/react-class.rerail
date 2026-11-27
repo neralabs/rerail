@@ -143,29 +143,29 @@ jsx_value(x) :- kind(x, "identifier"), ref_site(x, site), binding_value(site, v)
 .decl fn_component(f: node, c: node)
 // function Hello() {}, and `export default function () {}` (no name)
 fn_component(f, f) :- kind(f, "function_declaration"), !async_generator(f), ret_jsx_null(f),
-    (!field(f, "name", _) ; field(f, "name", n), text(n, x), cap_name(x)).
+    (!field(f, "name", _) ; field(f, "name", n), text(n, x), !match("_*[a-z].*", x)).
 fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "export_statement"), ret_jsx(f).
 // const Hello = …;  Hello = …
-fn_component(f, f) :- fn_expr(f), estree_parent(f, p), comp_bind(p, f, x), cap_name(x), ret_jsx_null(f).
+fn_component(f, f) :- fn_expr(f), estree_parent(f, p), comp_bind(p, f, x), !match("_*[a-z].*", x), ret_jsx_null(f).
 // { Hello: () => <div/> }, { Hello() { return <div/>; } }
 fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "pair"), field(p, "key", k), kind(k,
     "property_identifier"),
-    text(k, x), cap_name(x), ret_jsx(f).
+    text(k, x), !match("_*[a-z].*", x), ret_jsx(f).
 fn_component(f, f) :- kind(f, "method_definition"), child(o, f, _), kind(o, "object"), field(f, "name", k),
-    kind(k, "property_identifier"), text(k, x), cap_name(x), ret_jsx(f).
+    kind(k, "property_identifier"), text(k, x), !match("_*[a-z].*", x), ret_jsx(f).
 // React.memo(() => <div/>): the outermost wrapper call is the component.
 fn_component(f, c) :- fn_expr(f), wrapped_by(f, c), !wrapper_arg(c), ret_jsx_null(f).
 // Elsewhere where a component may stand: returned, an arrow's body, assigned to a member (`A.B = () => <div/>`
 // needs a capital B unless it is module.exports), named by its own capitalised name if it has one.
 fn_component(f, f) :- fn_expr(f), estree_parent(f, p), other_position(p, f), ret_jsx_null(f),
-    (!field(f, "name", _) ; field(f, "name", n), text(n, x), cap_name(x)), ret_jsx(f).
+    (!field(f, "name", _) ; field(f, "name", n), text(n, x), !match("_*[a-z].*", x)), ret_jsx(f).
 fn_component(f, f) :- fn_expr(f), estree_parent(f, p), kind(p, "assignment_expression"), field(p, "right", f),
     field(p, "left", l), kind(l, "member_expression"), ret_jsx_null(f), (!field(f, "name", _) ; field(f, "name", n),
-    text(n, x), cap_name(x)), (text(l, "module.exports") ; field(l, "property", q), text(q, y), cap_name(y)).
-// cap_name(x): isFirstLetterCapitalized. Leading underscores are skipped and the next character must not change
-// when upper-cased, so `_Foo`, `$x` and `__` count and `foo` does not (ASCII letters only, here).
-.decl cap_name(x: symbol)
-cap_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x), !match("_*[a-z].*", x).
+    text(n, x), !match("_*[a-z].*", x)), (text(l, "module.exports") ; field(l, "property", q), text(q, y), !match("_*[a-z].*", y)).
+// isFirstLetterCapitalized, written where a name is read as `!match("_*[a-z].*", x)`: leading underscores are skipped
+// and the next character must not change when upper-cased, so `_Foo`, `$x` and `__` count and `foo` does not (ASCII
+// letters only, here). A test of the name's text alone, as ESLint's is: a relation of the names that pass it, made from
+// every file's identifiers, joined each reader to every other file (decision 0665).
 .decl fn_expr(f: node)
 fn_expr(f) :- kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "generator_function").
 .decl async_generator(f: node)

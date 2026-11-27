@@ -10,6 +10,65 @@ use std::sync::Arc;
 mod merge;
 pub use merge::{DropRepeated, MergeIdentical};
 
+/// Every head variable of every rule is bound in its body: by a positive atom, a matched pattern or a nearest, a
+/// comparison that defines it from bound terms (`Body::cmp_binds`), or an aggregate's result. A variable named only in a
+/// negation, or not at all, has no value: the rule's rows are not the rule's meaning, and its finding has no place
+/// (decision 0652: a `$$$X` captures nothing, and RUF016's fallback read its `I` from a negation alone).
+pub fn head_bound(v: &Version) -> Result<(), String> {
+    // An aggregate's context (`rr_ctx…`) names the outer rule's variables, some of which the outer rule binds.
+    let checked = v.rules().filter(|rule| !crate::code_rule_dsl::logic::rr::aggregate_demand::helper(v.rel_name(rule.head().rel())));
+    let wrong: Vec<String> = checked.filter_map(|rule| unbound_head(v, rule)).collect();
+    if wrong.is_empty() {
+        return Ok(());
+    }
+    Err(format!("{} rule(s) leave a head variable unbound: give each a value in a positive literal, or leave it out of the head:\n{}", wrong.len(), wrong.join("\n")))
+}
+
+/// Rule `rule`'s head variables its body binds none of, shown with the rule; none: `None`.
+fn unbound_head(v: &Version, rule: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> Option<String> {
+    use crate::code_rule_dsl::logic::plan::body::{VarSet, term_vars};
+    let bound = body_bound(v, rule);
+    let mut head = VarSet::new();
+    rule.head().args().for_each(|t| term_vars(t, &mut head));
+    let free: Vec<&str> = head.minus(&bound).iter().map(|s| v.text(rule.var(s))).collect();
+    let shown = || v.show_rule(rule).chars().take(400).collect::<String>();
+    (!free.is_empty()).then(|| format!("  {}: {} bound by no positive literal\n      {}", v.rel_name(rule.head().rel()), free.iter().map(|x| format!("${x}")).collect::<Vec<_>>().join(", "), shown()))
+}
+
+/// The variables rule `rule`'s body binds: its positive atoms', matched patterns' and nearests', its aggregates'
+/// results, and to their fixed point those a comparison defines from bound terms.
+fn body_bound(v: &Version, rule: crate::code_rule_dsl::logic::program_image::RuleRef<'_>) -> crate::code_rule_dsl::logic::plan::body::VarSet {
+    use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
+    use crate::code_rule_dsl::logic::program_image::Lit as L;
+    let mut bound = VarSet::new();
+    let mut rest = Vec::new();
+    for l in rule.body() {
+        match l.view() {
+            L::Atom(a) if !a.neg() => bound.extend(&lit_vars(l)),
+            L::Nearest { .. } | L::Ast { .. } => bound.extend(&lit_vars(l)),
+            L::Agg { var, .. } => {
+                bound.insert(var);
+            }
+            L::Cmp { l: a, op, r } => rest.push((a, op, r)),
+            L::Atom(_) => {}
+        }
+    }
+    let body = Body::of(v, rule);
+    let mut before = usize::MAX;
+    while rest.len() != before {
+        before = rest.len();
+        // `x = t` or `t = x`: either side defines the other.
+        rest.retain(|&(a, op, r)| match body.cmp_binds(a, op, r, &bound).or_else(|| body.cmp_binds(r, op, a, &bound)) {
+            Some(new) => {
+                bound.extend(&new);
+                false
+            }
+            None => true,
+        });
+    }
+    bound
+}
+
 /// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
 pub struct InputsRead;
 
@@ -83,6 +142,8 @@ pub struct Found {
 /// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
 /// runs them, or the merge alone with `RERAIL_SAME=off`.
 pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Found), String> {
+    // Every head variable has a value (decision 0652).
+    head_bound(&version)?;
     let mut p = Pipeline::new("preparation", version);
     // The file-local part of each cross-file rule runs in the chunks, which export its rows, not their base relations.
     let mut pushed = crate::code_rule_dsl::typing::file_local::PushLocalJoins::default();
@@ -100,23 +161,7 @@ pub fn run(version: Arc<Version>, factorize: bool) -> Result<(Arc<Version>, Foun
     // A relation a round leaves (its rows name no document) is moved to the cross-file part, its file-local readers
     // following, and the program is located again until every row handed on is located (decision 0290, as
     // `file_local::locate` does on the tree).
-    let mut moved: Vec<String> = Vec::new();
-    let mut located: Vec<String> = Vec::new();
-    let located = loop {
-        let mut locate = crate::code_rule_dsl::typing::file_local::Locate::default();
-        p.program(&mut locate);
-        located.extend(locate.located);
-        if locate.blocked.is_empty() {
-            break Ok(located);
-        }
-        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
-        if fresh.is_empty() {
-            moved.sort();
-            break Err(moved);
-        }
-        moved.extend(fresh.iter().cloned());
-        p.program(&mut crate::code_rule_dsl::typing::file_local::MoveCrossFile(fresh));
-    };
+    let located = crate::code_rule_dsl::typing::file_local::locate_all(&mut p);
     let mut merge = MergeIdentical::default();
     let mut repeats = DropRepeated::default();
     if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {

@@ -715,7 +715,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &["n", "v"],
-        "value_type_of" => &["n", "t"],
+        "value_type_of" | "static_value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],
@@ -781,10 +781,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "file" => &["path"],
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
-        "package_for" | "tsconfig_for" => &["path", "dir"],
+        "package_for" => &["path", "dir"],
         "package_export" => &["name", "subpath", "target"],
-        "tsconfig" => &["dir", "base_url"],
-        "tsconfig_path" => &["dir", "pattern", "target"],
         "pkg" => &["d", "p"],
         "path_part" | "file_name" => &["d", "s"],
         "tape" => &["n", "par", "size", "depth"],
@@ -802,7 +800,8 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         rel if rel.starts_with(crate::code_rule_dsl::logic::strings::GROUPS) => &["sp", "m", "g", "gsp"],
         // A registered family's lazy relations (`facts::vtab::syntax::Families`: Python's `py.*`).
         rel if rel.starts_with("py_") => crate::code_rule_dsl::facts::vtab::syntax::family_columns(rel)?,
-        _ => return None,
+        // A language's project relations (decision 0710), with the columns its reader states.
+        rel => return super::repository::project_columns(rel),
     })
 }
 

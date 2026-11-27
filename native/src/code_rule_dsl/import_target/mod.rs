@@ -14,6 +14,7 @@ pub mod entrypoints;
 pub mod fs;
 pub mod json;
 pub mod path;
+pub mod project;
 pub mod resolver;
 pub mod term;
 pub mod tsconfig;
@@ -367,6 +368,32 @@ impl View {
             folder = path::dirname(&folder).to_owned();
         }
     }
+}
+
+/// A resolver of the specifiers of files under `root` on disk, as eslint-plugin-n's rules read a target at default
+/// options: given the importing file (workspace-relative), the specifier (up to its `!`) and its style (`require`,
+/// `import` or `type`), the file it resolves to, workspace-relative where it lies at or below the root, else
+/// absolute; `None` where resolution fails (`resolveError`). A resolution that succeeds with no file (a package
+/// `false` maps away) gives the specifier. One view's memo is shared by its calls, so a resolver is made per run.
+pub fn resolver(root: &std::path::Path) -> Box<dyn Fn(&str, &str, &str) -> Option<String>> {
+    let view = View::new(Arc::new(fs::HeldFiles::default()), Some(root));
+    Box::new(move |importer: &str, name: &str, style: &str| {
+        let style = match style {
+            "require" => Style::Require,
+            "type" => Style::Type,
+            _ => Style::Import,
+        };
+        let found = target(&view, importer, name, style);
+        if found.error.is_some() {
+            return None;
+        }
+        Some(match found.file_path.as_deref() {
+            Some(file) => view
+                .relative(file)
+                .map_or_else(|| file.to_owned(), str::to_owned),
+            None => name.to_owned(),
+        })
+    })
 }
 
 /// `ImportTarget#getModuleName`.

@@ -67,8 +67,9 @@ this_assign(s, x) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e,
 .decl broken_before(b: node, s: node)  // a statement before s in block b is no such assignment
 broken_before(b, s) :- child(b, s, _), this_assign(s, _), child(b, o, _), precedes(o, s), !kind(o, "comment"),
     !this_assign(o, _).
-// same_type(f, q): neither has a type, or both have the same type text.
+// same_type(f, q): field f and constructor parameter q of one class have no type, or the same type text (decision
+// 0652: without the class, every field of the corpus met every parameter).
 .decl same_type(f: node, q: node)
-same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), !field(f, "type", _), !field(q, "type", _).
-same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), field(f, "type", a), field(q, "type", b), text(a, t),
+same_type(f, q) :- bare_field(b, f, _), name_param(k, q, _), child(b, k, _), !field(f, "type", _), !field(q, "type", _).
+same_type(f, q) :- bare_field(b, f, _), name_param(k, q, _), child(b, k, _), field(f, "type", a), field(q, "type", b), text(a, t),
     text(b, t).

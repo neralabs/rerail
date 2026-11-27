@@ -58,7 +58,7 @@ pub struct Report {
     /// Merged relations: (kept, merged into it).
     pub(in crate::code_rule_dsl) merged: Vec<(String, String)>,
     /// Relations inlined into their readers.
-    pub(in crate::code_rule_dsl) inlined: Vec<String>,
+    pub inlined: Vec<String>,
     /// Variables named once, made `_`.
     pub(in crate::code_rule_dsl) singletons: usize,
     /// Atoms merged into another of the same keyed row.
@@ -988,14 +988,53 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
 /// of the reader's own rows.
 fn computed(rules: &[&Rule]) -> bool {
     let [rule] = rules else { return false };
-    let mut bound = BTreeSet::new();
-    rule.body.iter().for_each(|l| if let Literal::Atom(a) = l { a.vars().into_iter().for_each(|v| { bound.insert(v); }) });
+    // Its domain: positive atoms of other relations. Its function: comparisons over what they bind, and a call in the
+    // head (`cc_trim(raw, @replace_all(raw, …))`) or a head variable a comparison defines (`ca_split(r, h, t) :-
+    // ca_dotted(_, r), @rx(r, p) = 1, h = @rx_group(r, p, 1), …`; decision 0649).
+    let Some(from_domain) = domain_bound(rule) else { return false };
+    let bound = defined_from(rule, from_domain.clone());
+    let cmps_bound = rule.body.iter().all(|l| !matches!(l, Literal::Cmp { .. }) || l.vars().is_subset(&bound));
     let mut head = BTreeSet::new();
     rule.head.args.iter().for_each(|t| t.vars(&mut head));
-    rule.head.args.iter().any(|t| matches!(t, Term::Call(..)))
-        && !rule.body.is_empty()
-        && rule.body.iter().all(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel != rule.head.rel))
-        && head.is_subset(&bound)
+    let computes = rule.head.args.iter().any(|t| matches!(t, Term::Call(..))) || !head.is_subset(&from_domain);
+    computes && cmps_bound && head.is_subset(&bound)
+}
+
+/// What a computed view's domain binds: its body's positive atoms of other relations, with comparisons beside them and
+/// nothing else, one atom at least. Any other body: `None`.
+fn domain_bound(rule: &Rule) -> Option<BTreeSet<String>> {
+    let mut bound = BTreeSet::new();
+    let mut atoms = 0;
+    for l in &rule.body {
+        match l {
+            Literal::Atom(a) if !a.neg && a.rel != rule.head.rel => {
+                bound.extend(a.vars());
+                atoms += 1;
+            }
+            Literal::Cmp { .. } => {}
+            _ => return None,
+        }
+    }
+    (atoms > 0).then_some(bound)
+}
+
+/// `bound` and what each `$x = term` of bound variables binds, in any order, to the fixed point.
+fn defined_from(rule: &Rule, mut bound: BTreeSet<String>) -> BTreeSet<String> {
+    let eqs: Vec<(&Term, &Term)> = rule.body.iter().filter_map(|l| if let Literal::Cmp { l, op: "=", r } = l { Some((l, r)) } else { None }).flat_map(|(l, r)| [(l, r), (r, l)]).collect();
+    let mut before = usize::MAX;
+    while bound.len() != before {
+        before = bound.len();
+        for (x, e) in &eqs {
+            let mut of = BTreeSet::new();
+            e.vars(&mut of);
+            if let Term::Var(v) = x
+                && of.is_subset(&bound)
+            {
+                bound.insert(v.to_string());
+            }
+        }
+    }
+    bound
 }
 
 /// Whether `reader` (a rule body reading `read`, a computed view's row) reads every atom of the view's rule `def`:
@@ -1009,6 +1048,10 @@ fn domain_read(def: &Rule, read: &Atom, reader: &[Literal]) -> bool {
             }
     }
     def.body.iter().all(|l| {
+        // A comparison is the view's function, copied as it is; its atoms are its domain.
+        if matches!(l, Literal::Cmp { .. }) {
+            return true;
+        }
         let Literal::Atom(a) = l else { return false };
         let a = Atom { args: a.args.iter().map(|t| match t {
             Term::Var(v) => as_read.get(v.as_str()).map_or(Term::Wild, |t| (*t).clone()),
@@ -1103,10 +1146,13 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
         })
         .map(|(rel, _)| rel.clone())
         .collect();
+    let computed_rels: BTreeSet<String> = rules_of.iter().filter(|(_, rules)| computed(rules)).map(|(rel, _)| rel.clone()).collect();
     for rule in &prog.rules {
         for l in &rule.body {
             match l {
                 Literal::Atom(a) if !a.neg && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) && a.rel != rule.head.rel => {}
+                // A computed view's column read as `_` is computed and dropped (its domain is the reader's).
+                Literal::Atom(a) if !a.neg && computed_rels.contains(a.rel.as_str()) && a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_) | Term::Wild)) && a.rel != rule.head.rel => {}
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
                     candidates.remove(a.rel.as_str());
                 }
@@ -1137,23 +1183,31 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     if bodies.is_empty() {
         return Vec::new();
     }
-    let mut fresh = 0usize;
+    // Fresh names are numbered per rule, each copy carrying its count: a variable is the rule's own, and a program-wide
+    // count renumbered every later rule when an earlier clause was dropped (unreached), so the same rule lowered two
+    // ways.
     let mut out = Vec::with_capacity(prog.rules.len());
-    let mut work: Vec<Rule> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).cloned().collect();
+    let mut work: Vec<(Rule, usize)> = prog.rules.iter().filter(|r| !bodies.contains_key(r.head.rel.as_str())).map(|r| (r.clone(), 0)).collect();
     work.reverse();
-    while let Some(rule) = work.pop() {
+    while let Some((rule, mut fresh)) = work.pop() {
         let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
             out.push(rule);
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
+        let mut taken = BTreeSet::new();
+        rule.body.iter().for_each(|l| taken.extend(l.vars()));
+        rule.head.args.iter().for_each(|t| t.vars(&mut taken));
         for def in &bodies[read.rel.as_str()] {
-            fresh += 1;
             // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
             // an equality.
             let mut local = BTreeSet::new();
             def.body.iter().for_each(|l| local.extend(l.vars()));
             def.head.args.iter().for_each(|t| t.vars(&mut local));
+            fresh += 1;
+            while local.iter().any(|v| taken.contains(&format!("{v}_f{fresh}"))) {
+                fresh += 1;
+            }
             let mut to: BTreeMap<String, String> = local.iter().map(|v| (v.clone(), format!("{v}_f{fresh}"))).collect();
             let mut body: Vec<Literal> = Vec::new();
             for (h, r) in def.head.args.iter().zip(&read.args) {
@@ -1161,6 +1215,8 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
                     (Term::Var(v), Term::Var(x)) if to.get(v.as_str()) == Some(&format!("{v}_f{fresh}")) => {
                         to.insert(v.to_string(), x.to_string());
                     }
+                    // A column read as `_`: the definition's variable stays its own.
+                    (Term::Var(_), Term::Wild) => {}
                     (Term::Var(v), r) => body.push(Literal::Cmp { l: r.clone(), op: "=", r: Term::Var(to[v.as_str()].clone().into()) }),
                     _ => {}
                 }
@@ -1171,14 +1227,14 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             // head's side is renamed: the read's term is the reader's, whose variables may share a name with the
             // definition's.
             for (h, r) in def.head.args.iter().zip(&read.args) {
-                if !matches!(h, Term::Var(_)) {
+                if !matches!(h, Term::Var(_)) && !matches!(r, Term::Wild) {
                     let Literal::Cmp { r: h, .. } = rename(&Literal::Cmp { l: Term::Wild, op: "=", r: h.clone() }) else { unreachable!("a comparison") };
                     body.push(Literal::Cmp { l: r.clone(), op: "=", r: h });
                 }
             }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
-            work.push(c);
+            work.push((c, fresh));
         }
     }
     prog.rules = out;

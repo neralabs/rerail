@@ -41,10 +41,11 @@ fast_app_site(site) :- perf_site_ann(site, h), ruff_qual(h, q), fast_app(q).
 fast_app("fastapi.FastAPI"). fast_app("fastapi.APIRouter").
 
 .decl fast_param(f: node, p: node, x: symbol, ann: loc, dflt: loc)
+// An unset annotation or default stays unset: tested here, in the parameter's own rule. A row of the empty value in
+// fast_strip would name no document, and every reader of it would join in the cross-file part (decision 0677).
 fast_param(f, p, x, a, d) :- sig_param(f, p, nm, _, k, a0, d0), (k = "pos" ; k = "kwonly"), text(nm, x),
-    fast_strip(a0, a), fast_strip(d0, d).
-.decl fast_strip(e: loc, m: loc)  // parentheses and the annotation's `type` wrapper off; unset stays unset
-fast_strip(e, e) :- unset(e).
+    (unset(a0), unset(a) ; fast_strip(a0, a)), (unset(d0), unset(d) ; fast_strip(d0, d)).
+.decl fast_strip(e: loc, m: loc)  // parentheses and the annotation's `type` wrapper off
 fast_strip(e, m) :- unparen(e, b), !kind(b, "type"), m = b.
 fast_strip(e, m) :- unparen(e, b), kind(b, "type"), child(b, i, 0), fast_strip(i, m).
 

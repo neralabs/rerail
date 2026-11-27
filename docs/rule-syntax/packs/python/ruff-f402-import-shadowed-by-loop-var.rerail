@@ -18,7 +18,8 @@
     suppress ruff "F402"
 F402(t, x) :- loop_var(t, x, s), shadows(t, x, s, i), binding(_, x, i, "import"), same_branch(t, i).
 // `from __future__ import annotations` binds `annotations` too, though python/names does not count it.
-F402(t, x) :- loop_var(t, x, m), kind(m, "module"), future_bind(i, x), i < t, !nearest(t, _, branch_block),
+// The future import is the loop's module's (decision 0652: `i < t` compared nodes of any two files).
+F402(t, x) :- loop_var(t, x, m), kind(m, "module"), future_bind(i, x), within(i, m), i < t, !nearest(t, _, branch_block),
     count : { binding(m, x, o, _), o < t } = 0.
 .decl future_bind(i: node, x: symbol)
 future_bind(i, x) :- kind(f, "future_import_statement"), field(f, "name", i), kind(i, "dotted_name"), text(i, x).

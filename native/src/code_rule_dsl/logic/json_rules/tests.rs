@@ -9,7 +9,8 @@ fn repo() -> std::path::PathBuf {
 }
 
 /// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is
-/// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`).
+/// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`, or
+/// `RERAIL_WRITE_PACK=1`, which writes each file that differs).
 #[test]
 fn json_rules_pack_is_current() {
     let pack = repo().join("docs/rule-syntax/packs/python-main");
@@ -24,11 +25,30 @@ fn json_rules_pack_is_current() {
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}
+            Ok(got) if std::env::var_os("RERAIL_WRITE_PACK").is_some() => std::fs::write(&golden, got).unwrap_or_else(|e| panic!("{}: {e}", golden.display())),
             Ok(_) => differ.push(format!("{id}: differs from {}", golden.display())),
             Err(e) => differ.push(format!("{id}: {e}")),
         }
     }
     assert!(differ.is_empty(), "{} of {} rules differ:\n{}", differ.len(), jsons.len(), differ.join("\n"));
+}
+
+/// A guest capture the rules read by text (FAST003's route `{K}`) is passed to its helpers by its text (decisions
+/// 0652, 0677). A helper that reads K only by text takes the text (`text(K, t)` is `t = K`, its "any node" binder
+/// goes); a helper and the clause that bind K join `text(K, …)` where they pass it, inside an aggregate too.
+#[test]
+fn json_rules_a_capture_read_by_text_is_passed_by_its_text() {
+    let mut rules: Vec<(String, Vec<String>)> = vec![
+        ("eq(n, K)".into(), vec!["node(_, K, _, _, _)".into(), "kind(n, \"identifier\")".into(), "text(K, t1), text(n, t1)".into()]),
+        ("has(n, K)".into(), vec!["child(n, c, _)".into(), "eq(c, K)".into()]),
+        ("FAST(n, K)".into(), vec!["guest_name(n, c)".into(), "K = c".into(), "count : { child(n, p, _), !has(p, K) } = 0".into()]),
+    ];
+    let mut refs: Vec<(&mut String, &mut Vec<String>)> = rules.iter_mut().map(|(h, l)| (h, l)).collect();
+    let keyed = super::key_captures_by_text(&BTreeSet::from(["K".to_owned()]), &mut refs);
+    assert_eq!(keyed, [("eq".to_owned(), 1), ("has".to_owned(), 1)]);
+    assert_eq!(rules[0], ("eq(n, K)".to_owned(), vec!["kind(n, \"identifier\")".to_owned(), "t1 = K, text(n, t1)".to_owned()]));
+    assert_eq!(rules[1].1, ["child(n, c, _)", "eq(c, K)"], "has passes K, now its text, on");
+    assert_eq!(rules[2].1[2], "count : { child(n, p, _), text(K, K_text1), !has(p, K_text1) } = 0");
 }
 
 #[test]
@@ -140,4 +160,62 @@ fn json_tool_call_rule_finds_its_examples() {
     let eq = r#"{"id": "x", "mode": "steer", "match": {"field": "input.command", "eq": "ls"}, "sample": {"source": "tool:*", "boundary": "tool-call"}, "action": {"content": "no"}}"#;
     let refused = super::Translator::new().translate_text(eq, "x").unwrap_err();
     assert!(refused.contains("not translated"), "{refused}");
+}
+
+/// A value's `type` is the node's own (`value_type_of(n, t)`), not its text's (decision 0677): `value_type(v, t)` is
+/// keyed by the text, which `"12"` and `12` share, so `value(n, x), value_type(x, "int")` held at the string too,
+/// from the int's row, and joined every file's types in the cross-file part. A value followed through a binding
+/// (`follow`) is no node's own, and keeps its text's type.
+#[test]
+fn json_rules_value_type_is_the_nodes_own() {
+    let rule = |value: &str| {
+        format!(
+            r#"{{"format":"rerail.policy/v1","id":"int-literal","revision":1,"mode":"steer","description":"x","scope":{{"include":["**/*"],"exclude":[]}},
+"clauses":[{{"id":"c","forbid":{{"ast":{{"language":"python","rule":{{"any":[{{"kind":"integer"}},{{"kind":"string"}}],"value":{value}}}}}}},"message":"an int"}}]}}"#
+        )
+    };
+    let own = super::Translator::new().translate_text(&rule(r#"{"type":"int"}"#), "int-literal").expect("translates");
+    assert!(own.contains("value_type_of(") && !own.contains("value_type("), "{own}");
+    let followed = super::Translator::new().translate_text(&rule(r#"{"follow":true,"type":"int"}"#), "int-literal").expect("translates");
+    assert!(followed.contains("static_value(") && followed.contains("value_type("), "{followed}");
+    let dir = tempfile::tempdir().unwrap();
+    let policy = dir.path().join("int-literal.rerail");
+    std::fs::write(&policy, &own).unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "a = \"12\"\nb = 12\n").unwrap();
+    let lines = |text: &str| {
+        std::fs::write(&policy, text).unwrap();
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &dir.path().join("out"), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().unwrap()).collect::<Vec<_>>()
+    };
+    assert_eq!(lines(&own), [2], "the int alone, not the string of the same text:\n{own}");
+    // The text's type, as it was translated: the string's text is the int's, so it is found too.
+    let at = own.find("value_type_of(").unwrap() + "value_type_of(".len();
+    let node = own[at..].split(',').next().unwrap();
+    let read = own.find(&format!("value({node}, ")).unwrap() + format!("value({node}, ").len();
+    let var = own[read..].split(')').next().unwrap();
+    let by_text = own.replace(&format!("value_type_of({node}, "), &format!("value_type({var}, "));
+    assert_eq!(lines(&by_text), [1, 2], "{by_text}");
+}
+
+/// Review B2: in a family W reads no values of (JSON's: its strings are core_rr's literals), a value's type is
+/// core_rr's, and `value_type_of(n, t)`, which a translated `type` reads, has its rows: the key and the value
+/// strings, not the number.
+#[test]
+fn json_rules_value_type_holds_in_a_family_w_reads_no_values_of() {
+    let rule = r#"{"format":"rerail.policy/v1","id":"a-string","revision":1,"mode":"steer","description":"x","scope":{"include":["**/*"],"exclude":[]},
+"clauses":[{"id":"c","forbid":{"ast":{"language":"json","rule":{"any":[{"kind":"string"},{"kind":"number"}],"value":{"type":"string"}}}},"message":"a string"}]}"#;
+    let text = super::Translator::new().translate_text(rule, "a-string").expect("translates");
+    assert!(text.contains("value_type_of("), "{text}");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.json"), "{\n  \"a\":\n    2,\n  \"b\":\n    \"12\"\n}\n").unwrap();
+    let policy = dir.path().join("a-string.rerail");
+    std::fs::write(&policy, &text).unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &dir.path().join("out"), &serde_json::Value::Null).unwrap();
+    let mut lines: Vec<i64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().unwrap()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, [2, 4, 5], "the keys and the string value, not the number:\n{text}");
 }

@@ -7,7 +7,8 @@
  * (`scripts/generate/tests/unit-test-times.mjs` writes it from CI's logs; scripts/generate/README.md has the command).
  * Each shard computes the same split from the same files and times: the files, longest first, each to the shard that
  * holds the least time so far (longest processing time first). A file the times do not name yet, a new one, counts as
- * the median file. Stale times only make the split less even; every file still runs in exactly one shard.
+ * the median file. Stale times only make the split less even; every file still runs in exactly one shard. The split
+ * and the weights are in shard-split.ts, which CI's select-tests job also reads to count a selection's shards.
  *
  * The first shard of each platform also runs a step after the suite (the lint config coverage gate on Linux, the
  * Claude Code hook integration test on Windows), so it starts with that step's time, as test-file time, already held.
@@ -18,63 +19,11 @@
  */
 import { relative } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
+import { assignShards, platformTimes, weigher } from "./shard-split.js";
 import { UNIT_TEST_TIMES } from "./unit-test-times.generated.js";
 
-/** One platform's times: each test file's median milliseconds, and what the first shard's extra step adds. */
-export interface PlatformTimes {
-  /** The step the first shard runs after the suite, as test-file milliseconds. */
-  readonly firstShardExtraMs: number;
-  /** Each test file's median milliseconds, by its path from the repository root with `/` between folders. */
-  readonly files: Readonly<Record<string, number>>;
-}
-
-/** The times file: one entry per platform CI runs the suite on, keyed as `process.platform` names it. */
-export type TestTimes = Readonly<Record<string, PlatformTimes>>;
-
-/** The platform whose times a platform without its own (macOS) uses. */
-const FALLBACK_PLATFORM = "linux";
-
-/** What a file the times do not name counts as: the median of the files they do. */
-export function defaultWeight(files: Readonly<Record<string, number>>): number {
-  const times = Object.values(files).sort((a, b) => a - b);
-  if (times.length === 0) return 1;
-  const middle = Math.floor(times.length / 2);
-  return times.length % 2 === 1 ? times[middle]! : (times[middle - 1]! + times[middle]!) / 2;
-}
-
-/** The times this platform's runs use. */
-export function platformTimes(times: TestTimes, platform: string): PlatformTimes {
-  return times[platform] ?? times[FALLBACK_PLATFORM] ?? { firstShardExtraMs: 0, files: {} };
-}
-
-/**
- * Which shard (0-based) runs each path, longest processing time first: paths by weight, longest first and then by
- * path, each to the shard holding the least so far, the lowest such shard on a tie. The first shard starts holding
- * `firstShardExtraMs`. The `count` longest paths go one to each shard, so no shard is left without a file while there
- * are enough (vitest fails a run with none), even when the extra time outweighs the paths, as in a filtered run.
- * Deterministic, so every shard computes the same split.
- */
-export function assignShards(paths: readonly string[], times: PlatformTimes, count: number): Map<string, number> {
-  const fallback = defaultWeight(times.files);
-  const weighted = paths.map((path) => ({ path, weight: times.files[path] ?? fallback }));
-  weighted.sort((a, b) => b.weight - a.weight || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  const loads = Array.from({ length: count }, (_, shard) => (shard === 0 ? times.firstShardExtraMs : 0));
-  const taken = new Set<number>();
-  const shards = new Map<string, number>();
-  for (const { path, weight } of weighted) {
-    const lightest = lightestShard(loads, taken);
-    taken.add(lightest);
-    loads[lightest]! += weight;
-    shards.set(path, lightest);
-  }
-  return shards;
-}
-
-/** The shard holding the least so far, the lowest on a tie, among the shards still without a file while any is. */
-function lightestShard(loads: readonly number[], taken: ReadonlySet<number>): number {
-  const open = loads.map((_, shard) => shard).filter((shard) => taken.size >= loads.length || !taken.has(shard));
-  return open.reduce((lightest, shard) => (loads[shard]! < loads[lightest]! ? shard : lightest));
-}
+// The times file names its type from here.
+export type { PlatformTimes, TestTimes } from "./shard-split.js";
 
 export class TimeBalancedSequencer extends BaseSequencer {
   readonly #times = platformTimes(UNIT_TEST_TIMES, process.platform);
@@ -91,12 +40,11 @@ export class TimeBalancedSequencer extends BaseSequencer {
   }
 
   override async sort(files: TestSpecification[]): Promise<TestSpecification[]> {
-    const { files: times } = this.#times;
-    const fallback = defaultWeight(times);
+    const weight = weigher(this.#times.files);
     const order = new Map(
       files.map((spec) => {
         const result = this.ctx.cache.getTestSpecificationResult(spec);
-        return [spec, { failed: result?.failed ?? false, weight: result?.duration ?? times[this.pathOf(spec)] ?? fallback }];
+        return [spec, { failed: result?.failed ?? false, weight: result?.duration ?? weight(this.pathOf(spec)) }];
       }),
     );
     return [...files].sort((a, b) => {

@@ -15,7 +15,7 @@
 //   /* global Object: off */   function Object() { Object(); }      fine: no global Object, a name of its own
 // The suggestion is ESLint's: `({})` where `{` would start a statement or an arrow body (`() => Object()`),
 // and `;({})` where that statement would also continue the one before it. No options.
-.violation no_object_constructor(at: node) code "no-object-constructor" "The object literal notation {} is preferable."
+.violation no_object_constructor(at: node) code "no-object-constructor" "The object literal notation {{}} is preferable."
     suppress eslint "no-object-constructor"
     suppress oxlint "no-object-constructor"
     fix to_literal "Replace with '{}'."

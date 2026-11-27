@@ -417,7 +417,60 @@ pub struct Again {
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach"];
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", CROSS_FILE];
+
+/// The qualifier of a cross-file relation: declared (`.decl r(...) cross_file`, decision 0652), or given by `locate` to
+/// a relation whose rows name no document (decision 0290, `typing::file_local::locate`). The split holds it cross-file.
+pub const CROSS_FILE: &str = "cross_file";
+
+/// The qualifiers that place a relation's rows as the project's settings (decision 0710), on its `.decl`:
+/// `setting`, `keyed`, `by_path` and `by_path c`. See [`Setting`].
+pub const SETTING: &str = "setting";
+pub const KEYED: &str = "keyed";
+pub const BY_PATH: &str = "by_path";
+
+/// A project setting (decisions 0665, 0710): an input the same beside every chunk and the cross-file part, which a
+/// source file's edit changes at most in its own rows. Placeless to the split, as the options are: a per-file rule
+/// joins it and stays per-file. Which rows a file's results read, and so its memo entry's key, is
+/// the corpus memo's `settings_scopes`'. Each is declared so where it is declared (`.decl file(path: symbol) setting`);
+/// the engine names none.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setting {
+    /// `setting`: read whole (`env`, `file`).
+    Whole,
+    /// `keyed`: column 0 names a folder, target or module (`package(dir, name)`, `py_names__exports(m, x, q)`); a file
+    /// reads the rows of the keys its own rows name.
+    Keyed,
+    /// `by_path` or `by_path c`: a row per file, its path in column 0; column `c` names the key whose `Keyed` rows
+    /// the file reads (`package_for(path, dir) by_path 1`).
+    ByPath(Option<usize>),
+}
+
+impl Setting {
+    /// The setting a relation's qualifiers declare, if any.
+    pub fn of<'a>(words: impl IntoIterator<Item = &'a str>) -> Option<Setting> {
+        // The most specific word wins (a library may say `setting` where core says `by_path 1`): a path's with its
+        // key, a path's, a key's, the whole.
+        let rank = |s: &Setting| match s {
+            Setting::Whole => 0,
+            Setting::Keyed => 1,
+            Setting::ByPath(None) => 2,
+            Setting::ByPath(Some(_)) => 3,
+        };
+        words
+            .into_iter()
+            .filter_map(|w| match w {
+                SETTING => Some(Setting::Whole),
+                KEYED => Some(Setting::Keyed),
+                BY_PATH => Some(Setting::ByPath(None)),
+                _ => w.strip_prefix(BY_PATH).and_then(|c| c.strip_prefix(' ')).and_then(|c| c.parse().ok()).map(|c| Setting::ByPath(Some(c))),
+            })
+            .max_by_key(rank)
+    }
+}
+
+/// The qualifier `locate` gives a relation it moved, beside `CROSS_FILE`: a move, not a declaration (decision 0652).
+pub const MOVED_CROSS_FILE: &str = "moved_cross_file";
 
 impl Program {
     /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).

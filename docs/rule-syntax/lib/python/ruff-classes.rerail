@@ -130,13 +130,16 @@ type_app(t, h, i, a) :- ann_input(t), ann_strip(t, m), kind(m, "generic_type"), 
 ruff_type_nargs(t, n) :- type_app(t, _, _, _), n = count : { type_app(t, _, _, _) }.
 // ann_q(t, q): t's head (t itself when it is a name) resolves to q; typing_extensions names read as typing's.
 .decl ann_q(t: node, q: symbol)
-ann_q(t, q) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), ruff_qual(m, q0), typing_name(q0, q).
+ann_q(t, q) :- ann_strip(t, m), (kind(m, "identifier") ; kind(m, "attribute")), typing_q(m, q).
 .decl head_q(t: node, q: symbol)
 head_q(t, q) :- ann_q(t, q).
-head_q(t, q) :- type_app(t, h, 0, _), ruff_qual(h, q0), typing_name(q0, q).
-.decl typing_name(q: symbol, r: symbol)
-typing_name(q, q) :- ruff_qual(_, q).
-typing_name(q, cat("typing.", x)) :- ruff_qual(_, q), (split_dot(q, "typing_extensions", x) ; split_dot(q, "_typeshed", x)).
+head_q(t, q) :- type_app(t, h, 0, _), typing_q(h, q).
+// typing_q(n, q): n's qualified name, and typing_extensions' and _typeshed's as typing's. Keyed by the node, in its own
+// file: keyed by the name, it was a table of every file's names, joined by name in the cross-file part (decision 0677).
+.decl typing_q(n: node, q: symbol)
+typing_q(n, q) :- ruff_qual(n, q).
+typing_q(n, cat("typing.", x)) :- ruff_qual(n, q),
+    (split_dot(q, "typing_extensions", x) ; split_dot(q, "_typeshed", x)).
 .decl class_var_ann(t: node)
 class_var_ann(t) :- head_q(t, "typing.ClassVar").
 .decl final_ann(t: node)

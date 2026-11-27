@@ -52,7 +52,7 @@ ruf007_int1(n, L1) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf0
 //   L2: metavariable this relation binds for the calling rule
 .decl ruf007_int2(n: node, l2: loc)
 ruf007_int2(n, L2) :- kind(n, "integer"), node(_, n, _, _, _), L2 = n, value(n, v1),
-    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) <= 2147483647.
+    (value_type_of(n, "int") ; value_type_of(n, "float")), to_number(v1) <= 2147483647.
 ruf007_int2(n, L2) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf007_int2(c2, L2).
 
 // one(n): the JSON util `one`, used where the JSON says `matches: "one"`

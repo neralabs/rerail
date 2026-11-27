@@ -19,12 +19,13 @@
 //   '%d%d'   2        '%20[^,],%d'   2        '%*d %d'   1        '%.E'   invalid
 //
 // What a rule gets from this library:
-//   printf_needs(s, k)    format s needs k values (none when an argnum is above 32: '%40$s' is left unknown)
-//   printf_invalid(s)     format s is a ValueError
-//   scanf_assigns(s, k)   format s assigns k variables
-//   scanf_invalid(s)      format s has a bad conversion
-// s is a format string's value, php_value(f, "string", s) of a format argument f: the first of sprintf() or
-// printf(), the second of sscanf() (php_format_arg). Each relation is tested once per distinct string. No match_all: each format is first reduced, by @replace_all, to its placeholders, one
+//   printf_needs(f, k)    format f needs k values (none when an argnum is above 32: '%40$s' is left unknown)
+//   printf_invalid(f)     format f is a ValueError
+//   scanf_assigns(f, k)   format f assigns k variables
+//   scanf_invalid(f)      format f has a bad conversion
+// f is a format argument whose value is a known string, php_value(f, "string", s): the first of sprintf() or
+// printf(), the second of sscanf() (php_format_arg). The relations are keyed by f, not by the string, so each
+// file tests its own formats (decision 0677). No match_all: each format is first reduced, by @replace_all, to its placeholders, one
 // short code each ("<argnum:width-star width-n:precision-star precision-n>"), and counted with @count_matches.
 //
 // Builds on php/values.rerail (php_value).
@@ -34,8 +35,8 @@
 .decl php_format_arg(c: node, f: node, style: symbol)  // f is call c's format argument, style "printf" or "scanf"
 php_format_arg(c, f, "printf") :- (php_call(c, "sprintf") ; php_call(c, "printf")), php_arg(c, 0, f).
 php_format_arg(c, f, "scanf") :- php_call(c, "sscanf"), php_arg(c, 1, f).
-.decl php_format(s: symbol, style: symbol)  // the strings the relations below are computed for
-php_format(s, style) :- php_format_arg(_, f, style), php_value(f, "string", s).
+.decl php_format(f: node, s: symbol, style: symbol)  // the format arguments the relations below are computed for
+php_format(f, s, style) :- php_format_arg(_, f, style), php_value(f, "string", s).
 
 // ---- printf ----------------------------------------------------------------------------------------------------
 // format_re(name, re): the placeholder after its `%`, plain ("printf") and with groups ("printf_groups": 2 argnum,
@@ -47,32 +48,32 @@ format_re("printf_groups", cat("(?:([1-9][0-9]{0,8})\\$)?(?:[-+ 0]|'[\\s\\S])*(?
     "(?:\\.(?:[0-9]{1,9}|(\\*)(?:([1-9][0-9]{0,8})\\$)?)?)?l?[bcdeEfFgGhHosuxX%]")).
 format_re("scanf", "(\\*)?(?:[1-9][0-9]*\\$)?[0-9]*[hlL]?(?:[dDioxXufeEgscn]|\\[\\^?\\]?[^\\]]*\\])").
 
-.decl printf_code(s: symbol, code: symbol)
-printf_code(s, @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"), cat("%(?:(%)|", g, ")"),
-    "<${1}${2}:${3}${4}:${5}${6}>")) :- php_format(s, "printf"), format_re("printf", ph), format_re("printf_groups", g).
+.decl printf_code(f: node, code: symbol)
+printf_code(f, @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"), cat("%(?:(%)|", g, ")"),
+    "<${1}${2}:${3}${4}:${5}${6}>")) :- php_format(f, s, "printf"), format_re("printf", ph), format_re("printf_groups", g).
 
-.decl printf_invalid(s: symbol)
-printf_invalid(s) :- php_format(s, "printf"), format_re("printf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).
+.decl printf_invalid(f: node)
+printf_invalid(f) :- php_format(f, s, "printf"), format_re("printf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).
 
 // In-order values: placeholders with no argnum (`<:`, a literal is `<%:`), and stars with no N (`*:`, `*>`).
 // Numbered: N appears as `<N:`, `*N:` or `*N>`.
-.decl printf_needs(s: symbol, k: number)
-printf_needs(s, max(seq, top)) :- printf_seq(s, seq), printf_numbered(s, _), top = max n : { printf_numbered(s, n) }.
-printf_needs(s, seq) :- printf_seq(s, seq), !printf_numbered(s, _).
-.decl printf_seq(s: symbol, k: number)
-printf_seq(s, @count_matches("<:", code) + @count_matches("\\*:", code) + @count_matches("\\*>", code)) :-
-    printf_code(s, code), !printf_invalid(s), !printf_far(s).
-.decl printf_numbered(s: symbol, n: number)
-printf_numbered(s, n) :- printf_code(s, code), php_argnum(n), @count_matches(cat("[<*]", to_string(n), "[:>]"), code) > 0.
-.decl printf_far(s: symbol)  // an argnum above 32: the format's need is not computed (no printf_needs)
-printf_far(s) :- printf_code(s, code), @count_matches("[<*](3[3-9]|[4-9][0-9]|[1-9][0-9]{2,})[:>]", code) > 0.
+.decl printf_needs(f: node, k: number)
+printf_needs(f, max(seq, top)) :- printf_seq(f, seq), printf_numbered(f, _), top = max n : { printf_numbered(f, n) }.
+printf_needs(f, seq) :- printf_seq(f, seq), !printf_numbered(f, _).
+.decl printf_seq(f: node, k: number)
+printf_seq(f, @count_matches("<:", code) + @count_matches("\\*:", code) + @count_matches("\\*>", code)) :-
+    printf_code(f, code), !printf_invalid(f), !printf_far(f).
+.decl printf_numbered(f: node, n: number)
+printf_numbered(f, n) :- printf_code(f, code), php_argnum(n), @count_matches(cat("[<*]", to_string(n), "[:>]"), code) > 0.
+.decl printf_far(f: node)  // an argnum above 32: the format's need is not computed (no printf_needs)
+printf_far(f) :- printf_code(f, code), @count_matches("[<*](3[3-9]|[4-9][0-9]|[1-9][0-9]{2,})[:>]", code) > 0.
 .decl php_argnum(n: number)  // the argnums looked for: 1 to 32
 php_argnum(1).
 php_argnum(n + 1) :- php_argnum(n), n < 32.
 
 // ---- scanf -----------------------------------------------------------------------------------------------------
-.decl scanf_assigns(s: symbol, k: number)
-scanf_assigns(s, @count_matches("<>", @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"),
-    cat("%(?:(%)|", ph, ")"), "<${1}${2}>"))) :- php_format(s, "scanf"), !scanf_invalid(s), format_re("scanf", ph).
-.decl scanf_invalid(s: symbol)
-scanf_invalid(s) :- php_format(s, "scanf"), format_re("scanf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).
+.decl scanf_assigns(f: node, k: number)
+scanf_assigns(f, @count_matches("<>", @replace_all(@replace_all(s, cat("(%%|%", ph, ")|[\\s\\S]"), "${1}"),
+    cat("%(?:(%)|", ph, ")"), "<${1}${2}>"))) :- php_format(f, s, "scanf"), !scanf_invalid(f), format_re("scanf", ph).
+.decl scanf_invalid(f: node)
+scanf_invalid(f) :- php_format(f, s, "scanf"), format_re("scanf", ph), contains("%", @replace_all(s, cat("%%|%", ph), "")).

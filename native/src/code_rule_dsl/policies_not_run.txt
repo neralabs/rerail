@@ -1,0 +1,1 @@
+# <pack> <policy file>: policies that do not run on the pack split tests' files, for an error of their own; the list only shrinks (src/code_rule_dsl/tools.rs, pack_split_tests).

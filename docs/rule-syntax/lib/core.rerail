@@ -28,8 +28,6 @@
 // ---- the tape ----------------------------------------------------------------------------------------------------
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
-// An ECMAScript or Vue file's is its path without its extension: doc(d, "src/ui/button.tsx", "src/ui/button"), the
-// name tsx/names.rerail resolves an import of it to, so its symbols are "src/ui/button#Button".
 .decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
@@ -91,6 +89,8 @@
 // the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
 // container or bytes has no text in `value`.
 .decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// static_value_type_of(n, t): the type of static_value's value of n, as value_type_of names it.
+.decl static_value_type_of(n: node, t: symbol)
 // fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
 // whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
 // "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
@@ -101,7 +101,7 @@
 // interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
 .decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
+.input value, str, strprefix, name, comment, static_value, static_value_type_of, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
@@ -293,10 +293,14 @@
 // setting names. load(path, module, grammar): a rule asks for
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
-.decl env(key: symbol, value: symbol) extensible
+.decl env(key: symbol, value: symbol) setting extensible
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
+// module_target(k, f): the file module specifier k resolves to, k being "<importing path>\n<specifier>\n<style>" (style
+// "require", "import" or "type"), as Node resolves it with eslint-plugin-n's options; no row where it fails. Asked as
+// dir_entry is, by a rule binding k (the phase node_resolve).
+.decl module_target(k: symbol, f: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // ---- a coding agent's tool calls (`tool-calls.md`) ----
@@ -529,32 +533,20 @@
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
 // the Git tree, the policy) and is native because that is IO and format parsing, not logic.
 // file("src/c.tsx"): the file exists. Import resolution tests candidate paths against this.
-.decl file(path: symbol)                                 // a file in the scanned tree (Git tree facts)
-// tsconfig("web", "web/src") for web/tsconfig.json with "baseUrl": "src": the folder's tsconfig.json (else its
-// jsconfig.json), read as TypeScript reads it (comments, trailing commas), over its `extends` chain (a relative
-// path, or a package's file under node_modules or in the workspace). baseUrl is from the root, where it is set; no
-// row without one.
-.decl tsconfig(dir: symbol, base_url: symbol)            // tsconfig.json / jsconfig.json, `extends` followed
-// tsconfig_for("web/src/a.ts", "web"): the nearest folder in or above its directory with a tsconfig (as above).
-.decl tsconfig_for(path: symbol, dir: symbol)            // the tsconfig directory that governs a file
-// "paths": {"@/*": ["src/*"]} in web/tsconfig.json gives tsconfig_path("web", "@/*", "src/*"), one row per target.
-// The target is from dir: baseUrl (else the folder of the configuration that sets `paths`, an `extends` base's)
-// applied, so @join(dir, @glob_sub(pattern, target, s)) is the path specifier s maps to: with "baseUrl": "src",
-// "@/*": ["*"] gives "src/*" too, and a base's target outside dir starts with "../".
-.decl tsconfig_path(dir: symbol, pattern: symbol, target: symbol)
+.decl file(path: symbol) setting                                 // a file in the scanned tree (Git tree facts)
 // package("packages/ui", "@acme/ui") from packages/ui/package.json: maps a workspace package name to its directory.
-.decl package(dir: symbol, name: symbol)                 // package.json name
+.decl package(dir: symbol, name: symbol) keyed                 // package.json name
 // "exports": {"./button": "./src/button.ts"} in @acme/ui's package.json gives
 // package_export("@acme/ui", "./button", "./src/button.ts"): one row per target string, through conditions
 // ({"types": …, "default": …}) and fallback arrays; a string or a conditions object is the subpath ".".
-.decl package_export(name: symbol, subpath: symbol, target: symbol)
-// package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory, as tsconfig_for.
+.decl package_export(name: symbol, subpath: symbol, target: symbol) setting
+// package_for("web/src/a.js", "web"): the nearest package.json in or above a file's directory.
 // package_field("web", "engines/node", ">=18"): its string values, one row each. The key is the member's path
 // from the root, segments joined by "/" and escaped as JSON pointer tokens (RFC 6901: "~" as "~0", "/" as "~1"),
 // array elements by index from 0: "type", "engines/node", "devEngines/runtime/0/version". Only strings give
 // rows: `"engines": { "node": 18 }` gives none, as the engine ignores a non-string there.
-.decl package_for(path: symbol, dir: symbol)
-.decl package_field(dir: symbol, key: symbol, v: symbol)
+.decl package_for(path: symbol, dir: symbol) by_path 1
+.decl package_field(dir: symbol, key: symbol, v: symbol) keyed
 // Python: in `x: "Foo"`, `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the
 // list of positions follows Ruff's own table (its semantic model's string type definitions, nested ones included),
 // not anything visible in the tree. A `Literal` argument or `Annotated` metadata is none.
@@ -608,7 +600,7 @@
 // Surrogates delimit runs. This projection does not replace full decoded string values.
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
-.input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
+.input file, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
 .input signed_list, git_rev, str_part, str_part_word, str_part_start, literal_json
 .input dump_sha256, body_sha256, signature_sha256

@@ -160,6 +160,7 @@ impl ProgramPass for FactorizeExports {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let local = &split.local;
+        let (_, constants) = split.found();
         let head_of = |r: RuleRef<'_>| v.rel_name(r.head().rel());
         let natives_read: BTreeSet<&str> = f.natives().iter().filter(|n| !local.contains(v.rel_name(n.rel))).flat_map(|n| n.reads.iter()).map(|&r| v.rel_name(r)).collect();
         let keys = relation_keys(v, f);
@@ -224,6 +225,28 @@ impl ProgramPass for FactorizeExports {
                 }
                 let fans = parts.iter().filter(|p| !functional(v, *rule, &part_lits(p), &key, &head, &keys)).count();
                 if fans < 2 {
+                    break;
+                }
+                // Decision 0677: no node crosses into the cross-file part. Its readers (an export's, whose guard counts
+                // the whole factors) join the parts in the cross part, so a key that is a node carries it there. A
+                // relation that holds no node is handed on whole, its rows symbols; one that does holds a node already,
+                // a crossing the check names, and is factorized as before until its family is keyed by symbols.
+                let node_at = |rel: &str, c: usize| f.columns(rel).and_then(|cols| cols.get(c).map(|(_, t)| super::super::node_crossings::NODE_TYPES.contains(t))).unwrap_or(false);
+                let key_is_node = lits.iter().any(|l| match l.view() {
+                    L::Atom(a) if !a.neg() => a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(s) if name(v, *rule, s) == key) && node_at(v.rel_name(a.rel()), c)),
+                    _ => false,
+                });
+                let head_holds_node = (0..rule.head().args().count()).any(|c| node_at(rel, c));
+                if key_is_node && !head_holds_node {
+                    break;
+                }
+                // A join of a file's nodes with a constant (`export_all(e, m) :- star_export(e, s), node_module(s, m)`):
+                // a lookup in the constant, made in the file. Handed on as parts, the constant's part and the key were
+                // tables of every file's values, and their readers, which join them at the file's nodes, went to the
+                // cross part (decision 0677).
+                let constant = |r: &str| constants.contains(r) || (f.has_facts(r) && !rules_of.contains_key(r));
+                let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
+                if head_holds_node && lookup {
                     break;
                 }
                 plan.push((key, parts));
