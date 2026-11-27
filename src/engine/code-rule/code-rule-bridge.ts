@@ -4001,7 +4001,9 @@ export class CodeRuleBridge {
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
     for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
-      if (before !== undefined) taken.previous.set(path, before);
+      // A source under what the read left out (a folder Git ignores, one no walk enters, a link) is none of the walk's:
+      // the session keeps what it saw of it, unasked, and leaves it to no next walk.
+      if (before !== undefined && !leftOutOn(findings.leftOut, path.slice(worktree.length + 1))) taken.previous.set(path, before);
       const after = takenSource(worktree, findings, path);
       if (after !== undefined) taken.scan.sources.set(path, after);
     }
@@ -4041,7 +4043,9 @@ export class CodeRuleBridge {
     found: ReadonlyMap<string, WorktreeFindings>,
   ): Promise<Map<string, ObservedSource | undefined>> {
     const kept = new Map<string, ObservedSource | undefined>();
-    const unasked = this.#unaskedOf(discovery, walk, found);
+    // A shell command of the session that ran through the walk leaves each source to the next walk whatever a read finds
+    // (`#toolChanges`): asking would cost an owner lookup of each on the daemon's thread at every walk it spans.
+    const unasked = discovery.toolCalls.commandSince(walk.callsEnded) !== undefined;
     if (!await this.#keepSeenStill(discovery, { walk, scan, unasked }, kept) || !await this.#rereadMissingTexts(discovery, walk, scan, kept)) return kept;
     const listed = await this.#firstSeenInWorktrees(discovery, walk, scan, found);
     // A first sight Git lists puts the walk's observation back; the next walk shows these instead.
@@ -4052,12 +4056,12 @@ export class CodeRuleBridge {
 
   /**
    * Puts into `kept` each source the session saw itself that the walk's snapshot lacks (its last snapshot held it) and
-   * a read finds still there, with what the session saw of it; one `unasked` names is kept without a read. Returns false
+   * a read finds still there, with what the session saw of it; with `unasked`, each one without a read. Returns false
    * once the discovery is abandoned.
    */
   async #keepSeenStill(
     discovery: SourceDiscovery,
-    { walk, scan, unasked }: { readonly walk: WalkStart; readonly scan: SourceScan; readonly unasked: (path: string) => boolean },
+    { walk, scan, unasked }: { readonly walk: WalkStart; readonly scan: SourceScan; readonly unasked: boolean },
     kept: Map<string, ObservedSource | undefined>,
   ): Promise<boolean> {
     for (const [path, before] of walk.previous) {
@@ -4070,31 +4074,13 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Whether the walk keeps `path` as still there: one `unasked` names is; else whether a read finds a file there, which
+   * Whether the walk keeps `path` as still there: with `unasked`, it does; else whether a read finds a file there, which
    * a read of a path the session does not read never does.
    */
-  async #stillThere(root: string, path: string, unasked: (path: string) => boolean): Promise<boolean> {
-    if (unasked(path)) return true;
+  async #stillThere(root: string, path: string, unasked: boolean): Promise<boolean> {
+    if (unasked) return true;
     const read = await this.#readSource(root, path);
     return read !== undefined && read.deleted !== true;
-  }
-
-  /**
-   * The sources the session saw that `#keepSeenStill` keeps without asking the disk, since the walk answers for none of
-   * them whatever a read finds: every one while a shell command of the session ran through the walk, which leaves each
-   * to the next walk (`#toolChanges`); else each one the read its worktree's snapshot comes from did not read, as it
-   * left out the source or a folder on its way (`WorktreeFindings.leftOut`: a folder Git ignores, one no walk enters, a
-   * link), as no walk records a change there. A read that walks into it again, as one that follows a notice there does,
-   * asks again. Asking would cost an owner lookup of each on the daemon's thread at every walk, for the session's life.
-   */
-  #unaskedOf(discovery: SourceDiscovery, walk: WalkStart, found: ReadonlyMap<string, WorktreeFindings>): (path: string) => boolean {
-    if (discovery.toolCalls.commandSince(walk.callsEnded) !== undefined) return () => true;
-    const leftOut = new Map([...found].map(([root, findings]) => [sessionPath(discovery.root, root), findings.leftOut]));
-    return path => {
-      const worktree = rootHolding(walk.worktrees, path);
-      const unread = worktree === undefined ? undefined : leftOut.get(worktree);
-      return worktree !== undefined && unread !== undefined && leftOutOn(unread, path.slice(worktree.length + 1));
-    };
   }
 
   /**

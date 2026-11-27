@@ -83,6 +83,7 @@ vi.mock("node:fs/promises", async importOriginal => {
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { ToolCallWindows } from "../../../../src/engine/code-rule/tool-call-windows.js";
 import { RerailRuntime } from "../../../../src/runtime/index.js";
 import { temporaryDirectories, testEmbedder } from "../../../support/hook-events.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -240,6 +241,29 @@ describe("a walk of the other worktrees, about the files a session saw there", (
       expect(asked).toEqual(NOTHING);
       // The session still holds what it saw of each.
       expect(built.map(path => session.bridge.observedDigest(relative(session.main, path).split(sep).join("/")))).toEqual(built.map(() => expect.any(String)));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  it("keeps a source the session wrote in a folder no walk enters once it is gone, unasked, and answers for the session's calls there", { timeout: 120_000 }, async () => {
+    const session = await sessionBesideWorktree();
+    try {
+      const built = join(session.w1, "build", "gen.py");
+      await write(session, built, "g = 1\n");
+      await turn(session);
+      await rm(built);
+      const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+      const answered = vi.spyOn(ToolCallWindows.prototype, "answeredIn");
+
+      const asked = await askedAbout(session, [built], async () => await turn(session));
+
+      // No walk reads `build`, so none records a change there, nor the deletion: the session keeps what it saw.
+      expect(asked).toEqual(NOTHING);
+      expect(audits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([]);
+      expect(session.bridge.observedDigest(relative(session.main, built).split(sep).join("/"))).toEqual(expect.any(String));
+      // And the walk answers for the session's calls in `w1`, the Write among them: it leaves the file to no next walk.
+      expect(answered.mock.calls.map(([place]) => place)).toContain(relative(session.main, session.w1).split(sep).join("/"));
     } finally {
       await session.runtime.dispose();
     }
