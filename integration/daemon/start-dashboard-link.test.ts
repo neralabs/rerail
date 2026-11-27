@@ -1,14 +1,16 @@
 /**
  * `rerail start` and `rerail start --json` in a repository set up and started before, through the built CLI and a real
  * daemon, as a person runs them: autostart on, a Rerail home and a user home of their own, no browser. `--json` changes
- * the form of the answer only: each form ends on the dashboard's link and leaves the daemon as the other does.
+ * the form of the answer only: each form ends on the dashboard's link and leaves the daemon as the other does. In OMP
+ * and Pi the extension attaches its session again right after `/rerail-start`, and the link it showed still answers.
  */
 import { execFile, execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { createNativeSession, type NativeSessionClient } from "../../src/harness/index.js";
 import { removeFolder } from "../../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../../test/support/repository-rules.js";
 
@@ -120,6 +122,48 @@ function otherPackage(place: Place): string {
   return other;
 }
 
+/**
+ * The attach OMP's and Pi's extension makes once `/rerail-start` ends (`createNativeSession`), from this package, with
+ * the place's Rerail home and user home; the session it opens is closed again.
+ */
+async function attachAsTheExtension(place: Place): Promise<void> {
+  for (const name of ["RERAIL_HOME", "HOME", "USERPROFILE"] as const) vi.stubEnv(name, place.env[name]);
+  const opened: NativeSessionClient[] = [];
+  try {
+    await createNativeSession({
+      current: () => undefined,
+      matchesCurrent: () => false,
+      close: async () => undefined,
+      activate: client => opened.push(client),
+      entries: () => [],
+      appendEntry: () => undefined,
+      deliver: () => undefined,
+      reattach: async () => undefined,
+    }, {}, { host: "omp", sessionId: "rerail-start-link", cwd: place.repo }, false, {});
+  } finally {
+    await Promise.all(opened.map(async client => await client.close()));
+    vi.unstubAllEnvs();
+  }
+}
+
+/** Whose daemon the home records, and whether it serves the origin of `link`. */
+function daemonServing(place: Place, link: string): string {
+  const daemon = recorded(place);
+  if (daemon === undefined) return "none";
+  const whose = daemon.packageRoot === PACKAGE_ROOT ? "this" : "another";
+  return `${whose} package's, ${link.startsWith(daemon.url) ? "on the link's origin" : `on ${daemon.url}`}`;
+}
+
+/** Whether `link` answers as a browser opening it finds: any HTTP answer, or the error that came instead. */
+async function answerOf(link: string): Promise<string> {
+  try {
+    await fetch(link, { signal: AbortSignal.timeout(10_000) });
+    return "answers";
+  } catch (error) {
+    return `no answer (${(error as { cause?: { code?: string } }).cause?.code ?? String(error)})`;
+  }
+}
+
 describe("rerail start in a repository set up before, with and without --json", () => {
   test("starts the active package's daemon where none runs, and ends on its link", async () => {
     const place = makePlace();
@@ -140,5 +184,17 @@ describe("rerail start in a repository set up before, with and without --json", 
     const ended = { code: 0, lines: [ALREADY_ON, rulesLink(place)], daemon: `another package's, pid ${before?.pid}` };
     expect(await start(place, false)).toEqual(ended);
     expect(await start(place, true)).toEqual(ended);
+  }, TEST_TIMEOUT_MS);
+
+  // OMP's and Pi's `/rerail-start` runs `rerail start --json` from the extension's package, then the extension attaches
+  // its session again, which replaces a daemon of another package with its own. The person opens the link next.
+  test("in OMP and Pi, the link /rerail-start shows still answers once the extension attaches again", async () => {
+    const place = makePlace();
+    expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
+    const step = await rerail(PACKAGE_ROOT, place, ["start", "--json"]);
+    const link = shownLines(step.stdout, true).map(line => line.trim()).find(line => line.startsWith("http")) ?? `no link in ${step.stdout}`;
+    await attachAsTheExtension(place);
+    expect({ link: await answerOf(link), daemon: daemonServing(place, link) })
+      .toEqual({ link: "answers", daemon: "this package's, on the link's origin" });
   }, TEST_TIMEOUT_MS);
 });

@@ -254,9 +254,10 @@ describe("Rerail daemon control", () => {
   /**
    * A daemon of this process's pid that daemon.json records, with `state` over what it says, and that holds the home in
    * its start (`holdHomeStarting`): its health answers 503, as one in its start does not answer, until `answer(pid)`,
-   * after which daemon.json names `pid`, this process's unless given, and its health answers as `pid`.
+   * after which daemon.json names `pid`, this process's unless given, and its health answers as `pid`. `port`: the one
+   * daemon.json records.
    */
-  async function recordedStartingDaemon(state: Partial<DaemonState> = {}): Promise<{ answer: (pid?: number) => void; close: () => void }> {
+  async function recordedStartingDaemon(state: Partial<DaemonState> = {}): Promise<{ answer: (pid?: number) => void; close: () => void; port: number }> {
     let answers: number | undefined;
     const server = createHttpServer((_request, response) => {
       response.writeHead(answers === undefined ? 503 : 200, { "content-type": "application/json" });
@@ -274,6 +275,7 @@ describe("Rerail daemon control", () => {
         answers = pid;
       },
       close: () => server.close(),
+      port,
     };
   }
 
@@ -483,8 +485,13 @@ describe("Rerail daemon control", () => {
   });
 
   // The start a hook makes before it sends its settings replaces a running daemon of another package. One found in its
-  // start that answers as another package's is replaced the same way, once it answers, never used.
-  it("replaces a daemon of another package found in its start once it answers, as it replaces a running one", async () => {
+  // start that answers as another package's is replaced the same way, once it answers, never used. OMP's and Pi's attach
+  // takes any port and launches the replacement on the port the replaced daemon had, so a dashboard link shown for that
+  // daemon still answers; a hook's start names no port, and the daemon takes the one it remembers.
+  it.each([
+    ["a hook's start, which names no port", {}, false],
+    ["OMP's and Pi's attach, which takes any port", { port: 0 }, true],
+  ])("%s: replaces a daemon of another package found in its start once it answers, as it replaces a running one", async (_start, port, onFoundPort) => {
     const daemon = await recordedStartingDaemon({ packageRoot: "/older/rerail" });
     let stopped = false;
     const signals: string[] = [];
@@ -494,19 +501,19 @@ describe("Rerail daemon control", () => {
       stopped ||= signal === "SIGTERM";
       return true;
     };
-    const launched: number[] = [];
-    const launch = (): StartedChild => {
+    const launched: string[] = [];
+    const launch = (_command: string, args: readonly string[]): StartedChild => {
       const child = Object.assign(new EventEmitter(), { pid: 4242, unref() {} });
-      launched.push(child.pid);
+      launched.push(`${child.pid} --port ${args.includes("--port") ? args[args.indexOf("--port") + 1] : "unset"}`);
       setImmediate(() => child.emit("exit", 3, null));
       return child;
     };
     const machine = fakeMachine("linux", { kill, homeDaemonLockHeld: () => !stopped, spawn: launch });
     const control = { home, packageRoot: "/nowhere/rerail", onWaiting: () => daemon.answer(), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
     try {
-      await expect(startDaemonForPackage(control, { dev: true }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
+      await expect(startDaemonForPackage(control, { dev: true, ...port }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
       expect(signals).toEqual([`${process.pid} SIGTERM`]);
-      expect(launched).toEqual([4242]);
+      expect(launched).toEqual([`4242 --port ${onFoundPort ? daemon.port : "unset"}`]);
     } finally {
       daemon.close();
     }
