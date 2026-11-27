@@ -14,6 +14,7 @@
 //! - `rows`: a relation's rows, its columns in chunks that grow by quarter steps (`Rows`, `ColDir`), and their reads.
 //! - `relation`: a relation's descriptor (`Relation`), its indexes and orders, and its reads.
 //! - `bloom`: a blocked Bloom filter's format, its hash and its reads.
+//! - `ranged`: columns packed per range of rows (`Columns`, `RangedCol`), and their reads.
 
 #![no_std]
 
@@ -23,6 +24,7 @@ pub mod col;
 pub mod hash;
 pub mod kernel;
 pub mod pod;
+pub mod ranged;
 pub mod refs;
 pub mod relation;
 pub mod rows;
