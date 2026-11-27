@@ -39,9 +39,10 @@
 // something that happened later (an external call finished, a delay passed), not a copy of the cache.
 // A Hook of another file is known by its module and name: each file states what its own Hooks return, and what it
 // imports and re-exports, by paths and symbols alone (decision 0677); the cross-file part follows them through
-// imports and barrels, and a finding that rests on another file's Hook joins what holds for its file (qdc_true). The
-// copies that keep a useState from being reported at its argument, and the effects whose setter calls are not
-// "elsewhere", count a value of any imported Hook, whatever that Hook returns.
+// imports and barrels, and a finding that rests on another file's Hook joins what holds for its file (qdc_true). So
+// do the copies that keep a useState from being reported at its argument and the effects whose setter calls are not
+// "elsewhere": an effect that fills the state from an imported Hook copies only where that Hook returns a query or
+// its data; one that fills it from any other Hook (`setRows(saved)`, `saved = useSavedFilter()`) sets it elsewhere.
 // Gaps: a value computed by a call (`data.pages.flatMap(…)`, `data.map(…)`) is not followed; nor is a hook that
 // returns the data inside an object (`return { todos: data }`), a query result passed in as a prop, a setter of a
 // store (Jotai, Zustand) rather than useState, or an alias other than `@/`, `~/` and `#/`. The engine evaluates .ts and
@@ -51,10 +52,11 @@
 #include "tsx/react-compiler.rerail"
 
 .violation QueryDataCopiedToState(at: node, msg: symbol) "{msg}"
-QueryDataCopiedToState(a, m) :- qdc_initial(a, s, cs, cx, cn), !qdc_set_elsewhere(s), !qdc_copied(s),
-    qdc_says("initial", m), docof(a, d), qdc_tq_pkg(d), doc(d, p, _), qdc_true(p, cs, cx, cn).
-QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s, cs, cx, cn), !qdc_set_elsewhere(s), qdc_says("effect", m),
-    docof(k, d), qdc_tq_pkg(d), doc(d, p, _), qdc_true(p, cs, cx, cn).
+QueryDataCopiedToState(a, m) :- qdc_initial(a, s, cs, cx, cn), !qdc_set_elsewhere(s), !qdc_copied_sure(s),
+    qdc_copy_req(s, g), qdc_need(s, n), qdc_says("initial", m), docof(a, d), qdc_tq_pkg(d), doc(d, p, _),
+    qdc_true(p, cs, cx, cn), !qdc_group_true(p, g), !qdc_unmet(p, n).
+QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s, cs, cx, cn), !qdc_set_elsewhere(s), qdc_need(s, n),
+    qdc_says("effect", m), docof(k, d), qdc_tq_pkg(d), doc(d, p, _), qdc_true(p, cs, cx, cn), !qdc_unmet(p, n).
 // qdc_tq_pkg(d): document d uses TanStack Query: it imports it itself, or its package (its nearest package.json; the
 // workspace root's for a file under no other) depends on TanStack Query (`@tanstack/react-query`, v3's
 // `react-query`) or tRPC's React Query integration, so an `x.y.useQuery()` there is tRPC's TanStack hook and not
@@ -197,17 +199,59 @@ qdc_effect_copy(k, s, cs, cx, cn) :- qdc_effect_cb(cb), rc_set_state(k), rc_own(
     deparen(a, x), qdc_val(x, cs, cx, cn), field(k, "function", n), ref_site(n, s).
 .decl qdc_effect_cb(cb: node)
 qdc_effect_cb(cb) :- deps_hook(c, x, _, _), effect_hook(x), deps_cb(c, cb).
-// qdc_copied(s): an effect copies query data into s, or a value of an imported Hook.
-.decl qdc_copied(s: node)
-qdc_copied(s) :- qdc_effect_copy(_, s, _, _, _).
+// What keeps a state from being reported rests on other files' Hooks too. A copy that rests on an imported Hook
+// (cs != "") counts only where that Hook returns what the copy needs (qdc_true): each file names the conditions a
+// state's finding asks as groups of values (qdc_member, qdc_need_group), which the cross-file part answers per group
+// (qdc_group_true, qdc_unmet).
+// qdc_ask(s): a state a finding may report.
+.decl qdc_ask(s: node)
+qdc_ask(s) :- qdc_initial(_, s, _, _, _).
+qdc_ask(s) :- qdc_effect_copy(_, s, _, _, _).
+// qdc_copied_sure(s): an effect copies query data into s, whatever other files hold.
+.decl qdc_copied_sure(s: node)
+qdc_copied_sure(s) :- qdc_effect_copy(_, s, "", "", "").
+// qdc_copy_alt(s, k, cs, cx, cn): s has no sure copy, and an effect copies into it a value that is query data where
+// the Hook imported as cx from cs returns cn; k is that condition as one value. qdc_copy_req(s, g): g names them all
+// ("" none); s is copied when one of them holds.
+.decl qdc_copy_alt(s: node, k: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_copy_alt(s, cat(cs, " ", cx, " ", cn), cs, cx, cn) :- qdc_effect_copy(_, s, cs, cx, cn), cs != "",
+    !qdc_copied_sure(s).
+.decl qdc_copy_req(s: node, g: symbol)
+qdc_copy_req(s, g) :- qdc_copy_alt(s, _, _, _, _), g = join k by k sep " | " : { qdc_copy_alt(s, k, _, _, _) }.
+qdc_copy_req(s, "") :- qdc_ask(s), !qdc_copy_alt(s, _, _, _, _).
 
-// qdc_set_elsewhere(s): setter s is read anywhere but in an effect that copies query data into it: an event
-// handler, a child's prop, a custom hook's argument. The state is then a draft the user edits.
+// qdc_set_elsewhere(s): setter s is read outside every effect that may copy query data into it (qdc_cover, whatever
+// other files hold): an event handler, a child's prop, a custom hook's argument. The state is then a draft the user
+// edits. A read in an effect whose copy rests on other files is elsewhere unless that copy holds (qdc_need).
 .decl qdc_set_elsewhere(s: node)
 qdc_set_elsewhere(s) :- ref_site(r, s), !qdc_in_copying_effect(r, s).
-.decl qdc_in_copying_effect(r: node, s: node)
-qdc_in_copying_effect(r, s) :- qdc_effect_copy(k, s, _, _, _), qdc_effect_cb(cb), within(k, cb), within(r, cb),
+// qdc_cover(r, s, cs, cx, cn): reference r of setter s sits in an effect that copies query data into s, where the
+// Hook imported as cx from cs returns cn.
+.decl qdc_cover(r: node, s: node, cs: symbol, cx: symbol, cn: symbol)
+qdc_cover(r, s, cs, cx, cn) :- qdc_effect_copy(k, s, cs, cx, cn), qdc_effect_cb(cb), within(k, cb), within(r, cb),
     ref_site(r, s).
+.decl qdc_in_copying_effect(r: node, s: node)
+qdc_in_copying_effect(r, s) :- qdc_cover(r, s, _, _, _).
+// qdc_ref_alt(r, s, k, cs, cx, cn): r sits in no effect that copies query data into s whatever other files hold, and
+// in one whose copy rests on condition k: r sets s elsewhere unless one of its conditions holds. qdc_ref_group(r, s,
+// g): g names them all. qdc_need(s, n): n names the groups of s's references ("" none); each must hold.
+.decl qdc_sure_ref(r: node, s: node)
+qdc_sure_ref(r, s) :- qdc_cover(r, s, "", "", "").
+.decl qdc_ref_alt(r: node, s: node, k: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_ref_alt(r, s, cat(cs, " ", cx, " ", cn), cs, cx, cn) :- qdc_cover(r, s, cs, cx, cn), cs != "",
+    !qdc_sure_ref(r, s).
+.decl qdc_ref_group(r: node, s: node, g: symbol)
+qdc_ref_group(r, s, g) :- qdc_ref_alt(r, s, _, _, _, _), g = join k by k sep " | " : { qdc_ref_alt(r, s, k, _, _, _) }.
+.decl qdc_need(s: node, n: symbol)
+qdc_need(s, n) :- qdc_ref_group(_, s, _), n = join g by g sep " || " : { qdc_ref_group(_, s, g) }.
+qdc_need(s, "") :- qdc_ask(s), !qdc_ref_group(_, s, _).
+// qdc_member(p, g, cs, cx, cn): in the file at path p, group g holds the condition (cs, cx, cn).
+// qdc_need_group(p, n, g): in the file at path p, need n names group g.
+.decl qdc_member(p: symbol, g: symbol, cs: symbol, cx: symbol, cn: symbol)
+qdc_member(p, g, cs, cx, cn) :- qdc_copy_req(s, g), qdc_copy_alt(s, _, cs, cx, cn), docof(s, d), doc(d, p, _).
+qdc_member(p, g, cs, cx, cn) :- qdc_ref_group(r, s, g), qdc_ref_alt(r, s, _, cs, cx, cn), docof(r, d), doc(d, p, _).
+.decl qdc_need_group(p: symbol, n: symbol, g: symbol)
+qdc_need_group(p, n, g) :- qdc_need(s, n), qdc_ref_group(_, s, g), docof(s, d), doc(d, p, _).
 
 // ---- across files: other modules' Hooks -----------------------------------------------------------------------
 // Each file states, by its path, its module (ts_module) and symbols alone, what its own Hooks return (qdc_def), what
@@ -278,6 +322,12 @@ qdc_hook_of(t, x, m) :- qdc_star(p, t, s), qdc_target(p, s, t2), qdc_hook_of(t2,
 .decl qdc_true(p: symbol, cs: symbol, cx: symbol, cn: symbol)
 qdc_true(p, "", "", "") :- doc(_, p, _).
 qdc_true(p, s, x, m) :- qdc_import(p, s, x), qdc_target(p, s, t), qdc_hook_of(t, x, m).
+// qdc_group_true(p, g): one of group g's conditions holds for the file at path p. qdc_unmet(p, n): a group need n
+// names holds none: a reference sets the state elsewhere.
+.decl qdc_group_true(p: symbol, g: symbol)
+qdc_group_true(p, g) :- qdc_member(p, g, cs, cx, cn), qdc_true(p, cs, cx, cn).
+.decl qdc_unmet(p: symbol, n: symbol)
+qdc_unmet(p, n) :- qdc_need_group(p, n, g), !qdc_group_true(p, g).
 
 // The cases, `cases/tanstack-query-practice-query-data-copied-to-state/`, read as one repository: each line ending
 // in `// caught` is reported, and no other line.
@@ -302,6 +352,8 @@ qdc_true(p, s, x, m) :- qdc_import(p, s, x), qdc_target(p, s, t), qdc_hook_of(t,
     .fixture "src/components/purchases-ready.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/purchases-ready.tsx"
     .fixture "src/components/first-seen.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/first-seen.tsx"
     .fixture "src/components/user-badge.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/user-badge.tsx"
+    .fixture "src/components/filtered-todos.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/filtered-todos.tsx"
+    .fixture "src/features/filters/use-saved-filter.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/filters/use-saved-filter.tsx"
     .fixture "src/features/todos/api.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/api.ts"
     .fixture "src/features/projects/use-projects.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/projects/use-projects.ts"
     .fixture "src/components/project-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/project-list.tsx"
