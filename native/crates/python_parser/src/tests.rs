@@ -25,6 +25,11 @@ fn same(texts: &[&str]) {
         let interp = c.interpreted(text).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why}"));
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
         assert_eq!(rounds_differ(text.as_bytes()), None, "the regions as rounds, Metal's form, against the walk, {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
+        let aot = aot_text(text).unwrap_or_else(|at| panic!("the parser as Rust refuses {text:?} at byte {at}"));
+        assert_eq!(aot, want, "the parser as Rust, {text:?}");
     }
 }
 
@@ -45,6 +50,10 @@ fn refused(texts: &[&str]) {
     let c = compiled().expect("compiles");
     for &text in texts {
         assert!(c.image(text).is_none(), "accepted {text:?}");
+        assert!(aot_text(text).is_err(), "the parser as Rust accepts {text:?}");
+        if let Some(why) = tier1_differs(c, text) {
+            panic!("tier 1 as Rust, {text:?}: {why}");
+        }
     }
 }
 
@@ -68,6 +77,8 @@ fn blocks_are_the_lean_parsers() {
     // (tree-sitter's scanner dedents past them); one less deep than the next line is the block's.
     same(&["if a:\n  b\n  # c\nd\n", "if a:\n  b\n# c\nd\n", "if a:\n  b\n  # c\n", "if a:\n  if b:\n    c\n  # d\ne\n", "if a:\n  b\n  # c\n# d\ne\n"]);
     same(&["if a:\n  b\n# c\n  d\n", "if a:\n  b\n      # c\nd\n"]);
+    // A dedent past two levels ends both: the `else` after it is the outer statement's, not the inner `while`'s or `if`'s.
+    same(&["if a:\n  while b:\n    c\nelse:\n  d\n", "if a:\n  if b:\n    c\n  elif d:\n    e\nelse:\n  f\n", "try:\n  for a in b:\n    c\nexcept E:\n  d\n"]);
 }
 
 #[test]
@@ -285,6 +296,8 @@ fn corpus() {
     let dir = std::env::var("RERAIL_PYTHON_CORPUS").expect("set RERAIL_PYTHON_CORPUS");
     let c = compiled().expect("compiles");
     let (mut same, mut refused, mut differ, mut lean_refused, mut rounds_off) = (0, 0, 0, 0, 0);
+    // The parser as Rust where the interpreter is the lean parser: its tier 1 the interpreter's, then its tape.
+    let (mut aot_same, mut aot_off) = (0usize, 0usize);
     let mut taken: std::collections::BTreeMap<(usize, u32), usize> = Default::default();
     let (mut voted, mut alone) = (0usize, 0usize);
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -344,6 +357,26 @@ fn corpus() {
             }
             Some(image) if image_text(&image).as_deref() == Ok(&want) => {
                 same += 1;
+                let aot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tier1_differs(&c, &text).map_or_else(|| aot_text(&text).map_err(|at| format!("refused at byte {at}")), Err)));
+                match aot {
+                    Ok(Ok(t)) if t == want => aot_same += 1,
+                    Ok(Ok(got)) => {
+                        aot_off += 1;
+                        let at = got.lines().zip(want.lines()).position(|(a, b)| a != b).unwrap_or(0);
+                        let line = |t: &str| t.lines().nth(at).unwrap_or("").to_owned();
+                        let before = want.lines().nth(at.saturating_sub(1)).unwrap_or("").trim().to_owned();
+                        eprintln!("aot-differs tape: `{}` for `{}` after `{before}` :: {}", line(&got).trim(), line(&want).trim(), p.display());
+                    }
+                    Ok(Err(e)) => {
+                        aot_off += 1;
+                        eprintln!("aot-differs {} :: {}", e.chars().take(200).collect::<String>(), p.display());
+                    }
+                    Err(e) => {
+                        aot_off += 1;
+                        let m = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
+                        eprintln!("aot-panics {m} :: {}", p.display());
+                    }
+                }
                 // The regions as rounds (Metal's form) against the walk, and the rounds each block took.
                 if let Some((k, at)) = rounds_differ(text.as_bytes()) {
                     rounds_off += 1;
@@ -386,17 +419,26 @@ fn corpus() {
     let blocks: usize = taken.values().sum();
     eprintln!("rounds a block: {:.2} alone, {:.2} voted in 32s; {blocks} blocks", alone as f64 / blocks.max(1) as f64, voted as f64 / blocks.max(1) as f64);
     eprintln!("python corpus: {same} the same, {refused} refused, {differ} differ ({lean_refused} the lean parser refuses); {rounds_off} whose rounds differ from the walk");
+    eprintln!("python corpus as Rust: {aot_same} of the {same} the same, {aot_off} not");
     assert_eq!(differ, 0);
+    assert_eq!(aot_off, 0);
     assert_eq!(rounds_off, 0);
 }
 
-/// The shipped answers (`python.answers`, decision 0669) answer every question the grammar asks: a compile from them
-/// alone, not the machine's kept answers, proves nothing (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes
-/// them again, from a cold compile's).
+/// The shipped answers (`python.answers`, decision 0669) answer every question the grammar asks, and the parser as
+/// Rust's compile (`tiers_rust`): a compile from them alone, not the machine's kept answers, proves nothing
+/// (`answers::check_shipped`; `RERAIL_BLESS_ANSWERS=1` writes them again, from a cold compile's and the Rust's compile's
+/// from those), as Kotlin's.
 #[test]
 fn the_shipped_answers_answer_the_grammar() {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("python.answers");
-    rerail_bitlex::answers::check_shipped(&path, crate::ANSWERS, |known| Ok(crate::compile_timed(GRAMMAR, known, &mut |_, _| {})?.proofs));
+    rerail_bitlex::answers::check_shipped(&path, crate::ANSWERS, |known| {
+        let c = crate::compile_timed(GRAMMAR, known.clone(), &mut |_, _| {})?;
+        let mut given = known;
+        given.extend(c.proofs.iter().copied());
+        let (_, _, rust) = crate::tiers_rust_given(GRAMMAR, given)?;
+        Ok(c.proofs.into_iter().chain(rust).collect())
+    });
 }
 
 /// What was compiled, as one number: tier 2's words and machine, and tier 1's program.
@@ -422,4 +464,63 @@ fn a_cold_compile_makes_the_shipped_answers_program() {
     let warm = crate::compile_timed(GRAMMAR, known, &mut |_, _| {}).expect("the grammar compiles");
     assert_eq!(warm.proofs.len(), 0, "a question asked again");
     assert_eq!(fingerprint(&warm), fingerprint(&cold));
+}
+
+/// `rerail-python-aot`'s tiers are the compiler's output (`RERAIL_BLESS=1` writes them again).
+#[test]
+fn rust_is_current() {
+    let grammar = std::env::var("RERAIL_PYTHON_GRAMMAR").map_or_else(|_| GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let (tier1, tier2) = crate::tiers_rust(&grammar).unwrap_or_else(|e| panic!("the parser as Rust: {e}"));
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../python_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "python_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// Where tier 1 as Rust (`rerail_python_aot::lex`) is not the interpreter's tier 1: whether it
+/// sends the file to tree-sitter, and where neither does, each token's first and last byte and
+/// code.
+fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
+    let run = c.program.block_programs[0].run(text.as_bytes());
+    let lx = rerail_python_aot::lex(text.as_bytes());
+    let refused = run.totals.first().is_some_and(|&t| t != 0);
+    // An escape of `A & ~L` the lowering makes a local check of tier 2's at `A`'s token
+    // (`pending_checks`): the interpreter refuses the file there, tier 1 as Rust where it reads
+    // the escape. Either way the file is refused.
+    if lx.refused && !refused && c.tape(text).is_err() {
+        return None;
+    }
+    if refused != lx.refused {
+        return Some(format!("refused: the interpreter {refused}, tier 1 as Rust {}", lx.refused));
+    }
+    if refused {
+        return None;
+    }
+    let (starts, lasts) = (&run.positions[0], &run.positions[1]);
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
+    recs.sort_by_key(|r| r.start);
+    let n = starts.len().max(recs.len());
+    for k in 0..n {
+        let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
+        let rec = recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
+        if theirs != ours {
+            let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
+            return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
+        }
+    }
+    None
+}
+
+/// `text`'s tape from the parser as Rust (`rerail_python_aot`: tier 1, then tier 2), as text: format 16 in Python's
+/// table, each key numbered by its names (`aot_key_names`).
+fn aot_text(text: &str) -> Result<String, u32> {
+    let mut sink = rerail_tape_format::Named::new(lean::TAPE_TAG, lean::TERMINATORS, |key| aot_key_names(key, rerail_python_aot::SUPERS));
+    let tape = rerail_python_aot::parse(text.as_bytes(), &mut sink)?.unwrap_or_else(|e| panic!("python_aot's tree is no format 16 tape of Python's table: {e}"));
+    Ok(lean::tape_text(&tape))
 }

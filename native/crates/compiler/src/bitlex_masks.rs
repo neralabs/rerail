@@ -425,6 +425,8 @@ pub struct Lowering {
     pub tree: Vec<Stmt>,
     /// `tree` as the build reads it (`grammar::desugared`): tier 2 as Rust is written from it.
     pub tree_desugared: Vec<Stmt>,
+    /// The supertypes of a node in a slot (`grammar::super_classes`): slot, kind, its classes.
+    pub super_classes: Vec<(u16, u16, Vec<u16>)>,
     pub extra: Vec<String>,
     /// Each `mark`, in order: its kind, its bits and whether the file's end has it; and the
     /// hidden ones' kinds.
@@ -670,6 +672,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         mask_exprs: HashMap::default(),
         tree: Vec::new(),
         tree_desugared: Vec::new(),
+        super_classes: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
@@ -942,10 +945,11 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                         loses: low.loses.get(&i).map_or(&[][..], |v| v.as_slice()),
                         refuses: low.refuses.get(&i).map_or(&[][..], |v| v.as_slice()),
                         refuses_taken: low.refuses_taken.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        column: low.columns.get(&i).copied(),
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds, terminators: symbols.terminators.last_bytes() };
+            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds, terminators: symbols.terminators.last_bytes(), super_classes: &low.super_classes };
             phase_mark(&low, "before tier 2 as Rust");
             // Tier 2 as calls, the CPU's form, and as one loop, the device's (decision 0618): over tier 1's records
             // where its tokens are decided there, else the rules' methods.
@@ -4553,6 +4557,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens), grammar::super_classes(&low.tree, &ids)?)
     };
     low.tree_desugared = desugared;
+    low.super_classes = super_classes.clone();
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
     let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
     grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;

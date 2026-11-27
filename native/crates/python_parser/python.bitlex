@@ -230,7 +230,8 @@ escape "a hex number with no digits" when hex_n & x_any & prev(int_start) & ~nex
 mask word_start = w & alpha & ~prev(w) & ~p1 & ~p2 & ~number & ~prev(conv_at)
 mask name_more  = fill(word_start, ~w) & ~word_start
 
-assume "a name starts at a word's first letter: a start is never in a word" at starts word_start = alpha
+# Where a start reads them: no region's token starts there (the loop decides those first), and no row above does.
+assume "a name starts at a word's first letter that starts no string's prefix: a start is never in a word" at starts word_start = alpha & ~p1 & ~p2
 assume "a name runs over its word's bytes" in identifier name_more = word
 assume "a number's bytes are code" in integer code = ~empty
 
@@ -246,7 +247,7 @@ mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
 mask ell_at     = code & dot & next(dot) & next(dot, 2) & ~prev(dot)
 mask ell        = ell_at | prev(ell_at) | prev(ell_at, 2)
 mask p_start    = code & punct & ~second & ~number & ~conv_at & ~ell
-assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct
+assume "an operator starts at its first byte, but an ellipsis's or a conversion's (a `!` with no `=`): a start is never a pair's second" at starts p_start = punct & ~(dot & next(dot) & next(dot, 2) & ~prev(dot)) & ~(bang & ~next(eq))
 token punct     = start p_start pair two_start
 token ellipsis  = start ell_at run ell
 

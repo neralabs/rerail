@@ -295,3 +295,119 @@ statements and blocks end.
     418 at 7 and 379 at 6. The counts barely change the rounds: on the corpus, 2.49 rounds a block before, 2.53
     after; 6.10 and 6.33 where 32 blocks round together, as Metal's SIMD group does. At 7 the corpus reads every file
     it read at 15.
+62. **Python as Rust: `rerail-python-aot`**, as Kotlin's crate: `tier1.rs` from `bitlex_lex_rust`, `tier2.rs` from
+    `bitlex_rust`, checked by python_parser's `rust_is_current` (`RERAIL_BLESS=1` writes them). Every Python test
+    compares it with the interpreter and the lean parser: tier 1's records (`tier1_differs`), then the tape, and a
+    refusal where the interpreter refuses. What the lowerings lacked, and how each is lowered now:
+    - **A level** (item 58 refused it). The token loop keeps `level`, `frames` and `depth` as the walk does, and the
+      walk's `frame(…)` masks are one pass over the count's bytes. A template opened inside another pushes the outer
+      one's kind, level and held record first, then becomes the template: the other order pushed the new kind, and
+      the outer template never came back after an f-string in a dict's braces.
+    - **The walk's `deep`** is the escape, not one of the hidden set's parts: a string or comment is not refused for it.
+      A walk a refusal reads is never gated to test builds.
+    - **Supertypes**, as the interpreter's `NODE_SUPER`. A node's slot is in its key's bits from `CLASS_SHIFT` while tier 2
+      parses: a call to a `supertype` choice sets the slot of the node made last (`slot_made`, the outermost call
+      last); a wrap takes the moved node's slot, and the moved node takes the wrap's `in S` (`slot_moved`). A kind its
+      slot does not hold refuses the file there (`f() = 1`, `(a, b), c = d`). At the end `Writer::map_code_keys` maps
+      each code's key to its classes by slot and kind (`classes`, from `super_classes`). The tests read the format's
+      key, not the lean parser's layout.
+    - **`indented` levels and `, deeper`/`, shallower` marks**: a level's function saves its caller's indent and takes
+      its first token's column; a mark's column question is asked at each ask, past the token's cache; the node
+      closes with the comments pending at least as deep as its indent (`close_indented`).
+    - **A closer's record kind** where the records keep it at one reader only (`interp_open`, in both of a string's
+      readers): that piece's kind in the other reader, not its byte's (`{` is punct).
+    - **`at starts` assumes must hold in the token loop**, which test builds check at every start. Python's two were
+      false: a name's start excludes a string prefix's first letter, and an operator's excludes an ellipsis's and a
+      conversion's second byte. The token loop asks the rows whose start reads a region's `open` first, so a tail's
+      `}` is a tail and not punct.
+63. **The AOT's checks run in the tests, and the corpus reads it.** The parsers' test builds depend on their AOT crates
+    with `test-hooks` (Python, Kotlin, JSON; rr's already did), so the generated checks (`code_l` against the walk's
+    `code`, the `at starts` assumes) run in every test. They had not, and the corpus found two faults they hold:
+    - a read that resumes a string clears its bytes from the loop's code, as a record does;
+    - after an element, a repetition goes on as a `*`, also for a `+` (`sites`, `code`). Read as the `+` itself, the
+      rest could not end, so a block's last statement had none of the marks that end the block in its follow. The
+      optional `else` of a `while` inside it was then asked without `dedent`, and took an outer `if`'s `else` after a
+      dedent of two levels.
+
+    The corpus test checks the AOT where the interpreter matches the lean parser: tier 1's records, then the tape. It
+    matches on all 1642 posthog files. The comparison with the lean parser is python_lean's example `compare_aot`, which
+    builds the AOT without its checks.
+64. **Tier 1 makes the masks of its regions in passes over the words, as stage 1 makes the rest.** Each mask made
+    of the regions had been a pass of its own over the file, into a vector of its own: 142 of them in Python's tier 1,
+    84 in Kotlin's. The lean lexer reads each byte once. The masks now go into the pass written last (`Gen::fuse`):
+    each word of a mask is a local of the pass's step (`w_NAME`), a `prev` reads the word before it (`p_NAME`), and
+    `fill`, `escaped` and `toggle` keep their carries (`c_NAME`) from step to step, as stage 1's nodes do. A vector is
+    kept only for a mask that code outside the pass reads. A mask starts a new pass where it would read words not yet
+    made: a `next` of a mask in the same pass, or a mask that the code after the pass's start writes or makes, such as
+    the walk's masks, the token loop's `code_l` or another pass's masks. Python's tier 1 now has 11 passes and
+    Kotlin's 4. JSON's and rr's had no masks of regions. A pass is one statement of the walk (`gate_walk`), and makes
+    each of its masks.
+65. **Tier 2 asks the marks that end a part only at a token whose word an arm has.** Lean has `NEWLINE`, `INDENT`
+    and `DEDENT` as tokens, so `while self.peek() == T::And` asks one token. Tier 2's marks are questions about the
+    token (`m_newline`, `m_dedent`, its column), and its loops and options asked them first, at every token:
+    `while !(newline || dedent) && word == AND`. Now:
+    - a loop's or an option's word or kind test comes first, and its end's marks are asked after it (`while word == AND
+      && !(…)`). A `match` of the word asks them in each arm's guard, its `_` the loop's end
+      (`moves::exits_after_words`);
+    - a loop that ends an `indented` level (`block = statement+`, `match_block`) ends at the level's ending marks
+      alone, as lean's `while !matches!(peek, Dedent | Eof) { statement }`. It no longer asks a statement's whole first
+      set at every statement. A token that is neither refuses in the statement, as in lean. An expression level is no
+      such loop: its callers' tokens (`)`) end it too.
+66. **A string's parts are found in one scan of their starts, to the string's closer.** Tier 2's split of a string
+    asked each part's mask apart with `first_bit`, which reads to the mask's next bit wherever it is, the file's end
+    where there is none. That was once a part, for each of a string's parts, for every string, so it was quadratic in
+    a file's strings. `first_of` reads the union of the parts' masks, a word at a time, up to the closer and no
+    further, as the lean lexer's string reader looks no further than its quote. Each part then asks its own mask at
+    the one byte found. `advance`'s look for a template's `}` that resumes a string reads up to the next record in the
+    same way.
+67. **The token's code is kept as the token is reached (`cur`), for every grammar.** `word()` and `kind()` had asked
+    whether the token was past the last record and whether it was a piece of a split record, then read either one,
+    at every ask. Now they read `cur`, one field, as the lean parser's `peek` reads its token. `arrive` sets it after a
+    record's split, `take` sets it at a piece after another, and `advance` sets it after resuming a string. Past the
+    last record it is `END_CODE` (word 0 and kind 255, which no token has). Grammars with no string read in parts had
+    this already; it is now the runtime's own.
+68. **The masks of the loop's code are a lane of the token loop, not passes after it.** The escapes made of `code`
+    alone (Python's six of its numbers) read the loop's `code_l`, and were 7 passes over the file after the loop. The
+    loop goes over the blocks in order, and a region token clears its bytes from `code_l` before the loop moves past
+    them. So every block before the loop's is final. The lane makes those masks a word at a time behind the loop
+    (`Gen::lane_passes`, `render_passes`):
+    - at each block the loop comes to, the lane makes each word whose next block the loop has passed (`lane + 2 <=
+      b`);
+    - each of its passes makes the word one behind the pass before, whose `next` it reads;
+    - after the loop, it makes the words left;
+    - an escape is tested as its word is made (`refused |= w_X != 0`), so no vector is kept for it.
+
+    This is the first step to one pass over the file. The walk's masks, which the string escapes read, and stage 1
+    still run before the loop.
+69. **The token loop writes the regions' masks as it reads each region.** These are the masks the walk makes: each
+    region's opener `o_K` and fill `f_K`, and `hidden`. They are written with the walk's own writes, in `lw_…`
+    vectors (`Gen::walk_writes`, `with_walk_writes`). A grammar gets them when every region is read by a row (`read`,
+    or `read … parts`), none has an `else` form, and it is not lexed in the one pass (0619).
+    - `hidden` ends at the region's own last, not at the token's. A template's `${` is the token's closer, two bytes,
+      but the region closes at its `$`.
+    - A test build asserts each `lw_…` equals the walk's mask on every file not refused.
+
+    This is the second step to one pass. Next, the regional escapes and tier 2's regional masks are made from these
+    in the lane, and the walk runs only in test builds.
+70. **A compile asks every prover question through the kept answers, and writes the Rust tiers only for a caller
+    that reads them.** A test's compile of Python took 18 s on the M1 Max, and Kotlin's Rust-writing compile 25 s,
+    with every answer already kept. Three causes:
+    - `last_row` and `token_ops_back` asked the provers directly. They skipped the answers (0414) and rebuilt the
+      prover's operations for each row of each check: 11 s of Python's compile. They now ask through
+      `Lowering::never` and `settled_never`, as `token_row` does. Kotlin's shipped answers hold the new questions.
+    - The Rust writers ran in every compile. Only `rust_is_current` reads their text. `Symbols::rust` asks for it:
+      Python's and Kotlin's `tiers_rust` set it, and the parsers' `compiled`, JSON's and the C directives' do not.
+    - Tier 1's writer expanded a named mask again at each reader in `in_region_of`, so a mask DAG became a tree:
+      22 s of Kotlin's. `Gen::region_memo` keeps each named mask's answer by region, part and context. `region_gen`
+      goes up at each change of `regional` or `fills`, so the memo never answers from an older state.
+
+    A test's compile is now 3.7 s: bitlex 1.5 s, Cranelift 2.1 s. nextest runs each test in a process of its own,
+    which compiles the grammar again, so Python's suite takes 26 s and Kotlin's 51 s.
+71. **A test binary's processes compile the grammar once.** nextest runs each test in a process of its own. The
+    Bitlex compiler's half of each compile (`bitlex_output`) is now kept in the answers directory
+    (`answers::kept_output`), and the rest of each process reads it. The key is the grammar text and the test
+    binary's path, size and time, since the binary's code is the compiler, so a rebuild misses. The first process to
+    miss compiles under the family's lock, and the others wait, then read. Only `compiled()` reads the kept output:
+    the tests of the shipped answers and of a cold compile call `compile_timed` and still compile.
+
+    A test's own work is now Cranelift's code for both tiers, 2.1 s of its 2.3 s.

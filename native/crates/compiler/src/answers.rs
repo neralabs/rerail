@@ -93,6 +93,62 @@ pub fn check_shipped(path: &Path, shipped: &[u8], compile: impl Fn(Known) -> Res
     );
 }
 
+/// What `make` makes of `text` in this program (the running executable, whose code is the compiler), kept in
+/// [`directory`] for its other processes: a test binary's processes compile the grammar once, not once each. One
+/// file a family and executable, `<family>-<executable's key>.out`: its first 16 bytes the key of the executable's
+/// path, size and time and of `text`, then the bytes. A rebuilt executable or another text misses, and its bytes
+/// replace the file's. The first of the processes to miss makes them under the family's lock; the others wait, then
+/// read them.
+pub fn kept_output(family: &str, text: &[u8], make: impl FnOnce() -> Result<Vec<u8>, String>) -> Result<Vec<u8>, String> {
+    kept_output_in(&directory(), family, text, make)
+}
+
+/// [`kept_output`], in `dir`.
+pub fn kept_output_in(dir: &Path, family: &str, text: &[u8], make: impl FnOnce() -> Result<Vec<u8>, String>) -> Result<Vec<u8>, String> {
+    let (Ok(()), Ok(exe)) = (std::fs::create_dir_all(dir), std::env::current_exe()) else { return make() };
+    let Ok(meta) = std::fs::metadata(&exe) else { return make() };
+    let mut stamp = format!("{} {} {:?} ", exe.display(), meta.len(), meta.modified().ok()).into_bytes();
+    stamp.extend_from_slice(text);
+    let key = bitlex_prove::key_of(&stamp);
+    let name: String = bitlex_prove::key_of(exe.display().to_string().as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    let path = dir.join(format!("{family}-{name}.out"));
+    let read = || std::fs::read(&path).ok().filter(|b| b.len() >= key.len() && b[..key.len()] == key[..]).map(|b| b[key.len()..].to_vec());
+    if let Some(b) = read() {
+        return Ok(b);
+    }
+    let lock = Files::of(dir, family).lock();
+    if let Some(b) = read() {
+        return Ok(b);
+    }
+    let out = make()?;
+    let mut all = key.to_vec();
+    all.extend_from_slice(&out);
+    let _ = write_whole(&path, &all);
+    drop(lock);
+    Ok(out)
+}
+
+/// `parts` as one run of bytes, each after its length (`unpack`'s).
+pub fn pack(parts: &[&[u8]]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for p in parts {
+        out.extend_from_slice(&(p.len() as u64).to_le_bytes());
+        out.extend_from_slice(p);
+    }
+    out
+}
+
+/// The parts `pack` made of `bytes`; `None` where they are not `n` of them.
+pub fn unpack(bytes: &[u8], n: usize) -> Option<Vec<&[u8]>> {
+    let (mut out, mut at) = (Vec::new(), 0usize);
+    while at < bytes.len() {
+        let len = usize::try_from(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?)).ok()?;
+        out.push(bytes.get(at + 8..at + 8 + len)?);
+        at += 8 + len;
+    }
+    (out.len() == n).then_some(out)
+}
+
 /// A family's files in the answers directory.
 struct Files {
     answers: PathBuf,

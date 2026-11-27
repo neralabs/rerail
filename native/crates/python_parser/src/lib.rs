@@ -45,6 +45,11 @@ pub fn lang() -> &'static rerail_tape_format::f16::Lang {
 /// kinds, fields and supertypes are the lean parser's, so its keys are too. Its supertypes (`SUPERTYPE_IDS`) are one
 /// of the lean parser's sets (`lean::CLASSES`), or the key is none of its; an extra has none.
 fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
+    lang().number_named(&names(kind, field, classes, extra)?)
+}
+
+/// A key's names, by the lean parser's (`number`): the parser as Rust's keys are numbered by them too.
+fn names(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<rerail_tape_format::KeyNames> {
     let &(kind, named) = lean::KINDS.get(usize::from(kind))?;
     let field = lean::FIELDS.get(usize::from(field)).copied()?;
     let names: Vec<&str> = classes.iter().map(|&c| c.checked_sub(SUPERTYPE_IDS).and_then(|j| SUPERTYPES.get(usize::from(j))).copied()).collect::<Option<_>>()?;
@@ -54,7 +59,17 @@ fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
         true => return None,
         false => lean::CLASSES.iter().copied().find(|set| set.len() == names.len() && names.iter().all(|n| set.contains(n)))?,
     };
-    lang().number_named(&rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
+    Some(rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
+}
+
+/// A key of the parser as Rust's (`rerail-python-aot`'s: `kf | flags << 16`, its supertypes' bits from `CLASS_SHIFT`,
+/// bit `CLASS_SHIFT + j` the supertype `supers[j]`, its `SUPERS`) by the lean parser's names (`names`), as the JIT's
+/// keys are numbered: what a sink numbers its tape by (`rerail_tape_format::Named`).
+pub fn aot_key_names(key: u32, supers: &[u16]) -> Option<rerail_tape_format::KeyNames> {
+    use rerail_tape_format::{CLASS_SHIFT, CODE_EXTRA, KIND_BITS};
+    let classes: Vec<u16> = (0..supers.len()).filter(|&j| key >> (CLASS_SHIFT + j as u32) & 1 != 0).map(|j| supers[j]).collect();
+    let extra = (key >> 16) as u8 & CODE_EXTRA != 0;
+    names((key & ((1 << KIND_BITS) - 1)) as u16, (key >> KIND_BITS & 0x3f) as u16, &classes, extra)
 }
 
 /// The provers' answers by question (decision 0414).
@@ -83,13 +98,14 @@ pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
     rerail_bitlex::answers::answered("python", grammar.as_bytes(), shipped_answers(), |known| {
         // `RERAIL_PYTHON_LAPS`: each phase's time, as it ends, on stderr.
         let laps = std::env::var_os("RERAIL_PYTHON_LAPS").is_some();
-        let c = compile_timed(grammar, known, &mut |name, d| {
+        let mut lap = |name: &'static str, d: std::time::Duration| {
             if laps {
                 eprintln!("lap {name}: {d:?}");
             }
-        })?;
-        let made = c.proofs.clone();
-        Ok((c, made))
+        };
+        let out = kept(grammar, known, &mut lap)?;
+        let made = out.proofs.clone();
+        Ok((from_output(out, &mut lap)?, made))
     })
 }
 
@@ -134,6 +150,33 @@ pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
 /// `compile_text`, each phase's time given to `lap` as it ends, as `rerail_kotlin_parser`'s.
 /// `known`: the provers' answers a compile made before (`Compiled::proofs`, decision 0414).
 pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
+    let out = bitlex_output(grammar, known, lap)?;
+    from_output(out, lap)
+}
+
+/// What the Bitlex compiler makes of a grammar that the rest of a compile reads (`from_output`): the program's text,
+/// tier 2's words and its machine as text, and the provers' answers it made.
+pub struct Output {
+    pub text: String,
+    pub words: String,
+    pub machine: String,
+    pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
+}
+
+/// `bitlex_output`, kept for this test binary's other processes (`answers::kept_output`): its first process compiles
+/// the grammar, the others read what it made.
+fn kept(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Output, String> {
+    let bytes = rerail_bitlex::answers::kept_output("python-compiled", grammar.as_bytes(), || {
+        let o = bitlex_output(grammar, known, lap)?;
+        Ok(rerail_bitlex::answers::pack(&[o.text.as_bytes(), o.words.as_bytes(), o.machine.as_bytes(), &rerail_bitlex::bitlex_prove::encode(&o.proofs)]))
+    })?;
+    let parts = rerail_bitlex::answers::unpack(&bytes, 4).ok_or("a kept compile not of four parts")?;
+    let text = |b: &[u8]| String::from_utf8(b.to_vec()).map_err(|e| e.to_string());
+    Ok(Output { text: text(parts[0])?, words: text(parts[1])?, machine: text(parts[2])?, proofs: rerail_bitlex::bitlex_prove::decode(parts[3]).into_iter().collect() })
+}
+
+/// The Bitlex compiler's half of a compile (`compile_timed`): the grammar's syntax and the compiler.
+pub fn bitlex_output(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Output, String> {
     let mut at = std::time::Instant::now();
     let mut lap = |name: &'static str| {
         lap(name, at.elapsed());
@@ -152,7 +195,18 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
     let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::No)?;
     lap("bitlex compiler");
-    let program = rir::assemble(&compiled.text()).map_err(|e| format!("{e}\n{}", compiled.words))?;
+    Ok(Output { text: compiled.text(), words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone() })
+}
+
+/// The rest of a compile, from the Bitlex compiler's output: the words assembled, lowered to the native IR, tier 2's
+/// functions cut into clusters, and Cranelift's code for each tier.
+pub fn from_output(compiled: Output, lap: &mut dyn FnMut(&'static str, std::time::Duration)) -> Result<Compiled, String> {
+    let mut at = std::time::Instant::now();
+    let mut lap = |name: &'static str| {
+        lap(name, at.elapsed());
+        at = std::time::Instant::now();
+    };
+    let program = rir::assemble(&compiled.text).map_err(|e| format!("{e}\n{}", compiled.words))?;
     lap("assembled");
     let mut native = native_ir::lower(&program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?;
     lap("native IR");
@@ -170,7 +224,35 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
     let parser = native_cpu_stream::Parser::with_tiers(&native, &cut, tier1, tier2);
-    Ok(Compiled { parser, program, words: compiled.words.clone(), machine: compiled.machine.clone(), proofs: compiled.proofs.clone(), numbers: std::sync::OnceLock::new() })
+    Ok(Compiled { parser, program, words: compiled.words, machine: compiled.machine, proofs: compiled.proofs, numbers: std::sync::OnceLock::new() })
+}
+
+/// The parser as Rust (`rerail-python-aot`): tier 1 from the lexer's statements, tier 2 from the tree rules, or why
+/// the compiler writes neither. A compile of its own, as `rerail_kotlin_parser::tiers_rust`: the parser's
+/// (`compiled`) writes no Rust. The provers start from the shipped answers ([`ANSWERS`]), as every other compile of
+/// the grammar.
+pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    tiers_rust_given(grammar, shipped_answers()).map(|(t1, t2, _)| (t1, t2))
+}
+
+/// [`tiers_rust`] from the answers `known`, and the answers its compile made: the Rust's compile asks what the
+/// grammar's (`compile_timed`) does not, so the shipped answers hold both (`tests::the_shipped_answers_answer_the_grammar`).
+pub fn tiers_rust_given(grammar: &str, known: Proofs) -> Result<(String, String, Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>), String> {
+    let stmts = ::bitlex::syntax::parse(grammar)?;
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::Yes)?;
+    match (compiled.lexer_rust, compiled.rust) {
+        (Some(Ok(t1)), Some(Ok(t2))) => Ok((t1, t2, compiled.proofs)),
+        (t1, t2) => Err(format!("tier 1: {:?}; tier 2: {:?}", t1.map(|x| x.err()), t2.map(|x| x.err()))),
+    }
 }
 
 impl Compiled {
