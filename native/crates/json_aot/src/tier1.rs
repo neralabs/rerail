@@ -333,6 +333,12 @@ unsafe fn stage1_ends(src: &[u8], n: usize, from: usize, to: usize) -> [Carries;
             let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
             // in_string & control
             let v_t2 = v_m_in_string & v_m_control;
+            // q & ~string_tail
+            let v_t3 = v_m_q & !v_m_string_tail;
+            // structural_start & op
+            let v_t4 = v_m_structural_start & v_m_op;
+            // structural_start & nonquote_scalar
+            let v_t5 = v_m_structural_start & v_m_nonquote_scalar;
         }
         // A lane whose carries are an earlier lane's: its end is that lane's.
         for l in 1..RUN {
@@ -358,10 +364,46 @@ rerail_simd8::kernel! {
     pub fn stage1_ends_best(src: &[u8], n: usize, from: usize, to: usize) -> [Carries; LANES] = stage1_ends, on stage1_ends_on;
 }
 
-/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,
-/// and its end.
+/// The records' types: the grammar's tokens, each a mask of its starts (decision 0726).
+pub const TYPES: usize = 3;
+pub const TYPE_NAMES: [&str; TYPES] = ["\"", "punctuation", "number"];
+
+/// Block bits `bits` from `base` as indexes at `si[*count..]`, one write a bit: no write past the chunk's records.
+///
+/// # Safety
+/// `si` has room for `*count` and the bits' count.
 #[inline(always)]
-unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {
+unsafe fn write_exact(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {
+    while bits != 0 {
+        // SAFETY: the caller's.
+        unsafe { *si.add(*count) = base.wrapping_add(bits.trailing_zeros()) };
+        bits &= bits.wrapping_sub(1);
+        *count += 1;
+    }
+}
+
+/// Of block bits `all` (its records, the first numbered `first`), those of `mine` as their records' numbers at
+/// `ti[*count..]`.
+///
+/// # Safety
+/// `ti` has room for `*count` and the bits of `mine`.
+#[inline(always)]
+unsafe fn write_numbers(ti: *mut u32, count: &mut usize, first: usize, all: u64, mut mine: u64) {
+    while mine != 0 {
+        let below = all & ((1u64 << mine.trailing_zeros()) - 1);
+        // SAFETY: the caller's.
+        unsafe { *ti.add(*count) = (first + below.count_ones() as usize) as u32 };
+        mine &= mine.wrapping_sub(1);
+        *count += 1;
+    }
+}
+
+/// Pass 2 over blocks `from..to`, from entry `e`, run twice (decision 0726): counting (`write` false), the chunk's
+/// records and each type's added to `at` (the records, then each type's); then writing, each record at its index in
+/// the file (`starts`, from `at[0]`) and each type's records' numbers at their index among the type's (`types[t]`,
+/// from `at[1 + t]`). Whether the chunk refuses, and its end.
+#[inline(always)]
+unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) {
     let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
     let nw = (n - off).div_ceil(64);
     let to = to.min(nw);
@@ -373,13 +415,16 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
     let mut prev_incomplete = s::splat(0);
     let max_value = s::load(&MAX_VALUE);
     let mut errors = 0u64;
-    // Room for a record a byte of the bytes from the chunk on (at most a record a byte before it), and the slack of a
-    // block's unconditional writes: within `lex`'s `n + 67`.
-    starts.reserve((n - (64 * from).min(n)) + 64);
-    let si = starts.as_mut_ptr();
-    let mut count = starts.len();
-    // The block before's records, written at the next block (simdjson's `prev_structurals`).
+    let si = starts;
+    let mut count = at[0];
+    // The block before's records, written at the next block (simdjson's `prev_structurals`), and its types'.
     let mut prev_structurals = 0u64;
+    let mut tc_0 = at[1];
+    let mut prev_type_0 = 0u64;
+    let mut tc_1 = at[2];
+    let mut prev_type_1 = 0u64;
+    let mut tc_2 = at[3];
+    let mut prev_type_2 = 0u64;
     if from > 0 {
         let q = from - 1;
         let b: &[u8; 64] = src[off + 64 * q..off + 64 * q + 64].try_into().expect("a padded block");
@@ -485,19 +530,54 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
         let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);
         // mask structural_start = (op | (scalar & ~follows)) & ~string_tail
         let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;
-        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).
-        unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
-        prev_structurals = v_m_structural_start;
         // in_string & control
         let v_t2 = v_m_in_string & v_m_control;
         // a control byte in a string
         errors |= v_t2;
+        // q & ~string_tail
+        let v_t3 = v_m_q & !v_m_string_tail;
+        // structural_start & op
+        let v_t4 = v_m_structural_start & v_m_op;
+        // structural_start & nonquote_scalar
+        let v_t5 = v_m_structural_start & v_m_nonquote_scalar;
+        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`), and its types'.
+        if write {
+            let first = count;
+            unsafe { write_exact(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
+            unsafe { write_numbers(types[0], &mut tc_0, first, prev_structurals, prev_type_0) };
+            unsafe { write_numbers(types[1], &mut tc_1, first, prev_structurals, prev_type_1) };
+            unsafe { write_numbers(types[2], &mut tc_2, first, prev_structurals, prev_type_2) };
+        } else {
+            count += prev_structurals.count_ones() as usize;
+            tc_0 += prev_type_0.count_ones() as usize;
+            tc_1 += prev_type_1.count_ones() as usize;
+            tc_2 += prev_type_2.count_ones() as usize;
+        }
+        prev_structurals = v_m_structural_start;
+        prev_type_0 = v_t3;
+        prev_type_1 = v_t4;
+        prev_type_2 = v_t5;
     }
     // The last block's records.
     let q = to;
-    unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
-    // SAFETY: `count` records written, within the room reserved.
-    unsafe { starts.set_len(count) };
+    {
+        if write {
+            let first = count;
+            unsafe { write_exact(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };
+            unsafe { write_numbers(types[0], &mut tc_0, first, prev_structurals, prev_type_0) };
+            unsafe { write_numbers(types[1], &mut tc_1, first, prev_structurals, prev_type_1) };
+            unsafe { write_numbers(types[2], &mut tc_2, first, prev_structurals, prev_type_2) };
+        } else {
+            count += prev_structurals.count_ones() as usize;
+            tc_0 += prev_type_0.count_ones() as usize;
+            tc_1 += prev_type_1.count_ones() as usize;
+            tc_2 += prev_type_2.count_ones() as usize;
+        }
+    }
+    at[0] = count;
+    at[1] = tc_0;
+    at[2] = tc_1;
+    at[3] = tc_2;
     let mut refused = errors != 0;
     // a string open at the end of the file: the carry out of the file's last block.
     refused |= to == nw && c_m_in_string != 0;
@@ -510,7 +590,7 @@ unsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, 
 }
 
 rerail_simd8::kernel! {
-    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;
+    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) = stage1_from, on stage1_from_on;
 }
 
 /// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan
@@ -538,22 +618,65 @@ pub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {
 /// (pass 1), each chunk's one entry by a scan of those (pass 3), then each chunk's records from its entry (pass 2).
 /// Each pass's chunks are each on their own. The records are `lex`'s.
 pub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {
+    lex_typed(buf, n, blocks).lexed
+}
+
+/// The records of `buf[..n]`, and each type's (`TYPES`): each a record's number, in order.
+pub struct Typed {
+    pub lexed: Lexed,
+    pub types: Vec<Vec<u32>>,
+}
+
+/// `lex_chunked`'s records, and the records of each type apart: pass 2 run twice, counting then writing (decision
+/// 0726). Each chunk's places in the records and in each type's from an exclusive scan of the chunks' counts, so each
+/// chunk writes on its own, in any order.
+pub fn lex_typed(buf: &[u8], n: usize, blocks: usize) -> Typed {
     assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     let blocks = blocks.max(1);
     let off = if buf.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
     let nw = (n - off).div_ceil(64);
     let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();
     let entries = entries(&ends);
-    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);
+    let none = [core::ptr::null_mut::<u32>(); TYPES];
+    // Counting: each chunk's records and each type's.
+    let counts: Vec<[usize; TYPES + 1]> = (0..nw)
+        .step_by(blocks)
+        .enumerate()
+        .map(|(c, b)| {
+            let mut at = [0usize; TYPES + 1];
+            stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false);
+            at
+        })
+        .collect();
+    // Each chunk's first places: an exclusive scan of the counts.
+    let mut firsts: Vec<[usize; TYPES + 1]> = Vec::with_capacity(counts.len() + 1);
+    firsts.push([0; TYPES + 1]);
+    for c in &counts {
+        let last = firsts[firsts.len() - 1];
+        firsts.push(core::array::from_fn(|k| last[k] + c[k]));
+    }
+    let total = firsts[counts.len()];
+    let mut starts: Vec<u32> = Vec::with_capacity(total[0] + 3);
+    let mut types: Vec<Vec<u32>> = (0..TYPES).map(|t| Vec::with_capacity(total[t + 1])).collect();
+    let ptrs: [*mut u32; TYPES] = core::array::from_fn(|t| types[t].as_mut_ptr());
     let mut refused = false;
+    // Writing: each chunk from its places.
     for (c, b) in (0..nw).step_by(blocks).enumerate() {
-        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);
+        let mut at = firsts[c];
+        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, starts.as_mut_ptr(), ptrs, true);
         debug_assert_eq!(end, ends[c][lane_of(entries[c])], "pass 2 ends where pass 1 did");
+        debug_assert_eq!(at, firsts[c + 1], "pass 2 writes what it counted");
         refused |= r;
     }
-    let count = starts.len();
+    // SAFETY: every place below the totals written, each once.
+    unsafe {
+        starts.set_len(total[0]);
+        for (t, v) in types.iter_mut().enumerate() {
+            v.set_len(total[t + 1]);
+        }
+    }
     starts.extend([n as u32, n as u32, 0]);
-    Lexed { starts, count, len: n, refused }
+    Typed { lexed: Lexed { starts, count: total[0], len: n, refused }, types }
 }
 
 /// The records of `buf[..n]`, its `PADDING` bytes after it spaces.

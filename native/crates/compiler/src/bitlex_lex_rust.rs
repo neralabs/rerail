@@ -1486,6 +1486,9 @@ struct Gen<'a> {
     /// Simdjson's stage 1 (no `skip`, every mask in the pass): the mask whose bits are the records, written as
     /// indexes at its block (`bit_indexer`), the source padded (`PADDING`) and each block loaded where it is.
     index: Option<usize>,
+    /// The tokens' starts in simdjson's stage 1 (with `index`): each token's kind and the mask of its starts, its
+    /// records' type (decision 0726: `lex_typed` writes the records of each type apart).
+    types: Vec<(String, usize, Expr)>,
     /// What stage 1 writes from each block's bits: the records' mask and each error ORed (`sinks`), where none holds
     /// at the padding's byte past the end, its masks need not be the file's bits (`lv`).
     outputs: Vec<Expr>,
@@ -2391,6 +2394,30 @@ impl Gen<'_> {
         let (live, pairs, codes) = self.stage1_codes();
         let most = self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n.lag).max().unwrap_or(0);
         let Some(index) = self.index else { return String::new() };
+        // Pass 2 writes each type's records too: their masks live in it, with their operands.
+        let was = live.clone();
+        let mut live = live;
+        // (Each holds at no padding byte, as the records: a block past the end writes none.)
+        if !self.types.iter().all(|(_, _, e)| false_at(e, b' ', self.x.stmts)) {
+            return String::new();
+        }
+        for &(_, t, _) in &self.types {
+            live[t] = true;
+        }
+        for i in (0..self.nodes.len()).rev() {
+            if live[i] {
+                let code = &self.nodes[i].code;
+                for (l, m) in live[..i].iter_mut().zip(&self.nodes) {
+                    if code.contains(&format!("r_{}[", m.name)) {
+                        *l = true;
+                    }
+                }
+            }
+        }
+        // (A class stage 1 does not write has no code in its tables.)
+        if self.nodes.iter().enumerate().any(|(i, n)| live[i] && !was[i] && n.class.is_some()) {
+            return String::new();
+        }
         if most != 0 || self.nodes.iter().any(|n| n.kept || !n.also.is_empty()) {
             return String::new();
         }
@@ -2528,7 +2555,14 @@ impl Gen<'_> {
             carries.iter().map(|c| if free_names.contains(c) { format!("            {c}: c_{c}[k] ^ e.{c},\n") } else { format!("            {c}: c_{c}[k],\n") }).collect::<String>()
         );
         // Pass 2.
-        out.push_str("/// Pass 2 over blocks `from..to`, from entry `e`: the records into `starts` (as `stage1`'s), whether the chunk refuses,\n/// and its end.\n#[inline(always)]\nunsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) {\n");
+        let nt = self.types.len();
+        let _ = writeln!(
+            out,
+            "/// The records' types: the grammar's tokens, each a mask of its starts (decision 0726).\npub const TYPES: usize = {nt};\npub const TYPE_NAMES: [&str; TYPES] = [{}];\n",
+            self.types.iter().map(|(k, _, _)| format!("{k:?}")).collect::<Vec<_>>().join(", ")
+        );
+        out.push_str("/// Block bits `bits` from `base` as indexes at `si[*count..]`, one write a bit: no write past the chunk's records.\n///\n/// # Safety\n/// `si` has room for `*count` and the bits' count.\n#[inline(always)]\nunsafe fn write_exact(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {\n    while bits != 0 {\n        // SAFETY: the caller's.\n        unsafe { *si.add(*count) = base.wrapping_add(bits.trailing_zeros()) };\n        bits &= bits.wrapping_sub(1);\n        *count += 1;\n    }\n}\n\n/// Of block bits `all` (its records, the first numbered `first`), those of `mine` as their records' numbers at\n/// `ti[*count..]`.\n///\n/// # Safety\n/// `ti` has room for `*count` and the bits of `mine`.\n#[inline(always)]\nunsafe fn write_numbers(ti: *mut u32, count: &mut usize, first: usize, all: u64, mut mine: u64) {\n    while mine != 0 {\n        let below = all & ((1u64 << mine.trailing_zeros()) - 1);\n        // SAFETY: the caller's.\n        unsafe { *ti.add(*count) = (first + below.count_ones() as usize) as u32 };\n        mine &= mine.wrapping_sub(1);\n        *count += 1;\n    }\n}\n\n");
+        out.push_str("/// Pass 2 over blocks `from..to`, from entry `e`, run twice (decision 0726): counting (`write` false), the chunk's\n/// records and each type's added to `at` (the records, then each type's); then writing, each record at its index in\n/// the file (`starts`, from `at[0]`) and each type's records' numbers at their index among the type's (`types[t]`,\n/// from `at[1 + t]`). Whether the chunk refuses, and its end.\n#[inline(always)]\nunsafe fn stage1_from(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) {\n");
         head(&mut out);
         for c in &carries {
             let _ = writeln!(out, "    let mut c_{c} = e.{c};");
@@ -2536,7 +2570,23 @@ impl Gen<'_> {
         if self.lookup.is_some() {
             out.push_str("    let mut prev_input = s::splat(0);\n    let mut error = s::splat(0);\n    let mut prev_incomplete = s::splat(0);\n    let max_value = s::load(&MAX_VALUE);\n");
         }
-        out.push_str("    let mut errors = 0u64;\n    // Room for a record a byte of the bytes from the chunk on (at most a record a byte before it), and the slack of a\n    // block's unconditional writes: within `lex`'s `n + 67`.\n    starts.reserve((n - (64 * from).min(n)) + 64);\n    let si = starts.as_mut_ptr();\n    let mut count = starts.len();\n    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
+        out.push_str("    let mut errors = 0u64;\n    let si = starts;\n    let mut count = at[0];\n    // The block before's records, written at the next block (simdjson's `prev_structurals`), and its types'.\n    let mut prev_structurals = 0u64;\n");
+        for t in 0..nt {
+            let _ = writeln!(out, "    let mut tc_{t} = at[{}];\n    let mut prev_type_{t} = 0u64;", t + 1);
+        }
+        // The block before's records and its types', written (or counted) at the next block and after the last.
+        let flush = |base: &str| -> String {
+            let mut w = format!("        if write {{\n            let first = count;\n            unsafe {{ write_exact(si, &mut count, {base}, prev_structurals) }};\n");
+            for t in 0..nt {
+                let _ = writeln!(w, "            unsafe {{ write_numbers(types[{t}], &mut tc_{t}, first, prev_structurals, prev_type_{t}) }};");
+            }
+            w.push_str("        } else {\n            count += prev_structurals.count_ones() as usize;\n");
+            for t in 0..nt {
+                let _ = writeln!(w, "            tc_{t} += prev_type_{t}.count_ones() as usize;");
+            }
+            w.push_str("        }\n");
+            w
+        };
         // The block before the chunk, apart from the loop (as `stage1` has no such block): the words of the bytes alone it
         // leaves the chunk's first block, and the byte-pair check's.
         let block = |out: &mut String, pad: &str| {
@@ -2566,11 +2616,17 @@ impl Gen<'_> {
             for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
                 let _ = writeln!(out, "        // {why}\n        errors |= {w};");
             }
-            if i == index {
-                let _ = writeln!(out, "        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).\n        unsafe {{ write_indexes(si, &mut count, (({off}) as u32).wrapping_sub(64), prev_structurals) }};\n        prev_structurals = {w};");
-            }
         }
-        let _ = writeln!(out, "    }}\n    // The last block's records.\n    let q = to;\n    unsafe {{ write_indexes(si, &mut count, (({off}) as u32).wrapping_sub(64), prev_structurals) }};\n    // SAFETY: `count` records written, within the room reserved.\n    unsafe {{ starts.set_len(count) }};\n    let mut refused = errors != 0;");
+        let base = format!("(({off}) as u32).wrapping_sub(64)");
+        let _ = write!(out, "        // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`), and its types'.\n{}        prev_structurals = v_{};\n", flush(&base), self.nodes[index].name);
+        for (t, &(_, ti, _)) in self.types.iter().enumerate() {
+            let _ = writeln!(out, "        prev_type_{t} = v_{};", self.nodes[ti].name);
+        }
+        let _ = write!(out, "    }}\n    // The last block's records.\n    let q = to;\n    {{\n{}    }}\n    at[0] = count;\n", flush(&base));
+        for t in 0..nt {
+            let _ = writeln!(out, "    at[{}] = tc_{t};", t + 1);
+        }
+        out.push_str("    let mut refused = errors != 0;\n");
         for (why, id) in &self.end_sinks {
             let name = &self.nodes[*id].name;
             if carried(*id) {
@@ -2585,7 +2641,7 @@ impl Gen<'_> {
         }
         let _ = writeln!(
             out,
-            "    (refused, Carries {{\n{}    }})\n}}\n\nrerail_simd8::kernel! {{\n    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, starts: &mut Vec<u32>) -> (bool, Carries) = stage1_from, on stage1_from_on;\n}}\n",
+            "    (refused, Carries {{\n{}    }})\n}}\n\nrerail_simd8::kernel! {{\n    pub fn stage1_from_best(src: &[u8], n: usize, from: usize, to: usize, e: Carries, at: &mut [usize; TYPES + 1], starts: *mut u32, types: [*mut u32; TYPES], write: bool) -> (bool, Carries) = stage1_from, on stage1_from_on;\n}}\n",
             carries.iter().map(|c| format!("        {c}: c_{c},\n")).collect::<String>()
         );
         let off_of = match &self.prefix {
@@ -2594,7 +2650,7 @@ impl Gen<'_> {
         };
         let _ = writeln!(
             out,
-            "/// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan\n/// of their compositions. Round `r` composes each chunk's map after the map `2^r` chunks before it, so that after\n/// `log2` of the chunks rounds each chunk's map is the file's start's to its end. In a round each chunk is on its own,\n/// as a device's scan; the two buffers a round reads and writes swap.\npub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {{\n    let mut maps: Vec<[u8; LANES]> = ends.iter().map(|e| core::array::from_fn(|l| lane_of(e[l]) as u8)).collect();\n    let mut next = maps.clone();\n    let mut d = 1;\n    while d < maps.len() {{\n        next[..d].copy_from_slice(&maps[..d]);\n        for c in d..maps.len() {{\n            next[c] = core::array::from_fn(|l| maps[c][usize::from(maps[c - d][l])]);\n        }}\n        std::mem::swap(&mut maps, &mut next);\n        d *= 2;\n    }}\n    // Chunk `c`'s entry: the file's start, through the chunks before it.\n    let start = lane_of(Carries::default());\n    (0..maps.len()).map(|c| if c == 0 {{ Carries::default() }} else {{ lane_carries(usize::from(maps[c - 1][start])) }}).collect()\n}}\n\n/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry\n/// (pass 1), each chunk's one entry by a scan of those (pass 3), then each chunk's records from its entry (pass 2).\n/// Each pass's chunks are each on their own. The records are `lex`'s.\npub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    let blocks = blocks.max(1);\n    let off = {off_of};\n    let nw = (n - off).div_ceil(64);\n    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();\n    let entries = entries(&ends);\n    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let mut refused = false;\n    for (c, b) in (0..nw).step_by(blocks).enumerate() {{\n        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut starts);\n        debug_assert_eq!(end, ends[c][lane_of(entries[c])], \"pass 2 ends where pass 1 did\");\n        refused |= r;\n    }}\n    let count = starts.len();\n    starts.extend([n as u32, n as u32, 0]);\n    Lexed {{ starts, count, len: n, refused }}\n}}\n"
+            "/// Pass 3, across the chunks: each chunk's one entry, from the chunks' maps of entry to end (pass 1), by a prefix scan\n/// of their compositions. Round `r` composes each chunk's map after the map `2^r` chunks before it, so that after\n/// `log2` of the chunks rounds each chunk's map is the file's start's to its end. In a round each chunk is on its own,\n/// as a device's scan; the two buffers a round reads and writes swap.\npub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {{\n    let mut maps: Vec<[u8; LANES]> = ends.iter().map(|e| core::array::from_fn(|l| lane_of(e[l]) as u8)).collect();\n    let mut next = maps.clone();\n    let mut d = 1;\n    while d < maps.len() {{\n        next[..d].copy_from_slice(&maps[..d]);\n        for c in d..maps.len() {{\n            next[c] = core::array::from_fn(|l| maps[c][usize::from(maps[c - d][l])]);\n        }}\n        std::mem::swap(&mut maps, &mut next);\n        d *= 2;\n    }}\n    // Chunk `c`'s entry: the file's start, through the chunks before it.\n    let start = lane_of(Carries::default());\n    (0..maps.len()).map(|c| if c == 0 {{ Carries::default() }} else {{ lane_carries(usize::from(maps[c - 1][start])) }}).collect()\n}}\n\n/// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry\n/// (pass 1), each chunk's one entry by a scan of those (pass 3), then each chunk's records from its entry (pass 2).\n/// Each pass's chunks are each on their own. The records are `lex`'s.\npub fn lex_chunked(buf: &[u8], n: usize, blocks: usize) -> Lexed {{\n    lex_typed(buf, n, blocks).lexed\n}}\n\n/// The records of `buf[..n]`, and each type's (`TYPES`): each a record's number, in order.\npub struct Typed {{\n    pub lexed: Lexed,\n    pub types: Vec<Vec<u32>>,\n}}\n\n/// `lex_chunked`'s records, and the records of each type apart: pass 2 run twice, counting then writing (decision\n/// 0726). Each chunk's places in the records and in each type's from an exclusive scan of the chunks' counts, so each\n/// chunk writes on its own, in any order.\npub fn lex_typed(buf: &[u8], n: usize, blocks: usize) -> Typed {{\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b\"        \"), \"the source padded with spaces\");\n    let blocks = blocks.max(1);\n    let off = {off_of};\n    let nw = (n - off).div_ceil(64);\n    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();\n    let entries = entries(&ends);\n    let none = [core::ptr::null_mut::<u32>(); TYPES];\n    // Counting: each chunk's records and each type's.\n    let counts: Vec<[usize; TYPES + 1]> = (0..nw)\n        .step_by(blocks)\n        .enumerate()\n        .map(|(c, b)| {{\n            let mut at = [0usize; TYPES + 1];\n            stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false);\n            at\n        }})\n        .collect();\n    // Each chunk's first places: an exclusive scan of the counts.\n    let mut firsts: Vec<[usize; TYPES + 1]> = Vec::with_capacity(counts.len() + 1);\n    firsts.push([0; TYPES + 1]);\n    for c in &counts {{\n        let last = firsts[firsts.len() - 1];\n        firsts.push(core::array::from_fn(|k| last[k] + c[k]));\n    }}\n    let total = firsts[counts.len()];\n    let mut starts: Vec<u32> = Vec::with_capacity(total[0] + 3);\n    let mut types: Vec<Vec<u32>> = (0..TYPES).map(|t| Vec::with_capacity(total[t + 1])).collect();\n    let ptrs: [*mut u32; TYPES] = core::array::from_fn(|t| types[t].as_mut_ptr());\n    let mut refused = false;\n    // Writing: each chunk from its places.\n    for (c, b) in (0..nw).step_by(blocks).enumerate() {{\n        let mut at = firsts[c];\n        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, starts.as_mut_ptr(), ptrs, true);\n        debug_assert_eq!(end, ends[c][lane_of(entries[c])], \"pass 2 ends where pass 1 did\");\n        debug_assert_eq!(at, firsts[c + 1], \"pass 2 writes what it counted\");\n        refused |= r;\n    }}\n    // SAFETY: every place below the totals written, each once.\n    unsafe {{\n        starts.set_len(total[0]);\n        for (t, v) in types.iter_mut().enumerate() {{\n            v.set_len(total[t + 1]);\n        }}\n    }}\n    starts.extend([n as u32, n as u32, 0]);\n    Typed {{ lexed: Lexed {{ starts, count: total[0], len: n, refused }}, types }}\n}}\n"
         );
         out
     }
@@ -7211,6 +7267,11 @@ impl Gen<'_> {
                 continue;
             }
             let st = if in_pass { String::new() } else { self.val(start)? };
+            if in_pass {
+                let f = factored(start, x.stmts);
+                let t = self.node(&f)?;
+                self.types.push((format!("{kind}"), t, f));
+            }
             let k = self.kind_of(*row);
             let _ = write!(chain, "{}if bit(&{st}, s) {{\n                // `{kind}`\n                {k}\n            }} ", if chain.is_empty() { "" } else { "else " });
             all = Some(match all.take() {
@@ -11060,7 +11121,7 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
     let chunk_reader = std::cell::RefCell::new(None);
-    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, scan_templates: Vec::new(), level: None, deep: None, passes: Vec::new(), open_pass: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default(), in_lane: false, lane_passes: HashSet::new(), walk_writes: false, region_counts: false, reader_kinds: Vec::new(), readers: Vec::new(), reader_level: None, start_open: None, gap_escapes: Vec::new(), chunk_reader: &chunk_reader }.source().map(|t| chunked::with_chunks(interleave::lv_for_tests(interleave::stage1_for_tests(&interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t))))), chunk_reader.borrow().as_ref()))
+    Gen { x, rare: None, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, types: Vec::new(), outputs: Vec::new(), toggles: HashMap::new(), lookup: None, code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), nest: None, scan_templates: Vec::new(), level: None, deep: None, passes: Vec::new(), open_pass: None, spans: Vec::new(), skipped: [false; 256], start_in: None, fills: Vec::new(), field_writes: Vec::new(), t2_spans: Vec::new(), ends: None, fill_proofs: Default::default(), region_values: Default::default(), opener_at: [Bytes::ALL; 4], start_checks: Vec::new(), stretch_checks: Vec::new(), tail_checks: Vec::new(), code_after: String::new(), end_checks: Vec::new(), shapes: Default::default(), regional_ids: Default::default(), opener_ids: Default::default(), def_ids: Default::default(), end_names: Default::default(), shape_ids: Default::default(), name_strs: Default::default(), name_ids: Default::default(), kept: Default::default(), cube_tangled: Default::default(), opener_cache: Default::default(), cube_open: Default::default(), tangles: Default::default(), cube_read: Default::default(), in_lane: false, lane_passes: HashSet::new(), walk_writes: false, region_counts: false, reader_kinds: Vec::new(), readers: Vec::new(), reader_level: None, start_open: None, gap_escapes: Vec::new(), chunk_reader: &chunk_reader }.source().map(|t| chunked::with_chunks(interleave::lv_for_tests(interleave::stage1_for_tests(&interleave::generic_lex(&interleave::code_pass_in_loop(&interleave::interleave(&t).unwrap_or(t))))), chunk_reader.borrow().as_ref()))
 }
 
 /// Whether `e` names `n`.

@@ -67,13 +67,35 @@ settles blocks in node order. So the lanes carry what a range does to them, as t
 - `parse_middle` runs the three passes; `write_range` is one chunk's pass 2.
 
 Each cell has one writer, the chunk of its node, but for a node's slot, which the chunk that writes the node after
-writes, and an open node's length and size, which the chunk that closes it writes. Escaped values go to their block's
-side list, kept sorted by row: on the CPU the chunks write one at a time; written at once they need the side list's
-rows placed by a count first.
+writes, and an open node's length and size, which the chunk that closes it writes. Each is written once.
 
-### 3. Still to build (the design's stages)
+**The side lists by a count.** A value past its cell's escape (and a code past the cut) is an entry of its block's
+side list, kept in row order, which the serial writer inserts. From the middle, the chunks run twice (the user,
+2026-11-27: "please build these: that count"):
 
-- Stage 2's token pass, the per-type indexes of stage 1's pass 2.
+- counting: each entry's row marked in its list's mask, one of `Z` bits a list at the end of each block's side area
+  (`SIDE_MASKS`; `SIDE_AREA` grows by them, in the CLIF ops, `writer16` and `<ukl/writer.h>`), by an atomic or;
+- writing: each entry at its rank among the mask's rows (`State::mid_entry`), so every entry has its one place
+  whatever order the chunks write in; `end_middle` sets each list's count from its mask.
+
+A cell's value is the same in both runs, so the cells may be written in both.
+
+### 3. The records of each type: tier 1's pass 2 run twice
+
+The user (2026-11-27): "please build these: … the per-type token indexes". The types are the grammar's tokens (`'"'`,
+`punctuation`, `number`), each the mask of its `start`; `bitlex_lex_rust` keeps them (`Gen::types`) as it makes the
+records' mask from their union, and their masks live in pass 2 alone (the serial `stage1` is unchanged).
+
+- `stage1_from` runs twice from each chunk's entry: counting (`write` false), the chunk's records and each type's as
+  popcounts of the masks; then writing, each record at its index in the file and each type's records' numbers at
+  their index among the type's, from places an exclusive scan of the counts gives (`lex_typed`, `Typed`).
+- A chunk writes only its own places: one write a bit (`write_exact`, `write_numbers`), not simdjson's writes past
+  the count, which would reach the next chunk's records.
+- `lex_chunked` is `lex_typed`'s records.
+
+### 4. Still to build (the design's stages)
+
+- Stage 2's token pass, one thread a token from each type's records.
 - The greedy LZ4 encoder (`ukl/lz4_encode.h`) and the 16z pieces.
 - The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
 
@@ -86,4 +108,6 @@ places, nodes before, the file's end) is the serial walk's there, and the walk c
 does. At most 16 lanes a chunk. `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
 text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
 records written in order and in reverse (180 tapes, 8,926 chunks), gives the serial walk's tape byte for byte, and
-every refusal the serial one.
+every refusal the serial one; the slot and length lists hold up to 991 entries a block there. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
+1, 2, 3 and 16 blocks (8,784 records), the records `lex`'s and each type's the records split by their first byte.
+`rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

@@ -33,7 +33,9 @@ pub const ERROR_CODE: u16 = 0;
 /// A kind word's bit that says its code is MISSING (`f16::presence::FAULT` is this one), and its kind's bits.
 pub const FAULT: u32 = 1 << 15;
 pub const KIND_MASK: u32 = FAULT - 1;
-pub const SIDE_AREA: u64 = 16 + 4 * SIDE_LIST;
+pub const SIDE_AREA: u64 = 16 + 4 * SIDE_LIST + 4 * (Z as u64 / 8);
+/// An area's masks: each list's rows (`Z` bits), for the writers from the middle (decision 0726: `State::mid_entry`).
+pub const SIDE_MASKS: u64 = 16 + 4 * SIDE_LIST;
 /// 16z: a piece's entry, its kinds, the smallest piece a repeat names and LZ4 is tried on.
 pub const PIECE: u64 = 32;
 pub const RAW: u32 = 0;
@@ -645,6 +647,58 @@ impl State {
         Ok(())
     }
 
+    /// Row `j`'s entry `v` in side list `q` of `block`, from a cursor from the middle: counting, its bit set in the
+    /// list's mask (an atomic or: chunks count at once); writing, at its rank among the mask's rows, so each entry has
+    /// its place whatever order the chunks write in. `end_middle` sets the lists' counts.
+    #[inline(always)]
+    unsafe fn mid_entry(&self, block: Block, q: usize, j: u32, v: u64, count: bool) {
+        let masks = block.area + SIDE_MASKS as usize + q * (Z as usize / 8);
+        // SAFETY: the caller's: `block` is made, `j` a row of it; the masks are its area's.
+        unsafe {
+            let word = masks + 8 * (j / 64) as usize;
+            if count {
+                core::sync::atomic::AtomicU64::from_ptr(word as *mut u64).fetch_or(1u64 << (j % 64), core::sync::atomic::Ordering::Relaxed);
+                return;
+            }
+            let mut k = (ld64(word) & ((1u64 << (j % 64)) - 1)).count_ones();
+            for w in 0..j / 64 {
+                k += ld64(masks + 8 * w as usize).count_ones();
+            }
+            let list = List::of(block.area, q);
+            st16(list.js + 2 * k as usize, j);
+            st64(list.vs + 8 * k as usize, v);
+        }
+    }
+
+    /// `put_at_x` from a cursor from the middle: the cell, and past its escape the side list's entry (`mid_entry`).
+    #[inline(always)]
+    unsafe fn mid_put_x<X: CellWidths>(&self, a: usize, j: u32, v: u64, block: Block, count: bool) {
+        let esc = X::esc(self, a);
+        // SAFETY: the caller's.
+        unsafe {
+            if v >= esc {
+                self.mid_entry(block, a + 1, j, v, count);
+            }
+            X::put(self, a, block.room + X::at(self, a + 1) as usize + j as usize * X::w(self, a) as usize, esc, v.min(esc));
+        }
+    }
+
+    /// `put_code_at` from a cursor from the middle.
+    #[inline(always)]
+    unsafe fn mid_code_at(&self, j: u32, number: u32, block: Block, count: bool) {
+        let cut = self.cut;
+        // SAFETY: as `mid_entry`'s.
+        unsafe {
+            if number < cut {
+                st8(block.room + j as usize, number);
+                return;
+            }
+            let t = number - cut;
+            st8(block.room + j as usize, cut + t / self.per);
+            self.mid_entry(block, 0, j, u64::from(t % self.per), count);
+        }
+    }
+
     /// Every block of a tape of `n` nodes made, in order, for cursors from the middle (decision 0726: `Cursor::resume`),
     /// each writing a chunk of its nodes. Format 16's alone (16z's rooms are given back as its blocks are final).
     pub(crate) unsafe fn make_blocks(&mut self, n: u32) -> R {
@@ -652,8 +706,15 @@ impl State {
             return self.fail(fail::OUTSIDE, 0);
         }
         for b in 0..n.div_ceil(Z).max(1) {
-            // SAFETY: the parts' room is the caller's (`reserve_run`).
-            unsafe { self.new_block(b)? };
+            // SAFETY: the parts' room is the caller's (`reserve_run`); the masks are the area's, written before the
+            // chunks count into them.
+            unsafe {
+                self.new_block(b)?;
+                let masks = self.block(b).area + SIDE_MASKS as usize;
+                for w in 0..(4 * Z / 64) as usize {
+                    st64(masks + 8 * w, 0);
+                }
+            }
         }
         Ok(())
     }
@@ -665,6 +726,18 @@ impl State {
         self.prev_start = prev_start;
         self.open_len = 0;
         self.frontier = n;
+        // Each side list's count: its mask's rows.
+        for b in 0..self.blocks {
+            // SAFETY: each block is made, its masks counted.
+            unsafe {
+                let area = self.block(b).area;
+                for q in 0..4usize {
+                    let masks = area + SIDE_MASKS as usize + q * (Z as usize / 8);
+                    let c: u32 = (0..(Z / 64) as usize).map(|w| ld64(masks + 8 * w).count_ones()).sum();
+                    st32(area + 4 * q, c);
+                }
+            }
+        }
     }
 
     /// Block `b` made final, if it is: every node in it closed, the node after its last opened, the frontier past
@@ -1805,6 +1878,8 @@ pub struct Cursor<X: CellWidths, const MID: bool = false> {
     source_len: u64,
     opens: usize,
     open_len: u32,
+    /// A cursor from the middle's run: counting its side-list entries, or writing them (`State::mid_entry`).
+    count: bool,
     x: core::marker::PhantomData<X>,
 }
 
@@ -1817,7 +1892,10 @@ impl<X: CellWidths> Cursor<X, true> {
     /// `desc` is a writer's state whose blocks are made for the tape (`State::make_blocks`), of widths `X`; `buf` has
     /// room for every frame the chunk holds open at once (`OPEN` bytes each); no other cursor writes this chunk's
     /// nodes, and the frames are the nodes open at node `n` of the tape the chunks write.
-    pub unsafe fn resume(desc: *mut u8, buf: *mut u8, n: u32, prev_start: u64, frames: &[(u32, u32, u32, u64)]) -> Self {
+    ///
+    /// The chunks run twice: counting (`count`), each marking its side-list entries' rows; then, every chunk counted,
+    /// writing, each entry at its rank.
+    pub unsafe fn resume(desc: *mut u8, buf: *mut u8, n: u32, prev_start: u64, frames: &[(u32, u32, u32, u64)], count: bool) -> Self {
         // SAFETY: the caller's.
         unsafe {
             let s: *mut State = state(desc);
@@ -1831,7 +1909,7 @@ impl<X: CellWidths> Cursor<X, true> {
                 st32(t + 8, last);
                 st64(t + 16, start);
             }
-            Cursor { s, room: block.room, area: block.area, n, prev_start, source_len: st.source_len, opens, open_len: frames.len() as u32, x: core::marker::PhantomData }
+            Cursor { s, room: block.room, area: block.area, n, prev_start, source_len: st.source_len, opens, open_len: frames.len() as u32, count, x: core::marker::PhantomData }
         }
     }
 
@@ -1867,7 +1945,7 @@ impl<X: CellWidths> Cursor<X> {
                 let b = st.block((st.n - 1) / Z);
                 (b.room, b.area)
             };
-            Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, x: core::marker::PhantomData }
+            Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, count: false, x: core::marker::PhantomData }
         }
     }
 }
@@ -1888,8 +1966,7 @@ impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
         // SAFETY: as `hold_block`'s; the frames' room is `resume`'s.
         unsafe {
             self.hold_block();
-            let block = self.block();
-            (*self.s).put_code_at(0, number, block);
+            self.code(0, number);
             self.put(1, 0, 0);
             (*self.s).put_checkpoint_x::<X>(self.room, 0, start);
             self.prev_start = start;
@@ -1937,12 +2014,32 @@ impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
         Block { room: self.room, area: self.area }
     }
 
+    /// Row `j`'s code `number` in the held block.
+    #[inline(always)]
+    unsafe fn code(&mut self, j: u32, number: u32) {
+        let block = self.block();
+        // SAFETY: the held block is made, `j` a row of it.
+        unsafe {
+            if MID {
+                (*self.s).mid_code_at(j, number, block, self.count);
+            } else {
+                (*self.s).put_code_at(j, number, block);
+            }
+        }
+    }
+
     /// Row `j`'s value `v` in array `a` of the held block.
     #[inline(always)]
     unsafe fn put(&mut self, a: usize, j: u32, v: u64) {
         let block = self.block();
         // SAFETY: the held block is made, `j` a row of it.
-        unsafe { (*self.s).put_at_x::<X>(a, j, v, block) }
+        unsafe {
+            if MID {
+                (*self.s).mid_put_x::<X>(a, j, v, block, self.count);
+            } else {
+                (*self.s).put_at_x::<X>(a, j, v, block);
+            }
+        }
     }
 
     /// Block `n / Z` made and held, its first node next (`walk`'s `base[n / STRIDE]` at a stride's first node): format
@@ -1991,15 +2088,19 @@ impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
                     let v = if idx.is_multiple_of(K) { u64::from(i.wrapping_sub(p)) << 2 | 3 } else { u64::from(i.wrapping_sub(last)) << 2 | 1 };
                     if FIRST {
                         // The node before is the block before's last.
-                        let r = (*self.s).put_x::<X>(0, i - 1, v);
-                        debug_assert!(r.is_ok());
+                        if MID {
+                            let b = (*self.s).block((i - 1) / Z);
+                            (*self.s).mid_put_x::<X>(0, (i - 1) % Z, v, b, self.count);
+                        } else {
+                            let r = (*self.s).put_x::<X>(0, i - 1, v);
+                            debug_assert!(r.is_ok());
+                        }
                     } else {
                         self.put(0, j - 1, v);
                     }
                 }
             }
-            let block = self.block();
-            (*self.s).put_code_at(j, number, block);
+            self.code(j, number);
             self.put(1, j, start - self.prev_start);
             if j.is_multiple_of(K) {
                 (*self.s).put_checkpoint_x::<X>(self.room, j, start);
@@ -2130,8 +2231,7 @@ impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
                 }
             }
             let cj = cj % Z;
-            let block = self.block();
-            (*self.s).put_code_at(cj, child, block);
+            self.code(cj, child);
             self.put(1, cj, cs - start);
             if cj.is_multiple_of(K) {
                 (*self.s).put_checkpoint_x::<X>(self.room, cj, cs);
@@ -2174,10 +2274,17 @@ impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
             let (b, j) = (i / Z, i % Z);
             let st = &mut *self.s;
             let block = st.block(b);
-            st.put_at_x::<X>(2, j, end - start, block);
             let size = self.n - i;
-            if size > 1 {
-                st.put_at_x::<X>(0, j, u64::from(size) << 1, block);
+            if MID {
+                st.mid_put_x::<X>(2, j, end - start, block, self.count);
+                if size > 1 {
+                    st.mid_put_x::<X>(0, j, u64::from(size) << 1, block, self.count);
+                }
+            } else {
+                st.put_at_x::<X>(2, j, end - start, block);
+                if size > 1 {
+                    st.put_at_x::<X>(0, j, u64::from(size) << 1, block);
+                }
             }
             if !MID && self.n > (b + 1) * Z {
                 self.give();

@@ -37,7 +37,7 @@
 #define CLIF_W_LAID_AT 32u
 // A side area: four lists' entry counts (u32s), then each list's node offsets (u16s, `Z`) and values (u64s, `Z`).
 #define CLIF_W_SIDE_LIST 10240u
-#define CLIF_W_SIDE_AREA 40976u
+#define CLIF_W_SIDE_AREA 41488u
 // 16z's piece index entry: start, stored length, raw length, kind, next in its bucket (u32s); its hash (u64 at 24).
 #define CLIF_W_PIECE 32u
 #define CLIF_W_RAW 0u

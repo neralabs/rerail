@@ -1347,7 +1347,7 @@ pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<
 /// # Safety
 /// `state` is a writer's state, its room reserved and its blocks made for the tape the chunks write; `at` is the
 /// chunk's state from pass 3; no other chunk writes this one's nodes.
-pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, at: &At, stop: usize) -> Stop {
+pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, at: &At, stop: usize, count: bool) -> Stop {
     let mut ret = std::boxed::Box::new([0u8; DEPTH]);
     ret[..at.ret.len()].copy_from_slice(&at.ret);
     // The frames' room: those open at its entry, and as many as a chunk opens at most.
@@ -1355,7 +1355,7 @@ pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, 
     let frames: Vec<(u32, u32, u32, u64)> = at.frames.iter().map(|f| (f.node, f.kids, f.last, f.start)).collect();
     // SAFETY: the caller's; the frames' room is `buf`'s.
     unsafe {
-        let mut d = Cursor::<Cells, true>::resume(state, buf.as_mut_ptr(), at.nodes, at.prev_start, &frames);
+        let mut d = Cursor::<Cells, true>::resume(state, buf.as_mut_ptr(), at.nodes, at.prev_start, &frames, count);
         run_range(src, lx, &mut d, at.entry, &mut *ret, 0, stop)
     }
 }
@@ -1383,14 +1383,17 @@ pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: 
     w.final_as_written();
     w.make_blocks(last.nodes as usize).map_err(|_| u32::MAX)?;
     let state = w.state_address();
-    for c in order(chunks.len()) {
-        let at = ats[c].as_ref().ok_or(0u32)?;
-        let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
-        // SAFETY: the state's room is reserved and its blocks made; `at` is pass 3's.
-        match unsafe { write_range(src, lx, state, at, stop) } {
-            Stop::At(x) if x.i == stop => {}
-            Stop::Done(Ok(())) if c + 1 == chunks.len() => {}
-            _ => return Err(u32::MAX),
+    // Twice: each chunk's side-list entries counted, then each chunk written, each entry at its rank.
+    for count in [true, false] {
+        for c in order(chunks.len()) {
+            let at = ats[c].as_ref().ok_or(0u32)?;
+            let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+            // SAFETY: the state's room is reserved and its blocks made; `at` is pass 3's.
+            match unsafe { write_range(src, lx, state, at, stop, count) } {
+                Stop::At(x) if x.i == stop => {}
+                Stop::Done(Ok(())) if c + 1 == chunks.len() => {}
+                _ => return Err(u32::MAX),
+            }
         }
     }
     w.end_middle(last.nodes as usize, last.prev_start);

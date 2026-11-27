@@ -75,6 +75,40 @@ fn chunked_is_the_serial_lexer() {
     eprintln!("{} files, each in chunks of 1, 2, 3 and 16 blocks: the serial lexer's records", files.len());
 }
 
+/// Pass 2 run twice (count, then write): the records are the serial lexer's, and each type's are the records split by
+/// their first byte (a string's quote, a punctuation byte, else a word), each a record's number in order.
+#[test]
+fn typed_records_are_the_records_split_by_type() {
+    let files = files();
+    let ty = |name: &str| crate::TYPE_NAMES.iter().position(|t| *t == name).unwrap_or_else(|| panic!("a type {name}"));
+    let (quote, punct, word) = (ty("\""), ty("punctuation"), ty("number"));
+    let mut records = 0;
+    for (k, f) in files.iter().enumerate() {
+        let buf = padded(f);
+        let want = lex(&buf, f.len());
+        for blocks in [1, 2, 3, 16] {
+            let got = crate::lex_typed(&buf, f.len(), blocks);
+            assert_eq!(got.lexed.refused, want.refused, "file {k}, chunks of {blocks} blocks: refused");
+            if want.refused {
+                continue;
+            }
+            assert!(got.lexed.starts == want.starts, "file {k}, chunks of {blocks} blocks: the records");
+            let mut split: Vec<Vec<u32>> = vec![Vec::new(); crate::TYPES];
+            for r in 0..want.count {
+                let t = match buf[want.starts[r] as usize] {
+                    b'"' => quote,
+                    b'{' | b'}' | b'[' | b']' | b',' | b':' => punct,
+                    _ => word,
+                };
+                split[t].push(r as u32);
+            }
+            assert!(got.types == split, "file {k}, chunks of {blocks} blocks: the records of each type");
+            records += want.count;
+        }
+    }
+    eprintln!("{} files in chunks of 1, 2, 3 and 16 blocks ({records} records): each type's records the records split by type", files.len());
+}
+
 /// In the string, a chunk's lanes split by `in_string` never meet: both run to the chunk's end, and the join takes the
 /// one the chunk before ends in.
 #[test]
@@ -121,11 +155,14 @@ fn report_chunked_speed() {
             for _ in 0..5 {
                 let t = std::time::Instant::now();
                 for ((b, n), e) in bufs.iter().zip(&entries) {
-                    let mut s = Vec::with_capacity(n + 67);
+                    let mut s: Vec<u32> = Vec::with_capacity(n + 67);
+                    let mut t: Vec<Vec<u32>> = (0..crate::TYPES).map(|_| Vec::with_capacity(n + 67)).collect();
+                    let ptrs: [*mut u32; crate::TYPES] = core::array::from_fn(|k| t[k].as_mut_ptr());
+                    let mut at = [0usize; crate::TYPES + 1];
                     for (c, q) in (0..(n - off(b)).div_ceil(64)).step_by(blocks).enumerate() {
-                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut s);
+                        _ = crate::stage1_from_best(b, *n, q, q + blocks, e[c], &mut at, s.as_mut_ptr(), ptrs, true);
                     }
-                    std::hint::black_box(s.len());
+                    std::hint::black_box(at[0]);
                 }
                 best = best.min(t.elapsed().as_secs_f64());
             }
