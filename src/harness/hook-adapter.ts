@@ -10,9 +10,12 @@ import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { heldOnWindows, nameTaken, removeWithRetry } from "../engine/file-replace.js";
-import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
+import { shellWord } from "../engine/command-line.js";
+import { ENTRY_POINTS, REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { launcherRecordedNode } from "./launcher-node.js";
 import { exitWhenParentGone, type ParentWatch } from "./parent-watch.js";
 
 export type HookInput = Record<string, unknown>;
@@ -507,9 +510,26 @@ function launchedDirectly(moduleUrl: string): boolean {
 }
 
 /**
- * A hook the recorded-first fallback started on an older `node` from PATH, once the node set-up recorded was gone,
- * does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must never
- * break it.
+ * What a hook on a Node older than Rerail runs on tells the person to do. The `rerail` launcher runs the node set-up
+ * recorded while that file is there, whatever PATH holds, and `node` from PATH once it is gone. Gone, `rerail install
+ * --refresh` runs on the Node the person puts first on PATH and records it. Still there, as when an older Node replaced
+ * it at the same path (a package downgraded, Homebrew's link moved to an older formula), the launcher would start that
+ * Node again, so the line names the launcher's own command with `node` from PATH in its place.
+ */
+export function olderNodeStep(home: string = defaultRerailHome()): string {
+  const put = `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run`;
+  const recorded = launcherRecordedNode(home);
+  if (recorded === undefined) return `${put} rerail install --refresh.`;
+  // PowerShell's quoting on Windows, as Rerail's other Windows lines; a path with no space or sign needs none in cmd either.
+  const shell = process.platform === "win32" ? "powershell" : "posix";
+  const command = ["node", join(home, CURRENT_LINK, ENTRY_POINTS.cli), "install", "--refresh"].map(word => shellWord(shell, word)).join(" ");
+  return `${put} ${command}: the rerail command runs ${recorded} while that file is there, whatever PATH holds.`;
+}
+
+/**
+ * A hook on an older Node, the recorded one or, once that is gone, the `node` the recorded-first fallback found on
+ * PATH, does nothing and says so in one line on stderr, which the coding agents keep out of the session: a hook must
+ * never break it.
  */
 export async function serveHook(
   run: (input: HookInput) => Promise<HookOutput>,
@@ -527,7 +547,7 @@ export async function serveHook(
     } else {
       streams.stderr.write(
         `rerail hook: Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer and this is Node ${nodeVersion}, so it is off in this session. `
-          + `Put Node ${REQUIRED_NODE_MAJOR} or newer first on PATH, then run rerail install --refresh.\n`,
+          + `${olderNodeStep()}\n`,
       );
     }
   } catch (error) {

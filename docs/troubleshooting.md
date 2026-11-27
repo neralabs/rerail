@@ -476,6 +476,17 @@ rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is of
 Put Node 24 or newer first on `PATH` and run `rerail install --refresh` (or `rerail update`). It records that Node in
 the launcher, every connected agent's hooks and the status line.
 
+If an older Node took the place of the recorded one at the same path (a package downgraded, Homebrew's `node` linked
+to an older formula), `rerail` still runs that path whatever `PATH` holds, and the hooks' line names the launcher's
+own command with `node` from `PATH` in its place:
+
+```text
+rerail hook: Rerail needs Node 24 or newer and this is Node 22.12.0, so it is off in this session. Put Node 24 or newer first on PATH, then run node /home/me/.rerail/current/dist/cli/cli.js install --refresh: the rerail command runs /usr/local/bin/node while that file is there, whatever PATH holds.
+```
+
+Run that with Node 24 or newer first on `PATH`; it records that Node as `rerail install --refresh` does. Putting Node
+24 or newer back at the recorded path works too.
+
 <details>
 <summary>How Node is found, and no `node` at all</summary>
 
