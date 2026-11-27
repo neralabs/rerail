@@ -18,7 +18,7 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 rerail-clif = { path = "../clif" }
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
-cranelift-module = "=0.125.4"
+cranelift-module = "=0.138.0"
 libc = "0.2.189"
 # The one pool the engine runs on (tier 2 clusters compiled in parallel).
 rayon = "=1.12.0"

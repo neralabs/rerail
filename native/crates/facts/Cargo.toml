@@ -48,7 +48,7 @@ ast-grep-core = "=0.51.0"
 ast-grep-language = { version = "=0.51.0", default-features = false }
 cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
-cranelift-module = "=0.125.4"
+cranelift-module = "=0.138.0"
 foldhash = "=0.2.0"
 hashbrown = { version = "=0.16.1", default-features = false }
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }
