@@ -642,6 +642,27 @@ fn first_bit(x: &[u64], from: usize) -> Option<usize> {
     Some(64 * q + w.trailing_zeros() as usize)
 }
 
+/// The first byte in `from..to` where one of the masks `xs` holds, a word of their union at a time: the words up to
+/// `to` read, and no more, as the lean lexer's string reader looks no further than its quote.
+#[inline(always)]
+fn first_of<const N: usize>(xs: [&[u64]; N], from: usize, to: usize) -> Option<usize> {
+    let len = xs.iter().map(|x| x.len()).max().unwrap_or(0);
+    if from >= to || from / 64 >= len {
+        return None;
+    }
+    let (mut q, last) = (from / 64, ((to - 1) / 64).min(len - 1));
+    let word = |q: usize| xs.iter().fold(0u64, |a, x| a | x.get(q).copied().unwrap_or(0));
+    let mut w = word(q) & (!0u64 << (from % 64));
+    while w == 0 {
+        if q == last {
+            return None;
+        }
+        q += 1;
+        w = word(q);
+    }
+    Some(64 * q + w.trailing_zeros() as usize).filter(|&p| p < to)
+}
+
 /// Whether mask `x` holds at byte `i`.
 fn bit(x: &[u64], i: usize) -> bool {
     x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
@@ -651,6 +672,9 @@ fn bit(x: &[u64], i: usize) -> bool {
 const NONE: u32 = u32::MAX;
 /// No record's kind: past the last record (`kind_at`).
 const NO_KIND: u32 = u32::MAX;
+
+/// The token's code past the last record (`P::cur`): word 0, and a kind no token is.
+const END_CODE: u32 = 0xff;
 /// The kind of a node open whose kind its rule gives later (`retag`).
 const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
@@ -690,6 +714,9 @@ pub struct P<'a, L: Layout> {
     /// The marks found at this token (`held`): which, and whether each holds.
     known: u64,
     holds: u64,
+    /// The token's code, read as the token is reached (`arrive`, a piece taken), as the lean parser's `peek` reads its
+    /// token: past the last record, `END_CODE`.
+    cur: u32,
     flags: u32,
     depth: u32,
     /// A mark taken last, no token or rule's end since (`G::after_mark`).
@@ -719,7 +746,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, string_k: [0; 8], xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, xs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, string_k: [0; 8], xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: END_CODE, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -732,6 +759,7 @@ impl<'a, L: Layout> P<'a, L> {
         if self.i < self.n {
             self.split(self.i)?;
         }
+        self.cur = if self.i < self.n { self.code_at(self.i) } else { END_CODE };
         Ok(())
     }
 
@@ -851,7 +879,7 @@ impl<'a, L: Layout> P<'a, L> {
 
     #[inline(always)]
     fn word(&self) -> u32 {
-        self.word_at(self.i)
+        self.cur >> 8 & 0xff
     }
 
     #[inline(always)]
@@ -862,7 +890,7 @@ impl<'a, L: Layout> P<'a, L> {
     /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
     #[inline(always)]
     fn kind(&self) -> u32 {
-        self.kind_at(self.i)
+        self.cur & 0xff
     }
 
     #[inline(always)]
@@ -1055,6 +1083,7 @@ impl<'a, L: Layout> P<'a, L> {
             self.k += 1;
             if self.k < self.sub.len() {
                 self.known = 0;
+                self.cur = self.sub[self.k].2;
                 self.last_end = l + 1;
                 return Ok((s, l + 1));
             }
@@ -1328,30 +1357,28 @@ impl<L: Layout> P<'_, L> {
             self.bump_as(k::COLON)?;
             self.user_type()?;
             self.ask_semi(false)?;
-            if !(!self.marked && self.m_semi()) {
-                if self.word() == w::LPAREN_61 {
-                    self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                    self.value_arguments()?;
-                    self.close()?;
-                }
+            if self.word() == w::LPAREN_61 && !(!self.marked && self.m_semi()) {
+                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                self.value_arguments()?;
+                self.close()?;
             }
             self.close()?;
             self.mark_semi()?;
         }
-        if !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) {
-            if self.word() == w::PACKAGE_71 {
-                self.package_header()?;
-            }
+        if self.word() == w::PACKAGE_71 && !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) {
+            self.package_header()?;
         }
-        if !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) {
-            if self.word() == w::IMPORT_72 {
-                self.open(k::IMPORT_LIST);
-                self.import_header()?;
-                while !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) && self.word() == w::IMPORT_72 {
+        if self.word() == w::IMPORT_72 && !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) {
+            self.open(k::IMPORT_LIST);
+            self.import_header()?;
+            loop {
+                if self.word() == w::IMPORT_72 && !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc()) {
                     self.import_header()?;
+                } else {
+                    break;
                 }
-                self.close()?;
             }
+            self.close()?;
         }
         while self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc() || matches!(self.word(), w::THIS_5..=w::DO_26 | w::LPAREN_61..=w::AT_70 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
             let asks = self.asks;
@@ -1490,14 +1517,12 @@ impl<L: Layout> P<'_, L> {
         if self.m_label_at() || !self.m_lab_loop() && (self.m_lab_lam() || self.pat_this_at_0_0(self.i, self.n) || self.pat_jump_at_0_0(self.i, self.n) || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.word() == w::LBRACE_69 && self.word_at(self.i + 1) == w::MINUS_GT_38 || self.pat_lam_params_0_0(self.i, self.n) || self.m_ann_expr()) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_59 | w::COLON_COLON_63))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70 | w::SEALED_81..=w::SET_108 | w::COMPANION_121..=w::ENUM_123)) && ((self.i == 0 || (self.i - 1 < self.n && self.word_at(self.i - 1) != w::COMPANION_121)) && self.word() == w::OBJECT_20 && matches!(self.word_at(self.i + 1), w::COLON_28 | w::LBRACE_69) || (self.word() == w::FUN_19 && self.word_at(self.i + 1) == w::LPAREN_61) || (self.i > 0 && matches!(self.word_at(self.i - 1), w::RETURN_10 | w::THROW_11 | w::COMMA_27 | w::COLON_28 | w::EQ_36 | w::AMP_AMP_44..=w::MINUS_EQ_47 | w::QUEST_COLON_52 | w::EQ_EQ_55 | w::BANG_EQ_56 | w::LPAREN_61 | w::LBRACK_62) && self.word() == w::FUN_19) || self.word() == w::SUSPEND_97 && self.word_at(self.i + 1) == w::FUN_19 && self.word_at(self.i + 2) == w::LPAREN_61 || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63) || !(self.m_lab_loop() || (self.i == 0 || (self.i - 1 < self.n && !matches!(self.word_at(self.i - 1), w::DOT_59 | w::COLON_COLON_63))) && (w::SEALED_81..=w::ACTUAL_106).contains(&self.word()) && matches!(self.word_at(self.i + 1), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70 | w::SEALED_81..=w::SET_108 | w::COMPANION_121..=w::ENUM_123) || self.m_named() || self.word() == w::ENUM_123 && self.word_at(self.i + 1) == w::CLASS_21 || self.m_acc() || matches!(self.word(), w::VAL_17..=w::TYPEALIAS_23 | w::AT_70) || self.word() == w::FOR_24 || self.word() == w::WHILE_25 || self.word() == w::DO_26) && (matches!(self.word(), w::THIS_5..=w::NULL_16 | w::LPAREN_61..=w::LBRACE_69 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE)) {
             self.r_expression()?;
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if ASSIGNMENT_OPERATOR[self.word() as usize] != 0 {
-                    self.wrap(k::ASSIGNMENT, 0)?;
-                    self.reread_assignable()?;
-                    self.tk_as(ASSIGNMENT_OPERATOR[self.word() as usize] != 0, ASSIGNMENT_OPERATOR[self.word() as usize], 0)?;
-                    self.r_expression()?;
-                    self.close()?;
-                }
+            if ASSIGNMENT_OPERATOR[self.word() as usize] != 0 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.wrap(k::ASSIGNMENT, 0)?;
+                self.reread_assignable()?;
+                self.tk_as(ASSIGNMENT_OPERATOR[self.word() as usize] != 0, ASSIGNMENT_OPERATOR[self.word() as usize], 0)?;
+                self.r_expression()?;
+                self.close()?;
             }
         } else if self.m_lab_loop() {
             self.mark_lab_loop()?;
@@ -1708,18 +1733,14 @@ impl<L: Layout> P<'_, L> {
             self.implied()?;
             self.type_name()?;
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::COLON_28 {
-                    self.implied()?;
-                    self.delegation_specifier()?;
-                    self.delegation_specifiers()?;
-                }
+            if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.implied()?;
+                self.delegation_specifier()?;
+                self.delegation_specifiers()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::LBRACE_69 {
-                    self.class_body()?;
-                }
+            if self.word() == w::LBRACE_69 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.class_body()?;
             }
         } else if self.word() == w::TYPEALIAS_23 {
             self.retag(k::TYPE_ALIAS);
@@ -1751,23 +1772,17 @@ impl<L: Layout> P<'_, L> {
         self.name()?;
         self.function_value_parameters()?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.bump_as(k::COLON)?;
-                self.r_type()?;
-            }
+        if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.bump_as(k::COLON)?;
+            self.r_type()?;
         }
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::WHERE_117 {
-                self.type_constraints()?;
-            }
+        if self.word() == w::WHERE_117 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.type_constraints()?;
         }
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if matches!(self.word(), w::LBRACE_69 | w::EQ_36) {
-                self.function_body()?;
-            }
+        if matches!(self.word(), w::LBRACE_69 | w::EQ_36) && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.function_body()?;
         }
         Ok(())
     }
@@ -1790,10 +1805,8 @@ impl<L: Layout> P<'_, L> {
             self.multi_variable_declaration()?;
         }
         self.ask_semi(true)?;
-        if !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::WHERE_117 {
-                self.type_constraints()?;
-            }
+        if self.word() == w::WHERE_117 && !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.type_constraints()?;
         }
         self.ask_semi(true)?;
         if self.m_by_lf() || !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.word() == w::EQ_36) && (self.word() == w::BY_73) {
@@ -1839,20 +1852,18 @@ impl<L: Layout> P<'_, L> {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) {
-                if self.word() == w::COLON_28 {
-                    self.implied()?;
-                    self.delegation_specifier()?;
-                    loop {
-                        self.ask_semi(true)?;
-                        if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
-                            break;
-                        } else if self.word() == w::COMMA_27 {
-                            self.implied()?;
-                            self.delegation_specifier()?;
-                        } else {
-                            break;
-                        }
+            if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) {
+                self.implied()?;
+                self.delegation_specifier()?;
+                loop {
+                    self.ask_semi(true)?;
+                    if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k() {
+                        break;
+                    } else if self.word() == w::COMMA_27 {
+                        self.implied()?;
+                        self.delegation_specifier()?;
+                    } else {
+                        break;
                     }
                 }
             }
@@ -1881,18 +1892,14 @@ impl<L: Layout> P<'_, L> {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::COLON_28 {
-                    self.implied()?;
-                    self.delegation_specifier()?;
-                    self.delegation_specifiers()?;
-                }
+            if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.implied()?;
+                self.delegation_specifier()?;
+                self.delegation_specifiers()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::LBRACE_69 {
-                    self.class_body()?;
-                }
+            if self.word() == w::LBRACE_69 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.class_body()?;
             }
         } else if matches!(self.word(), w::CLASS_21 | w::INTERFACE_22) {
             self.bump_as(ANON[self.word() as usize])?;
@@ -1913,24 +1920,18 @@ impl<L: Layout> P<'_, L> {
                 self.primary_constructor()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::COLON_28 {
-                    self.implied()?;
-                    self.delegation_specifier()?;
-                    self.delegation_specifiers()?;
-                }
+            if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.implied()?;
+                self.delegation_specifier()?;
+                self.delegation_specifiers()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::WHERE_117 {
-                    self.type_constraints()?;
-                }
+            if self.word() == w::WHERE_117 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.type_constraints()?;
             }
             self.ask_semi(true)?;
-            if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-                if self.word() == w::LBRACE_69 {
-                    self.class_body()?;
-                }
+            if self.word() == w::LBRACE_69 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                self.class_body()?;
             }
         } else {
             return self.refuse();
@@ -1960,16 +1961,19 @@ impl<L: Layout> P<'_, L> {
             self.p_stored(w::RBRACE_30, k::RBRACE)?;
         } else if self.word() == w::LBRACE_69 {
             self.implied()?;
-            if self.m_semi_close() || self.m_enum_k() {
-            } else if matches!(self.word(), w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
+            if (matches!(self.word(), w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME) && !(self.m_semi_close() || self.m_enum_k()) {
                 self.enum_entry()?;
-                while !(self.m_semi_close() || self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40) || self.m_enum_k()) && self.word() == w::COMMA_27 {
-                    self.implied()?;
-                    self.ask_semi(false)?;
-                    if self.m_semi() {
-                        self.mark_semi()?;
+                loop {
+                    if self.word() == w::COMMA_27 && !(self.m_semi_close() || self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40) || self.m_enum_k()) {
+                        self.implied()?;
+                        self.ask_semi(false)?;
+                        if self.m_semi() {
+                            self.mark_semi()?;
+                        }
+                        self.enum_entry()?;
+                    } else {
+                        break;
                     }
-                    self.enum_entry()?;
                 }
             }
             if self.m_semi_close() || !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40) || self.m_enum_k()) && (matches!(self.word(), w::SEMI_32 | w::RBRACE_30)) {
@@ -2064,15 +2068,11 @@ impl<L: Layout> P<'_, L> {
     fn enum_entry(&mut self) -> R {
         self.open(k::ENUM_ENTRY);
         self.name()?;
-        if !(!self.marked && self.m_semi_close() || self.m_enum_k()) {
-            if self.word() == w::LPAREN_61 {
-                self.value_arguments()?;
-            }
+        if self.word() == w::LPAREN_61 && !(!self.marked && self.m_semi_close() || self.m_enum_k()) {
+            self.value_arguments()?;
         }
-        if !(!self.marked && self.m_semi_close() || self.m_enum_k()) {
-            if self.word() == w::LBRACE_69 {
-                self.class_body()?;
-            }
+        if self.word() == w::LBRACE_69 && !(!self.marked && self.m_semi_close() || self.m_enum_k()) {
+            self.class_body()?;
         }
         self.close()?;
         Ok(())
@@ -2091,11 +2091,9 @@ impl<L: Layout> P<'_, L> {
         self.open(k::VARIABLE_DECLARATION);
         self.name()?;
         self.ask_semi(true)?;
-        if !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.bump_as(k::COLON)?;
-                self.r_type()?;
-            }
+        if self.word() == w::COLON_28 && !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.bump_as(k::COLON)?;
+            self.r_type()?;
         }
         self.close()?;
         Ok(())
@@ -2318,12 +2316,10 @@ impl<L: Layout> P<'_, L> {
         } else if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
             self.user_type()?;
             self.ask_semi(true)?;
-            if !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) {
-                if self.word() == w::LPAREN_61 {
-                    self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                    self.value_arguments()?;
-                    self.close()?;
-                }
+            if self.word() == w::LPAREN_61 && !(self.m_by_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_enum_k()) {
+                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                self.value_arguments()?;
+                self.close()?;
             }
         } else {
             return self.refuse();
@@ -2387,7 +2383,23 @@ impl<L: Layout> P<'_, L> {
                 }
                 w::COMPANION_121 => {
                     self.retag(k::COMPANION_OBJECT);
-                    self.companion_rest()?;
+                    self.implied()?;
+                    self.p(w::OBJECT_20)?;
+                    self.ask_semi(true)?;
+                    if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) || (self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME) && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                        self.type_name()?;
+                    } else {
+                    }
+                    self.ask_semi(true)?;
+                    if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                        self.implied()?;
+                        self.delegation_specifier()?;
+                        self.delegation_specifiers()?;
+                    }
+                    self.ask_semi(true)?;
+                    if self.word() == w::LBRACE_69 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+                        self.class_body()?;
+                    }
                 }
                 w::INIT_120 => {
                     self.retag(k::ANONYMOUS_INITIALIZER);
@@ -2421,19 +2433,17 @@ impl<L: Layout> P<'_, L> {
     fn getter_rest(&mut self) -> R {
         self.p_stored(w::GET_107, k::GET)?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::LPAREN_61 {
-                self.implied()?;
-                self.p(w::RPAREN_29)?;
-                if self.word() == w::COLON_28 {
-                    self.bump_as(k::COLON)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_type()?;
-                    self.asks = asks;
-                }
-                self.function_body()?;
+        if self.word() == w::LPAREN_61 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.implied()?;
+            self.p(w::RPAREN_29)?;
+            if self.word() == w::COLON_28 {
+                self.bump_as(k::COLON)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_type()?;
+                self.asks = asks;
             }
+            self.function_body()?;
         }
         Ok(())
     }
@@ -2442,20 +2452,18 @@ impl<L: Layout> P<'_, L> {
     fn setter_rest(&mut self) -> R {
         self.p(w::SET_108)?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::LPAREN_61 {
-                self.implied()?;
-                self.parameter_with_optional_type()?;
-                self.p(w::RPAREN_29)?;
-                if self.word() == w::COLON_28 {
-                    self.bump_as(k::COLON)?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_type()?;
-                    self.asks = asks;
-                }
-                self.function_body()?;
+        if self.word() == w::LPAREN_61 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.implied()?;
+            self.parameter_with_optional_type()?;
+            self.p(w::RPAREN_29)?;
+            if self.word() == w::COLON_28 {
+                self.bump_as(k::COLON)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_type()?;
+                self.asks = asks;
             }
+            self.function_body()?;
         }
         Ok(())
     }
@@ -2478,47 +2486,17 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `companion_rest`.
-    fn companion_rest(&mut self) -> R {
-        self.p(w::COMPANION_121)?;
-        self.p(w::OBJECT_20)?;
-        self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if matches!(self.word(), w::FILE_74 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
-                self.type_name()?;
-            } else {
-            }
-        }
-        self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.implied()?;
-                self.delegation_specifier()?;
-                self.delegation_specifiers()?;
-            }
-        }
-        self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::LBRACE_69 {
-                self.class_body()?;
-            }
-        }
-        Ok(())
-    }
-
     /// `ctor_rest`.
     fn ctor_rest(&mut self) -> R {
         self.p(w::CONSTRUCTOR_122)?;
         self.function_value_parameters()?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.implied()?;
-                self.open(k::CONSTRUCTOR_DELEGATION_CALL);
-                self.tk_as(matches!(self.word(), w::THIS_5 | w::SUPER_6), ANON[self.word() as usize], 0)?;
-                self.value_arguments()?;
-                self.close()?;
-            }
+        if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.implied()?;
+            self.open(k::CONSTRUCTOR_DELEGATION_CALL);
+            self.tk_as(matches!(self.word(), w::THIS_5 | w::SUPER_6), ANON[self.word() as usize], 0)?;
+            self.value_arguments()?;
+            self.close()?;
         }
         self.ask_semi(true)?;
         if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2745,12 +2723,10 @@ impl<L: Layout> P<'_, L> {
         }
         self.user_type()?;
         self.ask_semi(true)?;
-        if !(self.m_ann_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::LPAREN_61 {
-                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                self.value_arguments()?;
-                self.close()?;
-            }
+        if self.word() == w::LPAREN_61 && !(self.m_ann_lf() || self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+            self.value_arguments()?;
+            self.close()?;
         }
         self.ask_semi(true)?;
         if self.m_ann_lf() {
@@ -2883,11 +2859,15 @@ impl<L: Layout> P<'_, L> {
         if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_39 {
             self.type_arguments()?;
         }
-        while !(self.word() == w::DOT_59 && self.word_at(self.i + 1) == w::LPAREN_61) && self.word() == w::DOT_59 {
-            self.implied()?;
-            self.type_name()?;
-            if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_39 {
-                self.type_arguments()?;
+        loop {
+            if self.word() == w::DOT_59 && !(self.word() == w::DOT_59 && self.word_at(self.i + 1) == w::LPAREN_61) {
+                self.implied()?;
+                self.type_name()?;
+                if self.m_generic() || self.m_gen_nav() || self.word() == w::LT_39 {
+                    self.type_arguments()?;
+                }
+            } else {
+                break;
             }
         }
         self.close()?;
@@ -3020,15 +3000,17 @@ impl<L: Layout> P<'_, L> {
     fn type_projection(&mut self) -> R {
         self.open(k::TYPE_PROJECTION);
         if self.m_paren_amp() || self.m_fn_recv() || INTERP_SOFT[self.word() as usize] != 0 || matches!(self.word(), w::IN_4 | w::AT_70 | w::LPAREN_61 | w::FILE_74) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME {
-            if !self.m_fn_recv() {
-                if matches!(self.word(), w::IN_4 | w::OUT_75) {
-                    self.open(k::TYPE_PROJECTION_MODIFIERS);
-                    self.variance_modifier()?;
-                    while !self.m_fn_recv() && matches!(self.word(), w::IN_4 | w::OUT_75) {
+            if matches!(self.word(), w::IN_4 | w::OUT_75) && !self.m_fn_recv() {
+                self.open(k::TYPE_PROJECTION_MODIFIERS);
+                self.variance_modifier()?;
+                loop {
+                    if matches!(self.word(), w::IN_4 | w::OUT_75) && !self.m_fn_recv() {
                         self.variance_modifier()?;
+                    } else {
+                        break;
                     }
-                    self.close()?;
                 }
+                self.close()?;
             }
             let asks = self.asks;
             self.asks = asks & 0x0 | 0x0;
@@ -3642,12 +3624,16 @@ impl<L: Layout> P<'_, L> {
             self.flags = self.flags & !FLAG_NO_LAMBDA;
             self.value_argument()?;
             self.flags = flags;
-            while !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) && self.word() == w::COMMA_27 {
-                self.implied()?;
-                let flags = self.flags;
-                self.flags = self.flags & !FLAG_NO_LAMBDA;
-                self.value_argument()?;
-                self.flags = flags;
+            loop {
+                if self.word() == w::COMMA_27 && !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) {
+                    self.implied()?;
+                    let flags = self.flags;
+                    self.flags = self.flags & !FLAG_NO_LAMBDA;
+                    self.value_argument()?;
+                    self.flags = flags;
+                } else {
+                    break;
+                }
             }
         }
         match self.word() {
@@ -3825,17 +3811,13 @@ impl<L: Layout> P<'_, L> {
         }
         self.function_value_parameters()?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.bump_as(k::COLON)?;
-                self.r_type()?;
-            }
+        if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.bump_as(k::COLON)?;
+            self.r_type()?;
         }
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if matches!(self.word(), w::LBRACE_69 | w::EQ_36) {
-                self.function_body()?;
-            }
+        if matches!(self.word(), w::LBRACE_69 | w::EQ_36) && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.function_body()?;
         }
         self.close()?;
         Ok(())
@@ -4045,34 +4027,30 @@ impl<L: Layout> P<'_, L> {
         self.open(k::OBJECT_LITERAL);
         self.p_stored(w::OBJECT_20, k::OBJECT)?;
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::COLON_28 {
-                self.bump_as(k::COLON)?;
-                let flags = self.flags;
-                self.flags = self.flags | FLAG_NO_LAMBDA;
-                self.delegation_specifier()?;
-                self.flags = flags;
-                loop {
-                    self.ask_semi(true)?;
-                    if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                        break;
-                    } else if self.word() == w::COMMA_27 {
-                        self.implied()?;
-                        let flags = self.flags;
-                        self.flags = self.flags | FLAG_NO_LAMBDA;
-                        self.delegation_specifier()?;
-                        self.flags = flags;
-                    } else {
-                        break;
-                    }
+        if self.word() == w::COLON_28 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.bump_as(k::COLON)?;
+            let flags = self.flags;
+            self.flags = self.flags | FLAG_NO_LAMBDA;
+            self.delegation_specifier()?;
+            self.flags = flags;
+            loop {
+                self.ask_semi(true)?;
+                if self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                    break;
+                } else if self.word() == w::COMMA_27 {
+                    self.implied()?;
+                    let flags = self.flags;
+                    self.flags = self.flags | FLAG_NO_LAMBDA;
+                    self.delegation_specifier()?;
+                    self.flags = flags;
+                } else {
+                    break;
                 }
             }
         }
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::LBRACE_69 {
-                self.class_body()?;
-            }
+        if self.word() == w::LBRACE_69 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.class_body()?;
         }
         self.close()?;
         Ok(())
@@ -4167,20 +4145,18 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::FINALLY_119 {
-                self.open(k::FINALLY_BLOCK);
-                self.implied()?;
-                if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_29 | w::ELSE_3 | w::DO_26 | w::TRY_9 | w::FINALLY_119 | w::MINUS_GT_38) && self.word() == w::LBRACE_69) {
-                    return self.refuse();
-                }
-                self.p(w::LBRACE_69)?;
-                if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc() || matches!(self.word(), w::THIS_5..=w::DO_26 | w::LPAREN_61..=w::AT_70 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
-                    self.statements()?;
-                }
-                self.p(w::RBRACE_30)?;
-                self.close()?;
+        if self.word() == w::FINALLY_119 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.open(k::FINALLY_BLOCK);
+            self.implied()?;
+            if !(self.i > 0 && matches!(self.word_at(self.i - 1), w::RPAREN_29 | w::ELSE_3 | w::DO_26 | w::TRY_9 | w::FINALLY_119 | w::MINUS_GT_38) && self.word() == w::LBRACE_69) {
+                return self.refuse();
             }
+            self.p(w::LBRACE_69)?;
+            if self.m_label_at() || self.m_lab_loop() || self.m_lab_lam() || self.m_as_kwn() || self.pat_sfx_0_0(self.i, self.n) || self.m_ann_expr() || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63 || self.m_named() || self.m_acc() || matches!(self.word(), w::THIS_5..=w::DO_26 | w::LPAREN_61..=w::AT_70 | w::BY_73..=w::OUT_75 | w::SEALED_81..=w::ENUM_123) || self.kind() == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) || self.kind() == t::BACKTICK_NAME || self.kind() == t::INTEGER_LITERAL || self.kind() == t::HEX_LITERAL || self.kind() == t::BIN_LITERAL || self.kind() == t::REAL_LITERAL || self.kind() == t::STRING_PREFIX || matches!(self.kind(), t::QUOTE__CLOSE | t::QUOTE) || matches!(self.kind(), t::TICK | t::TICK__CLOSE) {
+                self.statements()?;
+            }
+            self.p(w::RBRACE_30)?;
+            self.close()?;
         }
         self.close()?;
         Ok(())
@@ -4217,12 +4193,10 @@ impl<L: Layout> P<'_, L> {
         if self.word() == w::LPAREN_61 {
             self.open(k::WHEN_SUBJECT);
             self.implied()?;
-            if !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63) {
-                if self.word() == w::VAL_17 {
-                    self.implied()?;
-                    self.variable_declaration()?;
-                    self.p(w::EQ_36)?;
-                }
+            if self.word() == w::VAL_17 && !(self.bit_at(self.i, 9) || self.m_label_at() || self.m_lab_lam() || self.pat_sfx_0_0(self.i, self.n) || self.kind_at(self.i) == t::SIMPLE_IDENTIFIER && !(w::AS_1..=w::DO_26).contains(&self.word()) && self.word_at(self.i + 1) == w::COLON_COLON_63) {
+                self.implied()?;
+                self.variable_declaration()?;
+                self.p(w::EQ_36)?;
             }
             let asks = self.asks;
             self.asks = asks & 0x0 | 0x0;
@@ -4277,11 +4251,15 @@ impl<L: Layout> P<'_, L> {
             if self.word() == w::IF_7 {
                 self.guard_condition()?;
             }
-            while !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) && self.word() == w::COMMA_27 {
-                self.bump_as(k::COMMA)?;
-                self.when_condition()?;
-                if self.word() == w::IF_7 {
-                    self.guard_condition()?;
+            loop {
+                if self.word() == w::COMMA_27 && !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) {
+                    self.bump_as(k::COMMA)?;
+                    self.when_condition()?;
+                    if self.word() == w::IF_7 {
+                        self.guard_condition()?;
+                    }
+                } else {
+                    break;
                 }
             }
             if self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40) {
@@ -4384,12 +4362,10 @@ impl<L: Layout> P<'_, L> {
         self.control_structure_body()?;
         self.field_made(f::CONSEQUENCE);
         self.ask_semi(true)?;
-        if !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
-            if self.word() == w::ELSE_3 {
-                self.bump_as(k::ELSE)?;
-                self.control_structure_body()?;
-                self.field_made(f::ALTERNATIVE);
-            }
+        if self.word() == w::ELSE_3 && !(self.asks >> 3 & 1 != 0 && !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
+            self.bump_as(k::ELSE)?;
+            self.control_structure_body()?;
+            self.field_made(f::ALTERNATIVE);
         }
         self.close()?;
         Ok(())
@@ -4561,12 +4537,16 @@ impl<L: Layout> P<'_, L> {
 
     /// The loop the parser reads in more than one place (decision 0685 step 4).
     fn trail_brackets(&mut self) -> R {
-        while !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) && self.word() == w::COMMA_27 {
-            self.implied()?;
-            let asks = self.asks;
-            self.asks = asks & 0x0 | 0x0;
-            self.r_expression()?;
-            self.asks = asks;
+        loop {
+            if self.word() == w::COMMA_27 && !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) {
+                self.implied()?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x0;
+                self.r_expression()?;
+                self.asks = asks;
+            } else {
+                break;
+            }
         }
         match self.word() {
             w::COMMA_27 => {
@@ -4656,9 +4636,13 @@ impl<L: Layout> P<'_, L> {
     fn list(&mut self, item: fn(&mut Self) -> R) -> R {
         self.p(w::LT_39)?;
         item(self)?;
-        while !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) && self.word() == w::COMMA_27 {
-            self.implied()?;
-            item(self)?;
+        loop {
+            if self.word() == w::COMMA_27 && !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) {
+                self.implied()?;
+                item(self)?;
+            } else {
+                break;
+            }
         }
         match self.word() {
             w::COMMA_27 => {
@@ -4682,9 +4666,13 @@ impl<L: Layout> P<'_, L> {
     /// 4), as the lean parser's `list`.
     fn list_1(&mut self, item: fn(&mut Self) -> R) -> R {
         item(self)?;
-        while !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) && self.word() == w::COMMA_27 {
-            self.implied()?;
-            item(self)?;
+        loop {
+            if self.word() == w::COMMA_27 && !(self.word() == w::COMMA_27 && matches!(self.word_at(self.i + 1), w::RPAREN_29..=w::RBRACK_31 | w::MINUS_GT_38 | w::GT_40)) {
+                self.implied()?;
+                item(self)?;
+            } else {
+                break;
+            }
         }
         Ok(())
     }
@@ -30215,7 +30203,9 @@ impl<L: Layout> P<'_, L> {
                 self.next_x = self.xs.get(self.xi).map_or(u32::MAX, |x| x.start);
             }
             self.known = 0;
-            return self.resume_1(p);
+            self.resume_1(p)?;
+            self.cur = self.code_at(self.i);
+            return Ok(());
         }
         // The next token, the comments before it passed.
         self.i += 1;

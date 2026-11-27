@@ -585,19 +585,14 @@ pub struct State {
     pub words: usize,
 }
 
-/// A walk's state from one block to the next (`build_walk`): bits 0..4 the kind of region open
-/// at the block's end, plus one (0: none); bits 4..6 the hidden bytes it hides past its end (a
-/// closer's bytes, an empty literal's); bit `8 + k` that kind `k`'s closer has no byte left in
-/// the file (its `else` is taken from there on, with no scan); with a kind with `after`, the
-/// four bits after those the last kind with none opened, plus one (0: none).
+/// A walk's state from one block to the next (`build_walk`), one carried field laid out by its kinds
+/// (`block::WalkLayout`).
 pub struct WalkState;
 
 impl WalkState {
-    pub const SKIP: u8 = 4;
-    pub const NONE: u8 = 8;
-    /// The field's width for a walk of `kinds` kinds.
-    pub fn width(kinds: usize, after: bool) -> u8 {
-        Self::NONE + kinds as u8 + if after { 4 } else { 0 }
+    /// The field's width for `walk`.
+    pub fn width(walk: &crate::block::Walk) -> u8 {
+        walk.layout().width() as u8
     }
 }
 
@@ -643,7 +638,7 @@ impl State {
             }
         }
         for (w, walk) in native.walks.iter().enumerate().filter(|(_, w)| !w.kinds.is_empty()) {
-            wanted.push((usize::from(walk.hidden), WalkState::width(walk.kinds.len(), walk.kinds.iter().any(|k| k.after != 0)), 2 + w, false));
+            wanted.push((usize::from(walk.hidden), WalkState::width(walk), 2 + w, false));
         }
         let mut used: Vec<u8> = Vec::new();
         let (mut fields, mut top, mut flag, mut walk) = (Vec::new(), vec![None; n], vec![None; n], vec![None; native.walks.len()]);
@@ -1935,7 +1930,7 @@ impl Emit<'_, '_> {
         let calls = self.walks.expect("a walk's function");
         let field = self.state.fields[self.state.walk[w].expect("a walk's state field")];
         let made = walk.made();
-        let n = crate::native_cpu_walk::layout(walk.kinds.len(), made.len());
+        let n = crate::native_cpu_walk::layout(walk);
         let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * n as u32, 3));
         let state_in = self.read(&mut *f, &field, 0, field.width);
         f.ins().stack_store(state_in, slot, 0);
@@ -1949,6 +1944,12 @@ impl Emit<'_, '_> {
                 None => f.ins().iconst(types::I64, 0),
             };
             f.ins().stack_store(c2, slot, 8 * (3 + 3 * k as i32));
+        }
+        if let Some(l) = walk.level {
+            for (j, v) in [l.opens, l.closes].into_iter().enumerate() {
+                let x = plain(&mut *f, &self.syms, &mut self.values, usize::from(v));
+                f.ins().stack_store(x, slot, 8 * (1 + 3 * walk.kinds.len() + j) as i32);
+            }
         }
         if calls.built.borrow()[w].is_none() {
             let func = crate::native_cpu_walk::build_walk(native, w, calls).expect("a walk the program verified");
@@ -1964,7 +1965,7 @@ impl Emit<'_, '_> {
         self.put(&mut *f, field, state_out);
         self.walked[w] = true;
         for (j, &v) in made.iter().enumerate() {
-            self.set(usize::from(v), Sym::Slot(slot, 8 * (1 + 3 * walk.kinds.len() + j) as i32, false));
+            self.set(usize::from(v), Sym::Slot(slot, 8 * (crate::native_cpu_walk::made_at(walk) + j) as i32, false));
             self.carry(&mut *f, usize::from(v));
         }
     }
@@ -5322,7 +5323,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // (`Reader::resumes`), in the refusal's value, which only its sign refuses.
                     let flags = if flagged {
                         let resumes = f.ins().iconst(types::I64, if reader.resumes { RESUME_FLAG } else { 0 });
-                        match a.template {
+                        let flags = match a.template {
                             Some(t) => {
                                 let q = f.ins().ushr_imm(at, 6);
                                 let x = word_at(f, q, t, heads);
@@ -5333,7 +5334,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                                 f.ins().bor(b, resumes)
                             }
                             None => resumes,
-                        }
+                        };
+                        // Templates that nest (`Reader::nest`): the open records' stack
+                        // holds the string's record at its depth (`open_slot`).
+                        flags
                     } else {
                         nohits
                     };
@@ -7321,6 +7325,16 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     if common {
         let (punct, rest) = (f.create_block(), f.create_block());
         let is_p = f.ins().band_imm(entry, 1 << TOKEN_PUNCT);
+        // A token a reader tagged is its reader's, though its first byte is a punctuation's
+        // (Python's format spec at a `:`): its tag below, not the punctuation's code.
+        let is_p = match retag {
+            Some(tag) => {
+                let untagged = f.ins().icmp_imm(IntCC::SignedLessThan, tag, 0);
+                let zero = f.ins().iconst(types::I64, 0);
+                f.ins().select(untagged, is_p, zero)
+            }
+            None => is_p,
+        };
         f.ins().brif(is_p, punct, &[], rest, &[]);
         f.switch_to_block(punct);
         let bits = if by_pair.is_some() {

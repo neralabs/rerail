@@ -301,7 +301,7 @@ impl<'a> Parser<'a> {
                 (b | x, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.first(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
             // Desugared before (`desugar_leaves`).
@@ -332,7 +332,7 @@ impl<'a> Parser<'a> {
                 (s, e || y)
             }),
             Gram::Opt(a) | Gram::Star(a) => (self.starts(a).0, true),
-            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
+            Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
             Gram::Leaf { .. } => (Starts::default(), false),
@@ -352,7 +352,7 @@ impl<'a> Parser<'a> {
     fn starts_flagged(&self, g: &Gram, flags: &[String]) -> (Starts, bool) {
         match g {
             Gram::Unless { flag, .. } if flags.contains(flag) => (Starts::default(), false),
-            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
+            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Inner { body, .. } | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts_flagged(body, flags),
             Gram::Flag { flag, set, body } => {
                 let mut f: Vec<String> = flags.iter().filter(|x| *x != flag).cloned().collect();
@@ -397,7 +397,7 @@ impl<'a> Parser<'a> {
                 }
                 bits
             }
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Unless { body: a, .. } => self.first_flagged(a),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Unless { body: a, .. } => self.first_flagged(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first_flagged(body),
             _ => self.first(g).0,
         }
@@ -561,6 +561,13 @@ impl<'a> Parser<'a> {
                 let next = self.matches(a, at, follow)?;
                 let me = *self.open.last()?;
                 self.out[me].kind = self.kind_of(kind)?;
+                Some(next)
+            }
+            Gram::Inner { field, body } => {
+                // The open node's first child: the row after it.
+                let next = self.matches(body, at, follow)?;
+                let me = *self.open.last()?;
+                self.out.get_mut(me + 1)?.field = Some(field.clone());
                 Some(next)
             }
             Gram::As(kind, a) => {

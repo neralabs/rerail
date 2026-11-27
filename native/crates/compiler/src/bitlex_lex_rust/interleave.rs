@@ -635,8 +635,8 @@ pub(super) fn code_pass_in_loop(text: &str) -> String {
                 return text.to_owned();
             }
         }
-        // `code` a word before: the ring's.
-        let b = b.replace("prev(&code_l, i, ", "rprev(&code_r, i, ").replace("code_l[i]", "code_w").replace("lv[i]", "lv_w");
+        // `code` a word before: the ring's; `code` at a byte, of the spans read.
+        let b = b.replace("bit(&code_l, q)", "code_of(&code_spans, q)").replace("prev(&code_l, i, ", "rprev(&code_r, i, ").replace("code_l[i]", "code_w").replace("lv[i]", "lv_w");
         // Nothing else of the file's: no vector read at a word but a ring's.
         if b.contains("code_l") || b.match_indices("[i").any(|(k, _)| b[..k].ends_with(is_id) && !b[k..].starts_with("[i & 3]")) || b.match_indices(", i, ").any(|(k, _)| b[..k].rsplit(['(', '&']).next().is_some_and(|x| !x.is_empty() && x != "code_r" && !rings.iter().any(|v| v == x)) && !b[..k].ends_with("nw")) {
             return text.to_owned();

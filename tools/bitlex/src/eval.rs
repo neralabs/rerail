@@ -385,6 +385,8 @@ impl<'a> Ev<'a> {
             }
             Stmt::Exit(name) => self.lane_exit = Some(name.clone()),
             Stmt::Rounds { n: Some(n), body, .. } => self.rounds(*n, body)?,
+            // Regions with a level: no fixed point of masks, walked (`RegionLevel`).
+            Stmt::Rounds { n: None, regions: Some(r), .. } if r.level.is_some() => self.walk_regions(r)?,
             // The fixed point: a strictly causal body is right on a byte more each round, so it
             // settles within a round per byte, and one to confirm.
             Stmt::Rounds { n: None, body, .. } => {
@@ -565,6 +567,146 @@ impl<'a> Ev<'a> {
         let inst = self.instances.entry(template.to_string()).or_default();
         if !inst.iter().any(|x| x == name) {
             inst.push(name.to_string());
+        }
+        Ok(())
+    }
+
+    /// Regions walked left to right, as the backends walk them (`block::Walk`), with a level
+    /// (`RegionLevel`): their `o_K`, `f_K`, `else`s, hidden bytes and deep brackets.
+    fn walk_regions(&mut self, r: &crate::syntax::Regions) -> R<()> {
+        let n = self.n;
+        let level = r.level.as_ref().expect("a level");
+        let (opens, closes) = (self.mask(&level.opens)?, self.mask(&level.closes)?);
+        let mut ins = Vec::new();
+        for k in &r.kinds {
+            let second = match &k.or {
+                Some((c2, m)) => Some((self.mask(c2)?, *m)),
+                None => None,
+            };
+            let closer = self.mask(&k.closer)?;
+            let all = match &second {
+                Some((c2, _)) => closer.or(c2),
+                None => closer.clone(),
+            };
+            ins.push((self.mask(&k.opener)?, all, second));
+        }
+        // The first bit of `m` in `from..to`, a word at a time.
+        let next = |m: &Mask, from: usize, to: usize| {
+            let (mut i, to) = (from, to.min(n));
+            while i < to {
+                let w = m.w[i / 64] >> (i % 64);
+                if w != 0 {
+                    return Some(i + w.trailing_zeros() as usize).filter(|&b| b < to);
+                }
+                i = (i / 64 + 1) * 64;
+            }
+            None
+        };
+        let (mut hidden, mut deep) = (Mask::zeros(n), Mask::zeros(n));
+        let mut open: Vec<Mask> = r.kinds.iter().map(|_| Mask::zeros(n)).collect();
+        let mut fill = open.clone();
+        let mut empty = open.clone();
+        let set = |m: &mut Mask, a: usize, b: usize| (a..b.min(n)).for_each(|i| m.set(i));
+        let plain = |k: &str| r.kinds.iter().position(|q| q.kind == k).expect("verified: a kind");
+        let (mut resume, mut last, mut lv) = (0usize, None::<usize>, 0u8);
+        let nest = level.nest.as_ref().map_or(1, |x| usize::from(x.0));
+        let mut around: Vec<(Option<usize>, u8)> = Vec::new();
+        // The frames open in templates' code, the templates' and the brackets': `max` bounds them.
+        let mut total = 0u8;
+        let (mut d0, mut d1) = (Mask::zeros(n), Mask::zeros(n));
+        loop {
+            let mut best: Option<(usize, usize)> = None;
+            for (k, kind) in r.kinds.iter().enumerate() {
+                if !kind.after.is_empty() && !(lv == 0 && last.is_some_and(|l| kind.after.iter().any(|a| plain(a) == l))) {
+                    continue;
+                }
+                if let Some(t) = next(&ins[k].0, resume, n).filter(|&t| best.is_none_or(|b| t < b.0)) {
+                    best = Some((t, k));
+                }
+            }
+            if last.is_some() {
+                let limit = best.map_or(n, |b| b.0);
+                let (o, c) = (next(&opens, resume, limit), next(&closes, resume, limit));
+                if let Some(b) = o.into_iter().chain(c).min() {
+                    if o == Some(b) {
+                        if total == level.max {
+                            deep.set(b);
+                        } else {
+                            lv += 1;
+                            total += 1;
+                        }
+                    } else if lv == 0 {
+                        // A close with a template's frame on top.
+                        deep.set(b);
+                    } else {
+                        lv -= 1;
+                        total -= 1;
+                    }
+                    resume = b + 1;
+                    continue;
+                }
+            }
+            let Some((t, k)) = best else { break };
+            let kind = &r.kinds[k];
+            let closer = next(&ins[k].1, t + 1, n);
+            if let (Some((_, m)), None) = (&kind.empty, closer) {
+                empty[k].set(t);
+                set(&mut hidden, t + 1, t + usize::from(*m));
+                resume = t + usize::from(*m);
+                continue;
+            }
+            open[k].set(t);
+            if level.nest.is_some() {
+                let depth = if kind.resumes { around.len() } else if last.is_some() { around.len() + 1 } else { 0 };
+                if depth & 1 != 0 {
+                    d0.set(t);
+                }
+                if depth & 2 != 0 {
+                    d1.set(t);
+                }
+            }
+            let Some(c) = closer else {
+                set(&mut fill[k], t, n);
+                set(&mut hidden, t + 1, n);
+                break;
+            };
+            set(&mut fill[k], t, c);
+            let wide = ins[k].2.as_ref().filter(|(c2, _)| c2.get(c)).map(|x| x.1);
+            if kind.after.is_empty() && wide.is_some() {
+                if last.is_some() {
+                    if around.len() + 1 < nest {
+                        around.push((last, lv));
+                    } else {
+                        deep.set(c);
+                    }
+                }
+                if total == level.max {
+                    deep.set(c);
+                } else {
+                    total += 1;
+                }
+                (last, lv) = (Some(k), 0);
+            }
+            if kind.resumes && wide.is_none() {
+                (last, lv) = around.pop().unwrap_or((None, 0));
+                total = total.saturating_sub(1);
+            }
+            let to = if kind.outside { c } else { c + usize::from(wide.unwrap_or(kind.bytes)) };
+            set(&mut hidden, t + 1, to);
+            resume = to.max(t + 1);
+        }
+        for (k, kind) in r.kinds.iter().enumerate() {
+            self.vars.insert(format!("o_{}", kind.kind), Val::M(open[k].clone()));
+            self.vars.insert(format!("f_{}", kind.kind), Val::M(fill[k].clone()));
+            if let Some((e, _)) = &kind.empty {
+                self.vars.insert(e.clone(), Val::M(empty[k].clone()));
+            }
+        }
+        self.vars.insert(r.hidden.clone(), Val::M(hidden));
+        self.vars.insert(level.deep.clone(), Val::M(deep));
+        if let Some((_, a, b)) = &level.nest {
+            self.vars.insert(a.clone(), Val::M(d0));
+            self.vars.insert(b.clone(), Val::M(d1));
         }
         Ok(())
     }
@@ -1308,6 +1450,7 @@ impl<'a> Ev<'a> {
             _ => true,
         });
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
+            // A run's `~` with marks (`(~(C) without M)*`): none of the choices, each mark's question.
             ([TokenElem::Not(inner), marks @ ..], Some(t)) => !inner.iter().any(|c| one(t, c)) && without(t, marks),
             ([TokenElem::Not(_), ..], None) => false,
             (_, None) => e.contains(&TokenElem::End),
@@ -1548,7 +1691,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Inner { .. } | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 

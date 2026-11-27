@@ -521,8 +521,9 @@ enum EndAt {
 enum WordFn {
     /// `by_word`: a keyword's leaf, its kind its token's word's (`WORD_KIND`).
     Leaf { deferred: bool, extra: bool, end: EndAt, by_word: bool },
-    Open,
-    Close { this: bool, end: EndAt },
+    /// `attached`: at the end of the record before the token (`OPEN m=1`).
+    Open { attached: bool },
+    Close { this: bool, end: EndAt, deep: bool },
     Wrap,
     /// `RETAG m=1`: the node the last wrap moved.
     RetagMoved { remembered: bool },
@@ -531,7 +532,7 @@ enum WordFn {
     /// `RETAG`: the innermost open node.
     Here,
     /// A direct format 16 run's (`Table::direct`): a node's word, its supertypes' key bits; a leaf's, its end.
-    Open16 { classes: u32 },
+    Open16 { classes: u32, attached: bool },
     Leaf16 { end: EndAt, by_word: bool, classes: u32 },
     Close16 { this: bool, end: EndAt },
     /// `MERGE m=1`.
@@ -1732,13 +1733,13 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     f.block_params(done)[0]
 }
 
-/// Whether the token marks of one order hold (`program::patterns_hold`), from entry `first` of
-/// `marks`: each entry's `token_pattern`, none of the `unless` ones and, where there are others,
-/// one of them. 1 or 0.
-fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
-    let order = marks[first].order;
+/// Whether the token marks of one order hold (`program::patterns_hold`), from the first of
+/// `marks` (the program's from that order's first entry): each entry's `token_pattern`, none of
+/// the `unless` ones and, where there are others, one of them. 1 or 0.
+fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
+    let order = marks[0].order;
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
-    for m in marks[first..].iter().take_while(|m| m.order == order) {
+    for m in marks.iter().take_while(|m| m.order == order) {
         let v = token_pattern(f, e, m, extra_bit, lazy, code, heads);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
@@ -2380,11 +2381,12 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
 /// its key `kf` (its kind, its field above it) and its supertypes' bits, then `w_open` at the token's start (and open
 /// on the stack of open nodes) or, a leaf's (`end`), `w_leaf` with the token's bytes; then `w_commit`. No row. A key
 /// with no number is the ops' failure (`fail::NUMBER`); an op's failure is the writer's, which the host reads.
-fn node16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kf: Value, classes: u32, end: Option<EndAt>) {
+/// `attached`: a node's start at the end of the record before the token (`OPEN m=1`).
+fn node16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kf: Value, classes: u32, end: Option<EndAt>, attached: bool) {
     let s = &t.fns.sixteen;
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
-    let (nodes, start) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start));
+    let (nodes, start) = ((e.get)(f, Mem::Nodes), (e.get)(f, if attached { Mem::LastEnd } else { Mem::Start }));
     let kind = f.ins().band_imm(kf, 0x3ff);
     let field = f.ins().ushr_imm(kf, 16);
     let field = f.ins().band_imm(field, 0x3f);
@@ -2437,10 +2439,11 @@ fn close16_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this
 }
 
 /// `OPEN`: its row (its key, its field above its kind or none; its start), its offset; open.
-fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
+/// `attached` (`OPEN m=1`): its start the end of the record before the token.
+fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool, attached: bool) {
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
-    let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), (e.get)(f, Mem::Open));
+    let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, if attached { Mem::LastEnd } else { Mem::Start }), (e.get)(f, Mem::Open));
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(MemFlags::trusted(), kind, row, AT_KIND);
@@ -2465,7 +2468,7 @@ fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
 /// the one before the pending extras), size and tail; the pending extras its parent's (they
 /// follow its subtree); with wraps, it is the last node made at its parent's level. A node
 /// closed at the top level: the nodes before it are final, their codes committed.
-fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: bool, end_at: EndAt, wrapping: bool) {
+fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: bool, deep: bool, end_at: EndAt, wrapping: bool) {
     let open = (e.get)(f, Mem::Open);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
     (e.guard)(f, none);
@@ -2473,6 +2476,9 @@ fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: 
     (e.set)(f, Mem::Open, open);
     let open_c = (e.ctx)(f, OPEN);
     let at = slot_get(f, open_c, open);
+    if deep {
+        settle_deep(f, e, t);
+    }
     let (nodes, pending) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending));
     let end = if this {
         token_end_at(f, e, end_at)
@@ -2497,6 +2503,57 @@ fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: 
     t.commit(f, e, at);
     f.ins().jump(done, &[]);
     f.switch_to_block(done);
+}
+
+/// `CLOSE m=2` (decision 0698): the leading extras pending, each at least as deep as the level's
+/// indent, settled: the node closing keeps them (`Mem::Keep` the last one's end), as the
+/// interpreter's. The count is `settle_rows`'s.
+fn settle_deep(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>) {
+    let (nodes, pending, indent, keep) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Indent), (e.get)(f, Mem::Keep));
+    let first = f.ins().isub(nodes, pending);
+    let (rows, bytes) = ((e.ctx)(f, ROWS), (e.ctx)(f, BYTES));
+    let (id, sig, _) = t.fns.settle.as_ref().expect("a program with an indented level has its settle");
+    let k = call_own(f, *id, sig, &[rows, bytes, first, pending, indent])[0];
+    // The last settled one's end; with none, the row before the pending ones (the open node's
+    // at least), read and not taken.
+    let any = f.ins().icmp_imm(IntCC::NotEqual, k, 0);
+    let r = f.ins().iadd(first, k);
+    let r = f.ins().iadd_imm(r, -1);
+    let row = NodeCol::row(f, rows, r);
+    let end = f.ins().uload32(MemFlags::trusted(), row, AT_END);
+    let keep = f.ins().select(any, end, keep);
+    (e.set)(f, Mem::Keep, keep);
+    let left = f.ins().isub(pending, k);
+    (e.set)(f, Mem::Pending, left);
+}
+
+/// `settle_deep`'s count, a function of its own (a loop has a head, which a word's body has
+/// not): of the `pending` rows from `first`, how many lead with a column at least `indent`.
+fn settle_rows(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
+    let (rows, bytes, first, pending, indent) = (p[0], p[1], p[2], p[3], p[4]);
+    let (head, test, next, out) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(head, types::I64);
+    f.append_block_param(out, types::I64);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(head, &[BlockArg::from(zero)]);
+    f.switch_to_block(head);
+    heads.push((head, Step::Node));
+    let k = f.block_params(head)[0];
+    let all = f.ins().icmp(IntCC::Equal, k, pending);
+    f.ins().brif(all, out, &[BlockArg::from(k)], test, &[]);
+    f.switch_to_block(test);
+    let r = f.ins().iadd(first, k);
+    let row = NodeCol::row(f, rows, r);
+    let s = f.ins().uload32(MemFlags::trusted(), row, AT_START);
+    let col = column_of(f, bytes, s, heads);
+    let deep = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, col, indent);
+    f.ins().brif(deep, next, &[], out, &[BlockArg::from(k)]);
+    f.switch_to_block(next);
+    let k1 = f.ins().iadd_imm(k, 1);
+    f.ins().jump(head, &[BlockArg::from(k1)]);
+    f.switch_to_block(out);
+    let k = f.block_params(out)[0];
+    f.ins().return_(&[k]);
 }
 
 /// `WRAP`: a node before the last node made at the innermost open node's level, its field that
@@ -3403,7 +3460,7 @@ fn recover_statement(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ctx: Value, t
     let above = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, open, 1);
     f.ins().brif(above, close, &[], closed, &[]);
     f.switch_to_block(close);
-    close_word(f, e, t, false, EndAt::Field, r.wrapping);
+    close_word(f, e, t, false, false, EndAt::Field, r.wrapping);
     f.ins().jump(head, &[]);
     f.switch_to_block(closed);
     // The resume point.
@@ -3757,6 +3814,8 @@ type OwnFn = (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranel
 struct TableFns {
     shift: Option<OwnFn>,
     drop: Option<OwnFn>,
+    /// `CLOSE m=2`'s count (`settle_rows`), where an indented level closes.
+    settle: Option<OwnFn>,
     /// The format 16 writer's ops, defined in the module, and the passes that call them (decision 0434 §6, R17).
     sixteen: Sixteen,
 }
@@ -3773,11 +3832,12 @@ impl TableFns {
     /// `near`: the module's code in one arena (`Cut::near`), so the writer's ops call each other directly.
     fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, near: bool) -> Result<Self, Error> {
         let w = x.widths;
-        let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
+        let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner | On::OpenFirst, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
         let drops = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
         let shift = if wraps { Some(outline(module, "tempo_stream_shift", 5, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
         let drop = if drops { Some(outline(module, "tempo_stream_drop", 10, 2, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
+        let settle = if words.iter().any(|b| matches!(b.operation, Op::Close { deep: true, .. })) { Some(outline(module, "tempo_stream_settle", 5, 1, false, &[], settle_rows)?) } else { None };
         let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near).map_err(|e| {
             if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
                 eprintln!("the writer's ops: {e}");
@@ -3789,18 +3849,18 @@ impl TableFns {
         let pass = outline(module, "tempo_tape_pass", 7, 0, false, &names, |f, p, heads| crate::native_cpu_tape::pass(f, p, w.size, &ops, heads))?;
         let retag = outline(module, "tempo_tape_retag", 4, 0, false, &names, |f, p, heads| crate::native_cpu_tape::retag(f, p, &ops, heads))?;
         let _ = x;
-        Ok(TableFns { shift, drop, sixteen: Sixteen { ops, pass, retag } })
+        Ok(TableFns { shift, drop, settle, sixteen: Sixteen { ops, pass, retag } })
     }
 
     /// The functions' names: the node words' functions call them.
     fn names(&self) -> Vec<cranelift_codegen::ir::UserExternalName> {
-        let mut names: Vec<_> = self.shift.iter().chain(&self.drop).chain([&self.sixteen.pass, &self.sixteen.retag]).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect();
+        let mut names: Vec<_> = self.shift.iter().chain(&self.drop).chain(&self.settle).chain([&self.sixteen.pass, &self.sixteen.retag]).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect();
         names.extend(self.sixteen.ops.names());
         names
     }
 
     fn all(self) -> impl Iterator<Item = OwnFn> {
-        self.shift.into_iter().chain(self.drop).chain([self.sixteen.pass, self.sixteen.retag])
+        self.shift.into_iter().chain(self.drop).chain(self.settle).chain([self.sixteen.pass, self.sixteen.retag])
     }
 }
 
@@ -4165,7 +4225,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         if !matches!(words.get(restart).map(|w| w.operation), Some(Op::Token { .. })) || !flagged && phase_of[restart] != crate::stream::TAKEN {
             return Err(Error::UnsupportedFeature("statements that recover, with no root head that takes a token"));
         }
-        if words.iter().any(|w| matches!(w.operation, Op::Leaf { kind, .. } | Op::Open { kind } | Op::Wrap { kind } if kind == crate::native_cpu_tape::ERROR_ROW)) {
+        if words.iter().any(|w| matches!(w.operation, Op::Leaf { kind, .. } | Op::Open { kind, .. } | Op::Wrap { kind } if kind == crate::native_cpu_tape::ERROR_ROW)) {
             return Err(Error::UnsupportedFeature("a kind that is the ERROR row's"));
         }
         let mut limit = |v: usize| limits[v / 64] |= 1 << (v % 64);
@@ -5755,7 +5815,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                                         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
                                         let lazy = native.block_programs.first().and_then(Lazy::of);
                                         let code = taken_code.then(|| (env.get)(g, Mem::Taken));
-                                        let v = token_patterns(g, &env, &marks, first, bit, lazy.as_ref(), code, hs);
+                                        let v = token_patterns(g, &env, &marks[first..], bit, lazy.as_ref(), code, hs);
                                         g.ins().return_(&[v]);
                                     })?;
                                     word_fns.insert(key, made);
@@ -5766,7 +5826,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             } else {
                                 let lazy = native.block_programs.first().and_then(Lazy::of);
                                 let code = taken_code.then(|| mget(&mut f, Mem::Taken));
-                                token_patterns(&mut f, &env, &marks, first, bit, lazy.as_ref(), code, &mut heads)
+                                token_patterns(&mut f, &env, &marks[first..], bit, lazy.as_ref(), code, &mut heads)
                             };
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
@@ -5849,25 +5909,26 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let bit = f.ins().band_imm(bit, 1);
                     f.ins().brif(bit, fall, &[], skip, &[]);
                 }
-                Op::Open { kind } if table.direct.is_some() => {
+                Op::Open { kind, attached } if table.direct.is_some() => {
                     let (code, next) = with_field(kind);
                     let (field, classes) = table.direct.expect("direct")[pc];
                     let kf = if field != 0 { code & 0xffff | i64::from(field) } else { code };
                     let k = f.ins().iconst(types::I64, kf);
-                    word!(WordFn::Open16 { classes }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| node16_word(g, e, table, q[0], classes, None), next);
+                    word!(WordFn::Open16 { classes, attached }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| node16_word(g, e, table, q[0], classes, None, attached), next);
                 }
-                Op::Open { kind } => {
+                Op::Open { kind, attached } => {
                     let (code, next) = with_field(kind);
                     let k = f.ins().iconst(types::I64, code);
-                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, table, q[0], wrapping), next);
+                    word!(WordFn::Open { attached }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, table, q[0], wrapping, attached), next);
                 }
-                Op::Close { this } if table.direct.is_some() => {
+                Op::Close { deep: true, .. } if table.direct.is_some() => return Err(Error::UnsupportedBackend),
+                Op::Close { this, .. } if table.direct.is_some() => {
                     let end = end_at(pc);
                     word!(WordFn::Close16 { this, end }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close16_word(g, e, table, this, end));
                 }
-                Op::Close { this } => {
+                Op::Close { this, deep } => {
                     let end = end_at(pc);
-                    word!(WordFn::Close { this, end }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close_word(g, e, table, this, end, wrapping));
+                    word!(WordFn::Close { this, end, deep }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close_word(g, e, table, this, deep, end, wrapping));
                 }
                 Op::Leaf { kind, .. } if table.direct.is_some() => {
                     let end = end_at(pc);
@@ -5886,7 +5947,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         } else {
                             q[0]
                         };
-                        node16_word(g, e, table, k, classes, Some(end))
+                        node16_word(g, e, table, k, classes, Some(end), false)
                     }, next);
                 }
                 Op::Leaf { kind, deferred, extra } => {
@@ -6338,6 +6399,32 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     field_c.put(&mut f, last, x);
                     f.ins().jump(fall, &[]);
                 }
+                Op::NodeField { field, on: On::OpenFirst } => {
+                    // The node the innermost open node, a wrap, holds first: the row after it,
+                    // unless that is a wrap too (`head`).
+                    let open = mget(&mut f, Mem::Open);
+                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+                    guard(&mut f, none, pc);
+                    let top = f.ins().iadd_imm(open, -1);
+                    let at = slot_get(&mut f, open_c, top);
+                    let (mark, inner_mark) = {
+                        let a = slot(&mut f, wc(head_c), at);
+                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, a, 4))
+                    };
+                    let mark = f.ins().band_imm(mark, WRAPPED);
+                    let not_wrap = f.ins().icmp_imm(IntCC::Equal, mark, 0);
+                    guard(&mut f, not_wrap, pc);
+                    let inner_mark = f.ins().band_imm(inner_mark, WRAPPED);
+                    let nested = f.ins().icmp_imm(IntCC::NotEqual, inner_mark, 0);
+                    guard(&mut f, nested, pc);
+                    // The node's slot kept (`SLOT_SHIFT`).
+                    let first = f.ins().iadd_imm(at, 1);
+                    let had = field_c.get(&mut f, first);
+                    let in_slot = f.ins().band_imm(had, !crate::stream_analysis::FIELD_BITS);
+                    let x = f.ins().bor_imm(in_slot, i64::from(field));
+                    field_c.put(&mut f, first, x);
+                    f.ins().jump(fall, &[]);
+                }
                 Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made | On::MadeUnset } => {
                     let retag = matches!(w.operation, Op::Retag { .. });
                     let unset = matches!(w.operation, Op::NodeField { on: On::MadeUnset, .. });
@@ -6491,6 +6578,17 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let nodes = mget(&mut f, Mem::Nodes);
                         f.ins().iadd_imm(nodes, -1)
                     };
+                    // A node a wrap moved: one of the slot's kinds (a row of its table), else the
+                    // file is refused, as by the interpreter.
+                    if on == On::Moved {
+                        let k = kind_c.get(&mut f, last);
+                        let mut not_of = f.ins().iconst(types::I8, 1);
+                        for r in native.super_classes.iter().filter(|r| r.0 == kind) {
+                            let other = f.ins().icmp_imm(IntCC::NotEqual, k, i64::from(r.1));
+                            not_of = f.ins().band(not_of, other);
+                        }
+                        guard(&mut f, not_of, pc);
+                    }
                     let had = field_c.get(&mut f, last);
                     let x = f.ins().bor_imm(had, i64::from(crate::stream_analysis::slot_of(&classes, kind)) << crate::stream_analysis::SLOT_SHIFT);
                     field_c.put(&mut f, last, x);
@@ -7852,7 +7950,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
 
 /// The words that read many `ctx` fields and run rarely: each loads them all (`Cut::reload`).
 fn cold_op(op: &Op) -> bool {
-    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. })
+    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner | On::OpenFirst, .. })
 }
 
 /// Whether the program has context beside each call's return (a level's word, its flags): two
@@ -7884,7 +7982,17 @@ fn line_breaks(f: &mut FunctionBuilder<'_>, w: Value) -> Value {
 /// readable 64 bytes past its end).
 fn token_column(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, heads: &mut Vec<(Block, Step)>) -> Value {
     let s = (e.get)(f, Mem::Start);
+    column_at(f, e, s, heads)
+}
+
+/// The column of the byte at `s`: `token_column`'s, of any start.
+fn column_at(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, s: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let bytes = (e.ctx)(f, BYTES);
+    column_of(f, bytes, s, heads)
+}
+
+/// `column_at`'s, the file's bytes at `bytes`.
+fn column_of(f: &mut FunctionBuilder<'_>, bytes: Value, s: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (back, full, short, step, found, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     f.append_block_param(back, types::I64);
     f.append_block_param(found, types::I64);

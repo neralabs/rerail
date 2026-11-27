@@ -762,7 +762,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty, mut or, mut after, mut resumes, mut opens) = (false, None, None, 0u16, false, 1u8);
+                let (mut outside, mut empty, mut or, mut after, mut resumes, mut opens) = (false, None, None, 0u32, false, 1u8);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -791,8 +791,25 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
                         let hidden = program.rounds.get(usize::from(group)).and_then(|g| g.first()).ok_or(format!("block {at} region of no rounds group {group}"))?.0;
-                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind] })
+                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind], level: None })
                     }
+                }
+            } else if first == "level" {
+                // `block N level G %opens %closes MAX %deep [nest N %d0 %d1]`: the level of rounds
+                // group G's walk (`crate::block::Level`), after its kinds.
+                let group: u16 = line.number("")?;
+                let (opens, closes): (u16, u16) = (line.number("%")?, line.number("%")?);
+                let max: u8 = line.number("")?;
+                let deep: u16 = line.number("%")?;
+                let (mut nest, mut depths) = (1u8, None);
+                if line.peek_word().as_deref() == Some("nest") {
+                    line.word()?;
+                    nest = line.number("")?;
+                    depths = Some((line.number("%")?, line.number("%")?));
+                }
+                match program.walks.last_mut() {
+                    Some(w) if w.group == group && w.level.is_none() => w.level = Some(crate::block::Level { opens, closes, max, deep, nest, depths }),
+                    _ => return Err(format!("block {at} level of no walk of group {group} before it")),
                 }
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
@@ -859,7 +876,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), content: None, closers: Vec::new(), split: crate::records::Split::Tier1, quiet: false, resumes: false, nest: None });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -930,6 +947,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recresumes before its records"))?;
                 let k: usize = line.number("")?;
                 r.readers.get_mut(k).ok_or(format!("block {at} recresumes {k}: no such reader"))?.resumes = true;
+            } else if first == "recnest" {
+                // `recnest K O0 O1 M`: reader K's depth bits' outputs and how deep templates nest
+                // (`Reader::nest`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recnest before its records"))?;
+                let k: usize = line.number("")?;
+                let nest = (line.number("")?, line.number("")?, line.number("")?);
+                r.readers.get_mut(k).ok_or(format!("block {at} recnest {k}: no such reader"))?.nest = Some(nest);
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;

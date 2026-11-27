@@ -39,6 +39,11 @@ pub const RR_TAG: u8 = 13;
 /// A kind's bits in a code's `kf`: the field is above them.
 pub const KIND_BITS: u32 = 10;
 
+/// A parser's key's first supertype bit (decision 0698): above `kf` (16 bits) and the flags (3), bit `CLASS_SHIFT + j`
+/// puts the node in the parser's supertype `j`. The writer keeps a key as it is; the sink numbers it, classes and all,
+/// by its names (decision 0631).
+pub const CLASS_SHIFT: u32 = 19;
+
 /// A node's key (`Writer`'s): its kind and field, and its flags (`CODE_EXTRA`, …). A kind past
 /// `KIND_BITS` or a field past the 6 bits above it would spill into the next: a grammar's ids
 /// stay inside them.
@@ -394,6 +399,8 @@ impl<T> Sink<()> for Kept<'_, T> {
 struct Passing {
     w: f16::Writer,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// A code's key as numbered (`Writer::keys_by`): its classes from its slot while the parse holds slots.
+    key_of: fn(u32) -> u32,
     /// Each code id's number, as far as resolved.
     numbers: Vector<u32>,
     /// The nodes passed on whose close the ops have not had, outermost first: the parse's open ancestors.
@@ -581,7 +588,7 @@ impl<L: Layout> Writer<L> {
             }
         };
         let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
-        self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
+        self.sixteen = Ok(Box::new(Passing { w, number: t.number, key_of: |k| k, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
             let (cap, widths) = (WINDOW, self.layout.widths());
@@ -641,7 +648,7 @@ impl<L: Layout> Writer<L> {
                 let c = self.cell(i);
                 let id = usize::from(self.code[c]);
                 while s.numbers.len() <= id {
-                    let key = self.codes[s.numbers.len()][0];
+                    let key = (s.key_of)(self.codes[s.numbers.len()][0]);
                     match (s.number)(key) {
                         Some(number) => s.numbers.push(number),
                         None => break,
@@ -710,7 +717,7 @@ impl<L: Layout> Writer<L> {
     #[inline(never)]
     fn retag_passed(&mut self, node: usize, key: u32) {
         let Ok(s) = &mut self.sixteen else { return };
-        match (s.number)(key) {
+        match (s.number)((s.key_of)(key)) {
             Some(number) => s.w.retag(node, number),
             None => s.fail(|| format!("key {key:#x}: a code its format 16 table lacks")),
         }
@@ -1446,6 +1453,30 @@ impl<L: Layout> Writer<L> {
         self.uncode_from(len);
         self.marks.retain(|m| (m[0] as usize) < len);
         self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
+    }
+
+    /// Each code's key given to `f`, after the last edit: a parser that holds a node's slot in the bits from
+    /// `CLASS_SHIFT` while it parses and its classes from its slot and kind once its kind is final (the
+    /// interpreter's code table, decision 0698). Edits the code table, not the nodes.
+    /// The nodes passed on to format 16 (`commit`) are numbered by their keys then, so `keys_by(f)` given before the
+    /// parse numbers each by `f` of its key, its classes once its kind is final (a node retagged after it is passed
+    /// is numbered again), and this call ends it.
+    pub fn map_code_keys(&mut self, f: impl Fn(u32) -> u32) {
+        self.commit();
+        for c in self.codes.iter_mut() {
+            c[0] = f(c[0]);
+        }
+        if let Ok(s) = &mut self.sixteen {
+            s.key_of = |k| k;
+        }
+    }
+
+    /// Each node passed on to format 16 numbered by `f` of its key until `map_code_keys` (decision 0698's slots, in a
+    /// writer that passes its nodes on at each commit, decision 0434).
+    pub fn keys_by(&mut self, f: fn(u32) -> u32) {
+        if let Ok(s) = &mut self.sixteen {
+            s.key_of = f;
+        }
     }
 
     /// The tape in format 16 or 16z and its presence, where the writer writes it (`to`; decision 0434 §2): the nodes

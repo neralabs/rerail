@@ -398,6 +398,11 @@ pub struct Reader {
     /// ends the record a template left open (`ReadArm::template`), or, closed at a template
     /// again, leaves it open over the next one's code.
     pub resumes: bool,
+    /// With templates that nest (`block::Level::nest`): the outputs of its regions' depth bits,
+    /// low first, and how deep they nest (2 to 4). The record a template left open is kept by
+    /// its string's depth: a template's string opens a record at its depth, and a read that
+    /// resumes ends the one at its own.
+    pub nest: Option<(u16, u16, u8)>,
 }
 
 /// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
@@ -801,7 +806,10 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vector<u64>])
                     continue;
                 }
                 if template {
-                    // A template in a template's code: one more open (the regions bound how many).
+                    // A template in a template's code: one more open. Refused, as by the CPU's loop, past how deep
+                    // templates nest where the grammar says (`Reader::nest`, Python's); else the regions bound how
+                    // many (Kotlin's `depth`).
+                    read |= reader.nest.is_some_and(|n| open.len() >= usize::from(n.2));
                     open.push(starts.len());
                 }
                 l

@@ -44,6 +44,11 @@ pub fn lang() -> &'static rerail_tape_format::f16::Lang {
 /// A key's number in Python's table, as the lean parser's sink numbers it (`lean::names`, by its names): the grammar's
 /// kinds, fields and supertypes are the lean parser's, so its keys are too.
 fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
+    lang().number_named(&key_names(kind, field, classes, extra)?)
+}
+
+/// A key's names in Python's table (`number`'s): the lean parser's kind, field and set of supertypes.
+fn key_names(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<rerail_tape_format::KeyNames> {
     let &(kind, named) = lean::KINDS.get(usize::from(kind))?;
     let field = lean::FIELDS.get(usize::from(field)).copied()?;
     let names: Vec<&str> = classes.iter().map(|&c| c.checked_sub(SUPERTYPE_IDS).and_then(|j| SUPERTYPES.get(usize::from(j))).copied()).collect::<Option<_>>()?;
@@ -53,7 +58,7 @@ fn number(kind: u16, field: u16, classes: &[u16], extra: bool) -> Option<u32> {
         true => return None,
         false => lean::CLASSES.iter().copied().find(|set| set.len() == names.len() && names.iter().all(|n| set.contains(n)))?,
     };
-    lang().number_named(&rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
+    Some(rerail_tape_format::KeyNames { kind, named, field, flags: if extra { rerail_tape_format::CODE_EXTRA } else { 0 }, classes })
 }
 
 /// The provers' answers by question (decision 0414).
@@ -128,6 +133,32 @@ fn field(name: &str) -> Option<u16> {
 /// `grammar` compiled: a Bitlex grammar's text.
 pub fn compile_text(grammar: &str) -> Result<Compiled, String> {
     compile_timed(grammar, Default::default(), &mut |_, _| {})
+}
+
+/// Tier 1 and tier 2 of `grammar` as Rust (`rerail-python-aot`), as the Bitlex compiler writes them from the lexer's
+/// statements (`bitlex_lex_rust`) and the tree rules (`bitlex_rust`), without either tier compiled. The provers start
+/// from the shipped answers ([`ANSWERS`]), as every other compile of the grammar.
+pub fn tiers_rust(grammar: &str) -> Result<(String, String), String> {
+    tiers_rust_given(grammar, shipped_answers()).map(|(t1, t2, _)| (t1, t2))
+}
+
+/// [`tiers_rust`] from the answers `known`, and the answers its compile made: the Rust's compile asks what the
+/// grammar's (`compile_timed`) does not, so the shipped answers hold both (`tests::the_shipped_answers_answer_the_grammar`).
+pub fn tiers_rust_given(grammar: &str, known: Proofs) -> Result<(String, String, Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>), String> {
+    let stmts = ::bitlex::syntax::parse(grammar)?;
+    let own = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let kind = |name: &str| {
+        lean_kind(name).or_else(|| {
+            let mut own = own.borrow_mut();
+            let next = OWN_IDS + own.len() as u16;
+            Some(*own.entry(name.to_owned()).or_insert(next))
+        })
+    };
+    let symbols = bitlex_compile::Symbols { kind: &kind, field: &field, terminators: rerail_tape_format::newlines::Terminators::Newlines };
+    let compiled = bitlex_compile::compile_proved(&stmts, &[bitlex_compile::FALLBACK], Some(&symbols), bitlex_compile::Shape::Rules, known, bitlex_compile::AsRust::Yes)?;
+    let tier1 = compiled.lexer_rust.ok_or_else(|| "no tree section".to_owned())??;
+    let tier2 = compiled.rust.ok_or_else(|| "no tree section".to_owned())??;
+    Ok((tier1, tier2, compiled.proofs))
 }
 
 /// `compile_text`, each phase's time given to `lap` as it ends, as `rerail_kotlin_parser`'s.

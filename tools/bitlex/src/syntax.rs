@@ -436,6 +436,10 @@ pub struct Regions {
     pub kinds: Vec<Region>,
     /// `nests O .. C depth D else E`: the templates' code nests (`RegionNest`).
     pub nest: Option<RegionNest>,
+    /// `level O to C max N else D` (after `H`): the bracket level in a template's code (Python's,
+    /// decision 0698). A grammar has a nest or a level, not both: two designs of a template's code, to
+    /// be made one (0621 against 0698).
+    pub level: Option<RegionLevel>,
 }
 
 /// `regions H nests O .. C depth D else E { … }`: a template's code holds brackets and templates of
@@ -456,6 +460,31 @@ pub struct RegionNest {
     pub closer: Expr,
     pub depth: u8,
     pub deep: String,
+}
+
+/// `regions H level O to C max N else D { … }`: from where a plain kind's region closes at its
+/// `or` (a template opens) to where a kind that `resumes` closes at its own closer (its string
+/// ends), each byte of `O` outside the regions adds one to the level and each of `C` takes one
+/// away (none at zero). A kind with `after` opens only at level zero, as the lean lexer's
+/// string reader takes back only the `}` its template's own `{` opened (`{a[1:2]}` has no
+/// format spec, `{ {k: v} }` one template). An `O` past `N` (1 to 15) is `D`: the level stays
+/// `N`. Not a fixed point of masks: the evaluator and the backends walk such regions (the
+/// rounds' body makes `D` empty and counts no level).
+///
+/// `nest M depth A B` (after `max N`): templates nest, `M` (2 to 4) deep, as the lean lexer's
+/// string stack does (`f"{f'{a}'}"`). A plain kind's region in a template's code closed at its
+/// `or` opens a template inside it; the outer one's kind and level wait until the inner string
+/// ends. One past `M` is `D` at its closer. `A` and `B` are the bits, low first, of each
+/// region's depth at its opener: the templates around it (a kind that resumes: around its
+/// string), which the token loop's records of strings open over a template's code are kept by.
+#[derive(Clone, Debug)]
+pub struct RegionLevel {
+    pub opens: Expr,
+    pub closes: Expr,
+    pub max: u8,
+    pub deep: String,
+    /// `nest M depth A B`: `M`, and the depth bits' names.
+    pub nest: Option<(u8, String, String)>,
 }
 
 /// A kind of region (`Regions`).
@@ -528,6 +557,7 @@ impl Regions {
     /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
+        let deep = self.level.iter().flat_map(|l| std::iter::once(l.deep.clone()).chain(l.nest.iter().flat_map(|n| [n.1.clone(), n.2.clone()]))).map(|d| Stmt::Mask(d, Expr::Empty));
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
         let not = |a: Expr| Expr::Not(Box::new(a));
         let call = |f: &str, args: Vec<Arg>| Expr::Call(f.to_string(), args);
@@ -754,6 +784,7 @@ impl Regions {
             }
             out.push(Stmt::Mask(n.deep.clone(), and(pushes, name(&inner(n.depth)))));
         }
+        out.extend(deep);
         out
     }
 }
@@ -831,10 +862,14 @@ pub enum Gram {
     /// `retag K A`: on entering `A`, the innermost open node becomes a `K` (its kind decided by
     /// the token `A` starts with).
     Retag(String, Box<Gram>),
+    /// `retag K inner G A`: on entering `A`, the node the innermost open node, a wrap, holds
+    /// first (the node it moved) takes field `G` (`a: int` a `typed_parameter`, its name of no
+    /// field; `a: int = 1` a `typed_default_parameter`, its name `name`).
+    Inner { field: String, body: Box<Gram> },
     /// `merge 'K' A`, `A` a token: its leaf and the leaf just before it become one leaf of kind
     /// `K`, from the first's start to its end (`.` and `decl`, `.decl`).
     Merge(String, Box<Gram>),
-    /// `wrap K F [as M] REST…`: a node `K` around the node just made at this level (the last
+    /// `wrap K F [as M] REST…` (`K` a name or quoted): a node `K` around the node just made at this level (the last
     /// child of the innermost open node) and what `REST` matches. `K` takes the moved node's
     /// field and its slot; the moved node takes field `F` (`_`: none), with `as M` kind `M`, and
     /// with `in S`: the moved node's slot, supertype `S` (none without it; decision 0698).
@@ -983,8 +1018,10 @@ pub enum Stmt {
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
     /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
     /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
-    /// starts past the file's leading blanks, its padding.
-    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
+    /// starts past the file's leading blanks, its padding. `attached`: it starts where the record
+    /// before its first token ends (a comment's included), not at that token, as tree-sitter's
+    /// match body starts at its `:`'s end.
+    Node { kind: String, nested: bool, attached: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -1156,7 +1193,7 @@ fn apply_implied(body: &mut [Stmt]) -> Result<(), String> {
             // A token given a kind of its own, or merged, is a node's: not implied.
             Gram::As(..) | Gram::Merge(..) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
             Gram::Seq(gs) | Gram::Alt(gs) => gs.iter_mut().for_each(|g| mark(g, tokens, found)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) => mark(a, tokens, found),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } => mark(a, tokens, found),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => mark(body, tokens, found),
         }
     }
@@ -1691,7 +1728,8 @@ impl P {
             // `wrap K F [as M] [in S]`: the rest of the sequence is its body.
             if matches!(self.peek(), Some(Tok::Ident(w)) if w == "wrap") {
                 self.i += 1;
-                let kind = self.ident()?;
+                // A quoted kind: one no name spells (`'not in'`).
+                let kind = self.kind()?;
                 let field = Some(self.ident()?).filter(|f| f != "_");
                 let moved = if self.eat_kw("as") { Some(self.kind()?) } else { None };
                 let slot = if self.eat_kw("in") { Some(self.ident()?) } else { None };
@@ -1797,6 +1835,10 @@ impl P {
             }
             "retag" => {
                 let kind = self.ident()?;
+                if self.eat_kw("inner") {
+                    let field = self.ident()?;
+                    return Ok(Gram::Retag(kind, Box::new(Gram::Inner { field, body: Box::new(self.gram_atom()?) })));
+                }
                 Ok(Gram::Retag(kind, Box::new(self.gram_atom()?)))
             }
             "merge" => {
@@ -1963,8 +2005,9 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O [bytes N] .. C [bytes N] [outside] [else E bytes M] [nests D else E] [open K] … }`
-    /// (`Regions`).
+    /// `regions H [nests O .. C depth D else E | level O to C max N else D [nest M depth A B]] { K = O [bytes N] ..
+    /// C [bytes N] [outside] [else E bytes M] [nests D else E] [open K] … }` (`Regions`): a nest (Kotlin's, 0621) or a
+    /// level (Python's, 0698), not both.
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
         let nest = if self.eat_kw("nests") {
@@ -1979,6 +2022,30 @@ impl P {
                 return self.err("a nest of 1 to 15 levels");
             }
             Some(RegionNest { opener, closer, depth: depth as u8, deep })
+        } else {
+            None
+        };
+        let level = if nest.is_none() && self.eat_kw("level") {
+            let opens = self.expr()?;
+            self.want_kw("to")?;
+            let closes = self.expr()?;
+            self.want_kw("max")?;
+            let max = self.int()?;
+            if !(1..=15).contains(&max) {
+                return self.err("a level's max from 1 to 15");
+            }
+            let nest = if self.eat_kw("nest") {
+                let m = self.int()?;
+                if !(2..=4).contains(&m) {
+                    return self.err("a nest from 2 to 4");
+                }
+                self.want_kw("depth")?;
+                Some((m as u8, self.ident()?, self.ident()?))
+            } else {
+                None
+            };
+            self.want_kw("else")?;
+            Some(RegionLevel { opens, closes, max: max as u8, deep: self.ident()?, nest })
         } else {
             None
         };
@@ -2049,7 +2116,7 @@ impl P {
             return self.err("a region");
         }
         // `after` names kinds of these regions with no `after` of their own and with an `or` (a
-        // template's closer); at most 15 kinds.
+        // template's closer).
         for r in &kinds {
             for a in &r.after {
                 if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty() && k.or.is_some()) {
@@ -2061,13 +2128,17 @@ impl P {
         if let Some(w) = kinds.windows(2).find(|w| !w[0].after.is_empty() && w[1].after.is_empty()) {
             return Err(format!("region {}: a kind with no `after` after {}, which has one; the kinds with `after` come last", w[1].kind, w[0].kind));
         }
-        if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
-            return Err("regions with `after`: at most 15 kinds".into());
+        // A walk's kinds are a mask of 32 bits; its state's bits, the compiler's to fit (`block::WalkLayout`).
+        if kinds.len() > 32 {
+            return Err("regions: at most 32 kinds".into());
         }
         if nest.is_some() && kinds.iter().any(|r| r.resumes && r.after.len() != 1) {
             return Err("regions with a nest: a kind that resumes names one kind, its template's".into());
         }
-        Ok(Regions { hidden, kinds, nest })
+        if level.is_some() && !kinds.iter().any(|r| !r.after.is_empty()) {
+            return self.err("a `level` on regions with a kind with `after`");
+        }
+        Ok(Regions { hidden, kinds, nest, level })
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {
@@ -2480,10 +2551,11 @@ impl P {
             "node" => {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
+                let attached = self.eat_kw("attached");
                 let whole = self.eat_kw("whole");
                 let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
+                Stmt::Node { kind, nested, attached, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;
@@ -3020,7 +3092,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         f(g);
         match g {
             Gram::Seq(v) | Gram::Alt(v) => v.iter().for_each(|x| walk(x, f)),
-            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Inner { body: a, .. } | Gram::Merge(_, a) | Gram::As(_, a) => walk(a, f),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => walk(body, f),
             Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => {}
         }
@@ -3087,7 +3159,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
     let mut out = Vec::new();
     for s in stmts {
         out.push(match s {
-            Stmt::Node { kind, nested, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
+            Stmt::Node { kind, nested, attached, whole, padded, body } => Stmt::Node { kind: kind.clone(), nested: *nested, attached: *attached, whole: *whole, padded: *padded, body: leaves_in(body, &mut todo, &name)? },
             Stmt::Choice { name: n, supertype, nested, body } => Stmt::Choice { name: n.clone(), supertype: supertype.clone(), nested: *nested, body: leaves_in(body, &mut todo, &name)? },
             s => s.clone(),
         });
@@ -3109,6 +3181,7 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
             Gram::Plus(a) => Gram::Plus(Box::new(d(a)?)),
             Gram::Field(f, a) => Gram::Field(f.clone(), Box::new(d(a)?)),
             Gram::Retag(k, a) => Gram::Retag(k.clone(), Box::new(d(a)?)),
+            Gram::Inner { field, body } => Gram::Inner { field: field.clone(), body: Box::new(d(body)?) },
             Gram::Merge(k, a) => Gram::Merge(k.clone(), Box::new(d(a)?)),
             Gram::As(k, a) => Gram::As(k.clone(), Box::new(d(a)?)),
             Gram::Wrap { kind, field, moved, slot, body } => Gram::Wrap { kind: kind.clone(), field: field.clone(), moved: moved.clone(), slot: slot.clone(), body: Box::new(d(body)?) },
@@ -3230,7 +3303,7 @@ mod tier2_tests {
         );
         assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
         // Each token of a run without a mark (decision 0673 step 4); after a `~` too, each other token without it
-        // (decision 0632: Kotlin's `(~(…) without nl_end)*`).
+        // (decision 0632: Kotlin's `(~(…) without nl_end)*`; 0698: Python's `(~("def") without newline)*`).
         assert_eq!(
             mark("mark k = lf, before \"{\" (name | \",\" without k)* \"}\""),
             Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(","), TokenElem::Without("k".into())], vec![], vec![])], vec![word("}")]])], false))

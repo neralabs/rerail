@@ -555,6 +555,14 @@ impl<'a> Bytes<'a> {
                 let b = self.win(b, off, depth + 1)?;
                 format!("{{ let mut c = esc_back({p}, |q: usize| {at}); escaped_step({b}, &mut c) }}")
             }
+            // `escaped` in a region token whose run starts after its opener's `o` bytes (`escaped_from`, a field's write
+            // of the token's body): the run read back no further than that byte, the token's opener `s` the window
+            // function's, as the lean lexer reads a string's text from after its quote.
+            Expr::Call(f, args) if f == "escaped_from" && self.partial && let [Arg::E(b), Arg::N(o)] = args.as_slice() => {
+                let at = self.at(b, "q", depth + 1)?;
+                let b = self.win(b, off, depth + 1)?;
+                format!("{{ let lo = s as isize + {o}; let mut c = esc_from({p}, lo, |q: usize| {at}); escaped_step({b} & from_bit({p}, lo), &mut c) }}")
+            }
             // A fill from anywhere (`partial_windows`): stage 1's add, its carry the fill at the byte before the
             // window, read back over the run to its nearest start (in) or end (out), as the lean lexer reads a run.
             Expr::Call(f, args) if f == "fill" && self.partial && let [Arg::E(st), Arg::E(e)] = args.as_slice() => {
@@ -784,6 +792,17 @@ impl<'a> Bytes<'a> {
         let e = self.expr(m)?;
         let bits = self.win(&e, 0, 0)?;
         let esc = bits.contains("esc)");
+        // A read of the token's opener (`escaped_from`): the function takes it.
+        if bits.contains("esc_from(") {
+            if !self.written.contains(&f) {
+                self.written.push(f.clone());
+                let _ = write!(
+                    self.code,
+                    "/// `{m}`'s bits in the 64 bytes from `p` of the region token from `s`, from the bytes: none past the file or before it.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64, s: usize) -> u64 {{\n    {bits}\n}}\n\n"
+                );
+            }
+            return Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc, s) }}"), esc));
+        }
         if !self.written.contains(&f) {
             self.written.push(f.clone());
             let _ = write!(
@@ -1004,12 +1023,15 @@ impl<'a> Bytes<'a> {
             let e = with_live(&self.expr(m)?);
             let bits = self.win(&e, 0, 0)?;
             self.written.push(f.clone());
+            // A read of the region token's opener (`escaped_from`): the function takes the token's first byte `s`.
+            let opener = if bits.contains("esc_from(") { ", s: usize" } else { "" };
             let _ = write!(
                 self.code,
-                "/// `{m}`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64) -> u64 {{\n    {bits}\n}}\n\n"
+                "/// `{m}`'s bits in the 64 bytes from `p` that `live` holds, from the bytes.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64{opener}) -> u64 {{\n    {bits}\n}}\n\n"
             );
         }
-        Ok(format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc, upto(p, {})) }}", b.trim()))
+        let opener = if self.code.contains(&format!("unsafe fn {f}(src: &[u8], n: usize, p: isize, esc: &mut u64, live: u64, s: usize)")) { ", s" } else { "" };
+        Ok(format!("|p: isize, esc: &mut u64| unsafe {{ {f}(src, n, p, esc, upto(p, {}){opener}) }}", b.trim()))
     }
 
     /// One read (`name(args)`) of the loop as the bytes' form.
@@ -2146,6 +2168,24 @@ fn esc_back(p: isize, t: impl Fn(usize) -> bool) -> u64 {
         q -= 1;
     }
     c
+}
+
+/// `esc_back` of a run that starts no earlier than byte `lo`.
+#[inline(always)]
+fn esc_from(p: isize, lo: isize, t: impl Fn(usize) -> bool) -> u64 {
+    let mut c = 0;
+    let mut q = p;
+    while q > lo.max(0) && t((q - 1) as usize) {
+        c ^= 1;
+        q -= 1;
+    }
+    c
+}
+
+/// The bits of the window from `p` at byte `lo` and after.
+#[inline(always)]
+fn from_bit(p: isize, lo: isize) -> u64 {
+    if lo <= p { !0 } else if lo - p >= 64 { 0 } else { !0u64 << (lo - p) }
 }
 
 /// A fill's carry at the window from `p`, from the bytes: whether it holds at the byte before, the nearest byte back

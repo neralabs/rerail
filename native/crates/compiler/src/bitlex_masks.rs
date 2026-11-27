@@ -367,6 +367,9 @@ pub struct Lowering {
     pub token_templates: HashMap<String, Val>,
     /// The tokens reading in parts regions that `resume` (decision 0600).
     pub token_resumes: HashSet<String>,
+    /// The regions' depth bits' names (`regions H level … nest M depth A B`): the records of
+    /// strings open over a template's code are kept by them (`records::Records::nest`).
+    pub nest_depths: Option<(String, String, u8)>,
     /// The regions' kinds, as `regions H { … }` declares them.
     pub region_kinds: Vec<::bitlex::syntax::Region>,
     /// A kind read in parts (`read K parts { … }`): each part's start mask and bytes, in order.
@@ -422,6 +425,8 @@ pub struct Lowering {
     pub tree: Vec<Stmt>,
     /// `tree` as the build reads it (`grammar::desugared`): tier 2 as Rust is written from it.
     pub tree_desugared: Vec<Stmt>,
+    /// The supertypes of a node in a slot (`grammar::super_classes`): slot, kind, its classes.
+    pub super_classes: Vec<(u16, u16, Vec<u16>)>,
     pub extra: Vec<String>,
     /// Each `mark`, in order: its kind, its bits and whether the file's end has it; and the
     /// hidden ones' kinds.
@@ -646,6 +651,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         token_closer_last: HashMap::default(),
         token_templates: HashMap::default(),
         token_resumes: HashSet::default(),
+        nest_depths: None,
         region_kinds: Vec::new(),
         token_parts: HashMap::default(),
         token_part_names: HashMap::default(),
@@ -666,6 +672,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         mask_exprs: HashMap::default(),
         tree: Vec::new(),
         tree_desugared: Vec::new(),
+        super_classes: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
         mark_exprs: Vec::new(),
@@ -883,6 +890,12 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                     *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's mask not an output")? as u16;
                 }
             }
+            for (d0, d1, _) in r.readers.iter_mut().filter_map(|rd| rd.nest.as_mut()) {
+                for k in [d0, d1] {
+                    let v = low.program.masks[usize::from(*k)];
+                    *k = low.program.outputs.iter().position(|&o| o == v).ok_or("a reader's depth bits not an output")? as u16;
+                }
+            }
             for p in r.readers.iter_mut().flat_map(|rd| rd.parts.iter_mut()) {
                 let v = low.program.masks[usize::from(p.start)];
                 p.start = low.program.outputs.iter().position(|&o| o == v).ok_or("a part's start mask not an output")? as u16;
@@ -932,10 +945,11 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                         loses: low.loses.get(&i).map_or(&[][..], |v| v.as_slice()),
                         refuses: low.refuses.get(&i).map_or(&[][..], |v| v.as_slice()),
                         refuses_taken: low.refuses_taken.get(&i).map_or(&[][..], |v| v.as_slice()),
+                        column: low.columns.get(&i).copied(),
                     }
                 })
                 .collect();
-            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds, terminators: symbols.terminators.last_bytes() };
+            let x = crate::bitlex_rust::Input { tree: &low.tree_desugared, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds, terminators: symbols.terminators.last_bytes(), super_classes: &low.super_classes };
             phase_mark(&low, "before tier 2 as Rust");
             // Tier 2 as calls, the CPU's form, and as one loop, the device's (decision 0618): over tier 1's records
             // where its tokens are decided there, else the rules' methods.
@@ -1150,15 +1164,19 @@ impl Lowering {
                         // A region read in parts: its reader's arm, and each part's start and
                         // bytes; the closer and the parts are rows of their own (`Inside`).
                         Some(::bitlex::syntax::TokenRule::ReadParts(rs, parts)) => {
-                            // One region: its opener and closer. Several (`read K | L parts`):
-                            // one arm, at their openers taken (`o_K`), to each one's closer
+                            // One region: its opener, and its closer; an `after` kind's opener
+                            // taken (`o_K`), as it opens only past its template (a format
+                            // spec's `:` beside the code's). A plain one's is its bytes', which
+                            // the token loop tests without the regions' walk. Several (`read K | L parts`):
+                            // one arm, at their openers taken, to each one's closer
                             // outside the others' fills (a `"` in a raw string closes no
                             // string), each closer's last by `closer_last`. The first closer
                             // after the opener is its own region's: the bytes before it are
                             // its fill's. Each closer past its opener's bytes
                             // (`Region::closers_past`): a reader looks from the byte after.
                             let (opener, closer) = match rs.as_slice() {
-                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers_past(&format!("o_{}", r.kind)))?),
+                                [r] if r.after.is_empty() => (self.expr(&r.opener)?, self.expr(&r.closers_past(&format!("o_{}", r.kind)))?),
+                                [r] => (self.expr(&Expr::Name(format!("o_{}", r.kind)))?, self.expr(&r.closers_past(&format!("o_{}", r.kind)))?),
                                 _ => {
                                     let name = |x: String| Expr::Name(x);
                                     let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -1190,25 +1208,40 @@ impl Lowering {
                                 self.token_resumes.insert(kind.clone());
                             }
                             if rs.iter().any(resumed) {
-                                let ts: Vec<Option<Expr>> = rs.iter().map(|r| r.or.as_ref().filter(|_| resumed(r)).map(|o| o.0.clone())).collect();
-                                if ts.iter().any(Option::is_none) {
-                                    return Err(format!("token {kind}: regions resumed with ones that are not"));
+                                // The resumed regions' templates; the reader's other regions have
+                                // no second closer.
+                                let res: Vec<&::bitlex::syntax::Region> = rs.iter().filter(|r| resumed(r)).collect();
+                                if rs.iter().any(|r| !resumed(r) && r.or.is_some()) {
+                                    return Err(format!("token {kind}: regions resumed beside ones with a second closer"));
                                 }
-                                // One template, or each region's at its own closes (`f_K`'s
-                                // last byte before), as Kotlin's `$` and a `$$"…"` string's `$$`.
-                                let t = if ts.iter().all(|x| format!("{x:?}") == format!("{:?}", ts[0])) {
-                                    ts[0].clone().expect("a template")
-                                } else {
-                                    let name = |x: String| Expr::Name(x);
-                                    let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
-                                    rs.iter()
+                                let Some(ts) = res.iter().map(|r| r.or.as_ref().map(|o| o.0.clone())).collect::<Option<Vec<Expr>>>() else {
+                                    return Err(format!("token {kind}: a region resumed with no template"));
+                                };
+                                let name = |x: String| Expr::Name(x);
+                                let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+                                let same = ts.iter().all(|x| format!("{x:?}") == format!("{:?}", ts[0]));
+                                let t = if same && res.len() == rs.len() {
+                                    ts[0].clone()
+                                } else if same {
+                                    // One template beside plain regions: it holds only where a
+                                    // resumed region closed at it (`prev(f_K)`), so a plain string
+                                    // of the same reader (Python's, beside its f-strings) ends at
+                                    // its closer whatever the template's bytes.
+                                    let f = res.iter().map(|r| name(format!("f_{}", r.kind))).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a resumed region");
+                                    and(ts[0].clone(), Expr::Call("prev".into(), vec![Arg::E(f)]))
+                                } else if res.len() == rs.len() {
+                                    // Each region's at its own closes (`f_K`'s last byte before),
+                                    // as Kotlin's `$` and a `$$"…"` string's `$$`.
+                                    res.iter()
                                         .zip(&ts)
                                         .map(|(r, t)| {
                                             let f = format!("f_{}", r.kind);
-                                            and(t.clone().expect("a template"), and(Expr::Call("prev".into(), vec![Arg::E(name(f.clone()))]), Expr::Not(Box::new(name(f)))))
+                                            and(t.clone(), and(Expr::Call("prev".into(), vec![Arg::E(name(f.clone()))]), Expr::Not(Box::new(name(f)))))
                                         })
                                         .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))
                                         .expect("a region")
+                                } else {
+                                    return Err(format!("token {kind}: regions resumed with different templates beside plain ones"));
                                 };
                                 let t = self.expr(&t)?;
                                 self.token_templates.insert(kind.clone(), t);
@@ -1240,7 +1273,12 @@ impl Lowering {
                                     Some(_) => Expr::And(Box::new(r.closers_past(&format!("o_{}", r.kind))), Box::new(Expr::Name(format!("{}_in0", r.kind)))),
                                     None => r.closer.clone(),
                                 };
-                                let (opener, closer) = (self.expr(&r.opener)?, self.expr(&closer)?);
+                                // Its opener: its bytes', which the token loop tests without the
+                                // regions' walk; an `after` kind's taken (`o_K`), as it opens only
+                                // past its template, so a token of another kind at its first byte
+                                // (a format spec's `:` beside the code's) is the other rule's.
+                                let opener = if r.after.is_empty() { r.opener.clone() } else { Expr::Name(format!("o_{}", r.kind)) };
+                                let (opener, closer) = (self.expr(&opener)?, self.expr(&closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
                                 let none = match (&r.empty, r.outside, &r.open) {
                                     (Some((_, m)), ..) => crate::records::ReadNone::Bytes(*m),
@@ -1503,8 +1541,12 @@ impl Lowering {
                 None => None,
             });
         }
+        let brackets = match &regions.level {
+            Some(l) => Some((self.expr(&l.opens)?, self.expr(&l.closes)?)),
+            None => None,
+        };
         let later = regions.kinds.iter().any(|r| r.empty.is_some());
-        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).max().unwrap_or(0) + u8::from(later);
+        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).chain(brackets.iter().flat_map(|(o, c)| [o.d, c.d])).max().unwrap_or(0) + u8::from(later);
         let zero = self.op(BlockOp::Const(0));
         let w = self.within(d)?;
         let clean = |me: &mut Self, x: Val, d: u8| -> Result<u16, String> {
@@ -1518,6 +1560,7 @@ impl Lowering {
         // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
         // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
         if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice())
+            && regions.level.is_none()
             && r.empty.is_none()
             && r.or.is_none()
             && !r.outside
@@ -1553,10 +1596,26 @@ impl Lowering {
         // at its own closer, in the round before (the string ended): from there no template is
         // open, and none opens there. A `prev` on its way (`groups`' strict rule); each round is
         // right a place further, as the hidden places are.
-        let ends = regions.kinds.iter().any(|r| r.resumes).then(|| {
+        let ends = (regions.level.is_none() && regions.kinds.iter().any(|r| r.resumes)).then(|| {
             self.program.ops.push(BlockOp::Carry(zero));
             (self.program.ops.len() - 1) as u16
         });
+        // With a level, in its place a carry per template kind (a plain kind with `or`): whether
+        // the innermost frame open before each byte is a template of that kind (decision 0698,
+        // 60). A tail opens only there; the frames are a count's, below.
+        let tops: Vec<(usize, u16)> = match &regions.level {
+            Some(_) => regions
+                .kinds
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.after.is_empty() && r.or.is_some() && !r.outside)
+                .map(|(k, _)| {
+                    self.program.ops.push(BlockOp::Carry(zero));
+                    (k, (self.program.ops.len() - 1) as u16)
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let mut ended: Vec<u16> = Vec::new();
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
@@ -1575,8 +1634,19 @@ impl Lowering {
         let mut templates: Vec<Option<u16>> = Vec::with_capacity(regions.kinds.len());
         for (at, (r, &(opener, closer, c_before, or))) in regions.kinds.iter().zip(&ins).enumerate() {
             let mut taken = self.op(BlockOp::And(opener, code));
-            let mut after = 0u16;
-            if !r.after.is_empty() {
+            let mut after = 0u32;
+            if !r.after.is_empty() && !tops.is_empty() {
+                // Taken where the innermost frame is a template of a kind `after` names.
+                let mut gate = None;
+                for &(k, top) in tops.iter().filter(|(k, _)| r.after.contains(&regions.kinds[*k].kind)) {
+                    after |= 1 << k;
+                    gate = Some(match gate {
+                        Some(g) => self.op(BlockOp::Or(g, top)),
+                        None => top,
+                    });
+                }
+                taken = self.op(BlockOp::And(taken, gate.expect("verified: a kind named")));
+            } else if !r.after.is_empty() {
                 // Taken where the last template a plain kind's region closed at before is one of
                 // a kind `after` names (the lean lexer's string reader, back from the template).
                 let mut named = None;
@@ -1670,12 +1740,160 @@ impl Lowering {
             self.toggles.push((f, flips));
             kinds.push(crate::block::WalkKind { opener, opens: r.opens, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
         }
+        // A level (decision 0698, 60): the frames open in templates' code, each a template or a
+        // bracket, are a count's (`lv`), and the templates alone another's (`nest`). A template
+        // opens at a plain kind's second closer and ends at a tail's own closer; a bracket counts
+        // in a template's code (`nest` above 0), but not a byte a kind opens at (a tail's `}`).
+        // Each carry `top_q` is again, per level `L`, "the count before is `L`, and the last
+        // frame opened at `L` was a template of kind `q`": a `prev` on every way to it.
+        let mut top_next: Vec<u16> = Vec::new();
+        let level = match (&regions.level, brackets) {
+            (Some(l), Some((o, c))) => {
+                let (opens_b, closes_b) = (clean(self, o, d)?, clean(self, c, d)?);
+                let any = |me: &mut Self, xs: &mut dyn Iterator<Item = u16>| xs.fold(None, |a: Option<u16>, x| Some(a.map_or(x, |a| me.op(BlockOp::Or(a, x))))).unwrap_or(zero);
+                let pushes: Vec<Option<u16>> = templates.clone();
+                let tpush = any(self, &mut pushes.iter().flatten().copied());
+                let tpop = any(self, &mut ended.iter().copied());
+                // A count of `up` and `down` with room for `max`: its planes, the value after each
+                // byte, as `count` keeps one (the module's "Counts and frames").
+                let count = |me: &mut Self, up: u16, down: u16, max: u32| -> Vec<u16> {
+                    let down = me.op(BlockOp::AndNot(down, up));
+                    let mut w = 1u32;
+                    while (1u64 << w) < u64::from(max) + 2 {
+                        w += 1;
+                    }
+                    let (mut planes, mut before): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
+                    for k in 0..w as usize {
+                        let flips = if k == 0 {
+                            me.op(BlockOp::Or(up, down))
+                        } else {
+                            let (mut ones, mut some) = (before[0], before[0]);
+                            for &b in &before[1..k] {
+                                ones = me.op(BlockOp::And(ones, b));
+                                some = me.op(BlockOp::Or(some, b));
+                            }
+                            let carry = me.op(BlockOp::And(up, ones));
+                            let borrow = me.op(BlockOp::AndNot(down, some));
+                            me.op(BlockOp::Or(carry, borrow))
+                        };
+                        let plane = me.op(BlockOp::Toggle(flips));
+                        before.push(me.op(BlockOp::Prev(plane, 1)));
+                        planes.push(plane);
+                    }
+                    planes
+                };
+                let equals = |me: &mut Self, planes: &[u16], m: u64| -> u16 {
+                    let mut out: Option<u16> = None;
+                    for (k, &p) in planes.iter().enumerate() {
+                        let one = m >> k & 1 == 1;
+                        out = Some(match out {
+                            None if one => p,
+                            None => me.op(BlockOp::Not(p)),
+                            Some(e) if one => me.op(BlockOp::And(e, p)),
+                            Some(e) => me.op(BlockOp::AndNot(e, p)),
+                        });
+                    }
+                    out.expect("a plane")
+                };
+                // Above `m`: past the bound, or below zero (all ones). From the top plane down, as
+                // `Lowering::above`: above at plane `k` where the planes above it are `m`'s, `k` is
+                // 1 and `m`'s bit `k` is 0.
+                let above = |me: &mut Self, planes: &[u16], m: u64| -> u16 {
+                    let mut out = zero;
+                    let mut equal: Option<u16> = None;
+                    for k in (0..planes.len()).rev() {
+                        let p = planes[k];
+                        if m >> k & 1 == 0 {
+                            let here = equal.map_or(p, |e| me.op(BlockOp::And(e, p)));
+                            out = me.op(BlockOp::Or(out, here));
+                            equal = Some(match equal {
+                                Some(e) => me.op(BlockOp::AndNot(e, p)),
+                                None => me.op(BlockOp::Not(p)),
+                            });
+                        } else {
+                            equal = Some(equal.map_or(p, |e| me.op(BlockOp::And(e, p))));
+                        }
+                    }
+                    out
+                };
+                let nest = l.nest.as_ref().map_or(1, |x| x.0);
+                let np = count(self, tpush, tpop, u32::from(nest));
+                let nb: Vec<u16> = np.iter().map(|&p| self.op(BlockOp::Prev(p, 1))).collect();
+                let in_t = any(self, &mut nb.iter().copied());
+                let not_opened = self.op(BlockOp::Not(earlier.expect("a kind")));
+                let code_t = self.op(BlockOp::And(code, in_t));
+                let code_t = self.op(BlockOp::And(code_t, not_opened));
+                let bo = self.op(BlockOp::And(opens_b, code_t));
+                let bc = self.op(BlockOp::And(closes_b, code_t));
+                let up = self.op(BlockOp::Or(tpush, bo));
+                let down = self.op(BlockOp::Or(tpop, bc));
+                let lp = count(self, up, down, u32::from(l.max));
+                // Per level, the openers there (shared by the kinds' frames).
+                let mut at_level: Vec<(u16, u16)> = Vec::new();
+                for lv in 1..=u64::from(l.max) {
+                    let after = equals(self, &lp, lv);
+                    let before = self.op(BlockOp::Prev(after, 1));
+                    let openers = self.op(BlockOp::And(up, after));
+                    at_level.push((before, openers));
+                }
+                for &(k, _) in &tops {
+                    let a = templates[k].expect("a template kind's second closer");
+                    let mut t = zero;
+                    for &(before, openers) in &at_level {
+                        let from = self.op(BlockOp::And(openers, a));
+                        let to = self.op(BlockOp::AndNot(openers, a));
+                        let open = self.op(BlockOp::Fill(from, to));
+                        let was = self.op(BlockOp::Prev(open, 1));
+                        let kept = self.op(BlockOp::And(before, was));
+                        t = self.op(BlockOp::Or(t, kept));
+                    }
+                    top_next.push(t);
+                }
+                // Deep: a frame past `max`, a template past `nest`, or a close on a template.
+                let on_t = any(self, &mut tops.iter().map(|t| t.1));
+                let stray = self.op(BlockOp::And(bc, on_t));
+                let moved = self.op(BlockOp::Or(up, down));
+                let over = above(self, &lp, u64::from(l.max));
+                let over = self.op(BlockOp::And(moved, over));
+                let n_over = above(self, &np, u64::from(nest));
+                let n_over = self.op(BlockOp::And(tpush, n_over));
+                let deep = self.op(BlockOp::Or(stray, over));
+                let deep = self.op(BlockOp::Or(deep, n_over));
+                named(self, l.deep.clone(), deep);
+                hide.push(self.op(BlockOp::Prev(deep, 1)));
+                // The depth bits at each opener: the templates around it, `nest` before the byte;
+                // a tail's, around its string, one fewer.
+                let depths = match &l.nest {
+                    Some((m, a, b)) => {
+                        let plain = any(self, &mut regions.kinds.iter().zip(&opens).filter(|(r, _)| !r.resumes).map(|(_, &o)| o));
+                        let tails = any(self, &mut regions.kinds.iter().zip(&opens).filter(|(r, _)| r.resumes).map(|(_, &o)| o));
+                        let (p0, p1) = (nb[0], nb[1]);
+                        let n0 = self.op(BlockOp::Not(p0));
+                        let m1 = self.op(BlockOp::Xor(p1, n0));
+                        let (x0, x1) = (self.op(BlockOp::And(plain, p0)), self.op(BlockOp::And(tails, n0)));
+                        let x = self.op(BlockOp::Or(x0, x1));
+                        let (y0, y1) = (self.op(BlockOp::And(plain, p1)), self.op(BlockOp::And(tails, m1)));
+                        let y = self.op(BlockOp::Or(y0, y1));
+                        named(self, a.clone(), x);
+                        named(self, b.clone(), y);
+                        hide.push(self.op(BlockOp::Prev(x, 1)));
+                        hide.push(self.op(BlockOp::Prev(y, 1)));
+                        self.nest_depths = Some((a.clone(), b.clone(), *m));
+                        Some((x, y))
+                    }
+                    None => None,
+                };
+                Some(crate::block::Level { opens: opens_b, closes: closes_b, max: l.max, deep, nest, depths })
+            }
+            _ => None,
+        };
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
             next = self.op(BlockOp::Or(next, h));
         }
         named(self, regions.hidden.clone(), hidden);
         let mut pairs = vec![(hidden, next)];
+        pairs.extend(tops.iter().zip(&top_next).map(|(&(_, c), &x)| (c, x)));
         if let Some(e) = ends {
             let mut x = *ended.first().ok_or("a kind that resumes with no closer of its own")?;
             for &y in &ended[1..] {
@@ -1685,7 +1903,7 @@ impl Lowering {
             pairs.push((e, x));
         }
         self.program.rounds.push(pairs);
-        self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds });
+        self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds, level });
         Ok(())
     }
 
@@ -3553,7 +3771,8 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
         .filter_map(|w| {
             let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
             let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
-            Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
+            let level = w.level.map(|l| crate::block::Level { opens: n(l.opens), closes: n(l.closes), deep: n(l.deep), depths: l.depths.map(|(a, b)| (n(a), n(b))), ..l });
+            Some(crate::block::Walk { group, hidden: n(w.hidden), kinds, level })
         })
         .collect();
     out.records = program.records.clone();
@@ -4280,6 +4499,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         (st, ar, wh, rules, grammar::desugared(&low.tree, &tokens), grammar::super_classes(&low.tree, &ids)?)
     };
     low.tree_desugared = desugared;
+    low.super_classes = super_classes.clone();
     low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
     let settling: Vec<u16> = low.settles.iter().map(|&k| mark_kinds[k]).collect();
     grammar::without_mark_leaves(&mut arms, &mark_kinds, &settling)?;
@@ -5673,7 +5893,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 // A token's own rows: a row inside a region of the same name (a closer `"`) is not its.
                 let inside_rows = low.inside.clone();
                 let retag_of = |k: &String| moved.iter().find(|&&(r, _)| token_rows[r].0 == *k && !inside_rows.get(r).copied().unwrap_or(false)).map(|&(_, f)| (kinds[usize::from(f)], extra_marks(k)));
-                let retag = retag_of(&kind);
+                let mut retag = retag_of(&kind);
+                // An extra's reader whose first bytes give its kind: where a mark tests a token
+                // (`at K when ...`), the token loop passes over the extra's tokens by its mark,
+                // which only a reader gives (`Reader::retag`): its own kind, with the mark.
+                if retag.is_none() && low.extra.contains(&kind) && low.token_escapes.iter().any(|e| e.4.marks()) {
+                    let rf = &real_first;
+                    let mut ks: Vec<u8> = (0..rows.len()).filter(|&r| token_rows[r].0 == kind && !low.inside.get(r).copied().unwrap_or(false)).flat_map(|r| (0..256).filter(move |&b| rf[r][b / 64] >> (b % 64) & 1 == 1)).map(|b| kinds[b]).collect();
+                    ks.sort_unstable();
+                    ks.dedup();
+                    if let [k] = ks.as_slice() {
+                        retag = Some((*k, extra_marks(&kind)));
+                    }
+                }
                 // An output of its own: one shared with a mark's may be the token loop's alone
                 // (`loop_marks`), not stored.
                 let last = low.token_closer_last.get(&kind).copied().map(|l| {
@@ -5739,7 +5971,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let mut closers: Vec<(u8, u8)> = closer_rows.iter().filter(|c| c.0 == kind).flat_map(|&(_, r, f)| { let first = real_first[r]; (0..=255u8).filter(move |&b| first[usize::from(b >> 6)] >> (b & 63) & 1 == 1).map(move |b| (b, f)) }).map(|(b, f)| (b, kinds[usize::from(f)])).collect();
                 closers.sort_unstable();
                 closers.dedup();
-                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes };
+                // Templates that nest: a template's or a resuming reader's records by its depth.
+                let nest = match low.nest_depths.clone() {
+                    Some((a, b, m)) if resumes || arms.iter().any(|x| x.template.is_some()) => {
+                        let (va, vb) = (low.names.get(&a).copied().ok_or("the depth bits, named")?, low.names.get(&b).copied().ok_or("the depth bits, named")?);
+                        Some((mask_of(low, va, &mut mark_masks), mask_of(low, vb, &mut mark_masks), m))
+                    }
+                    _ => None,
+                };
+                let reader = crate::records::Reader { arms, other, retag, parts, content, closers, split, quiet: false, resumes, nest };
                 let at = match readers.iter().position(|x| *x == reader) {
                     Some(at) => at,
                     None => {
