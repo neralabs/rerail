@@ -12264,3 +12264,29 @@ sync-integration-hub-tape's commit: callable per-file relations, the spike's pro
 No conflicts; the merge is the feeder's alone.
 
 Checked under Relax: rerail-logic corpus calls tests (10), rerail-corpus-prep built (it holds no tests of its own; the callable tests are logic's). Relax has no clippy: none run. No Metal or farm runs.
+
+### Q592. Roll-up 164 (main f7aaa59534 onto Pulling-it-all-together): what the merge chose
+
+main's two commits: a walk reads whether a folder is a checkout's top from its listing (`WalkFolderOwners`: a folder
+whose listing names no `.git` takes its parent's checkout, unless a recorded checkout outside Git starts there,
+`CheckoutOwners.plainRootAt`), and an installed Rerail answers an event of a session not started with
+inactive-session.
+
+Conflicts, resolved by invariant:
+- seen-sources-walk-cost: both sides count 4 lstats of a walked folder; with `WalkFolderOwners` in, main's reason
+  holds (its listing named no `.git`, so its checkout is its parent's), and its comment is taken.
+
+Fixes the merge needed:
+- walk-folder-owners.test builds the owners by the hub's constructor, from the catalogs' database, as the runtime does.
+
+Fixed on the way (red on main's own head):
+- `topLevelAt` compared Git's top level, which Git names in the case the folder is stored in, with the folder as the
+  lookup typed it: on macOS a session named `REPO` for the folder `repo` had no checkout at all. Where the two
+  spellings differ, their stored forms (`storedForm`) are compared, and the root is spelled as the lookup's, so the
+  paths below it stay within it. main's "is the full lookup's for a session named in another letter case" passes.
+
+Checked: tsc --noEmit; vitest on walk-folder-owners, the router, runtime-checkout-owners, many-worktrees, event-stream
+and engine-service-socket, and catalog/checkouts. Still red as before: engine-service-socket's "is no one off
+Windows", since the built engine binding predates `namedPipeServer` (the tree's has it); and under this machine's load
+(averages 35 to 40) the placement files' 5-second cases time out on the hub's own tree as on this one. No Metal or
+farm runs.

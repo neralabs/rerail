@@ -430,7 +430,7 @@ describe("a walk of the other worktrees, about the files a session saw there", (
     }
   });
 
-  it("asks the disk only the read's own lstat of each source the session saw that it reads unchanged, and two more of each folder it reads", { timeout: 120_000 }, async () => {
+  it("asks the disk only the read's own lstat of each source the session saw that it reads unchanged, and one more of each folder it reads, its `.gitignore`", { timeout: 120_000 }, async () => {
     const session = await sessionBesideWorktree();
     try {
       const sources = [0, 1, 2, 3].map(index => join(session.w1, "src", `s${index}.py`));
@@ -448,10 +448,9 @@ describe("a walk of the other worktrees, about the files a session saw there", (
       expect({ seen, walked }).toEqual({
         // The read's own lstat of each entry it meets (`lookAt`), on the thread pool: none more for the session's sight.
         seen: { ...NOTHING, promised: 4 },
-        // That lstat of each folder and of its file, and on the daemon's thread, of each folder's `.gitignore`, to find Git's
-        // ignore rules there (`GitIgnoreAnswers`): the listing of the folder above cannot tell. Each folder's checkout is the
-        // answer its first lookup kept, at the session's turn before, until the next point (`CheckoutOwners.lookAgain`): no
-        // lstat of its `.git` entry.
+        // That lstat of each folder and of its file, and on the daemon's thread, of each folder's `.gitignore`, to find
+        // Git's ignore rules there (`GitIgnoreAnswers`). None of its `.git` entry: its listing named none, so its
+        // checkout is its parent's (`WalkFolderOwners.listed`).
         walked: { ...NOTHING, lstat: 4, promised: 8 },
       });
     } finally {

@@ -5,7 +5,7 @@
  */
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { physicalPath } from "./checkout-control.js";
+import { physicalPath, storedForm } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { recordedCheckoutsVersionReader, recordedPlainRoot } from "./repository-registry.js";
 import { declaredSubmodulePaths } from "./checkouts/declared-submodules.js";
@@ -228,6 +228,15 @@ export class CheckoutOwners {
     return dropped;
   }
 
+  /**
+   * Whether a recorded checkout outside Git (`addPlainRoot`) has its top level at `real`, a physical folder: such a
+   * folder owns its files though it holds no `.git` entry.
+   */
+  plainRootAt(real: string): boolean {
+    const root = this.#plainRoot(real);
+    return root !== undefined && relative(root, real) === "";
+  }
+
   /** How many folders it holds an answer for. */
   cachedFolders(): number {
     return new Set([...this.#roots.keys(), ...this.#confirmed.keys()]).size;
@@ -410,8 +419,11 @@ export class CheckoutOwners {
 function topLevelAt(directory: string): string | Unanswered | undefined {
   const location = repositoryIdentityLocation(directory);
   if (location.unanswered !== undefined) return UNANSWERED;
-  const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
-  return top !== undefined && top === physicalPath(directory) ? top : undefined;
+  if (!location.git) return undefined;
+  const [top, here] = [physicalPath(location.workspaceRoot), physicalPath(directory)];
+  // On a case-insensitive file system Git names the top level in the case it is stored in, the lookup in the case it
+  // was typed in: the same folder where their stored spellings agree (`storedForm`), its root spelled as the lookup's.
+  return top === here || storedForm(top) === storedForm(here) ? here : undefined;
 }
 
 /**
