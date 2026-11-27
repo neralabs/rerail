@@ -1852,7 +1852,9 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R_rows, JSPACE const uint8_t* R_
 // of them, so a row is kept where its place holds it: its mark one read, no hash or probe again.
 // `seen` (decision 0567): its rows less those a relation holds, through the relation's map (`h_at` in its map's
 // block, `hmask + 1` places of 3 words, a row of the relation a place, as a fold's key map is laid out); its rows out
-// placed in the map as the rows they become (its rows past `r_rows_at`'s length, in their order).
+// placed in the map as the rows they become (its rows past `r_rows_at`'s length, in their order). `seen` 2: the map
+// read only, its rows out placed in it after its head's gate once written (code 7 of `lat_rehash_one`), so a park may
+// grow it.
 // `sorted` (t58 increment A): its rows made distinct in the head's first order instead (`dedup_key_one`): no places.
 typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; uint32_t ocap; uint32_t places;
                        uint32_t seen; uint32_t hmask; uint32_t sorted; uint64_t r_at, r_rows_at, h_at; } Dedup;
@@ -2061,7 +2063,7 @@ UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const
     for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->ocap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
     // The row it becomes: the relation's rows as the device holds them, and its place among the new ones
     // (`Batch::append_live` writes them there).
-    if (d->seen != 0u) dedup_place(T, HB, d, x, clif_rows_len(R, d->r_rows_at) + at);
+    if (d->seen == 1u) dedup_place(T, HB, d, x, clif_rows_len(R, d->r_rows_at) + at);
 }
 
 // ---- A batch's jobs (decisions 0601, 0603): its levels' work, run by its program (`join_phase`). ----
@@ -2287,14 +2289,22 @@ UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB
         ukl_atomic_or((JSPACE uint32_t*)(HB + p.h_at) + (x >> 5), 1u << (uint32_t)(x & 31ul));
         return;
     }
-    if (p.code == 4u) {
-        if (s >= p.n) return;
+    // Code 7: a round's new rows written past the relation's rows (`append_live`), as many as the word at `h0_at` of
+    // `OB` holds (at most `n`), placed as code 4's, after its head's gate.
+    if (p.code == 4u || p.code == 7u) {
+        uint32_t row = s;
+        if (p.code == 7u) {
+            if (s >= ukl_min(*(JSPACE const uint32_t*)(OB + p.h0_at), p.n)) return;
+            row = clif_rows_len(R, p.r_rows_at) + s;
+        } else if (s >= p.n) {
+            return;
+        }
         JSPACE uint32_t* M = (JSPACE uint32_t*)(HB + p.h_at);
         int64_t key[8];
-        for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, &p, s, c);
+        for (uint32_t c = 0; c < p.nkeys && c < 8; c++) key[c] = lat_r(R, &p, row, c);
         uint32_t at = lat_hash(key, p.nkeys, p.hmask);
         for (uint32_t k = 0; k <= p.hmask; k++) {
-            if (ukl_atomic_cas(&M[3 * at], 0xffffffffu, s) == 0xffffffffu) return;
+            if (ukl_atomic_cas(&M[3 * at], 0xffffffffu, row) == 0xffffffffu) return;
             at = (at + 1) & p.hmask;
         }
         return;
@@ -2609,6 +2619,8 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_IX_OFFS 30u
 #define PK_IX_MARK 31u
 #define PK_DEDUP_KEY 32u
+// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`), its items its rows'.
+#define PK_SET_PLACE 33u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -2897,6 +2909,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
         case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_REHASH: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
+        case PK_SET_PLACE: lat_rehash_one((JSPACE const uint8_t*)j->S, j->G, j->VC, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_CLEAR: lat_clear_one(LA, LT, H, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_CLAIM: lat_claim_one(L, LA, j->cnt, (JSPACE const LatP*)j->P, t); break;
         case PK_LAT_BEST: lat_best_one(L, LA, LT, H, (JSPACE uint32_t*)V, j->cnt, (JSPACE const LatP*)j->P, t); break;

@@ -2632,6 +2632,8 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let ordered: Vector<usize> = spec.lines.iter().find_map(|l| if let Line::Sorted(r) = l { Some(r.iter().map(|&x| x as usize).collect()) } else { None }).unwrap_or_default();
     let mut cyclic: Vector<usize> = rerail_blocks::vector::Vector::new();
     let mut kept_old = false;
+    // The own relations' columns of symbols held as atoms (`Line::Atoms`): read as texts by the device's stages.
+    let mut atom_cols: Vec<(usize, usize)> = Vec::new();
     let mut seed_specs: Vec<(usize, Join)> = Vec::new();
     // Each relation's kept rows (`Start::Base`), by index: under `wave0_changes` they are no wave's delta.
     let mut kept_n: Vector<usize> = rerail_blocks::vector::Vector::new();
@@ -2705,6 +2707,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 rels.get_mut(*rel as usize).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys as usize, lattice, widen.get())?;
             }
             Line::Key { rel, cols } => rels.get_mut(*rel as usize).ok_or_else(|| err(format!("key: no relation {rel}")))?.set_key(us(cols))?,
+            Line::Atoms { rel, cols } => atom_cols.extend(cols.iter().map(|&c| (*rel as usize, c as usize))),
             Line::Seed { head, join, est } => {
                 let join = bound(join);
                 let mut j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, &join, &mut syms, !device_wanted)? };
@@ -2827,11 +2830,18 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 }
             }
         }
+        // The own relations' columns of symbols: read as texts where the atoms blocks hold them (a column of made
+        // texts is not one of them: `own_texts`, read in the arena).
+        let syms_of = |own_texts: &[(usize, usize)]| -> Vec<(usize, usize)> {
+            let typed = rels.iter().enumerate().flat_map(|(i, r)| r.types.iter().enumerate().filter(|&(_, &t)| t == b's').map(move |(c, _)| (i, c)));
+            typed.chain(atom_cols.iter().copied()).filter(|at| !own_texts.contains(at)).collect()
+        };
         let plans = loop {
+            let own_syms = syms_of(&own_texts);
             let plans = match &refused {
                 Some(r) => Err(r.clone()),
                 None => specs.iter().map(|(pi, text)| match &probes[*pi].body {
-                    Body::Join(j) => dev.compile_join(j, text, &own_texts, probes[*pi].head).map(|p| (*pi, p)),
+                    Body::Join(j) => dev.compile_join(j, text, &own_texts, &own_syms, probes[*pi].head).map(|p| (*pi, p)),
                     Body::Sql(_) => Err("a SQL seed".to_owned()),
                     Body::Unplanned => Err("a probe not planned yet".to_owned()),
                 }).collect::<std::result::Result<Vec<_>, String>>(),
@@ -8811,7 +8821,7 @@ pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) ->
     let plans: Vec<JoinPlan> = specs.iter().filter_map(|spec| {
         let j = join_rule(conn, spec, &mut syms).ok()?;
         // No own texts: the plan's head is not read (`usize::MAX`).
-        dev.compile_join(&j, &spec.to_text(), &[], usize::MAX).ok()
+        dev.compile_join(&j, &spec.to_text(), &[], &[], usize::MAX).ok()
     }).collect();
     if plans.is_empty() {
         return Ok(0);

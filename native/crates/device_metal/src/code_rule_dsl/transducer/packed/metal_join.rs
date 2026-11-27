@@ -2815,7 +2815,8 @@ impl Batch {
         let hb = match held {
             Some((r, map)) => {
                 assert!(map.places.is_power_of_two() && cols.len() == r.cols && cols.len() <= 8);
-                (d[23], d[24]) = (1, (map.places - 1) as u32);
+                // A map that grows at a park: read only, its rows placed after the gate (`set_place`).
+                (d[23], d[24]) = (if map.grows.is_some() { 2 } else { 1 }, (map.places - 1) as u32);
                 for (w, v) in [(26, r.at), (28, r.rows_at()), (30, map.at as u64)] {
                     (d[w], d[w + 1]) = (v as u32, (v >> 32) as u32);
                 }
@@ -2848,6 +2849,7 @@ impl Batch {
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
+        job.dedup_map = held.and_then(|(_, m)| m.grows);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
         job.h_place = (table.placed() && key.is_none()).then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
@@ -3232,6 +3234,34 @@ impl Batch {
         self.queue(job)
     }
 
+    /// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`): `r`'s rows past its
+    /// rows as the device holds them, as many as slot `count.0` of `count.1` holds (its items those rows', `cap` its
+    /// threads as guessed), once
+    /// `append_live` wrote them there. Its dedup read the map only (`Dedup::seen` 2), so a park before it grew the map
+    /// with every row it held; a map that grows is re-pointed here too (`LatMap::grows`, `Rooms::folds`).
+    pub(in crate::code_rule_dsl) fn set_place(&mut self, r: &DevRel, cap: usize, count: (usize, &Words), map: LatMap<'_>) -> Result<(), Error> {
+        assert!(map.places.is_power_of_two() && r.cols <= 8);
+        let p = LatParams { top: 0, n: u32::MAX, had: 0, nkeys: r.cols as u32, code: 7, after: NONE, pmask: 0, hmask: (map.places - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 4 * count.0 as u64 };
+        let hb = bound(map.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        // Its relation as `append_live` writes it (its block's wrap), so it runs after that copy.
+        job.desc.s = job.reach(&r.wrap()?, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        job.desc.g = job.reach(&count.1.buffer.buffer, 0, false)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v] {
+            *d = job.desc.s;
+        }
+        job.p = Some(lat_bytes(&p).to_vec());
+        job.lat = map.grows.map(|h| (h, false));
+        // Its items as many as the round's rows (its count's word on the device), `cap` its threads as guessed.
+        job.rows = Some((job.desc.g + 4 * count.0 as u64, 0));
+        (job.count, job.clear, job.lattice, job.set_place) = (0, 0, [0, 0], cap);
+        job.order(&[job.desc.s, job.desc.g], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
     /// A set head's held bitmap (`HeldBits`) emptied and every row of `r`'s first `n` set in it, its bit at its index
     /// under `key` (code 6 of `lat_hclear_one` and `lat_rehash_one`): a program's first work, as `set_map`'s.
     pub(in crate::code_rule_dsl) fn set_bits(&mut self, r: &DevRel, n: usize, bits: HeldBits<'_>, key: &SortKey) -> Result<(), Error> {
@@ -3460,6 +3490,9 @@ impl Batch {
                 // Check `t`'s cap: after the gate's two words, three words a check, its third.
                 prog.rooms.gates.push(GateRoom { params: params.buffer.clone(), at: pat + 16 + 24 * t as u64 + 16, grow });
             }
+            if let (Some(h), Some(dat)) = (j.dedup_map.take(), at[3]) {
+                prog.rooms.dedups.push((h, params.buffer.clone(), dat));
+            }
             match j.lat.take() {
                 Some((h, false)) => prog.rooms.folds.push((h, params.buffer.clone(), pat)),
                 Some((h, true)) => prog.rooms.tail.as_mut().expect("the tail begun").grows.push((h, params.buffer.clone(), pat)),
@@ -3681,6 +3714,7 @@ impl Batch {
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_CLAIM, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_BEST, |j| j.count)]);
         job_phase(prog, &[(JobKind::Lattice, PK_LAT_MERGE, |j| j.clear)]);
+        job_phase(prog, &[(JobKind::Lattice, PK_SET_PLACE, |j| j.set_place)]);
         // The view format its worker is compiled for: the jobs' one, else several (0).
         for j in &jobs {
             if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) {
@@ -4626,6 +4660,9 @@ struct Rooms {
     sorts: Vec<SortRoom>,
     /// Each live fold's map (its head, `LatMap::grows`), its parameters (`LatParams`) at byte `.2` of `.1`.
     folds: Vec<(usize, Buffer, u64)>,
+    /// Each dedup less a set head's map that grows (its head, `LatMap::grows`), its words (`Dedup`) at byte `.2` of
+    /// `.1`: re-pointed at the map grown.
+    dedups: Vec<(usize, Buffer, u64)>,
     /// The program's tail (`Batch::lattice_tail`): its first phase and each head's map growth's parameters.
     tail: Option<Tail>,
     /// A parameters buffer and a word's byte offset in it.
@@ -4770,9 +4807,12 @@ impl Kit {
         self.maps_grown = !maps.is_empty();
         if self.maps_grown {
             let tail = self.rooms.tail.as_ref().expect("a program whose maps grow has a tail");
-            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow.
+            // Each head's growth: its new map and its old, or none (`omask` all ones) where its map did not grow. Two
+            // gates of a park may each grow it: its last map the new one, its keys those of the map it had (the
+            // first growth's old: the maps between them hold none until this tail runs).
             for (key, params, at) in &tail.grows {
-                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places);
+                let first = maps.iter().filter(|m| m.key == *key).min_by_key(|m| m.old_places).map(|m| (m.old_at, m.old_places));
+                let g = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places).map(|m| MapGrown { key: m.key, at: m.at, places: m.places, old_at: first.expect("its first growth").0, old_places: first.expect("its first growth").1 });
                 // SAFETY: the growth's `LatParams`, within its parameters buffer; no work of the program runs.
                 unsafe {
                     let b = params.contents().cast::<u8>().add(*at as usize);
@@ -4785,6 +4825,16 @@ impl Kit {
                         }
                         None => b.add(std::mem::offset_of!(LatParams, omask)).cast::<u32>().write_unaligned(u32::MAX),
                     }
+                }
+            }
+            // Each dedup less a set head's map grown: its map's mask (word 24) and place (words 30, 31) the new one's.
+            for (key, params, at) in &self.rooms.dedups {
+                let Some(g) = maps.iter().filter(|m| m.key == *key).max_by_key(|m| m.places) else { continue };
+                // SAFETY: the dedup's words (`Dedup`, 32 `u32`s), within its parameters buffer; no work of the program runs.
+                unsafe {
+                    let b = params.contents().cast::<u8>().add(*at as usize);
+                    b.add(4 * 24).cast::<u32>().write_unaligned((g.places - 1) as u32);
+                    b.add(4 * 30).cast::<u64>().write_unaligned(g.at);
                 }
             }
             // Each fold of a head grown: its map the new one.
@@ -4802,10 +4852,12 @@ impl Kit {
     }
 
     /// A park's release once its rooms grew (`grow_rooms`), the gate's phase `p` parked: the phase its walk takes
-    /// after it, or where a lattice head's map grew, the program's tail first, whose jump goes on to that phase.
+    /// after it, or where a head's map grew at this park, the program's tail first, whose jump goes on to that phase.
+    /// Its growth is this park's alone: a later park (an arena's remap) runs no tail, which would empty the map and
+    /// place again the keys of the one this growth replaced.
     fn release(&mut self, p: u32) -> Option<u32> {
         let after = walk_next(&self.jumps, self.last, self.phase_items.len() as u32, p);
-        match (&self.rooms.tail, self.maps_grown) {
+        match (&self.rooms.tail, std::mem::take(&mut self.maps_grown)) {
             (Some(t), true) => {
                 let first = t.first;
                 let jump = self.jumps.last_mut().expect("the tail's jump");
@@ -4912,6 +4964,7 @@ const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
 /// A sorted dedup's keys (t58 increment A, `dedup_key_one`).
 const PK_DEDUP_KEY: u32 = 32;
+const PK_SET_PLACE: u32 = 33;
 
 /// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
 const HK_TOTAL: WordAt = WordAt::word(68);
@@ -5004,7 +5057,7 @@ const PK_IX_MARK: u32 = 31;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
-const ROWS_ITEMS: [u32; 17] = [PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+const ROWS_ITEMS: [u32; 18] = [PK_SET_PLACE, PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
                                PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE, PK_IX_MARK];
 
 /// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
@@ -5617,6 +5670,10 @@ struct Job {
     live_ix: Option<(std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>, u64, usize, u32)>,
     /// A live fold of head `.0`'s map, or (`.1`) the tail's growth of it (`Rooms::folds`, `Tail::grows`).
     lat: Option<(usize, bool)>,
+    /// A dedup less head `.0`'s set map, which grows (`Rooms::dedups`).
+    dedup_map: Option<usize>,
+    /// A set head's round's rows placed in its map (`Batch::set_place`): its threads at most, its items its rows'.
+    set_place: usize,
     /// The tail's jump (`Tail::jump`).
     jump: bool,
     /// Its output placed by its level's size script at its start, its rows a word's or its input's room, not
@@ -5711,6 +5768,8 @@ impl Job {
             rooms: Vec::new(),
             live_ix: None,
             lat: None,
+            dedup_map: None,
+            set_place: 0,
             jump: false,
         }
     }

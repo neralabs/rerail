@@ -3522,6 +3522,16 @@ impl<'a> Run<'a, '_> {
                 }
             }
         }
+        // The stratum's own relations' symbol columns held as atoms (integers in the types): a device stage reads a
+        // slot bound from one as a text where the atoms blocks hold it.
+        if self.model.inputs.atoms.is_some() {
+            for r in rels.iter().filter(|r| scc.contains(r)) {
+                let cols: Vector<usize> = f.types(r).iter().enumerate().filter(|(_, t)| **t == "sym").map(|(c, _)| c).collect();
+                if !cols.is_empty() {
+                    rel_lines.push(SpecLine::Atoms { rel: ri[*r], cols });
+                }
+            }
+        }
         // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
         // them where they lie does not keep the run's other relations' blocks.
         let kept_rows: Vector<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(**r)).map(|r| ri[*r]).collect();

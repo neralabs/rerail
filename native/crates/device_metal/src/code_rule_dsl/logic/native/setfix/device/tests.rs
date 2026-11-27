@@ -544,6 +544,138 @@ use rerail_blocks::vector::Vector;
         assert_eq!(got[1], got[0], "the device's made texts are the CPU's rows");
     }
 
+    /// A set head's map (`SetHead::map`, its keys too wide for a held bitmap) made for its program's rows, not its
+    /// bound: a round whose rows pass half its places parks the program at its gate, its map grows and its rows are
+    /// placed again in it (the program's tail), and the program goes on, none run again. Its rows are the CPU's, each
+    /// once.
+    #[test]
+    fn a_set_heads_map_past_half_full_grows_at_a_park() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // Two chains of 150 nodes, ids 2^33 apart, each node to the next and the one after: their closure is
+        // 2 * 150 * 149 / 2 rows, past a first map's half, most of them reached in two rounds (a map that lost a row
+        // would make it twice).
+        let spread = 1i64 << 33;
+        for c in 0..2i64 {
+            let at = |v: i64| (c * 1000 + v) * spread + 7;
+            for v in 0..149i64 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [at(v), at(v + 1)]).unwrap();
+                if v + 2 < 150 {
+                    db.execute("INSERT INTO e VALUES (?1, ?2)", [at(v), at(v + 2)]).unwrap();
+                }
+            }
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // q(x, y) :- e(x, y).  q(x, z) :- q(x, y), e(y, z).
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let step = format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("map_half_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&step))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+                assert!(r.maps_grown >= 1 && r.reruns == 0, "its map grown at a park, no rerun: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            let mut sorted = rows.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), rows.len(), "device {device}: each row once");
+            got.push(sorted);
+        }
+        assert_eq!(got[0].len(), 2 * 150 * 149 / 2, "the CPU's closure");
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
+    /// A recursive component's own column of symbols read as a text (`OWN_SYMS`): a cat of it with a constant is the
+    /// only key of an input atom, its atom found in the atoms directory (`find_stage`) and probed by value, no row
+    /// where the text is no atom. On the device, the CPU's rows.
+    #[test]
+    fn an_own_symbol_in_a_cat_keys_an_atom_as_the_cpu_does() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE r (c0); CREATE TEMP TABLE k (c0, c1);").unwrap();
+        let nodes = 2000i64;
+        let parts = ["ab", "c", "def", "g", "hi"];
+        let name = |v: i64| format!("{}{}", parts[(v % 5) as usize], v % 7);
+        for v in 0..nodes {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![v, name(v)]).unwrap();
+            if v > 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [(v - 1) / 3, v]).unwrap();
+            }
+        }
+        for v in [0i64, 1, 3, 4, 6, 7, 12] {
+            db.execute("INSERT INTO r VALUES (?1)", [v]).unwrap();
+        }
+        // Some names' "<name>.s" map to another name; the others are no atom of k's (nor of any relation).
+        for v in 0..35i64 {
+            if v % 3 != 0 {
+                db.execute("INSERT INTO k VALUES (?1, ?2)", rusqlite::params![format!("{}.s", name(v)), name(v + 11)]).unwrap();
+            }
+        }
+        let n = format!("t:x:{}:{}:is", hex("temp.n"), hex("c0, c1"));
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let root = format!("t:x:{}:{}:i", hex("temp.r"), hex("c0"));
+        let k = format!("t:x:{}:{}:ss", hex("temp.k"), hex("c0, c1"));
+        // q(x, t) :- r(x), n(x, t).  q(y, t) :- q(x, t), e(x, y).  q(y, u) :- q(x, t), e(x, y), k(@dot(t, "s"), u).
+        let seed = format!("pos {root} v0\npos {n} v0 v1\nhead v0 v1");
+        let down = format!("pos d0 v0 v1\npos {e} v0 v2\nhead v2 v1");
+        let mapped = format!("pos d0 v0 v1\npos {e} v0 v2\ncat v3 v1 x:{}\npos {k} v3 v4\nhead v2 v4", hex("s"));
+        // w(y, @dot(t, "w")) :- q(x, t), e(x, y): a head's cat of the own symbol, into another relation's column of
+        // made texts (as points-to's pt_tqv(m, @dot(q, x), ..) :- pt_tbv(m, x, ..)).
+        let into = format!("pos d0 v0 v1\npos {e} v0 v2\neq v3 x:{}\nhead v2 cat:v1:v3", hex("w"));
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("own_sym_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1); DROP TABLE IF EXISTS temp.w; CREATE TEMP TABLE w (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), "rel w is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&down)), format!("join 0 0 {}", hex(&mapped)), format!("join 1 0 {}", hex(&into))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let mut rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            let mut ws: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.w").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            ws.sort_unstable();
+            assert!(ws.len() > 100 && ws.iter().all(|(_, t)| t.ends_with(".w")), "device {device}: w's made texts: {}", ws.len());
+            rows.extend(ws.into_iter().map(|(x, t)| (-1 - x, t)));
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        let mapped_rows = got[0].iter().filter(|(x, t)| *x >= 0 && *t != name(*x) && !got[0].iter().any(|(y, u)| u == t && *y < *x && (*x - 1) / 3 == *y)).count();
+        assert!(got[0].len() > nodes as usize && mapped_rows > 0, "the CPU's rows: {} ({mapped_rows} mapped)", got[0].len());
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
     /// Decision 0661: a string join on the device. Each group's parts are joined in their order by a number, with a
     /// separator, into the canonical arena; a group of no parts has "". The joins are copied along alias edges, a
     /// recursive set head's text column. Clean, the component runs on the device; with a group of more parts than a

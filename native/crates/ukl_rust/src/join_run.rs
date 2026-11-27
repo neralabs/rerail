@@ -58,6 +58,8 @@ const PK_IX_PLACE: u32 = 5;
 const PK_IX_OFFS: u32 = 30;
 const PK_IX_MARK: u32 = 31;
 const PK_DEDUP_KEY: u32 = 32;
+/// A round's new rows placed in its set head's map after its gate (code 7 of `lat_rehash_one`), its items its rows'.
+const PK_SET_PLACE: u32 = 33;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -184,7 +186,9 @@ struct Dedup {
     cols: [u32; 16],
     ocap: u32,
     places: u32,
-    /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567).
+    /// Its rows less those a relation holds, through its map (`dedup_held`), its rows out placed in it (decision 0567):
+    /// 1. 2: the map read only, its rows out placed in it after its head's gate once written (code 7 of
+    /// `lat_rehash_one`), so a park may grow it.
     seen: u32,
     hmask: u32,
     /// Its rows made distinct in the head's first order (t58 increment A, `dedup_key_one`): no places.
@@ -1890,6 +1894,9 @@ unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
 }
 
 /// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
+/// Code 7 (a set's map its dedup only read, `Dedup::seen` 2): row `s` of a round's new rows written past the
+/// relation's rows (`Batch::append_live`), as many as the word at `h0_at` of `ob` holds (at most `n`), placed as code
+/// 4's, after its head's gate: a park before it grew the map with every row it held.
 /// Code 6 (a set's held bitmap, t58 increment A): row `s`'s bit set, at its index under the key past `p` (`held_index`).
 unsafe fn lat_rehash_one(r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
     if p.code == 6 {
@@ -1901,18 +1908,25 @@ unsafe fn lat_rehash_one(r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: 
         at((hb.add(p.h_at as usize) as *mut u32).add((x >> 5) as usize)).fetch_or(1 << (x & 31), Ordering::Relaxed);
         return;
     }
-    if p.code == 4 {
-        if s >= p.n {
+    if p.code == 4 || p.code == 7 {
+        let row = if p.code == 7 {
+            if s >= (*(ob.add(p.h0_at as usize) as *const u32)).min(p.n) {
+                return;
+            }
+            rows_len(r, p.r_rows_at) + s
+        } else if s >= p.n {
             return;
-        }
+        } else {
+            s
+        };
         let h = hb.add(p.h_at as usize) as *mut u32;
         let mut key = [0i64; 8];
         for c in 0..p.nkeys.min(8) {
-            key[c as usize] = lat_r(r, p, s, c);
+            key[c as usize] = lat_r(r, p, row, c);
         }
         let mut a = lat_hash(&key, p.nkeys, p.hmask);
         for _ in 0..=p.hmask {
-            if at(h.add(3 * a as usize)).compare_exchange(NONE, s, SeqCst, SeqCst).is_ok() {
+            if at(h.add(3 * a as usize)).compare_exchange(NONE, row, SeqCst, SeqCst).is_ok() {
                 return;
             }
             a = (a + 1) & p.hmask;
@@ -2527,7 +2541,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
     let o0 = *offsets;
     // The rows they become (`Dedup::seen`): the relation's rows as the device holds them, and their places among the
     // new ones (`Batch::append_live` writes them there).
-    let had = if d.seen != 0 { rows_len(r, d.r_rows_at) } else { 0 };
+    let had = if d.seen == 1 { rows_len(r, d.r_rows_at) } else { 0 };
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     if x0 == 0 && x1 > 0 {
         *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
@@ -2537,7 +2551,7 @@ unsafe fn dedup_scatter_range(t: *const i64, totals: *mut u32, offsets: *const u
         for c in 0..d.ncols.min(16) {
             copy_col(colp(t, d.cols[c as usize], d.cap, x), colp_mut(o, c, d.ocap, a), len, false);
         }
-        if d.seen != 0 {
+        if d.seen == 1 {
             dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, len, had + a);
         }
     });
@@ -3872,7 +3886,7 @@ impl Prog {
     unsafe fn job(&self, kind: u32, j: &Job, b: &Bufs, t: u32) {
         let lat = || &*(j.p as *const LatP);
         match kind {
-            PK_LAT_REHASH => lat_rehash_one(j.s_, j.g, j.vc, lat(), t),
+            PK_LAT_REHASH | PK_SET_PLACE => lat_rehash_one(j.s_, j.g, j.vc, lat(), t),
             PK_LAT_CLAIM => lat_claim_one(b.l, b.la, j.cnt, lat(), t),
             PK_LAT_BEST => lat_best_one(b.l, b.la, b.lt, b.h, b.v as *const u32, j.cnt, lat(), t),
             PK_LAT_MERGE => lat_merge_one(b.l, b.la, b.lt, b.h, j.s_, j.vc, b.o, j.counters, b.v as *const u32, j.g as *const u32, lat(), t),
