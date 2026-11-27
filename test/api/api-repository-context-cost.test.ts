@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,11 +16,15 @@ vi.mock("node:fs", async importOriginal => {
       if (fileChecks.counting) fileChecks.existsSync += 1;
       return original.existsSync(...parameters);
     },
+    statSync: ((...parameters: Parameters<typeof original.statSync>) => {
+      if (reads.counting && parameters[1]?.bigint === true) reads.stamps += 1;
+      return original.statSync(...parameters);
+    }) as typeof original.statSync,
   };
 });
 
-/** Git locations placed, remotes read and processes started while `counting` is on. */
-const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0 }));
+/** Git locations placed, remotes read, processes started and files stamped (one `stat` in `bigint`) while `counting` is on. */
+const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0, stamps: 0 }));
 vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
   return {
@@ -53,6 +57,7 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { checkouts, lookupCheckout, recordCheckout, repositories } from "../../src/engine/index.js";
+import { loopInPlace } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Statements run on any connection while `counting` is on, prepared once or for one run. */
@@ -379,11 +384,12 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     return { root, api: app, first, second, resolveCheckout: stores.checkouts() };
   }
 
-  /** One read of `checkout` through `resolveCheckout`: the repository it names, the remotes it read and the processes it started. */
+  /** One read of `checkout` through `resolveCheckout`: the repository it names, the remotes it read, the processes it started and the files it stamped. */
   function counted(resolveCheckout: (workspace: string) => { repositoryKey: string } | undefined, checkout: string) {
-    Object.assign(reads, { remotes: 0, starts: 0, counting: true });
+    Object.assign(reads, { remotes: 0, starts: 0, stamps: 0, counting: true });
     try {
-      return { named: resolveCheckout(checkout)?.repositoryKey, remotes: reads.remotes, starts: reads.starts };
+      const named = resolveCheckout(checkout)?.repositoryKey;
+      return { named, remotes: reads.remotes, starts: reads.starts, stamps: reads.stamps };
     } finally {
       reads.counting = false;
     }
@@ -393,12 +399,12 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     const { root, api, first, second, resolveCheckout } = await twoRepositories();
     const checkout = cloneAt(join(root, "fresh"), APP);
     expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
-    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 0, starts: 0, stamps: 0 });
 
     gitIn(checkout, "remote", "set-url", "origin", OTHER);
 
-    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 1, starts: 1 });
-    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 0, starts: 0 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 1, starts: 1, stamps: 0 });
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: second, remotes: 0, starts: 0, stamps: 0 });
     expect(await namedRepositories(api, checkout)).toEqual(allNaming(second));
   });
 
@@ -449,13 +455,29 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     expect(await namedRepositories(api, linked)).toEqual(allNaming(second));
   });
 
-  it("reads the remote again at each read while a config file it is read from cannot be read", async () => {
+  it("keeps the remote while a config file whose text cannot be read keeps its size, time and file id, and reads it again once one changes", async () => {
     const { root, first, resolveCheckout } = await twoRepositories();
     const checkout = cloneAt(join(root, "fresh"), APP);
-    // A folder where Git, with extensions.worktreeConfig off, reads no file: no text can be read there.
-    mkdirSync(join(checkout, ".git", "config.worktree"));
+    // Larger than Rerail reads a config file, where Git, with extensions.worktreeConfig off, reads no file.
+    const file = join(checkout, ".git", "config.worktree");
+    const large = "#".repeat(2 ** 20 + 1);
+    writeFileSync(file, large);
     expect(resolveCheckout(checkout)?.repositoryKey).toBe(first);
-    expect(counted(resolveCheckout, checkout)).toMatchObject({ named: first, remotes: 1 });
-    expect(counted(resolveCheckout, checkout)).toMatchObject({ named: first, remotes: 1 });
+    const kept = { named: first, remotes: 0, starts: 0, stamps: 1 };
+    const readAgain = { named: first, remotes: 1, starts: 1, stamps: 1 };
+    const twice = () => [counted(resolveCheckout, checkout), counted(resolveCheckout, checkout)];
+    expect(twice()).toEqual([kept, kept]);
+
+    utimesSync(file, 1000, 1000); // Its time alone.
+    expect(twice()).toEqual([readAgain, kept]);
+    appendFileSync(file, "#"); // Its size alone.
+    utimesSync(file, 1000, 1000);
+    expect(twice()).toEqual([readAgain, kept]);
+    writeFileSync(`${file}.new`, `${large}#`); // Its file id alone.
+    utimesSync(`${file}.new`, 1000, 1000);
+    renameSync(`${file}.new`, file);
+    expect(twice()).toEqual([readAgain, kept]);
+    loopInPlace(file); // A file that cannot even be looked at.
+    expect(twice()).toEqual([readAgain, kept]);
   });
 });
