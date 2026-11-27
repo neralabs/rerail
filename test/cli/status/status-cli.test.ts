@@ -66,7 +66,16 @@ describe("rerail status", () => {
     // A folder link a test account can make on every system: a junction on Windows.
     symlinkSync(version, current, process.platform === "win32" ? "junction" : "dir");
     mkdirSync(join(user, AGENT_FOLDERS[agent]), { recursive: true });
-    await registerHarnesses({ root: current, home: user, harnesses: [agent] });
+    // Registered in the Rerail home `rerail status` reads, as set-up registers: Claude Code's settings keep that home's
+    // folders from the agent, so a registration for another home reads as not connected.
+    const testHome = process.env.RERAIL_HOME;
+    process.env.RERAIL_HOME = rerailHome;
+    try {
+      await registerHarnesses({ root: current, home: user, harnesses: [agent] });
+    } finally {
+      if (testHome === undefined) delete process.env.RERAIL_HOME;
+      else process.env.RERAIL_HOME = testHome;
+    }
     change(rerailHome);
     // The coding agents' home is HOME on macOS and Linux and USERPROFILE on Windows.
     const run = status(folder, { RERAIL_HOME: rerailHome, HOME: user, USERPROFILE: user });

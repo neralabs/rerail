@@ -1238,7 +1238,7 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
   const deny = rerailDataDenyRules(directories, "Edit", path => claudeRulePath(path, context.platform));
   // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
   if (context.platform === "win32") return { "permissions.deny": deny };
-  const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
+  const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realRoot(context.root)];
   return {
     "permissions.deny": deny,
     "sandbox.filesystem.denyRead": protectedDirectories,
@@ -1246,6 +1246,35 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
     ...isolateHome ? { "sandbox.filesystem.allowRead": [...new Set(packageCode.filter(path => path !== rerailHome && contains(rerailHome, path)))] } : {},
     "sandbox.excludedCommands": [`${directCommand(context, ENTRY_POINTS.cli)} *`, `${setupLauncher(context)} *`, "rerail *"],
   };
+}
+
+/**
+ * The real path of `root`; for a link whose target is gone, as `<home>/current` once its version folders were deleted,
+ * the real path that target had (`realGoneTarget`), so a check of whether Rerail is connected to it reads the entry the
+ * registration wrote while the target was there; else `root`.
+ */
+async function realRoot(root: string): Promise<string> {
+  try {
+    return await realpath(root);
+  } catch {
+    return await realGoneTarget(root) ?? root;
+  }
+}
+
+/**
+ * The real path the target of the link at `link` had: the real path of its nearest folder still there, with the rest of
+ * the target's names after it. Undefined when `link` is no link.
+ */
+async function realGoneTarget(link: string): Promise<string | undefined> {
+  const target = await readlink(link).then(text => resolve(dirname(link), text), () => undefined);
+  if (target === undefined) return undefined;
+  const gone: string[] = [];
+  for (let at = target; dirname(at) !== at; at = dirname(at)) {
+    const real = await realpath(at).catch(() => undefined);
+    if (real !== undefined) return join(real, ...gone);
+    gone.unshift(basename(at));
+  }
+  return undefined;
 }
 
 /** The `statusLine` of the settings `value` read from `path`; one that is not a command specification throws. */
