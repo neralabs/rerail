@@ -16,7 +16,7 @@
 
 use rerail_reads::ids::{INDEX_BITS, Numbering, Run, SLOT_BITS, SPAN_SLOTS};
 use rerail_reads::view::{F16Z_FORMAT, TapeView};
-use rerail_reads::views::{ANCHOR_ITEM, NO_ROW, PLACE_PAST_COMMENTS, PLACED_AT, ViewDir, ViewDoc, ViewHome, ViewRow};
+use rerail_reads::views::{ANCHOR_ITEM, NO_ROW, PLACE_PAST_COMMENTS, PLACED_AT, PLACED_TABLE, ViewDir, ViewDoc, ViewHome, ViewRow};
 use rerail_reads::tape::{InPlace, f16, f16z};
 
 /// A tape where it lies, and its view (the host's: a 16z view's cache at the host's address).
@@ -384,7 +384,10 @@ impl<'a> Doc<'a> {
         if place == Place::Docof {
             return u64::from(self.e.file);
         }
-        let span = self.placed(self.loc_span(l));
+        // Placed by its table (`PLACED_TABLE`: a placement no word maps, its spans placed once, by local id), else its
+        // span as read, placed: the CLIF read's and the host's (`view_reads::Doc::placed_loc`). Without the table a
+        // guest at a declared place or in an embed read its spans clamped by a delta it does not have: line 1.
+        let span = if self.e.placement == PLACED_TABLE { *items::<u64>(&self.e.placed).add(l as usize) } else { self.placed(self.loc_span(l)) };
         let (s, t) = ((span >> 32) as u32, span as u32);
         let line = self.lines.line(s);
         u64::from(match place {
