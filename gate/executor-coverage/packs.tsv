@@ -47,12 +47,12 @@
 2	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1, rerail 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @glob_sub/3	not on the device: no computed term	lib 1
-1	function @is_cased_lowercase/1	not on the device: no Metal device	lib 1
-1	function @is_cased_uppercase/1	not on the device: no Metal device	lib 1
-1	function @is_lowercase/1	not on the device: no Metal device	lib 1
+1	function @is_cased_lowercase/1	not on the device: no computed term	lib 1
+1	function @is_cased_uppercase/1	not on the device: no computed term	lib 1
+1	function @is_lowercase/1	not on the device: no computed term	lib 1
 1	function @package_of/1	not on the device: no computed term	lib 1
-1	function @py_consecutive_names/1	not on the device: no Metal device	python 1
-1	function @py_parses/1	not on the device: no Metal device	python 1
+1	function @py_consecutive_names/1	not on the device: no computed term	python 1
+1	function @py_parses/1	not on the device: no computed term	python 1
 1	function @to_precision/2	not on the device: no computed term	lib 1
 1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
 1	shipped functor @class_prefix/1	not native: sqlite: error: no SQL for @class_prefix($a)	data-layer (engine) 1
