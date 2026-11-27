@@ -4,16 +4,19 @@
 .mode steer
 .scope include "**/*"
 
-// Ruff AIR311 (Airflow): an Airflow 2 API that Airflow 3 still accepts but deprecated. A read of a moved name is
-// reported at the name or the attribute's last part (unless it is an `except ImportError` fallback for the new
-// name); so is a deprecated keyword: `sla_miss_callback=` to a DAG, `datasets=` to DatasetOrTimeSchedule (a safe
-// rename to `assets=`), and `sla=` to an operator, at the keyword's name.
+// Ruff AIR311 (Airflow): an Airflow 2 API that Airflow 3 still accepts but deprecated. A read of a moved name, by
+// the import Ruff sees there, is reported at the name or the attribute's last part (unless it is an `except
+// ImportError` fallback for the new name), a string annotation's names too; so is a deprecated keyword:
+// `sla_miss_callback=` to a DAG, `datasets=` to DatasetOrTimeSchedule (a safe rename to `assets=`), and `sla=` to
+// an operator, at the keyword's name.
 //   from airflow import Dataset
 //   Dataset("s3://x")                   ← AIR311: import `Asset` from `airflow.sdk` instead
 //   from airflow.models.param import Param
 //   Param(1)                            ← AIR311: import `Param` from `airflow.sdk.definitions.param`
 //   BashOperator(task_id="t", sla=None) ← AIR311: `sla` has no replacement
-#include "python/misc-airflow.rerail"
+//   from airflow.sdk import task
+//   @task                               not reported: `task` is airflow.sdk's now, whatever was imported above
+#include "python/pt1120-python-06.rerail"   // air_at, air_safe, air_callq, air_dag_at, air_kind_at
 
 .violation AIR311(at: node, x: symbol, m: symbol) code "AIR311"
     "Import `{x}` from `{m}` instead; the old name still works in Airflow 3 but is expected to be removed later."
@@ -30,19 +33,19 @@
     fix safe to_assets "Rename to `assets`"
 to_assets(at) => replace(at, `assets`).
 
-AIR311(at, x, m) :- air311_hit(e, at, m, x), !air_guarded(e, m, x).
+AIR311(at, x, m) :- air311_hit(e, at, m, x), !air_safe(e, m, x).
 air_needs_guard(e, m, x) :- air311_hit(e, _, m, x).
 // air311_hit(e, at, m, x): reference e, reported at at, has an Airflow 3 spelling `x` in `m`. Keyed by the reference:
 // air311_new is a table of names alone, and a rule of it that took its names from every file's references made it
 // a table of every file's names, joined by name in the cross-file part (decision 0677).
 .decl air311_hit(e: node, at: node, m: symbol, x: symbol)
-air311_hit(e, at, m, x) :- air_ref(e, at, q), air311_new(q, m, x).
-air311_hit(e, at, "airflow.sdk.definitions.param", x) :- air_ref(e, at, q), prefix("airflow.models.", q),
+air311_hit(e, at, m, x) :- air_at(e, at, q), air311_new(q, m, x).
+air311_hit(e, at, "airflow.sdk.definitions.param", x) :- air_at(e, at, q), prefix("airflow.models.", q),
     split_dot(q, m, x), m != "", (x = "Param" ; x = "ParamsDict" ; x = "DagParam").
-AIR311_gone(at, q) :- air_ref(_, at, q), q = "airflow.datasets.DatasetAliasEvent".
-AIR311_arg(n, "sla_miss_callback") :- air_kw(c, "sla_miss_callback", n), air_dag(c).
-AIR311_datasets(n) :- air_kw(c, "datasets", n), call_q(c, "airflow.timetables.datasets.DatasetOrTimeSchedule").
-AIR311_arg(n, "sla") :- air_kw(c, "sla", n), air_kind(c, "operators", "Operator").
+AIR311_gone(at, q) :- air_at(_, at, q), q = "airflow.datasets.DatasetAliasEvent".
+AIR311_arg(n, "sla_miss_callback") :- air_kw(c, "sla_miss_callback", n), air_dag_at(c).
+AIR311_datasets(n) :- air_kw(c, "datasets", n), air_callq(c, "airflow.timetables.datasets.DatasetOrTimeSchedule").
+AIR311_arg(n, "sla") :- air_kw(c, "sla", n), air_kind_at(c, "operators", "Operator").
 air_kind_ask("operators", "Operator").
 // air311_new(old, module, name): old's Airflow 3 spelling is `name` in `module`.
 .decl air311_new(old: symbol, m: symbol, x: symbol)

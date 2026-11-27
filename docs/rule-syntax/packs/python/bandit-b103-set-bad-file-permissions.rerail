@@ -11,8 +11,10 @@
 //   os.chmod(path, 0o600)                not reported
 //   os.chmod(path, mode=0o777)           not reported: Bandit reads positional arguments only
 //   os.chmod(path, stat.S_IRWXO)         not reported: a name, not an integer literal
+//   os.chmod("f", \
+//            755)                        B103: a line continuation is no argument
 
-#include "python/security.rerail"   // call_leaf, arg_count, pos_arg, literal
+#include "python/security.rerail"   // call_leaf, pos_arg, literal
 
 .violation B103(at: node, msg: symbol) code "B103" "{msg}"
     suppress nosec "B103"
@@ -25,5 +27,13 @@ B103(c, "Narrow this chmod mode to owner-only write and execute, such as 0o600 o
 // bits are m's. The bits tested are below 32, and 10^5 is a multiple of 32, so the last five decimal digits
 // decide them: a mode of any size converts safely (0xFFFFFFFFFFFFFFFFFFFF is B103).
 .decl chmod_mode(c: node, m: number)
-chmod_mode(c, to_number(low)) :- call_leaf(c, x), contains("chmod", x), arg_count(c, 2), pos_arg(c, 1, a),
+chmod_mode(c, to_number(low)) :- call_leaf(c, x), contains("chmod", x), chmod_arg(c, 1, a), chmod_args(c, 2),
     literal(a, "int", v), (strlen(v) <= 5, low = v ; strlen(v) > 5, low = @slice(v, strlen(v) - 5, strlen(v))).
+// chmod_arg(c, i, a), chmod_args(c, k): security's pos_arg and arg_count without the line continuations that
+// tree-sitter leaves among a call's arguments (`f("f", \` / `755)`), which `ast` does not have. The library's
+// in_call_args should leave them out (NOTES-pt1120-python-06.md); then these are pos_arg and arg_count again.
+.decl chmod_arg(c: node, i: number, a: node)
+chmod_arg(c, i, a) :- call_leaf(c, x), contains("chmod", x), pos_arg(c, j, a), !kind(a, "line_continuation"),
+    i = count : { pos_arg(c, k, b), k < j, !kind(b, "line_continuation") }.
+.decl chmod_args(c: node, k: number)
+chmod_args(c, k) :- call_leaf(c, x), contains("chmod", x), k = count : { pos_arg(c, _, b), !kind(b, "line_continuation") }.

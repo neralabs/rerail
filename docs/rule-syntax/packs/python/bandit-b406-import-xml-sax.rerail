@@ -8,6 +8,7 @@
 //   import xml.sax                              B406
 //   from xml.sax import saxutils                B406
 //   import defusedxml.sax                       not reported
+//   import xml . sax                            B406: `ast` reads the name without the spaces
 //   importlib.import_module("xml.sax")          B406: a call that imports a listed module (exactly)
 
 #include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
@@ -15,4 +16,11 @@
 .violation B406(at: node) code "B406"
     "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
     suppress nosec "B406"
-B406(n) :- blacklisted(n, "B406").
+B406(c) :- blacklisted(c, "B406"), kind(c, "call").
+B406(i) :- b406_hit(i, "B406", r), r = min k : { b406_hit(i, _, k) }.
+// b406_hit(i, code, rank): security's import_hit, over each imported name as `ast` spells it, without the spaces
+// and line continuations a dotted name may hold (`import xml.\` / `sax`). The library's import_name should drop
+// them (NOTES-pt1120-python-06.md); then this rule is `blacklisted(n, "B406")` again.
+.decl b406_hit(i: node, code: symbol, rank: number)
+b406_hit(i, code, r) :- import_entry(i, s0), s = @replace_all(s0, "[\\s\\\\]+", ""), blacklist_import(code, r, m),
+    prefix(m, s).
