@@ -174,7 +174,7 @@ fn trees() -> Vec<Vec<u8>> {
 /// Two states the same: the place, the next record, the depth, the levels' places, the nodes before, the file's end
 /// (the last token's end is not read at a list's cycle place, where every chunk starts).
 fn same_state(a: &crate::middle::At, b: &crate::middle::At) -> bool {
-    a.end == b.end && a.nodes == b.nodes && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && a.ret == b.ret))
+    a.end == b.end && a.nodes == b.nodes && a.prev_start == b.prev_start && (a.end.is_some() || (a.entry.i == b.entry.i && a.entry.depth == b.entry.depth && a.entry.st == b.entry.st && a.ret == b.ret && a.frames == b.frames))
 }
 
 #[test]
@@ -207,4 +207,36 @@ fn tier2_entries_are_the_serial_walks() {
         }
     }
     eprintln!("{} files in chunks of 1, 2, 3 and 16 records ({chunks} chunks): the serial walk's states; at most {most} lanes a chunk", all.len());
+}
+
+/// Pass 2: each chunk's nodes written from its state, the chunks in order and in reverse, give the serial walk's tape,
+/// byte for byte.
+#[test]
+fn tier2_tape_from_the_middle_is_the_serial_tape() {
+    let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
+    let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
+    let writer = |f: &[u8]| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+    let (mut tapes, mut chunks) = (0, 0);
+    for (k, f) in all.iter().enumerate() {
+        let buf = padded(f);
+        let lx = lex(&buf, f.len());
+        let mut w = writer(f);
+        let parsed = crate::parse_lexed(&buf, &lx, &mut w);
+        let want = parsed.ok().map(|()| w.finish().expect("the serial tape").tape.as_bytes().to_vec());
+        for size in [1, 3, 16] {
+            for reverse in [false, true] {
+                let mut m = writer(f);
+                let got = crate::middle::parse_middle(&buf, &lx, &mut m, size, |n| if reverse { (0..n).rev().collect() } else { (0..n).collect() });
+                assert_eq!(got, parsed, "file {k}, chunks of {size}: the verdict");
+                if let Some(want) = &want {
+                    let have = m.finish().expect("the tape from the middle").tape.as_bytes().to_vec();
+                    assert!(have == *want, "file {k}, chunks of {size}, reverse {reverse}: the tape from the middle differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
+                    tapes += 1;
+                    chunks += crate::middle::chunk_starts(&buf, &lx, size).len();
+                }
+            }
+        }
+    }
+    eprintln!("{tapes} tapes from the middle ({chunks} chunks), each the serial tape");
 }

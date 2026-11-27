@@ -50,11 +50,29 @@ tier 2's form from its loop's text (`run`), appended to the tier:
 The helpers that write (`open`, `leaf`, `leaf_in`, `token`, `close`, `string`, `value_primitive`) are generic over
 `Out`. The serial walk calls them with the cursor, as before.
 
-### 2. Still to build (the design's stages)
+### 2. Pass 2: the tape from each chunk's entry
 
-- Pass 2: the tape written from each chunk's entry. The writer's cursor holds its open frames and makes and settles
-  blocks in node order; a cursor from the middle takes the frames of the levels open at its entry and writes its
-  nodes at their final places.
+The writer's cursor holds the frames of the open nodes (node, children so far, last child, start) and makes and
+settles blocks in node order. So the lanes carry what a range does to them, as they carry the nest:
+
+- the frames it closes of its entry's (`fkc`), what it writes into those (`touch`: children added, the last), and the
+  frames it leaves open (`pf`), their nodes from the range's first; the last node's start (`last_start`). `Shadow` is
+  the `Out` that keeps them as the cursor does, without writing.
+- `then` and `apply` compose them with the nest, so pass 3 gives each chunk its first node, the start before it and
+  its open frames (`At::frames`, `At::prev_start`).
+- A cursor from the middle (`writer16::Cursor<X, true>`, `Cursor::resume`) writes a chunk's nodes from them: every
+  block is made first (`Writer::make_blocks`, the node count from pass 3), none is settled while chunks write
+  (`finish` makes each final, in block order), and the state's fields are set once at the end (`end_middle`). The
+  serial cursor (`MID` false, the default) is unchanged.
+- `parse_middle` runs the three passes; `write_range` is one chunk's pass 2.
+
+Each cell has one writer, the chunk of its node, but for a node's slot, which the chunk that writes the node after
+writes, and an open node's length and size, which the chunk that closes it writes. Escaped values go to their block's
+side list, kept sorted by row: on the CPU the chunks write one at a time; written at once they need the side list's
+rows placed by a count first.
+
+### 3. Still to build (the design's stages)
+
 - Stage 2's token pass, the per-type indexes of stage 1's pass 2.
 - The greedy LZ4 encoder (`ukl/lz4_encode.h`) and the 16z pieces.
 - The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
@@ -66,4 +84,6 @@ objects and arrays, nests 40, 1,023 and 1,025 deep, empty levels, and the closer
 chunks of 1, 2, 3 and 16 records, 11,813 chunks. Each chunk's state from pass 3 (place, record, depth, levels'
 places, nodes before, the file's end) is the serial walk's there, and the walk chunk after chunk ends as `parse`
 does. At most 16 lanes a chunk. `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
-text checks on the serial walk.
+text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
+records written in order and in reverse (180 tapes, 8,926 chunks), gives the serial walk's tape byte for byte, and
+every refusal the serial one.

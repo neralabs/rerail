@@ -153,46 +153,107 @@ pub trait Out {
     unsafe fn close(&mut self, end: u64);
 }
 
-impl Out for Cursor<Cells> {
+impl<const MID: bool> Out for Cursor<Cells, MID> {
     #[inline(always)]
     unsafe fn open(&mut self, number: u32, start: u64) {
-        unsafe { Cursor::open(self, number, start) }
+        unsafe { Cursor::<Cells, MID>::open(self, number, start) }
     }
     #[inline(always)]
     unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
-        unsafe { Cursor::leaf(self, number, start, end) }
+        unsafe { Cursor::<Cells, MID>::leaf(self, number, start, end) }
     }
     #[inline(always)]
     unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
-        unsafe { Cursor::leaf_in(self, number, child, start, cs, ce, end) }
+        unsafe { Cursor::<Cells, MID>::leaf_in(self, number, child, start, cs, ce, end) }
     }
     #[inline(always)]
     unsafe fn close(&mut self, end: u64) {
-        unsafe { Cursor::close(self, end) }
+        unsafe { Cursor::<Cells, MID>::close(self, end) }
     }
 }
 
-/// The nodes a walk writes, counted: what pass 1 keeps of them.
+/// The writer's frame of an open node, as the cursor keeps it: the node, its children so far, its last child
+/// (`NONE`: none yet), its start.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Count {
-    pub nodes: u32,
+pub struct Frame {
+    pub node: u32,
+    pub kids: u32,
+    pub last: u32,
+    pub start: u64,
 }
 
-impl Out for Count {
+/// No last child yet.
+pub const NONE: u32 = u32::MAX;
+
+/// What a range wrote into a frame open at its entry, which it does not know: the children it added, its last.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Touch {
+    pub kids: u32,
+    pub last: Option<u32>,
+}
+
+/// The writer's frames, kept as the cursor keeps them, without writing (pass 1's, and the serial walk's in the tests):
+/// the nodes written (from the range's first, `n`), the frames the range opened (`own`), those open at its entry that
+/// it knows (`base`, outermost first) and what it wrote into those below them (`touch`, innermost first), the frames
+/// of its entry it closed (`closed`), and the last node's start.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Shadow {
+    pub n: u32,
+    pub own: Vec<Frame>,
+    pub base: Vec<Frame>,
+    pub touch: Vec<Touch>,
+    pub closed: usize,
+    pub last_start: Option<u64>,
+}
+
+impl Shadow {
+    /// A node written at `start`: its parent's child.
     #[inline(always)]
-    unsafe fn open(&mut self, _: u32, _: u64) {
-        self.nodes += 1;
+    fn node(&mut self, start: u64) -> u32 {
+        let i = self.n;
+        if let Some(f) = self.own.last_mut() {
+            f.kids += 1;
+            f.last = i;
+        } else if self.closed < self.base.len() {
+            let k = self.base.len() - 1 - self.closed;
+            self.base[k].kids += 1;
+            self.base[k].last = i;
+        } else {
+            let k = self.closed - self.base.len();
+            if self.touch.len() <= k {
+                self.touch.resize(k + 1, Touch::default());
+            }
+            self.touch[k].kids += 1;
+            self.touch[k].last = Some(i);
+        }
+        self.n += 1;
+        self.last_start = Some(start);
+        i
+    }
+}
+
+impl Out for Shadow {
+    #[inline(always)]
+    unsafe fn open(&mut self, _: u32, start: u64) {
+        let i = self.node(start);
+        self.own.push(Frame { node: i, kids: 0, last: NONE, start });
     }
     #[inline(always)]
-    unsafe fn leaf(&mut self, _: u32, _: u64, _: u64) {
-        self.nodes += 1;
+    unsafe fn leaf(&mut self, _: u32, start: u64, _: u64) {
+        self.node(start);
     }
     #[inline(always)]
-    unsafe fn leaf_in(&mut self, _: u32, _: u32, _: u64, _: u64, _: u64, _: u64) {
-        self.nodes += 2;
+    unsafe fn leaf_in(&mut self, _: u32, _: u32, start: u64, cs: u64, _: u64, _: u64) {
+        self.node(start);
+        self.n += 1;
+        self.last_start = Some(cs);
     }
     #[inline(always)]
-    unsafe fn close(&mut self, _: u64) {}
+    unsafe fn close(&mut self, _: u64) {
+        if self.own.pop().is_none() {
+            self.closed += 1;
+        }
+    }
 }
 
 /// The walk's state at a place: the next record, the last token's end, the levels open, the place. The levels'
@@ -283,7 +344,9 @@ pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize]) -> Vec<usi
 
 /// One lane of a summary: what a range does for the entries at place `st0` whose innermost levels return to `kc`
 /// (innermost first; those it closed). It leaves `p` open above what is left of them (outermost first), and leaves at
-/// `exit`, or the file ends in it (`end`), having written `nodes`.
+/// `exit`, or the file ends in it (`end`), having written `nodes`. Of the writer's frames: it closes `fkc` of its
+/// entry's, writes `touch` into those (innermost first, the last the one it is in then), leaves `pf` open (their nodes
+/// and last children from the range's first node), and its last node starts at `last_start`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lane {
     pub st0: u8,
@@ -292,6 +355,19 @@ pub struct Lane {
     pub exit: Entry,
     pub nodes: u32,
     pub end: Option<Result<(), u32>>,
+    pub fkc: usize,
+    pub touch: Vec<Touch>,
+    pub pf: Vec<Frame>,
+    pub last_start: Option<u64>,
+}
+
+impl Lane {
+    /// A lane from where its walk stopped: its frames from what `sh` kept.
+    fn of(st0: u8, kc: Vec<u8>, p: Vec<u8>, exit: Entry, end: Option<Result<(), u32>>, sh: Shadow) -> Lane {
+        let mut touch = sh.touch;
+        touch.resize(sh.closed + 1, Touch::default());
+        Lane { st0, kc, p, exit, nodes: sh.n, end, fkc: sh.closed, touch, pf: sh.own, last_start: sh.last_start }
+    }
 }
 
 /// A range's summary: its lanes, its first record and the record past it.
@@ -308,24 +384,27 @@ pub fn lanes(src: &[u8], lx: &crate::tier1::Lexed, start: usize, stop: usize, de
     let places: &[u8] = if start == 0 { &[0] } else { CYCLES };
     // Deeper than the walk goes: the serial walk refused the file before this chunk.
     if depth0 > DEPTH {
-        let lanes = places.iter().map(|&st0| Lane { st0, kc: Vec::new(), p: Vec::new(), exit: Entry::default(), nodes: 0, end: Some(Err(lx.starts[start])) }).collect();
+        let lanes = places.iter().map(|&st0| Lane::of(st0, Vec::new(), Vec::new(), Entry::default(), Some(Err(lx.starts[start])), Shadow::default())).collect();
         return Summary { lanes, start, end: stop };
     }
-    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Count)> =
-        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Count::default())).collect();
+    let mut work: Vec<(u8, Vec<u8>, std::boxed::Box<[u8; DEPTH]>, usize, Entry, Shadow)> =
+        places.iter().map(|&st| (st, Vec::new(), std::boxed::Box::new([0u8; DEPTH]), depth0, Entry { i: start, e: 0, depth: depth0, st }, Shadow::default())).collect();
     let mut out = Summary { lanes: Vec::new(), start, end: stop };
     while let Some((st0, kc, mut ret, low, en, mut count)) = work.pop() {
         // SAFETY: the records and the padded source are tier 1's, as the serial walk's.
         match unsafe { run_range(src, lx, &mut count, en, &mut *ret, low, stop) } {
-            Stop::At(x) => out.lanes.push(Lane { st0, kc, p: ret[low..x.depth].to_vec(), exit: x, nodes: count.nodes, end: None }),
-            Stop::Done(r) => out.lanes.push(Lane { st0, kc, p: Vec::new(), exit: Entry::default(), nodes: count.nodes, end: Some(r) }),
+            Stop::At(x) => {
+                let p = ret[low..x.depth].to_vec();
+                out.lanes.push(Lane::of(st0, kc, p, x, None, count));
+            }
+            Stop::Done(r) => out.lanes.push(Lane::of(st0, kc, Vec::new(), Entry::default(), Some(r), count)),
             Stop::Read(x) => {
                 for &k in RETS {
                     let mut kc = kc.clone();
                     kc.push(k);
                     let mut r = ret.clone();
                     r[x.depth] = k;
-                    work.push((st0, kc, r, x.depth, Entry { st: k, ..x }, count));
+                    work.push((st0, kc, r, x.depth, Entry { st: k, ..x }, count.clone()));
                 }
             }
         }
@@ -350,7 +429,29 @@ fn then(a: &Lane, b: &Lane) -> Option<Lane> {
     kc.extend_from_slice(&b.kc[m..]);
     let mut p = a.p[..a.p.len() - m].to_vec();
     p.extend_from_slice(&b.p);
-    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end })
+    // The frames: `b`'s closed ones matched against those `a` leaves open, the rest closed below `a`'s entry; what
+    // `b` wrote into the one it is then in, that frame's.
+    let at = |x: u32| x + a.nodes;
+    let (n, fm) = (a.pf.len(), b.fkc.min(a.pf.len()));
+    let mut pf = a.pf[..n - fm].to_vec();
+    let mut touch = a.touch.clone();
+    if b.fkc < n {
+        let (f, t) = (pf.last_mut().expect("a frame left open"), b.touch[b.fkc]);
+        f.kids += t.kids;
+        if let Some(l) = t.last {
+            f.last = at(l);
+        }
+    } else {
+        let (s, t) = (touch.last_mut().expect("the frame `a` is in"), b.touch[n]);
+        s.kids += t.kids;
+        if let Some(l) = t.last {
+            s.last = Some(at(l));
+        }
+        touch.extend(b.touch[n + 1..].iter().map(|t| Touch { kids: t.kids, last: t.last.map(at) }));
+    }
+    pf.extend(b.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
+    let last_start = b.last_start.or(a.last_start);
+    Some(Lane { st0: a.st0, kc, p, exit: b.exit, nodes: a.nodes + b.nodes, end: b.end, fkc: a.fkc + b.fkc - fm, touch, pf, last_start })
 }
 
 /// Two ranges' summaries, one after the other. Associative, so a prefix scan composes them in any tree.
@@ -377,12 +478,15 @@ pub struct At {
     pub ret: Vec<u8>,
     pub nodes: u32,
     pub end: Option<Result<(), u32>>,
+    /// The writer's frames open there, outermost first, and the start of the node before.
+    pub frames: Vec<Frame>,
+    pub prev_start: u64,
 }
 
 impl At {
     /// The file's first record: the root's place, no level open.
     pub fn start() -> At {
-        At { entry: Entry::default(), ret: Vec::new(), nodes: 0, end: None }
+        At { entry: Entry::default(), ret: Vec::new(), nodes: 0, end: None, frames: Vec::new(), prev_start: 0 }
     }
 }
 
@@ -396,7 +500,18 @@ pub fn apply(s: &Summary, a: &At) -> Option<At> {
     let l = s.lanes.iter().find(|l| l.st0 == a.entry.st && l.kc.len() <= d && (0..l.kc.len()).all(|j| l.kc[j] == a.ret[d - 1 - j]))?;
     let mut ret = a.ret[..d - l.kc.len()].to_vec();
     ret.extend_from_slice(&l.p);
-    Some(At { entry: l.exit, ret, nodes: a.nodes + l.nodes, end: l.end })
+    let at = |x: u32| x + a.nodes;
+    let nf = a.frames.len().checked_sub(l.fkc)?;
+    let mut frames = a.frames[..nf].to_vec();
+    if let Some(f) = frames.last_mut() {
+        let t = l.touch[l.fkc];
+        f.kids += t.kids;
+        if let Some(x) = t.last {
+            f.last = at(x);
+        }
+    }
+    frames.extend(l.pf.iter().map(|f| Frame { node: at(f.node), last: if f.last == NONE { NONE } else { at(f.last) }, ..*f }));
+    Some(At { entry: l.exit, ret, nodes: a.nodes + l.nodes, end: l.end, frames, prev_start: l.last_start.unwrap_or(a.prev_start) })
 }
 
 /// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by a prefix scan of their compositions: round
@@ -433,15 +548,78 @@ pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<
             continue;
         }
         let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
-        let mut count = Count { nodes: at.nodes };
+        let mut sh = Shadow { n: at.nodes, base: at.frames.clone(), ..Shadow::default() };
         // SAFETY: as `lanes`'.
-        match unsafe { run_range(src, lx, &mut count, at.entry, &mut *ret, 0, stop) } {
-            Stop::At(x) => at = At { entry: x, ret: ret[..x.depth].to_vec(), nodes: count.nodes, end: None },
-            Stop::Done(r) => at = At { entry: Entry::default(), ret: Vec::new(), nodes: count.nodes, end: Some(r) },
+        let stopped = unsafe { run_range(src, lx, &mut sh, at.entry, &mut *ret, 0, stop) };
+        let mut frames = sh.base[..sh.base.len() - sh.closed].to_vec();
+        frames.extend_from_slice(&sh.own);
+        let prev_start = sh.last_start.unwrap_or(at.prev_start);
+        match stopped {
+            Stop::At(x) => at = At { entry: x, ret: ret[..x.depth].to_vec(), nodes: sh.n, end: None, frames, prev_start },
+            Stop::Done(r) => at = At { entry: Entry::default(), ret: Vec::new(), nodes: sh.n, end: Some(r), frames: Vec::new(), prev_start },
             Stop::Read(_) => unreachable!("the whole nest is known"),
         }
     }
     out.push(at);
     out
+}
+
+/// Pass 2: chunk `at..stop`'s nodes written from its state `at`, through a cursor from the middle on the writer's state
+/// `state` (its blocks made: `Writer::make_blocks`). Where it stops: at the next chunk's first record, or the file's end.
+///
+/// # Safety
+/// `state` is a writer's state, its room reserved and its blocks made for the tape the chunks write; `at` is the
+/// chunk's state from pass 3; no other chunk writes this one's nodes.
+pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, at: &At, stop: usize) -> Stop {
+    let mut ret = std::boxed::Box::new([0u8; DEPTH]);
+    ret[..at.ret.len()].copy_from_slice(&at.ret);
+    // The frames' room: those open at its entry, and as many as a chunk opens at most.
+    let mut buf: Vec<u8> = Vec::with_capacity(((DEPTH + 1) * 3 + 1 + at.frames.len()) * 24);
+    let frames: Vec<(u32, u32, u32, u64)> = at.frames.iter().map(|f| (f.node, f.kids, f.last, f.start)).collect();
+    // SAFETY: the caller's; the frames' room is `buf`'s.
+    unsafe {
+        let mut d = Cursor::<Cells, true>::resume(state, buf.as_mut_ptr(), at.nodes, at.prev_start, &frames);
+        run_range(src, lx, &mut d, at.entry, &mut *ret, 0, stop)
+    }
+}
+
+/// `src`'s tape into `w` from the middle: each chunk of about `size` records summarised (pass 1), each chunk's state by
+/// a prefix scan of them (pass 3), then each chunk's nodes written from its state (pass 2), the chunks in the order
+/// `order` gives (each on its own: any order writes the same tape). Or the byte it was refused at.
+pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: usize, order: impl Fn(usize) -> Vec<usize>) -> Result<(), u32> {
+    if lx.refused {
+        return Err(0);
+    }
+    if lx.count == 0 {
+        return Err(lx.len as u32);
+    }
+    let chunks = chunk_starts(src, lx, size);
+    let sums = summaries(src, lx, size);
+    let ats = entries(&sums);
+    let last = ats.last().cloned().flatten().ok_or(0u32)?;
+    match last.end {
+        Some(Ok(())) => {}
+        Some(Err(b)) => return Err(b),
+        None => return Err(0),
+    }
+    w.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * 3 + 1);
+    w.final_as_written();
+    w.make_blocks(last.nodes as usize).map_err(|_| u32::MAX)?;
+    let state = w.state_address();
+    for c in order(chunks.len()) {
+        let at = ats[c].as_ref().ok_or(0u32)?;
+        let stop = chunks.get(c + 1).copied().unwrap_or(lx.count + 1);
+        // SAFETY: the state's room is reserved and its blocks made; `at` is pass 3's.
+        match unsafe { write_range(src, lx, state, at, stop) } {
+            Stop::At(x) if x.i == stop => {}
+            Stop::Done(Ok(())) if c + 1 == chunks.len() => {}
+            _ => return Err(u32::MAX),
+        }
+    }
+    w.end_middle(last.nodes as usize, last.prev_start);
+    match w.failure() {
+        None => Ok(()),
+        Some(_) => Err(u32::MAX),
+    }
 }
 "#;

@@ -645,6 +645,28 @@ impl State {
         Ok(())
     }
 
+    /// Every block of a tape of `n` nodes made, in order, for cursors from the middle (decision 0726: `Cursor::resume`),
+    /// each writing a chunk of its nodes. Format 16's alone (16z's rooms are given back as its blocks are final).
+    pub(crate) unsafe fn make_blocks(&mut self, n: u32) -> R {
+        if self.z() || self.n != 0 || self.blocks != 0 {
+            return self.fail(fail::OUTSIDE, 0);
+        }
+        for b in 0..n.div_ceil(Z).max(1) {
+            // SAFETY: the parts' room is the caller's (`reserve_run`).
+            unsafe { self.new_block(b)? };
+        }
+        Ok(())
+    }
+
+    /// The state once every chunk is written by cursors from the middle: `n` nodes, the last one's start, none open,
+    /// each node final as written. `finish` makes every block final.
+    pub(crate) fn end_middle(&mut self, n: u32, prev_start: u64) {
+        self.n = n;
+        self.prev_start = prev_start;
+        self.open_len = 0;
+        self.frontier = n;
+    }
+
     /// Block `b` made final, if it is: every node in it closed, the node after its last opened, the frontier past
     /// it.
     unsafe fn settle(&mut self, b: u32) -> R {
@@ -1725,6 +1747,24 @@ pub unsafe fn w_open(desc: *const u8, number: u32, start: u64) -> u32 {
     unsafe { code(state(desc).open_node(number, start, true).map(|_| ())) }
 }
 
+/// Every block of a tape of `n` nodes made, for cursors from the middle (`State::make_blocks`).
+///
+/// # Safety
+/// `desc` is a writer's state, its room reserved (`reserve_run`).
+pub unsafe fn w_make_blocks(desc: *const u8, n: u32) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).make_blocks(n)) }
+}
+
+/// The state once cursors from the middle wrote every chunk (`State::end_middle`).
+///
+/// # Safety
+/// `desc` is a writer's state.
+pub unsafe fn w_end_middle(desc: *const u8, n: u32, prev_start: u64) {
+    // SAFETY: the caller's.
+    unsafe { state(desc).end_middle(n, prev_start) }
+}
+
 /// The innermost open node's end: its length, and an inner node's slot.
 ///
 /// # Safety
@@ -1751,7 +1791,12 @@ pub unsafe fn w_leaf(desc: *const u8, number: u32, start: u64, end: u64) -> u32 
 /// a constant offset), with no test of their bounds: as `Walk`'s, the caller's are in order (`begin`). The state is
 /// reached only to begin a block (and settle the one before) and to close a node of a block before: then its own op
 /// writes the node, the cursor's fields given to it and taken back. The bytes are the state's ops'.
-pub struct Cursor<X: CellWidths> {
+///
+/// A cursor from the middle (`MID`, decision 0726: `resume`) writes one chunk of a tape's nodes, from node `n` with
+/// the frames of the nodes open there, while other cursors write the other chunks: every block is made before
+/// (`State::make_blocks`), none is settled by it (`finish` makes every block final), and the state's own fields are
+/// never its (`end_middle` sets them once every chunk is written).
+pub struct Cursor<X: CellWidths, const MID: bool = false> {
     s: *mut State,
     room: usize,
     area: usize,
@@ -1761,6 +1806,44 @@ pub struct Cursor<X: CellWidths> {
     opens: usize,
     open_len: u32,
     x: core::marker::PhantomData<X>,
+}
+
+impl<X: CellWidths> Cursor<X, true> {
+    /// A cursor from the middle on the writer's state `desc`: its next node `n`, the start of node `n - 1`
+    /// (`prev_start`), and the frames of the nodes open there (outermost first: each node, its children so far, its
+    /// last child or `NONE`, its start), kept in `buf`.
+    ///
+    /// # Safety
+    /// `desc` is a writer's state whose blocks are made for the tape (`State::make_blocks`), of widths `X`; `buf` has
+    /// room for every frame the chunk holds open at once (`OPEN` bytes each); no other cursor writes this chunk's
+    /// nodes, and the frames are the nodes open at node `n` of the tape the chunks write.
+    pub unsafe fn resume(desc: *mut u8, buf: *mut u8, n: u32, prev_start: u64, frames: &[(u32, u32, u32, u64)]) -> Self {
+        // SAFETY: the caller's.
+        unsafe {
+            let s: *mut State = state(desc);
+            let st = &*s;
+            let block = st.block(if n == 0 { 0 } else { (n - 1) / Z });
+            let opens = buf as usize;
+            for (k, &(i, idx, last, start)) in frames.iter().enumerate() {
+                let t = opens + k * OPEN as usize;
+                st32(t, i);
+                st32(t + 4, idx);
+                st32(t + 8, last);
+                st64(t + 16, start);
+            }
+            Cursor { s, room: block.room, area: block.area, n, prev_start, source_len: st.source_len, opens, open_len: frames.len() as u32, x: core::marker::PhantomData }
+        }
+    }
+
+    /// The next node.
+    pub fn nodes(&self) -> u32 {
+        self.n
+    }
+
+    /// The start of the last node written.
+    pub fn prev_start(&self) -> u64 {
+        self.prev_start
+    }
 }
 
 impl<X: CellWidths> Cursor<X> {
@@ -1785,6 +1868,40 @@ impl<X: CellWidths> Cursor<X> {
                 (b.room, b.area)
             };
             Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, x: core::marker::PhantomData }
+        }
+    }
+}
+
+impl<X: CellWidths, const MID: bool> Cursor<X, MID> {
+    /// Block `n / Z` held, made before (`MID`'s `start_block`).
+    #[inline(always)]
+    unsafe fn hold_block(&mut self) {
+        // SAFETY: `resume`'s: every block is made.
+        let block = unsafe { (*self.s).block(self.n / Z) };
+        (self.room, self.area) = (block.room, block.area);
+    }
+
+    /// The file's first node, from the middle (`open_node_x`'s at node 0): its code, gap and checkpoint, its frame
+    /// pushed where `push`.
+    #[inline(always)]
+    unsafe fn first_from_middle(&mut self, number: u32, start: u64, push: bool) {
+        // SAFETY: as `hold_block`'s; the frames' room is `resume`'s.
+        unsafe {
+            self.hold_block();
+            let block = self.block();
+            (*self.s).put_code_at(0, number, block);
+            self.put(1, 0, 0);
+            (*self.s).put_checkpoint_x::<X>(self.room, 0, start);
+            self.prev_start = start;
+            self.n = 1;
+            if push {
+                let t = self.opens + self.open_len as usize * OPEN as usize;
+                st32(t, 0);
+                st32(t + 4, 0);
+                st32(t + 8, NONE);
+                st64(t + 16, start);
+                self.open_len += 1;
+            }
         }
     }
 
@@ -1909,15 +2026,23 @@ impl<X: CellWidths> Cursor<X> {
     pub unsafe fn open(&mut self, number: u32, start: u64) {
         // SAFETY: the caller's.
         unsafe {
-            if self.n == 0 {
+            if self.n == 0 && MID {
+                self.first_from_middle(number, start, true);
+            } else if self.n == 0 {
                 // The root: the file's first node, its block the first (`walk`'s document).
                 let r = self.give().open_node_x::<X>(number, start, true);
                 debug_assert!(r.is_ok(), "the writer's open, its room reserved");
                 self.take();
             } else if self.n.is_multiple_of(Z) {
-                self.start_block();
+                if MID {
+                    self.hold_block();
+                } else {
+                    self.start_block();
+                }
                 self.node::<true>(number, start, true);
-                self.settle_before();
+                if !MID {
+                    self.settle_before();
+                }
             } else {
                 self.node::<false>(number, start, true);
             }
@@ -1933,16 +2058,25 @@ impl<X: CellWidths> Cursor<X> {
         debug_assert!(end >= start && end <= self.source_len, "a leaf's end past its start, in the source");
         // SAFETY: the caller's.
         unsafe {
-            if self.n == 0 {
+            if self.n == 0 && MID {
+                self.first_from_middle(number, start, false);
+                self.put(2, 0, end - start);
+            } else if self.n == 0 {
                 // The file's one node.
                 let r = self.give().leaf_x::<X>(number, start, end);
                 debug_assert!(r.is_ok(), "the writer's leaf, its room reserved");
                 self.take();
             } else if self.n.is_multiple_of(Z) {
-                self.start_block();
+                if MID {
+                    self.hold_block();
+                } else {
+                    self.start_block();
+                }
                 let j = self.node::<true>(number, start, false);
                 self.put(2, j, end - start);
-                self.settle_before();
+                if !MID {
+                    self.settle_before();
+                }
             } else {
                 let j = self.node::<false>(number, start, false);
                 self.put(2, j, end - start);
@@ -1960,6 +2094,7 @@ impl<X: CellWidths> Cursor<X> {
         debug_assert!(cs >= start && ce >= cs && end >= ce && end <= self.source_len, "the node's and its child's bounds in order");
         // SAFETY: the caller's.
         unsafe {
+            debug_assert!(!(MID && self.n == 0), "a cursor from the middle's first node is opened");
             if self.n == 0 {
                 // The file's one node and its child.
                 let r = self.give().leaf_in_x::<X>(number, child, start, cs, ce, end);
@@ -1969,14 +2104,18 @@ impl<X: CellWidths> Cursor<X> {
             }
             let first = self.n.is_multiple_of(Z);
             let j = if first {
-                self.start_block();
+                if MID {
+                    self.hold_block();
+                } else {
+                    self.start_block();
+                }
                 self.node::<true>(number, start, false)
             } else {
                 self.node::<false>(number, start, false)
             };
             self.put(2, j, end - start);
             self.put(0, j, 2 << 1);
-            if first {
+            if first && !MID {
                 self.settle_before();
             }
             // The child: the node's first, so no slot of the node before describes it; its block's first where the
@@ -1984,7 +2123,11 @@ impl<X: CellWidths> Cursor<X> {
             let cj = j + 1;
             let child_first = cj == Z;
             if child_first {
-                self.start_block();
+                if MID {
+                    self.hold_block();
+                } else {
+                    self.start_block();
+                }
             }
             let cj = cj % Z;
             let block = self.block();
@@ -1996,7 +2139,7 @@ impl<X: CellWidths> Cursor<X> {
             self.put(2, cj, ce - cs);
             self.prev_start = cs;
             self.n += 1;
-            if child_first {
+            if child_first && !MID {
                 self.settle_before();
             }
         }
@@ -2036,7 +2179,7 @@ impl<X: CellWidths> Cursor<X> {
             if size > 1 {
                 st.put_at_x::<X>(0, j, u64::from(size) << 1, block);
             }
-            if self.n > (b + 1) * Z {
+            if !MID && self.n > (b + 1) * Z {
                 self.give();
                 let r = (*self.s).settle(b);
                 debug_assert!(r.is_ok(), "the writer's settle, its room reserved");
@@ -2046,10 +2189,12 @@ impl<X: CellWidths> Cursor<X> {
     }
 }
 
-impl<X: CellWidths> Drop for Cursor<X> {
-    /// The state's fields the walk's.
+impl<X: CellWidths, const MID: bool> Drop for Cursor<X, MID> {
+    /// The state's fields the walk's (a cursor from the middle's never are: `end_middle`).
     fn drop(&mut self) {
-        self.give();
+        if !MID {
+            self.give();
+        }
     }
 }
 
