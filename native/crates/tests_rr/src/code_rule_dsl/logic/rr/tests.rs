@@ -219,7 +219,9 @@ Bad(n, "second", 8) :- kind(n, "identifier").
 }
 
 /// A message's node path (decision 0722 §4, §7): `{p}` spelled, `{p.file}` and `{p.line}`, each read in the path's own
-/// file's tape, though the finding is in another file: a call in a.py names the function it calls in b.py.
+/// file's tape, though the finding is in another file: a call in a.py names the function it calls in b.py. No node
+/// crosses, not even as a finding's place: `target` holds names and paths, so it is staged before the program
+/// (decision 0709), and `Calls` is made in a.py's own part, reading it.
 #[test]
 fn a_message_spells_a_node_path_of_another_file() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-paths");
@@ -236,7 +238,7 @@ def_at(s, @node_path(n)) :- kind(n, "function_definition"), field(n, "name", x),
 ret_at(s, @node_path(r)) :- kind(n, "function_definition"), field(n, "name", x), text(x, s), field(n, "body", b), child(b, r, _), kind(r, "return_statement").
 .decl callee(c: node, s: symbol)
 callee(c, s) :- kind(c, "call"), field(c, "function", f), text(f, s).
-.decl target(s: symbol, p: node_path, r: node_path) cross_file
+.decl target(s: symbol, p: node_path, r: node_path)
 target(s, p, r) :- def_at(s, p), ret_at(s, r), callee(_, s).
 .violation Calls(at: node, p: node_path, r: node_path) "calls {p} in {p.file} at line {p.line}, returning at {r} (line {r.line})"
 Calls(c, p, r) :- callee(c, s), target(s, p, r).

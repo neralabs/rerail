@@ -832,11 +832,14 @@ impl<'v> Program<'v> {
     /// document.
     fn base_locations(&self, rel: &str) -> Vector<usize> {
         // An undeclared one (a tree axis before lowering declares it) has none of its own, as the tree's.
-        let mut columns: Vector<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
-        if let Some(column) = document_column(rel) {
+        // A line, a match and a token are locations as a node is (decision 0724 §3), and a typed read places as its
+        // node counterpart does (`match_document(m, d)` as `docof(n, d)`).
+        let mut columns: Vector<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| matches!(*t, "node" | "line" | "match" | "token" | "place")).map(|(i, _)| i).collect();
+        let node_read = crate::code_rule_dsl::facts::core::counterpart(rel);
+        if let Some(column) = document_column(node_read).filter(|c| !columns.contains(c)) {
             columns.push(column);
         }
-        if rel == "docof" && !columns.contains(&1) {
+        if node_read == "docof" && !columns.contains(&1) {
             columns.push(1);
         }
         // The tape's `tape(n, par, size, depth)` (the climbs' parent column, lower.rs `need_tape`) is declared over

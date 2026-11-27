@@ -453,14 +453,40 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Opti
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Rows of values as a relation of atoms (`c0`, `c1`, …), the store's atoms for strings.
-fn atoms_source<'a>(store: &ContentStore, width: usize, rows: impl Iterator<Item = &'a Vec<front::Value>> + Clone) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+/// A phase's export as a relation of this run's atoms: each string interned. A node path column (`paths[c]`,
+/// decision 0722) comes as its text, as the phase's outputs show it (`path_tables::path_text`: its base, a tab,
+/// `/`, its low 32 bits in hex), since its atom is the phase's run's: its base is interned here and the word made
+/// again, so the reader's path reads (`@path_spelling`, a message's `{p}`) find it.
+fn atoms_source<'a>(store: &ContentStore, width: usize, paths: &[bool], rows: impl Iterator<Item = &'a Vec<front::Value>> + Clone) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
     let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
     let cols: Vec<&str> = names.iter().map(String::as_str).collect();
-    let texts: Vec<&str> = rows.clone().flatten().filter_map(|v| if let front::Value::Str(s) = v { Some(s.as_str()) } else { None }).collect();
+    let path = |c: usize| paths.get(c).copied().unwrap_or(false);
+    let split = |s: &str| -> Option<(String, i64)> {
+        let (base, low) = s.rsplit_once("\t/")?;
+        Some((base.to_owned(), i64::from(u32::from_str_radix(low, 16).ok()?)))
+    };
+    let mut texts: Vec<String> = Vec::new();
+    for row in rows.clone() {
+        for (c, v) in row.iter().enumerate() {
+            if let front::Value::Str(s) = v {
+                texts.push(if path(c) { split(s).ok_or_else(|| Error::Plan(format!("a node path's text {s:?} is no path's")))?.0 } else { s.to_string() });
+            }
+        }
+    }
+    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
     let mut atoms = store.intern_atoms(&texts).map_err(|e| Error::Plan(e.to_string()))?.into_iter().map(i64::from);
     let mut relation = crate::code_rule_dsl::facts::vtab::Relation::new(&cols);
     for row in rows {
-        let row: Vector<i64> = row.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Branded(a) => a.value(), front::Value::Str(_) => atoms.next().expect("an atom per string") }).collect();
+        let row: Vector<i64> = row
+            .iter()
+            .enumerate()
+            .map(|(c, v)| match v {
+                front::Value::Int(i) => *i,
+                front::Value::Branded(a) => a.value(),
+                front::Value::Str(s) if path(c) => atoms.next().expect("an atom per string") << 32 | split(s).map_or(0, |(_, low)| low),
+                front::Value::Str(_) => atoms.next().expect("an atom per string"),
+            })
+            .collect();
         relation.push(&row);
     }
     Ok(Arc::new(relation))
@@ -3505,7 +3531,8 @@ fn run_observed_within(
             // Read as `syntax::measured` reads it: its statistics counted from its rows.
             let flat = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vector<i64> { (0..s.len()).flat_map(|r| (0..width).map(move |c| (r, c))).map(|(r, c)| s.value(r, c)).collect() };
             let rows = &phased[rel];
-            let source = atoms_source(store, width, rows.iter())?;
+            let paths: Vec<bool> = head.columns_of(rel).map(|c| c.iter().map(|(_, t)| t == "node_path").collect()).unwrap_or_default();
+            let source = atoms_source(store, width, &paths, rows.iter())?;
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
@@ -6981,7 +7008,7 @@ fn run_observed_within(
             .map(|r| match w_relations.iter().find(|(w, _)| *w == r) {
                 // W's reference graph, as the cross-file part binds it.
                 Some((_, source)) => Ok((r.clone(), Arc::clone(source))),
-                None => Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), phased[&r].iter())?)),
+                None => Ok((r.clone(), atoms_source(store, head.columns_of(&r).expect("a phase's export the program declares").len(), &head.columns_of(&r).map(|c| c.iter().map(|(_, t)| t == "node_path").collect::<Vec<bool>>()).unwrap_or_default(), phased[&r].iter())?)),
             })
             .collect::<Result<_>>()?;
         let (db_path, x_path, kept_in, world_in) = (path.clone(), cross_path.clone(), kept.clone(), world_inputs);

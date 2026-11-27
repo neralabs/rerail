@@ -346,7 +346,31 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                 // (decision 0292 §3).
                 let node_reads: Vec<String> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
                 vars.extend(node_reads.iter().cloned());
-                let must = !node_reads.is_empty();
+                // A component that reads a node it does not hand on (`callee(_, s)`, a node, line, match or token
+                // column the rest of the rule leaves unread) is pushed too, whatever else would leave it: handed on
+                // whole, the export carries that column into the cross part, and no node id crosses (decision 0677).
+                // Pushed, it is the columns the rest reads (`fl<h>_target(s) :- callee(_, s)`).
+                let outside: BTreeSet<String> = rule
+                    .head()
+                    .args()
+                    .flat_map(|t| term_vars(v, rule, t))
+                    .chain(body.iter().enumerate().filter(|(j, _)| !lits.contains(j)).flat_map(|(_, l)| lit_vars(v, rule, *l)))
+                    .collect();
+                let mut outside = outside;
+                close_under(&mut outside, &equal);
+                let drops_node = atoms.iter().any(|a| {
+                    f.columns(rel(a)).is_some_and(|cols| {
+                        a.args().zip(cols.iter()).any(|(t, (_, ty))| {
+                            matches!(*ty, "node" | "line" | "match" | "token" | "place")
+                                && match t {
+                                    TermRef::Wild => true,
+                                    TermRef::Var(s) => !outside.contains(&name(v, rule, s)),
+                                    _ => false,
+                                }
+                        })
+                    })
+                });
+                let must = !node_reads.is_empty() || drops_node;
                 if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
                 }
