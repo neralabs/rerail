@@ -1,0 +1,1 @@
+A running session checks its next edit in a checkout replaced at its path, by another clone's worktree or a new clone, with the rules of the clone now there, or with none until that clone is recorded, not with the removed clone's rules until a session starts in that folder.

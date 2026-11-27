@@ -28,12 +28,16 @@ import {
   type CodeRulePlacementEntry,
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
-import { repositoryIdentityLocation, WorktreeRegistryPass, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
+import { WorktreeRegistryPass } from "../catalog/repository-identity.js";
 import {
   followsGitignore,
+  isOwnRow,
+  locationNow,
   recordedCheckoutsReader,
   recordedCheckoutsVersionReader,
   recordStartedWorktree,
+  stillPlaces,
+  type KeptLocation,
   type RecordedCheckouts,
   type RecordedCheckoutStatus,
 } from "../catalog/repository-registry.js";
@@ -740,7 +744,10 @@ interface CheckoutEntry {
   building?: { readonly users: Set<object> | undefined; readonly done: Promise<void> } | undefined;
   /** The open sessions its catalog was built ahead for, while nothing else asked for it; undefined once something did. */
   heldAheadFor?: Set<object> | undefined;
-  location: RepositoryIdentityLocation | undefined;
+  /** The folder's location as last read, and what was there then ({@link KeptLocation}). */
+  location: KeptLocation | undefined;
+  /** The clone id of the row last weighed against `location`, and whether that row is the folder's own (`isOwnRow`). */
+  weighed?: { readonly cloneId: string; readonly own: boolean } | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
   status: RepositoryStatus | undefined;
@@ -807,20 +814,21 @@ export class CheckoutCatalogs {
     return entry.checkout === undefined ? [] : [entry.checkout.checkoutPath, ...entry.parents];
   }
 
-  /** Re-read `root`'s record, start state and set-up; returns its eligibility. */
+  /** Re-read `root`'s record, start state and set-up, and whether its folder is still the clone recorded; returns its eligibility. */
   refresh(root: string): CheckoutEligibility {
     const entry = this.#entry(root, false);
-    this.#read([entry]);
+    this.#read([entry], true);
     return entry.eligibility;
   }
 
   /**
    * `refresh` of every one of `roots`, the recorded ones read in one statement: what a session that knows every worktree
-   * of its repository asks at every event. Returns each root's eligibility.
+   * of its repository asks at every event. Returns each root's eligibility. A folder is asked again only where its row
+   * changed since the last read; whether it is still the clone recorded is read when its rules are (`#signature`).
    */
   refreshAll(roots: Iterable<string>): Map<string, CheckoutEligibility> {
     const entries = [...roots].map(root => this.#entry(root, false));
-    this.#read(entries);
+    this.#read(entries, false);
     return new Map(entries.map(entry => [entry.root, entry.eligibility]));
   }
 
@@ -958,23 +966,27 @@ export class CheckoutCatalogs {
         parents: [], status: undefined, eligibility: "unrecorded", catalog: undefined,
       };
       this.#entries.set(root, entry);
-      if (read) this.#read([entry]);
+      if (read) this.#read([entry], false);
     }
     return entry;
   }
 
   /**
-   * Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. The recorded
-   * ones are read in one statement, with their parents and start state (`RecordedCheckouts.read`). A worktree of a
-   * started clone that no session started in is recorded here, the first time a path in it is looked up.
+   * Only a recorded checkout is eligible, and only by its folder's own row (`ownRow`): a row recorded at its path for
+   * another clone, as one removed and replaced there leaves, is taken as no row. The recorded ones are read in one
+   * statement, with their parents and start state (`RecordedCheckouts.read`). A worktree of a started clone that no
+   * session started in is recorded here, the first time a path in it is looked up, and so is one that replaced a
+   * recorded checkout. `placeAgain`: each recorded folder is asked whether it is still the clone it was read as.
    */
-  #read(entries: readonly CheckoutEntry[]): void {
+  #read(entries: readonly CheckoutEntry[], placeAgain: boolean): void {
     const roots = entries.map(entry => entry.root);
-    let recorded = this.#recorded.read(roots);
+    let recorded = ownRows(entries, this.#recorded.read(roots), placeAgain);
     // One pass over Git's registries for every worktree this read records, and a worktree recorded here may hold another
     // of the entries, so all of them are read again with its row.
     const registries = new WorktreeRegistryPass();
-    if (entries.filter(entry => !recorded.has(entry.root) && this.#recordWorktree(entry, registries)).length > 0) recorded = this.#recorded.read(roots);
+    if (entries.filter(entry => !recorded.has(entry.root) && this.#recordWorktree(entry, registries)).length > 0) {
+      recorded = ownRows(entries, this.#recorded.read(roots), false);
+    }
     for (const entry of entries) this.#apply(entry, recorded.get(entry.root));
   }
 
@@ -986,8 +998,7 @@ export class CheckoutCatalogs {
       entry.eligibility = "unrecorded";
       return;
     }
-    entry.location ??= repositoryIdentityLocation(entry.root);
-    const { git, main } = entry.location;
+    const { git, main } = (entry.location ??= locationNow(entry.root)).location;
     const { status } = recorded;
     entry.checkout = { checkoutPath: entry.root, repositoryKey: recorded.repositoryKey, cloneId: recorded.cloneId, git, main };
     entry.parents = recorded.parents;
@@ -999,14 +1010,17 @@ export class CheckoutCatalogs {
   /** Records `entry` when it is a worktree of a started clone (`recordStartedWorktree`) by `registries`; whether it did. */
   #recordWorktree(entry: CheckoutEntry, registries: WorktreeRegistryPass): boolean {
     // A folder outside Git may become a checkout, so only a Git location is kept.
-    const location = entry.location ?? repositoryIdentityLocation(entry.root);
-    if (location.git) entry.location = location;
-    return recordStartedWorktree(this.database, entry.root, location, registries);
+    const kept = entry.location ?? locationNow(entry.root);
+    if (kept.location.git) entry.location = kept;
+    return recordStartedWorktree(this.database, entry.root, kept.location, registries);
   }
 
-  /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */
+  /**
+   * `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`.
+   * Read as the checkout's rules are, so its folder is asked whether it is still the clone recorded there.
+   */
   #signature(entry: CheckoutEntry): string {
-    this.#read([entry]);
+    this.#read([entry], true);
     if (entry.checkout === undefined) return entry.eligibility;
     const signature = ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry.root), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;
@@ -1037,6 +1051,36 @@ export class CheckoutCatalogs {
     const quarantined = quarantinedLibraryRules(this.database).filter(rule => rule.kind === "code" && missingLibrary.has(rule.ruleId));
     return { ruleSet, folders, quarantined };
   }
+}
+
+/** The rows of `rows` that are their entries' folders' own (`ownRow`), by root. */
+function ownRows(entries: readonly CheckoutEntry[], rows: ReadonlyMap<string, RecordedCheckoutStatus>, placeAgain: boolean): Map<string, RecordedCheckoutStatus> {
+  const own = new Map<string, RecordedCheckoutStatus>();
+  for (const entry of entries) {
+    const row = rows.get(entry.root);
+    if (row !== undefined && ownRow(entry, row.cloneId, placeAgain)) own.set(entry.root, row);
+  }
+  return own;
+}
+
+/**
+ * Whether the row recorded at `entry`'s root with clone id `cloneId` is its folder's own ({@link isOwnRow}). A row with
+ * the clone id last weighed keeps that answer unless `placeAgain`, so a read of many recorded checkouts asks their
+ * folders nothing; a row written since, and every row when `placeAgain`, is weighed against the folder as it is now.
+ */
+function ownRow(entry: CheckoutEntry, cloneId: string, placeAgain: boolean): boolean {
+  const { weighed } = entry;
+  if (!placeAgain && weighed?.cloneId === cloneId) return weighed.own;
+  const own = isOwnRow(cloneId, placedNow(entry));
+  entry.weighed = { cloneId, own };
+  return own;
+}
+
+/** `entry`'s folder as it is now: its kept location while that still places it ({@link stillPlaces}), else read afresh. */
+function placedNow(entry: CheckoutEntry): KeptLocation {
+  const kept = entry.location;
+  entry.location = kept !== undefined && stillPlaces(kept) ? kept : locationNow(entry.root);
+  return entry.location;
 }
 
 /**
