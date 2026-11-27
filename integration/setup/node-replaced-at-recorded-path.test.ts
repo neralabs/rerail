@@ -14,6 +14,7 @@ import { copyFile, link, mkdir, mkdtemp, readFile, realpath, writeFile } from "n
 import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
+import type { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
@@ -37,11 +38,36 @@ interface Ran {
   stderr: string;
 }
 
+/**
+ * `command` run to its end. Given no `input` it gets no stdin to read (the null device), so nothing is written to a
+ * command that takes none, as git here, which can exit before a write reaches it. Given `input`, it may still end
+ * without reading it, as a hook line that starts no node does.
+ */
 async function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv, input?: string): Promise<Ran> {
-  const child = spawn(command, [...args], { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
-  child.stdin.end(input ?? "");
-  const [stdout, stderr, [code]] = await Promise.all([text(child.stdout), text(child.stderr), once(child, "close") as Promise<[number | null]>]);
+  const options = { cwd, env, windowsHide: true };
+  const child = input === undefined
+    ? spawn(command, [...args], { ...options, stdio: ["ignore", "pipe", "pipe"] })
+    : spawn(command, [...args], { ...options, stdio: ["pipe", "pipe", "pipe"] });
+  const [stdout, stderr, [code]] = await Promise.all([
+    text(child.stdout), text(child.stderr), once(child, "close") as Promise<[number | null]>, fed(child.stdin, input),
+  ]);
   return { code, stdout, stderr };
+}
+
+/**
+ * Writes `input` to a child's stdin and closes it. A write to a child that has closed its stdin fails with EPIPE: the
+ * child ended without reading, which is no failure, while any other error on the stream fails the run.
+ */
+async function fed(stdin: Writable | null, input: string | undefined): Promise<void> {
+  if (stdin === null) return;
+  const closed = Promise.withResolvers<void>();
+  stdin.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") closed.resolve();
+    else closed.reject(error);
+  });
+  stdin.on("close", () => { closed.resolve(); });
+  stdin.end(input);
+  await closed.promise;
 }
 
 interface Place {
