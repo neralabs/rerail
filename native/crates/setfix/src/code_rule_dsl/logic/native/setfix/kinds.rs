@@ -327,7 +327,7 @@ pub(super) fn count_for_tests(n: usize) {
 #[inline(always)]
 pub(super) fn count_for_tests(_: usize) {}
 
-/// Tests: the node texts the process's walks read as their term's atom (`Source::node_text_atom`).
+/// Tests: the node texts the process's walks read as their atom (`Source::node_atom`).
 #[cfg(any(test, feature = "test-hooks"))]
 static TERMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(any(test, feature = "test-hooks"))]

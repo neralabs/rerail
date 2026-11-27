@@ -285,6 +285,11 @@ pub trait Source: Send + Sync {
     /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
     /// (`NodeRead::Text`).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<NodeRead<'_>> { self.node_read(name, n, more).map(NodeRead::Value) }
+    /// Decision 0706 E1: node `n`'s text as `name` reads it, as its value, read where the text lies, no text made: the value `held` gives
+    /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
+    /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
+    /// reads it by `node_read`).
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -377,10 +382,6 @@ pub trait Source: Send + Sync {
     fn value_bits(&self, _node: usize, _column: usize, _value: i64) -> Option<ValueBits> { None }
     /// Whether the source has built bits since it was made: 0 where it never has (no `value_bits` to ask).
     fn value_bits_gen(&self) -> u32 { 0 }
-    /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
-    /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
-    /// where it does not: the text is read (`node_read_ref`).
-    fn node_text_atom(&self, _name: &str, _n: i64) -> Option<i64> { None }
     /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
     /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
     /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is

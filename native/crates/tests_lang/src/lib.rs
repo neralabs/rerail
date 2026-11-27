@@ -227,6 +227,8 @@ pub mod code_rule_dsl {
                 pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
                 #[cfg(test)]
                 pub mod tests;
+                #[cfg(test)]
+                pub mod field_reads;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::facts::vtab::{Modules, Relation, Source};
                 #[allow(unused_imports)]

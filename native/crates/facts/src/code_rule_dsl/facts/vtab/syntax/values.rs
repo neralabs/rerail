@@ -833,8 +833,8 @@ impl Source for Layered {
         p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     /// The base's (a part's node is read as text).
-    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
-        self.base.node_text_atom(name, n)
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        self.base.node_atom(name, n, make, held)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -1288,6 +1288,32 @@ impl Source for Layered {
                 part.src.row_at(r, columns, out);
             }
         });
+    }
+    /// The base's rows that pass (its own scan, document by document), then the values' rows past them, numbered as
+    /// `for_rows` numbers them. The trait's scan read each row's columns through `value`: a select of the row's node
+    /// for each column of each row (1,766 samples of an idc run, `View::filtered`).
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vector<u32> {
+        let mut out = self.base.filter_eq(eqs);
+        let passes = |r: &[i64]| eqs.iter().all(|&(c, v)| r[c] == v);
+        if self.made.is_some() {
+            let at = self.scan_at();
+            self.scanned(|s| {
+                s.each(at, self.width.max(1), &mut |i, r| {
+                    if passes(r) {
+                        out.push(i as u32);
+                    }
+                    true
+                });
+            });
+            return out;
+        }
+        self.parts(|p| {
+            for part in &p.list {
+                let at = (self.base_len() + part.start) as u32;
+                out.extend(part.src.filter_eq(eqs).iter().map(|&r| at + r));
+            }
+        });
+        out
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         self.base.for_rows(columns, each);

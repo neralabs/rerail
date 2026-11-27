@@ -12364,3 +12364,33 @@ Conflicts, resolved by invariant:
 Checked under Relax: tests-rr callable (4, and the feeder's measurement ignored), rerail-logic calls (10),
 tests-corpus phases::tests (23) and base_tests (54); corpus.rs keeps c7ddc0ec8e's cone-output rule beside the
 feeder's change. Relax has no clippy: none run. No Metal or farm runs.
+
+### Q597. Roll-up 169 (Typing-support-final-shape e5cb42f329 onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's eight commits: a field's rows by the field alone read from an index of them (`FieldRows`:
+each row's document, row, child and parent, so a read needs no walk); a chunk's layered source filters by its base's
+scan (`Layered::filter_eq`); a view probe's matches take the probe's key; a node's text bound by a join read as its
+atom where it lies, made where it has none, following `Interner::id` (`Source::node_atom`, `text_atom_any`).
+
+Conflicts, resolved by invariant (one shape each):
+- The node-text atom: the hub's `node_text_atom` (0706 E1: an existing term atom, only while the walk defers no text)
+  and Typing's `node_atom` (an atom as `held` gives it, the walk's deferred value included, else made when bound) are
+  one read. `node_atom` stays, at the hub's step in the walk (with its `more` arguments and its count of term atoms for
+  the tests), the layered source passing it to its base; `node_text_atom` goes from `Source` and every source.
+- The field index: both sides made a `FieldRows` in the batch's block. One stays, Typing's entries (`of`, `len`), built
+  as the hub's 0706 E4 builds it: ahead, by the planner (`build_value_index`), per the user's direction that a join's
+  indexes are the planner's to build first, not a lookup's. `Batch::by_field` is `None` until then, and each reader
+  takes the index where it is built: the hub's `lookup`, `lookup_docs`' field case and Typing's `lookup_read` fast
+  path. Before it, a field alone is scanned (`filter_eq`), as on the hub.
+- `kinds`: the hub's rows a kind at a time and `kind_matches` (Typing's side was the base's). `op_atoms`: removed, as the
+  hub removed it (b6d3505de9). `node_read`: the hub's, with `more`, and `node_read_ref`, beside `node_atom`.
+
+Fixes the merge needed:
+- `text_atom_any` split a node's id as `n >> 32`: the hub's ids are `Located` (0724), and it reads them so.
+- tests-lang field_reads: `node_read` takes `more` (`&[]`); the field case checks both states, the scan before the
+  index is built and the index's lookup and cursor read after `build_value_index`.
+
+Checked under Relax: rerail-setfix (148), tests-lang syntax (111, field_reads among them), tests-corpus base_tests
+(54, the term atoms' case among them) and phases::tests (23), tests-logic native::tests (20) and plan::tests (114: 50
+at 2 threads before that process passed the 12 GB cap, the other 64 at 1). rerail-boot's cost_shape_tests: the same
+15 red. Relax has no clippy: none run. No Metal or farm runs.

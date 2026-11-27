@@ -465,6 +465,38 @@ impl LongTexts {
         Some(f.text(core))
     }
 
+    /// `text_any`'s text as its value, read where it lies (no text made): the atom the document's memo of its tape
+    /// terms holds for it, else the value `held` gives the text (the atom it has, or a value the reader gave it), else,
+    /// with `make`, the atom made (as the `text` view's reads make it, `Projected::text_atom`). An atom found or made is
+    /// kept in the memo. `None` for a comment's id, a node not in the batch, or a text with no value and none made.
+    /// 7.6 M reads of an idc run took 282 ns each, a text made and then looked up among the atoms.
+    pub fn text_atom_any(&self, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+        let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());
+        if granules::comment_of(low).is_some() {
+            return None;
+        }
+        let p = &self.batch.docs[*self.docs.get(&key)?];
+        let x = p.ranks().select(Item::Node, p.local_of(low)?)?;
+        let f = p.f();
+        let index = f.index();
+        let memo = index.term(x).map(|term| &p.term_atoms.get_or_init(|| (0..index.terms()).map(|_| AtomicU32::new(u32::MAX)).collect())[term as usize]);
+        if let Some(a) = memo.map(|m| m.load(Relaxed)).filter(|&a| a != u32::MAX) {
+            return Some(i64::from(a));
+        }
+        let text = f.text(x);
+        let v = match held(text) {
+            Some(v) => v,
+            None if make => self.batch.atoms.intern(text).ok().map(i64::from)?,
+            None => return None,
+        };
+        // Only an atom is kept: a value the reader gave is its own.
+        if let (Some(m), Ok(a)) = (memo, u32::try_from(v)) {
+            m.store(a, Relaxed);
+        }
+        Some(v)
+    }
+
     /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
     /// document's values are read at its first request, and only those asked for are interned. None for a node with no
     /// value, a document of a language W reads no values of (its literals are `rr_value_lit`'s), or one not in the
@@ -599,19 +631,8 @@ impl Source for LongTexts {
             _ => self.node_read(name, n, more).map(super::NodeRead::Value),
         }
     }
-    fn node_text_atom(&self, name: &str, n: i64) -> Option<i64> {
-        if name != "rr_node_text_any" {
-            return None;
-        }
-        let (key, low) = (rerail_blocks::located::Located(n).key(), rerail_blocks::located::Located(n).low());
-        // A comment span's text is no node's: read as text.
-        if granules::comment_of(low).is_some() {
-            return None;
-        }
-        let p = &self.batch.docs[*self.docs.get(&key)?];
-        let local = p.local_of(low)?;
-        let core = p.ranks().select(Item::Node, local)?;
-        Some(p.text_atom(&*self.batch.atoms, local, core)).filter(|&a| a >= 0)
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> {
+        (name == "rr_node_text_any").then(|| self.text_atom_any(n, make, held)).flatten()
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)
@@ -2829,19 +2850,35 @@ impl KindRows {
     }
 }
 
-/// The `field` view's rows by its field column (`Batch::fields`).
+/// The `field` view's rows by their field (`field($p, #f, $c)`, neither node bound): each field's rows in row order,
+/// `[document, its row among the document's fielded nodes, the child's local id, its parent's]` (the parent as a
+/// read of the view's row reads it, `Projected::parent_of_node`; `NONE` for the root's). A probe by a field alone
+/// walked every node of the batch for the few in the field, 884 probes of an idc run at 572 ns a row out (1.84 s).
+///
+/// In the batch's block (decision 0353 step 4: an index in its relation's block, not a host structure).
 struct FieldRows {
-    /// The fields, ascending.
+    /// The field atoms, ascending.
     keys: Cells<i64>,
-    /// Where each field's rows start in `rows`, and one past the last.
+    /// Where each field's rows start in `at`, and one past the last.
     starts: Cells<u32>,
-    /// Each field's rows, ascending.
-    rows: Cells<u32>,
+    at: Cells<[u32; 4]>,
 }
 
 impl FieldRows {
-    /// Over `(field, row)` pairs in row order.
-    fn new(b: &Batch, mut all: Vec<(i64, u32)>) -> Self {
+    fn new(b: &Batch) -> Self {
+        // The scratch the index is sorted in: the index itself is the block's.
+        let mut all: Vec<(i64, [u32; 4])> = Vec::new();
+        for doc in 0..b.docs.len() {
+            let p = &b.docs[doc];
+            for (r, x) in p.ranks().iter(Item::Field) {
+                let l = p.local_of_node(x);
+                if l == NONE {
+                    continue;
+                }
+                let up = if l == 0 { NONE } else { p.parent_of_node(x) };
+                all.push((i64::from(field_atom(p.tag(), p.f().field(x))), [doc as u32, r, l, up]));
+            }
+        }
         // Stable: within a field, the rows stay in order.
         all.sort_by_key(|e| e.0);
         let (mut keys, mut starts) = (Vec::new(), Vec::new());
@@ -2852,11 +2889,15 @@ impl FieldRows {
             }
         }
         starts.push(all.len() as u32);
-        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), rows: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
+        FieldRows { keys: in_block(&b.block, &keys), starts: in_block(&b.block, &starts), at: in_block(&b.block, &all.iter().map(|e| e.1).collect::<Vec<_>>()) }
     }
-    /// The rows of `field`.
-    fn of(&self, field: i64) -> &[u32] {
-        self.keys.binary_search(&field).map_or(&[][..], |i| &self.rows[self.starts[i] as usize..self.starts[i + 1] as usize])
+    /// The rows of `field`, in row order.
+    fn of(&self, field: i64) -> &[[u32; 4]] {
+        self.keys.binary_search(&field).map_or(&[][..], |i| &self.at[self.starts[i] as usize..self.starts[i + 1] as usize])
+    }
+    /// How many rows it holds.
+    fn len(&self) -> usize {
+        self.at.len()
     }
 }
 
@@ -4913,6 +4954,11 @@ impl Batch {
             (doc, (r as usize - nodes.at(doc)) as u32)
         })
     }
+    /// The `field` view's rows whose field is `field`, in row order, where the field index was built ahead (decision
+    /// 0706 E4, `Source::build_value_index`: the planner builds an index a join needs, a lookup does not): `None` before.
+    fn by_field(&self, field: i64) -> Option<&[[u32; 4]]> {
+        self.fields.get().map(|k| k.of(field))
+    }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
         let doc = self.doc(rerail_blocks::located::Located::key_wide(n), memo)?;
@@ -5410,7 +5456,8 @@ impl Source for Viewed {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         // A field's rows from the batch's field index, where it was built ahead (decision 0706 E4).
         if matches!(self.view, View::Field) && column == 1 && let Some(f) = self.batch.fields.get() {
-            let mut rows: rerail_blocks::vector::Vector<usize> = values.iter().flat_map(|&v| f.of(v).iter().map(|&r| r as usize)).collect();
+            let firsts = self.batch.firsts(View::Field);
+            let mut rows: rerail_blocks::vector::Vector<usize> = values.iter().flat_map(|&v| f.of(v).iter().map(|e| firsts.at(e[0] as usize) + e[1] as usize)).collect();
             if values.len() > 1 {
                 rows.sort_unstable();
                 rows.dedup();
@@ -5425,14 +5472,9 @@ impl Source for Viewed {
         }
         let mut built = None;
         self.batch.fields.get_or_init(|| {
-            let offsets = self.batch.firsts(self.view);
-            let mut all: Vec<(i64, u32)> = Vec::new();
-            for doc in 0..self.batch.docs.len() {
-                let base = offsets.at(doc);
-                self.each_row(doc, offsets.at(doc + 1) - base, &[1], |i, value| all.push((value[0], (base + i) as u32)));
-            }
-            built = Some(all.len());
-            FieldRows::new(&self.batch, all)
+            let rows = FieldRows::new(&self.batch);
+            built = Some(rows.len());
+            rows
         });
         built
     }
@@ -5880,6 +5922,11 @@ impl Viewed {
             } else {
                 b.kind_matches(v).filter(|(doc, _)| kept(doc)).for_each(|(doc, local)| one(Some(b.nodes().at(doc) + local as usize)));
             }
+        } else if matches!(self.view, View::Field) && column == 1 && let Some(rows) = b.by_field(v) {
+            // A field's rows by the field alone, from the batch's index of them where it was built ahead (decision 0706
+            // E4); else the general lookup (`false`).
+            let firsts = b.firsts(View::Field);
+            rows.iter().filter(|e| kept(&(e[0] as usize))).for_each(|e| one(Some(firsts.at(e[0] as usize) + e[1] as usize)));
         } else {
             return false;
         }
@@ -5965,6 +6012,40 @@ impl Viewed {
             }
             return true;
         }
+        // A field's rows by the field alone (`field($p, #f, $c)`, neither node bound): the batch's index of them
+        // (`Batch::by_field`, where it was built ahead: decision 0706 E4), each row's values its parent's id, the field
+        // and the child's id (from the last one's granule, `global_near`, while the rows stay in a document), no row
+        // found and read again. The general lookup took 978 ns a row out on idc (3.1 s), and a walk of every node for
+        // the few in the field 572.
+        if matches!(self.view, View::Field) && column == 1 && columns.len() <= 8 && columns.iter().all(|&c| c < 3) && let Some(rows) = self.batch.by_field(value) {
+            let b = &*self.batch;
+            let (firsts, mut vals) = (b.firsts(View::Field), [0i64; 8]);
+            let (mut doc_at, mut near, mut up_near, mut last_up) = (u32::MAX, 0u32, 0u32, (NONE, -1i64));
+            for &[doc, r, l, up] in rows {
+                if doc != doc_at {
+                    (doc_at, near, up_near, last_up) = (doc, 0, 0, (NONE, -1));
+                }
+                let p = &b.docs[doc as usize];
+                let parent = match up {
+                    NONE => -1,
+                    q if q == last_up.0 => last_up.1,
+                    q => {
+                        last_up = (q, p.global_near(q, &mut up_near));
+                        last_up.1
+                    }
+                };
+                let child = p.global_near(l, &mut near);
+                for (o, &c) in vals.iter_mut().zip(columns) {
+                    *o = match c {
+                        0 => parent,
+                        1 => value,
+                        _ => child,
+                    };
+                }
+                each(firsts.at(doc as usize) + r as usize, &vals[..columns.len()]);
+            }
+            return true;
+        }
         // A field's rows are its fielded nodes: a probe's match without a field has no row (`row_of_node`), and is
         // passed over.
         let Some(plan) = self.plan_for(column, columns, cursor) else { return false };
@@ -6000,8 +6081,14 @@ impl Viewed {
                     View::Field => d.knowing(local, x, i as u32),
                     _ => d.knowing(local, x, u32::MAX),
                 };
-                for (o, &c) in vals[..len].iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
+                // The probe's key where it is the column (a probe by parent: each match's parent; by id: the match's
+                // id), not read again: a parent's id was a tape parent search, a rank and a granule's bisection.
+                for ((o, &c), &op) in vals[..len].iter_mut().zip(columns).zip(&plan.ops) {
+                    *o = match (op, up, id) {
+                        (UP, Some(u), _) => u,
+                        (ID, _, Some(n)) => n,
+                        _ => self.read_value(&d, i, c),
+                    };
                 }
                 // A match by its own id: the tape node its read selected, kept in the read's memo (`node_hint`), so
                 // the next probe of that id selects none.

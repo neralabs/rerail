@@ -10823,11 +10823,17 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                             at_nodes.as_deref()
                         }
                     };
-                    // A symbol's value, while the walk has deferred no text: the text's atom from its term, with no
-                    // hash of the text (decision 0706 E1). A text deferred, it is read: the atom of a text deferred
-                    // here would not be the deferred value.
-                    let as_atom = probe & (TEXT_OUT | UNREAD_OUT) == 0 && cx.syms.defers_none();
-                    let atom = if as_atom { nodes.and_then(|s| s.node_text_atom(name, val(slots, args[0]))) } else { None };
+                    // A node's text as its value, read where it lies (decision 0706 E1, `Source::node_atom`), for every way
+                    // of reading the text out but a scratch text's or an unread one's: as `held` gives it (its atom, or the
+                    // value this walk deferred it as, as `Interner::id` takes them), else, bound, its atom made where `id`
+                    // would make it or defer it (the `text` view's reads make it so). A probe takes an atom alone: a value
+                    // deferred it reads as before (`before_walk` drops it).
+                    let atom = if probe & (TEXT_OUT | UNREAD_OUT) == 0 {
+                        let make = probe & PROBE_OUT == 0;
+                        let syms = &cx.syms;
+                        let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
+                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing))
+                    } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();
                         Some(a)
