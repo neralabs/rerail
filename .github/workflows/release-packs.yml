@@ -7,15 +7,15 @@ name: Release packs
 # The "Release" pull request (each pack's version and CHANGELOG.md, from its changesets, beside core's bump) is
 # opened by release-pr.yml; merging it is the release. On a push to main this workflow releases:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
-#   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
-#   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
-#   under `next` with trusted publishing, side by side. Nothing a push publishes reaches `latest` until a person
-#   approves it: the request-promotion job starts a run of this workflow that promotes exactly what was published,
-#   and waits for that approval once the release is tested on `next` (docs/release.md, "Promoting"). A version tagged
-#   but not on npm (a failed or unapproved publish) is planned again by every later run, so re-running the run or the
-#   next push publishes it. The dist-tags job then lists each published pack's dist-tags in the run summary and fails
-#   if one's `next` is not the version just published, or is older than its `latest`. A pack never published at all needs its first
-#   publish by hand; the run reports it and fails after publishing the others.
+#   validation of test/engine/catalog/packs.test.ts and packs-rerail/), packed, checked to hold only what
+#   its `files` allows, and tagged. The release never waits on npm: the tag comes first, then the version's GitHub
+#   Release and its publish under `next` with trusted publishing, side by side. Nothing a push publishes reaches
+#   `latest` until a person approves it: the request-promotion job starts a run of this workflow that promotes exactly
+#   what was published, and waits for that approval once the release is tested on `next` (docs/release.md,
+#   "Promoting"). A version tagged but not on npm (a failed or unapproved publish) is planned again by every later run,
+#   so re-running the run or the next push publishes it. The dist-tags job then lists each published pack's dist-tags in
+#   the run summary and fails if one's `next` is not the version just published, or is older than its `latest`. A pack
+#   never published at all needs its first publish by hand; the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
 # changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
 # (the Release pull request is not checked). One of prose alone (scripts/check/ci/prose.mjs: changesets, changelog

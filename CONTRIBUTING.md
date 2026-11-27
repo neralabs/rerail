@@ -258,7 +258,7 @@ runtime load an engine from another path instead.
 | --- | --- | --- | --- |
 | Runtime, CLI and coding-agent hosts | `src/` | `npm run build` | `npm run check`, `npm test` |
 | Native engine (Rust) | `native/` | `npm run build:native` | `npm run check:native`, `npm run test:native` |
-| Rule packs | `packs/` | none | `npm test` (the pack validation, `test/engine/catalog/packs.test.ts`), `npm run conformance:languages -- --pack <id>` |
+| Rule packs | `packs/` | none | `npm test` (the pack validation, `test/engine/catalog/packs.test.ts` and `packs-rerail/`), `npm run conformance:languages -- --pack <id>` |
 | Dashboard | `ui/` | `npm run build:ui` | `npm run check:ui-tokens` |
 | Integration suites | `integration/` | `npm run build` | `npm run test:integration:built` (needs a real OMP, below) |
 | Repository scripts | `scripts/` | none | `npm run test:scripts` |

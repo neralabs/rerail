@@ -23,8 +23,8 @@ package at the repository root. Packs that port a linter are
 
 ```sh
 npm run fixtures:pull                                               # the packs' test data and samples, from S3
-npx vitest run test/engine/catalog/packs.test.ts                    # every pack: checks 1 to 8 and each rule's status
-npx vitest run test/engine/catalog/packs.test.ts -t "pack python"   # one pack
+npx vitest run test/engine/catalog/packs                            # every pack: checks 1 to 8 and each rule's status
+npx vitest run test/engine/catalog/packs -t "pack python"           # one pack
 npm run test:conformance                                            # the conformance check
 ```
 

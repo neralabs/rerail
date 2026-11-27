@@ -1195,7 +1195,7 @@ jobs:
 
       # The pack validation's check 4 leaves scoring the fixtures to the conformance check (the conformance and tools jobs
       # below), which scores the same fixtures through the same runner and fails on the same failures, so they are scored
-      # once (test/engine/catalog/packs.test.ts). The pack publish gate (release-packs.yml) still scores them itself.
+      # once (test/engine/support/pack-suite.ts). The pack publish gate (release-packs.yml) still scores them itself.
       # TESTS: the selected files' paths, read into words (none holds a space); empty runs every file. A shard may find
       # none of a few selected files (--passWithNoTests); a run of every file that finds none fails.
       - name: Unit tests

@@ -1,7 +1,8 @@
 /**
  * The pack validation contract (docs/pack-format.md, "The validation contract"): checks 1 to 8 over one
- * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts calls it for every pack, and it reuses the
- * conformance runner for ported rules, so it lives beside that runner and stays out of the published core.
+ * `packs/<id>/` directory. Test support, not runtime: test/engine/catalog/packs.test.ts and the files of
+ * test/engine/catalog/packs-rerail/ call it for every pack, and it reuses the conformance runner for ported rules, so
+ * it lives beside that runner and stays out of the published core.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
