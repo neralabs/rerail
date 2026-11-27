@@ -2386,14 +2386,11 @@ fn every_switch_lowering_reads_is_classified() {
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
     // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
-    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
-    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
-    // program is kept under `COMBINING` alone.
+    // `front`), and `answers_where_documents_are_version`. The combined program is kept under `COMBINING` alone. The
+    // program's own demand is preparation's: it judges an answer on the split it makes (`Deferral::with_round_undone`).
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
-        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
-        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
     combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));

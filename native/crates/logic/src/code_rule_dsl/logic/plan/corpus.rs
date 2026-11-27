@@ -109,6 +109,12 @@ pub mod connections;
 /// lowering or preparation is listed here, in `COMBINING` (which the prepared key holds through the combined
 /// program's), or as changing none, which a test checks (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
+    // `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
     "RERAIL_SPAN_PREFILTER",
@@ -2815,14 +2821,15 @@ fn run_observed_within(
                 let v = &lowered.version;
                 let answered = |rel: &str| v.rules().any(|r| v.rel_name(r.head().rel()) == rel);
                 if let Some(a) = ON_REQUEST.iter().flat_map(|r| r.iter()).find(|a| matches!(a.answer, Answer::Function(_)) && answered(a.rel) && !split.file_local.contains(a.rel)) {
-                    // The deferred joins can draw it there (a pair cache's guard, a factor read across files): the run
-                    // prepares the program again with the next deferral (`run_observed`), once per change.
-                    if let Some(next) = deferral.after_placement(a.rel, &cached)
+                    // The deferred joins can draw it there (a pair cache's guard, a factor read across files), and so can the
+                    // program's own demand (RUF034 alone): the run prepares the program again with the next deferral
+                    // (`run_observed`), once per change, its round eager where no other change keeps it local.
+                    if let Some(next) = deferral.after_placement(a.rel, &cached).or_else(|| deferral.with_round_undone(a.rel))
                         && let Some(replans) = crate::code_rule_dsl::logic::profile::bound::<preparation::Replans>().0
                     {
-                        super::joins::log(|| format!("replan: `{}` drawn into the cross-file part by the deferred joins; pair caches {cached:?}; from {deferral:?} to {next:?}", a.rel));
+                        super::joins::log(|| format!("replan: `{}` drawn into the cross-file part; pair caches {cached:?}; from {deferral:?} to {next:?}", a.rel));
                         replans.lock().insert(prepared_key, next);
-                        return Err(Error::Plan(format!("{REPLAN}`{}` drawn into the cross-file part by the deferred joins", a.rel)));
+                        return Err(Error::Plan(format!("{REPLAN}`{}` drawn into the cross-file part", a.rel)));
                     }
                     return Err(Error::Plan(format!("`{}` is answered on request in the cross-file part, which holds no documents to read it from (decision 0174 §6)", a.rel)));
                 }
