@@ -1479,8 +1479,8 @@ impl Drop for Held {
                         let v = rel.get(id, c);
                         lo = lo.min(v);
                         hi = hi.max(v);
-                        dlo = dlo.min(v >> 32);
-                        dhi = dhi.max(v >> 32);
+                        dlo = dlo.min(rerail_blocks::located::Located::key_wide(v));
+                        dhi = dhi.max(rerail_blocks::located::Located::key_wide(v));
                         low = low.max(v as u64 & 0xffff_ffff);
                     }
                     width_census::column(u64::from(n), lo, hi, (dlo, dhi, low));

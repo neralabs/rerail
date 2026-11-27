@@ -11963,3 +11963,20 @@ Tests (Relax, CPU; no farm, no `all`):
 - rr-root 55/55, logic 312/312, typing 13/13, corpus-prep 19/19.
 - boot: everything but the 17 cost_shape_tests, which are red on the hub's tree as they are here.
 - Not run: the Metal tests (no farm). `a_contexts_rows_on_metal_are_the_cpus` ran once by mistake, under `--exact`, with the device set to CPU, and failed there; it is not counted.
+
+### Q578. Roll-up 150 (Native-and-GPU-strata 1a5a0bd3ae onto Pulling-it-all-together): what the merge chose
+
+Native-and-GPU-strata's two new commits, 1a97a41368 and 1a5a0bd3ae (plan "Chunk node numbers", steps 1 and 1b). A directory's rows are now the growth's numbers, so finding an id's row takes one load: `ViewDir` gains `order`, `first` and `span`, and loses `by_number`. The ids' encodings are defined once, in `rerail_blocks::located`, and `scripts/check/check_node_ids.py` refuses a hand-written shift by 32 anywhere else.
+
+- **`ViewDir` keeps the hub's `codes` and takes Native's numbering.** The hub had put the codes' directory home (`codes`, decision 0697) in the struct's old `pad` slot. Native replaced `by_number`, `numbered` and `pad2` with `order`, `first` and `span`. The merged struct has both, in the Rust definition, the UKL text in view_reads.rs, the generated `<ukl/reads/view.h>`, and both directory writers: made.rs's `directory` and device_chunk.rs. made.rs's homes stay at `HOMES * n + 2`, with the codes' home after the cache.
+- **The Metal join reads the next document's first row through the order** (`view_rows_end`, Native's). It still passes the codes' directory to `clif_view_child_first` (`view_codes(d)`, the hub's).
+- **The tape's ids are encoded by `Located`.** The hub numbers a tape document's nodes by the tape (`self.tape`: `node_near`, and `x` in `node_ids` and `token_ids`). That branch is kept, with Native's `Located::new` in place of `key << 32`.
+- **Hub code that split an id by hand is now `Located`.** That is the 0706 E1 text-atom read (`node_text_atom`). `check_node_ids.py --all` passes on the merged tree.
+- `values.rs`: the hub's optional log (`self.log.as_ref()?`) is kept, with Native's `// bits:` mark on the link word.
+
+Tests (Relax, CPU; no farm, no Metal):
+- clif 19/19, facts 18/18.
+- tests-lang 200/200, in five chunks at one thread (two threads exceed the 12 GB cap).
+- tests-logic: typing 34/34, plan 117/117, the native, waves, stats, strings, profile, liveness and costs groups 90/90.
+- logic 312/312.
+- tests-corpus: base and phases 71/71.

@@ -636,7 +636,7 @@ impl Fused {
                     (&b[0], &mut a[k])
                 };
                 dst.clear();
-                dst.extend(src.iter().map(|&x| x >> 32));
+                dst.extend(src.iter().map(|&x| rerail_blocks::located::Located::key_wide(x)));
             }
         }
         // On the stack (decision 0687): a fused chunk's columns and outputs are few.

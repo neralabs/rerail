@@ -309,8 +309,8 @@ impl Rewrite for Subst {
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
             TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
-                Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
-                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
+                Some(TermRef::Int(n)) => Some(T::Int(rerail_blocks::located::Located::key_wide(n))),
+                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(rerail_blocks::located::Located::key_wide(*n))),
                 _ => None,
             },
             _ => None,

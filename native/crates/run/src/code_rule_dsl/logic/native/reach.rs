@@ -414,9 +414,9 @@ impl Closed {
         let (mut sq0, mut sqd0) = (0i64, 0i64);
         let mut i = 0;
         while i < self.xs.len() {
-            let doc = self.xs[i] >> 32;
+            let doc = rerail_blocks::located::Located::key_wide(self.xs[i]);
             let mut in_doc = 0i64;
-            while i < self.xs.len() && self.xs[i] >> 32 == doc {
+            while i < self.xs.len() && rerail_blocks::located::Located::key_wide(self.xs[i]) == doc {
                 let l = self.sets[i].len() as i64;
                 sq0 += l * l;
                 in_doc += l;
@@ -431,8 +431,8 @@ impl Closed {
         let mut sqd1 = 0i64;
         let mut i = 0;
         while i < self.xs.len() {
-            let doc = self.xs[i] >> 32;
-            while i < self.xs.len() && self.xs[i] >> 32 == doc {
+            let doc = rerail_blocks::located::Located::key_wide(self.xs[i]);
+            while i < self.xs.len() && rerail_blocks::located::Located::key_wide(self.xs[i]) == doc {
                 for id in self.sets[i].iter() {
                     count[id as usize] += 1;
                     if in_doc[id as usize] == 0 {

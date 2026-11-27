@@ -252,7 +252,7 @@ pub fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
 /// position.
 pub(super) fn file_tree_guest(file: u32, grammar: String, len: usize) -> Guest {
     let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(len).unwrap_or(u32::MAX)] };
-    Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
+    Guest { host: file, file, at: rerail_blocks::located::Located::new(file, 0).0, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
 }
 
 /// Whether `d` is a file the run reads for its programs, as parsed and not yet split (`file_and_tree`).
@@ -590,7 +590,7 @@ impl Guests {
     /// of that name (made with the batch, `seed`, else made here), or the string there, made a tape value (decision
     /// 0431): one per grammar and text, its places the strings it was parsed at; a text made already gains a place.
     fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, parses: &Parses<'_>) -> Result<Got, String> {
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
             return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
@@ -668,7 +668,7 @@ impl Guests {
     /// programs of `via` are built at its first ask, each at the host node over its bytes (`Program::at`), and each is
     /// made once, when asked: no reader of the file's programs sees one it did not ask for.
     fn demanded(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, name: &str) -> Result<Option<Document>, String> {
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         if !self.demanded.contains_key(&(host_key, via)) {
             let programs = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false));
             let ids = self.numbering(host)?;
@@ -788,7 +788,7 @@ impl Guests {
                 at
             }
         };
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         let tape_verdict = crate::code_rule_dsl::embed::embedder(via).tape_verdict();
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse, &segments, tape_verdict)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
@@ -843,7 +843,7 @@ impl Guests {
     /// `@splice(_, node, with)`: the grammar, text, tape and path of node's document with node's text replaced by
     /// the text of a document whose tape is `with`; `None` when either is not in the chunk.
     fn splice(&mut self, by_key: &HashMap<u32, &Document>, docs: &[Document], node: i64, with: &str) -> Result<Option<(String, String, String, String)>, String> {
-        let Some(d) = by_key.get(&((node >> 32) as u32)).copied() else { return Ok(None) };
+        let Some(d) = by_key.get(&rerail_blocks::located::Located(node).key()).copied() else { return Ok(None) };
         let Some(w) = docs.iter().find(|x| *syntax::tape_hex(&x.digest) == *with) else { return Ok(None) };
         let ids = self.numbering(d)?;
         let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };

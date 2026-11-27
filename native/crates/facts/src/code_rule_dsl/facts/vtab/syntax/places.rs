@@ -213,7 +213,7 @@ impl Source for Places {
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        let docs: BTreeSet<u32> = spans.iter().map(|&s| (s >> 32) as u32).collect();
+        let docs: BTreeSet<u32> = spans.iter().map(|&s| rerail_blocks::located::Located(s).key()).collect();
         if let Some(rows) = self.spans.rows_of_documents(&docs) {
             let mut row = vec![0; all.len()];
             for r in rows {
@@ -376,7 +376,7 @@ impl Pairs {
     }
     /// A row of `id` (the first column: its document is the high half) and `value`.
     fn add(&mut self, id: i64, value: i64) {
-        self.0.push([value, id >> 32]);
+        self.0.push([value, rerail_blocks::located::Located::key_wide(id)]);
     }
     /// `(rows, distinct values, the sum of their postings' squares, that sum within each document)`.
     fn measure(mut self) -> (i64, i64, i64, i64) {

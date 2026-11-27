@@ -220,17 +220,17 @@ impl Source for Corpus {
         let w = self.width();
         let mut found = rerail_blocks::vector![];
         for &v in values.iter().filter(|v| **v > 0) {
-            let key = if v >= 1 << 32 { v >> 32 } else { v };
+            let key = rerail_blocks::located::document_of(v);
             let Some(&doc) = self.run.by_key.get(&key) else { continue };
             let rows = self.rows_of(doc);
-            found.extend(rows.chunks(w).enumerate().filter(|(_, r)| r[column] == v).map(|(i, _)| PROBE | doc << 32 | i));
+            found.extend(rows.chunks(w).enumerate().filter(|(_, r)| r[column] == v).map(|(i, _)| PROBE | doc << 32 | i)); // bits: a probe's row handle
         }
         Some(found)
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         let w = self.width();
         if row & PROBE != 0 {
-            let (doc, i) = ((row & !PROBE) >> 32, row & 0xffff_ffff);
+            let (doc, i) = ((row & !PROBE) >> 32, row & 0xffff_ffff); // bits: a probe's row handle
             return self.rows_of(doc)[i * w + column];
         }
         self.all()[row * w + column]

@@ -444,7 +444,7 @@ impl ProgramPass for Hide {
         let reached: BTreeSet<String> = delta.made.iter().cloned().collect();
         drop(delta);
         let bound = self.bound;
-        let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
+        let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { rerail_blocks::located::Located::new(bound, 0).0 };
         let reaches = reaching(&rules, &seeds);
         // What `parsed` asks for (`rr_embed_req`, and the contexts `rr_ctx<k>` only it reads) is not bounded: asking is
         // not seeing. A string in an annotation is in a document not shown, and its rule's demand is made of inputs
@@ -839,7 +839,7 @@ fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v
 /// Hiding's last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
 /// (`bound`), by its facts (`analyse`; none where it is not reached).
 fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vector<usize>>, bound: u32) -> Final {
-    let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
+    let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { rerail_blocks::located::Located::new(bound, 0).0 };
     let src = v.rule(rule.src).expect("a rule of the input");
     let name = |s: Slot| v.text(src.var(s)).to_owned();
     let mut out = Final::default();

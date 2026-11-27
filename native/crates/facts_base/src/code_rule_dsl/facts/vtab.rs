@@ -407,7 +407,7 @@ pub trait Source: Send + Sync {
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
-        self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
+        self.for_rows(&[column], &mut |r, row| each(r, rerail_blocks::located::document_of(row[0])));
     }
     fn estimated_len(&self) -> usize {
         self.len()

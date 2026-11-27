@@ -275,19 +275,29 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
         let d = s.docs.dir();
         (n + (*d).ndocs as usize, h + (*d).nhomes as usize)
     });
-    let (rows, homes, dir): (*mut ViewRow, *mut ViewHome, *mut ViewDir) = (b.alloc_t(n.max(1)), b.alloc_t(nhomes.max(1)), b.alloc_t(1));
+    // Its rows: the numbers in the growth from its batches' first document's to their last (plan "Chunk node
+    // numbers"), a document's row its number less the first, as in each batch's own directory.
+    let numbers = || sources.iter().flat_map(|s| (0..s.docs.len()).map(|i| s.docs.number(i)));
+    let (first, span) = super::made::numbers_spanned(numbers());
+    let (rows, homes, order, dir): (*mut ViewRow, *mut ViewHome, *mut u32, *mut ViewDir) = (b.alloc_t((span as usize).max(1)), b.alloc_t(nhomes.max(1)), b.alloc_t(n.max(1)), b.alloc_t(1));
+    // SAFETY: `span` rows, just allocated in the chunk's block: the numbers none of its batches' documents has.
+    unsafe { super::made::write_absent(rows, first, span, numbers()) };
     let (mut k, mut h, mut past) = (0usize, 0u32, [0u32; ROWS]);
     for s in &sources {
         let d = s.docs.dir().cast_mut();
-        // SAFETY: as above; the rows and homes just allocated in the chunk's block, `n` and `nhomes` of them.
+        // SAFETY: as above; the rows, homes and order just allocated in the chunk's block, `span`, `nhomes` and `n`
+        // of them.
         unsafe {
             let (srows, shomes, sn, sh) = (ViewDir::block_rows(d), ViewDir::homes_mut(d), (*d).ndocs as usize, (*d).nhomes);
             for i in 0..sn {
                 // copy: derived (the layered directory's row: the batch's row, its first rows and homes renumbered)
-                let mut row: ViewRow = srows.add(i).read();
+                let mut row: ViewRow = srows.add(ViewDir::row_at(d, i as u32) as usize).read();
                 row.rows = std::array::from_fn(|v| past[v] + row.rows[v]);
                 row.homes = row.homes.map(|x| x + h);
-                rows.add(k).write(row);
+                row.at = k as u32;
+                let r = s.docs.number(i) - first;
+                rows.add(r as usize).write(row);
+                order.add(k).write(r);
                 k += 1;
             }
             for j in 0..sh as usize {
@@ -303,29 +313,12 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     // with a key below the chunk's was never found by its parents' walk, `tp_ident` and `tp_list` 9 rows short).
     let by_key: *mut u32 = b.alloc_t(n.max(1));
     {
-        let mut order: Vec<u32> = (0..n as u32).collect();
-        // SAFETY: the rows, all `n` written above.
-        order.sort_by_key(|&i| unsafe { (*rows.add(i as usize)).key });
+        // SAFETY: the order, all `n` written above.
+        let mut keyed: Vec<u32> = (0..n).map(|m| unsafe { order.add(m).read() }).collect();
+        // SAFETY: the rows, all `n` of the order written above.
+        keyed.sort_by_key(|&r| unsafe { (*rows.add(r as usize)).key });
         // SAFETY: `n` entries, just allocated in the chunk's block.
-        unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), by_key, n) };
-    }
-    // Its rows by their documents' numbers in the growth (`ViewDir::by_number`): each batch's rows past those before.
-    let count = batch.docs.ids().count() as usize;
-    let by_number: *mut u32 = b.alloc_t(count.max(1));
-    {
-        let mut k = 0u32;
-        // SAFETY: `count` entries, just allocated in the chunk's block; each document's number is below `count`.
-        unsafe {
-            for j in 0..count {
-                by_number.add(j).write(rerail_clif::view_reads::NO_DOC);
-            }
-            for s in &sources {
-                for i in 0..s.docs.len() {
-                    by_number.add(s.docs.number(i) as usize).write(k + i as u32);
-                }
-                k += s.docs.len() as u32;
-            }
-        }
+        unsafe { std::ptr::copy_nonoverlapping(keyed.as_ptr(), by_key, n) };
     }
     let at = b.offset_of(dir);
     // The chunk's batch's cache is the directory's; each value's rows name their own in their views (`TapeView::side`).
@@ -335,7 +328,7 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     // SAFETY: as above.
     let codes = unsafe { (*batch.docs.dir()).codes };
     // SAFETY: the directory, just allocated in the chunk's block, made whole.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, codes, pages: batch.docs.ids().table_at() as u64, by_number: b.offset_of(by_number) as u64, numbered: count as u32, pad2: 0 }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, codes, pages: batch.docs.ids().table_at() as u64, order: b.offset_of(order) as u64, first, span }) };
     // The device's where it reads every batch's: the block's buffer made after the last allocation, so it covers
     // them, and each batch's slabs (a batch's first buffer is its block's, covered by this one).
     let device = crate::code_rule_dsl::tape::placed::device();

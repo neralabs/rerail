@@ -26,7 +26,7 @@ pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Sou
             return None;
         }
         for d in docs {
-            rows.extend(now.range_lookup(0, Some((d << 32, true)), Some(((d + 1) << 32, false)))?.into_iter().map(|r| r as u32));
+            rows.extend(now.range_lookup(0, Some((rerail_blocks::located::Located::of(*d, 0).0, true)), Some((rerail_blocks::located::Located::of(*d + 1, 0).0, false)))?.into_iter().map(|r| r as u32));
         }
     }
     rows.sort_unstable();

@@ -123,7 +123,7 @@ impl PythonProject for Batch {
         let mut by_doc: BTreeMap<u32, BTreeSet<u32>> = BTreeMap::new();
         for &n in requests {
             if n >= 0 {
-                by_doc.entry((n >> 32) as u32).or_default().insert(n as u32);
+                by_doc.entry(rerail_blocks::located::Located(n).key()).or_default().insert(rerail_blocks::located::Located(n).low());
             }
         }
         let mut rows = Vec::new();
