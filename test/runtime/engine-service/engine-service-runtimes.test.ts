@@ -1545,22 +1545,22 @@ describe("the engine service's idle close", () => {
     expect(live("a")).toBe(false);
   });
 
-  // The service's stop ended its quiet sessions one after another and stopped at the first that failed (a database
-  // busy past its wait): each one after it stayed open and owned, with nothing left to end it.
+  // The service's stop ended its quiet sessions one after another and stopped at the first that failed (a write of its
+  // end that failed as it was made): each one after it stayed open and owned, with nothing left to end it.
   it("ends every other quiet session's record when the service stops and ending one fails", async () => {
     const { second, clock, service, start, ended } = await idleService();
     await start("a");
     await start("b", second);
     clock.now += 60_000;
     await service.closeIdleSessions();
-    const interrupt = vi.spyOn(SqliteAuditControlStore.prototype, "interrupt").mockImplementationOnce(() => {
+    const ending = vi.spyOn(SqliteAuditControlStore.prototype, "endOwnership").mockImplementationOnce(() => {
       throw new Error("database is locked");
     });
     services.splice(services.indexOf(service), 1);
     try {
       await service.close();
     } finally {
-      interrupt.mockRestore();
+      ending.mockRestore();
     }
     // Which of the two ends first depends on which close finished first.
     expect([ended("a"), ended("b")].filter(at => at !== null)).toHaveLength(1);
