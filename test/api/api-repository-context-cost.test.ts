@@ -32,13 +32,19 @@ vi.mock("node:fs", async importOriginal => {
  * (`lstat`) while `counting` is on.
  */
 const reads = vi.hoisted(() => ({ counting: false, placements: 0, remotes: 0, starts: 0, stamps: 0, looked: [] as string[] }));
+/** What the next placement runs once Git placed the folder, before Rerail reads anything more of it. */
+const placing = vi.hoisted(() => ({ after: undefined as (() => void) | undefined }));
 vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
   const original = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
   return {
     ...original,
     repositoryIdentityLocation: (...parameters: Parameters<typeof original.repositoryIdentityLocation>) => {
       if (reads.counting) reads.placements += 1;
-      return original.repositoryIdentityLocation(...parameters);
+      const location = original.repositoryIdentityLocation(...parameters);
+      const after = placing.after;
+      placing.after = undefined;
+      after?.();
+      return location;
     },
     readRemoteAddress: (...parameters: Parameters<typeof original.readRemoteAddress>) => {
       if (reads.counting) reads.remotes += 1;
@@ -562,6 +568,16 @@ describe("a folder of a checkout made a repository of its own, while the daemon 
       expect(await namedRepositories(api, read)).toEqual(allNaming(second));
     });
   }
+
+  it("names the new repository at the next read when the folder became one while Git placed it in the checkout around it", async () => {
+    const { top, api, first, second, resolveCheckout } = await twoRepositories();
+    const read = join(top, "tools");
+    mkdirSync(read);
+    placing.after = () => cloneAt(read, OTHER);
+    expect(resolveCheckout(read)?.repositoryKey).toBe(first);
+
+    expect(await namedRepositories(api, read)).toEqual(allNaming(second));
+  });
 
   it("keeps an unchanged folder's location: its next read starts no process, places nothing, and looks at one `.git` entry per folder below the top level", async () => {
     const { top, first, resolveCheckout } = await twoRepositories();
