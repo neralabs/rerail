@@ -45,7 +45,8 @@ block_scope("class").
 // and classes, the identifier for parameters, the specifier for imports. form says which construct it was.
 // space exists because TypeScript keeps two namespaces: `type T = …` and `const T = …` can coexist, and
 // `let x: T` looks T up among types while `f(T)` looks it up among values.
-.decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol) extensible   // vue/vue-01: a view's
+// `extensible`: vue/vue-01 adds the declarations of a Vue view's script.
+.decl decl_site(s: node, x: symbol, site: node, form: symbol, space: symbol) extensible
 // `var x = 1` anywhere in function f (even inside an if or a loop) declares x in f: var is function-scoped.
 decl_site(s, x, d, "var", "value")   :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"),
     text(n, x), child(v, d, _), kind(v, "variable_declaration"), nearest(d, s, fn_scope).
