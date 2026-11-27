@@ -15,7 +15,7 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
 mod tier2;
 
-pub use tier1::{Lexed, PADDING, lex};
+pub use tier1::{Lexed, PADDING, UNRECORDED, lex};
 /// The supertypes a key's class bits name (`rerail_tape_format::Writer::classes`), ascending.
 pub use tier2::SUPERS;
 

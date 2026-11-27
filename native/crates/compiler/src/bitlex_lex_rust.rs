@@ -6873,7 +6873,15 @@ impl Gen<'_> {
         } else {
             once_asks.clear();
         }
-        let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
+        // Stage 1's checks after its blocks: none, or the escapes no token reads (`sinks`), which the loop reads.
+        let finals_read = self.stage1_parts(true).finals.lines().all(|l| matches!(l.trim(), "" | "// The errors, once." | "refused |= errors != 0;"));
+        // The counts' scans of the tokens' bytes, where the loop reads a count past them (a mark's `depth.eq(0)`, the
+        // string reader's bound): kept, of the bytes; else none, tier 2's to count.
+        let keep_scans = {
+            let all = [&open_code, &branches, &token_code, &token_read, &own_code, &gap_code, &acc_after].iter().map(|t| bytes::strip_scans(t)).collect::<String>();
+            token_scans.iter().any(|(name, ..)| uses(&all, &format!("c_{}", ident(name))))
+        };
+        let from_bytes = if fused && finals_read && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
             let (live, _, codes) = self.stage1_codes();
@@ -6909,7 +6917,8 @@ impl Gen<'_> {
                     None => branches_t.clone(),
                 };
                 for (i, t) in [open_t, branches_t, if alone { &token_read } else { &token_code }, &own_code, gap_t, &acc_after].into_iter().enumerate() {
-                    let t = bytes::strip_scans(&bytes::strip_pauses(&pairs_read(t)));
+                    let t = bytes::strip_pauses(&pairs_read(t));
+                    let t = if keep_scans { t } else { bytes::strip_scans(&t) };
                     let t = if i == 1 && lean_rows.is_some() { by.rewrite_windows(&t)? } else { by.rewrite(&t)? };
                     let t = bytes::fuse_tests(&t, &by.escapes);
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
@@ -6943,6 +6952,26 @@ impl Gen<'_> {
                     }
                     None => String::new(),
                 });
+                // The escapes no token reads (`sinks`): each over the gap and the token, every byte the loop passes (the
+                // lean lexer's indent, read where its line breaks), and the gap after the last token once after the loop.
+                let last = if reader_code.is_some() { "if rd_end != usize::MAX { rd_end } else { l }" } else { "l" };
+                let (mut sink_loop, mut sink_end) = (String::new(), String::new());
+                for (why, id) in &self.sinks {
+                    let m = &self.nodes[*id].name;
+                    let _ = write!(sink_loop, "        // {why}: in the gap and the token\n        if any_in(&{m}, at, {last}) {{\n            refused = true;\n            break 'tokens;\n        }}\n");
+                    let _ = write!(sink_end, "    // {why}: in the gap after the last token\n    if at < n && any_in(&{m}, at, n - 1) {{\n        refused = true;\n    }}\n");
+                }
+                pieces.push(by.rewrite(&sink_loop)?);
+                pieces.push(by.rewrite_windows(&sink_end)?);
+                // The string reader's state, its pick and its check after the loop (`ReaderCode`), of the bytes as the rest.
+                for (k, t) in reader_code.iter().flat_map(|rc| [(0, &rc.decl), (1, &rc.pick), (0, &rc.end)]) {
+                    let t = bytes::strip_pauses(t);
+                    let t = if k == 1 { by.rewrite(&t)? } else { by.rewrite_windows(&t)? };
+                    if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
+                        return Err("a pause the string reader still reads".into());
+                    }
+                    pieces.push(t);
+                }
                 // The pairs masks the loop reads: of the block's classes, as its other masks (`Bytes::pairs`).
                 by.pairs = pair_rows.iter().filter(|(f, _)| pieces.iter().any(|q| q.contains(&format!("k_{f}")))).cloned().collect();
                 let (decl, words) = by.block_words();
@@ -6962,7 +6991,7 @@ impl Gen<'_> {
         let walk = gate_walk(&self.body, &rest, &made);
         // The counts' words over the tokens.
         // No count where the loop reads the bytes (`strip_scans`).
-        let scan_decl: String = if from_bytes.is_some() { String::new() } else { token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect() };
+        let scan_decl: String = if from_bytes.is_some() && !keep_scans { String::new() } else { token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect() };
         if fused {
             let head = if from_bytes.is_some() {
                 String::from("/// `src`'s records, in one pass over its blocks (decisions 0619, 0623): each block's token starts from its 64 bytes, and\n/// each mask a token reads from the bytes where it reads it, as the lean lexer reads its window's.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {\n    let nw = n.div_ceil(64);\n    let mut refused = false;\n")
@@ -7034,19 +7063,24 @@ impl Gen<'_> {
         }
         // A string reader's (decision 0698): its state, its pick at a template's level 0, the pieces after its record.
         if let Some(rc) = &reader_code {
-            let mut rd = rc.pick.clone();
+            // Of the bytes where the loop reads them (`from_bytes`), else of stage 1's masks.
+            let (decl, pick, end) = match &from_bytes {
+                Some((p, ..)) => (p[10].clone(), p[11].clone(), p[12].clone()),
+                None => (rc.decl.clone(), rc.pick.clone(), rc.end.clone()),
+            };
+            let mut rd = pick;
             for (i, arm) in row_arms.iter().enumerate() {
                 rd = rd.replace(&reader::arm_of(arm.row), &i.to_string());
             }
             for (from, to) in [
-                ("    // The blocks of 64 bytes, and in each the bytes `skip` does not hold", format!("{}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold", rc.decl)),
+                ("    // The blocks of 64 bytes, and in each the bytes `skip` does not hold", format!("{decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold")),
                 ("        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word)", format!("{rd}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks, word)")),
                 ("            unsafe { out.add(len).write(rec) };\n            len += 1;\n", "            unsafe { out.add(len).write(rec) };\n            // A string's record is its first piece, its others after it (`more`), to its last byte (`rd_end`).\n            len += 1 + more;\n            more = 0;\n".to_owned()),
                 ("        } else {\n            let tested = pending | hits;\n", "        } else if rd_bare {\n            // A string's tail: its gap is the next token's.\n            marks = 0;\n        } else {\n            let tested = pending | hits;\n".to_owned()),
                 ("        from_record = s + 1;\n", "        if !rd_bare {\n            from_record = s + 1;\n        }\n".to_owned()),
                 ("code: kind | word << 8 | marks << 16 };\n", "code: kind | if rd_bare { 0 } else { word << 8 } | marks << 16 };\n        rd_bare = false;\n".to_owned()),
                 ("        at = l + 1;\n        if at >= base + 64 {", "        at = if rd_end != usize::MAX { rd_end } else { l } + 1;\n        rd_end = usize::MAX;\n        if at >= base + 64 {".to_owned()),
-                ("    let _ = (from, from_record, before, pending);\n", format!("{}    let _ = (from, from_record, before, pending);\n", rc.end)),
+                ("    let _ = (from, from_record, before, pending);\n", format!("{end}    let _ = (from, from_record, before, pending);\n")),
             ] {
                 if !out.contains(from) {
                     return Err(format!("tier 1 as Rust: a string reader's loop: no `{}`", from.trim()));
@@ -7061,6 +7095,18 @@ impl Gen<'_> {
             }
             out.replace_range(e..e + anchor.len(), "            } };\n            match row {\n");
             out.insert_str(p + "            let row = ".len(), "if rd_pick != usize::MAX { rd_pick } else { ");
+        }
+        if let Some((p, ..)) = &from_bytes {
+            // The escapes no token reads: before the loop's next start, and after the loop.
+            if !p[8].is_empty() {
+                let at = ["        at = if rd_end != usize::MAX { rd_end } else { l } + 1;\n", "        at = l + 1;\n"].into_iter().find(|a| out.contains(a)).ok_or("tier 1 as Rust: no next start for the escapes")?;
+                out = out.replacen(at, &format!("{}{at}", p[8]), 1);
+                let end = "    let _ = (from, from_record, before, pending);\n";
+                if !out.contains(end) {
+                    return Err("tier 1 as Rust: no loop's end for the escapes".into());
+                }
+                out = out.replacen(end, &format!("{}{end}", p[9]), 1);
+            }
         }
         if from_bytes.is_some() {
             out = out.replacen(&alone_text, "", 1);
@@ -7267,7 +7313,7 @@ impl Gen<'_> {
             out = tidy_lean(&o);
         }
         // The lean lexer's micro-lexers, where a read is one (decision 0655 step 7).
-        if out.contains("micro::")
+        if out.lines().any(|l| !l.trim_start().starts_with("//") && l.contains("micro::"))
             && let Some(at) = out.find("\n\n")
         {
             out.insert_str(at + 2, "use rerail_simd8::micro;\n\n");

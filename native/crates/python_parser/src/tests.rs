@@ -387,7 +387,7 @@ fn corpus() {
             }
             Some(image) if image_text(&image).as_deref() == Ok(&want) => {
                 same += 1;
-                let aot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tier1_differs(&c, &text).map_or_else(|| aot_text(&text).map_err(|at| format!("refused at byte {at}")), Err)));
+                let aot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tier1_differs(c, &text).map_or_else(|| aot_text(&text).map_err(|at| format!("refused at byte {at}")), Err)));
                 match aot {
                     Ok(Ok(t)) if t == want => aot_same += 1,
                     Ok(Ok(got)) => {
@@ -493,10 +493,12 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     // lexer's pieces are no tokens of code: the interpreter's give the words of their bytes, which its tier 2 takes
     // but no lookahead of its reads (it reads the records).
     let Some(tokens) = rerail_compiler::stream::tokens(&c.program, text.as_bytes(), &run) else { return Some("the interpreter's string with no closer".into()) };
+    // The marks tier 2 asks of the bytes or the tokens (`UNRECORDED`, decision 0623) are in no record of tier 1's.
+    let asked = rerail_python_aot::UNRECORDED << 16;
     let (starts, lasts, codes): (Vec<u32>, Vec<u32>, Vec<u32>) = tokens.iter().fold((Vec::new(), Vec::new(), Vec::new()), |mut v, &(s, l, c, piece)| {
         v.0.push(s);
         v.1.push(l);
-        v.2.push(if piece { c & 0xff } else { c });
+        v.2.push(if piece { c & 0xff } else { c & !asked });
         v
     });
     // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
@@ -507,7 +509,8 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), codes.get(k));
         let rec = recs.get(k);
-        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
+        let code = rec.map(|r| r.code & !asked);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), code.as_ref());
         if theirs != ours {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
             return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));

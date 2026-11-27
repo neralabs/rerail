@@ -571,3 +571,31 @@ statements and blocks end.
       `dot | exp_l`, not the walk's `number`.
     - A row's start reads a string reader's regions as none: its arms read them.
     - The regions are numbered for the counts' reads, but the loop opens none.
+
+88. **Python's tier 1 as Rust has no stage 1: each block's masks are made where the loop reads them.** As rr's and
+    JSON's, the loop makes each block's words from one load and its classes (`block_classes`), and a read past the
+    block reads windows of the bytes. No mask of the whole file is made before the loop, and the reader's arms read
+    their stops, quotes and refusals the same way. What the bytes form needed:
+    - **The escapes no token reads** (`sinks`: a tab or a form feed in a line's indentation, or starting the file)
+      are tested in the loop, over each gap and its token (`at` to the token's last byte), and over the gap after the
+      last token once after the loop. Every byte is read once. Stage 1's check of them after its blocks goes.
+    - **A search of `A & F`, `F` a `fill`** reads `A`'s bits (its block's word, then windows), and tests `F` at each
+      bit by walking back over the bytes `E` does not hold to one `S` holds, as the lean lexer reads a line's indent
+      at its line break. `fill(S, E)` at a byte holds where `S` holds there, or `E` does not and it holds a byte back.
+    - **`escaped(B)` at one byte** is whether the run of `B`s before it is odd. A window searched from a byte inside
+      the token starts its carry the same way, so its windows need not start at the token's first byte. A window
+      reading `escaped(B)` a byte on shifts the window's escapes down a byte, with the carry out as its last bit, and a
+      window reading the same escapes twice computes them once.
+    - **A pairs mask a byte back** (`prev(two_start)`, `two_start = two & ~escaped(two)`) is `escaped(two)`: a byte is
+      escaped exactly where the byte before is a `two` not escaped itself.
+    - **A conjunction with a side that holds nowhere** (`i_open & prev(empty)`) holds nowhere, so it reads none of
+      its other side.
+    - **A complement a few bytes on or back** in a block's word masks with the bytes valid there, not the block's own:
+      `~prev(~empty)` holds at the file's first byte.
+    - **The counts' scans** of the tokens' bytes stay where the loop reads a count past them: `depth`, for the line
+      breaks' marks (`depth.eq(0)`) and the string reader's bound.
+    - **The reader's code** reads one mask a call: the stops by the format flag, each quote's mask by the quote, a
+      brace's run by which brace it is.
+
+    Tier 2 asks the token marks the loop no longer records (`trail`, `future`: `UNRECORDED`), as rr's tier 2 does.
+    The tests compare the records without those bits, as rr's do.
