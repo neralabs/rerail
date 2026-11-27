@@ -6902,7 +6902,17 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
                 shared
             }
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared))));
+        let w = within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared);
+        // SPIKE (S3): `RERAIL_SPIKE_PARENT_SET=child=parent`: axis `child`'s members have a parent in axis `parent`'s set.
+        let parent = std::env::var("RERAIL_SPIKE_PARENT_SET").ok().and_then(|v| {
+            let (c, q) = v.split_once('=')?;
+            (c == name).then(|| q.to_owned())
+        });
+        let w = match parent.and_then(|q| sets.iter().find(|(n, _)| *n == q)) {
+            Some((_, kinds)) => w.parent_in(Arc::new(within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, kinds, binding))),
+            None => w,
+        };
+        out.push((name.clone(), Arc::new(w)));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {

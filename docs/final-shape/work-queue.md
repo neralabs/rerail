@@ -12144,3 +12144,10 @@ Fixes the merge needed:
 
 Checked under Relax: rerail-setfix (147), tests-logic native::tests and plan::tests (1 thread), tests-corpus
 base_tests (54), tests-lang syntax::tests. Relax has no clippy: none run. No Metal or farm runs.
+
+### Q586. Roll-up 158 (Typing-support-final-shape 0a81aea19e onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's one commit: a kind-set axis can keep only members whose parent is in another set (a
+spike, off by default), in within.rs and syntax.rs. A clean merge.
+
+Checked under Relax: rerail-facts (18), tests-lang syntax::tests (103). No Metal or farm runs.
