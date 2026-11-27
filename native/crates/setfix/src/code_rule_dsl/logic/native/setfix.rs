@@ -2946,6 +2946,16 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             forms::open(&comp)
         };
     }
+    // A negation of the component's own relation (a fork's tails, the design's S1: `!cls_early` in `cls_late`) is
+    // sound only in the form that makes it whole first; waves would read it growing. Never run so. (A component with
+    // gates or requests waits on its negations itself, `answers::gate`.)
+    let nrels = comp.store.read().unwrap().rels.len();
+    let own_neg = comp.gates.is_empty() && comp.requests.is_empty() && comp.produced.is_empty() && comp.probes.iter().filter_map(|p| match &p.body { Body::Join(j) => Some(j), _ => None }).any(|j| {
+        j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::Full(x) | Src::Delta(x) | Src::FullMulti(x, _), neg: true, .. } if (*x as usize) < nrels))
+    });
+    if own_neg && comp.form.as_ref().is_none_or(|f| f.fork().is_none()) {
+        return Err(err(format!("{name}: a negation of the component's own relation, and no fork form to run it (the design's S1)")));
+    }
     reg.insert(key, Arc::new(Mutex::new(comp)));
     Ok(name)
 }
@@ -3072,10 +3082,20 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // collected here, never written to it, and handed to the form.
         let folds = cl.seeds();
         let mut folded: Vector<i64> = Vector::new();
+        // The relation the form forks (the design's S1, one pass a name): its seeds' rows collected, never written to
+        // it; the form runs its readers' rests on each.
+        let forks = cl.fork();
+        let mut forked: Vector<i64> = Vector::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
             if pi < start { continue; }
             runs += 1;
+            if forks == Some(p.head) {
+                let n = run_join_collect(j, store, syms, &[], &mut forked)?;
+                visits += n;
+                per[pi].1 += n;
+                continue;
+            }
             if folds == Some(p.head) {
                 let n = run_join_collect(j, store, syms, &[], &mut folded)?;
                 visits += n;
@@ -3110,9 +3130,18 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         if folds.is_some() {
             cl.take_seeds(std::mem::take(&mut folded));
         }
+        if forks.is_some() {
+            cl.take_fork(std::mem::take(&mut forked));
+        }
         form_name = cl.name();
         let prep = forms::framed(form_name, &name, &mut || cl.prepare(store, syms));
+        // The fork's rows (the design's S1, one pass a name), apart from the climb's.
+        if forks.is_some() {
+            forms::account("per name", &name, cl.fork_rows(), 0, 0);
+        }
         match prep {
+            // The fork's rows were never written to their relation: waves from the rows it has would miss them.
+            None if forks.is_some() => return Err(err(format!("{name}: the fork form could not run (the design's S1)"))),
             None => closure_ran = Some(None),
             Some(launches) if !launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
                 let tickets = crate::code_rule_dsl::logic::lanes::wave::queue("closure", launches);

@@ -45,6 +45,18 @@ pub(super) trait Form: Send {
     }
     /// The seeds' rows of relation `seeds()`, collected (`k` values a row).
     fn take_seeds(&mut self, _rows: Vector<i64>) {}
+    /// The relation whose rows the form forks (the design's S1, one pass a name): the seed loop collects its seeds'
+    /// rows, never written to it, and hands them over (`take_fork`) before `prepare`; the form runs its readers' rests
+    /// on each row.
+    fn fork(&self) -> Option<usize> {
+        None
+    }
+    /// The rows of relation `fork()`, collected.
+    fn take_fork(&mut self, _rows: Vector<i64>) {}
+    /// The rows the fork's tails made, once `prepare` ran.
+    fn fork_rows(&self) -> u64 {
+        0
+    }
 }
 
 /// The executors, in the order they are tried.
@@ -107,6 +119,15 @@ impl Form for ClosureForm {
     }
     fn take_seeds(&mut self, rows: Vector<i64>) {
         self.cl.take_seeds(rows);
+    }
+    fn fork(&self) -> Option<usize> {
+        self.cl.fork_source()
+    }
+    fn take_fork(&mut self, rows: Vector<i64>) {
+        self.cl.take_fork(rows);
+    }
+    fn fork_rows(&self) -> u64 {
+        self.cl.fork_rows()
     }
 }
 
