@@ -1676,17 +1676,20 @@ fn message_templates(programs: &[&str], settings: &[(String, String)]) -> HashMa
 /// `part`'s rows of a finding's relation (`rr::lower`'s `diagnostic_rule`) with their message made from their policy's
 /// and clause's template and their last `holes` columns' values (`findings::HOLE`), and those columns dropped: the
 /// message's words are the writer's, not the program's (decision 0225 §3).
-fn compose_messages(part: &output::Rows, holes: usize, templates: &HashMap<(String, String), String>) -> output::Rows {
+///
+/// A hole of a node path (`findings::PATH_HOLE`: `kinds[j]` is its suffix, `_path`, `_path_file` or `_path_line`)
+/// holds the path's text, and `paths` reads it in its document's tape: spelled, its file, or its line.
+fn compose_messages(part: &output::Rows, kinds: &[&str], templates: &HashMap<(String, String), String>, paths: &dyn Fn(&str, &str) -> String) -> output::Rows {
     use crate::code_rule_dsl::logic::rr::lower::findings::{message_of, MESSAGE_COLUMN};
     let w = part.width();
-    let kept = w.saturating_sub(holes);
+    let kept = w.saturating_sub(kinds.len());
     let text = |i: usize, c: usize| match part.cell(i, c) {
         output::Cell::Text(t) => t.to_owned(),
         output::Cell::Int(v) => v.to_string(),
     };
     let mut composed = output::Rows::new(part.types()[..kept].to_vec());
     for i in 0..part.len() {
-        let values: Vec<String> = (kept..w).map(|c| text(i, c)).collect();
+        let values: Vec<String> = (kept..w).zip(kinds).map(|(c, kind)| if kind.is_empty() { text(i, c) } else { paths(&text(i, c), kind) }).collect();
         let (policy, clause) = (text(i, 0), text(i, 1));
         let message = match templates.get(&(policy, clause.clone())).or_else(|| templates.get(&(String::new(), clause))) {
             Some(t) => message_of(t, &values),
@@ -1696,6 +1699,57 @@ fn compose_messages(part: &output::Rows, holes: usize, templates: &HashMap<(Stri
         composed.push(&cells);
     }
     composed
+}
+
+/// The documents the writer made to spell node paths (`path_hole`), by file and whether split into its programs: each
+/// file's source and documents, made once a run.
+type TapesRead = std::sync::Mutex<HashMap<(String, bool), Option<(Arc<str>, Arc<Vec<syntax::Document>>)>>>;
+
+/// A message's node path hole (`compose_messages`): the path, shown as its text (`path_tables::path_text`), read in
+/// its document's tape (decision 0722 §7): `_path` its spelling, `_path_file` its file, `_path_line` its node's line.
+/// The file is read from the run's snapshot and made into documents as the run makes them (`make`: its tree, or split
+/// into its programs where the path's root names a guest's key), once a run (`tapes`). A path its tape no longer has
+/// (the file changed, or is no file of the corpus) is shown as it is, with why.
+fn path_hole(root: &Path, tapes: &TapesRead, make: &dyn Fn(&str, String, bool) -> Option<Vec<syntax::Document>>, shown: &str, kind: &str) -> String {
+    use crate::code_rule_dsl::facts::vtab::syntax::paths;
+    let Some(file) = paths::file_of_text(shown) else { return shown.to_owned() };
+    if kind == "_path_file" {
+        return file.to_owned();
+    }
+    let base = shown.rsplit_once("\t/").map_or(shown, |(b, _)| b);
+    let root_text = paths::root_of(base).unwrap_or(file);
+    // A tape value (decision 0431) is parsed again from its grammar and text, its root; it is no file's, so it has
+    // no line.
+    if let Some((grammar, text)) = paths::tape_of_root(root_text) {
+        if kind == "_path_line" {
+            return String::new();
+        }
+        let Some((facts, guest)) = guests::tape_value_again(grammar, &text) else { return format!("{shown} (no tape of {grammar})") };
+        let lines = Arc::clone(&facts.lines);
+        return paths::spell_text(&facts, Some((&guest, lines)), root_text, shown).map_or_else(|| format!("{shown} (not in its tape)"), |(s, _)| s);
+    }
+    let guest = root_text.split_once("\t#").and_then(|(_, k)| u32::from_str_radix(k, 16).ok());
+    let read = tapes.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry((file.to_owned(), guest.is_some())).or_insert_with(|| {
+        let source = crate::git_workspace::snapshot::read_to_string(root.join(file)).ok()?;
+        let docs = make(file, source.clone(), guest.is_some())?;
+        Some((Arc::from(source.as_str()), Arc::new(docs)))
+    }).clone();
+    let Some((source, docs)) = read else { return format!("{shown} (no tape of {file})") };
+    let doc = match guest {
+        Some(k) => docs.iter().find(|d| d.key == k),
+        None => docs.iter().find(|d| d.guest.is_none() && core::facts_tag(&d.facts) != core::TEXT).or_else(|| docs.first()),
+    };
+    let Some(doc) = doc else {
+        let made: Vec<String> = docs.iter().map(|d| format!("{:08x}", d.key)).collect();
+        return format!("{shown} (no document of it in {file}: made {})", made.join(", "));
+    };
+    // A guest is placed in its file through its host's lines, as the batch places it (`made::Docs::whole`).
+    let placed = doc.guest.as_deref().map(|g| (g, docs.iter().find(|d| d.key == g.host).map_or_else(|| Arc::clone(&doc.facts.lines), |h| Arc::clone(&h.facts.lines))));
+    let Some((spelled, start)) = paths::spell_text(&doc.facts, placed, root_text, shown) else { return format!("{shown} (not in {file}'s tape)") };
+    match kind {
+        "_path_line" => (source.as_bytes()[..(start as usize).min(source.len())].iter().filter(|&&b| b == b'\n').count() + 1).to_string(),
+        _ => spelled,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -9687,6 +9741,8 @@ fn run_observed_within(
     // A stage's probes (decision 0675) are kept in the files' memo entries, not written out.
     outputs.retain(|rel, _| !phases::is_probe(rel));
     let templates: std::cell::OnceCell<HashMap<(String, String), String>> = std::cell::OnceCell::new();
+    // The tapes a message's node paths are read in (`path_hole`), each file's once.
+    let tapes_read: TapesRead = Default::default();
     // A node column's values (none where a part holds the column as text: rows a phase handed of its texts).
     let node_values = |part: &output::Rows, c: usize| -> Vector<i64> {
         (0..part.len())
@@ -9751,8 +9807,38 @@ fn run_observed_within(
             let parts: &[Arc<output::Rows>] = if crate::code_rule_dsl::logic::rr::is_diagnostic(rel) {
                 // The wording is the handed program's where one was handed (a reused combine's may be of an earlier wording).
                 let templates = templates.get_or_init(|| message_templates(programs, &given.read.map_or_else(|| head_settings.clone(), |read| ProgramFields::settings(&**read))));
-                let holes = head.columns_of(rel).map_or(0, |d| d.iter().filter(|(c, _)| c.starts_with(crate::code_rule_dsl::logic::rr::lower::findings::HOLE)).count());
-                messaged = parts.iter().map(|p| Arc::new(compose_messages(p, holes, templates))).collect();
+                use crate::code_rule_dsl::logic::rr::lower::findings::{HOLE, PATH_HOLE};
+                // Each hole's kind: a node path's suffix (`PATH_HOLE`), else none.
+                let kinds: Vec<&str> = head
+                    .columns_of(rel)
+                    .map(|d| {
+                        d.iter()
+                            .filter(|(c, _)| c.starts_with(HOLE))
+                            .map(|(c, _)| match c.find(PATH_HOLE).map(|at| &c[at..]) {
+                                Some("_path_file") => "_path_file",
+                                Some("_path_line") => "_path_line",
+                                Some(_) => "_path",
+                                None => "",
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                // A file's documents as the run makes them: its tree, or split into its programs (`hit_document`).
+                // A file of another grammar is read for its programs (decision 0512): its text, its tree (a hidden
+                // guest) and the tree's programs. A file of the run's grammar is its tree, its programs made of it.
+                let make = |file: &str, source: String, guests: bool| -> Option<Vec<syntax::Document>> {
+                    let key = run_docs_held.lock().expect("the run's documents").get(file).map_or(0, |(_, k)| *k);
+                    let other = text_document(root, file, label);
+                    let how = HitBuild { root, label, tapes: None, keep_tapes: false, unpackaged: false, split: (guests && other).then_some((&guest_keys, projection.shape, local_seen)) };
+                    let mut docs = hit_document(&how, key, file, None, source, None).ok()?;
+                    if guests && !other {
+                        let programs = guests::Guests::new(label, projection.shape, Arc::clone(&guest_keys)).seeing(local_seen).programs(&docs).ok()?;
+                        docs.extend(programs);
+                    }
+                    Some(docs)
+                };
+                let spelled = |shown: &str, kind: &str| path_hole(root, &tapes_read, &make, shown, kind);
+                messaged = parts.iter().map(|p| Arc::new(compose_messages(p, &kinds, templates, &spelled))).collect();
                 &messaged
             } else {
                 parts

@@ -604,6 +604,8 @@ impl Source for LongTexts {
             "node_path" => self.batch.node_path(n).map(|w| w.to_string()),
             "path_node" => self.batch.path_node(n).map(|x| x.to_string()),
             "path_unit" => self.batch.path_unit(n).map(|w| w.to_string()),
+            "path_spelling" => self.batch.path_spelling(n),
+            "path_file" => self.batch.path_file(n),
             // `op_at`'s operator at place `more[0]`, in either shape (`Tree` makes its rows so in both; `""` past the
             // last: an operator is never empty).
             "rr_node_op_at" => {
@@ -1516,6 +1518,8 @@ pub struct Dialect {
     values: bool,
     /// Its node path tables as its codes (`paths::Codes`, decision 0722).
     pub paths: paths::Codes,
+    /// The tables themselves: their labels spell a path (`paths::DocPaths::spell`).
+    path_tables: &'static rerail_lang::code_rule_dsl::path_tables::PathTables,
     /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
     /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
     grammar: Option<Arc<crate::code_rule_dsl::tape::tokens::TokenGrammar>>,
@@ -1550,12 +1554,21 @@ impl Dialect {
             .collect();
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        let paths = paths::Codes::new(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).path_tables(), &names, &|f| catalog.field_id(f), catalog.field_count());
-        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, paths, grammar })
+        let path_tables = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).path_tables();
+        let paths = paths::Codes::new(path_tables, &names, &|f| catalog.field_id(f), catalog.field_count());
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, paths, path_tables, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
         self.granule_kinds.get(usize::from(code)).copied().unwrap_or(0)
+    }
+    /// Its family's node path tables (decision 0722): their labels spell a path's steps (`paths::DocPaths::spell`).
+    pub fn path_tables(&self) -> &'static rerail_lang::code_rule_dsl::path_tables::PathTables {
+        self.path_tables
+    }
+    /// Field `id`'s name in the grammar (`None` for 0, no field).
+    pub fn field_name(&self, id: u16) -> Option<&'static str> {
+        self.catalog.field_name(id)
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
     pub(super) fn code(&self, f: FactsIn<'_>, id: u32) -> u16 {
@@ -2545,8 +2558,17 @@ fn in_block<T: cells::Cell>(block: &Arc<Block>, items: &[T]) -> Cells<T> {
 impl Batch {
     /// Document `i`'s paths' root text: its path, and a guest's document key after it (a guest shares its host's
     /// path; its key is a hash of its host node's id, `granules`).
+    ///
+    /// A tape value (a string a rule parsed, decision 0431) or another value document is rooted at its identity instead, its grammar and text
+    /// (`paths::tape_root`): it is one per grammar and text, whichever string holds it, and no file's.
     fn path_root(&self, i: usize) -> String {
         match self.docs.guest(i) {
+            // `@parse` and `@splice` make value documents of a grammar and a text too, parsed as a tape value is.
+            Some(g) if matches!(g.made, Made::Tape { .. } | Made::Parse { .. } | Made::Splice { .. }) => {
+                let d = self.docs.input(i);
+                let grammar = d.guest.as_deref().map_or("", |g| g.grammar.as_str());
+                paths::tape_root(grammar, d.facts.source.as_str())
+            }
             Some(_) => format!("{}\t#{:08x}", self.docs.path(i), self.docs.key(i)),
             None => self.docs.path(i).to_owned(),
         }
@@ -2584,17 +2606,37 @@ impl Batch {
     /// The node path `w` names (`@path_node`): its document is the one of the batch whose root text its base starts
     /// with; none for another's, or one whose granule or steps the tape no longer has.
     pub fn path_node(&self, w: i64) -> Option<i64> {
+        let (i, _, x) = self.path_at(w)?;
+        let p = &self.docs[i];
+        let local = p.local_of_node(x);
+        (local != NONE).then(|| p.global(local))
+    }
+
+    /// The node path `w` decoded: its document's index, its paths and its node there (in their projection's ids).
+    fn path_at(&self, w: i64) -> Option<(usize, Arc<NodePaths>, u32)> {
         let atoms = RunAtoms(&*self.atoms);
         let text = paths::Atoms::text(&atoms, (w as u64 >> 32) as u32)?;
         let root = paths::root_of(&text)?;
         let roots = self.path_roots.get_or_init(|| (0..self.docs.len()).map(|i| (self.path_root(i), i)).collect());
         let i = *roots.get(root)?;
         let made = self.node_paths(i)?;
-        let p = &self.docs[i];
-        let q = made.whole.as_ref().unwrap_or(p);
+        let q = made.whole.as_ref().unwrap_or(&self.docs[i]);
         let x = made.paths.decode(q, self.dialects.get(q.tag())?, &atoms, w as u64)?;
-        let local = p.local_of_node(x);
-        (local != NONE).then(|| p.global(local))
+        Some((i, made, x))
+    }
+
+    /// Node path `w` spelled (`@path_spelling`, a message's `{p}`; decision 0722 §4): `pkg/mod.py::C.m/body.return`.
+    pub fn path_spelling(&self, w: i64) -> Option<String> {
+        let (i, made, x) = self.path_at(w)?;
+        let q = made.whole.as_ref().unwrap_or(&self.docs[i]);
+        made.paths.spell(q, self.dialects.get(q.tag())?, x)
+    }
+
+    /// The file a node path names (`@path_file`, a message's `{p.file}`): its root's path, a guest's key left out.
+    /// Read from its base's text alone.
+    pub fn path_file(&self, w: i64) -> Option<String> {
+        let text = paths::Atoms::text(&RunAtoms(&*self.atoms), (w as u64 >> 32) as u32)?;
+        paths::file_of_text(&format!("{text}\t/1")).map(str::to_owned)
     }
 
     /// The path of the granule a node path's base is in (`@path_unit`): its key's atom, no steps.

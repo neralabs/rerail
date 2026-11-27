@@ -188,3 +188,30 @@ fn a_small_files_paths_need_no_anchor() {
         panic!("{anchored} paths under anchors:\n{}", lines.join("\n"));
     }
 }
+
+/// A path is spelled (decision 0722 §4) by its file, its units (a granule's name; `#k` only where siblings of its
+/// parent share it) and its steps (a field's label, else a kind's; `#k` only where siblings are spelled alike).
+#[test]
+fn a_path_is_spelled_by_its_units_and_labelled_steps() {
+    let source = "class C:\n    def m(self):\n        if a:\n            return 1\n        return 2\n\ndef f():\n    pass\n\ndef f():\n    pass\n";
+    let facts = facts("python", "pkg/mod.py", source);
+    let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+    let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
+    let paths = DocPaths::new(&p, &dialect, "pkg/mod.py").unwrap();
+    let f = p.f();
+    let mut spelled: Vec<String> = (0..f.len() as u32).filter(|&x| f.named(x)).filter_map(|x| paths.spell(&p, &dialect, x)).collect();
+    spelled.sort();
+    for want in [
+        "pkg/mod.py::C.m",
+        "pkg/mod.py::C.m/body.if",
+        "pkg/mod.py::C.m/body.if.cond",
+        "pkg/mod.py::C.m/body.if.then.return",
+        "pkg/mod.py::C.m/body.return",
+        "pkg/mod.py::C.m/params",
+        "pkg/mod.py::f#0",
+        "pkg/mod.py::f#1",
+    ] {
+        assert!(spelled.iter().any(|s| s == want), "{want} among {spelled:#?}");
+    }
+    assert!(!spelled.iter().any(|s| s.contains("::C#") || s.contains("m#")), "one C and one m: no ordinal {spelled:#?}");
+}

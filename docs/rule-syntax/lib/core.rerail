@@ -565,6 +565,10 @@
 .functor node_path(n: node): node_path
 .functor path_node(p: node_path): node
 .functor path_unit(p: node_path): node_path
+// @path_spelling(p): p spelled, `pkg/mod.py::C.run/body.if#0.then.return` (a message's {p}; decision 0722 §4).
+// @path_file(p): the file p names (a message's {p.file}).
+.functor path_spelling(p: node_path): symbol
+.functor path_file(p: node_path): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for

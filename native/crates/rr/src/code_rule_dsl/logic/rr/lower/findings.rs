@@ -22,6 +22,11 @@ pub const HEAD: [&str; 8] = ["policy", "clause", "code", "path", "line", "at", "
 /// writer composes `message` from them and the template and writes the row without them (decision 0225 §3).
 pub const HOLE: &str = "hole";
 
+/// A hole that carries a node path for the writer to read (decision 0722 §7): `hole{j}` then this, then `_file` or
+/// `_line` for `{p.file}` and `{p.line}`. The path is read in its own document's tape, whichever file the finding is
+/// in, so the rule carries the word and the writer spells it.
+pub const PATH_HOLE: &str = "_path";
+
 /// The index of `message` in a finding's row (`HEAD`).
 pub const MESSAGE_COLUMN: usize = 6;
 
@@ -865,8 +870,28 @@ impl<'p> Findings<'_, 'p> {
         let (_, keys) = message_parts(&finding.message).map_err(|e| Error::Syntax(format!(".violation {} message: {e}", finding.name)))?;
         let mut holes = Vec::new();
         let mut reads = Vec::new();
+        // Each hole's suffix after `hole{j}`: a node path's kind (`PATH_HOLE`), else none.
+        let mut kinds: Vec<&'static str> = Vec::new();
+        let path_column = |i: usize| finding.columns[i].1 == "node_path";
         for key in &keys {
             let value = self.fresh("message");
+            let (node, property) = key.split_once('.').map_or((key.as_str(), None), |(n, p)| (n, Some(p)));
+            if !key.contains('(') && column(node).is_ok_and(path_column) {
+                let i = column(node)?;
+                if i == 0 {
+                    return Err(Error::Syntax(format!(".violation {}: a finding is placed on a node, not a node path", finding.name)));
+                }
+                kinds.push(match property {
+                    None => "_path",
+                    Some("file") => "_path_file",
+                    Some("line") => "_path_line",
+                    Some(_) => return Err(Error::Syntax(format!(".violation {} message: a node path has no property {key} (its own, .file or .line)", finding.name))),
+                });
+                holes.push(cols[i].clone());
+                reads.push(Reads::Nothing);
+                continue;
+            }
+            kinds.push("");
             let (term, read) = if let Some((node, property)) = key.split_once('.') {
                 let i = column(node)?;
                 match property {
@@ -940,8 +965,8 @@ impl<'p> Findings<'_, 'p> {
             args.push(self.s(name));
             args.push(cols[i].clone());
         }
-        for (j, hole) in holes.into_iter().enumerate() {
-            decl.push((format!("{HOLE}{j}"), "sym".to_owned()));
+        for (j, (hole, kind)) in holes.into_iter().zip(kinds).enumerate() {
+            decl.push((format!("{HOLE}{j}{kind}"), if kind.is_empty() { "sym" } else { "node_path" }.to_owned()));
             args.push(hole);
         }
         let rel = diagnostic_name(policy, &finding.name, location);

@@ -218,6 +218,80 @@ Bad(n, "second", 8) :- kind(n, "identifier").
     }
 }
 
+/// A message's node path (decision 0722 §4, §7): `{p}` spelled, `{p.file}` and `{p.line}`, each read in the path's own
+/// file's tape, though the finding is in another file: a call in a.py names the function it calls in b.py.
+#[test]
+fn a_message_spells_a_node_path_of_another_file() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-paths");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "from b import g\n\ndef f():\n    return g(1)\n").unwrap();
+    std::fs::write(root.join("b.py"), "class K:\n    def m(self):\n        return 0\n\ndef g(x):\n    return x\n").unwrap();
+    let rule = root.join("rule.rerail");
+    std::fs::write(&rule, r#"
+.policy "contract:paths" revision 1
+.language python
+.decl def_at(s: symbol, p: node_path)
+def_at(s, @node_path(n)) :- kind(n, "function_definition"), field(n, "name", x), text(x, s).
+.decl ret_at(s: symbol, p: node_path)
+ret_at(s, @node_path(r)) :- kind(n, "function_definition"), field(n, "name", x), text(x, s), field(n, "body", b), child(b, r, _), kind(r, "return_statement").
+.decl callee(c: node, s: symbol)
+callee(c, s) :- kind(c, "call"), field(c, "function", f), text(f, s).
+.decl target(s: symbol, p: node_path, r: node_path) cross_file
+target(s, p, r) :- def_at(s, p), ret_at(s, r), callee(_, s).
+.violation Calls(at: node, p: node_path, r: node_path) "calls {p} in {p.file} at line {p.line}, returning at {r} (line {r.line})"
+Calls(c, p, r) :- callee(c, s), target(s, p, r).
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    let messages: Vec<&str> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(messages, ["calls b.py::g in b.py at line 5, returning at b.py::g/body.return (line 6)"], "{rows:#?}");
+}
+
+/// A program a file holds (decision 0431 §4) has paths too: rooted at its file's path and its document key, spelled
+/// in its own tape and placed at its file's lines, as the writer makes the file's programs again.
+#[test]
+fn a_message_spells_a_node_path_of_a_program_a_file_holds() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-guest-paths");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.html"), "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n").unwrap();
+    let rule = root.join("rule.rerail");
+    std::fs::write(&rule, r#"
+.policy "contract:guest-paths" revision 1
+.language html
+#include "html/embeds.rerail"
+.violation Call(at: node, p: node_path) "{p} at {p.file}:{p.line}"
+Call(c, @node_path(c)) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p), kind(c, "call_expression").
+"#).unwrap();
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let rows = report["diagnostics"].as_array().unwrap().clone();
+    std::fs::remove_dir_all(root).unwrap();
+    let mut messages: Vec<String> = rows.iter().map(|r| r["message"].as_str().unwrap().to_owned()).collect();
+    messages.sort_by_key(|m| m.rsplit(':').next().unwrap().to_owned());
+    assert_eq!(messages.len(), 2, "{rows:#?}");
+    for (m, line) in messages.iter().zip(["3", "5"]) {
+        assert!(m.starts_with("a.html#") && m.contains("::") && m.ends_with(&format!(" at a.html:{line}")), "{messages:?}");
+        assert!(!m.contains('\t') && !m.contains("not in") && !m.contains("no tape"), "{messages:?}");
+    }
+}
+
+/// A string a rule parses is a tape value (decision 0431), one per grammar and text: its paths are rooted at that
+/// identity (decision 0722 §7), spelled `annotation:List[int]::/…`, the same whichever string holds it, and the writer
+/// parses it again to spell them. It is no file's: `{p.file}` and `{p.line}` are empty.
+#[test]
+fn a_message_spells_a_node_path_of_a_parsed_string() {
+    let rows = finding_contract("x: \"List[int]\" = []\ny: \"List[int]\" = []\n", r#"
+.policy "contract:tape-paths" revision 1
+.language python
+.violation Ann(at: node, p: node_path) "{p}|{p.file}|{p.line}"
+Ann(s, @node_path(i)) :- kind(s, "string"), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "int").
+"#);
+    let messages: std::collections::BTreeSet<&str> = rows.iter().map(|r| r["message"].as_str().unwrap()).collect();
+    assert_eq!(messages.len(), 1, "both strings' tape value is one: {rows:#?}");
+    let m = messages.first().unwrap();
+    assert!(m.starts_with("annotation:List[int]::") && m.ends_with("||") && !m.contains("not in") && !m.contains("no tape"), "{m}");
+}
+
 /// O111: `{{` and `}}` are braces of a message's text, as the converter writes them; a lone `}` stays text.
 #[test]
 fn doubled_braces_in_a_message_are_text() {

@@ -442,6 +442,30 @@ pub fn unit_of(text: &str) -> Option<&str> {
     Some(&text[..text.find("\t@").unwrap_or(text.len())])
 }
 
+/// A tape value's root text (decision 0722 §7): its identity, its grammar and text (0431: one per grammar and text,
+/// whatever holds it), after a `\u{1}`; the text escaped so the root holds no tab. A tape value is no file's.
+pub fn tape_root(grammar: &str, text: &str) -> String {
+    format!("\u{1}{grammar}:{}", text.replace('\\', "\\\\").replace('\t', "\\t"))
+}
+
+/// A tape value's grammar and text, from its root text (`tape_root`); `None` for a file's root.
+pub fn tape_of_root(root: &str) -> Option<(&str, String)> {
+    let (grammar, text) = root.strip_prefix('\u{1}')?.split_once(':')?;
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (c, c == '\\') {
+            (_, true) => match chars.next() {
+                Some('t') => out.push('\t'),
+                Some(o) => out.push(o),
+                None => out.push('\\'),
+            },
+            (c, false) => out.push(c),
+        }
+    }
+    Some((grammar, out))
+}
+
 /// A base's root text: its document's path (and a guest's key), before its granule's key.
 pub fn root_of(text: &str) -> Option<&str> {
     unit_of(text)?.rsplit_once('\t').map(|(root, _)| root)
@@ -558,8 +582,12 @@ impl DocPaths {
     /// The node path `word` names in this document: `None` for another document's path, or one whose granule or
     /// steps its tape no longer has.
     pub fn decode(&self, p: &super::Projected, dialect: &super::Dialect, atoms: &dyn Atoms, word: u64) -> Option<u32> {
+        self.decode_text(p, dialect, atoms.text((word >> 32) as u32)?, word as u32)
+    }
+
+    /// The node a path of base text `text` and low 32 bits `low` names (`decode`, its atom's text read).
+    pub fn decode_text(&self, p: &super::Projected, dialect: &super::Dialect, mut text: String, low: u32) -> Option<u32> {
         let (f, table) = (p.f(), p.table()?);
-        let mut text = atoms.text((word >> 32) as u32)?;
         // Its anchors' steps, the outermost first.
         let mut anchored = Vec::new();
         while let Some(t) = text.rfind("\t@") {
@@ -574,7 +602,6 @@ impl DocPaths {
         }
         let g = *self.by_key.get(key)? as usize;
         let (mut x, _) = table.start_up(g);
-        let low = word as u32;
         let n = (u32::BITS - 1).checked_sub(low.leading_zeros())?;
         let mut own = Bits::default();
         own.put(u64::from(low), n);
@@ -583,6 +610,76 @@ impl DocPaths {
             x = self.read_down(f, dialect, x, bits)?;
         }
         Some(x)
+    }
+
+    /// Node `x`'s path spelled (decision 0722 §4): `file "::" unit ("." unit)* ["/" step ("." step)*]`. A unit is a
+    /// granule's name, else its kind's label; a step its field's label, or its kind's where it has no field or its slot
+    /// is kind-grouped. `#k` is the 0-based ordinal among siblings spelled the same, written only where there are
+    /// several. A name holding `. / # :` or a space is backquoted. `None` where `x` has no path (`encode`'s).
+    pub fn spell(&self, p: &super::Projected, dialect: &super::Dialect, x: u32) -> Option<String> {
+        let (f, table) = (p.f(), p.table()?);
+        let tables = dialect.path_tables();
+        let quote = |s: &str| if s.is_empty() || s.contains(['.', '/', '#', ':', ' ', '`']) { format!("`{}`", s.replace('`', "``")) } else { s.to_owned() };
+        let g = table.granule_of(x)?;
+        // The units, the outermost first: each granule's own part of its key, `/kind:name#ord`.
+        let mut units = Vec::new();
+        let mut at = g;
+        while let (_, Some(up)) = table.start_up(at) {
+            let (key, parent) = (&self.keys[at], &self.keys[up]);
+            let own = key.strip_prefix(parent.as_str())?.strip_prefix('/')?;
+            let (base, ord) = own.rsplit_once('#')?;
+            let (kind, name) = base.split_once(':')?;
+            let kind = dialect.names.iter().copied().find(|k| *k == kind).unwrap_or("");
+            let mut unit = if name.is_empty() { quote(rerail_lang::code_rule_dsl::path_tables::kind_label(tables, kind)) } else { quote(name) };
+            if self.by_key.contains_key(&format!("{parent}/{base}#1")) {
+                unit = format!("{unit}#{ord}");
+            }
+            units.push(unit);
+            at = up;
+        }
+        units.reverse();
+        // A guest's root, `path\t#key`, is spelled `path#key`; a tape value's, its grammar and its text quoted.
+        let file = match tape_of_root(&self.path) {
+            Some((grammar, text)) => format!("{grammar}:{}", quote(&text)),
+            None => self.path.replace('\t', ""),
+        };
+        let mut out = format!("{file}::{}", units.join("."));
+        // The steps from the granule's start down to x.
+        let (start, _) = table.start_up(g);
+        let mut chain = Vec::new();
+        let mut c = x;
+        while c != start {
+            if !is_path_child(f, c) {
+                return None;
+            }
+            chain.push(c);
+            c = f.parent(c)?;
+        }
+        chain.reverse();
+        let mut steps = Vec::with_capacity(chain.len());
+        let mut q = start;
+        for &c in &chain {
+            let ch = children_of(f, dialect, q);
+            let parent = dialect.paths.parent(dialect.code(f, q));
+            let spelled = |&(k, slot, field, _): &(u32, Option<usize>, u16, u16)| -> String {
+                let grouped = slot.and_then(|s| parent.map(|p| p.slots[s].grouped)).unwrap_or(false);
+                match dialect.field_name(field).filter(|_| field != 0 && !grouped) {
+                    Some(name) => rerail_lang::code_rule_dsl::path_tables::field_label(tables, name).to_owned(),
+                    None => rerail_lang::code_rule_dsl::path_tables::kind_label(tables, dialect.name(f, k)).to_owned(),
+                }
+            };
+            let names: Vec<String> = ch.kids.iter().map(spelled).collect();
+            let i = ch.kids.iter().position(|k| k.0 == c)?;
+            let same = names.iter().filter(|n| **n == names[i]).count();
+            let ord = names[..i].iter().filter(|n| **n == names[i]).count();
+            steps.push(if same > 1 { format!("{}#{ord}", quote(&names[i])) } else { quote(&names[i]) });
+            q = c;
+        }
+        if !steps.is_empty() {
+            out.push('/');
+            out.push_str(&steps.join("."));
+        }
+        Some(out)
     }
 
     /// Granule `g`'s anchors (decision 0722 §5): from its start, in preorder, a node whose steps from its base pass a
@@ -637,4 +734,33 @@ impl DocPaths {
         self.anchors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(g as u32, std::sync::Arc::clone(&anchors));
         anchors
     }
+}
+
+/// A node path shown as text (`path_tables::path_text`: its base's text, a tab, `/`, its low bits in hex) read in
+/// `facts`, the tape of the document whose root is `root` (a file's path; a guest's, its path, a tab and `#` its key,
+/// `guest` its place and its file's lines): the path spelled (`DocPaths::spell`) and its node's first byte in its
+/// file's text. What the writer puts in a message's `{p}` and `{p.line}` (decision 0722 §7). `None` for a text no
+/// path's, or one the tape no longer has.
+pub fn spell_text(facts: &std::sync::Arc<crate::code_rule_dsl::facts::core::Facts>, guest: Option<(&super::Guest, std::sync::Arc<crate::code_rule_dsl::lines::LineTable>)>, root: &str, shown: &str) -> Option<(String, u32)> {
+    let (base, low) = shown.rsplit_once("\t/")?;
+    let low = u32::from_str_radix(low, 16).ok()?;
+    let dialect = super::Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(facts)).ok()?;
+    let place = guest.as_ref().map(|(g, _)| g.in_file.clone());
+    let p = super::Projected::new(0, std::sync::Arc::clone(facts), Some(&dialect), super::Shape::Core, false, guest.as_ref().map(|(g, l)| (*g, std::sync::Arc::clone(l))));
+    let paths = DocPaths::new(&p, &dialect, root)?;
+    let x = paths.decode_text(&p, &dialect, base.to_owned(), low)?;
+    let start = p.f().start(x);
+    let at = place.map_or(start, |pl| pl.host([start, start])[0]);
+    Some((paths.spell(&p, &dialect, x)?, at))
+}
+
+/// The file a node path's shown text names (`{p.file}`): its root's path, a guest's key left out.
+pub fn file_of_text(shown: &str) -> Option<&str> {
+    let (base, _) = shown.rsplit_once("\t/")?;
+    let root = root_of(base)?;
+    // A tape value is no file's.
+    if root.starts_with('\u{1}') {
+        return Some("");
+    }
+    Some(root.split_once("\t#").map_or(root, |(path, _)| path))
 }

@@ -74,6 +74,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "node_path" => (vec![Some(Domain::Node)], Some(Domain::Path)),
         "path_node" => (vec![Some(Domain::Path)], Some(Domain::Node)),
         "path_unit" => (vec![Some(Domain::Path)], Some(Domain::Path)),
+        "path_spelling" | "path_file" => (vec![Some(Domain::Path)], Some(Domain::Name)),
         f if let Some((_, args, ret)) = crate::code_rule_dsl::logic::strings::functions::signature(f) => {
             let domain = |k: &crate::code_rule_dsl::logic::strings::functions::Kind| {
                 Some(if *k == crate::code_rule_dsl::logic::strings::functions::Kind::Text { Name } else { Int })

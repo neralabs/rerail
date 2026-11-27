@@ -151,6 +151,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("node_path", &[Number], Number),
     ("path_node", &[Number], Number),
     ("path_unit", &[Number], Number),
+    ("path_spelling", &[Number], Text),
+    ("path_file", &[Number], Text),
     // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
     // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
     ("rr_node_name", &[Number], Text),

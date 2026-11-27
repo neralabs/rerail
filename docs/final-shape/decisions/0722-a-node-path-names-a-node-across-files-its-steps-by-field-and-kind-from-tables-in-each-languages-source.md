@@ -152,3 +152,25 @@ does not have at run time). Both cost no stability, and both made paths shorter.
      `class_definition:C#0/function_definition:m#0`, decode back to the calls; `@path_unit` is the granule's own path),
      `a_node_path_columns_atom_is_mapped_and_its_steps_kept`, `a_node_path_crosses_and_the_node_it_decodes_is_named`;
      the coverage ledger probes the three functions (native; on the device, no computed term, as `@text_len`).
+4. **The spelling, and a message's `{p}`, `{p.file}`, `{p.line}`** (this commit).
+   - `DocPaths::spell`: `file::units/steps` as §4 has it. A unit is its granule's name (its key's), else its kind's
+     label, `#k` where its parent holds another of the same kind and name; a step is its field's label, or its kind's
+     where it has no field or its slot is kind-grouped, `#k` where siblings are spelled alike; a name holding
+     `. / # :`, a space or a backquote is backquoted (`pkg/mod.py::C.m/body.if.then.return`, `pkg/mod.py::f#1`).
+   - A message's placeholder of a `node_path` column is a hole the rule fills with the word (`findings::PATH_HOLE`,
+     `hole{j}_path`, `_path_file`, `_path_line`); the writer reads it (`corpus::path_hole`): the path's file read from
+     the run's snapshot and made into documents as the run makes them (its tree, and its programs; a file of another
+     grammar split, decision 0512), once a run, then decoded and spelled; `{p.line}` is its node's line in its file.
+     So a finding names another file's node: its batch could not decode the path, and a rule that read it there would
+     lose the finding. A path the tape no longer has is shown as it is, with why.
+   - `@path_spelling(p)` and `@path_file(p)`: the same in a rule, over the batch's documents.
+   - Differs from §7 in two ways. A value document (a tape value, `@parse`'s, `@splice`'s) is rooted at its identity,
+     its grammar and text (`paths::tape_root`), not its key: a key is a run's registry's, and another process could
+     not decode it; the writer parses it again (`guests::tape_value_again`). It is no file's: `{p.file}` and
+     `{p.line}` are empty. And the writer makes a file's documents again from the run's snapshot, rather than reading
+     the tapes the run kept: the run makes a memo hit's documents so too (decision 0458), and the same source and
+     guest keys give the same tapes.
+   - Tests: `a_message_spells_a_node_path_of_another_file` (`calls b.py::g in b.py at line 5, returning at
+     b.py::g/body.return (line 6)`), `..._of_a_program_a_file_holds` (an HTML script's call, at its file's lines),
+     `..._of_a_parsed_string` (two strings' annotation, one tape value, one path),
+     `a_path_is_spelled_by_its_units_and_labelled_steps`; the ledger probes `@path_spelling` and `@path_file`.
