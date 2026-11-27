@@ -16,7 +16,7 @@ import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, dashboardLink, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
-import type { TrayDaemon, TrayHandle } from "./tray.js";
+import type { TrayDaemon, TrayHandle, TrayRepository } from "./tray.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
@@ -77,7 +77,7 @@ const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 interface RepositoriesRead {
   readonly version: string;
   readonly catalog: ReturnType<RerailApiStores["ruleCatalog"]>;
-  readonly list: ReturnType<typeof repositoriesWithRuleCounts>;
+  readonly list: readonly TrayRepository[];
 }
 
 /**
@@ -893,20 +893,29 @@ export class RerailDaemon {
   }
 
   /**
-   * Every repository Rerail knows on this machine, as the dashboard lists them, with how many of its rules run. The
-   * answer is counted again only once any process changed the repositories or their rules
-   * (`repositoryRulesVersionReader`) or the installed packs changed (the cached catalog is another object): a session
-   * recording its work changes neither, so a caller that asks every few seconds costs one read of the rule settings
-   * while only sessions run. Before the database exists there is no repository, and asking does not create it.
+   * Every repository Rerail knows on this machine, in the dashboard's order, with how many of its rules run: only its
+   * key, name, whether it is set up, its start state and its counts, the fields `repositoryRulesVersionReader` covers.
+   * The answer is counted again only once any process changed the repositories or their rules, or the installed packs
+   * changed (the cached catalog is another object): a session recording its work changes neither, so a caller that
+   * asks every few seconds costs one read of the rule settings while only sessions run. A repository's aliases,
+   * checkouts and gitignore setting are not in the answer, since a change to them would not count it again. Before the
+   * database exists there is no repository, and asking does not create it.
    */
-  repositories(): RepositoriesRead["list"] {
+  repositories(): readonly TrayRepository[] {
     if (!existsSync(this.#databasePath)) return [];
     this.#repositoriesVersion ??= repositoryRulesVersionReader(this.#stores.database());
     const version = this.#repositoriesVersion();
     const catalog = this.#stores.ruleCatalog();
     const read = this.#repositoriesRead;
     if (read !== undefined && read.version === version && read.catalog === catalog) return read.list;
-    const list = repositoriesWithRuleCounts(this.#stores);
+    const list = repositoriesWithRuleCounts(this.#stores).map(({ repository, counts }) => ({
+      key: repository.repositoryKey,
+      name: repository.name,
+      setUp: repository.setUp,
+      state: repository.state,
+      total: counts.total,
+      on: counts.on,
+    }));
     this.#repositoriesRead = { version, catalog, list };
     return list;
   }
@@ -1706,14 +1715,7 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   try {
     trayHandle = tray?.({
       health: () => daemon.health(),
-      repositories: () => daemon.repositories().map(({ repository, counts }) => ({
-        key: repository.repositoryKey,
-        name: repository.name,
-        setUp: repository.setUp,
-        state: repository.state,
-        total: counts.total,
-        on: counts.on,
-      })),
+      repositories: () => daemon.repositories(),
       dashboardLink: (view, repository) => {
         const state = daemon.state();
         const page = new URL(state.url);

@@ -887,6 +887,14 @@ describe("the daemon's tray service", () => {
       database.$client.close();
     }
     expect(given.repositories()).toEqual([{ key: "remote:github.com/acme/web", name: "web", setUp: true, state: "started", total: 0, on: 0 }]);
+    // A rename, and a repository switched off and no longer set up, are read again: the answer holds only what the cache's version covers.
+    const renamed = openRerailDatabase(state.databasePath);
+    try {
+      renamed.update(repositories).set({ displayName: "acme-web", configuredAt: null, started: false, updatedAt: 2 }).run();
+    } finally {
+      renamed.$client.close();
+    }
+    expect(given.repositories()).toEqual([{ key: "remote:github.com/acme/web", name: "acme-web", setUp: false, state: "stopped", total: 0, on: 0 }]);
     expect(close).not.toHaveBeenCalled();
 
     given.stop();
