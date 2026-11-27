@@ -137,7 +137,10 @@ up_global(h, site) :- up_fwd(h), head_ref(_, h, x), docof(h, d), modnode(d, m), 
 .decl global_site(m: node, x: symbol, site: node)
 global_site(m, x, site) :- kind(m, "module"), binding(m, x, _, _), k = max i : { binding(m, x, s2, _), visit_index(s2, i) },
     binding(m, x, site, form), visit_index(site, k), form != "except", !global_deleted(m, x, k).
-.decl global_deleted(m: node, x: symbol, k: number)  // an unconditional `del x` in m after the binding at k
+// global_deleted(m, x, k): an unconditional `del x` in m after the binding at k. Ruff's handle_node_delete makes a
+// Deletion only off a conditional branch (no `if`, `while` or `match` around it), outside an exception handler of
+// its own scope and outside an `else` of `for`, `while` or `try`: python/scopes' del_site, through del_conditional.
+.decl global_deleted(m: node, x: symbol, k: number)
 global_deleted(m, x, k) :- binding(m, x, s, _), kind(m, "module"), visit_index(s, k), del_site(m, n, st), text(n, x),
     visit_index(st, j), j > k.
 // sd_runtime(h): h is in a runtime-required annotation of a singledispatch implementation (Ruff's

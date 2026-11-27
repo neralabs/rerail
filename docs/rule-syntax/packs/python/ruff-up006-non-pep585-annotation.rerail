@@ -62,7 +62,8 @@ type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).
 .end
 
 // The module's binding is its last, after the whole walk; an unconditional `del` after it leaves the module
-// unbound, and the scopes around the read are asked as usual.
+// unbound, and the scopes around the read are asked as usual. A `del` under `if`, in an `except` body or in a loop's
+// or `try`'s `else` is conditional to Ruff (handle_node_delete): the module's typing.List still wins.
 .test the_module_binding_is_the_last_one exactly
     .fixture "c.py" ```
         from __future__ import annotations
@@ -79,7 +80,36 @@ type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).
             return g
         del List
         ```
+    .fixture "g.py" ```
+        from __future__ import annotations
+        import sys
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
+        if sys.argv:
+            del List
+        ```
+    .fixture "i.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
+        try:
+            pass
+        except ValueError:
+            del List
+        for _ in ():
+            pass
+        else:
+            del List
+        ```
     .expect UP006 at "d.py":5
+    .expect UP006 at "g.py":6
+    .expect UP006 at "i.py":5
 .end
 
 // A singledispatch implementation's non-variadic parameters and its return are runtime-required annotations, no
