@@ -1,0 +1,1 @@
+Saving scan settings with `rerail settings` while another program holds Rerail's database, as `rerail scrub` or `rerail reset` does for seconds, no longer fails at once with an internal error: the save is made once the database is free, and one that waited 5 s is not made and says why.

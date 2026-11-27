@@ -1,9 +1,9 @@
 /**
  * The Claude Code hook against a daemon of this build while another process holds the Rerail database's write lock,
  * as `rerail reset`, `rerail scrub` or a newer Rerail's migration does for seconds: the hook's answers do not wait for
- * the lock, the steer still reaches the agent, a session started meanwhile opens with its note, a session's end and a
- * dashboard save answer without holding the other sessions' hooks, and every record the daemon took while the lock
- * was held is in the database once it is released.
+ * the lock, the steer still reaches the agent, a session started meanwhile opens with its note, a session's end, a
+ * dashboard save and a save of a checkout's scan settings answer without holding the other sessions' hooks, and every
+ * record the daemon took while the lock was held is in the database once it is released.
  */
 import { execFile, fork, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -299,7 +300,119 @@ describe("the Claude Code hook while another process holds the database's write 
     // The rule back to its start, as the other cases read it.
     expect((await saveRuleMode(null)).status).toBe(200);
   }, 60_000);
+
+  // Before, the save read the checkout's scan settings and then wrote them in one transaction, whose write SQLite fails
+  // at once while another process holds the lock, with no busy wait: `rerail settings` exited 1 with "internal" and the
+  // API answered 500, the change not made.
+  it("saves a checkout's scan mode asked with rerail settings, and a scope asked of the API, while the lock is held 2 s, once it is released, and answers a hook meanwhile", async () => {
+    const { saver, read } = await scanSettingsSessions("scan-saved");
+    const free = await read();
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    const heldAt = performance.now();
+    let saves;
+    let held;
+    let waitingAtHook;
+    try {
+      saves = followed(scanSettingsCli(saver, ["--mode", "log"]), scanSettingsApi("PATCH", saver, { scope: "repository" }));
+      held = await read();
+      waitingAtHook = saves.waiting();
+      // The issue's hold: 2 s, well inside SQLite's 5 s busy wait.
+      await delay(Math.max(0, 2_000 - (performance.now() - heldAt)));
+    } finally {
+      await lock.release();
+    }
+    const [cli, api] = await saves.answers;
+    const report = `hook with the lock free: ${String(free.ms)} ms; beside the held saves: ${String(held.ms)} ms; `
+      + `rerail settings: exit ${String(cli.code)} after ${String(cli.ms)} ms, ${cli.stdout}${cli.stderr}; PATCH: ${String(api.status)} ${api.body}`;
+    expect(cli.code, report).toBe(0);
+    expect(cli.stdout, report).toMatch(/\/log, /u);
+    expect(api.status, report).toBe(200);
+    expect(await savedScanSettings(saver), report).toMatchObject({ scope: "repository", mode: "log" });
+    expect(waitingAtHook, report).toBe(true);
+    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+    expect((await scanSettingsApi("PATCH", saver, { scope: "ai-output", mode: "steer" })).status).toBe(200);
+  }, 60_000);
+
+  // Before, the save failed at once with "internal" whether the lock was given back in a moment or never.
+  it("refuses a scan settings save with 503 database-busy, which rerail settings prints, once the lock stays held past SQLite's 5 s, and answers a hook meanwhile", async () => {
+    const { saver, read } = await scanSettingsSessions("scan-busy");
+    const before = await savedScanSettings(saver);
+    const free = await read();
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    let answers;
+    let held;
+    let waitingAtHook;
+    try {
+      const saves = followed(scanSettingsCli(saver, ["--mode", "log"]), scanSettingsApi("PATCH", saver, { mode: "log" }));
+      held = await read();
+      waitingAtHook = saves.waiting();
+      answers = await saves.answers;
+    } finally {
+      await lock.release();
+    }
+    const [cli, api] = answers;
+    const report = `hook with the lock free: ${String(free.ms)} ms; beside the held saves: ${String(held.ms)} ms; `
+      + `rerail settings: exit ${String(cli.code)} after ${String(cli.ms)} ms, ${cli.stdout}${cli.stderr}; PATCH: ${String(api.status)} ${api.body}`;
+    const busy = "the change was not made: another process held the Rerail database's write lock for 5 s";
+    expect(api.status, report).toBe(503);
+    expect(JSON.parse(api.body), report).toMatchObject({ error: "database-busy", message: expect.stringContaining(busy) });
+    expect(cli.code, report).toBe(1);
+    expect(cli.stderr, report).toContain(`rerail: database-busy: ${busy}`);
+    expect(await savedScanSettings(saver), report).toEqual(before);
+    expect(waitingAtHook, report).toBe(true);
+    expect(held.ms, report).toBeLessThan(free.ms + 1_000);
+  }, 60_000);
 });
+
+/**
+ * Two sessions started in the checkout: `saver`, whose checkout's scan settings a case saves, and another whose
+ * `PreToolUse` hook (`read`) a case times while the save waits.
+ */
+async function scanSettingsSessions(name: string): Promise<{ saver: string; read: () => Promise<HookAnswer> }> {
+  const [saver, other] = [`${name}-saver`, `${name}-other`];
+  for (const sessionId of [saver, other]) await hook({ session_id: sessionId, cwd: repo, hook_event_name: "SessionStart", source: "startup" }, repo);
+  const read = (): Promise<HookAnswer> => hook({
+    session_id: other, cwd: repo, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: `toolu_read_${String(performance.now())}`,
+    tool_input: { file_path: join(repo, "src", "app", "__init__.py") },
+  }, repo);
+  return { saver, read };
+}
+
+/** `cli` and `api` with whether both still wait for their answers: none of them rejects. */
+function followed<A, B>(cli: Promise<A>, api: Promise<B>): { answers: Promise<[A, B]>; waiting(): boolean } {
+  let answered = 0;
+  const count = (): void => { answered += 1; };
+  for (const answer of [cli, api]) void answer.then(count, count);
+  return { answers: Promise.all([cli, api]), waiting: () => answered === 0 };
+}
+
+interface CliRun {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  ms: number;
+}
+
+/** `rerail settings --session <sessionId>` with `args`, in the checkout, in its own process, however it exits. */
+async function scanSettingsCli(sessionId: string, args: readonly string[]): Promise<CliRun> {
+  const started = performance.now();
+  const child = spawn(process.execPath, [CLI, "settings", "--session", sessionId, ...args], {
+    cwd: repo, env: environment(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
+  });
+  const [stdout, stderr] = await Promise.all([text(child.stdout), text(child.stderr), once(child, "close")]);
+  return { code: child.exitCode, stdout, stderr, ms: Math.round(performance.now() - started) };
+}
+
+/** A request to the session's scan settings (`/api/sessions/{id}/audit-settings`), as the daemon answers it. */
+async function scanSettingsApi(method: "GET" | "PATCH", sessionId: string, body?: Record<string, unknown>): Promise<{ status: number; body: string }> {
+  return await daemonRequest(method, `/api/sessions/${sessionId}/audit-settings`, body);
+}
+
+/** The scan settings the daemon reads now for the checkout of `sessionId`. */
+async function savedScanSettings(sessionId: string): Promise<unknown> {
+  const read = await scanSettingsApi("GET", sessionId);
+  return (JSON.parse(read.body) as { settings: unknown }).settings;
+}
 
 /** Whether the database holds `sessionId` now as ended and let go: its record ended, and its owner row not active. */
 function endedAndLetGo(sessionId: string): boolean {
@@ -317,11 +430,16 @@ function endedAndLetGo(sessionId: string): boolean {
 
 /** The dashboard's save of `RULE`'s mode for the whole repository (`PUT /api/repository/settings`), as the daemon answers it. */
 async function saveRuleMode(mode: "log" | null): Promise<{ status: number; body: string }> {
+  return await daemonRequest("PUT", "/api/repository/settings", { checkout: repo, owner: "repository", targets: [{ kind: "rule", id: RULE }], mode });
+}
+
+/** One request to the daemon with the person's access token, as the dashboard sends it, and its answer. */
+async function daemonRequest(method: "GET" | "PATCH" | "PUT", path: string, body?: Record<string, unknown>): Promise<{ status: number; body: string }> {
   const state = JSON.parse(await readFile(join(process.env.RERAIL_HOME!, DAEMON_STATE_FILE), "utf8")) as { url: string; accessToken: string };
-  const response = await fetch(new URL("/api/repository/settings", state.url), {
-    method: "PUT",
+  const response = await fetch(new URL(path, state.url), {
+    method,
     headers: { "content-type": "application/json", "x-rerail-access": state.accessToken },
-    body: JSON.stringify({ checkout: repo, owner: "repository", targets: [{ kind: "rule", id: RULE }], mode }),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return { status: response.status, body: await response.text() };
 }
