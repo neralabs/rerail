@@ -12256,3 +12256,11 @@ Conflicts, resolved by invariant:
 Checked under Relax: rerail-setfix (148, the new a_chunk_asks_a_derived_inputs_whole_key_by_its_hash among them),
 tests-corpus base_tests (54), tests-lang syntax::tests (103), tests-logic native::tests (20) and plan::tests (1 thread,
 115). Relax has no clippy: none run. No Metal or farm runs.
+
+### Q591. Roll-up 163 (sync-integration-hub-tape 997285fc2d onto Pulling-it-all-together): what the merge chose
+
+sync-integration-hub-tape's commit: callable per-file relations, the spike's program layer (`.callable R PATTERN`, split, answered by file): corpus_prep's `preparation::callable` and logic's `corpus::calls`, new files and a module line each.
+
+No conflicts; the merge is the feeder's alone.
+
+Checked under Relax: rerail-logic corpus calls tests (10), rerail-corpus-prep built (it holds no tests of its own; the callable tests are logic's). Relax has no clippy: none run. No Metal or farm runs.
