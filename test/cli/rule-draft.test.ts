@@ -1024,7 +1024,7 @@ describe("rerail rules add", () => {
     });
 
     /** A Python function over the complexity pack's limit: one place its Python rule matches, at line 1. */
-    const BRANCHY = `def branchy(n):\n${Array.from({ length: 7 }, (_, i) => `    if n == ${i}:\n        return ${i}\n`).join("")}    return -1\n`;
+    const BRANCHY = `def branchy(n):\n${Array.from({ length: 15 }, (_, i) => `    if n == ${i}:\n        return ${i}\n`).join("")}    return -1\n`;
 
     // No copy is made here: the test above shows rules add putting it where this pass looks.
     it("is tested where the original is added, so rules test counts the places the copy would catch, and records nothing", async () => {

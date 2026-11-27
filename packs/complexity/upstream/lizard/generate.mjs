@@ -2,8 +2,9 @@
 // two files beside it:
 // - lizard-<VERSION>.tsv, every function's score, which test/engine/code-rule/complexity-rules.test.ts reads;
 // - fixtures.expected.json, lizard's findings as the conformance check reads a tool's (conformance/README.md): one
-//   CYCLOMATIC_COMPLEXITY finding, at the function's first line, per function scored above the pack's limit of 6, on
-//   the corpus files some rule's scope covers, a candidate's included. The test files the scopes leave out are
+//   CYCLOMATIC_COMPLEXITY finding, at the function's first line, per function scored above the parity limit of 6, on
+//   the corpus files some rule's scope covers, a candidate's included. The rules' default ceiling is 15, which no corpus
+//   function reaches, so each port in conformance.json is judged at a `config` ceiling of 6. The test files the scopes leave out are
 //   complexity-rules.test.ts's.
 // Then it writes provenance.json and LICENSES.md (every file is Rerail's: UPSTREAM.md lists the corpus, and the rest is
 // recorded). `npm run fixtures:derive -- --pack complexity` runs it after the corpus changes, with the lizard of
@@ -23,7 +24,7 @@ const VERSION = "1.24.0";
 const ORIGIN = "https://github.com/terryyin/lizard@308b1c3efd8c1c69bcc3eb82deeaec64fd3662ec";
 /** The rules' violation code, which conformance.json names as the upstream rule each port ports. */
 const RULE = "CYCLOMATIC_COMPLEXITY";
-/** The pack's ceiling: a function scored above it is a finding. */
+/** The parity ceiling, which conformance.json's ports set: a function scored above it is a finding. */
 const LIMIT = 6;
 
 const [executable] = process.argv.slice(2);

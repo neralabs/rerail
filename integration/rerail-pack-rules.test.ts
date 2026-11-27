@@ -199,8 +199,8 @@ const VIEWS = "def view(user):\n    assert user.is_admin\n    return user\n";
 const REPORT = "from app.legacy import old_total\n\n\ndef report(items):\n    return old_total(items)\n";
 const MAIN = "print(\"starting\")\n";
 const OFF = "assert True\n";
-/** A Python function at cyclomatic complexity 10, over the complexity pack's ceiling, with an assert in it. */
-const TOO_COMPLEX = `def classify(a, b, c, d, e, f, g):\n    score = 0\n${["a", "b", "c", "d", "e", "f", "g"].map((flag, index) => `    if ${flag}:\n        score += ${index + 1}\n`).join("")}    assert score >= 0\n    if a and b:\n        score += 8\n    return score\n`;
+/** A Python function at cyclomatic complexity 16, over the complexity pack's ceiling, with an assert in it. */
+const TOO_COMPLEX = `def classify(a, b, c, d, e, f, g, h, i, j, k, l, m):\n    score = 0\n${["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"].map((flag, index) => `    if ${flag}:\n        score += ${index + 1}\n`).join("")}    assert score >= 0\n    if a and b:\n        score += 8\n    return score\n`;
 
 beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "rerail-rr-rules-")));

@@ -83,8 +83,8 @@ async function hook(input: Record<string, unknown>, projectDir: string): Promise
 const contextOf = (answer: HookAnswer): string => answer.output.hookSpecificOutput?.additionalContext ?? "";
 
 function tooComplex(name: string): string {
-  const branches = ["a", "b", "c", "d", "e", "f", "g"].map((flag, index) => `    if ${flag}:\n        score += ${index + 1}\n`).join("");
-  return `def ${name}(a, b, c, d, e, f, g):\n    score = 0\n${branches}    if a and b:\n        score += 8\n    return score\n`;
+  const branches = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"].map((flag, index) => `    if ${flag}:\n        score += ${index + 1}\n`).join("");
+  return `def ${name}(a, b, c, d, e, f, g, h, i, j, k, l, m):\n    score = 0\n${branches}    if a and b:\n        score += 8\n    return score\n`;
 }
 
 /** A Python function well under the rule's ceiling. */

@@ -170,12 +170,12 @@
     {
       "id": "complexity-cyclomatic-python",
       "document": "rules/complexity-cyclomatic-python.json",
-      "title": "Keep Python functions to 6 or fewer paths",
+      "title": "Keep Python functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/grade.py",
-          "text": "def grade(score, curve, late, extra):\n    if score > 90 and not late:\n        return \"A\"\n    elif score > 80 or extra:\n        return \"B\"\n    elif score > 70:\n        return \"C\"\n    for bonus in curve:\n        if bonus:\n            score += bonus\n    return \"F\"\n"
+          "text": "def grade(score, curve, late, extra):\n    if score > 97 and not late:\n        return \"A+\"\n    elif score > 93 and not late:\n        return \"A\"\n    elif score > 90 or extra:\n        return \"A-\"\n    elif score > 87:\n        return \"B+\"\n    elif score > 83:\n        return \"B\"\n    elif score > 80:\n        return \"B-\"\n    elif score > 77:\n        return \"C+\"\n    elif score > 73:\n        return \"C\"\n    elif score > 70:\n        return \"C-\"\n    elif score > 67:\n        return \"D+\"\n    elif score > 63:\n        return \"D\"\n    elif score > 60:\n        return \"D-\"\n    for bonus in curve:\n        if bonus:\n            score += bonus\n    return \"F\"\n"
         },
         "passes": {
           "path": "src/grade.py",
@@ -186,12 +186,12 @@
     {
       "id": "complexity-cyclomatic-typescript",
       "document": "rules/complexity-cyclomatic-typescript.json",
-      "title": "Keep TypeScript functions to 6 or fewer paths",
+      "title": "Keep TypeScript functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/grade.ts",
-          "text": "export function grade(score: number, late: boolean, extra: boolean): string {\n  if (score > 90 && !late) return \"A\";\n  if (score > 80 || extra) return \"B\";\n  if (score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"D\";\n  }\n  return \"F\";\n}\n"
+          "text": "export function grade(score: number, late: boolean, extra: boolean): string {\n  if (score > 97 && !late) return \"A+\";\n  if (score > 93 && !late) return \"A\";\n  if (score > 90 || extra) return \"A-\";\n  if (score > 87) return \"B+\";\n  if (score > 83) return \"B\";\n  if (score > 80) return \"B-\";\n  if (score > 77) return \"C+\";\n  if (score > 73) return \"C\";\n  if (score > 70) return \"C-\";\n  if (score > 67) return \"D+\";\n  if (score > 63) return \"D\";\n  if (score > 60) return \"D-\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"E\";\n  }\n  return \"F\";\n}\n"
         },
         "passes": {
           "path": "src/grade.ts",
@@ -202,12 +202,12 @@
     {
       "id": "complexity-cyclomatic-javascript",
       "document": "rules/complexity-cyclomatic-javascript.json",
-      "title": "Keep JavaScript functions to 6 or fewer paths",
+      "title": "Keep JavaScript functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/grade.js",
-          "text": "export function grade(score, late, extra) {\n  if (score > 90 && !late) return \"A\";\n  if (score > 80 || extra) return \"B\";\n  if (score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"D\";\n  }\n  return \"F\";\n}\n"
+          "text": "export function grade(score, late, extra) {\n  if (score > 97 && !late) return \"A+\";\n  if (score > 93 && !late) return \"A\";\n  if (score > 90 || extra) return \"A-\";\n  if (score > 87) return \"B+\";\n  if (score > 83) return \"B\";\n  if (score > 80) return \"B-\";\n  if (score > 77) return \"C+\";\n  if (score > 73) return \"C\";\n  if (score > 70) return \"C-\";\n  if (score > 67) return \"D+\";\n  if (score > 63) return \"D\";\n  if (score > 60) return \"D-\";\n  for (const bonus of [1, 2]) {\n    if (bonus > score) return \"E\";\n  }\n  return \"F\";\n}\n"
         },
         "passes": {
           "path": "src/grade.js",
@@ -218,12 +218,12 @@
     {
       "id": "complexity-cyclomatic-php",
       "document": "rules/complexity-cyclomatic-php.json",
-      "title": "Keep PHP functions to 6 or fewer paths",
+      "title": "Keep PHP functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/Grade.php",
-          "text": "<?php\nfunction grade(int $score, bool $late, bool $extra): string\n{\n    if ($score > 90 && !$late) {\n        return 'A';\n    } elseif ($score > 80 || $extra) {\n        return 'B';\n    } elseif ($score > 70) {\n        return 'C';\n    }\n    foreach ([1, 2] as $bonus) {\n        if ($bonus > $score) {\n            return 'D';\n        }\n    }\n    return 'F';\n}\n"
+          "text": "<?php\nfunction grade(int $score, bool $late, bool $extra): string\n{\n    if ($score > 97 && !$late) return 'A+';\n    if ($score > 93 && !$late) return 'A';\n    if ($score > 90 || $extra) return 'A-';\n    if ($score > 87) return 'B+';\n    if ($score > 83) return 'B';\n    if ($score > 80) return 'B-';\n    if ($score > 77) return 'C+';\n    if ($score > 73) return 'C';\n    if ($score > 70) return 'C-';\n    if ($score > 67) return 'D+';\n    if ($score > 63) return 'D';\n    if ($score > 60) return 'D-';\n    foreach ([1, 2] as $bonus) {\n        if ($bonus > $score) return 'E';\n    }\n    return 'F';\n}\n"
         },
         "passes": {
           "path": "src/Grade.php",
@@ -234,12 +234,12 @@
     {
       "id": "complexity-cyclomatic-blade",
       "document": "rules/complexity-cyclomatic-blade.json",
-      "title": "Keep the functions in Blade templates to 6 or fewer paths",
+      "title": "Keep the functions in Blade templates to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "resources/views/grade.blade.php",
-          "text": "@php\n    $grade = function (int $score, bool $late, bool $extra): string {\n        if ($score > 90 && !$late) return 'A';\n        if ($score > 80 || $extra) return 'B';\n        if ($score > 70) return 'C';\n        foreach ([1, 2] as $bonus) {\n            if ($bonus > $score) return 'D';\n        }\n        return 'F';\n    };\n@endphp\n<p>{{ $grade($score, $late, $extra) }}</p>\n"
+          "text": "@php\n    $grade = function (int $score, bool $late, bool $extra): string {\n        if ($score > 97 && !$late) return 'A+';\n        if ($score > 93 && !$late) return 'A';\n        if ($score > 90 || $extra) return 'A-';\n        if ($score > 87) return 'B+';\n        if ($score > 83) return 'B';\n        if ($score > 80) return 'B-';\n        if ($score > 77) return 'C+';\n        if ($score > 73) return 'C';\n        if ($score > 70) return 'C-';\n        if ($score > 67) return 'D+';\n        if ($score > 63) return 'D';\n        if ($score > 60) return 'D-';\n        foreach ([1, 2] as $bonus) {\n            if ($bonus > $score) return 'E';\n        }\n        return 'F';\n    };\n@endphp\n<p>{{ $grade($score, $late, $extra) }}</p>\n"
         },
         "passes": {
           "path": "resources/views/grade.blade.php",
@@ -250,12 +250,12 @@
     {
       "id": "complexity-cyclomatic-rust",
       "document": "rules/complexity-cyclomatic-rust.json",
-      "title": "Keep Rust functions to 6 or fewer paths",
+      "title": "Keep Rust functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/grade.rs",
-          "text": "pub fn grade(score: u32, late: bool, extra: bool) -> &'static str {\n    if score > 90 && !late {\n        \"A\"\n    } else if score > 80 || extra {\n        \"B\"\n    } else if score > 70 {\n        \"C\"\n    } else {\n        for bonus in [1, 2] {\n            if bonus > score {\n                return \"D\";\n            }\n        }\n        \"F\"\n    }\n}\n"
+          "text": "pub fn grade(score: u32, late: bool, extra: bool) -> &'static str {\n    if score > 97 && !late { return \"A+\"; }\n    if score > 93 && !late { return \"A\"; }\n    if score > 90 || extra { return \"A-\"; }\n    if score > 87 { return \"B+\"; }\n    if score > 83 { return \"B\"; }\n    if score > 80 { return \"B-\"; }\n    if score > 77 { return \"C+\"; }\n    if score > 73 { return \"C\"; }\n    if score > 70 { return \"C-\"; }\n    if score > 67 { return \"D+\"; }\n    if score > 63 { return \"D\"; }\n    if score > 60 { return \"D-\"; }\n    for bonus in [1, 2] {\n        if bonus > score { return \"E\"; }\n    }\n    \"F\"\n}\n"
         },
         "passes": {
           "path": "src/grade.rs",
@@ -266,12 +266,12 @@
     {
       "id": "complexity-cyclomatic-vue",
       "document": "rules/complexity-cyclomatic-vue.json",
-      "title": "Keep Vue component functions to 6 or fewer paths",
+      "title": "Keep Vue component functions to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/components/Grade.vue",
-          "text": "<script setup lang=\"ts\">\nconst props = defineProps<{ score: number; late: boolean; extra: boolean }>();\n\nfunction grade(): string {\n  if (props.score > 90 && !props.late) return \"A\";\n  if (props.score > 80 || props.extra) return \"B\";\n  if (props.score > 70) return \"C\";\n  for (const bonus of [1, 2]) {\n    if (bonus > props.score) return \"D\";\n  }\n  return \"F\";\n}\n</script>\n\n<template>\n  <p>{{ grade() }}</p>\n</template>\n"
+          "text": "<script setup lang=\"ts\">\nconst props = defineProps<{ score: number; late: boolean; extra: boolean }>();\n\nfunction grade(): string {\n  if (props.score > 97 && !props.late) return \"A+\";\n  if (props.score > 93 && !props.late) return \"A\";\n  if (props.score > 90 || props.extra) return \"A-\";\n  if (props.score > 87) return \"B+\";\n  if (props.score > 83) return \"B\";\n  if (props.score > 80) return \"B-\";\n  if (props.score > 77) return \"C+\";\n  if (props.score > 73) return \"C\";\n  if (props.score > 70) return \"C-\";\n  if (props.score > 67) return \"D+\";\n  if (props.score > 63) return \"D\";\n  if (props.score > 60) return \"D-\";\n  for (const bonus of [1, 2]) {\n    if (bonus > props.score) return \"E\";\n  }\n  return \"F\";\n}\n</script>\n\n<template>\n  <p>{{ grade() }}</p>\n</template>\n"
         },
         "passes": {
           "path": "src/components/Grade.vue",
@@ -282,12 +282,12 @@
     {
       "id": "complexity-cyclomatic-java",
       "document": "rules/complexity-cyclomatic-java.json",
-      "title": "Keep Java methods and constructors to 6 or fewer paths",
+      "title": "Keep Java methods and constructors to 15 or fewer paths",
       "group": "Complexity",
       "examples": {
         "caught": {
           "path": "src/main/java/com/example/Grade.java",
-          "text": "class Grade {\n    String grade(int score, boolean late, boolean extra) {\n        if (score > 90 && !late) {\n            return \"A\";\n        }\n        if (score > 80 || extra) {\n            return \"B\";\n        }\n        if (score > 70) {\n            return \"C\";\n        }\n        for (int bonus : new int[] {1, 2}) {\n            if (bonus > score) {\n                return \"D\";\n            }\n        }\n        return \"F\";\n    }\n}\n"
+          "text": "class Grade {\n    String grade(int score, boolean late, boolean extra) {\n        if (score > 97 && !late) return \"A+\";\n        if (score > 93 && !late) return \"A\";\n        if (score > 90 || extra) return \"A-\";\n        if (score > 87) return \"B+\";\n        if (score > 83) return \"B\";\n        if (score > 80) return \"B-\";\n        if (score > 77) return \"C+\";\n        if (score > 73) return \"C\";\n        if (score > 70) return \"C-\";\n        if (score > 67) return \"D+\";\n        if (score > 63) return \"D\";\n        if (score > 60) return \"D-\";\n        for (int bonus : new int[] {1, 2}) {\n            if (bonus > score) return \"E\";\n        }\n        return \"F\";\n    }\n}\n"
         },
         "passes": {
           "path": "src/main/java/com/example/Grade.java",

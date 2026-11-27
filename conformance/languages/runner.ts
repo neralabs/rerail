@@ -3,8 +3,9 @@ import { basename, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { isPackFixture, packFixtureAbsence, requirePackFixture, samplesTree } from "../../scripts/s3/pack-fixtures.mjs";
 import { LABELS_SUFFIX, SAMPLE_ID, sampleLabelsSchema } from "../../scripts/samples/format.js";
-import type { CodeRuleSourceLanguage } from "../../src/engine/index.js";
+import type { CodeRuleDslValue, CodeRuleSourceLanguage } from "../../src/engine/index.js";
 import {
+  applyCodeRuleConfig,
   languageFor,
   encodeCodeRuleWorkspaceRequest,
   loadNativeBinding,
@@ -256,6 +257,13 @@ const codeRuleDocumentSchema = z.object({
   clauses: z.array(z.object({ id: z.string(), violation: z.object({ code: z.string() }).optional() })).min(1),
 });
 
+/** The code rule document the port at `path` is evaluated as: the shipped bytes, with the port's `config` applied. */
+function portDocument(rule: PackRule, path: string): string {
+  const shipped = readFileSync(path, "utf8");
+  if (rule.config === undefined) return shipped;
+  return JSON.stringify(applyCodeRuleConfig(JSON.parse(shipped) as unknown, rule.config as Record<string, CodeRuleDslValue>));
+}
+
 /**
  * Compiles each rule's code rule; a code rule whose clauses report another code than the upstream rule is an error.
  * With `compiles`, the rules another plan of the pack compiled, the rules are those, each compiled when first evaluated.
@@ -266,7 +274,7 @@ function compileRules(loaded: LoadedPack, rules: readonly PackRule[], errors: st
   return rules.flatMap(rule => {
     const path = join(loaded.directory, rule.policy);
     try {
-      const text = readFileSync(path, "utf8");
+      const text = portDocument(rule, path);
       const document = codeRuleDocumentSchema.parse(JSON.parse(text));
       const other = seen.get(document.id);
       if (other !== undefined) throw new Error(`policy id ${document.id} is also ${other}'s`);

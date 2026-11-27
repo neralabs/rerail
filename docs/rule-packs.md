@@ -311,9 +311,9 @@ A language or framework pack goes in the folder holding all its matches (`web` w
 
 ## Function complexity
 
-The `complexity` pack keeps functions small enough to read, test and change. Each `if`, loop, `catch`, `&&` or `||` adds a path through a function, and the pack flags functions with more than 6: cyclomatic complexity above 6, as in the Metrics-in-the-Loop study's feedback. The limit of 6 is the study's: a strict standard a repository chooses to adopt, not a verdict on its code. Only functions an agent's edit touches are checked; a repository that works to another limit can set the pack to Log or leave it off.
+The `complexity` pack keeps functions small enough to read, test and change. Each `if`, loop, `catch`, `&&` or `||` adds a path through a function, and the pack flags functions with more than 15: cyclomatic complexity above 15, lizard's own default warning threshold. Only functions an agent's edit touches are checked. A repository that works to another limit sets the pack's `ceiling` in `.rerail/packs.json` (the pack's README, "Setting the ceiling"), such as the stricter 6 of the Metrics-in-the-Loop study, or sets the pack to Log or leaves it off.
 
-A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has cyclomatic complexity 8, over the ceiling of 6. Decompose it into smaller functions. ``
+A finding names the function and number: `` CYCLOMATIC_COMPLEXITY src/grade.py:1: `grade` has cyclomatic complexity 18, over the ceiling of 15. Decompose it into smaller functions. ``
 
 <details>
 <summary>How complexity is counted</summary>

@@ -248,10 +248,10 @@ async function evaluate(files: SourceFile[], catalogKind: CatalogKind, mode: Eva
 async function evaluateOnce(files: SourceFile[], catalogKind: CatalogKind, mode: Evaluator): Promise<Summary> {
   return (await evaluate(files, catalogKind, mode))[0]!;
 }
-/** A function of cyclomatic complexity 7, above the bundled complexity rules' limit of 6. */
+/** A function of cyclomatic complexity 16, above the bundled complexity rules' default ceiling of 15. */
 const COMPLEX_FUNCTION = [
   "export function run(a: number): number {",
-  ...[1, 2, 3, 4, 5, 6].map(limit => `  if (a > ${limit}) return ${limit};`),
+  ...Array.from({ length: 15 }, (_, index) => `  if (a > ${index + 1}) return ${index + 1};`),
   "  return 0;",
   "}",
   "",
