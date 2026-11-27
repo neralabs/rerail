@@ -426,8 +426,8 @@ pub fn run_policies(
 
 /// The batch's policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated
 /// once (decisions 0051, 0089), each policy's findings split back by its id, less those its `suppress` lines drop
-/// (`unsuppressed`). Each member's findings and run's record, by its index in `paths`; `None` for a policy that runs
-/// alone. `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+/// (`pack_suppressed`). Each member's findings and run's record, by its index in `paths`; `None` for a policy that
+/// runs alone. `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
 fn packed(paths: &[std::path::PathBuf], root: &std::path::Path, out: &std::path::Path, options: &serde_json::Value) -> Result<Vec<Option<KeyedRow>>, String> {
     #[cfg(test)]
     let alone = pack_split_tests::ALONE.with(std::cell::Cell::get);
@@ -439,35 +439,51 @@ fn packed(paths: &[std::path::PathBuf], root: &std::path::Path, out: &std::path:
     let mut done: Vec<Option<KeyedRow>> = paths.iter().map(|_| None).collect();
     for group in groups.iter().filter(|g| g.members.len() > 1) {
         let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? else { continue };
-        for ((&k, (found, run)), metadata) in group.members.iter().zip(each).zip(&group.metadata) {
-            done[k] = unsuppressed(found, &out.join(k.to_string()), root, metadata)?.map(|found| (found, run));
+        let Some(mut dropped) = pack_suppressed(group, root, out)? else { continue };
+        for (&k, (found, run)) in group.members.iter().zip(each) {
+            done[k] = Some((kept(found, &mut dropped), run));
         }
     }
     Ok(done)
 }
 
-/// A pack member's findings (`run_pack`'s, in their order) less those the linters' comments its `suppress` lines
-/// name drop (`rr_host::suppressions`), read again from its own outputs in `own`. `None` where a line does not read:
-/// the policy then runs alone, and meets its error there.
-fn unsuppressed(found: Vec<serde_json::Value>, own: &std::path::Path, root: &std::path::Path, metadata: &serde_json::Value) -> Result<Option<Vec<serde_json::Value>>, String> {
-    // Its settings as its record holds them (`rr::metadata`): `[key, text]` pairs.
-    let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
+/// The findings of `group`'s pack that the linters' comments its members' `suppress` lines name drop
+/// (`rr_host::suppressions`), read from the pack's runs where `run_pack` places them: the first dialect's in
+/// `out/pack-<first member>`, each other's in its label's folder below it. `None` where a member's line does not
+/// read: the group's policies then run alone, and that one meets its error there.
+fn pack_suppressed(group: &PolicyGroup, root: &std::path::Path, out: &std::path::Path) -> Result<Option<Vec<serde_json::Value>>, String> {
     let mut suppressions = super::rr_host::suppressions::Suppressions::default();
-    if suppressions.add(settings.iter().copied()).is_err() {
-        return Ok(None);
+    for metadata in &group.metadata {
+        // A member's settings as its record holds them (`rr::metadata`): `[key, text]` pairs.
+        let settings: Vec<(&str, &str)> = metadata["settings"].as_array().into_iter().flatten().filter_map(|pair| Some((pair[0].as_str()?, pair[1].as_str()?))).collect();
+        if suppressions.add(settings.iter().copied()).is_err() {
+            return Ok(None);
+        }
     }
     if suppressions.is_empty() {
-        return Ok(Some(found));
+        return Ok(Some(Vec::new()));
     }
-    let (_, mut dropped) = reported(own, root, &suppressions)?;
-    let kept = found.into_iter().filter(|finding| match dropped.iter().position(|d| d == finding) {
-        Some(at) => {
-            dropped.swap_remove(at);
-            false
-        }
-        None => true,
-    });
-    Ok(Some(kept.collect()))
+    let dir = out.join(format!("pack-{}", group.members[0]));
+    let mut dropped = Vec::new();
+    for run in group.dialects.iter().skip(1).map(|label| dir.join(label)).chain([dir.clone()]) {
+        dropped.extend(reported(&run, root, &suppressions)?.1);
+    }
+    Ok(Some(dropped))
+}
+
+/// A member's findings (`run_pack`'s, in their order) less those of `dropped`, each taken from `dropped` as it is met.
+/// A finding names its policy, so one member's never drops another's.
+fn kept(found: Vec<serde_json::Value>, dropped: &mut Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    found
+        .into_iter()
+        .filter(|finding| match dropped.iter().position(|d| d == finding) {
+            Some(at) => {
+                dropped.swap_remove(at);
+                false
+            }
+            None => true,
+        })
+        .collect()
 }
 
 /// Policies of a batch that run as one pack: one language, the same dialects with files in scope, the same guest
