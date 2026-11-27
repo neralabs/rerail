@@ -288,7 +288,7 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, la, (uint32_t)((uint64_t)key & 0xfffffffful));
     if (l == NONE) return;
     uint32_t first = e->rows[1];
-    if (l == 0u) { *lo = first; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[1] : s->nr; return; }
+    if (l == 0u) { *lo = first; *hi = view_rows_end(d, e, 1u, s->nr); return; }
     uint32_t c = clif_view_child_first(ch, e->entry, t, e->view, ls, la, l);
     if (c == NONE) return;
     *lo = first + c; *hi = NONE; *how = 2u;
@@ -3185,10 +3185,9 @@ UKL_INLINE bool axis_in(UKL_GLOBAL const AxisP* p, UKL_GLOBAL const uint32_t* bi
 
 // Node row `v`'s document's row in the directory, its first `node` row and its rows' end.
 UKL_INLINE UKL_GLOBAL const ViewRow* axis_doc(UKL_GLOBAL const ViewDir* d, uint32_t v, UKL_PRIVATE uint32_t* end) {
-    uint32_t i = clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE);
-    UKL_GLOBAL const ViewRow* rows = view_rows(d);
-    *end = i + 1u < d->ndocs ? rows[i + 1u].rows[0] : d->ends[0];
-    return &rows[i];
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE)];
+    *end = view_rows_end(d, e, 0u, d->ends[0]);
+    return e;
 }
 
 // Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the scan

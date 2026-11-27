@@ -18,6 +18,7 @@ typedef struct ViewRow {
     uint32_t rows[27];
     uint32_t view[34];
     uint32_t bytes;
+    uint32_t at;
 } ViewRow;
 typedef struct ViewHome {
     uint64_t host;
@@ -35,11 +36,11 @@ typedef struct ViewDir {
     uint32_t counted;
     uint32_t pad;
     uint64_t pages;
-    uint64_t by_number;
-    uint32_t numbered;
-    uint32_t pad2;
+    uint64_t order;
+    uint32_t first;
+    uint32_t span;
 } ViewDir;
-UKL_STATIC_ASSERT(sizeof(ViewRow) == 296, "ViewRow: size");
+UKL_STATIC_ASSERT(sizeof(ViewRow) == 304, "ViewRow: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, source) == 24, "ViewRow.source");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == 32, "ViewRow.homes");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 156, "ViewRow.view");
@@ -49,8 +50,11 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == 32, "ViewDir.cache");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == 40, "ViewDir.by_key");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, pages) == 168, "ViewDir.pages");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, order) == 176, "ViewDir.order");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, at) == 296, "ViewRow.at");
 UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }
 UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }
+UKL_INLINE uint32_t view_rows_end(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e, uint32_t k, uint32_t end) { uint32_t m = e->at + 1u; return m < d->ndocs ? view_rows(d)[((UKL_GLOBAL const uint32_t*)(view_block(d) + d->order))[m]].rows[k] : end; }
 UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }
 UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }
 UKL_INLINE UKL_GLOBAL const uint8_t* view_source(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[2], e->source); }

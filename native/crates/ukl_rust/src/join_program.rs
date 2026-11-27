@@ -139,6 +139,8 @@ struct ViewRow {
     rows: [u32; 27],
     view: [u32; 34],
     bytes: u32,
+    /// Its place in the directory's order (`ViewDir::order`).
+    at: u32,
 }
 #[repr(C)]
 struct ViewHome {
@@ -158,9 +160,10 @@ struct ViewDir {
     counted: u32,
     pad: u32,
     pages: u64,
-    by_number: u64,
-    numbered: u32,
-    pad2: u32,
+    /// Its rows in its views' order (rows are the growth's numbers less `first`, `span` of them).
+    order: u64,
+    first: u32,
+    span: u32,
 }
 #[repr(C)]
 struct PlacedDir {
@@ -170,7 +173,7 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 296 && size_of::<ViewDir>() == 192 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<ViewRow>() == 304 && size_of::<ViewDir>() == 192 && size_of::<PlacedDir>() == 32);
 const _: () = assert!(core::mem::offset_of!(ViewRow, source) == 24 && core::mem::offset_of!(ViewRow, homes) == 32 && core::mem::offset_of!(ViewRow, view) == 156);
 
 #[repr(C)]
@@ -500,6 +503,11 @@ unsafe fn view_block(d: *const ViewDir) -> *const u8 {
 unsafe fn view_rows(d: *const ViewDir) -> *const ViewRow {
     view_block(d).add((*d).rows as usize) as *const ViewRow
 }
+/// The first row of view `k` past document `e`'s: the next in the directory's order's, `end` past the last.
+unsafe fn view_rows_end(d: *const ViewDir, e: *const ViewRow, k: usize, end: u32) -> u32 {
+    let m = (*e).at + 1;
+    if m < (*d).ndocs { (*view_rows(d).add(*(view_block(d).add((*d).order as usize) as *const u32).add(m as usize) as usize)).rows[k] } else { end }
+}
 unsafe fn view_home(d: *const ViewDir, h: u32, at: u64) -> *const u8 {
     let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
     (*homes.add(h as usize)).gpu.wrapping_add(at as usize)
@@ -727,8 +735,7 @@ impl St<'_> {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[1];
             if l == 0 {
-                let a = e.offset_from(view_rows(d)) as u32;
-                let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[1] } else { s.nr };
+                let hi = view_rows_end(d, e, 1, s.nr);
                 return Walk { lo: first, hi, how: 0, tag: 0 };
             }
             let c = self.rd.walk(CHILD_FIRST, d, e, l);

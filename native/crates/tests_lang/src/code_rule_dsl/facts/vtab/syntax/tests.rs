@@ -4423,14 +4423,16 @@ fn the_directorys_searches_are_the_jits() {
 /// made in the growth, in its role's region (files from 0, code guests from 2^30, hidden documents from 1.5 × 2^30)
 /// and in making order, and its later spans one run more; every id's document and local id come back from its page,
 /// on the host and by the JIT (`dir_doc_of_id`, `dir_local_of_id`), through each directory that holds it: the
-/// chunk's first batch, the batch a round grew it into (rows in key order, so a document's row moves), and the
-/// layered directory with a tape value admitted (`views_over`). An id handed out in the first round is the same id
-/// in the second.
+/// chunk's first batch, the batch a round grew it into (its documents in key order, so a document's place moves),
+/// and the layered directory with a tape value admitted (`views_over`). A row is the document's number less the
+/// directory's first, the same in each: one load from the page. An id handed out in the first round is the same id
+/// in the second. The directory's searches by row and by key (`dir_doc_of_row`, `dir_doc_of_key`) are the JIT's
+/// too on the grown and the layered directories, where a document's row is not its place in their order.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
     use crate::code_rule_dsl::facts::nearest::Binding;
-    use rerail_clif::view_reads::{NO_DOC, PAGE, PAGE_BITS, ROLE_PAGES, ViewDir};
+    use rerail_clif::view_reads::{NO_DOC, PAGE, PAGE_BITS, ROLE_PAGES, VIEWS, ViewDir};
     let store = ContentStore::open(&temp("chunk-ids")).unwrap();
     let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
     let projection = Projection::core();
@@ -4442,6 +4444,37 @@ fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
     type OfId = extern "C" fn(*const u8, u32) -> u32;
     // SAFETY: each read's signature: the descriptor (a directory), then the id.
     let (doc_of, local_of): (OfId, OfId) = unsafe { (std::mem::transmute::<*const u8, OfId>(jit.function("dir_doc_of_id")), std::mem::transmute::<*const u8, OfId>(jit.function("dir_local_of_id"))) };
+    type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
+    type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor, then its arguments.
+    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute::<*const u8, ByRow>(jit.function("dir_doc_of_row")), std::mem::transmute::<*const u8, ByKey>(jit.function("dir_doc_of_key"))) };
+    // The searches of directory `d` (its first rows counted), the host's and the JIT's, over every row of the
+    // node and child views and every key: the row found holds the view's row, and is the key's.
+    let searched = |d: *const ViewDir, keys: &[(u32, u32)], at: &str| {
+        // SAFETY: the directory in its batch's block, which the test holds, its first rows counted.
+        let (n, span, ends) = unsafe { ((*d).ndocs, (*d).span, (*d).ends) };
+        for k in 0..2u32.min(VIEWS.len() as u32) {
+            for r in 0..ends[k as usize] {
+                for memo in [0, span / 2, span.saturating_sub(1), span, NO_DOC] {
+                    // SAFETY: as above.
+                    let host = unsafe { ViewDir::doc_of_row(d, k, r, memo) };
+                    assert_eq!(by_row(d.cast(), k, r, memo), host, "{at}: view {k}, row {r}, memo {memo}");
+                    // SAFETY: as above; the row found one of its documents'.
+                    let (place, from) = unsafe { (ViewDir::at_of(d, host), ViewDir::first_of(d, k as usize, ViewDir::at_of(d, host))) };
+                    // SAFETY: as above.
+                    let to = unsafe { ViewDir::first_of(d, k as usize, place + 1) };
+                    assert!(place < n && from <= r && r < to, "{at}: view {k}, row {r}: row {host}, place {place}, rows {from}..{to}");
+                }
+            }
+        }
+        for &(key, row) in keys {
+            for memo in [0, row, span, NO_DOC] {
+                // SAFETY: as above.
+                let host = unsafe { ViewDir::doc_of_key(d, key, memo) };
+                assert_eq!((by_key(d.cast(), key, memo), host), (row, row), "{at}: key {key}, memo {memo}");
+            }
+        }
+    };
     // Every id of `ids` (first id, first local id, how many) comes back as document `row` through directory `d`.
     let mut tried = 0usize;
     let mut check = |d: *const ViewDir, row: u32, (id, local, n): (u32, u32, u32), at: &str| {
@@ -4477,9 +4510,13 @@ fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
         .into_iter()
         .map(|i| (docs.key(i), [(base(docs, i), 0, ids_of(docs, i)), if i == a { (later.0, later.1, 5000) } else { (0, 0, 0) }]))
         .collect();
+    // A document's row in any directory of the growth: its number less the directory's first.
+    // SAFETY: each directory in the chunk's block, which the test holds.
+    let row_in = |d: *const ViewDir, docs: &made::Docs, key: u32| docs.number(row(docs, key)) - unsafe { (*d).first };
     for &(key, runs) in &held {
+        assert_eq!(docs.row(row(docs, key)), row_in(docs.dir(), docs, key), "key {key}: its row is its number");
         for run in runs {
-            check(docs.dir(), row(docs, key) as u32, run, "the first batch");
+            check(docs.dir(), row_in(docs.dir(), docs, key), run, "the first batch");
         }
     }
     // A round grows the batch: c.py's row comes between a.py's and b.py's, and every id stays.
@@ -4489,14 +4526,26 @@ fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
     let c = row(&second.docs, 5);
     second.docs.get(c);
     assert_eq!(base(&second.docs, c), pages(ids_of(docs, b)) + pages(ids_of(docs, a)) + pages(5000), "c.py's pages follow the later spans'");
+    let sd = second.docs.dir();
+    assert_eq!(c, 1, "c.py is second by key");
+    assert_ne!(second.docs.row(c), c as u32, "c.py's row is its number, not its place");
     for &(key, runs) in &held {
         let i = row(&second.docs, key);
         assert_eq!(base(&second.docs, i), runs[0].0, "key {key}: its ids in the second round");
+        assert_eq!(row_in(sd, &second.docs, key), row_in(docs.dir(), docs, key), "key {key}: its row in the second round");
         for run in runs {
-            check(second.docs.dir(), i as u32, run, "the grown batch");
+            check(sd, row_in(sd, &second.docs, key), run, "the grown batch");
         }
     }
-    check(second.docs.dir(), c as u32, (base(&second.docs, c), 0, ids_of(&second.docs, c)), "the grown batch, c.py");
+    check(sd, row_in(sd, &second.docs, 5), (base(&second.docs, c), 0, ids_of(&second.docs, c)), "the grown batch, c.py");
+    // Its first rows counted, its rows' reads written (the views' directory, device or not).
+    device_chunk::views_in_place(&second).expect("the grown batch's directory");
+    let keys_of = |d: *const ViewDir, docs: &[&made::Docs]| -> Vec<(u32, u32)> {
+        let mut keys: Vec<(u32, u32)> = docs.iter().flat_map(|docs| docs.keys().map(|k| (k, row_in(d, docs, k))).collect::<Vec<_>>()).collect();
+        keys.extend([(0, NO_DOC), (4, NO_DOC), (u32::MAX - 1, NO_DOC)]);
+        keys
+    };
+    searched(sd, &keys_of(sd, &[&second.docs]), "the grown batch");
     // A tape value admitted: a hidden document, numbered in the chunk's growth.
     let admitted = grower.admit(&store, vec![file(hidden, "v.py")], &[], &tests, Binding::Cpu, &projection).unwrap();
     let value = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the value's batch");
@@ -4504,17 +4553,21 @@ fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
     value.docs.get(0);
     let v = base(&value.docs, 0);
     assert_eq!(v, ROLE_PAGES[2] << PAGE_BITS, "the value takes the hidden documents' first page");
-    check(value.docs.dir(), 0, (v, 0, ids_of(&value.docs, 0)), "the value's batch");
+    check(value.docs.dir(), 0, (v, 0, ids_of(&value.docs, 0)), "the value's batch: its row 0, its number its first");
     // SAFETY: the value's directory, in the chunk's block: none of its rows is a chunk's file.
     assert_eq!(unsafe { ViewDir::doc_of_id(value.docs.dir(), base(&second.docs, c)) }, NO_DOC, "c.py is no row of the value's batch");
     let layered = device_chunk::views_over(&second, std::slice::from_ref(&value)).expect("a layered directory");
     let ld = second.block().ptr::<ViewDir>(layered.at).cast_const();
-    check(ld, second.docs.len() as u32, (v, 0, ids_of(&value.docs, 0)), "the layered directory, the value");
+    // SAFETY: the layered directory, in the chunk's block.
+    assert_eq!(unsafe { ((*ld).first, (*ld).span) }, (0, 5), "the layered directory's rows: the growth's five numbers");
+    check(ld, row_in(ld, &value.docs, hidden), (v, 0, ids_of(&value.docs, 0)), "the layered directory, the value");
     for &(key, runs) in &held {
+        assert_eq!(row_in(ld, &second.docs, key), row_in(sd, &second.docs, key), "key {key}: its row in the layered directory");
         for run in runs {
-            check(ld, row(&second.docs, key) as u32, run, "the layered directory");
+            check(ld, row_in(ld, &second.docs, key), run, "the layered directory");
         }
     }
+    searched(ld, &keys_of(ld, &[&second.docs, &value.docs]), "the layered directory");
     assert!(tried > 5000, "{tried} ids");
 }
 

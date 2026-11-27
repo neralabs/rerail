@@ -49,45 +49,41 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 }
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
-/// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
-/// (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed: row
-/// `i`'s tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n` (`ViewDir::cache` is
-/// `3n + 1` once it is made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
+/// `block`: `n` documents, each its key, `keys` in order, each one's row its number in the growth (`numbered`) less
+/// the first's, rows of the numbers between that none of them has with key `NO_DOC`; the first rows are written when
+/// counted (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed:
+/// the `i`th document's tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n`
+/// (`ViewDir::cache` is `3n + 1` once it is made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
 /// zeros where none was given). Its offset in the block, and the given counts'.
 pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize, ids: &Ids, numbered: &[Arc<Numbered>]) -> (usize, usize) {
-    use rerail_clif::view_reads::{NO_DOC, ViewDir, ViewHome, ViewRow};
-    let rows: *mut ViewRow = block.alloc_t(n.max(1));
+    use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
+    // Its rows: the numbers from its first document's to its last (plan "Chunk node numbers").
+    let (first, span) = numbers_spanned(numbered.iter().map(|d| d.number));
+    let rows: *mut ViewRow = block.alloc_t((span as usize).max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(HOMES * n + 1);
-    // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their rows'.
+    // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their order's.
     let by_key: *mut u32 = block.alloc_t(n.max(1));
-    // Its rows by their documents' numbers in the growth (`ViewDir::by_number`): every number so far, its row here
-    // or `NO_DOC`.
-    let count = ids.count() as usize;
-    let by_number: *mut u32 = block.alloc_t(count.max(1));
-    // SAFETY: `count` entries, just allocated in `block`; each of its documents' numbers is below `count`.
-    unsafe {
-        for j in 0..count {
-            by_number.add(j).write(NO_DOC);
-        }
-        for (row, d) in numbered.iter().enumerate() {
-            by_number.add(d.number as usize).write(row as u32);
-        }
-    }
+    let order: *mut u32 = block.alloc_t(n.max(1));
+    // SAFETY: `span` rows, just allocated in `block`: the numbers none of its documents has.
+    unsafe { write_absent(rows, first, span, numbered.iter().map(|d| d.number)) };
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for (key, counts) in docs.take(n) {
-        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its homes, and its place in the order by key.
+        let row = numbered[k].number - first;
+        // SAFETY: its row of the rows, its given counts just allocated in `block`, and its homes, and its places in
+        // the order and the order by key.
         unsafe {
             let h = (HOMES * k) as u32;
-            rows.add(k).write(ViewRow { key, homes: [h, h + 1, h + 2], ..Default::default() });
+            rows.add(row as usize).write(ViewRow { key, homes: [h, h + 1, h + 2], at: k as u32, ..Default::default() });
+            order.add(k).write(row);
             given.add(k).write(counts.map_or([0; COUNTS + 1], |c| {
                 let mut g = [1; COUNTS + 1];
                 // copy: not block data (a document's view counts as given, into its directory row)
                 g[..COUNTS].copy_from_slice(&c);
                 g
             }));
-            by_key.add(k).write(k as u32);
+            by_key.add(k).write(row);
             for j in 0..HOMES {
                 homes.add(HOMES * k + j).write(ViewHome::default());
             }
@@ -108,12 +104,36 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
             homes: block.offset_of(homes) as u64,
             by_key: block.offset_of(by_key) as u64,
             pages: ids.table_at() as u64,
-            by_number: block.offset_of(by_number) as u64,
-            numbered: count as u32,
+            order: block.offset_of(order) as u64,
+            first,
+            span,
             ..Default::default()
         })
     };
     (at, block.offset_of(given))
+}
+
+/// The first of `numbers` and how many numbers from it to the last: a directory's rows (`ViewDir::first`, `span`).
+pub(super) fn numbers_spanned(numbers: impl Iterator<Item = u32>) -> (u32, u32) {
+    let (lo, hi) = numbers.fold((u32::MAX, 0), |(lo, hi), x| (lo.min(x), hi.max(x)));
+    if lo > hi { (0, 0) } else { (lo, hi - lo + 1) }
+}
+
+/// Writes the rows of `rows` (`span` of them, from number `first`) whose numbers none of `held` is: key and place
+/// `NO_DOC`, so a search tried on one finds no document there.
+///
+/// # Safety
+/// `rows` holds `span` rows, written by this caller alone; `held` are numbers from `first` within `span`.
+pub(super) unsafe fn write_absent(rows: *mut rerail_clif::view_reads::ViewRow, first: u32, span: u32, held: impl Iterator<Item = u32>) {
+    use rerail_clif::view_reads::{NO_DOC, ViewRow};
+    let mut is = vec![false; span as usize];
+    for x in held {
+        is[(x - first) as usize] = true;
+    }
+    for (j, _) in is.iter().enumerate().filter(|(_, h)| !**h) {
+        // SAFETY: the caller's.
+        unsafe { rows.add(j).write(ViewRow { key: NO_DOC, at: NO_DOC, ..Default::default() }) };
+    }
 }
 
 /// A directory row's homes (`ViewRow::homes`): its tape's, its lines', its source's.
@@ -367,9 +387,21 @@ impl Docs {
     }
     /// Document `i`'s key, made or not: its directory row's.
     pub fn key(&self, i: usize) -> u32 {
+        // SAFETY: the directory `new` made in the batch's block, which the context holds; `row(i)` is one of its.
+        unsafe { rerail_clif::view_reads::ViewDir::key_of(self.dir(), self.row(i)) }
+    }
+    /// Document `i`'s row in its directory: its number in the growth less the directory's first (`ViewDir`'s rows,
+    /// the `i`th of its order).
+    pub fn row(&self, i: usize) -> u32 {
         assert!(i < self.slots.len(), "document {i} of {}", self.slots.len());
-        // SAFETY: the directory `new` made in the batch's block, which the context holds; row `i` is one of its.
-        unsafe { rerail_clif::view_reads::ViewDir::key_of(self.dir(), i as u32) }
+        // SAFETY: the directory `new` made in the batch's block, which the context holds; its order written there.
+        unsafe { rerail_clif::view_reads::ViewDir::row_at(self.dir(), i as u32) }
+    }
+    /// The document of row `row` of its directory, by index (`ViewRow::at`), `None` for a row of none.
+    pub fn of_row(&self, row: u32) -> Option<usize> {
+        // SAFETY: as `row`; a row below its span.
+        let at = unsafe { (row < rerail_clif::view_reads::ViewDir::span_of(self.dir())).then(|| rerail_clif::view_reads::ViewDir::at_of(self.dir(), row)) }?;
+        (at != rerail_clif::view_reads::NO_DOC).then_some(at as usize)
     }
     /// Every document's key, in order.
     pub fn keys(&self) -> impl ExactSizeIterator<Item = u32> + '_ {
@@ -402,9 +434,10 @@ impl Docs {
     }
     /// `position`, the document `memo` tried first (the directory's search, `ViewDir::doc_of_key`).
     pub fn position_from(&self, key: u32, memo: u32) -> Option<usize> {
+        let memo = if (memo as usize) < self.slots.len() { self.row(memo as usize) } else { rerail_clif::view_reads::NO_DOC };
         // SAFETY: as `key`.
         let d = unsafe { rerail_clif::view_reads::ViewDir::doc_of_key(self.dir(), key, memo) };
-        (d != rerail_clif::view_reads::NO_DOC).then_some(d as usize)
+        if d == rerail_clif::view_reads::NO_DOC { None } else { self.of_row(d) }
     }
     /// What document `i` is made from: its facts, tape, path and place, built if it is pending (`Pending`, Q332). One
     /// that could not be built fails the batch (`failure`).
@@ -762,8 +795,16 @@ impl Firsts<'_> {
     /// The document whose rows hold `row`, `memo` tried first (the directory's search, `ViewDir::doc_of_row`).
     #[inline]
     pub fn doc_of(&self, row: usize, memo: u32) -> usize {
-        // SAFETY: as `at`.
-        unsafe { rerail_clif::view_reads::ViewDir::doc_of_row(self.dir, self.k as u32, row as u32, memo) as usize }
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        // SAFETY: as `at`: the directory's order and rows (the search's answer one of its documents' rows, or 0 for
+        // none).
+        unsafe {
+            let memo = if (memo as usize) < self.n { ViewDir::row_at(self.dir, memo) } else { NO_DOC };
+            if self.n == 0 {
+                return 0;
+            }
+            ViewDir::at_of(self.dir, ViewDir::doc_of_row(self.dir, self.k as u32, row as u32, memo)) as usize
+        }
     }
 }
 

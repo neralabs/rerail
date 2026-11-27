@@ -517,15 +517,16 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     // directory's rows (each one's key and first `node` row) and the scanned starts where they lie.
     // SAFETY: the directory lies in `block` at `dir_at` (`views_in_place`), alive while the batch is; its rows are
     // written once its views were.
-    let (dir, rows) = unsafe {
+    // Its rows in its views' order (`ViewDir::order`: a row is a number of the growth).
+    let (dir, rows, order) = unsafe {
         let d = &*block.ptr::<ViewDir>(dir_at);
-        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.ndocs as usize))
+        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.span as usize), std::slice::from_raw_parts(block.ptr::<u32>(d.order as usize), d.ndocs as usize))
     };
     // SAFETY: the scanned starts, `n + 1` values.
     let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
     let runs_of = |put: &mut dyn FnMut(u32, u32)| {
-        for (i, r) in rows.iter().enumerate() {
-            let end = rows.get(i + 1).map_or(dir.ends[0], |e| e.rows[0]) as usize;
+        for (i, r) in order.iter().map(|&o| &rows[o as usize]).enumerate() {
+            let end = order.get(i + 1).map_or(dir.ends[0], |&o| rows[o as usize].rows[0]) as usize;
             let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
             if to > from {
                 put(from, r.key);
