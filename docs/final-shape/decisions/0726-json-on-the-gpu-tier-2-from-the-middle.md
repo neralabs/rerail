@@ -93,7 +93,23 @@ records' mask from their union, and their masks live in pass 2 alone (the serial
   the count, which would reach the next chunk's records.
 - `lex_chunked` is `lex_typed`'s records.
 
-### 4. Still to build (the design's stages)
+### 4. Every chunk on its own, in any order
+
+The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
+shape." Every pass of both tiers runs its chunks in the order an `Order` gives (a permutation asked each time a pass
+runs them), and each round of every scan too (`each`, `scan`: Hillis and Steele's, its two buffers apart):
+
+- tier 1: pass 1 (`stage1_ends`), pass 3 (`entries_in`), pass 2's count, the counts' exclusive scan, and pass 2's
+  writes (`lex_typed_in`);
+- tier 2: the chunks' starts (each run of `size` records finds its own first record after a separator, placed by a
+  prefix sum of the runs that have one), the depths (each chunk's sum of openers and closers, then their scan), pass
+  1 (`summaries`), pass 3 (`entries`), and pass 2's count and writes (`parse_middle`).
+
+The tests run them in seeded random orders, a new permutation at each ask: the answers are the serial ones. So no
+chunk reads what another wrote but through a scan's rounds, and the shape is the device's: one launch a pass or a
+scan round, each chunk a thread or a group.
+
+### 5. Still to build (the design's stages)
 
 - Stage 2's token pass, one thread a token from each type's records.
 - The greedy LZ4 encoder (`ukl/lz4_encode.h`) and the 16z pieces.
@@ -107,7 +123,7 @@ chunks of 1, 2, 3 and 16 records, 11,813 chunks. Each chunk's state from pass 3 
 places, nodes before, the file's end) is the serial walk's there, and the walk chunk after chunk ends as `parse`
 does. At most 16 lanes a chunk. `rerail-parser-tests`' `json_rust_is_current` holds the tier to the generator, its
 text checks on the serial walk. `tier2_tape_from_the_middle_is_the_serial_tape`: every file that parses, in chunks of 1, 3 and 16
-records written in order and in reverse (180 tapes, 8,926 chunks), gives the serial walk's tape byte for byte, and
+records, every pass in order and in two random orders (270 tapes, 13,800 chunks), gives the serial walk's tape byte for byte, and
 every refusal the serial one; the slot and length lists hold up to 991 entries a block there. `typed_records_are_the_records_split_by_type`: 390 files in chunks of
-1, 2, 3 and 16 blocks (8,784 records), the records `lex`'s and each type's the records split by their first byte.
+1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
 `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

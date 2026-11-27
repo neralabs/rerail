@@ -598,20 +598,48 @@ rerail_simd8::kernel! {
 /// `log2` of the chunks rounds each chunk's map is the file's start's to its end. In a round each chunk is on its own,
 /// as a device's scan; the two buffers a round reads and writes swap.
 pub fn entries(ends: &[[Carries; LANES]]) -> Vec<Carries> {
-    let mut maps: Vec<[u8; LANES]> = ends.iter().map(|e| core::array::from_fn(|l| lane_of(e[l]) as u8)).collect();
-    let mut next = maps.clone();
+    entries_in(ends, &in_order)
+}
+
+/// The order a pass runs its chunks in: a permutation of `0..n`, asked once each time a pass runs them. Each chunk is
+/// on its own, so any order gives the same answer (`in_order`; the tests' random ones).
+pub type Order<'a> = &'a dyn Fn(usize) -> Vec<usize>;
+
+/// The chunks in order.
+pub fn in_order(n: usize) -> Vec<usize> {
+    (0..n).collect()
+}
+
+/// `f` of each of `n` chunks, run in `order`'s order: each chunk's result in its place.
+fn each<T>(n: usize, order: Order<'_>, mut f: impl FnMut(usize) -> T) -> Vec<T> {
+    let mut out: Vec<Option<T>> = (0..n).map(|_| None).collect();
+    for c in order(n) {
+        assert!(out[c].is_none(), "a chunk run twice");
+        out[c] = Some(f(c));
+    }
+    out.into_iter().map(|x| x.expect("every chunk run")).collect()
+}
+
+/// Hillis and Steele's inclusive scan of `xs` by `op` (`op(a, b)`, `a` the earlier), each round's chunks in `order`'s
+/// order, the two buffers apart.
+fn scan<T: Clone>(xs: Vec<T>, order: Order<'_>, op: impl Fn(&T, &T) -> T) -> Vec<T> {
+    let mut acc = xs;
     let mut d = 1;
-    while d < maps.len() {
-        next[..d].copy_from_slice(&maps[..d]);
-        for c in d..maps.len() {
-            next[c] = core::array::from_fn(|l| maps[c][usize::from(maps[c - d][l])]);
-        }
-        std::mem::swap(&mut maps, &mut next);
+    while d < acc.len() {
+        let next = each(acc.len(), order, |c| if c < d { acc[c].clone() } else { op(&acc[c - d], &acc[c]) });
+        acc = next;
         d *= 2;
     }
+    acc
+}
+
+/// `entries`, each round's chunks in `order`'s order.
+pub fn entries_in(ends: &[[Carries; LANES]], order: Order<'_>) -> Vec<Carries> {
+    let maps: Vec<[u8; LANES]> = each(ends.len(), order, |c| core::array::from_fn(|l| lane_of(ends[c][l]) as u8));
+    let maps = scan(maps, order, |a, b| core::array::from_fn(|l| b[usize::from(a[l])]));
     // Chunk `c`'s entry: the file's start, through the chunks before it.
     let start = lane_of(Carries::default());
-    (0..maps.len()).map(|c| if c == 0 { Carries::default() } else { lane_carries(usize::from(maps[c - 1][start])) }).collect()
+    each(maps.len(), order, |c| if c == 0 { Carries::default() } else { lane_carries(usize::from(maps[c - 1][start])) })
 }
 
 /// The records of `buf[..n]` from the middle: its blocks in chunks of `blocks`, each chunk's ends from every entry
@@ -627,47 +655,46 @@ pub struct Typed {
     pub types: Vec<Vec<u32>>,
 }
 
+/// `lex_chunked`'s records, and the records of each type apart (`lex_typed_in`, the chunks in order).
+pub fn lex_typed(buf: &[u8], n: usize, blocks: usize) -> Typed {
+    lex_typed_in(buf, n, blocks, &in_order)
+}
+
 /// `lex_chunked`'s records, and the records of each type apart: pass 2 run twice, counting then writing (decision
 /// 0726). Each chunk's places in the records and in each type's from an exclusive scan of the chunks' counts, so each
-/// chunk writes on its own, in any order.
-pub fn lex_typed(buf: &[u8], n: usize, blocks: usize) -> Typed {
+/// chunk writes on its own. Every pass's chunks, and each round of its scans, in `order`'s order.
+pub fn lex_typed_in(buf: &[u8], n: usize, blocks: usize, order: Order<'_>) -> Typed {
     assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].chunks_exact(8).all(|w| w == b"        "), "the source padded with spaces");
     let blocks = blocks.max(1);
     let off = if buf.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };
     let nw = (n - off).div_ceil(64);
-    let ends: Vec<[Carries; LANES]> = (0..nw).step_by(blocks).map(|b| stage1_ends_best(buf, n, b, b + blocks)).collect();
-    let entries = entries(&ends);
+    let chunks = nw.div_ceil(blocks);
+    let ends: Vec<[Carries; LANES]> = each(chunks, order, |c| stage1_ends_best(buf, n, c * blocks, c * blocks + blocks));
+    let entries = entries_in(&ends, order);
     let none = [core::ptr::null_mut::<u32>(); TYPES];
     // Counting: each chunk's records and each type's.
-    let counts: Vec<[usize; TYPES + 1]> = (0..nw)
-        .step_by(blocks)
-        .enumerate()
-        .map(|(c, b)| {
-            let mut at = [0usize; TYPES + 1];
-            stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false);
-            at
-        })
-        .collect();
+    let counts: Vec<[usize; TYPES + 1]> = each(chunks, order, |c| {
+        let mut at = [0usize; TYPES + 1];
+        stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, core::ptr::null_mut(), none, false);
+        at
+    });
     // Each chunk's first places: an exclusive scan of the counts.
-    let mut firsts: Vec<[usize; TYPES + 1]> = Vec::with_capacity(counts.len() + 1);
-    firsts.push([0; TYPES + 1]);
-    for c in &counts {
-        let last = firsts[firsts.len() - 1];
-        firsts.push(core::array::from_fn(|k| last[k] + c[k]));
-    }
-    let total = firsts[counts.len()];
+    let sums = scan(counts, order, |a, b| core::array::from_fn(|k| a[k] + b[k]));
+    let firsts: Vec<[usize; TYPES + 1]> = each(chunks + 1, order, |c| if c == 0 { [0; TYPES + 1] } else { sums[c - 1] });
+    let total = firsts[chunks];
     let mut starts: Vec<u32> = Vec::with_capacity(total[0] + 3);
     let mut types: Vec<Vec<u32>> = (0..TYPES).map(|t| Vec::with_capacity(total[t + 1])).collect();
     let ptrs: [*mut u32; TYPES] = core::array::from_fn(|t| types[t].as_mut_ptr());
-    let mut refused = false;
+    let si = starts.as_mut_ptr();
     // Writing: each chunk from its places.
-    for (c, b) in (0..nw).step_by(blocks).enumerate() {
+    let refusals = each(chunks, order, |c| {
         let mut at = firsts[c];
-        let (r, end) = stage1_from_best(buf, n, b, b + blocks, entries[c], &mut at, starts.as_mut_ptr(), ptrs, true);
+        let (r, end) = stage1_from_best(buf, n, c * blocks, c * blocks + blocks, entries[c], &mut at, si, ptrs, true);
         debug_assert_eq!(end, ends[c][lane_of(entries[c])], "pass 2 ends where pass 1 did");
         debug_assert_eq!(at, firsts[c + 1], "pass 2 writes what it counted");
-        refused |= r;
-    }
+        r
+    });
+    let refused = refusals.iter().any(|&r| r);
     // SAFETY: every place below the totals written, each once.
     unsafe {
         starts.set_len(total[0]);
@@ -691,4 +718,9 @@ pub fn lex(buf: &[u8], n: usize) -> Lexed {
 #[inline(always)]
 fn prev(x: &[u64], i: usize, k: u32) -> u64 {
     x[i] << k | if i > 0 { x[i - 1] >> (64 - k) } else { 0 }
+}
+
+/// Whether `x` holds anywhere.
+fn any(x: &[u64]) -> bool {
+    x.iter().any(|&w| w != 0)
 }

@@ -307,39 +307,61 @@ let mut st: u8 = en.st;
 @LOOP@
 }
 
-/// Each chunk's first record: every `size` records on to the first after a separator; the first chunk at the file's.
-pub fn chunk_starts(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<usize> {
+/// The order a pass runs its chunks in: a permutation of `0..n`, asked once each time a pass runs them. Each chunk is
+/// on its own, so any order gives the same answer (`in_order`; the tests' random ones).
+pub type Order<'a> = &'a dyn Fn(usize) -> Vec<usize>;
+
+/// The chunks in order.
+pub fn in_order(n: usize) -> Vec<usize> {
+    (0..n).collect()
+}
+
+/// `f` of each of `n` chunks, run in `order`'s order: each chunk's result in its place.
+pub fn each<T>(n: usize, order: Order<'_>, f: impl Fn(usize) -> T) -> Vec<T> {
+    let mut out: Vec<Option<T>> = (0..n).map(|_| None).collect();
+    for c in order(n) {
+        assert!(out[c].is_none(), "a chunk run twice");
+        out[c] = Some(f(c));
+    }
+    out.into_iter().map(|x| x.expect("every chunk run")).collect()
+}
+
+/// Hillis and Steele's inclusive scan of `xs` by `op` (`op(a, b)`, `a` the earlier): round `r` takes each chunk's value
+/// after the one `2^r` chunks before it, each round's chunks in `order`'s order, the two buffers apart.
+pub fn scan<T: Clone>(xs: Vec<T>, order: Order<'_>, op: impl Fn(&T, &T) -> T) -> Vec<T> {
+    let mut acc = xs;
+    let mut d = 1;
+    while d < acc.len() {
+        let next = each(acc.len(), order, |c| if c < d { acc[c].clone() } else { op(&acc[c - d], &acc[c]) });
+        acc = next;
+        d *= 2;
+    }
+    acc
+}
+
+/// Each chunk's first record: in each run of `size` records, the first after a separator, placed by a prefix sum of
+/// the runs that have one; the first chunk at the file's first record. A run with none is its chunk's.
+pub fn chunk_starts(src: &[u8], lx: &crate::tier1::Lexed, size: usize, order: Order<'_>) -> Vec<usize> {
     let size = size.max(1);
-    let mut out = vec![0];
-    let mut t = size;
-    while t < lx.count {
-        if SEPS.contains(&src[lx.starts[t - 1] as usize]) {
-            out.push(t);
-            t += size;
-        } else {
-            t += 1;
+    let runs = lx.count.div_ceil(size).max(1);
+    let found: Vec<Option<usize>> = each(runs, order, |k| if k == 0 { Some(0) } else { (k * size..((k + 1) * size).min(lx.count)).find(|&t| SEPS.contains(&src[lx.starts[t - 1] as usize])) });
+    let places = scan(found.iter().map(|f| usize::from(f.is_some())).collect(), order, |a, b| a + b);
+    let mut out = vec![0; places[runs - 1]];
+    for k in order(runs) {
+        if let Some(t) = found[k] {
+            out[places[k] - 1] = t;
         }
     }
     out
 }
 
-/// The depth at each chunk's first record: the prefix sum of its records' openers and closers (none below 0: a file
-/// whose closers pass its openers is refused before them).
-pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize]) -> Vec<usize> {
-    let mut out = Vec::with_capacity(chunks.len());
-    let mut d = 0isize;
-    let mut c = 0;
-    for t in 0..lx.count {
-        if c < chunks.len() && chunks[c] == t {
-            out.push(d.max(0) as usize);
-            c += 1;
-        }
-        d += delta(src[lx.starts[t] as usize]);
-    }
-    while out.len() < chunks.len() {
-        out.push(d.max(0) as usize);
-    }
-    out
+/// The depth at each chunk's first record: each chunk's sum of its records' openers and closers, then their prefix
+/// sum (none below 0: a file whose closers pass its openers is refused before them).
+pub fn depths(src: &[u8], lx: &crate::tier1::Lexed, chunks: &[usize], order: Order<'_>) -> Vec<usize> {
+    let n = chunks.len();
+    let sums: Vec<isize> = each(n, order, |c| (chunks[c]..chunks.get(c + 1).copied().unwrap_or(lx.count)).map(|t| delta(src[lx.starts[t] as usize])).sum());
+    let inc = scan(sums, order, |a, b| a + b);
+    each(n, order, |c| if c == 0 { 0 } else { inc[c - 1].max(0) as usize })
 }
 
 /// One lane of a summary: what a range does for the entries at place `st0` whose innermost levels return to `kc`
@@ -517,28 +539,22 @@ pub fn apply(s: &Summary, a: &At) -> Option<At> {
 /// Pass 3: each chunk's state at its start, then the file's end, from the chunks' summaries, by a prefix scan of their compositions: round
 /// `r` composes each chunk's summary after the one `2^r` chunks before it (Hillis and Steele's, as tier 1's
 /// `entries`), each chunk on its own in a round.
-pub fn entries(sums: &[Summary]) -> Vec<Option<At>> {
-    let mut acc: Vec<Summary> = sums.to_vec();
-    let mut d = 1;
-    while d < acc.len() {
-        let next: Vec<Summary> = (0..acc.len()).map(|c| if c < d { acc[c].clone() } else { compose(&acc[c - d], &acc[c]) }).collect();
-        acc = next;
-        d *= 2;
-    }
-    (0..=acc.len()).map(|c| if c == 0 { Some(At::start()) } else { apply(&acc[c - 1], &At::start()) }).collect()
+pub fn entries(sums: &[Summary], order: Order<'_>) -> Vec<Option<At>> {
+    let acc = scan(sums.to_vec(), order, compose);
+    each(acc.len() + 1, order, |c| if c == 0 { Some(At::start()) } else { apply(&acc[c - 1], &At::start()) })
 }
 
-/// Every chunk's summary (pass 1), of chunks of about `size` records.
-pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<Summary> {
-    let chunks = chunk_starts(src, lx, size);
-    let ds = depths(src, lx, &chunks);
-    (0..chunks.len()).map(|c| lanes(src, lx, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c])).collect()
+/// Every chunk's summary (pass 1), of chunks of about `size` records, in `order`.
+pub fn summaries(src: &[u8], lx: &crate::tier1::Lexed, size: usize, order: Order<'_>) -> Vec<Summary> {
+    let chunks = chunk_starts(src, lx, size, order);
+    let ds = depths(src, lx, &chunks, order);
+    each(chunks.len(), order, |c| lanes(src, lx, chunks[c], chunks.get(c + 1).copied().unwrap_or(lx.count + 1), ds[c]))
 }
 
 /// The serial walk's state at each chunk's start, walked chunk after chunk from the file's, then at the file's end
 /// (the test of pass 3).
 pub fn serial_entries(src: &[u8], lx: &crate::tier1::Lexed, size: usize) -> Vec<At> {
-    let chunks = chunk_starts(src, lx, size);
+    let chunks = chunk_starts(src, lx, size, &in_order);
     let mut out = Vec::with_capacity(chunks.len());
     let mut at = At::start();
     let mut ret = std::boxed::Box::new([0u8; DEPTH]);
@@ -584,18 +600,19 @@ pub unsafe fn write_range(src: &[u8], lx: &crate::tier1::Lexed, state: *mut u8, 
 }
 
 /// `src`'s tape into `w` from the middle: each chunk of about `size` records summarised (pass 1), each chunk's state by
-/// a prefix scan of them (pass 3), then each chunk's nodes written from its state (pass 2), the chunks in the order
-/// `order` gives (each on its own: any order writes the same tape). Or the byte it was refused at.
-pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: usize, order: impl Fn(usize) -> Vec<usize>) -> Result<(), u32> {
+/// a prefix scan of them (pass 3), then each chunk's nodes written from its state (pass 2): every pass's chunks, and
+/// each round of its scans, in the order `order` gives (each on its own: any order writes the same tape). Or the byte
+/// it was refused at.
+pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer, size: usize, order: Order<'_>) -> Result<(), u32> {
     if lx.refused {
         return Err(0);
     }
     if lx.count == 0 {
         return Err(lx.len as u32);
     }
-    let chunks = chunk_starts(src, lx, size);
-    let sums = summaries(src, lx, size);
-    let ats = entries(&sums);
+    let chunks = chunk_starts(src, lx, size, order);
+    let sums = summaries(src, lx, size, order);
+    let ats = entries(&sums, order);
     let last = ats.last().cloned().flatten().ok_or(0u32)?;
     match last.end {
         Some(Ok(())) => {}
