@@ -58,7 +58,7 @@
 
 .violation QueryInLoop(at: node, call: symbol, list: symbol, l: number, fix: symbol) "`{call}(…)` runs once per item of `{list}` (the loop at line {l}): N database round trips for N items (the n+1 problem), and when the calls run together under `Promise.all` they queue for the connection pool until requests fail with P2024. {fix} Leave it when the list is small and bounded by the code (a handful of fixed items), or when each iteration must see the previous one's write or must run one at a time on purpose (a job that processes rows singly with its own error handling)."
 QueryInLoop(q, call, lt, l, fix) :- prq_report(q, it), callee(q, m), text(m, call), text(it, lt), line(it, l),
-    prq_query(q, _, op), prq_fix(op, fix), docof(q, d), !prq_offline_doc(d).
+    prq_query(q, op, s, w), prq_fix(op, fix), docof(q, d), !prq_offline_doc(d), doc(d, p, _), pcg_holds(p, s, w).
 
 // prq_offline_doc(d): d runs outside the app's request and job paths by its shape. A file that exports nothing and
 // calls a function of its own at its top level (`main()`, `main().catch(…)`, `(async () => …)()`) is a script run on
@@ -93,13 +93,13 @@ prq_fn_site(s) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(
 .decl prq_report(q: node, it: node)
 prq_report(q, it) :- prq_hit(q, it, _), !prq_inner(q, it).
 .decl prq_hit(q: node, it: node, b: node)
-prq_hit(q, it, b) :- prq_loop(it, b, l, how), prq_query(q, _, op), (q = b ; within_stop(q, b, prq_fn)),
+prq_hit(q, it, b) :- prq_loop(it, b, l, how), prq_query(q, op, _, _), (q = b ; within_stop(q, b, prq_fn)),
     prq_reads(q, l), !prq_batched(op, how), !prq_fixed_list(it), !prq_per_group(q, op), !prq_exits(b),
     !prq_guarded(q, b), !prq_item_list(q, l).
 // prq_item_list(q, l): q filters `in` on the item (`where: { id: { in: chunk } }`, `{ in: ids.map(…) }`): each
 // iteration already loads or writes a group of rows in one query (a chunk, or the ids grouped under one key).
 .decl prq_item_list(q: node, l: node)
-prq_item_list(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _), field(q, "arguments", al),
+prq_item_list(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _, _), field(q, "arguments", al),
     within(p, al), kind(p, "pair"), field(p, "key", k), text(k, "in"), field(p, "value", v), (i = v ; within(i, v)),
     kind(i, "identifier"), text(i, x).
 // prq_per_group(q, op): a top-N or newest-row query per item (`findMany({ take })`, `findFirst({ orderBy })`): one
@@ -108,7 +108,7 @@ prq_item_list(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _)
 prq_per_group(q, "findMany") :- prq_arg_key(q, "take").
 prq_per_group(q, op) :- (op = "findFirst" ; op = "findFirstOrThrow"), prq_arg_key(q, "orderBy").
 .decl prq_arg_key(q: node, k: symbol)
-prq_arg_key(q, k) :- prq_query(q, _, _), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"), child(a, p, _),
+prq_arg_key(q, k) :- prq_query(q, _, _, _), call_arg(q, a0, 0), deparen(a0, a), kind(a, "object"), child(a, p, _),
     ((kind(p, "pair"), field(p, "key", kk), text(kk, k)) ; (kind(p, "shorthand_property_identifier"), text(p, k))).
 // prq_exits(b): the for loop running b stops early, by `return` or its own `break`: a search for the first match
 // (`for (const l of links) { const r = await …findFirst(…); if (r) return r }`) usually runs once or twice.
@@ -124,7 +124,7 @@ prq_breakable("do_statement"). prq_breakable("switch_statement").
 .decl prq_guarded(q: node, b: node)
 prq_guarded(q, b) :- prq_loop(_, b, _, _), kind(t, "try_statement"), within(q, t), within_stop(t, b, prq_fn).
 // A query handed unsent to `ops.push(…)` is collected for a later `$transaction(ops)`: the batch the fix asks for.
-prq_guarded(q, b) :- prq_loop(_, b, _, _), prq_query(q, _, _), call_arg(k, a, 0), deparen(a, q), callee(k, m),
+prq_guarded(q, b) :- prq_loop(_, b, _, _), prq_query(q, _, _, _), call_arg(k, a, 0), deparen(a, q), callee(k, m),
     kind(m, "member_expression"), field(m, "property", p), text(p, "push"), within_stop(k, b, prq_fn).
 // prq_inner(q, it): another hit of q sits inside it's loop body: report only the innermost loop.
 .decl prq_inner(q: node, it: node)
@@ -153,9 +153,10 @@ prq_tx_batch(k) :- kind(t, "call_expression"), callee(t, m), kind(m, "member_exp
 prq_iter("map"). prq_iter("forEach"). prq_iter("flatMap"). prq_iter("reduce"). prq_iter("filter").
 prq_iter("some"). prq_iter("every"). prq_iter("find").
 
-// prq_query(q, r, op): call q is `<r>.<model>.<op>(…)` and r is a Prisma client (pcg_client).
-.decl prq_query(q: node, r: node, op: symbol)
-prq_query(q, r, op) :- prq_shape(q, r, op), pcg_client(r).
+// prq_query(q, op, s, w): call q is `<r>.<model>.<op>(…)` and r is a Prisma client where pcg_holds(path, s, w) holds
+// for q's file (pcg_client).
+.decl prq_query(q: node, op: symbol, s: symbol, w: symbol)
+prq_query(q, op, s, w) :- prq_shape(q, r, op), pcg_client(r, s, w).
 .decl prq_shape(q: node, r: node, op: symbol)
 prq_shape(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member_expression"), field(m, "property", p),
     text(p, op), prq_op(op), field(m, "object", mo0), deparen(mo0, mo), kind(mo, "member_expression"),
@@ -164,16 +165,20 @@ prq_shape(q, r, op) :- kind(q, "call_expression"), callee(q, m), kind(m, "member
 .decl pcg_ask(r: node)
 pcg_ask(r) :- prq_shape(_, r, _).
 // ---- the Prisma client gate (the same block in each rule of the pack that matches `<r>.<model>.<op>(…)`) ----------
-// pcg_client(r): receiver r (pcg_ask) is a Prisma client. Resolved Prisma: r's root name is the parameter of a
-// `$transaction` callback; a parameter, variable or class member typed with a Prisma client type (`PrismaClient`,
-// `Prisma.TransactionClient`, `PrismaService`); a variable whose value makes or extends one (`new PrismaClient(…)`,
-// `prisma.$extends(…)`); or an import from a Prisma module: `@prisma/client`, a generated client, a specifier with a
-// path part naming prisma (`@/lib/prisma`, `@acme/prisma`), or a file of the run that makes a PrismaClient. Resolved
-// otherwise: an import from Drizzle, Kysely, Knex, TypeORM, Sequelize, Mongoose, Objection or MikroORM, a file of the
-// run that imports one, or a variable made by one (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db`
-// of a tRPC context, an import from a file the run reads in another lane): accepted only under the client names of
-// pcg_named, and only when a package.json of the repository lists Prisma and the file's package and the root list
-// no other ORM.
+// pcg_client(r, s, w): receiver r (pcg_ask) is a Prisma client where pcg_holds(p, s, w) holds for r's file at path p.
+// Resolved Prisma: r's root name is the parameter of a `$transaction` callback; a parameter, variable or class member
+// typed with a Prisma client type (`PrismaClient`, `Prisma.TransactionClient`, `PrismaService`); a variable whose
+// value makes or extends one (`new PrismaClient(…)`, `prisma.$extends(…)`); or an import from a Prisma module:
+// `@prisma/client`, a generated client, a specifier with a path part naming prisma (`@/lib/prisma`, `@acme/prisma`),
+// or a file of the run that makes a PrismaClient. Resolved otherwise: an import from Drizzle, Kysely, Knex, TypeORM,
+// Sequelize, Mongoose, Objection or MikroORM, a file of the run that imports one, or a variable made by one
+// (`drizzle(…)`, `new Kysely(…)`): never Prisma. Not resolved (`ctx.db` of a tRPC context, an import from a file the
+// run reads in another lane): accepted only under the client names of pcg_named, and only when a package.json of the
+// repository lists Prisma and the file's package and the root list no other ORM.
+// What the file an import names makes or imports is another file's (pcg_target, by paths alone, decision 0677): r's
+// own file states what it needs of it, keyed by the specifier s, and the finding joins pcg_holds. w is "" (nothing:
+// r is no import, s is ""), "!other" (s names no file of another ORM) or "prisma" (s names a file of Prisma's, and
+// none of another ORM).
 .decl pcg_root(r: node, o: node)
 pcg_root(r, x) :- pcg_ask(r), deparen(r, x).
 pcg_root(r, o) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o).
@@ -183,23 +188,27 @@ pcg_root(r, o) :- pcg_root(r, e), kind(e, "await_expression"), child(e, o0, 0), 
 // pcg_base(r, o): o is the identifier or `this` r's chain starts from.
 .decl pcg_base(r: node, o: node)
 pcg_base(r, o) :- pcg_root(r, o), (kind(o, "identifier") ; kind(o, "this")).
+// pcg_prisma(r), pcg_other(r): r's own file resolves it as Prisma's, as another ORM's.
 .decl pcg_prisma(r: node)
 pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_prisma_site(s).
-pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
-    pcg_prisma_spec(src).
-pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
-    pcg_target(d, src, dt), pcg_prisma_mod(dt).
+pcg_prisma(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_prisma_spec(sp).
 pcg_prisma(r) :- pcg_base(r, o), kind(o, "this"), pcg_this_prop(r, o, x), kind(cb, "class_body"), within(o, cb),
     within(s, cb), pcg_member_named(s, x), pcg_prisma_site(s).
 .decl pcg_other(r: node)
 pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, s), pcg_other_site(s).
-pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _),
-    pcg_other_spec(src).
-pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, _), docof(o, d),
-    pcg_target(d, src, dt), pcg_other_mod(dt).
-.decl pcg_client(r: node)
-pcg_client(r) :- pcg_prisma(r), !pcg_other(r).
-pcg_client(r) :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+pcg_other(r) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), pcg_other_spec(sp).
+// pcg_imported(r, s): r's root name is imported from specifier s.
+.decl pcg_imported(r: node, s: symbol)
+pcg_imported(r, s) :- pcg_base(r, o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, _).
+// pcg_unnamed_ok(r): the names and the repository accept r unresolved.
+.decl pcg_unnamed_ok(r: node)
+pcg_unnamed_ok(r) :- pcg_ask(r), pcg_named(r), docof(r, d), pcg_prisma_repo(d).
+.decl pcg_client(r: node, s: symbol, w: symbol)
+pcg_client(r, "", "") :- pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _).
+pcg_client(r, "", "") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), !pcg_imported(r, _), pcg_unnamed_ok(r).
+pcg_client(r, s, "!other") :- pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
+pcg_client(r, s, "!other") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s), pcg_unnamed_ok(r).
+pcg_client(r, s, "prisma") :- pcg_ask(r), !pcg_prisma(r), !pcg_other(r), pcg_imported(r, s).
 // pcg_this_prop(r, o, x): r's chain reads `this.x` (o the `this`).
 .decl pcg_this_prop(r: node, o: node, x: symbol)
 pcg_this_prop(r, o, x) :- pcg_root(r, e), kind(e, "member_expression"), field(e, "object", o0), deparen(o0, o),
@@ -237,29 +246,37 @@ pcg_site_type(s, t) :- (kind(s, "variable_declarator") ; kind(s, "public_field_d
     text(a, t).
 .decl pcg_site_value(s: node, v: node)
 pcg_site_value(s, v) :- (kind(s, "variable_declarator") ; kind(s, "public_field_definition")), field(s, "value", v).
-// pcg_prisma_spec(s), pcg_other_spec(s): an import specifier of a Prisma module, of another ORM.
-.decl pcg_prisma_spec(s: symbol)
-pcg_prisma_spec(s) :- import_binding(_, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
-.decl pcg_other_spec(s: symbol)
-pcg_other_spec(s) :- import_binding(_, _, s, _),
+// pcg_prisma_spec(sp), pcg_other_spec(sp): the import at sp names a Prisma module, another ORM's, by its specifier.
+// Tested at the import, not as a table of every file's specifiers (decision 0677).
+.decl pcg_prisma_spec(sp: node)
+pcg_prisma_spec(sp) :- import_binding(sp, _, s, _), match("(?i)(?:.*/)?[^/]*prisma[^/]*(?:/.*)?", s).
+.decl pcg_other_spec(sp: node)
+pcg_other_spec(sp) :- import_binding(sp, _, s, _),
     match("(?:drizzle-orm|kysely|knex|typeorm|sequelize|sequelize-typescript|mongoose|objection|@mikro-orm/[^/]+)(?:/.*)?", s).
-// pcg_prisma_mod(d), pcg_other_mod(d): file d makes a PrismaClient or imports a Prisma module; imports another ORM.
-.decl pcg_prisma_mod(d: number)
-pcg_prisma_mod(d) :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d).
-pcg_prisma_mod(d) :- import_binding(sp, _, s, _), pcg_prisma_spec(s), docof(sp, d).
-.decl pcg_other_mod(d: number)
-pcg_other_mod(d) :- import_binding(sp, _, s, _), pcg_other_spec(s), docof(sp, d).
-// pcg_target(d, s, d2): specifier s imported by d names file d2 of the run: relative to d, or `@/x`, `~/x`, `#/x`
-// matched by the path's end (tsconfig `paths` are not read), or `@scope/pkg/x` as /pkg/x or /pkg/src/x.
-.decl pcg_spec(d: number, s: symbol)
-pcg_spec(d, s) :- pcg_base(_, o), ref_site(o, sp), import_binding(sp, _, s, _), docof(o, d).
-.decl pcg_target(d: number, s: symbol, d2: number)
-pcg_target(d, s, d2) :- pcg_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), pcg_ext(e),
-    doc(d2, cat(b, e), _).
-pcg_target(d, s, d2) :- pcg_spec(d, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), doc(d2, f, _),
+// pcg_mod(f, w): the file at path f makes a PrismaClient or imports a Prisma module (w = "prisma"), or imports
+// another ORM (w = "other").
+.decl pcg_mod(f: symbol, w: symbol)
+pcg_mod(f, "prisma") :- kind(n, "new_expression"), field(n, "constructor", c), text(c, "PrismaClient"), docof(n, d),
+    doc(d, f, _).
+pcg_mod(f, "prisma") :- pcg_prisma_spec(sp), docof(sp, d), doc(d, f, _).
+pcg_mod(f, "other") :- pcg_other_spec(sp), docof(sp, d), doc(d, f, _).
+// pcg_target(p, s, w): specifier s, imported by the file at path p, names a file of the run that is a pcg_mod of
+// kind w: relative to p, or `@/x`, `~/x`, `#/x` matched by the path's end (tsconfig `paths` are not read), or
+// `@scope/pkg/x` as /pkg/x or /pkg/src/x. It pairs two files, by their paths alone (decision 0677).
+.decl pcg_spec(p: symbol, s: symbol)
+pcg_spec(p, s) :- pcg_client(r, s, _), s != "", docof(r, d), doc(d, p, _).
+.decl pcg_target(p: symbol, s: symbol, w: symbol) cross_file
+pcg_target(p, s, w) :- pcg_spec(p, s), prefix(".", s), b = @join(@dir(p), s), pcg_ext(e), pcg_mod(cat(b, e), w).
+pcg_target(p, s, w) :- pcg_spec(p, s), match("[@~#]/(?<r>.+)", s), pcg_ext(e), t = cat("/", r, e), pcg_mod(f, w),
     (suffix(t, f) ; f = cat(r, e)).
-pcg_target(d, s, d2) :- pcg_spec(d, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), doc(d2, f, _),
+pcg_target(p, s, w) :- pcg_spec(p, s), match("@[^/]+/(?<k>[^/]+)/(?<r>.+)", s), pcg_ext(e), pcg_mod(f, w),
     (suffix(cat("/", k, "/", r, e), f) ; suffix(cat("/", k, "/src/", r, e), f)).
+// pcg_holds(p, s, w): what pcg_client asks of specifier s holds for the file at path p (w: "" always, "!other",
+// "prisma"). The importing file's finding reads it at its own path.
+.decl pcg_holds(p: symbol, s: symbol, w: symbol) cross_file
+pcg_holds(p, "", "") :- doc(_, p, _).
+pcg_holds(p, s, "!other") :- pcg_spec(p, s), !pcg_target(p, s, "other").
+pcg_holds(p, s, "prisma") :- pcg_target(p, s, "prisma"), !pcg_target(p, s, "other").
 .decl pcg_ext(e: symbol)
 pcg_ext(".ts"). pcg_ext(".tsx"). pcg_ext(".js"). pcg_ext(".jsx"). pcg_ext(".mts"). pcg_ext(".mjs").
 pcg_ext("/index.ts"). pcg_ext("/index.tsx"). pcg_ext("/index.js").
@@ -292,8 +309,8 @@ prq_op("count"). prq_op("aggregate"). prq_op("groupBy").
 
 // prq_reads(q, l): an argument of q reads a name bound in l (the loop's item, or a callback parameter).
 .decl prq_reads(q: node, l: node)
-prq_reads(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _), field(q, "arguments", al), within(i, al),
-    (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x).
+prq_reads(q, l) :- prq_loop(_, _, l, _), prq_bound(l, x), prq_query(q, _, _, _), field(q, "arguments", al),
+    within(i, al), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), text(i, x).
 .decl prq_bound(l: node, x: symbol)
 prq_bound(l, x) :- prq_loop(_, _, l, _), (i = l ; within(i, l)),
     (kind(i, "identifier") ; kind(i, "shorthand_property_identifier_pattern")), text(i, x), !prq_type_part(i, l).
