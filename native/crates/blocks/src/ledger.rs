@@ -16,7 +16,7 @@
 use crate::block::{Extent, PAGE};
 use crate::free::MIN_LOG;
 use std::sync::atomic::{AtomicBool, Ordering::*};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// How a GPU use reaches the block.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,7 +171,7 @@ fn bit(bits: &[u64], i: usize) -> bool {
 impl Ledger {
     pub(crate) fn new(base: *mut u8, len: usize, pages: bool, ext: Arc<Extent>) -> Arc<Ledger> {
         let l = Arc::new(Ledger { state: Mutex::default(), chunk_uses: std::sync::atomic::AtomicUsize::new(0), uses: std::sync::atomic::AtomicUsize::new(0), root: Mutex::new(std::sync::Weak::new()), base: base as usize, pages, ext });
-        let mut live = blocks();
+        let mut live = blocks_mut();
         // After any at the same address: memory an outer ledger holds (a pooled lease) made a block's (`Block::over`)
         // or `Tracked`, the inner ledger is the one its address finds (`of_address`).
         let i = live.partition_point(|e| e.0 <= l.base);
@@ -181,7 +181,7 @@ impl Ledger {
 
     /// Its block keeps only its first `len` bytes now (a freeze gave the rest of its reservation back).
     pub(crate) fn resized(&self, len: usize) {
-        if let Some(e) = blocks().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
+        if let Some(e) = blocks_mut().iter_mut().find(|e| std::ptr::eq(e.2.as_ptr(), self)) {
             e.1 = self.base + len;
         }
     }
@@ -561,7 +561,7 @@ impl Ledger {
         let release: Box<dyn FnOnce() + Send> = Box::new(move || {
             // No longer found by its address before another mapping can take it; an outer ledger of the same memory
             // (a lease's) stays.
-            blocks().retain(|e| e.2.as_ptr() as usize != me);
+            blocks_mut().retain(|e| e.2.as_ptr() as usize != me);
             release()
         });
         let now = {
@@ -622,12 +622,21 @@ impl<T: Send + 'static> Drop for Tracked<T> {
 }
 
 /// The live blocks' address ranges, the lowest first, each with its ledger: how a buffer bound for a kernel is found
-/// to be a block's (`Fence::uses_address`), whoever made the buffer.
+/// to be a block's (`Fence::uses_address`), whoever made the buffer. Read by every bind of every dispatch, on every
+/// thread that encodes one, and written only as a block is made, resized or let go: a reader shares it. As a mutex,
+/// the CPU's join programs' binds queued on it (the data-layer rules over 50 files: 20 of 52 s of CPU in its waits
+/// and wakes, 2026-11-25).
 // state: bookkeeping (the blocks in the process, by address: what is mapped, not what a relation has)
-static BLOCKS: Mutex<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = Mutex::new(Vec::new());
+static BLOCKS: RwLock<Vec<(usize, usize, std::sync::Weak<Ledger>)>> = RwLock::new(Vec::new());
 
-fn blocks() -> MutexGuard<'static, Vec<(usize, usize, std::sync::Weak<Ledger>)>> {
-    BLOCKS.lock().unwrap_or_else(|e| e.into_inner())
+type Live = Vec<(usize, usize, std::sync::Weak<Ledger>)>;
+
+fn blocks() -> RwLockReadGuard<'static, Live> {
+    BLOCKS.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn blocks_mut() -> RwLockWriteGuard<'static, Live> {
+    BLOCKS.write().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Every live block's free chunks' pages to the OS (`Ledger::trim`): a run's end. The bytes given.
@@ -658,13 +667,17 @@ pub struct Fence {
     /// The addresses its binds by address held already (`region::bind_address`), each with the ledger it found, or
     /// none (a buffer of no block's): a program's stack binds the same buffers at each of its thousands of
     /// dispatches (decision 0641).
-    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>>>,
+    bound: Mutex<std::collections::HashMap<usize, Option<Arc<Ledger>>, rustc_hash::FxBuildHasher>>,
+    /// The binds by address done already, by address and access (`region::bind_address`): each a bind that held its
+    /// ledger and pinned its region, so a bind of it again does nothing more. A pass binds the same buffers at each of
+    /// its launches: one lookup each, not the ledger's and the pins' (decision 0641).
+    done_binds: Mutex<std::collections::HashSet<(usize, bool), rustc_hash::FxBuildHasher>>,
     signal: Condvar,
 }
 
 impl Fence {
     pub fn new() -> Arc<Fence> {
-        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(std::collections::HashMap::new()), signal: Condvar::new() })
+        Arc::new(Fence { uses: Mutex::new(Vec::new()), after: Mutex::new(Vec::new()), done: AtomicBool::new(false), committed: AtomicBool::new(false), pinned: Mutex::new(Vec::new()), bound: Mutex::new(Default::default()), done_binds: Mutex::new(Default::default()), signal: Condvar::new() })
     }
 
     fn add(&self, ledger: &Arc<Ledger>, access: Access, chunk: Option<(usize, usize)>) {
@@ -701,6 +714,16 @@ impl Fence {
         }
         self.bound.lock().unwrap_or_else(|e| e.into_inner()).insert(addr, Some(Arc::clone(&l)));
         Some(l)
+    }
+
+    /// Whether a bind of `addr` for this access (`write`) was done already: its ledger held and its region pinned.
+    pub(crate) fn bound_already(&self, addr: usize, write: bool) -> bool {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).contains(&(addr, write))
+    }
+
+    /// A bind of `addr` for this access is done: its ledger held and its region pinned (`bound_already`).
+    pub(crate) fn note_bound(&self, addr: usize, write: bool) {
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).insert((addr, write));
     }
 
     /// Whether `key` (a region, with its access) is pinned on it for the first time now.
@@ -754,6 +777,7 @@ impl Fence {
             std::mem::take(&mut *uses)
         };
         self.bound.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.done_binds.lock().unwrap_or_else(|e| e.into_inner()).clear();
         // Pins first: a region its work held may go now, its chunk freed while the block's use still holds it.
         let after = std::mem::take(&mut *self.after.lock().unwrap_or_else(|e| e.into_inner()));
         for f in after {

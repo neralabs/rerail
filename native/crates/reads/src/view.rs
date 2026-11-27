@@ -176,7 +176,7 @@ pub mod z {
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
     mod lookup;
-    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, failed, get, is_dead, key, ready, still, text_find, text_open, verdict_get, verdict_put};
+    pub use lookup::{FAILS, Fill, NO, PASSES, UNKNOWN, YES, done, failed, get, is_dead, key, lookup, ready, still, text_find, text_open, verdict_get, verdict_put};
 
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;

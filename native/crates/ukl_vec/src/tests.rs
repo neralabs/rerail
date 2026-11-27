@@ -1658,16 +1658,16 @@ fn the_label_parents_kernels_rust_is_the_checked_in_one() {
     let kept = std::fs::read_to_string(at).unwrap_or_default();
     assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it)");
     // The digest of the source it was written from: the CPU device runs it for a program of that text and those
-    // defines alone (`rerail_ukl_rust::kernels`), and the engine's test checks its label source has it.
-    let sources = format!(
-        "//! The digests (`digest`) of the sources the kernels here were written from: rerail-ukl-vec's tests write them\n//! with the kernels (`UKL_RS_WRITE=1`), and fail if they differ.\n\n/// `label_passes.uglykl` as the engine assembles it for a batch of format 16 (`label_parents_w8`, `label_leaves_w8`).\npub const LABEL_PASSES_16: u64 = {:#018x};\n",
-        rerail_ukl_rust::digest(&label_passes_text(), &[])
-    );
+    // defines alone (`rerail_ukl_rust::kernels`), and the engine's test checks its label source has it. Its line
+    // alone: the file holds the join program's digests too, which the engine's test keeps.
+    let line = format!("pub const LABEL_PASSES_16: u64 = {:#018x};", rerail_ukl_rust::digest(&label_passes_text(), &[]));
     let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_rust/src/sources.rs");
+    let kept = std::fs::read_to_string(at).unwrap();
+    let old = kept.lines().find(|l| l.starts_with("pub const LABEL_PASSES_16: u64 = ")).unwrap_or_else(|| panic!("{at}: no LABEL_PASSES_16"));
     if std::env::var_os("UKL_RS_WRITE").is_some() {
-        std::fs::write(at, &sources).unwrap();
+        std::fs::write(at, kept.replace(old, &line)).unwrap();
     }
-    assert!(std::fs::read_to_string(at).unwrap_or_default() == sources, "{at} is not the digest of the kernels' source (UKL_RS_WRITE=1 writes it)");
+    assert!(old == line, "{at} is not the digest of the kernels' source (UKL_RS_WRITE=1 writes it): {old}, not {line}");
 }
 
 /// The label passes' `label_leaves` (each node's leaf tests, a word of 32 nodes a thread) as Rust at 8 lanes, as

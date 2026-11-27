@@ -126,6 +126,12 @@ pub struct SpanTotal {
     /// How far the process's footprint high-water mark rose while it was open, in all and less the spans inside it.
     pub rise: u64,
     pub own_rise: u64,
+    /// The cycles and instructions its thread retired while it was open (macOS's `thread_selfcounts`; elsewhere
+    /// none), in all and less the spans inside it.
+    pub cycles: u64,
+    pub own_cycles: u64,
+    pub instructions: u64,
+    pub own_instructions: u64,
 }
 
 #[derive(Default, Clone)]
@@ -215,6 +221,10 @@ impl State {
             s.freed += t.freed;
             s.rise += t.rise;
             s.own_rise += t.own_rise;
+            s.cycles += t.cycles;
+            s.own_cycles += t.own_cycles;
+            s.instructions += t.instructions;
+            s.own_instructions += t.own_instructions;
         }
         for (k, t) in o.sql {
             let s = self.sql.entry(k).or_default();
@@ -364,6 +374,8 @@ pub struct Blocked {
 pub struct PlacedTotal {
     pub runs: u64,
     pub on_gpu: u64,
+    /// Its runs the placement put on the device (or the CPU binding's join program), whether or not they ran there.
+    pub placed_device: u64,
     pub gpu_cheaper: u64,
     pub device: bool,
     pub forms: Vec<&'static str>,
@@ -736,6 +748,9 @@ pub struct Open {
     /// The tick counter and this thread's account (`ACCOUNTED`) when it opened: it closes accounting for its time.
     ticks: u64,
     accounted: (u64, f64),
+    /// This thread's instructions and cycles when it opened, and those the spans inside it retired.
+    counts: [u64; 2],
+    children_counts: [u64; 2],
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -1605,7 +1620,7 @@ fn open(path: String) -> Span {
         if work != 0 {
             rerail_context::work::set_part(rerail_context::work::SPAN, u64::from(work));
         }
-        s.opens.push(Open { work, path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
+        s.opens.push(Open { work, path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted(), counts: thread_counts(), children_counts: [0; 2] });
     });
     Span(true)
 }
@@ -1642,7 +1657,11 @@ impl Drop for Span {
             }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
+            let c = thread_counts();
+            let ran = [c[0].wrapping_sub(open.counts[0]), c[1].wrapping_sub(open.counts[1])];
             if let Some(parent) = s.opens.last_mut() {
+                parent.children_counts[0] += ran[0];
+                parent.children_counts[1] += ran[1];
                 parent.children += total;
                 parent.children_alloc += alloc;
                 parent.children_rise += rise;
@@ -1657,6 +1676,10 @@ impl Drop for Span {
             t.freed += freed.saturating_sub(open.alloc.1);
             t.rise += rise;
             t.own_rise += rise.saturating_sub(open.children_rise);
+            t.instructions += ran[0];
+            t.own_instructions += ran[0].saturating_sub(open.children_counts[0]);
+            t.cycles += ran[1];
+            t.own_cycles += ran[1].saturating_sub(open.children_counts[1]);
         });
     }
 }
@@ -1692,6 +1715,29 @@ pub fn peaks() -> String {
         if !rerail_prof::heap::snapshot_frames().is_empty() || std::env::var_os("RERAIL_HEAP_FRAMES").is_some() { let _ = std::fs::write(dir.join("heap-frames.tsv"), memory::heap_frames_tsv()); }
     }
     r
+}
+
+/// This thread's instructions and cycles retired so far (macOS's `thread_selfcounts`); elsewhere none.
+fn thread_counts() -> [u64; 2] {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn thread_selfcounts(kind: i32, buf: *mut u64, nbytes: usize) -> i32;
+        }
+        let mut b = [0u64; 2];
+        // SAFETY: kind 1 fills two u64s, this thread's instructions and cycles.
+        unsafe { thread_selfcounts(1, b.as_mut_ptr(), 16) };
+        b
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        [0, 0]
+    }
+}
+
+/// This thread's open span's path, `-` outside any (a measurement aid's tag, `stage_prof`).
+pub fn current_path() -> String {
+    current()
 }
 
 /// This thread's open span's path, `-` outside any.

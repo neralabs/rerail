@@ -15,6 +15,7 @@ default = ["ir"]
 ir = ["dep:cranelift-codegen", "dep:cranelift-frontend", "dep:cranelift-module", "dep:cranelift-jit", "dep:cranelift-jit-wasm", "dep:rerail-blocks"]
 
 [dependencies]
+rerail-reads = { path = "../reads" }
 cranelift-codegen = { version = "=0.125.4", optional = true }
 cranelift-frontend = { version = "=0.125.4", optional = true }
 cranelift-module = { version = "=0.125.4", optional = true }

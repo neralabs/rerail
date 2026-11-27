@@ -12429,3 +12429,35 @@ Conflicts, resolved by invariant:
 
 Checked under Relax: tests-rr callable (4; the 9 measurements ignored, as on the feeder) and tests-corpus
 phases::tests (23). No Metal or farm runs.
+
+### Q600. Roll-up 172 (django-bugs 94df767cae onto Pulling-it-all-together): what the merge chose
+
+django-bugs' SIMD work (the uglykl join program and its Rust, decision 0567; t58 A's sorted rounds; the host's
+program, `device host`; 0706 E1's atom table check; the reads crate, rerail-reads), taken at the user's word, with
+the scalar joins kept the CPU's default.
+
+The CPU's joins: scalar by default. The join program runs on the CPU only where a run asks for it
+(`RERAIL_CPU_JOINS=program`, `placement::host_joins`); the user's choice, 2026-11-27.
+
+Reconciled with the hub's later shape:
+- The paged directory (Chunk node numbers step 1): the join stages' and the Rust's next-document reads
+  (`view_rows(d)[a+1]`) go through `view_rows_end`, the m-th row's next in order (`ViewDir::row_at`, `first_of`);
+  the made reads index the block's rows by `row_at`.
+- Decision 0697's codes directory: every view read in join_stages.uglykl takes `view_codes(d)`; the Rust reads a
+  node's kind and field from the codes home (`Doc::codes`, `code_item` by the tape's `CodesLang`); the codes home's
+  device address is its host address with no process device. view.h regenerated from the merged CLIF.
+- 0187 P1, no order tags: django's runs joined in place (`rows_joined`, `merged_keyed`) and its tests carry no tags;
+  the device's set keys and HeadKeyP are the hub's, tag-free; FINDS_WALK (17fd16d862) kept.
+- 0706 E1 moves into `Source::node_atom`, which takes the run's atom table (`AtomTableOf`): a batch's atoms answer
+  only a run whose table they are (the same table, or the same database); `node_text_atom` is gone.
+- The join program's digests (`JOIN_PROGRAM`) are the merged source's.
+
+Fixes the merge needed: git kept both sides' copy of moved items (HeadKey/run_key/head_bounds, node_txt,
+`col_bounds` twice, `Looped::bounds` twice, the chunk-ids test's closing brace); `Shared::host` gets `statics`; two
+setfix hunks (the lot's sorted runs; the Component's `device_host`) brought to django's side. field_reads' atom tests
+pass the store's table, and check another store's run gets none. `Atoms::share`'s doc back on it.
+
+Checked under Relax: rerail-reads, rerail-ukl-rust, rerail-clif (19), rerail-setfix (150), tests-lang syntax (113:
+the_join_programs_view_reads_are_the_jits, an_ids_document_and_local_id..., the_kernels_directory_searches...),
+tests-corpus base_tests (54) and phases (23), tests-logic native (20) and plan (113, one thread), tests-rr
+program_image (54), device crate's join_rust digests. No Metal, farm or clippy runs.

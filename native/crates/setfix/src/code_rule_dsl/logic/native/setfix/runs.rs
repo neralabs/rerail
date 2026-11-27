@@ -589,6 +589,25 @@ impl Run {
         }
     }
 
+    /// Runs of rows in place that meet in order (`Index::joined_in_place`) as one: rows `lo..hi`, their prints joined
+    /// (where each has them), its fences made once; the run `merge` makes of them two at a time.
+    fn rows_joined<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], runs: &[Arc<Run>]) -> Run {
+        let lo = match runs[0].ids { Ids::Rows(lo, _) => lo, Ids::List(_) => unreachable!("runs of rows in place") };
+        let hi = match runs[runs.len() - 1].ids { Ids::Rows(_, hi) => hi, Ids::List(_) => unreachable!("runs of rows in place") };
+        let home = data.home();
+        let prints = if runs.iter().all(|r| !r.prints.is_empty()) {
+            let mut v = crate::code_rule_dsl::facts::rows::vector_in(home.as_ref(), runs.iter().map(|r| r.prints.len()).sum());
+            for r in runs {
+                // copy: derived: the runs' prints joined into the joined run's (an index written where it is computed)
+                v.extend_from_slice(&r.prints);
+            }
+            v
+        } else {
+            crate::code_rule_dsl::facts::rows::vector_in(None, 0)
+        };
+        Run { prints, ..Run::fenced(data, k, cols, Ids::Rows(lo, hi)) }
+    }
+
     /// Two runs as one. Two runs of rows in place that meet, the first's last row not past the second's first, are
     /// one run of rows in place (decision 0180): their prints joined, no ids listed.
     fn merge<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], a: &Run, b: &Run) -> Run {
@@ -1378,23 +1397,36 @@ impl Index {
         Self::merged(data, k, &self.cols, self.runs[..n].iter().map(|(r, _)| Arc::clone(r)).collect())
     }
 
+    /// `parts` (in row order) with each chain of runs of rows in place that meet in order joined into one run of rows
+    /// in place, as `Run::merge` joins two (the first's last row not past the second's first), built once: its prints
+    /// joined once and its fences made once over its rows. Joined two at a time, a run a round of a device
+    /// fixpoint was built again at each join, its rows' every round over.
+    fn joined_in_place<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Vec<Arc<Run>> {
+        let meets = |a: &Run, b: &Run| match (&a.ids, &b.ids) {
+            (Ids::Rows(lo, mid), Ids::Rows(mid2, hi)) => mid == mid2 && (lo == mid || mid2 == hi || cmp_ids(data, k, cols, mid - 1, *mid).is_le()),
+            _ => false,
+        };
+        let mut out: Vec<Arc<Run>> = Vec::with_capacity(parts.len());
+        let mut i = 0;
+        while i < parts.len() {
+            let mut j = i + 1;
+            while j < parts.len() && meets(&parts[j - 1], &parts[j]) {
+                j += 1;
+            }
+            if j == i + 1 {
+                out.push(Arc::clone(&parts[i]));
+            } else {
+                out.push(Arc::new(Run::rows_joined(data, k, cols, &parts[i..j])));
+            }
+            i = j;
+        }
+        out
+    }
+
     /// `parts` merged into one: pairwise, smallest first (each id is copied about log(n) times); runs of rows in
     /// place that meet in order are joined first, as they merge without listing ids.
-    fn merged<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], mut parts: Vec<Arc<Run>>) -> Run {
-        let mut joined: Vec<Arc<Run>> = Vec::with_capacity(parts.len());
-        for p in parts.drain(..) {
-            if let Some(last) = joined.last()
-                && matches!((&last.ids, &p.ids), (Ids::Rows(_, a), Ids::Rows(b, _)) if a == b)
-            {
-                let m = Run::merge(data, k, cols, last, &p);
-                if matches!(m.ids, Ids::Rows(..)) {
-                    *joined.last_mut().expect("a run") = Arc::new(m);
-                    continue;
-                }
-            }
-            joined.push(p);
-        }
-        parts = joined;
+    fn merged<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Run {
+        let mut parts = Self::joined_in_place(data, k, cols, parts);
         while parts.len() > 1 {
             parts.sort_by_key(|r| std::cmp::Reverse(r.ids.len()));
             let a = parts.pop().expect("a run");
@@ -1404,9 +1436,77 @@ impl Index {
         Arc::try_unwrap(parts.pop().expect("a run")).unwrap_or_else(|r| (*r).clone())
     }
 
+    /// `parts` merged into one, as `merged` merges them (runs of rows in place that meet joined first, then by the
+    /// order on `cols`, then id), each id's key read once: its values on `cols` (an order is by value, decision
+    /// 0187 P1), into arrays the merges compare, smallest runs first. No row is read while they merge.
+    fn merged_keyed<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], parts: Vec<Arc<Run>>) -> Run {
+        let mut joined = Self::joined_in_place(data, k, cols, parts);
+        if joined.len() == 1 {
+            return Arc::try_unwrap(joined.pop().expect("a run")).unwrap_or_else(|r| (*r).clone());
+        }
+        let printed = joined.iter().all(|r| !r.prints.is_empty());
+        let n: usize = joined.iter().map(|r| r.ids.len()).sum();
+        let w = cols.len();
+        // Each element (a run's place): its id, print and key, in the runs' order, each run a stretch.
+        let mut id = Vec::with_capacity(n);
+        let mut prints = Vec::with_capacity(if printed { n } else { 0 });
+        let mut keys = Vec::with_capacity(n * w);
+        let mut stretches = Vec::with_capacity(joined.len());
+        for r in &joined {
+            let at = id.len();
+            for (p, x) in r.ids.iter().enumerate() {
+                id.push(x);
+                if printed {
+                    prints.push(r.prints[p]);
+                }
+                keys.extend(cols.iter().map(|&c| data.value(x, k, c)));
+            }
+            stretches.push(at as u32..id.len() as u32);
+        }
+        // Element `a` before `b`: the columns, then id (`cmp_rows`).
+        let before = |a: u32, b: u32| {
+            let (a, b) = (a as usize, b as usize);
+            keys[a * w..a * w + w].cmp(&keys[b * w..b * w + w]).then_with(|| id[a].cmp(&id[b])).is_le()
+        };
+        // The runs as lists of elements, merged two smallest at a time.
+        let mut lists: Vec<Vec<u32>> = stretches.into_iter().map(|r| r.collect()).collect();
+        let mut heap: std::collections::BinaryHeap<std::cmp::Reverse<(usize, usize)>> = lists.iter().enumerate().map(|(i, l)| std::cmp::Reverse((l.len(), i))).collect();
+        while heap.len() > 1 {
+            let std::cmp::Reverse((_, i)) = heap.pop().expect("a run");
+            let std::cmp::Reverse((_, j)) = heap.pop().expect("a run");
+            let (a, b) = (std::mem::take(&mut lists[i]), std::mem::take(&mut lists[j]));
+            let mut out = Vec::with_capacity(a.len() + b.len());
+            let (mut x, mut y) = (0, 0);
+            while x < a.len() && y < b.len() {
+                if before(a[x], b[y]) {
+                    out.push(a[x]);
+                    x += 1;
+                } else {
+                    out.push(b[y]);
+                    y += 1;
+                }
+            }
+            out.extend_from_slice(&a[x..]);
+            out.extend_from_slice(&b[y..]);
+            heap.push(std::cmp::Reverse((out.len(), i)));
+            lists[i] = out;
+        }
+        let order = std::mem::take(&mut lists[heap.pop().expect("a run").0 .1]);
+        let home = data.home();
+        let ids = crate::code_rule_dsl::facts::rows::collect_in(home.as_ref(), order.iter().map(|&e| id[e as usize]));
+        let prints = if printed { crate::code_rule_dsl::facts::rows::collect_in(home.as_ref(), order.iter().map(|&e| prints[e as usize])) } else { crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
+        Run { prints, ..Run::fenced(data, k, cols, Ids::List(ids)) }
+    }
+
     /// At most `max` runs, the two smallest merged at a time (a relation's frozen order: its probes cannot merge it
-    /// later, and a large run is left alone while the small ones grow to its size).
+    /// later, and a large run is left alone while the small ones grow to its size). To one run, every run merged at
+    /// once on their keys read once (`merged_keyed`): a device fixpoint leaves a run a round, hundreds of them.
     pub(super) fn tier<D: RowData + ?Sized>(&mut self, data: &D, k: usize, max: usize) {
+        if max <= 1 && self.runs.len() > 2 {
+            let parts = std::mem::take(&mut self.runs).into_iter().map(|(r, _)| r).collect();
+            self.runs = vec![(Arc::new(Self::merged_keyed(data, k, &self.cols, parts)), 0)];
+            return;
+        }
         while self.runs.len() > max.max(1) {
             let mut by: Vector<usize> = (0..self.runs.len()).collect();
             by.sort_by_key(|&i| self.runs[i].0.ids.len());
@@ -1846,6 +1946,72 @@ pub mod tests {
                 assert_eq!(walked.ids.to_vec(), galloped.ids.to_vec(), "{cols:?}");
                 assert_eq!((&walked.prints, &walked.fences), (&galloped.prints, &galloped.fences), "{cols:?}");
             }
+        }
+    }
+
+    /// A chain of runs of rows in place that meet in order, joined at once (`Index::joined_in_place`), is the run
+    /// `Run::merge` makes of them two at a time: rows, prints and fences, for full-row, prefix and
+    /// printed orders; a run whose first row orders before the last one's ends the chain there.
+    #[test]
+    fn runs_in_place_joined_at_once_are_the_pairwise_joins() {
+        let k = 3;
+        // Sorted on every column, but for one step down at row 1500 (two chains).
+        let rows: Vector<i64> = (0..3000u32).flat_map(|i| { let j = if i < 1500 { i } else { i - 1500 }; [i64::from(j / 50), i64::from((j / 5) % 10), i64::from(j % 5)] }).collect();
+        for (cols, printed) in [(rerail_blocks::vector![0, 1, 2], false), (rerail_blocks::vector![0], false), (rerail_blocks::vector![0, 1], true)] {
+            let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
+            let mut at = 0u32;
+            for len in [1u32, 300, 2, 777, 50, 1, 369, 9, 400, 3, 1000, 88] {
+                ix.add_run_in(&rows[..], k, at as usize, (at + len) as usize, 1, &[(at, at + len)]);
+                at += len;
+            }
+            let parts: Vec<Arc<Run>> = ix.runs.iter().map(|(r, _)| Arc::clone(r)).collect();
+            let mut pairwise: Vec<Run> = Vec::new();
+            for p in &parts {
+                if let Some(last) = pairwise.last() {
+                    let m = Run::merge(&rows[..], k, &cols, last, p);
+                    if matches!(m.ids, Ids::Rows(..)) {
+                        *pairwise.last_mut().expect("a run") = m;
+                        continue;
+                    }
+                }
+                pairwise.push((**p).clone());
+            }
+            let once = Index::joined_in_place(&rows[..], k, &cols, parts);
+            assert_eq!(once.len(), pairwise.len(), "{cols:?}: the chains");
+            assert!(once.len() >= 2, "{cols:?}: the step down ends a chain");
+            for (a, b) in once.iter().zip(&pairwise) {
+                assert_eq!(a.ids.to_vec(), b.ids.to_vec(), "{cols:?}");
+                assert_eq!((&a.prints, &a.fences), (&b.prints, &b.fences), "{cols:?}");
+            }
+        }
+    }
+
+    /// Many runs merged at once on their keys (`merged_keyed`, a frozen order's `tier` to one run) are the pairwise
+    /// merge's run (`merged`): ids, prints and fences, for full-row, prefix and printed orders, runs of
+    /// rows in place (some meeting, some not) among sorted ones, as a device fixpoint leaves them a round each.
+    #[test]
+    fn many_runs_merged_on_their_keys_are_the_pairwise_merge() {
+        let k = 3;
+        let rows: Vector<i64> = (0..6000u32).flat_map(|i| [i64::from(i % 37), i64::from((i * 7) % 11), i64::from((i * 13) % 500)]).collect();
+        for (cols, printed) in [(rerail_blocks::vector![0, 1, 2], false), (rerail_blocks::vector![0], false), (rerail_blocks::vector![1, 0], true), (rerail_blocks::vector![2], false)] {
+            let mut ix = if printed { Index::printed(cols.clone()) } else { Index::new(cols.clone()) };
+            // Rounds of uneven sizes, sorted each; a few laid out in place.
+            let mut at = 0usize;
+            let mut wave = 1;
+            for len in [1usize, 300, 2, 777, 50, 1, 1200, 9, 400, 3, 1000, 600, 1657] {
+                let hi = at + len;
+                ix.add_run_in(&rows[..], k, at, hi, wave, &[]);
+                (at, wave) = (hi, wave + 1);
+            }
+            assert!(ix.runs.len() > 10, "{cols:?}");
+            let parts: Vec<Arc<Run>> = ix.runs.iter().map(|(r, _)| Arc::clone(r)).collect();
+            let pairwise = Index::merged(&rows[..], k, &cols, parts.clone());
+            let keyed = Index::merged_keyed(&rows[..], k, &cols, parts);
+            assert_eq!(pairwise.ids.to_vec(), keyed.ids.to_vec(), "{cols:?}");
+            assert_eq!((&pairwise.prints, &pairwise.fences), (&keyed.prints, &keyed.fences), "{cols:?}");
+            let mut tiered = ix.clone();
+            tiered.tier(&rows[..], k, 1);
+            assert_eq!((tiered.runs.len(), tiered.runs[0].0.ids.to_vec()), (1, pairwise.ids.to_vec()), "{cols:?}: tier");
         }
     }
 

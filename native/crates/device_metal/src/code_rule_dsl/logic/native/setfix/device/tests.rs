@@ -544,6 +544,256 @@ use rerail_blocks::vector::Vector;
         assert_eq!(got[1], got[0], "the device's made texts are the CPU's rows");
     }
 
+    /// A set head's map (`SetHead::map`, its keys too wide for a held bitmap) made for its program's rows, not its
+    /// bound: a round whose rows pass half its places parks the program at its gate, its map grows and its rows are
+    /// placed again in it (the program's tail), and the program goes on, none run again. Its rows are the CPU's, each
+    /// once.
+    #[test]
+    fn a_set_heads_map_past_half_full_grows_at_a_park() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1);").unwrap();
+        // Two chains of 150 nodes, ids 2^33 apart, each node to the next and the one after: their closure is
+        // 2 * 150 * 149 / 2 rows, past a first map's half, most of them reached in two rounds (a map that lost a row
+        // would make it twice).
+        let spread = 1i64 << 33;
+        for c in 0..2i64 {
+            let at = |v: i64| (c * 1000 + v) * spread + 7;
+            for v in 0..149i64 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [at(v), at(v + 1)]).unwrap();
+                if v + 2 < 150 {
+                    db.execute("INSERT INTO e VALUES (?1, ?2)", [at(v), at(v + 2)]).unwrap();
+                }
+            }
+        }
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        // q(x, y) :- e(x, y).  q(x, z) :- q(x, y), e(y, z).
+        let seed = format!("pos {e} v0 v1\nhead v0 v1");
+        let step = format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("map_half_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&step))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+                assert!(r.maps_grown >= 1 && r.reruns == 0, "its map grown at a park, no rerun: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            let mut sorted = rows.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            assert_eq!(sorted.len(), rows.len(), "device {device}: each row once");
+            got.push(sorted);
+        }
+        assert_eq!(got[0].len(), 2 * 150 * 149 / 2, "the CPU's closure");
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
+    /// An own column of made texts (decision 0307) keyed by a constant and by a symbol, beside a node: probed by the
+    /// node, the column compared with each as texts. Its rows are the CPU's.
+    #[test]
+    fn an_own_made_text_keyed_beside_a_node_is_compared_as_texts() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE r (c0); CREATE TEMP TABLE u (c0, c1);").unwrap();
+        let parts = ["ab", "c", "def", "g", "hi"];
+        let name = |v: i64| format!("{}{}", parts[(v % 5) as usize], v % 7);
+        for v in 0..40i64 {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![v, name(v)]).unwrap();
+            if v > 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [(v - 1) / 3, v]).unwrap();
+            }
+            // u(y, t): some of the texts a node's parent holds, as symbols.
+            if v > 3 && v % 2 == 0 {
+                db.execute("INSERT INTO u VALUES (?1, ?2)", rusqlite::params![v, format!("{}.s", name((v - 1) / 3))]).unwrap();
+            }
+        }
+        db.execute("INSERT INTO r VALUES (0)", []).unwrap();
+        let n = format!("t:x:{}:{}:is", hex("temp.n"), hex("c0, c1"));
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let root = format!("t:x:{}:{}:i", hex("temp.r"), hex("c0"));
+        let u = format!("t:x:{}:{}:is", hex("temp.u"), hex("c0, c1"));
+        // q(x, t) :- r(x), n(x, t).    q(y, t) :- e(_, y), n(y, t).
+        // q(y, @dot(t, "s")) :- q(x, t), e(x, y).            (q's column 1: made texts)
+        // h(y, t) :- q(x, t), e(x, y), q(x, "ab0.s").        (keyed by the node and a constant)
+        // h(y, w) :- q(x, t), e(x, y), u(y, w), q(y, w).     (keyed by the node and a symbol)
+        // h(y, w) :- q(x, t), e(x, y), q(y, w), w != "c1.s".  (a made text bound, then tested: a fused atom)
+        // h(y, t) :- q(x, t), e(x, y), !u(y, t).             (a made text as a negated atom's key, beside a node;
+        //                                                      most of q's texts are no atom)
+        let seed = format!("pos {root} v0\npos {n} v0 v1\nhead v0 v1");
+        let each = format!("pos {e} v0 v1\npos {n} v1 v2\nhead v1 v2");
+        let down = format!("pos d0 v0 v1\npos {e} v0 v2\neq v3 x:{}\nhead v2 cat:v1:v3", hex("s"));
+        let by_const = format!("pos d0 v0 v1\npos {e} v0 v2\npos c0 v0 x:{}\nhead v2 v1", hex("ab0.s"));
+        let by_sym = format!("pos d0 v0 v1\npos {e} v0 v2\npos {u} v2 v3\npos c0 v2 v3\nhead v2 v3");
+        let bound = format!("pos d0 v0 v1\npos {e} v0 v2\npos c0 v2 v3\nne v3 x:{}\nhead v2 v3", hex("c1.s"));
+        let negated = format!("pos d0 v0 v1\npos {e} v0 v2\nneg {u} v2 v1\nhead v2 v1");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let tag = format!("own_text_key_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1); DROP TABLE IF EXISTS temp.h; CREATE TEMP TABLE h (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {tag}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), "rel h is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("seed 0 {}", hex(&each)), format!("join 0 0 {}", hex(&down)), format!("join 1 0 {}", hex(&by_const)), format!("join 1 0 {}", hex(&by_sym)), format!("join 1 0 {}", hex(&bound)), format!("join 1 0 {}", hex(&negated))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &tag, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed && r.reruns == 0, "the component on the device: {r:?}");
+            }
+            super::super::close(&db, &tag).unwrap();
+            let mut rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.h").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 20, "the CPU's rows of h: {:?}", got[0]);
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
+    /// An atom over the component's own relation by two keys (`Src::FullMulti`), beside one over it by one key: two
+    /// live indexes of one recursive relation in a round. Its rows are the CPU's.
+    #[test]
+    fn an_own_relation_probed_by_two_keys_and_by_one_is_the_cpus() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE e (c0, c1, c2);").unwrap();
+        // Labeled edges of a graph of 60 nodes, 3 labels: e(x, y, l). Its closure (10,800 rows) is past the head's
+        // first rows and twice a round's: its program's bound is `REACH_BYTES` of rows at least, so it is one program.
+        for x in 0..60i64 {
+            for (d, l) in [(1, 0), (7, 1), (13, 2)] {
+                db.execute("INSERT INTO e VALUES (?1, ?2, ?3)", [x, (x + d) % 60, l]).unwrap();
+            }
+        }
+        let e = format!("t:x:{}:{}:iii", hex("temp.e"), hex("c0, c1, c2"));
+        // p(x, y, l) :- e(x, y, l).
+        // p(x, z, l) :- p(x, y, l), e(y, z, l), p(y, z, l).   (probed by two keys: y, z bound; l tested)
+        // p(x, z, l) :- e(x, y, 0), p(y, z, l), l > 0.        (an own atom by one key)
+        let seed = format!("pos {e} v0 v1 v2\nhead v0 v1 v2");
+        let two = format!("pos d0 v0 v1 v2\npos {e} v1 v3 v2\npos c0 v1 v3 v2\nhead v0 v3 v2");
+        let one = format!("pos {e} v0 v1 i:0\npos d0 v1 v2 v3\nhead v0 v2 v3");
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("multi_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.p; CREATE TEMP TABLE p (c0, c1, c2);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel p iii empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&two)), format!("join 0 0 {}", hex(&one))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed && r.reruns == 0 && r.programs == 1, "the component on the device, one program: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let mut rows: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.p").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        assert!(got[0].len() > 10000, "the CPU's rows: {}", got[0].len());
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
+    /// A recursive component's own column of symbols read as a text (`OWN_SYMS`): a cat of it with a constant is the
+    /// only key of an input atom, its atom found in the atoms directory (`find_stage`) and probed by value, no row
+    /// where the text is no atom. On the device, the CPU's rows.
+    #[test]
+    fn an_own_symbol_in_a_cat_keys_an_atom_as_the_cpu_does() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1); CREATE TEMP TABLE e (c0, c1); CREATE TEMP TABLE r (c0); CREATE TEMP TABLE k (c0, c1);").unwrap();
+        let nodes = 2000i64;
+        let parts = ["ab", "c", "def", "g", "hi"];
+        let name = |v: i64| format!("{}{}", parts[(v % 5) as usize], v % 7);
+        for v in 0..nodes {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![v, name(v)]).unwrap();
+            if v > 0 {
+                db.execute("INSERT INTO e VALUES (?1, ?2)", [(v - 1) / 3, v]).unwrap();
+            }
+        }
+        for v in [0i64, 1, 3, 4, 6, 7, 12] {
+            db.execute("INSERT INTO r VALUES (?1)", [v]).unwrap();
+        }
+        // Some names' "<name>.s" map to another name; the others are no atom of k's (nor of any relation).
+        for v in 0..35i64 {
+            if v % 3 != 0 {
+                db.execute("INSERT INTO k VALUES (?1, ?2)", rusqlite::params![format!("{}.s", name(v)), name(v + 11)]).unwrap();
+            }
+        }
+        let n = format!("t:x:{}:{}:is", hex("temp.n"), hex("c0, c1"));
+        let e = format!("t:x:{}:{}:ii", hex("temp.e"), hex("c0, c1"));
+        let root = format!("t:x:{}:{}:i", hex("temp.r"), hex("c0"));
+        let k = format!("t:x:{}:{}:ss", hex("temp.k"), hex("c0, c1"));
+        // q(x, t) :- r(x), n(x, t).  q(y, t) :- q(x, t), e(x, y).  q(y, u) :- q(x, t), e(x, y), k(@dot(t, "s"), u).
+        let seed = format!("pos {root} v0\npos {n} v0 v1\nhead v0 v1");
+        let down = format!("pos d0 v0 v1\npos {e} v0 v2\nhead v2 v1");
+        let mapped = format!("pos d0 v0 v1\npos {e} v0 v2\ncat v3 v1 x:{}\npos {k} v3 v4\nhead v2 v4", hex("s"));
+        // w(y, @dot(t, "w")) :- q(x, t), e(x, y): a head's cat of the own symbol, into another relation's column of
+        // made texts (as points-to's pt_tqv(m, @dot(q, x), ..) :- pt_tbv(m, x, ..)).
+        let into = format!("pos d0 v0 v1\npos {e} v0 v2\neq v3 x:{}\nhead v2 cat:v1:v3", hex("w"));
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let name = format!("own_sym_{}", if device { "dev" } else { "cpu" });
+            db.execute_batch("DROP TABLE IF EXISTS temp.q; CREATE TEMP TABLE q (c0, c1); DROP TABLE IF EXISTS temp.w; CREATE TEMP TABLE w (c0, c1);").unwrap();
+            let mut spec = vec![format!("name {name}")];
+            if device {
+                spec.push("device".into());
+            }
+            spec.extend(["rel q is empty".to_owned(), "rel w is empty".to_owned(), format!("seed 0 {}", hex(&seed)), format!("join 0 0 {}", hex(&down)), format!("join 0 0 {}", hex(&mapped)), format!("join 1 0 {}", hex(&into))]);
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, &name, 0).unwrap();
+            if device {
+                let r = super::take_report().expect("a device report");
+                assert!(r.refused.is_none() && !r.handed, "the component on the device: {r:?}");
+            }
+            super::super::close(&db, &name).unwrap();
+            let mut rows: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.q").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            let mut ws: Vec<(i64, String)> = db.prepare("SELECT c0, sym_text(c1) FROM temp.w").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            ws.sort_unstable();
+            assert!(ws.len() > 100 && ws.iter().all(|(_, t)| t.ends_with(".w")), "device {device}: w's made texts: {}", ws.len());
+            rows.extend(ws.into_iter().map(|(x, t)| (-1 - x, t)));
+            rows.sort_unstable();
+            got.push(rows);
+        }
+        let mapped_rows = got[0].iter().filter(|(x, t)| *x >= 0 && *t != name(*x) && !got[0].iter().any(|(y, u)| u == t && *y < *x && (*x - 1) / 3 == *y)).count();
+        assert!(got[0].len() > nodes as usize && mapped_rows > 0, "the CPU's rows: {} ({mapped_rows} mapped)", got[0].len());
+        assert_eq!(got[1], got[0], "the device's rows are the CPU's");
+    }
+
     /// Decision 0661: a string join on the device. Each group's parts are joined in their order by a number, with a
     /// separator, into the canonical arena; a group of no parts has "". The joins are copied along alias edges, a
     /// recursive set head's text column. Clean, the component runs on the device; with a group of more parts than a
@@ -1511,6 +1761,10 @@ use rerail_blocks::vector::Vector;
             // part that may be a name.
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v1\nhead v0 v1", sym("^(?:(?<h>.*))$"), sym("h")),
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v3\nhead v0 v3", sym("^(?:(?<h>foo|Bar|SRC|x9).*)$"), sym("h")),
+            // A made text the head reads too (an arena text) as an atom's only key: the atom it is found by its own
+            // stage (`find_stage`), then probed by value; no row where the text is no atom.
+            format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {m} v2\nhead v2 v1"),
+            format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:3\npos {m} v2\nhead v2 v1"),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
@@ -1794,7 +2048,9 @@ use rerail_blocks::vector::Vector;
 
     /// Decision 0353 step 4: a view filtered by constants (`WHERE idx = 0`, `View::eqs`) is read in place whole, its
     /// constants keys its stage adds: probed by a column, its index is over that column and the filtered one, and
-    /// nothing of it is uploaded. A stage that checks no keys (a filter's) refuses it: nothing is uploaded (step 6).
+    /// nothing of it is uploaded. A stage that checks no keys (a filter's) refuses it: nothing is uploaded (step 6). A
+    /// `SELECT 1` view (a gate's: whether rows are there) has no source column for its one column, so it is not read
+    /// in place by its columns (it panicked there, the data layer's 50 files on the CPU's join program).
     #[test]
     fn a_filtered_view_is_read_in_place_its_constants_keys() {
         use crate::code_rule_dsl::facts::core::{self, Built};
@@ -1842,6 +2098,17 @@ use rerail_blocks::vector::Vector;
         let mut rep = super::Report::default();
         let Err(why) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep) else { panic!("a filter's filtered view has no device form") };
         assert!(why.contains("filtered by constants"), "{why}");
+        // `SELECT 1 FROM child WHERE idx = 0`: its one column reads no source column.
+        let gate = InRel::over_filtered(Arc::clone(&src), rerail_blocks::vector![], vec![(2, 0)], vec![b'i']);
+        for cols in [&[][..], &[0][..]] {
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+            let mut batch = mj::Batch::new().expect("the device");
+            let mut rep = super::Report::default();
+            if let Ok((_, _, place, consts)) = super::resident(&gate, &[0], cols, mj::JOIN, &mut batch, &mut rep) {
+                assert!(place.len() == 1 && consts.is_empty(), "{cols:?}: not read by its columns in place: {place:?} {consts:?}");
+                batch.finish().unwrap();
+            }
+        }
         let _ = std::fs::remove_file(&store_path);
     }
 
@@ -1918,8 +2185,9 @@ use rerail_blocks::vector::Vector;
         let device = rerail_accel_gpu::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
-        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
-        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order"] {
+        // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before). `doc`'s rows, one a
+        // file, read in place too: its key and its path's and module's atoms, in its entry (`view_doc`).
+        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order", "doc"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let Some(d) = src.device_view() else {
                 assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
@@ -1953,8 +2221,8 @@ use rerail_blocks::vector::Vector;
         // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
         // of (Metal's, CUDA's, the CPU's); given to the device by none of them elsewhere (decision 0440 step C:
         // OpenCL's wraps have none, though its allocations may, Intel's unified shared memory).
-        let placed = if device.has_addresses() { 16 } else { 0 };
-        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
+        let placed = if device.has_addresses() { 18 } else { 0 };
+        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth, node_order and doc read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
@@ -2185,6 +2453,159 @@ use rerail_blocks::vector::Vector;
         let _ = std::fs::remove_file(&store_path);
     }
 
+    /// A node's text read where its source lies (`mj::OPND_NODE`: the long-text nodes' node view in place, its
+    /// document by key, its numbered node, its span of the source; `reads::Doc::text_of`) is the host's
+    /// (`@rr_node_text_any`, `LongTexts::text_any_ref`) for every node of the batch, nothing made; and a node of no
+    /// document of the batch's has none.
+    #[test]
+    fn a_nodes_text_read_in_place_is_the_hosts() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::NodeRead;
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, LONG_TEXT_NODES, device_chunk::ViewsInPlace, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        use rerail_ukl_rust::join_program::reads::Doc;
+        use std::sync::Arc;
+        // Bound to the CPU, as a run is: the directory at the host's addresses, the join program's there
+        // (`ViewsInPlace::read_on_host`), whatever the process's device.
+        let _host = rerail_accel::gpu::shared::on_host();
+        assert!(ViewsInPlace::read_on_host());
+        let texts = ["import os\nx = f(1, y=2)  # one\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "s = 'αβ' + \"é\"\n", "", "def f(a, b:\n    return [a for\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (5 + 4 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-node-texts-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        let source = |name: &str| Arc::clone(&all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1);
+        let (long, node) = (source(LONG_TEXT_NODES), source("node"));
+        let view = long.node_texts_in_place().expect("the node view in place, at the host's addresses");
+        let d = view.dir as *const ViewDir;
+        let read = |id: i64| -> Option<String> {
+            // SAFETY: the directory is the batch's, at the host's addresses, held by `view`.
+            unsafe {
+                let m = ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC);
+                if m == NO_DOC {
+                    return None;
+                }
+                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
+            }
+        };
+        let mut seen = 0;
+        for r in 0..node.len() {
+            let id = node.value(r, 1);
+            let host = match long.node_read_ref("rr_node_text_any", id, &[]) {
+                Some(NodeRead::Text(t)) => t.to_owned(),
+                other => panic!("node {id:#x}: the host's text {:?}", other.is_some()),
+            };
+            assert_eq!(read(id).as_deref(), Some(host.as_str()), "node {id:#x}: its text read in place");
+            seen += 1;
+        }
+        assert!(seen > 40, "every node of the batch read: {seen}");
+        assert!(read(1000 << 32).is_none(), "a node of no document of the batch's has no text");
+        drop(view);
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// A chunk's layered binding of the long-text nodes (decision 0431 §8: the chunk's batch, then a tape value's
+    /// admitted after it) reads every node's text in place through the directory over both (`views_over`): the
+    /// value's nodes too, its document's source where it lies, as `node_read` finds them through the value's batch.
+    /// Read through the chunk's batch alone, 175 strata of the data layer were refused at run time.
+    #[test]
+    fn a_layered_nodes_text_read_in_place_is_the_hosts() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source;
+        use crate::code_rule_dsl::facts::vtab::syntax::values::{Layered, Values};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, LONG_TEXT_NODES, Matchers, Projection, device_chunk::ViewsInPlace};
+        use crate::code_rule_dsl::model::FileInput;
+        use rerail_clif::view_reads::{NO_DOC, ViewDir};
+        use rerail_ukl_rust::join_program::reads::Doc;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        let _host = rerail_accel::gpu::shared::on_host();
+        assert!(ViewsInPlace::read_on_host());
+        crate::test_languages();
+        let doc = |key: u32, source: &str| {
+            let path = format!("d{key}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        };
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-layered-texts-{}-{nonce}.sqlite", std::process::id()));
+        let content = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+        let projection = Projection::core();
+        let chunk = vec![doc(20, "import os\nx = f(1, y=[2, g(3)])\n"), doc(23, "class C(B):\n    def m(self, a, *b):\n        return [a for a in b]\n")];
+        let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+        let values = Arc::new(Values::default());
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q='αβ'):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
+        let value_node = Arc::clone(&admitted.iter().find(|(n, _)| n == "node").expect("the value's node view").1);
+        values.add(&[5], &[], admitted);
+        let find = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("{name}")).1);
+        let long: Arc<dyn Source> = Arc::new(Layered::new(LONG_TEXT_NODES, find(LONG_TEXT_NODES), Arc::clone(&values)));
+        let view = long.node_texts_in_place().expect("the node view over the chunk and its value, in place");
+        let d = view.dir as *const ViewDir;
+        let read = |id: i64| -> Option<String> {
+            // SAFETY: the layered directory, at the host's addresses, held by `view`.
+            unsafe {
+                let m = ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC);
+                if m == NO_DOC {
+                    return None;
+                }
+                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
+            }
+        };
+        let (chunk_node, mut seen) = (find("node"), [0usize; 2]);
+        for (k, node) in [&chunk_node, &value_node].into_iter().enumerate() {
+            for r in 0..node.len() {
+                let id = node.value(r, 1);
+                let host = long.node_read("rr_node_text_any", id, &[]).unwrap_or_else(|| panic!("node {id:#x}: the host's text"));
+                let rusqlite::types::Value::Text(host) = host else { panic!("node {id:#x}: a text") };
+                assert_eq!(read(id).as_deref(), Some(host.as_str()), "node {id:#x}: its text read in place");
+                // Its preorder key (`@rr_node_order`, `ARITH_NODE_ORDER`) read through the same directory: the host's.
+                let host = match long.node_read("rr_node_order", id, &[]) {
+                    Some(rusqlite::types::Value::Integer(k)) => k,
+                    other => panic!("node {id:#x}: the host's order {other:?}"),
+                };
+                // SAFETY: as `read`.
+                let order = unsafe { Doc::of(d, ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC)).order_of_id(id as u32) };
+                assert_eq!(order, Some(host as u64), "node {id:#x}: its order read in place");
+                seen[k] += 1;
+            }
+        }
+        assert!(seen[0] > 20 && seen[1] > 10, "the chunk's and the value's nodes read: {seen:?}");
+        drop(view);
+        // `doc` through the same layered binding: read in place where every batch's entries hold its atoms, a row a
+        // file (the value's too), its key, path and module the host's; a value whose entries hold none refuses it.
+        let doc_l: Arc<dyn Source> = Arc::new(Layered::new("doc", find("doc"), Arc::clone(&values)));
+        let n = doc_l.len();
+        assert!(n >= 3, "the chunk's files and the value's: {n} rows");
+        {
+            use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+            let d = doc_l.device_view().expect("doc over the chunk and its value, read in place");
+            assert_eq!(d.rows, n);
+            let placed = mj::DevRel::view_in(d.home.clone(), 3, n, d.in_place.clone()).unwrap();
+            let out = mj::DevRel::empty(3, n).unwrap();
+            let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+            let mut batch = mj::Batch::new().expect("the device");
+            batch.copy_rows(mj::Rows::Rel(&placed), n, &[mj::Col::From(0), mj::Col::From(1), mj::Col::From(2)], mj::Rows::Rel(&out), 0).unwrap();
+            batch.finish().unwrap();
+            for c in 0..3 {
+                let host: Vec<i64> = (0..n).map(|r| doc_l.value(r, c)).collect();
+                assert_eq!(out.column(c), &host[..], "doc, layered: column {c} read in place");
+            }
+        }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
     /// Q203: a stage's table before it runs is the planner's estimate of its rows with a margin, not its input
     /// doubled: rr_token_req's tables were 730,304 rows for 7,453 made, and refused past the device's budget. The
     /// growth a stage was seen to have still sizes it first, a scan holds its relation's rows at most, and a rule the
@@ -2192,7 +2613,9 @@ use rerail_blocks::vector::Vector;
     /// Decision 0353 step 5: a `has` axis is read off the tape by the device, not uploaded. Probed by its node, a
     /// stage climbs the node's numbered ancestors where the node is in the set; by its ancestor, it reads the
     /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
-    /// neither column alone (whole), its rows are uploaded as before.
+    /// neither column alone (whole), its rows are uploaded as before. `inside` and `nearest` are walked the same way
+    /// (their set tested at the ancestor, `nearest`'s climb its first member and its subtree less what lies below a
+    /// nearer one), and each by both columns: the node's climb, each ancestor checked against the bound one.
     #[test]
     fn a_has_axis_on_the_device_is_walked_on_the_tape() {
         use crate::code_rule_dsl::facts::core::{self, Built};
@@ -2222,8 +2645,9 @@ use rerail_blocks::vector::Vector;
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
-        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), Axis::Has, &kinds, Binding::Cpu));
-        assert!(has.has_walk().is_some(), "the batch's views are read in place");
+        for axis in [Axis::Has, Axis::Inside, Axis::Nearest] {
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu));
+        assert!(has.has_walk().is_some(), "{axis:?}: the batch's views are read in place");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
         // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
         let expect = |col: usize| -> Vec<(i64, i64)> {
@@ -2237,18 +2661,26 @@ use rerail_blocks::vector::Vector;
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
-        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE q2 (c0, c1);").unwrap();
         for &id in &ids {
             db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
         }
+        // Each pair and its reverse, which no axis holds (an ancestor is strict).
+        for &(n, a) in &expect(0) {
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, a]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [a, n]).unwrap();
+        }
         super::super::hold_source(&db, "has_t", Arc::clone(&has), b"ii".to_vec());
         let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
         let h = format!("r:{}", hex("has_t"));
         // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
         // h0(n, a) :- has(n, a): whole, not read in place: refused, on the CPU (`None`; nothing is uploaded).
-        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
-            let want = expect(col.unwrap_or(0));
-            assert!(want.len() > 20, "by column {col:?}: {} rows", want.len());
+        // h0(n, a) :- q2(n, a), has(n, a): by both.
+        for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (Some(2), format!("pos {q2} v0 v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
+            let want = expect(col.unwrap_or(0).min(1));
+            assert_eq!(want, expect(1 - col.unwrap_or(0).min(1)), "{axis:?}: the host's lookups by either column give the same pairs");
+            assert!(want.len() > 20, "{axis:?} by column {col:?}: {} rows", want.len());
             let mut got = Vec::new();
             for device in [false, true] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2264,14 +2696,196 @@ use rerail_blocks::vector::Vector;
                 super::super::close(&db, "has_test").unwrap();
                 if device {
                     let r = report.as_ref().expect("a device run");
-                    assert_eq!(r.refused.is_none(), col.is_some(), "by column {col:?}: refused only whole: {r:?}");
+                    // Read whole, `has` is refused (no solve makes it whole); `inside` and `nearest` are read as the
+                    // batch's solve made them (decision 0277).
+                    assert_eq!(r.refused.is_none(), col.is_some() || axis != Axis::Has, "{axis:?} by column {col:?}: refused only has, whole: {r:?}");
+                    if col.is_some() {
+                        assert_eq!(r.sorts, 0, "{axis:?} by column {col:?}: no index of the axis: {r:?}");
+                    }
                 }
                 let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();
                 got.push(rows);
             }
-            assert_eq!(got[0], want, "by column {col:?}: the CPU's rows are the host's lookups");
-            assert_eq!(got[1], want, "by column {col:?}: the device's rows are the CPU's");
+            assert_eq!(got[0], want, "{axis:?} by column {col:?}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], want, "{axis:?} by column {col:?}: the device's rows are the CPU's");
+        }
+        }
+    }
+
+    /// Decision 0706 step 0: `docof(n, d)` probed by `n`, or by `n` and `d`, reads `n`'s one row (its position,
+    /// `view_loc_number`, its id read back: `d` is its document's file), no index of the view: the device's rows are
+    /// the CPU's, the CPU's the view's own. Every position's id is probed (nodes, tokens, spans), and ids of none: low
+    /// bits of no position, a key of no document; by both, each pair and the pair with another `d`.
+    #[test]
+    fn docof_probed_by_its_id_reads_its_one_row() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Guest, Made, Placement, Projection, shaped};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
+        let mut docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        // A guest (decision 0055), whose `docof` is its host's file (7), not its own key.
+        let text = "y = [2,\n  3]\n";
+        let file = FileInput::new("d0.py".to_owned(), "python".to_owned(), Arc::new(text.to_owned().into()), None, None, "core").unwrap();
+        let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("the guest") };
+        let place = Placement::Copied { delta: 10, within: [10, 24] };
+        let guest = Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "program".to_owned(), root: 0, place: place.clone(), in_file: place, made: Made::Host };
+        docs.push(Document { key: 100, core: "/w#core:d0.py#guest:python:0".to_owned(), digest: core::digest(&facts), path: "d0.py".to_owned(), facts, tape: None, guest: Some(Arc::new(guest)), module: None, unpackaged: false });
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-docof-own-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = shaped(&content, docs, &Projection::core()).unwrap();
+        let docof = Arc::clone(&all.iter().find(|(n, _)| *n == "docof").expect("docof").1);
+        assert!(docof.device_view().is_some(), "docof, read in place");
+        let rows: Vec<(i64, i64)> = (0..docof.len()).map(|r| (docof.value(r, 0), docof.value(r, 1))).collect();
+        assert!(rows.len() > 100, "{} positions", rows.len());
+        assert!(rows.iter().any(|&(n, d)| n >> 32 == 100 && d == 7), "the guest's positions are its host's file's");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE q2 (c0, c1);").unwrap();
+        // Ids of none: another low bit pattern of a document's key, and a key no document has.
+        let none = [(7i64 << 32) | 0x3fff_0000, (7i64 << 32) | 0x0fff_ffff, (99i64 << 32) | 1];
+        for &(n, d) in &rows {
+            db.execute("INSERT INTO q VALUES (?1)", [n]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, d]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, d + 1]).unwrap();
+        }
+        for n in none {
+            db.execute("INSERT INTO q VALUES (?1)", [n]).unwrap();
+        }
+        super::super::hold_source(&db, "docof_t", Arc::clone(&docof), b"ii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
+        let v = format!("r:{}", hex("docof_t"));
+        let mut want = rows.clone();
+        want.sort_unstable();
+        want.dedup();
+        for (by, rule) in [("n", format!("pos {q} v0\npos {v} v0 v1\nhead v0 v1")), ("n, d", format!("pos {q2} v0 v1\npos {v} v0 v1\nhead v0 v1"))] {
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name docof_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "docof_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "docof_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "by {by}: on the device: {r:?}");
+                    assert_eq!(r.sorts, 0, "by {by}: no index of docof: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], want, "by {by}: the CPU's rows are the view's");
+            assert_eq!(got[1], want, "by {by}: the device's rows are the CPU's");
+        }
+    }
+
+    /// Containment (`within(n, a)`, `Mode::Tree`: `n` strictly below `a`) is `has` of every kind, read off the tape by
+    /// the device with no pair made or indexed: by its node, the node's numbered ancestors; by its ancestor, its
+    /// subtree; by both, the node's climb, each ancestor checked against the bound one. The rows are the CPU's, and
+    /// the CPU's the host's lookups; the pairs probed by both are the true ones and as many false ones (each reversed).
+    #[test]
+    fn containment_on_the_device_is_walked_on_the_tape() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Mode, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("d{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-within-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let all = sources(&content, docs).unwrap();
+        let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
+        let batch = node.python_batch().expect("the batch");
+        let within: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::new(Arc::clone(&batch), Mode::Tree));
+        assert!(within.has_walk().is_some_and(|w| w.axis == crate::code_rule_dsl::facts::vtab::HasWalk::EVERY), "containment is walked as has of every kind");
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        // The host's pairs, from its lookups by the node (column 0) and by the ancestor (column 1): the same pairs.
+        let expect = |col: usize| -> Vec<(i64, i64)> {
+            let mut rows: Vec<(i64, i64)> = ids.iter().flat_map(|&id| within.lookup(col, &[id]).unwrap_or_default()).map(|r| (within.value(r, 0), within.value(r, 1))).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        };
+        let pairs = expect(0);
+        assert_eq!(pairs, expect(1), "the host's lookups by either column give the same pairs");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE q2 (c0, c1);").unwrap();
+        for &id in &ids {
+            db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
+        }
+        // Each true pair and its reverse, which no strict containment holds.
+        for &(n, a) in &pairs {
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [n, a]).unwrap();
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [a, n]).unwrap();
+        }
+        super::super::hold_source(&db, "within_t", Arc::clone(&within), b"ii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
+        let w = format!("r:{}", hex("within_t"));
+        // By the node, by the ancestor, by both.
+        for (by, rule) in [("n", format!("pos {q} v0\npos {w} v0 v1\nhead v0 v1")), ("a", format!("pos {q} v1\npos {w} v0 v1\nhead v0 v1")), ("n, a", format!("pos {q2} v0 v1\npos {w} v0 v1\nhead v0 v1"))] {
+            assert!(pairs.len() > 20, "{} pairs", pairs.len());
+            let mut got = Vec::new();
+            for device in [false, true] {
+                db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                let mut spec = vec!["name within_test".to_owned()];
+                if device {
+                    spec.push("device".into());
+                }
+                spec.push("rel h0 ii empty".into());
+                spec.push(format!("seed 0 {}", hex(&rule)));
+                super::super::open(&db, &spec.join("\n")).unwrap();
+                super::super::run(&db, "within_test", 0).unwrap();
+                let report = super::take_report();
+                super::super::close(&db, "within_test").unwrap();
+                if device {
+                    let r = report.as_ref().expect("a device run");
+                    assert!(r.refused.is_none(), "by {by}: on the device: {r:?}");
+                    // None, though the host's lookups solved its pairs into a block (`placed`): they are not indexed.
+                    assert_eq!(r.sorts, 0, "by {by}: no index built of containment: {r:?}");
+                }
+                let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                rows.sort_unstable();
+                got.push(rows);
+            }
+            assert_eq!(got[0], pairs, "by {by}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], pairs, "by {by}: the device's rows are the CPU's");
         }
     }
 
@@ -2520,6 +3134,41 @@ use rerail_blocks::vector::Vector;
             assert_eq!(got[0], want, "{how}: the CPU's rows are the host's");
             assert_eq!(got[1], want, "{how}: the device's rows are the CPU's");
         }
+        // Every child probed by its parent alone, each document's root among the parents: the parent is the walk's
+        // only key, known by its making (`parent_known`), and a root's children are walked as any parent's where every
+        // numbered node's parent is numbered (`ViewDoc::parented`), else its document's rows, each tested.
+        let mut all: Vec<(i64, i64)> = (0..child.len()).map(|r| (child.value(r, 0), child.value(r, 1))).collect();
+        all.sort_unstable();
+        let mut parents: Vec<i64> = all.iter().map(|r| r.0).collect();
+        parents.dedup();
+        let roots = parents.iter().filter(|&&p| !all.iter().any(|r| r.1 == p)).count();
+        assert!(roots >= 3, "the documents' roots are parents: {roots}");
+        db.execute_batch("DELETE FROM temp.q;").unwrap();
+        for &p in &parents {
+            db.execute("INSERT INTO q VALUES (?1)", [p]).unwrap();
+        }
+        let every = format!("t:d:{}:{}:ii", hex("main.child_t"), hex("p, c"));
+        let rule = format!("pos {q} v0\npos {every} v0 v1\nhead v0 v1");
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+            let mut spec = vec!["name every_child_test".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 ii empty".into());
+            spec.push(format!("seed 0 {}", hex(&rule)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "every_child_test", 0).unwrap();
+            let report = super::take_report();
+            super::super::close(&db, "every_child_test").unwrap();
+            if device {
+                let r = report.as_ref().expect("a device run");
+                assert!(r.refused.is_none(), "every child by its parent: {r:?}");
+            }
+            let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+            rows.sort_unstable();
+            assert_eq!(rows, all, "every child by its parent (device {device}): the host's rows");
+        }
     }
 
     #[test]
@@ -2679,8 +3328,8 @@ use rerail_blocks::vector::Vector;
     }
 
     /// The same strata on the engine's CPU joins (scalar Rust) and on the device's join program, warm: wall and the
-    /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) a
-    /// kernel with Rust of its source (`rerail_ukl_rust::kernels`) runs as it; `RERAIL_CPU_RUST=0` makes each the c++ build.
+    /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) the
+    /// program is `rerail_ukl_rust::join_program`, its SIMD Rust: the only code the CPU device runs.
     #[test]
     #[ignore]
     fn joins_timed_on_the_cpu_and_the_device() {
@@ -2753,6 +3402,7 @@ use rerail_blocks::vector::Vector;
                 let mut best = (f64::MAX, f64::MAX);
                 // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
                 let mut prog = (f64::MAX, f64::MAX);
+                let mut held = 0i64;
                 let mut faulted = i64::MAX;
                 for k in 0..repeat {
                     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2761,6 +3411,9 @@ use rerail_blocks::vector::Vector;
                         spec.push("device".into());
                     }
                     spec.push("rel h0 ii empty".into());
+                    // As the planner opens a stratum (`nowrite`): its rows stay the engine's, held (`derived`) once
+                    // it closes, not inserted into a table, so the time is the run's, not a table's.
+                    spec.push("nowrite".into());
                     spec.extend(rules.iter().cloned());
                     super::super::open(&db, &spec.join("\n")).unwrap();
                     let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
@@ -2777,12 +3430,16 @@ use rerail_blocks::vector::Vector;
                         }
                     }
                     super::super::close(&db, "timed").unwrap();
+                    // Its rows where the engine holds them: those not dead.
+                    let src = super::super::derived(&db, "h0").expect("h0 held");
+                    let (_, n, dead, _) = super::super::held_rows(&*src).expect("its rows");
+                    held = (n - (0..n).filter(|&i| dead.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 != 0)).count()) as i64;
                     // The first run warms (compiles, sizes); the best of the others.
                     if k > 0 {
                         best = (best.0.min(wall), best.1.min(cpu));
                     }
                 }
-                let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                let n = held;
                 rows.push(n);
                 eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
                 if device {

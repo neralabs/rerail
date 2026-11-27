@@ -81,15 +81,32 @@ pub struct ViewInPlace {
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
     pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
+    /// The view's home where its source keeps it (`rows::IndexHome`), made again with more room when a probe's index has
+    /// none in it: `None` for a home no source keeps.
+    pub grows: Option<Arc<super::rows::IndexHome>>,
 }
 
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
-/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending. `axis`: which
+/// ancestors are a node's (`HasWalk::HAS` and the rest).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
     pub kinds: Arc<[i64]>,
+    pub axis: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl HasWalk {
+    /// Every ancestor, where the node is in the set (`has`).
+    pub const HAS: u32 = 0;
+    /// Every ancestor in the set (`inside`).
+    pub const INSIDE: u32 = 1;
+    /// The nearest ancestor in the set (`nearest`).
+    pub const NEAREST: u32 = 2;
+    /// Every ancestor, the set every kind (`kinds` none): containment, `within(n, a)`, `n` strictly below `a`.
+    pub const EVERY: u32 = 3;
 }
 
 /// A batch's 16z cache as its views' directory names it (decision 0353 step 4b, `view::cache`): the batch's one cache
@@ -274,6 +291,10 @@ pub enum NodeRead<'a> {
     Value(rusqlite::types::Value),
 }
 
+/// A run's atom table as a source checks it against its own (`Source::node_atom`): its address and its database
+/// (`AtomTable::database`; `None` for an in-memory one's).
+pub type AtomTableOf<'a> = (*const (), Option<&'a std::path::Path>);
+
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
@@ -289,7 +310,10 @@ pub trait Source: Send + Sync {
     /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
     /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
     /// reads it by `node_read`).
-    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>) -> Option<i64> { None }
+    /// `table` is the run's atom table, its address and its database (`AtomTable::database`): a source's atom is the
+    /// run's only where its atoms are that table or of that database, else `None` (a source made in another store
+    /// numbers its atoms apart), and the text is read.
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>, _table: AtomTableOf<'_>) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -536,6 +560,13 @@ pub trait Source: Send + Sync {
     /// its directory. `None`: the device does not read it where it lies.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {
+        None
+    }
+    /// The node reads' batch's `node` view in place (`syntax::LongTexts`'s): the directory through which a stage reads
+    /// a node's text where its source lies (`@rr_node_text_any`, the join program's `OPND_NODE`), no text made.
+    /// `None`: no node is read so.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_texts_in_place(&self) -> Option<ViewInPlace> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the

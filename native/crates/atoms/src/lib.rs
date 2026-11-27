@@ -802,6 +802,11 @@ impl Atoms {
         connection.query_row_cached("SELECT id FROM main.store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()
     }
 
+    /// The database file these are the atoms of (its key, as the registry holds it); `None` for an in-memory one's.
+    pub fn database(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     /// Makes `path`'s database read and write these atoms in this process: a run's working database
     /// (its SQL's scratch) whose symbols are the store's (decision 0052).
     pub fn share(self: &Arc<Self>, path: &Path) {
@@ -1680,6 +1685,9 @@ impl rerail_store_base::content_store::AtomTable for Atoms {
     }
     fn value(&self, atom: Sym) -> StoreResult<Option<String>> {
         Atoms::value(self, atom)
+    }
+    fn database(&self) -> Option<&Path> {
+        Atoms::database(self)
     }
 }
 

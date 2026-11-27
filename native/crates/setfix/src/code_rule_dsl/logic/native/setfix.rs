@@ -1172,11 +1172,12 @@ impl Rel {
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, f: Fresh, pend: bool) -> bool {
-        let (from, placed) = (self.n, !f.placed.is_empty());
+        let (from, placed, host_placed) = (self.n, !f.placed.is_empty(), f.host_placed);
         let new = self.push_fresh_rows(f, pend);
-        // A declared key's check over the rows written (decision 0361 step 6). Rows the device placed are not read on
-        // the host (decision 0384: no host work on the Metal path): their key's check is the device's, left open.
-        if new && !self.keyed.is_empty() && !placed {
+        // A declared key's check over the rows written (decision 0361 step 6). Rows a GPU placed are not read on the
+        // host (decision 0384: no host work on the Metal path): their key's check is the device's, left open. Rows the
+        // host's run of the program placed are this CPU's, checked here.
+        if new && !self.keyed.is_empty() && (!placed || host_placed) {
             self.check_keys(from);
         }
         new
@@ -1187,6 +1188,7 @@ impl Rel {
         // (decision 0384 step 3), or their relation made its tail. Beside rows derived here, those a rule here
         // repeats are dropped; into a lattice (which folds each), they are read where they lie.
         let placed = std::mem::take(&mut f.placed);
+        // The lots a device wrote in the first order: each a run, or its rounds' runs (t58 A).
         let in_order = std::mem::take(&mut f.in_order);
         let k = self.k;
         // A lattice relation's rows the device folded, with its key map (decision 0384 step 5): taken as they lie,
@@ -1277,8 +1279,7 @@ impl Rel {
         }
         debug_assert!(room.is_some() || f.n == 0, "a wave's rows with no room");
         drop(f);
-        // Each lot by its place in `placed` (`in_order` names them so).
-        let lots: Vec<(usize, (Placed, Option<Vector<u32>>))> = placed.into_iter().enumerate().filter(|(_, (p, _))| !matches!(p, Placed::Wave { .. })).collect();
+        let lots: Vec<(usize, Placed, Option<Vector<u32>>)> = placed.into_iter().enumerate().filter(|(_, (p, _))| !matches!(p, Placed::Wave { .. })).map(|(l, (p, r))| (l, p, r)).collect();
         if let Some(room) = room {
             let room = Arc::try_unwrap(room).unwrap_or_else(|_| panic!("{}: a wave's room still held past its end", self.table));
             // SAFETY: every writer of the room is done (its last holder is this), and wrote the slots `src` names.
@@ -1287,10 +1288,11 @@ impl Rel {
                 room.finish(&mut self.data, src.len() as u32);
             }
         }
-        // The lots' rows come after the room's, in the lots' order.
         let mut at = from + src.len();
-        for (l, (p, r)) in lots {
+        for (lot, p, r) in lots {
             let m = p.len();
+            let lot_from = at;
+            at += m as usize;
             match p {
                 Placed::Part(p) => self.data.append_part(p),
                 // SAFETY: the writer finished, and wrote every value of the rows `n` counts.
@@ -1300,18 +1302,17 @@ impl Rel {
             rounds.extend((0..m as usize).map(|i| r.as_ref().map_or(u32::MAX, |r| r[i])));
             // Written in the first order (t58 increment A): known sorted, its orders take it in place; a run of it at
             // a time where it is runs (a fixpoint's rounds' rows, each round's in the order).
-            if let Some((_, runs)) = in_order.iter().find(|(x, _)| *x == l) {
+            if let Some((_, runs)) = in_order.iter().find(|(l, _)| *l == lot) {
                 if runs.is_empty() {
-                    self.sorted.note(&self.data, k, &self.idx[0].cols, at as u32, (at + m as usize) as u32);
+                    self.sorted.note(&self.data, k, &self.idx[0].cols, lot_from as u32, at as u32);
                 }
-                let mut r0 = at as u32;
+                let mut run = lot_from as u32;
                 for &n in runs {
-                    self.sorted.note(&self.data, k, &self.idx[0].cols, r0, r0 + n);
-                    r0 += n;
+                    self.sorted.note(&self.data, k, &self.idx[0].cols, run, run + n);
+                    run += n;
                 }
-                debug_assert!(runs.is_empty() || r0 as usize == at + m as usize, "a lot's runs its rows");
+                debug_assert!(runs.is_empty() || run as usize == at, "a lot's runs its rows");
             }
-            at += m as usize;
         }
         // The CPU's rows come sorted by the first order (`Fresh::settle`): known so, their runs take them in place.
         if cpu > 0 {
@@ -1658,7 +1659,10 @@ pub struct Fresh { room: Option<Arc<rows::WaveRoom>>, spans: Vec<(u8, u32)>, end
                    in_order: Vec<(usize, Vec<u32>)>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
-                   map: Option<keys::KeyMap> }
+                   map: Option<keys::KeyMap>,
+                   /// `placed` was written by the host's run of the device's program (`device host`): its rows are this
+                   /// CPU's to read, so its declared keys are checked as rows written here are (decision 0361 step 6).
+                   host_placed: bool }
 
 /// Only an empty one is cloned (a vector of them made): a clone of rows would be a second writer of their slots.
 impl Clone for Fresh {
@@ -2173,6 +2177,8 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
                    waiting: Option<(Box<dyn forms::Form>, Vector<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
+                   /// Its device plans run on the host (`device host`: `rerail_accel::gpu::shared::on_host`).
+                   device_host: bool,
                    /// Device joins waiting in this thread's wave (`submit`): their ticket.
                    device_wait: Option<u64>,
                    seed_specs: Vec<(usize, Join)>,
@@ -2797,6 +2803,8 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
+    // `device host`: the device's program on the host (`rerail_accel::gpu::shared::on_host`), the run bound to the CPU.
+    let mut device_host = false;
     // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
     let mut delta_specs: Vec<(usize, String)> = Vec::new();
     let mut leveled = false;
@@ -2806,6 +2814,8 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let ordered: Vector<usize> = spec.lines.iter().find_map(|l| if let Line::Sorted(r) = l { Some(r.iter().map(|&x| x as usize).collect()) } else { None }).unwrap_or_default();
     let mut cyclic: Vector<usize> = rerail_blocks::vector::Vector::new();
     let mut kept_old = false;
+    // The own relations' columns of symbols held as atoms (`Line::Atoms`): read as texts by the device's stages.
+    let mut atom_cols: Vec<(usize, usize)> = Vec::new();
     let mut seed_specs: Vec<(usize, Join)> = Vec::new();
     // Each relation's kept rows (`Start::Base`), by index: under `wave0_changes` they are no wave's delta.
     let mut kept_n: Vector<usize> = rerail_blocks::vector::Vector::new();
@@ -2867,7 +2877,10 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head as usize, delta: *delta as usize, body: Body::Sql(sql.to_string()), whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
             Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head as usize, delta: *delta as usize, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
-            Line::Device => device_wanted = solver().is_some(),
+            Line::Device { host } => {
+                device_wanted = solver().is_some();
+                device_host = *host;
+            }
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().map(|&r| r as usize)); }
             Line::Measured { desc, key, keyed, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.as_ref().map(|k| k.to_string()), keyed: *keyed, cols: us(cols), ranks: us(ranks) }),
             Line::KeptOld => kept_old = true,
@@ -2877,6 +2890,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 rels.get_mut(*rel as usize).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys as usize, lattice, widen.get())?;
             }
             Line::Key { rel, cols } => rels.get_mut(*rel as usize).ok_or_else(|| err(format!("key: no relation {rel}")))?.set_key(us(cols))?,
+            Line::Atoms { rel, cols } => atom_cols.extend(cols.iter().map(|&c| (*rel as usize, c as usize))),
             Line::Seed { head, join, est } => {
                 let join = bound(join);
                 let mut j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, &join, &mut syms, !device_wanted)? };
@@ -2966,6 +2980,7 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     }
     // The device's plans of the seeds, or why it takes none of them: then they are parsed again with the CPU's indexes.
     let device_plans = if let Some(dev) = solver().filter(|_| device_wanted) {
+        let _host = device_host.then(rerail_accel::gpu::shared::on_host);
         let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
         let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
@@ -2998,11 +3013,18 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
                 }
             }
         }
+        // The own relations' columns of symbols: read as texts where the atoms blocks hold them (a column of made
+        // texts is not one of them: `own_texts`, read in the arena).
+        let syms_of = |own_texts: &[(usize, usize)]| -> Vec<(usize, usize)> {
+            let typed = rels.iter().enumerate().flat_map(|(i, r)| r.types.iter().enumerate().filter(|&(_, &t)| t == b's').map(move |(c, _)| (i, c)));
+            typed.chain(atom_cols.iter().copied()).filter(|at| !own_texts.contains(at)).collect()
+        };
         let plans = loop {
+            let own_syms = syms_of(&own_texts);
             let plans = match &refused {
                 Some(r) => Err(r.clone()),
                 None => specs.iter().map(|(pi, text)| match &probes[*pi].body {
-                    Body::Join(j) => dev.compile_join(j, text, &own_texts, probes[*pi].head).map(|p| (*pi, p)),
+                    Body::Join(j) => dev.compile_join(j, text, &own_texts, &own_syms, probes[*pi].head).map(|p| (*pi, p)),
                     Body::Sql(_) => Err("a SQL seed".to_owned()),
                     Body::Unplanned => Err("a probe not planned yet".to_owned()),
                 }).collect::<std::result::Result<Vec<_>, String>>(),
@@ -3147,19 +3169,32 @@ fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let mut reg = on.components.lock();
     let key = name.clone();
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, inner, form: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
+                               device: device_plans, device_host, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
         (Some(dev), Some(d)) => d.iter().any(|(_, p)| dev.reads_own(p)),
         _ => false,
     };
-    // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
-    if !on_device_rounds && comp.maint.drivers.is_empty() {
+    // The maintain mode's component neither: its first wave's delta is the rows its removals put back. On the host
+    // (`device host`, the run bound to the CPU) a closure is the closure form's still (decision 0098 §1, the user's
+    // choice 2026-11-25): its rounds are not the program's, and its seeds run as they did before the host's program.
+    if (!on_device_rounds || comp.device_host) && comp.maint.drivers.is_empty() {
         comp.form = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             forms::open(&comp)
         };
+        if comp.form.is_some() && comp.device_host {
+            // Its seeds were parsed for the device, without the CPU's indexes: parsed again with them, as a run the
+            // device refuses has them (`run`).
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = Interner::for_loading(&symbols);
+            for (pi, js) in std::mem::take(&mut comp.seed_specs) {
+                comp.probes[pi].body = Body::Join(Box::new(join_rule(conn, &js, &mut syms)?));
+            }
+            syms.check()?;
+            comp.device = None;
+        }
     }
     reg.insert(key, Arc::new(Mutex::new(comp)));
     Ok(name)
@@ -3390,8 +3425,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     // Decision 0113 §3 for the device joins: when the caller can wait for its level's wave, a stratum placed on the
     // device encodes its seed joins into the wave's one command buffer and returns `3`; the run after the wave
     // finishes them (`SolverDevice::resume`). A level's small strata so share one commit and one wait. A recursive one
-    // runs its rounds here.
-    if !seeded && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
+    // runs its rounds here. Not on the host (`device host`): its work runs as it is flushed, on this thread, so a wave
+    // shares no commit and no wait there.
+    if !seeded && !comp.device_host && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
         && let Some(dev) = solver()
         && let Some(plans) = comp.device.as_ref()
         && !plans.iter().any(|(_, p)| dev.reads_own(p))
@@ -3401,6 +3437,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             Body::Join(j) => (plan, &**j, comp.probes[*pi].head),
             Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
+        let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
         let submitted = { let syms = symbols.read().unwrap(); let s = comp.store.read().unwrap(); dev.submit(&rules, &s, &syms) };
         if let Ok(Some(t)) = submitted {
             comp.device_wait = Some(t);
@@ -3478,6 +3515,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // wave's, and the CPU's waves go on from them.
         let mut handed_back = false;
         let on_device = resumed_on_device || tried && {
+            let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
+            let host_rows = comp.device_host;
             let dev = dev.expect("a device");
             let plans = comp.device.as_ref().expect("device plans");
             let tp = Instant::now();
@@ -3504,6 +3543,19 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             } else {
                 dev.run_joins(&rules, store, syms, &mut dev_fresh)
             };
+            // Decision 0462: a head the device's rows would take to the width cap is the scalar joins', which stop the
+            // run there or cut it, as the rule says (the device's run has no cap of its own).
+            let got = match got {
+                Ok(made) if {
+                    // Each head's rows: what it held, and what the device's rules made of it (staged, or in place).
+                    let mut to = vec![0usize; nrels];
+                    for ((pi, _), n) in plans.iter().zip(made.iter().copied()) {
+                        to[comp.probes[*pi].head] += n as usize;
+                    }
+                    to.iter().enumerate().any(|(r, n)| *n > 0 && store.rels[r].n + n >= limits.cap)
+                } => Err(format!("a head at the width cap ({} rows, decision 0462)", limits.cap)),
+                got => got,
+            };
             match got {
                 Ok(made) => {
                     let cpu = cpu_now() - c0;
@@ -3522,6 +3574,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         // Its lots in the first order with them, at their places past `f`'s own.
                         let at = f.placed.len();
                         f.in_order.extend(d.in_order.drain(..).map(|(l, r)| (at + l, r)));
+                        f.host_placed |= host_rows && !d.placed.is_empty();
                         f.placed.append(&mut d.placed);
                         if d.map.is_some() {
                             debug_assert!(f.map.is_none(), "two folds' maps for one relation");
@@ -5159,6 +5212,10 @@ pub enum Ver {
 /// its probes name.
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, ids: Option<OnceLock<Vector<u32>>>, eqs: Vec<(usize, i64)>, of: Option<Arc<str>> }
 impl View {
+    /// The relation it is a view of, by name, where it was made for one (a measurement aid's label).
+    pub fn of(&self) -> Option<&str> {
+        self.of.as_deref()
+    }
     /// Its rows' places in the source, a view of some rows': found when first asked, for a filtered one.
     fn ids(&self) -> Option<&[u32]> {
         self.ids.as_ref().map(|ids| ids.get_or_init(|| self.filtered()).as_slice())
@@ -5222,6 +5279,10 @@ impl View {
     /// The constants that chose its rows: each a source's column and its value.
     pub fn eqs(&self) -> &[(usize, i64)] {
         &self.eqs
+    }
+    /// Its columns: the source's it reads (none for `SELECT 1`, whose relation's one column is no source column).
+    pub fn arity(&self) -> usize {
+        self.cols.len()
     }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
@@ -6119,7 +6180,7 @@ pub fn give_versions(conn: impl Scoped, table: &str, types: Vec<u8>, given: [(Ar
     let view = |(src, cols): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<rerail_blocks::vector::Vector<usize>>)| -> Arc<InRel> {
         let viewed = cols.is_some();
         let view = View { src, cols: cols.unwrap_or_else(|| (0..k).collect()), ids: None, eqs: Vec::new(), of: None };
-        Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ranges: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
+        Arc::new(InRel { vers: Default::default(), viewed, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types: types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), ranges: Default::default(), counted: Default::default(), tables: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     };
     forgotten_on_close();
     let given = given.map(view);
@@ -6301,11 +6362,11 @@ impl InRel {
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ranges: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
     /// `src`'s columns `cols`, filtered by `eqs` (each a column of `src` and its value), as `view` opens a
-    /// `SELECT cols ... WHERE c = v` input.
+    /// `SELECT cols ... WHERE c = v` input (`cols` empty: `SELECT 1`, a gate's, its one column no source column).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn over_filtered(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, eqs: Vec<(usize, i64)>, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        debug_assert_eq!(cols.len(), k);
+        debug_assert!(cols.len() == k || cols.is_empty());
         let view = View { src, cols, ids: Some(OnceLock::new()), eqs, of: None };
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), ranges: Default::default(), ahead: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), stats: None })
     }
@@ -9427,6 +9488,25 @@ pub fn prefetch_joins(conn: &Connection, specs: &[Join]) -> Result<usize> {
     level::prefetch(conn, specs)
 }
 
+/// Decision 0707: the indexes the joins `specs` probe their relations by, built on the device before the strata that
+/// run them (`SolverDevice::build_indexes`), as the device would compile them (`host`: its join programs the host's).
+/// How many it built; none with no device.
+pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) -> Result<usize> {
+    let Some(dev) = solver().filter(|d| d.join_available()) else { return Ok(0) };
+    let _host = host.then(rerail_accel::gpu::shared::on_host);
+    let symbols = symbols(conn)?;
+    let mut syms = Interner::for_loading(&symbols);
+    let plans: Vec<JoinPlan> = specs.iter().filter_map(|spec| {
+        let j = join_rule(conn, spec, &mut syms).ok()?;
+        // No own texts: the plan's head is not read (`usize::MAX`).
+        dev.compile_join(&j, &spec.to_text(), &[], &[], usize::MAX).ok()
+    }).collect();
+    if plans.is_empty() {
+        return Ok(0);
+    }
+    dev.build_indexes(&plans.iter().collect::<Vec<_>>()).map_err(err)
+}
+
 /// Drops a chunk's pending pairs and what the lanes keep for it.
 pub fn level_clear() {
     level::clear()
@@ -10832,7 +10912,10 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                         let make = probe & PROBE_OUT == 0;
                         let syms = &cx.syms;
                         let existing = |s: &str| syms.held(s).filter(|&v| make || u32::try_from(v).is_ok());
-                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing))
+                        // The run's atom table, which the source's atoms must be (a batch shaped in another store numbers its
+                        // atoms apart).
+                        let table = (Arc::as_ptr(syms.atoms()).cast(), syms.atoms().database());
+                        nodes.and_then(|s| s.node_atom(name, val(slots, args[0]), make, &existing, table))
                     } else { None };
                     if let Some(a) = atom {
                         kinds::count_term_atom_for_tests();

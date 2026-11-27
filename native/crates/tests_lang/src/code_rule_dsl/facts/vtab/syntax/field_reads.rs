@@ -118,17 +118,23 @@ fn a_nodes_text_read_as_its_atom_is_the_atom_of_its_text() {
     let distinct: BTreeSet<String> = ids.iter().filter_map(|&n| text_of(n)).collect();
     let atom: BTreeMap<String, i64> = distinct.iter().enumerate().filter(|(i, _)| i % 3 == 0).map(|(i, t)| (t.clone(), i as i64)).collect();
     let existing = |s: &str| atom.get(s).copied();
+    // The run's atom table: the store's, which the batch's atoms are.
+    let atoms = store.atoms_handle();
+    let table = (Arc::as_ptr(&atoms).cast(), atoms.database());
     let mut held = 0;
     // Twice: the second read answered from the memo.
     for _ in 0..2 {
         for &n in &ids {
             let want = text_of(n).and_then(|t| atom.get(&t).copied());
-            assert_eq!(texts.node_atom("rr_node_text_any", n, false, &existing), want, "node {n:#x} ({:?})", text_of(n));
+            assert_eq!(texts.node_atom("rr_node_text_any", n, false, &existing, table), want, "node {n:#x} ({:?})", text_of(n));
             held += usize::from(want.is_some());
         }
     }
     assert!(held > 10 && ids.len() > 50, "{held} held of {}", ids.len());
-    assert_eq!(texts.node_atom("rr_node_text", ids[1], false, &existing), None, "another read: none");
+    assert_eq!(texts.node_atom("rr_node_text", ids[1], false, &existing, table), None, "another read: none");
+    // A run whose atoms are another table, of no database: the batch's atoms are no symbols of it (decision 0706 E1).
+    let theirs = Arc::new(0u8);
+    assert_eq!(texts.node_atom("rr_node_text_any", ids[1], false, &existing, (Arc::as_ptr(&theirs).cast(), None)), None, "another store's run: none");
 }
 
 /// Made where it has none (`make`), a node's text atom is the store's atom of the text `node_read` reads, for every
@@ -144,11 +150,13 @@ fn a_nodes_text_atom_made_is_the_stores_atom_of_its_text() {
     let texts = Arc::clone(&sources.iter().find(|(n, _, _)| *n == LONG_TEXT_NODES).unwrap().2);
     let ids: Vec<i64> = (0..batch.docs.len()).flat_map(|d| { let p = &batch.docs[d]; (0..p.len()).map(|l| p.global(l)).collect::<Vec<_>>() }).collect();
     let none = |_: &str| None;
+    let atoms = store.atoms_handle();
+    let table = (Arc::as_ptr(&atoms).cast(), atoms.database());
     let mut made = 0;
     for _ in 0..2 {
         for &n in &ids {
             let Some(rusqlite::types::Value::Text(t)) = texts.node_read("rr_node_text_any", n, &[]) else { continue };
-            let got = texts.node_atom("rr_node_text_any", n, true, &none).expect("made");
+            let got = texts.node_atom("rr_node_text_any", n, true, &none, table).expect("made");
             assert_eq!(Some(got), store.atom(&t).unwrap().map(i64::from), "node {n:#x} ({t:?})");
             made += 1;
         }

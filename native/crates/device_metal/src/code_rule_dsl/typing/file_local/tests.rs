@@ -2104,7 +2104,7 @@ fn local_joins_are_pushed_on_a_version() {
 .decl docof(n: node, d: number)
 .decl line(n: node, l: number)
 .input node, child, text, docof, line
-.decl defined(s: symbol)
+.decl defined(s: symbol) cross_file
 defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
 .decl uses(f: node, x: symbol)
 uses(f, x) :- node(_, f, "identifier", _, _), text(f, x), defined(x).

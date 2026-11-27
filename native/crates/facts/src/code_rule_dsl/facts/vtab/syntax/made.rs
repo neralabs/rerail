@@ -93,10 +93,15 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
         k += 1;
     }
     assert_eq!(k, n, "a key for every document");
+    // The codes' directory, the binary's. With no process device the join programs run on the host, which reads every
+    // home where it lies: its device address its host address (`ViewsInPlace::read_on_host`); with one, the device's
+    // wrap writes it (`Docs::codes_device`).
+    let codes = rerail_tape_format::codes_dir::bytes().as_ptr() as u64;
+    let codes_gpu = if crate::code_rule_dsl::tape::placed::device().is_none() { codes } else { 0 };
     // SAFETY: the cache's and the codes' homes, just allocated.
     unsafe {
         homes.add(HOMES * n).write(ViewHome::default());
-        homes.add(HOMES * n + 1).write(ViewHome { host: rerail_tape_format::codes_dir::bytes().as_ptr() as u64, gpu: 0 });
+        homes.add(HOMES * n + 1).write(ViewHome { host: codes, gpu: codes_gpu });
     }
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.

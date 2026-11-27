@@ -8,7 +8,7 @@
 //! The views no CLIF reads yet (`tape`, `ast_depth`, `node_order`, `next_sibling`, `rr_report_location`) are read here
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
-use crate::reads::{NONE, f16, f16z::Z};
+use crate::reads::{NONE, f16, f16z::slice::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
 use rerail_clif::view_reads::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
@@ -91,63 +91,22 @@ impl<'a> Tape<'a> {
         let after = self.end_of(i);
         if after < end { after } else { NONE }
     }
-    /// Its auxiliary index in its home (decision 0656), after its presence: the presence's bytes from its header
-    /// rounded up to 16 (`f16::presence::aux_at`), as `tape_place` finds it. `None` without a presence, or where the
-    /// bytes there are no index.
-    fn aux(&self) -> Option<crate::aux_index::AuxIndex<'a>> {
-        let (t, v) = match *self {
-            Tape::F16(t, v) => (t, v),
-            Tape::F16Z(z) => (z.t, z.v),
-        };
-        if v.presence == 0 {
-            return None;
-        }
-        let at = v.presence as usize;
-        let head = t.get(at..at + crate::f16::presence::HEAD)?;
-        let w = |k: usize| u32::from_le_bytes([head[4 * k], head[4 * k + 1], head[4 * k + 2], head[4 * k + 3]]) as usize;
-        let len = crate::f16::presence::HEAD + 8 * (w(0) + w(1)) * w(2) + 4 * w(3);
-        crate::aux_index::AuxIndex::read(t.get(crate::f16::presence::aux_at(at, at + len)..)?).ok()
-    }
-    /// Named node `node`'s place among its parent's named children (`tape_place`, `aux_index::place`): 0 for the
-    /// first, and for the root; from the last every-K-th named sibling at or before it, the siblings stepped to it,
-    /// each named one counted. `NONE` where the home holds no index.
+    /// Named node `node`'s place among its parent's named children (`tape_place`): `rerail_reads::tape::place`, the
+    /// one Rust read of it, over this tape's reads. `NONE` where the home holds no index.
     pub fn place(&self, node: u32) -> u32 {
-        use crate::aux_index::{K, NONE as NO_ENTRY};
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_at_or_before(p, node) {
-            (_, NO_ENTRY) => (0, p + 1),
-            (k, e) => (k * K, e),
-        };
-        while c < node {
-            i += u32::from(aux.named(self.number(c)));
-            c = self.end_of(c);
-        }
-        i
+        self.place_by(node, false)
     }
     /// Named node `node`'s place among its parent's named children that are no comment (`tape_place_past_comments`,
-    /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
-    /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
+    /// T's shape's places), as `place`.
     pub fn place_past_comments(&self, node: u32) -> u32 {
-        use crate::aux_index::K;
-        let Some(aux) = self.aux() else { return NONE };
-        let p = self.parent(node);
-        if p == NONE {
-            return 0;
-        }
-        let (mut i, mut c) = match aux.eighth_past_comments(p, node) {
-            None => (0, p + 1),
-            Some((k, e, q)) => (k * K - q, e),
+        self.place_by(node, true)
+    }
+    fn place_by(&self, node: u32, past_comments: bool) -> u32 {
+        let t = match *self {
+            Tape::F16(t, _) => t,
+            Tape::F16Z(z) => z.t,
         };
-        while c < node {
-            let code = self.number(c);
-            i += u32::from(aux.named(code) && !aux.comment(code));
-            c = self.end_of(c);
-        }
-        i
+        rerail_reads::tape::place(t, self.view(), node, past_comments, |x| self.parent(x), |x| self.number(x), |x| self.end_of(x))
     }
 }
 

@@ -17,10 +17,9 @@ use super::*;
 use crate::lanes as ln;
 use core::cell::{Cell, UnsafeCell};
 use core::mem::MaybeUninit;
-use rerail_simd::prelude::*;
 use rerail_simd::{LaneCount, SupportedLaneCount};
 
-/// The lanes a step: 8 (four NEON registers of 64-bit lanes).
+/// The lanes a step: 8 (four 128-bit registers of 64-bit lanes: NEON, SSE).
 pub(super) const LANES: usize = 8;
 
 /// Bindings a tile, candidates a chunk; `SLACK`: room past each for a last step's whole vector (`N` at most 64).
@@ -33,10 +32,11 @@ type U<const N: usize> = Simd<u64, N>;
 type R<const N: usize> = Simd<u32, N>;
 type W<const N: usize> = Mask<i64, N>;
 
-/// Whether stage `s` runs at lanes: a join, a semi-join or an anti-join of a relation in its block, probed by its keys
-/// through its index (or every row), with no view, text, aggregate or text test.
+/// Whether stage `s` runs at lanes: a join, a semi-join or an anti-join of a relation in its block or a view read in
+/// place, probed by its keys through its index (or every row), with no walk of the tape (`has`, a parent's children),
+/// text, aggregate or text test.
 pub(super) fn runs_at_lanes(s: &Stage) -> bool {
-    s.v_has == 0 && s.r_view == 0 && s.v_parent == 0 && s.mode <= 2 && s.nkeys <= 8 && s.nslots <= 16
+    s.v_has == 0 && s.v_parent == 0 && s.mode <= 2 && s.nkeys <= 8 && s.nslots <= 16
 }
 
 #[inline(always)]
@@ -124,8 +124,6 @@ struct Lanes<'a> {
     /// The relation's descriptor (`r + r_at`), its dead rows' (`r + r_dead`).
     d: *const u8,
     dead: *const u8,
-    /// The block its far base lies in (`far_block`).
-    far: *const u8,
 }
 
 /// Each lane's binding (`t`), its slots read once: a slot's values at its first use, one load where the lanes are `N`
@@ -174,23 +172,60 @@ where
     }
 }
 
-/// A step's rows, found once in their relation (`RowAt`), each column read once.
+/// A step's rows, found once (in their relation, `RowAt`, or each lane's in its view, `super::Row`), each column
+/// read once.
 struct Row<const N: usize>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    at: ln::RowAt<N>,
+    at: Found<N>,
     have: Cell<u32>,
     v: UnsafeCell<[MaybeUninit<I<N>>; 16]>,
+}
+
+/// Where a step's rows are found: a relation's rows, or a view's, each lane's row found in its document.
+enum Found<const N: usize>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    Rel(ln::RowAt<N>),
+    View([super::Row<'static>; N]),
+}
+
+impl<const N: usize> Found<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    #[inline(always)]
+    unsafe fn get(&self, c: u32) -> I<N> {
+        match self {
+            Found::Rel(at) => at.get(c).cast::<i64>(),
+            Found::View(rows) => Simd::from_array(core::array::from_fn(|j| rows[j].get(c))),
+        }
+    }
 }
 
 impl<const N: usize> Row<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
+    /// row repeats the one before's (consecutive candidates of one row) taking it.
     #[inline(always)]
-    unsafe fn new(d: *const u8, id: R<N>, far: *const u8, sealed: ln::Sealed) -> Self {
-        Row { at: ln::rel_at(d, id, far, sealed), have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
+    unsafe fn new(l: &Lanes, id: R<N>) -> Self {
+        let s = l.st.s;
+        let at = if s.r_view == 0 {
+            Found::Rel(ln::rel_at(l.d, id, l.st.rf))
+        } else {
+            let mut memo = NONE;
+            let first = vrow(s.r_view, s.v_dir, id[0], &mut memo);
+            let mut rows = [first; N];
+            for j in 1..N {
+                rows[j] = if id[j] == id[j - 1] { rows[j - 1] } else { vrow(s.r_view, s.v_dir, id[j], &mut memo) };
+            }
+            Found::View(rows)
+        };
+        Row { at, have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
     }
 
     /// Column `c` of each lane's row.
@@ -200,13 +235,13 @@ where
         // relation has.
         unsafe {
             if c >= 16 {
-                return self.at.get(c).cast::<i64>();
+                return self.at.get(c);
             }
             let v = &mut *self.v.get();
             if self.have.get() >> c & 1 != 0 {
                 return v[c as usize].assume_init();
             }
-            let x = self.at.get(c).cast::<i64>();
+            let x = self.at.get(c);
             v[c as usize].write(x);
             self.have.set(self.have.get() | 1 << c);
             x
@@ -286,7 +321,15 @@ impl Lanes<'_> {
             3 => each(i64::checked_div),
             4 => each(i64::checked_rem),
             5 => (x.simd_max(y), Mask::splat(true)),
-            _ => (x.simd_min(y), Mask::splat(true)),
+            6 => (x.simd_min(y), Mask::splat(true)),
+            // A node's preorder key (`ARITH_NODE_ORDER`): each lane's node read off its tape through the stage's
+            // node view; the lanes' rows are mostly one document's, found once and tried first for the next.
+            _ => {
+                let (xs, mut memo) = (x.to_array(), u32::MAX);
+                // SAFETY: the stage's node view, bound for it (`Batch::bind_node_texts`), held for the launch.
+                let r: [Option<i64>; N] = core::array::from_fn(|i| unsafe { super::node_order(self.st.s.v_dir, xs[i], &mut memo) });
+                (Simd::from_array(r.map(|v| v.unwrap_or(0))), Mask::from_array(r.map(|v| v.is_some())))
+            }
         }
     }
 
@@ -456,7 +499,7 @@ impl Lanes<'_> {
                     } else {
                         ln::rel_group_row(self.d, s.r_index, q)
                     };
-                    let row = Row::new(self.d, id, self.far, self.st.rd.col_sealed());
+                    let row = Row::new(self, id);
                     let mut m = valid.cast::<i64>();
                     if s.r_dead != 0 {
                         m &= !ln::rel_dead(self.dead, id).cast::<i64>();
@@ -617,7 +660,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far as *const u8 };
+    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize) };
     let v = if s.mode == 0 { v } else { core::ptr::null_mut() };
     let mut v = Count::<N> {
         counts,
@@ -757,7 +800,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far as *const u8 };
+    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize) };
     let o0 = *offsets;
     let end = (*offsets.add(t1 as usize)).wrapping_sub(o0).min(s.cap_out);
     let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(o0), end };
@@ -837,7 +880,7 @@ impl Lanes<'_> {
                 } else {
                     ln::rel_group_row(self.d, s.r_index, q)
                 };
-                v.put(self, &b, &Row::new(self.d, id, self.far, self.st.rd.col_sealed()), valid.cast::<i64>());
+                v.put(self, &b, &Row::new(self, id), valid.cast::<i64>());
                 k += N as u32;
             }
         }

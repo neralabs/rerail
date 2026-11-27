@@ -7,7 +7,6 @@
 
 use super::*;
 use crate::lanes as ln;
-use rerail_simd::prelude::*;
 use rerail_simd::{LaneCount, SupportedLaneCount};
 
 type I<const N: usize> = Simd<i64, N>;
@@ -82,7 +81,7 @@ where
     }
 
     /// The lanes whose row the relation holds (`dedup_held`): each lane's walk of the map from its hash's place.
-    unsafe fn held(&self, d: &Dedup, rel: *const u8, hb: *const u8, sealed: ln::Sealed, on: W<N>) -> W<N> {
+    unsafe fn held(&self, d: &Dedup, rel: *const u8, hb: *const u8, on: W<N>) -> W<N> {
         let m = hb.add(d.h_at as usize) as *const u32;
         let rd = rel.wrapping_add(d.r_at as usize);
         let (mut at, mut go, mut held) = (self.h & sr(d.hmask), on, Mask::splat(false));
@@ -96,8 +95,8 @@ where
             let Some(f) = go.first_set() else { break };
             // A lane done reads the first walking lane's row: every read is of a row there is.
             let y = go.select(y, sr(y[f]));
-            // The set's own relation, one part in its block: no far base.
-            let row = ln::rel_at(rd, y, rd, sealed);
+            // The head relation in its own block: no far base.
+            let row = ln::rel_at(rd, y, rel);
             let mut same = go;
             for c in 0..d.ncols.min(16) as usize {
                 same &= row.get(c as u32).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
@@ -113,7 +112,7 @@ where
 /// Rows `x0..x1` of a dedup (all below its rows): each kept (1) where its place (its claim's, past the places) holds
 /// it, the least of its equal rows, and, less a relation's (`Dedup::seen`), the relation holds no equal row.
 #[allow(clippy::too_many_arguments)]
-pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, sealed: ln::Sealed, x0: u32, x1: u32)
+pub(super) unsafe fn dedup_mark_lanes<const N: usize>(t: *const i64, p: *const u32, counts: *mut u32, rel: *const u8, hb: *const u8, d: &Dedup, x0: u32, x1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -129,7 +128,7 @@ where
         let y = ln::gather32_ix(p.cast::<u8>(), on.select(at, sr(0)), 2);
         let mut keep = on & y.simd_eq(me);
         if d.seen != 0 && keep.any() {
-            keep &= !Rows::<N>::of(d, t, x, n).held(d, rel, hb, sealed, keep);
+            keep &= !Rows::<N>::of(d, t, x, n).held(d, rel, hb, keep);
         }
         let c: [u32; N] = keep.select(sr(1), sr(0)).to_array();
         core::ptr::copy_nonoverlapping(c.as_ptr(), counts.add(x as usize), n as usize);
@@ -196,9 +195,71 @@ where
     }
 }
 
+/// Each lane's key's tag (`mark_tag`): its hash's high 32 bits but `MARK_SAME`'s.
+#[inline(always)]
+fn tag_lanes<const N: usize>(h: U<N>) -> R<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    (h >> U::splat(32)).cast::<u32>() & sr(!MARK_SAME)
+}
+
+/// `ix_key`'s of a view's rows `t0..t1` at `N` lanes: each document found once and its rows walked in order
+/// (`reads::Rows`: each one's tape node the next of its numbering's, not selected again), `N` rows' keys hashed an
+/// operation. A placed view's rows past its directory's (its tail relation's) are `ix_hash`'s.
+pub(super) unsafe fn ix_keys_view_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    let (mut kind, mut d, mut lim) = (p.kind as u32, p.dir, t1);
+    if kind & VIEW_PLACED != 0 {
+        let pd = d as *const PlacedDir;
+        (kind, d, lim) = (kind & !VIEW_PLACED, (*pd).dir, t1.min((*pd).rows));
+    }
+    let (k, nk) = (kind - 1, (p.ncols & !IX_LIVE).min(8) as usize);
+    let rows = view_rows(d);
+    let (mut t, mut memo) = (t0, NONE);
+    while t < lim {
+        let a = ViewDir::doc_of_row(d, k, t, memo);
+        memo = a;
+        let e = rows.add(a as usize);
+        let first = (*e).rows[k as usize];
+        let stop = view_rows_end(d, e, k as usize, lim).min(lim);
+        if stop <= t {
+            ix_key_tag(bb, bf, out, tags, p, kb, eb, t);
+            t += 1;
+            continue;
+        }
+        let mut w = doc(d, e).rows_from(k.min(super::reads::LAST_VIEW), t - first);
+        while t < stop {
+            let n = (stop - t).min(N as u32);
+            // Each key column's values of the lanes' rows (0 past them, their keys not written).
+            let mut v = [[0u64; N]; 8];
+            for j in 0..n as usize {
+                let at = w.next();
+                for (c, &col) in v[..nk].iter_mut().zip(&p.cols) {
+                    c[j] = at.col(col);
+                }
+            }
+            let mut h = U::<N>::splat(KEY_SEED);
+            for c in &v[..nk] {
+                h = ln::key_mix(h, U::from_array(*c));
+            }
+            let keys: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
+            core::ptr::copy_nonoverlapping(keys.as_ptr(), out.add((eb + t) as usize), n as usize);
+            let tg: [u32; N] = tag_lanes(h).to_array();
+            core::ptr::copy_nonoverlapping(tg.as_ptr(), tags.add((eb + t) as usize), n as usize);
+            t += n;
+        }
+    }
+    for t in lim.max(t0)..t1 {
+        ix_key_tag(bb, bf, out, tags, p, kb, eb, t);
+    }
+}
+
 /// Rows `t0..t1` of an index's relation (rows in its block, no view): each one's key hash, masked, plus `kb`, at
 /// `eb + t` of `out`, as `ix_key`'s.
-pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, far: *const u8, sealed: ln::Sealed, out: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
+pub(super) unsafe fn ix_keys_lanes<const N: usize>(bb: *const u8, bf: *const u8, out: *mut u32, tags: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -208,13 +269,15 @@ where
         let n = (t1 - t).min(N as u32);
         // Lanes past the rows read the first one's: every read is of a row there is.
         let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + iota::<N>(), sr(p.from.wrapping_add(t)));
-        let at = ln::rel_at(d, row, far, sealed);
+        let at = ln::rel_at(d, row, bf);
         let mut h = U::splat(KEY_SEED);
         for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
             h = ln::key_mix(h, at.get(p.cols[i]));
         }
         let k: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
         core::ptr::copy_nonoverlapping(k.as_ptr(), out.add((eb + t) as usize), n as usize);
+        let tg: [u32; N] = tag_lanes(h).to_array();
+        core::ptr::copy_nonoverlapping(tg.as_ptr(), tags.add((eb + t) as usize), n as usize);
         t += n;
     }
 }

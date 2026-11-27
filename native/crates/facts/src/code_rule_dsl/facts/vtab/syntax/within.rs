@@ -576,6 +576,69 @@ impl Within {
         &self.solved().rows
     }
 
+    /// Its solve and those of `more` on the host, in one relation as the device writes it (`solved_with`): its rows,
+    /// then each one's of `more`, each batch's written as `solved_from` writes it (its documents' key runs, per node
+    /// row its nearest member ancestor, or for `inside` the chain of them).
+    fn solved_on_host_with(&self, more: &[&Within]) -> crate::code_rule_dsl::facts::rows::Part {
+        use crate::code_rule_dsl::facts::nearest as file_local;
+        use crate::code_rule_dsl::facts::rows::{Life, Part};
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
+        let all: Vec<&Within> = std::iter::once(self).chain(more.iter().copied()).collect();
+        let found: Vec<Vector<u32>> = all.iter().map(|w| w.found()).collect();
+        let chain = |found: &[u32], v: usize, each: &mut dyn FnMut(u32)| {
+            let mut a = found[v];
+            while a != file_local::NONE {
+                each(a);
+                a = if inside { found[a as usize] } else { file_local::NONE };
+            }
+        };
+        // Per batch, per node row its first row in the relation (past the batches' before), and the runs: one a
+        // document that has rows.
+        let (mut starts, mut len, mut runs) = (Vec::with_capacity(all.len()), 0u32, 0usize);
+        for (w, f) in all.iter().zip(&found) {
+            let mut start = Vec::with_capacity(f.len() + 1);
+            for v in 0..f.len() {
+                start.push(len);
+                chain(f, v, &mut |_| len += 1);
+            }
+            start.push(len);
+            let offsets = w.batch.nodes();
+            runs += (0..w.batch.docs.len()).filter(|&d| start[offsets.at(d + 1)] > start[offsets.at(d)]).count();
+            starts.push(start);
+        }
+        let (rows, keys) = Part::over_key_runs(Life::Run, 2, len as usize, runs);
+        let mut k = 0;
+        for (w, start) in all.iter().zip(&starts) {
+            let offsets = w.batch.nodes();
+            for (doc, key) in w.batch.docs.keys().enumerate() {
+                let first = start[offsets.at(doc)];
+                if start[offsets.at(doc + 1)] > first {
+                    keys.put(k, first, key);
+                    k += 1;
+                }
+            }
+        }
+        let mut at = 0u32;
+        for (w, f) in all.iter().zip(&found) {
+            for v in 0..f.len() {
+                let id = w.batch.id(v, &mut memo);
+                chain(f, v, &mut |a| {
+                    // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
+                    unsafe {
+                        rows.put(at, 0, id);
+                        rows.put(at, 1, w.batch.id(a as usize, &mut memo));
+                    }
+                    at += 1;
+                });
+            }
+        }
+        // SAFETY: rows `0..len` are written.
+        unsafe { rows.written(len) };
+        rows
+    }
+
     /// The solve made on the device off the batch's tapes (decision 0353 step 4), when the binding is the device's
     /// and one is registered: `None` sends it to the host's.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -590,6 +653,28 @@ impl Within {
         self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) })
     }
 
+    /// The walk of `has_walk` over `views` (the batch's views, or a layered source's over the batch and its values:
+    /// `values::Layered`), of `nodes` node rows, `keep` keeping them: for containment and every kind-set axis.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub(super) fn walk_over(&self, views: &super::device_chunk::ViewsInPlace, nodes: usize, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        use crate::code_rule_dsl::facts::vtab::HasWalk;
+        let axis = match self.mode {
+            Mode::Axis(Axis::Has) => HasWalk::HAS,
+            Mode::Axis(Axis::Inside) => HasWalk::INSIDE,
+            Mode::Axis(Axis::Nearest) => HasWalk::NEAREST,
+            Mode::Tree => HasWalk::EVERY,
+            Mode::Span => return None,
+        };
+        // The node view as the join programs here read it: at the host's addresses where they run on the host.
+        let view = views.read_of(super::device_chunk::VIEW_NODE, keep)?;
+        Some(HasWalk { nodes, view, kinds: Arc::clone(&self.kinds), axis })
+    }
+
+    /// Whether `other`'s walk is this one's (the same mode and set), so one walk reads both batches' nodes.
+    pub(super) fn walks_as(&self, other: &Within) -> bool {
+        self.mode == other.mode && self.kinds == other.kinds
+    }
+
     /// Its solve and those of the tape values `more` (decision 0431 §8), made on the device in one relation over
     /// `views`, the layered source's directory of the batch and its values (`values::Layered`, kept by `keep`): its
     /// rows, then each value's, as the device binds a layered source's.
@@ -597,6 +682,12 @@ impl Within {
     pub(super) fn solved_with(&self, more: &[&Within], views: &super::device_chunk::ViewsInPlace, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<crate::code_rule_dsl::facts::rows::Part> {
         if !self.solvable() || more.iter().any(|w| w.mode != self.mode) {
             return None;
+        }
+        // Solved on the host where the device does not solve it (the join programs run on the host): the rows are
+        // the same relation's, in its block, so its readers read it there and keep its indexes, not each a copy of
+        // its rows (1 GB of uploads a run over 50 files, each stratum's copy indexed again; decision 0707).
+        if !self.on_device() {
+            return Some(self.solved_on_host_with(more));
         }
         self.solved_over(views, keep).map(|c| c.rows)
     }
@@ -1066,16 +1157,13 @@ impl Source for Within {
     }
     /// `has`, read by the device off the tape (decision 0353 step 5): where the batch's views are read in place, its
     /// `node` view, which a stage's walk reads a node's kind, ancestors and subtree through, and the set's atoms.
+    /// Containment (`within`, `Mode::Tree`) is `has` of every kind, and `inside` and `nearest` the same walks with
+    /// the set tested elsewhere: by `n` its numbered ancestors (nearest's first member), by `a` its subtree (nearest's
+    /// less what lies below a nearer member), no pair made.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
-        use super::device_chunk::{VIEW_NODE, read_kind, views_in_place};
-        if self.mode != Mode::Axis(Axis::Has) {
-            return None;
-        }
-        let v = views_in_place(&self.batch)?;
-        let mut view = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: read_kind(VIEW_NODE), buffers: v.buffers.clone(), caches: v.caches.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
-        view.failed = view.cache_failed();
-        Some(crate::code_rule_dsl::facts::vtab::HasWalk { nodes: self.batch.nodes().total(), view, kinds: Arc::clone(&self.kinds) })
+        let v = super::device_chunk::views_in_place(&self.batch)?;
+        self.walk_over(v, self.batch.nodes().total(), Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)
     }
     /// A kind-set axis or containment read whole (the device's keyed read, decision 0277): the batch's solve
     /// (decision 0143), one pass over the nodes, chosen from here on, so its `n` lookups read the same rows. Spans
