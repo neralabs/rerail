@@ -113,7 +113,8 @@ export async function follow(path, onMessage, signal) {
 /**
  * What a write that did not answer OK throws: an Error "<method> <path> answered <status>: <body>", or for a change the
  * daemon made but could not confirm on the disk (`503 not-on-disk`), a `NotOnDisk` Error in the daemon's own words,
- * which say the change was made: the page must not tell a person it failed.
+ * which say the change was made: the page must not tell a person it failed. A change another process's write lock kept
+ * from being made (`503 database-busy`) throws an Error in the daemon's words, which say why and when to try again.
  */
 function writeRefused(method, path, status, text) {
   let body = null;
@@ -121,6 +122,7 @@ function writeRefused(method, path, status, text) {
     body = JSON.parse(text);
   } catch {}
   if (body?.error === "not-on-disk" && typeof body.message === "string") return Object.assign(new Error(body.message), { name: "NotOnDisk" });
+  if (body?.error === "database-busy" && typeof body.message === "string") return new Error(body.message);
   return new Error(`${method} ${path} answered ${status}: ${text.slice(0, 200)}`);
 }
 

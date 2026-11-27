@@ -2,12 +2,14 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, s
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, parse, resolve, sep } from "node:path";
+import Database from "better-sqlite3";
 import { and, eq, ne } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { openRecordWriter, type RecordWriter } from "../../../src/engine/storage/record-writes.js";
 import { checkouts, mergeAssistState, repositories } from "../../../src/engine/storage/schema.js";
 import { withinCheckout } from "../../../src/engine/catalog/checkout-control.js";
-import type { CheckoutRecord, RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
+import type { CheckoutContext, CheckoutRecord, RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
 import {
   adoptRemote,
   checkoutStatus,
@@ -1192,4 +1194,136 @@ describe("the repository registry", () => {
   });
 });
 
+describe("a checkout's record while another process holds the database's write lock", () => {
+  const closers: Array<() => void> = [];
+  afterEach(() => {
+    for (const close of closers.splice(0).reverse()) close();
+  });
 
+  /** The database's record writer, as a runtime of the daemon holds it. */
+  function recordWriter(path: string): RecordWriter {
+    const records = openRecordWriter(path);
+    closers.push(() => records.close());
+    return records;
+  }
+
+  /** A connection of this process holding the write lock of the database at `path`, as `rerail scrub` holds it for seconds. */
+  function lockHeld(path: string): Database.Database {
+    const holder = new Database(path);
+    closers.push(() => holder.close());
+    holder.exec("BEGIN IMMEDIATE");
+    return holder;
+  }
+
+  function seenAt(database: RerailDatabase, checkoutPath: string): number | undefined {
+    return database.select({ at: checkouts.lastSeenAt }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.at;
+  }
+
+  /** Milliseconds `run` kept this thread. */
+  function msOf(run: () => void): number {
+    const started = process.hrtime.bigint();
+    run();
+    return Number(process.hrtime.bigint() - started) / 1e6;
+  }
+
+  // A session's start records its checkout. Before, that write took the lock in an immediate transaction on the daemon's
+  // thread at every start, waited the 5 s busy timeout and failed, so the session opened without its start note.
+  it("sees a recorded checkout again at once, and moves its seen time once the lock is given back", async () => {
+    const root = await temporary("rerail-registry-seen-held-");
+    const path = join(root, "rerail.sqlite");
+    const database = open(path);
+    const main = gitRepository(join(root, "main"));
+    const recorded = recordCheckout(database, main, 1_000);
+    const records = recordWriter(path);
+    const holder = lockHeld(path);
+
+    let seen: CheckoutContext | undefined;
+    expect(msOf(() => { seen = recordCheckout(database, main, 2_000, records); })).toBeLessThan(1_000);
+    expect(seen).toMatchObject({ checkoutPath: main, repositoryKey: recorded.repositoryKey, cloneId: recorded.cloneId });
+    expect(seenAt(database, main)).toBe(1_000);
+
+    holder.exec("COMMIT");
+    await records.settled();
+    expect(seenAt(database, main)).toBe(2_000);
+  });
+
+  // A checkout with no row under its clone id gets its repository from the write itself, so a session's first start
+  // there still takes the lock, as before: beside a holder it waits out the busy timeout and fails.
+  it("takes the lock for a checkout seen for the first time, moved, or cloned again at its path, as before", async () => {
+    const root = await temporary("rerail-registry-first-held-");
+    const path = join(root, "rerail.sqlite");
+    const database = open(path);
+    const [fresh, moved, recloned] = ["fresh", "moved", "recloned"].map(name => gitRepository(join(root, name)));
+    const movedKey = recordCheckout(database, moved!, 1_000).repositoryKey;
+    recordCheckout(database, recloned!, 1_000);
+    renameSync(moved!, `${moved!}-away`);
+    removeFolderSync(recloned!);
+    gitRepository(recloned!);
+    const records = recordWriter(path);
+    // The catalog's connection fails at once where it would wait out its 5 s for the lock.
+    database.$client.pragma("busy_timeout = 0");
+    const holder = lockHeld(path);
+
+    for (const folder of [fresh!, `${moved!}-away`, recloned!]) {
+      expect(() => recordCheckout(database, folder, 2_000, records), folder).toThrow("database is locked");
+    }
+    holder.exec("COMMIT");
+    await records.settled();
+    // Nothing was kept to be made later: the rows are as they were.
+    expect(database.select({ path: checkouts.checkoutPath, seen: checkouts.lastSeenAt }).from(checkouts).orderBy(checkouts.checkoutPath).all())
+      .toEqual([moved!, recloned!].sort().map(checkoutPath => ({ path: checkoutPath, seen: 1_000 })));
+
+    const after = [fresh!, `${moved!}-away`, recloned!].map(folder => recordCheckout(database, folder, 3_000, records));
+    expect(after.map(checkout => seenAt(database, checkout.checkoutPath))).toEqual([3_000, 3_000, 3_000]);
+    expect(after[1]!.repositoryKey).toBe(movedKey);
+  });
+
+  // The record of a checkout seen again is the transaction's own statements, made later: another process that forgot
+  // the checkout meanwhile, as a removal of its repository does, finds it recorded again, as that transaction would.
+  it("records a checkout again that another process forgot while its seen time waited", async () => {
+    const root = await temporary("rerail-registry-forgotten-held-");
+    const path = join(root, "rerail.sqlite");
+    const database = open(path);
+    const main = gitRepository(join(root, "main"));
+    const recorded = recordCheckout(database, main, 1_000);
+    const records = recordWriter(path);
+    const holder = lockHeld(path);
+
+    recordCheckout(database, main, 2_000, records);
+    holder.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(main);
+    holder.exec("COMMIT");
+    await records.settled();
+
+    expect(listRepositories(database).flatMap(repository => repository.checkouts))
+      .toMatchObject([{ checkoutPath: main, repositoryKey: recorded.repositoryKey, cloneId: recorded.cloneId, lastSeenAt: 2_000 }]);
+  });
+
+  // The daemon's prune runs in the process that saw the checkout, so its forget waits for the writes waiting there:
+  // made first, it would take the seen time for one before the pass began and forget a worktree made again at the path.
+  it("keeps a removed checkout seen while the prune looked, whose seen time waited for the lock, with its settings", async () => {
+    const root = await temporary("rerail-registry-prune-held-");
+    const path = join(root, "rerail.sqlite");
+    const database = open(path);
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main, 1_000);
+    recordCheckout(database, worktree, 1_000);
+    checkoutSetting(database, worktree);
+    const records = recordWriter(path);
+    const holder = lockHeld(path);
+    recordCheckout(database, worktree, 3_000, records);
+    git(main, "worktree", "remove", worktree);
+
+    const unanswered: { looking: Promise<unknown> | undefined } = { looking: undefined };
+    const pass = pruneCheckouts(database, { now: 2_000, unanswered });
+    // The pass found the worktree gone. Given back now, the lock is free before the writes waiting for it are made.
+    await unanswered.looking;
+    holder.exec("COMMIT");
+
+    expect(await pass).toEqual([]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.lastSeenAt]))
+      .toEqual([[worktree, 3_000], [main, 1_000]]);
+    expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: worktree }]);
+  });
+});

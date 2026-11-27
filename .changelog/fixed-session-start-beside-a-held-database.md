@@ -1,0 +1,1 @@
+A coding session that starts in a folder Rerail already knows while another program holds its database, as `rerail scrub` or `rerail reset` does for seconds, opens at once with its session-start note. Before, its start waited 5 s and then went on without the note, and the hooks of every other session waited with it.

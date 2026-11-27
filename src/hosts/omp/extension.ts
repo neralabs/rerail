@@ -32,7 +32,8 @@ import { registerConversationRulesCommand } from "./command.js";
 import { nodeExecutable } from "../../runtime/daemon-control.js";
 import type { NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
 import { registerOmpSemanticTools } from "./semantic-tools.js";
-import { countDroppedEvent, createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
+import { createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
+import { AttachRetry } from "../../harness/attach-retry.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import { contained } from "../../harness/contained-hook.js";
 import { guardCompaction } from "../../harness/compaction-guard.js";
@@ -43,8 +44,6 @@ import { SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, type SessionNoteRules } fr
 import { registerConversationRulesTool } from "./tool.js";
 import { conversationRulesEnabled, semanticToolsEnabled } from "../../engine/experimental-features.js";
 import { registerOmpSteerRenderer } from "./steer-renderer.js";
-import { EVENTS_DROPPED_ENTRY_TYPE, type DroppedEvents } from "../../runtime/session-state.js";
-
 export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE } from "../../runtime/session-state.js";
 
 
@@ -118,13 +117,6 @@ function messageText(message: AgentMessage): string {
   const content = message.content;
   if (typeof content === "string") return content;
   return content.flatMap((item) => (item.type === "text" ? [item.text] : [])).join("\n");
-}
-
-/** Attaching starts or resolves a daemon, so retries begin at a second and settle at half a minute. */
-const ATTACH_RETRY_MS = 1_000;
-const ATTACH_RETRY_CEILING_MS = 30_000;
-function attachBackoffMs(failures: number): number {
-  return Math.min(ATTACH_RETRY_MS * 2 ** Math.max(failures - 1, 0), ATTACH_RETRY_CEILING_MS);
 }
 
 interface InitializeOptions {
@@ -309,55 +301,18 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return pending;
     };
 
-    // A session that failed to attach (daemon down or wedged at startup) surfaces that failure to
-    // the host exactly once, then keeps trying quietly in the background until Rerail is back.
-    // Each host-driven attach opens a generation; a retry whose build was in flight when a newer
-    // session (or shutdown) arrived belongs to a stale generation and must not reschedule itself.
-    let attachTimer: ReturnType<typeof setTimeout> | undefined;
-    let attachGeneration = 0;
-    let attachFailures = 0;
-    /** The context whose attach failed and is being retried; undefined once one attaches. */
-    let failingAttach: ExtensionContext | undefined;
-    /** What arrived for `failingAttach`'s session meanwhile: the attached client records it as a gap. */
-    let attachDrops: { sessionId: string; gap: DroppedEvents } | undefined;
-    const attachAs = async (ctx: ExtensionContext, generation: number): Promise<void> => {
-      try {
-        await initialize(ctx);
-      } catch (error) {
-        if (generation !== attachGeneration) throw error;
-        attachFailures += 1;
-        failingAttach = ctx;
-        // Another session's drops keep their marker in that session, which got their final count before the host left
-        // it, but the footer counts only this one's.
-        if (attachDrops !== undefined && attachDrops.sessionId !== ctx.sessionManager.getSessionId()) {
-          attachDrops = undefined;
-          presentation.dropped(0);
-        }
-        // With no runtime left, the footer follows the failing session, so it can say what is being dropped.
-        if (remote === undefined) presentation.start(ctx);
-        attachTimer = setTimeout(() => { attachAs(ctx, generation).catch(() => undefined); }, attachBackoffMs(attachFailures));
-        attachTimer.unref();
-        throw error;
-      }
-      if (generation !== attachGeneration) return;
-      if (attachFailures > 0) process.stderr.write(`Rerail attached after ${attachFailures} failed attempt(s)\n`);
-      attachFailures = 0;
-      failingAttach = undefined;
-      const dropped = attachDrops;
-      attachDrops = undefined;
-      if (dropped === undefined) return;
-      presentation.dropped(0);
-      // Events of a session that never attached have nowhere to be recorded but their marker, which got its final count
-      // before the host left that session.
-      if (remote === undefined || activeSession?.sessionId !== dropped.sessionId) return;
-      pi.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...dropped.gap, recovered: true });
-      remote.recordDropped([dropped.gap]);
-    };
+    const attachRetry = new AttachRetry<ExtensionContext>({
+      initialize: (ctx, rebuild) => initialize(ctx, { rebuild }),
+      sessionId: ctx => ctx.sessionManager.getSessionId(),
+      appendEntry: (customType, data) => pi.appendEntry(customType, data),
+      reportDropped: count => presentation.dropped(count),
+      // With no runtime left, the footer follows the failing session, so it can say what is being dropped.
+      failed: ctx => { if (remote === undefined) presentation.start(ctx); },
+      recorder: sessionId => remote !== undefined && activeSession?.sessionId === sessionId ? remote : undefined,
+    });
     const attach = (ctx: ExtensionContext): Promise<void> => {
       liveSessionId = ctx.sessionManager.getSessionId();
-      clearTimeout(attachTimer);
-      attachFailures = 0;
-      return attachAs(ctx, ++attachGeneration);
+      return attachRetry.attach(ctx);
     };
 
     /**
@@ -372,36 +327,34 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       return activeSession;
     };
 
-    /**
-     * Counts the event `build` makes for the session failing to attach, if there is one; the attached client records it.
-     * `build` stays pure: nothing counted here changes what a later event of the same message carries.
-     */
-    const countAttachDrop = (build: (sessionId: string) => AdapterEvent): boolean => {
-      if (failingAttach === undefined) return false;
-      const sessionId = failingAttach.sessionManager.getSessionId();
-      const event = build(sessionId);
-      const previous = attachDrops?.sessionId === sessionId ? attachDrops.gap : undefined;
-      const gap = countDroppedEvent(previous, event.kind, event.eventId);
-      attachDrops = { sessionId, gap };
-      if (previous === undefined) pi.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...gap, recovered: false });
-      presentation.dropped(gap.count);
-      return true;
-    };
-
-    /**
-     * The gap of a session that never attached is recorded only by its host-session marker, so before the host leaves that
-     * session the marker gets the final count. The host appends to whichever session is current, so this runs while it is
-     * still `ctx`'s; a switch that is then cancelled keeps counting, and a later marker carries the higher count.
-     */
-    const markAttachDropsFinal = (ctx: ExtensionContext): void => {
-      if (attachDrops === undefined || attachDrops.sessionId !== ctx.sessionManager.getSessionId()) return;
-      pi.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...attachDrops.gap, recovered: false });
-    };
-
-    /** The attached runtime's open gap marker gets its count so far while the host session is still current (see markAttachDropsFinal). */
+    /** The attached runtime's open gap marker gets its count so far while the host session is still current (see `AttachRetry.markFinal`). */
     const markGapFinal = (ctx: ExtensionContext): void => {
-      markAttachDropsFinal(ctx);
+      attachRetry.markFinal(ctx);
       if (activeSession?.sessionId === ctx.sessionManager.getSessionId()) remote?.markGapFinal();
+    };
+
+    /** The event of `ingestEvent` whose wait for its session failed, with no newer attach queued behind that one. */
+    const ingestAfterFailedAttach = async (build: (sessionId: string) => AdapterEvent, outcome?: (delivered: boolean) => void): Promise<void> => {
+      if (attachRetry.failing() !== undefined) {
+        if (attachRetry.countDrop(build)) outcome?.(false);
+      } else if (remote !== undefined && activeSession !== undefined && activeSession.sessionId === liveSessionId) {
+        // The failure of the rebuild is the event's outcome; a delivery failure of its own does not replace it.
+        await ingestDelivered(build(activeSession.sessionId), outcome).catch(() => undefined);
+      }
+    };
+    /** The event of `ingestEvent` once its wait resolved to `session`. */
+    const ingestInto = async (
+      session: AdapterSession | undefined,
+      build: (sessionId: string) => AdapterEvent,
+      outcome?: (delivered: boolean) => void,
+    ): Promise<AdapterSession | undefined> => {
+      // A runtime that outlived a failed switch belongs to the session OMP left: what happens in the one it is in is not its.
+      if (session !== undefined && (attachRetry.failing() === undefined || session.sessionId === liveSessionId)) {
+        await ingestDelivered(build(session.sessionId), outcome);
+        return session;
+      }
+      if (attachRetry.countDrop(build)) outcome?.(false);
+      return undefined;
     };
 
     /**
@@ -428,23 +381,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           break;
         } catch (error) {
           if (attaching !== undefined) continue;
-          if (failingAttach !== undefined) {
-            if (countAttachDrop(build)) outcome?.(false);
-          } else if (remote !== undefined && activeSession !== undefined && activeSession.sessionId === liveSessionId) {
-            // The failure of the rebuild is the event's outcome; a delivery failure of its own does not replace it.
-            await ingestDelivered(build(activeSession.sessionId), outcome).catch(() => undefined);
-          }
+          await ingestAfterFailedAttach(build, outcome);
           if (quietAttachFailure) return undefined;
           throw error;
         }
       }
-      // A runtime that outlived a failed switch belongs to the session OMP left: what happens in the one it is in is not its.
-      if (session !== undefined && (failingAttach === undefined || session.sessionId === liveSessionId)) {
-        await ingestDelivered(build(session.sessionId), outcome);
-        return session;
-      }
-      if (countAttachDrop(build)) outcome?.(false);
-      return undefined;
+      return ingestInto(session, build, outcome);
     };
 
     const initializeNow = async (ctx: ExtensionContext, options_: InitializeOptions = {}): Promise<void> => {
@@ -535,12 +477,12 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           : resolve(currentContext?.cwd ?? process.cwd(), options.databasePath),
         // Uninstall retires this session's runtime before removing Rerail; reattach rebuilds it if the removal fails.
         detach: async () => {
+          // A detached OMP stays detached: a retry armed by a failed attach would start Rerail again while it is removed.
+          attachRetry.cancel();
           presentation.stop();
           await closeRuntime();
         },
-        reattach: async () => {
-          if (currentContext !== undefined) await initialize(currentContext, { rebuild: true });
-        },
+        reattach: () => attachRetry.resume(currentContext),
       });
     }
     pi.on("session_start", (_event, ctx) => attach(ctx));
@@ -714,12 +656,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     ])));
 
     pi.on("session_shutdown", async (_event, ctx) => {
-      clearTimeout(attachTimer);
-      attachGeneration += 1;
-      failingAttach = undefined;
-      markAttachDropsFinal(ctx);
-      attachDrops = undefined;
-      presentation.dropped(0);
+      attachRetry.stop(ctx);
       presentation.stop();
       try {
         await closeRuntime();
