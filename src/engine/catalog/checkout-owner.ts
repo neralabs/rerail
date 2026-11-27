@@ -7,6 +7,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { declaredSubmodulePaths } from "./checkouts/declared-submodules.js";
+import { FolderPlaces } from "./checkouts/folder-places.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
 export interface CheckoutOwner {
@@ -84,6 +85,18 @@ function lstatStamp(path: string): string {
   }
 }
 
+/**
+ * What a lookup gets for a folder whose Git gave no answer (the location's `unanswered`): no checkout
+ * there or around it stands in for it, and nothing is kept from it, so the next lookup asks Git again.
+ */
+const UNANSWERED = Symbol("unanswered");
+type Unanswered = typeof UNANSWERED;
+
+/** `owner` as a caller outside the map gets it: no owner where Git gave no answer ({@link UNANSWERED}). */
+function answered(owner: CheckoutOwner | Unanswered | undefined): CheckoutOwner | undefined {
+  return owner === UNANSWERED ? undefined : owner;
+}
+
 function within(root: string, candidate: string): boolean {
   const path = relative(root, candidate);
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
@@ -97,6 +110,8 @@ function within(root: string, candidate: string): boolean {
  */
 export class CheckoutOwners {
   readonly #recordedVersion: (() => string) | undefined;
+  /** Where each folder is on disk (`FolderPlaces`): a watched worktree's top folder is not looked up again. */
+  readonly #places: FolderPlaces;
   #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
@@ -115,14 +130,18 @@ export class CheckoutOwners {
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
 
-  /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
-  constructor(recordedVersion?: () => string) {
+  /**
+   * `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`).
+   * `places`: the daemon's, which every session shares; without it every path is looked up on disk.
+   */
+  constructor(recordedVersion?: () => string, places: FolderPlaces = new FolderPlaces()) {
     this.#recordedVersion = recordedVersion;
+    this.#places = places;
   }
 
   /** A recorded checkout outside Git owns the files below it that no Git checkout owns. */
   addPlainRoot(root: string): void {
-    this.#plainRoots.add(physicalPath(root));
+    this.#plainRoots.add(this.#places.physical(root));
   }
 
   /**
@@ -151,7 +170,7 @@ export class CheckoutOwners {
   lookAgainAt(path: string): boolean {
     this.#revalidate();
     const lexical = resolve(path);
-    const real = physicalPath(lexical);
+    const real = this.#places.physical(lexical);
     const outgrown = (real === lexical ? [lexical] : [lexical, real])
       .map(start => this.#outgrownAbove(start))
       .filter((folder): folder is string => folder !== undefined);
@@ -169,11 +188,32 @@ export class CheckoutOwners {
    * differ (a symlink into another checkout) or when the real path leaves the owner (a symlink escaping it).
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
+    return answered(this.#ownerOf(absolute));
+  }
+
+  /** {@link ownerOf}, or {@link UNANSWERED} when Git gave no answer for the folder that would name the owner. */
+  #ownerOf(absolute: string): CheckoutOwner | Unanswered | undefined {
     this.#revalidate();
     const lexical = resolve(absolute);
-    const real = physicalPath(lexical);
+    return this.#ownerAt(lexical, this.#places.physical(lexical));
+  }
+
+  /**
+   * `ownerOf` for a path that is its own real path: a file or folder a walk reached through folders alone (never a
+   * link) from a folder whose place it checked. Its real path is not looked up again. Undefined where Git gave no
+   * answer, as from `ownerOf`.
+   */
+  ownerOfReal(path: string): CheckoutOwner | undefined {
+    this.#revalidate();
+    const real = resolve(path);
+    return answered(this.#ownerAt(real, real));
+  }
+
+  /** The checkout holding `lexical`, whose real path is `real` (see `ownerOf`), or {@link UNANSWERED} as `#ownerOf` gives it. */
+  #ownerAt(lexical: string, real: string): CheckoutOwner | Unanswered | undefined {
     const root = this.#rootOf(lexical, real);
-    if (root === undefined || !within(root, real)) return undefined;
+    if (root === undefined || root === UNANSWERED) return root;
+    if (!within(root, real)) return undefined;
     if (real !== lexical && this.#rootOf(real, real) !== root) return undefined;
     return { checkoutRoot: root, path: relative(root, real).split(sep).join("/") };
   }
@@ -184,13 +224,21 @@ export class CheckoutOwners {
    */
   isDeclaredSubmodule(root: string): boolean {
     this.#revalidate();
-    let declared = this.#submodules.get(root);
-    if (declared === undefined) {
-      const enclosing = this.ownerOf(dirname(root));
-      declared = enclosing !== undefined && this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
-      this.#submodules.set(root, declared);
-    }
+    const kept = this.#submodules.get(root);
+    if (kept !== undefined) return kept;
+    const declared = this.#declaredAround(root);
+    // Git gave no answer for a folder it rests on: undeclared for this lookup alone, as before, and kept by nothing.
+    if (declared === UNANSWERED) return false;
+    this.#submodules.set(root, declared);
     return declared;
+  }
+
+  /** Whether the checkout around `root` declares it, or {@link UNANSWERED} when Git gave no answer for either. */
+  #declaredAround(root: string): boolean | Unanswered {
+    const enclosing = this.#ownerOf(dirname(root));
+    if (enclosing === undefined || enclosing === UNANSWERED) return enclosing ?? false;
+    const own = this.#confirm(root);
+    return own === UNANSWERED ? own : this.declaredSubmodules(enclosing.checkoutRoot).includes(root);
   }
 
   /**
@@ -201,11 +249,14 @@ export class CheckoutOwners {
   declaredSubmodules(root: string): string[] {
     return declaredSubmodulePaths(root)
       .map(path => join(root, path))
-      .filter(folder => within(root, folder) && this.#confirm(folder) === physicalPath(folder));
+      .filter(folder => within(root, folder) && this.#confirm(folder) === this.#places.physical(folder));
   }
 
-  /** The checkout root above `path` (the path itself when it is one), searched from `path`; `real` finds plain roots. */
-  #rootOf(path: string, real: string): string | undefined {
+  /**
+   * The checkout root above `path` (the path itself when it is one), searched from `path`; `real` finds plain roots.
+   * {@link UNANSWERED} from the first folder up that holds `.git` passes through `??`: no checkout around it stands in.
+   */
+  #rootOf(path: string, real: string): string | Unanswered | undefined {
     // Only folders are remembered: the path itself is a checkout root only when it holds `.git`.
     const own = holdsGitEntry(path) ? this.#confirm(path) : undefined;
     return own ?? this.#gitRoot(dirname(path)) ?? this.#plainRoot(real);
@@ -231,23 +282,24 @@ export class CheckoutOwners {
     return owner;
   }
 
-  #gitRoot(lexical: string): string | undefined {
+  #gitRoot(lexical: string): string | Unanswered | undefined {
     const unresolved: string[] = [];
     let directory = lexical;
-    let root: string | undefined;
     for (;;) {
-      if (this.#roots.has(directory)) {
-        root = this.#roots.get(directory);
-        break;
-      }
+      if (this.#roots.has(directory)) return this.#rootFor(unresolved, this.#roots.get(directory));
       unresolved.push(directory);
-      root = this.#confirm(directory);
-      if (root !== undefined) break;
+      const root = this.#confirm(directory);
+      // A folder whose Git gave no answer kept nothing (#confirm), and decides nothing for the folders below it.
+      if (root === UNANSWERED) return root;
       const parent = dirname(directory);
-      if (parent === directory) break;
+      if (root !== undefined || parent === directory) return this.#rootFor(unresolved, root);
       directory = parent;
     }
-    for (const folder of unresolved) this.#roots.set(folder, root);
+  }
+
+  /** Keeps `root` as the checkout root of each of `folders`, and gives it. */
+  #rootFor(folders: readonly string[], root: string | undefined): string | undefined {
+    for (const folder of folders) this.#roots.set(folder, root);
     return root;
   }
 
@@ -258,13 +310,19 @@ export class CheckoutOwners {
    * is asked. A lookup asks this of the folder it starts at only when that folder holds a `.git` entry, so a walk, which
    * asks for each folder before the files in it, finds such a checkout at its folder without a stat more.
    */
-  #confirm(directory: string): string | undefined {
+  #confirm(directory: string): string | Unanswered | undefined {
     if (this.#confirmed.has(directory)) {
       if (!this.#outgrown(directory)) return this.#confirmed.get(directory);
       this.#forgetWithin(directory);
     }
     const gitEntry = gitEntryAt(directory);
     const root = gitEntry === undefined ? undefined : topLevelAt(directory);
+    // A Git that gave no answer decides nothing: nothing is kept, and the next lookup asks Git again.
+    return root === UNANSWERED ? root : this.#keep(directory, gitEntry, root);
+  }
+
+  /** Keeps `root` as the answer for `directory`, and its `.git` entry while Git did not take it for a top level. */
+  #keep(directory: string, gitEntry: GitEntry | undefined, root: string | undefined): string | undefined {
     this.#confirmed.set(directory, root);
     if (gitEntry !== undefined && root === undefined) this.#unconfirmedGitEntries.set(directory, gitEntry);
     else this.#unconfirmedGitEntries.delete(directory);
@@ -304,9 +362,13 @@ export class CheckoutOwners {
   }
 }
 
-/** The physical top level of the checkout whose `.git` entry `directory` holds, when Git takes `directory` for it. */
-function topLevelAt(directory: string): string | undefined {
+/**
+ * The physical top level of the checkout whose `.git` entry `directory` holds, when Git takes `directory` for it;
+ * {@link UNANSWERED} when Git gave no answer (the location's `unanswered`).
+ */
+function topLevelAt(directory: string): string | Unanswered | undefined {
   const location = repositoryIdentityLocation(directory);
+  if (location.unanswered !== undefined) return UNANSWERED;
   const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
   return top !== undefined && top === physicalPath(directory) ? top : undefined;
 }

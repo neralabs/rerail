@@ -37,9 +37,9 @@ export const ruleSheetActions = {
     if (ui.askOpen) scrollSheetTo(".sask");
   },
   askintent: intent => { ui.askIntent = intent; invalidate(); },
-  askcopy: () => {
+  askcopy: (_, button) => {
     const stored = openRuleStored();
-    if (stored) copyText(askPrompt(askRule(stored), ui.askIntent), document.getElementById("askText"), "Prompt copied. Paste it into your coding agent.");
+    if (stored) copyText(askPrompt(askRule(stored), ui.askIntent), { field: document.getElementById("askText"), message: "Prompt copied. Paste it into your coding agent.", button });
   },
   promptedit: () => {
     sheetState.agentEdit = true;
@@ -49,12 +49,12 @@ export const ruleSheetActions = {
     document.getElementById("agentDraft")?.focus();
   },
   promptcancel: () => { sheetState.agentEdit = false; invalidate(); },
-  promptcopy: () => {
+  promptcopy: (_, button) => {
     const draft = document.getElementById("agentDraft");
     const id = panelRuleId();
     if (id === null || !draft) return;
     if (draft.value.trim() === "") { draft.focus(); return; }
-    copyText(agentSeesPrompt(id, draft.value), draft);
+    copyText(agentSeesPrompt(id, draft.value), { field: draft, button });
   },
   delask: () => {
     sheetState.delConfirm = !sheetState.delConfirm;

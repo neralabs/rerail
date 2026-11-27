@@ -246,7 +246,7 @@ pub fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>>
         .collect()
 }
 
-pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
+pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<Arc<GlobSet>> {
     let mut builder = GlobSetBuilder::new();
     for (index, pattern) in patterns.iter().enumerate() {
         let glob = GlobBuilder::new(pattern)
@@ -257,6 +257,7 @@ pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
     }
     builder
         .build()
+        .map(Arc::new)
         .map_err(|error| invalid(format!("{path}: {error}")))
 }
 

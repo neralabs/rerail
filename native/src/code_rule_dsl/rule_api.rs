@@ -29,7 +29,7 @@ impl CompiledCodeRuleDsl {
 
     #[napi]
     pub fn canonical_json(&self) -> String {
-        self.inner.canonical.clone()
+        self.inner.canonical.to_string()
     }
 
     /// Whether a repository-relative path is inside this code rule's scope: the same
