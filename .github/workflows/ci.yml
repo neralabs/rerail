@@ -367,9 +367,9 @@ jobs:
               - 'playwright.config.ts'
               - 'packs/complexity/**'
               - 'packs/javascript/**'
-              - 'packs/next/**'
               - 'packs/python/**'
               - 'packs/typescript/**'
+              - 'packs/vue/**'
             # The integration tests and the rule packs from npm: the suites, the test support they import, the vitest
             # config, the OMP host they provision, the built package, the scripts updater-cli.test.ts packs this checkout
             # and its engine package with. The packs come from the registry, not packs/, except the complexity pack
