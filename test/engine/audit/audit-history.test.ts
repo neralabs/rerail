@@ -2,10 +2,10 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditStore, type RuleActivityTotals } from "../../../src/engine/audit/audit-store.js";
 import type { CodeRuleViolation } from "../../../src/engine/code-rule/code-rule.js";
-import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
+import { openRerailDatabase, resetRepositoryHistory, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION } from "../../../src/engine/storage/migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
@@ -23,6 +23,30 @@ async function temporaryDatabase(): Promise<string> {
   const path = join(root, "home", "rerail.sqlite");
   await mkdir(dirname(path), { recursive: true });
   return path;
+}
+
+/** Opens the file at `path` as a writer, with what the open wrote on this thread's stderr: the lines that name a damaged row. */
+function openSaying(path: string): { database: RerailDatabase; said: string[] } {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  try {
+    const database = openRerailDatabase(path);
+    return { database, said: stderr.mock.calls.map(([chunk]) => String(chunk)) };
+  } finally {
+    stderr.mockRestore();
+  }
+}
+
+/** The SQL for `column`'s text cut short by 2 characters, as a power cut or another program's write can leave it. */
+const cutShort = (column: string): string => `substr(${column}, 1, length(${column}) - 2)`;
+
+/** Sets `column` of the rows `where` names to the SQL `value`, with the CHECKs off for that one write, as damage writes it. */
+function damage(client: Database.Database, { table, column, value, where }: { table: string; column: string; value: string; where: string }): void {
+  client.pragma("ignore_check_constraints = ON");
+  try {
+    client.prepare(`UPDATE ${table} SET ${column} = ${value} WHERE ${where}`).run();
+  } finally {
+    client.pragma("ignore_check_constraints = OFF");
+  }
 }
 
 /*
@@ -436,7 +460,14 @@ describe("derived audit history", () => {
     }
   });
 
-  it("marks the scans a file recorded before audits had an origin, and takes them out of its history", async () => {
+  // A power cut or another program's write can leave a scan request's audit ids cut short, or another JSON value, which
+  // the CHECK on the column refuses on a write: the step leaves that request out, so the audits it names stay the
+  // session's history, as before the step, and names it; the file opens.
+  it.each([
+    ["every scan request's audit ids read", undefined],
+    ["one scan request's audit ids are cut short", cutShort("audit_ids_json")],
+    ["one scan request's audit ids are a JSON object", "json_object('id', json_extract(audit_ids_json, '$[0]'))"],
+  ] as const)("marks the scans a file recorded before audits had an origin, and takes them out of its history (%s)", async (_, damaged) => {
     const path = await temporaryDatabase();
     const previous = openRerailDatabase(path);
     const client = previous.$client;
@@ -444,6 +475,7 @@ describe("derived audit history", () => {
     const current = triggers();
     let requested: string[] = [];
     let repositoryAudit = "";
+    let unread: string[] = [];
     try {
       openSessions(path);
       // The file as the build before `audits-origin` left it: its triggers derive history from every audit, and it has
@@ -455,13 +487,20 @@ describe("derived audit history", () => {
       expect(triggers()).not.toEqual(current);
       writeHistory(path, client, 8, { sessionsOnly: true });
       client.prepare("UPDATE audits SET origin = 'ongoing'").run();
-      // Scans it recorded: two by `rerail scan --session` and the first repository audit, whichever held violations.
-      const withViolations = client.prepare("SELECT audit_id FROM audits WHERE json_array_length(violations_json) > 0 ORDER BY audit_id LIMIT 3")
+      // Scans it recorded: two by `rerail scan --session` and the first repository audit, whichever held violations; and
+      // two more a second request names, whose stored audit ids a damaged write changed.
+      const withViolations = client.prepare("SELECT audit_id FROM audits WHERE json_array_length(violations_json) > 0 ORDER BY audit_id LIMIT 5")
         .pluck().all() as string[];
       requested = withViolations.slice(0, 2);
       repositoryAudit = withViolations[2]!;
-      client.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
-        VALUES ('request', 's1', '/w', 'repository', 'log', '[]', 'completed', 1, ?)`).run(JSON.stringify(requested));
+      unread = withViolations.slice(3, 5);
+      const request = client.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
+        VALUES (?, 's1', '/w', 'repository', 'log', '[]', 'completed', 1, ?)`);
+      request.run("request", JSON.stringify(requested));
+      if (damaged !== undefined) {
+        request.run("damaged", JSON.stringify(unread));
+        damage(client, { table: "audit_requests", column: "audit_ids_json", value: damaged, where: "id = 'damaged'" });
+      }
       client.prepare(`INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at)
         VALUES ('/w', 's1', ?, 'completed', 1)`).run(repositoryAudit);
       client.prepare("DELETE FROM schema_migrations WHERE id = 'audits-origin'").run();
@@ -471,10 +510,15 @@ describe("derived audit history", () => {
       client.close();
     }
 
-    const database = openRerailDatabase(path);
+    const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
         .toEqual([...requested, repositoryAudit].sort());
+      expect(database.$client.prepare("SELECT origin FROM audits WHERE audit_id IN (?, ?)").pluck().all(...unread)).toEqual(["ongoing", "ongoing"]);
+      expect(database.$client.prepare("SELECT count(*) AS n FROM schema_migrations WHERE id = 'audits-origin'").get()).toEqual({ n: 1 });
+      // The open names the request it left out, once: the file, the request and its session, and the column to mend.
+      expect(said.map(line => [line.startsWith(`rerail: ${path}: `), line.includes(" scan request damaged of session s1: the audit_ids_json ")]))
+        .toEqual(damaged === undefined ? [] : [[true, true]]);
       // The step dropped the older triggers, and the DDL created this build's again.
       expect(database.$client.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name").all()).toEqual(current);
       expectMatchesOracle(path, database.$client);
@@ -488,8 +532,19 @@ describe("derived audit history", () => {
     }
   });
 
-  it("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current", async () => {
+  // A power cut or another program's write can leave an audit's stored list cut short (the CHECK on its violations
+  // refuses that on a write; none holds its rule revisions), or with an item that is no object (no CHECK reads the
+  // items): the backfill leaves out what of that audit does not read, names a list it left out, and the file opens.
+  it.each([
+    ["every audit's lists read", undefined, undefined],
+    ["one audit's violations are cut short", { violations_json: cutShort("violations_json") }, "violations_json"],
+    ["one audit's rule revisions are cut short", { rule_revisions_json: cutShort("rule_revisions_json") }, "rule_revisions_json"],
+    ["one audit's violations and rule revisions each end with a string", {
+      violations_json: "json_insert(violations_json, '$[#]', 'no violation')", rule_revisions_json: "json_insert(rule_revisions_json, '$[#]', 'no revision')",
+    }, undefined],
+  ] as const)("fills the derived history from the audits a file already holds when it is upgraded, then keeps it current (%s)", async (_, damaged, named) => {
     const path = await temporaryDatabase();
+    let damagedAudit = "";
     const created = new Database(path);
     try {
       for (const statement of RERAIL_BASELINE_SCHEMA_STATEMENTS) created.exec(statement);
@@ -515,14 +570,24 @@ describe("derived audit history", () => {
       baseline.prepare(`INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json)
         VALUES ('request', 's1', '/w', 'repository', 'log', '[]', 'completed', 1, '["before-0","before-3"]')`).run();
       baseline.prepare("INSERT INTO repository_audits (workspace_root, session_id, audit_id, status, started_at) VALUES ('/w', 's2', 'before-4', 'completed', 1)").run();
+      // An ongoing audit with violations and rules is the one damaged.
+      damagedAudit = baseline.prepare(`SELECT audit_id FROM audits WHERE audit_id NOT IN ('before-0', 'before-3', 'before-4')
+        AND json_array_length(violations_json) > 0 AND json_array_length(rule_revisions_json) > 0 ORDER BY audit_id LIMIT 1`).pluck().get() as string;
+      for (const [column, value] of Object.entries(damaged ?? {})) damage(baseline, { table: "audits", column, value, where: `audit_id = '${damagedAudit}'` });
     } finally {
       baseline.close();
     }
 
-    const database = openRerailDatabase(path);
+    const { database, said } = openSaying(path);
     try {
       expect(database.$client.prepare("SELECT audit_id FROM audits WHERE origin = 'scan' ORDER BY audit_id").pluck().all())
         .toEqual(["before-0", "before-3", "before-4"]);
+      // The open names the list it left out, once: the file, the audit, and the column to mend.
+      expect(said.map(line => [line.startsWith(`rerail: ${path}: `), line.includes(` ${damagedAudit}: the ${named} of its audits row `)]))
+        .toEqual(named === undefined ? [] : [[true, true]]);
+      // The oracle reads every audit's lists whole, so the damaged audit goes first, with what was derived from it: every
+      // other audit's history is what reading every audit gives.
+      if (damaged !== undefined) database.$client.prepare("DELETE FROM audits WHERE audit_id = ?").run(damagedAudit);
       expectMatchesOracle(path, database.$client);
       // Upgraded, the file takes audits the repository owns too.
       recordCheckouts(database.$client);

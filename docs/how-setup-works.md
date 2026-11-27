@@ -666,7 +666,11 @@ aside (or point `RERAIL_HOME` elsewhere), start again, then re-import your rules
 
 A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or a command, hook or status line that
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
-that cannot write the file gets an error naming those steps, and the file is left as it was.
+that cannot write the file gets an error naming those steps, and the file is left as it was. A scan request's audit
+ids, or an audit's violations or rule revisions, that are not a JSON array, which only a damaged file or a hand edit
+leaves, fail no step: the step that reads them leaves that row out, and the error output of the process that opened
+the file names it once (`daemon.log` when the daemon opened it). The audits such a scan request names stay in its
+session's history, even once the row is mended, since each step runs once.
 
 Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
 and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it

@@ -1,0 +1,1 @@
+A database last opened by Rerail 0.1.4 or earlier that holds a damaged scan request, or by an early 0.1.0 prerelease that holds a damaged audit, now opens on upgrade instead of stopping the daemon, `rerail status` and every hook. The upgrade leaves that row out and names it once, in `daemon.log` when the daemon opened the file.

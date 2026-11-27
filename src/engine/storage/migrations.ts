@@ -83,13 +83,15 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   {
     // The derived audit history the dashboard reads (`audit-history.ts`), filled from the audits a file already
     // holds. Steps run before the DDL, so the tables and the backfill are written out here, frozen as this step
-    // introduced them; the triggers that keep the tables current come with the DDL right after. No floor: an older
-    // build never reads these tables, and its writes to `audits` reach them through the triggers.
+    // introduced them; the triggers that keep the tables current come with the DDL right after. An audit whose stored
+    // violations or rule revisions do not read is left out of what they give and named (`sayHistoryLeftOut`). No floor:
+    // an older build never reads these tables, and its writes to `audits` reach them through the triggers.
     id: "audit-history-derived-tables",
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;
       for (const statement of AUDIT_HISTORY_TABLES) database.run(sql.raw(statement));
       for (const statement of AUDIT_HISTORY_BACKFILL) database.run(sql.raw(statement));
+      sayHistoryLeftOut(database);
     },
   },
   {
@@ -171,9 +173,10 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
   {
     // An audit's `origin`: `ongoing`, or `scan` for one someone asked for, whose violations the dashboard leaves out.
     // The four triggers that derive history from `audits` are dropped, and the DDL right after creates them again
-    // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`). No
-    // floor: an older build never reads the column, its inserts take the default, and it creates a trigger only when
-    // the trigger is missing, so it keeps these.
+    // skipping scans. The scans a file already holds are marked where it still names them (`markRecordedScans`), and a
+    // scan request whose stored audit ids do not read is left out and named (`markRequestedScans`). No floor: an older
+    // build never reads the column, its inserts take the default, and it creates a trigger only when the trigger is
+    // missing, so it keeps these.
     id: "audits-origin",
     up(database) {
       for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update", "audits_history_rule_set_update"])
@@ -225,14 +228,69 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
 function markRecordedScans(database: RerailDatabase): void {
   const tables = new Set(database.all<{ name: string }>(sql`SELECT name FROM sqlite_master WHERE type = 'table'`).map(row => row.name));
   if (!tables.has("audits")) return;
-  if (tables.has("audit_requests")) database.run(sql.raw(MARK_REQUESTED_SCANS));
+  if (tables.has("audit_requests")) markRequestedScans(database);
   if (tables.has("repository_audits")) database.run(sql.raw(MARK_REPOSITORY_AUDIT_SCANS));
   if (tables.has("audit_violations")) for (const statement of SCAN_HISTORY_REPAIR) database.run(sql.raw(statement));
 }
 
-/** `audits-origin`: the audits `rerail scan --session` (an audit request) recorded are scans. */
+/**
+ * `audits-origin`: the audits `rerail scan --session` (an audit request) recorded are scans. A request whose stored audit
+ * ids are no JSON array (`isJsonArray`) is left out, and named on the error output of the process whose open runs the
+ * step: `daemon.log` in the daemon. The audits it ran stay in the session's history, as before the step, and stay there
+ * once the row is mended, since the step runs once.
+ */
+function markRequestedScans(database: RerailDatabase): void {
+  database.run(sql.raw(MARK_REQUESTED_SCANS));
+  const file = database.$client.name;
+  for (const request of unreadRows(database, "audit_requests", "audit_ids_json", "id || ' of session ' || session_id")) {
+    process.stderr.write(`rerail: ${file}: marking the scans recorded before this Rerail's upgrade leaves out scan request ${request}: `
+      + "the audit_ids_json of its audit_requests row is not a JSON array, which only a damaged file or a hand edit leaves, so "
+      + "the audits it ran stay in the session's history, even once the row is mended.\n");
+  }
+}
+
+/** `markRequestedScans`' mark, over the requests whose audit ids are a JSON array (`listOrNone`). */
 const MARK_REQUESTED_SCANS = `UPDATE audits SET origin = 'scan' WHERE audit_id IN (
-    SELECT requested.value FROM audit_requests request, json_each(request.audit_ids_json) requested)`;
+    SELECT requested.value FROM audit_requests request, json_each(${listOrNone("request.audit_ids_json")}) requested)`;
+
+/**
+ * `audit-history-derived-tables`: names each audit whose violations or rule revisions its backfill read as no items (no
+ * JSON array, `isJsonArray`), as `markRequestedScans` names a request. The history then holds none of its violations,
+ * or none of the rules it ran; its own row is left as it is.
+ */
+function sayHistoryLeftOut(database: RerailDatabase): void {
+  const file = database.$client.name;
+  const lists = [["violations_json", "the violations of audit"], ["rule_revisions_json", "the rules run by audit"]] as const;
+  for (const [column, what] of lists) {
+    for (const auditId of unreadRows(database, "audits", column, "audit_id")) {
+      process.stderr.write(`rerail: ${file}: filling the violation history from the audits recorded before this Rerail's upgrade leaves `
+        + `out ${what} ${auditId}: the ${column} of its audits row is not a JSON array, which only a damaged file or a hand edit leaves.\n`);
+    }
+  }
+}
+
+/**
+ * Whether the text the SQL expression `value` gives is a JSON array, in SQL that never fails its statement: `json_valid`
+ * comes first, since `json_type` and `json_each` fail the whole statement on text that is not JSON. Only a damaged file
+ * or a hand edit leaves such text where Rerail stores a list, and a step whose statement failed on it failed the open,
+ * at every open, since a failed step runs again. A step reads such a list as no items (`listOrNone`) and names its row
+ * (`unreadRows`) instead, so the row costs its own entries, as `stored-list.ts` has readers do. The rule provenance move
+ * tests the text of an audit's provenance the same way (`holdable`).
+ */
+function isJsonArray(value: string): string {
+  return `CASE WHEN json_valid(${value}) THEN json_type(${value}) = 'array' ELSE 0 END`;
+}
+
+/** The text the SQL expression `value` gives where it is a JSON array (`isJsonArray`), else null, which `json_each` reads as no items. */
+function listOrNone(value: string): string {
+  return `CASE WHEN ${isJsonArray(value)} THEN ${value} END`;
+}
+
+/** What the SQL expression `name` gives for each row of `table` whose `column` holds no JSON array (`isJsonArray`). */
+function unreadRows(database: RerailDatabase, table: string, column: string, name: string): string[] {
+  return database.all<{ name: string }>(sql.raw(`SELECT ${name} AS name FROM ${identifier(table)} WHERE NOT ${isJsonArray(identifier(column))}`))
+    .map(row => row.name);
+}
 
 /** `audits-origin`: the first repository audit each checkout's row still names is a scan. */
 const MARK_REPOSITORY_AUDIT_SCANS = `UPDATE audits SET origin = 'scan'
@@ -314,7 +372,9 @@ const AUDIT_HISTORY_TABLES: readonly string[] = [
 /**
  * The audits a file holds, replayed into those tables as the triggers would have built them: one row per distinct
  * (rule, violation key) in each audit at its first copy, `logged` when any copy was in Log mode; each key's latest
- * sighting; each audit's rule set. The violation key is `audit-history.ts`'s `violationKeySql`.
+ * sighting; each audit's rule set. The violation key is `audit-history.ts`'s `violationKeySql`. A list that is no JSON
+ * array reads as no items (`listOrNone`), and an item that is no JSON object is passed over before `json_extract`
+ * reads it (it fails the statement on a string): each costs its own entries, never the open.
  */
 const AUDIT_HISTORY_BACKFILL: readonly string[] = [
   `INSERT INTO audit_violations (audit_id, ordinal, session_id, started_at, rule_id, violation_key, logged)
@@ -331,7 +391,8 @@ const AUDIT_HISTORY_BACKFILL: readonly string[] = [
           AS violation_key,
         row_number() OVER copies AS copy,
         max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
-      FROM audits audit, json_each(audit.violations_json) violation
+      FROM audits audit, json_each(${listOrNone("audit.violations_json")}) violation
+      WHERE violation.type = 'object'
       WINDOW copies AS (PARTITION BY audit.audit_id, json_extract(violation.value, '$.ruleId'),
         coalesce(json_extract(violation.value, '$.clauseId'), '') || char(31) || coalesce(json_extract(violation.value, '$.path'), '')
           || char(31) || coalesce(json_extract(violation.value, '$.span'), '') || char(31) || coalesce(json_extract(violation.value, '$.code'), '')
@@ -345,8 +406,8 @@ const AUDIT_HISTORY_BACKFILL: readonly string[] = [
   "INSERT INTO audit_rule_sets (rule_revisions_json) SELECT DISTINCT rule_revisions_json FROM audits",
   `INSERT INTO audit_rule_set_rules (rule_set_id, rule_id)
     SELECT DISTINCT rule_set.rule_set_id, json_extract(revision.value, '$.ruleId')
-    FROM audit_rule_sets rule_set, json_each(rule_set.rule_revisions_json) revision
-    WHERE json_extract(revision.value, '$.ruleId') IS NOT NULL`,
+    FROM audit_rule_sets rule_set, json_each(${listOrNone("rule_set.rule_revisions_json")}) revision
+    WHERE json_extract(CASE revision.type WHEN 'object' THEN revision.value END, '$.ruleId') IS NOT NULL`,
   `INSERT INTO audit_rule_set_uses (audit_id, session_id, started_at, rule_set_id)
     SELECT audit.audit_id, audit.session_id, audit.started_at, rule_set.rule_set_id
     FROM audits audit JOIN audit_rule_sets rule_set ON rule_set.rule_revisions_json = audit.rule_revisions_json`,
