@@ -447,6 +447,18 @@ Rerail is not installed on this computer. Install it with npx @neralabs/rerail s
 
 There is no installation in `~/.rerail` (or `RERAIL_HOME`, when set). Run set-up.
 
+### `rerail status` says `Rerail's install at … is gone`
+
+```text
+Rerail's install at /home/me/.rerail/current is gone: Rerail does not run in Codex, so nothing is recorded, and the rerail command, which runs from there, does not start. Run npx @neralabs/rerail setup first.
+```
+
+The version folders under `~/.rerail/versions` were deleted, by hand or by a clean-up tool, so `~/.rerail/current`
+points at nothing. Each coding agent the line names is connected to `current`, so Rerail does not run in its sessions,
+and the `rerail` command fails with `Cannot find module`, since it runs from `current` too. Run set-up through npx: it
+installs a version and points `current` at it again. `rerail status` prints this line first; the steps the lines after
+it name work once set-up has run.
+
 ### `Git could not say where the repository of … is`
 
 ```text
@@ -688,8 +700,10 @@ session's start says that nothing is recorded until a daemon from the active pac
 If `rerail status` instead names Claude Code hook or status line scripts that are missing, Claude Code's settings point
 at a Rerail that is gone, and every hook fails before Rerail runs. Run the command the line ends with, then open a new
 session: `rerail install --refresh` while `~/.rerail/current` holds an install, as after an update to a version without
-a script the settings name; `npx @neralabs/rerail setup` once the version folders under `~/.rerail/versions` are gone,
-since set-up installs a version again and the `rerail` command itself runs from `current`.
+a script the settings name; otherwise `npx @neralabs/rerail setup`, since set-up installs a version again and the
+`rerail` command itself runs from `current`. Once the version folders under `~/.rerail/versions` are gone, the first
+line of `rerail status` says so for Claude Code and every other coding agent connected to `current`
+([above](#rerail-status-says-rerails-install-at--is-gone)).
 
 ### Windows: a build from a checkout records nothing
 

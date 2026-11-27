@@ -1,6 +1,6 @@
 /** What `rerail status` says of the folder it runs in. */
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,9 @@ import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // By its file URL: the run starts outside the package, where a bare `tsx` does not resolve.
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+
+/** The folder under the user's home whose presence makes each coding agent found on this computer. */
+const AGENT_FOLDERS = { "claude-code": ".claude", codex: ".codex", cursor: ".cursor", pi: join(".pi", "agent") } as const;
 
 /** `rerail status` from the source in `cwd`, with `env` over this process's environment and no daemon started. */
 function status(cwd: string, env: NodeJS.ProcessEnv): SpawnSyncReturns<string> {
@@ -47,11 +50,11 @@ describe("rerail status", () => {
   }, 60_000);
 
   /**
-   * A user folder whose Rerail home was set up and used (a database), with Claude Code connected to `<home>/current`,
-   * which links to a version folder holding no scripts; then `change` runs on that home. Returns what `rerail status`
-   * says of the missing scripts, and the status line's script, which registration writes for this system.
+   * A user folder whose Rerail home was set up and used (a database), with `agent` connected to `<home>/current`, which
+   * links to a version folder holding no scripts; then `change` runs on that home. Returns the lines `rerail status`
+   * prints, and `current`.
    */
-  async function missingScriptsLine(change: (rerailHome: string) => void): Promise<{ line: string | undefined; statusScript: string }> {
+  async function statusOfConnected(agent: keyof typeof AGENT_FOLDERS, change: (rerailHome: string) => void): Promise<{ lines: string[]; current: string }> {
     const user = realpathSync(mkdtempSync(join(tmpdir(), "rerail-status-user-")));
     users.push(user);
     const rerailHome = join(user, ".rerail");
@@ -62,25 +65,44 @@ describe("rerail status", () => {
     const current = join(rerailHome, "current");
     // A folder link a test account can make on every system: a junction on Windows.
     symlinkSync(version, current, process.platform === "win32" ? "junction" : "dir");
-    mkdirSync(join(user, ".claude"));
-    await registerHarnesses({ root: current, home: user, harnesses: ["claude-code"] });
+    mkdirSync(join(user, AGENT_FOLDERS[agent]), { recursive: true });
+    await registerHarnesses({ root: current, home: user, harnesses: [agent] });
     change(rerailHome);
     // The coding agents' home is HOME on macOS and Linux and USERPROFILE on Windows.
     const run = status(folder, { RERAIL_HOME: rerailHome, HOME: user, USERPROFILE: user });
-    const statusScript = join(current, "dist", "hosts", "claude", process.platform === "win32" ? "claude-status.js" : "claude-status.sh");
-    return { line: run.stdout.split("\n").find(text => text.startsWith("Claude Code's Rerail hooks run ")), statusScript };
+    return { lines: run.stdout.split("\n").filter(line => line !== ""), current };
   }
 
-  it("once the managed install's version folders are gone, names the status line's script and set-up, which installs one", async () => {
-    // As a removal by hand or a clean-up tool leaves it: `current` dangles, and `install --refresh` would change nothing.
-    const { line, statusScript } = await missingScriptsLine(rerailHome => removeFolderSync(join(rerailHome, "versions")));
-    expect(line).toContain(statusScript);
-    expect(line).toMatch(/ Run npx @neralabs\/rerail setup\.$/u);
+  // As a removal by hand or a clean-up tool leaves it: `current` dangles, and `install --refresh` would change nothing.
+  const removeVersions = (rerailHome: string): void => removeFolderSync(join(rerailHome, "versions"));
+
+  it.each([["codex", "Codex"], ["cursor", "Cursor"], ["pi", "Pi"], ["claude-code", "Claude Code"]] as const)(
+    "once the managed install's version folders are gone and only %s is connected, says so first and once, and names set-up through npx",
+    async (agent, name) => {
+      const { lines, current } = await statusOfConnected(agent, removeVersions);
+
+      expect(lines[0], lines.join("\n")).toContain(`${current} is gone: Rerail does not run in ${name}, so nothing is recorded`);
+      expect(lines[0]).toMatch(/ Run npx @neralabs\/rerail setup first\.$/u);
+      expect(lines.filter(line => line.includes("npx @neralabs/rerail setup")), lines.join("\n")).toHaveLength(1);
+    },
+    60_000,
+  );
+
+  it("once the managed install's version folders are gone in a home with no database yet, names the install, not a computer without Rerail", async () => {
+    const { lines, current } = await statusOfConnected("codex", rerailHome => {
+      removeVersions(rerailHome);
+      rmSync(join(rerailHome, RERAIL_DATABASE_FILE));
+    });
+
+    expect(lines[0], lines.join("\n")).toContain(`${current} is gone: Rerail does not run in Codex, so nothing is recorded`);
   }, 60_000);
 
-  it("while `current` holds an install that lacks the scripts the settings name, as after an update, names install --refresh", async () => {
-    const { line, statusScript } = await missingScriptsLine(() => undefined);
-    expect(line).toContain(statusScript);
+  it("while `current` holds an install that lacks the scripts the settings name, as after an update, names the status line's script and install --refresh", async () => {
+    const { lines, current } = await statusOfConnected("claude-code", () => undefined);
+    const line = lines.find(text => text.startsWith("Claude Code's Rerail hooks run "));
+
+    expect(line, lines.join("\n")).toContain(join(current, "dist", "hosts", "claude", process.platform === "win32" ? "claude-status.js" : "claude-status.sh"));
     expect(line).toMatch(/ Run rerail install --refresh\.$/u);
+    expect(lines.join("\n")).not.toContain(" is gone");
   }, 60_000);
 });

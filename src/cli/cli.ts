@@ -93,12 +93,12 @@ import {
   startStep, type CarriedFlags, type SetupContext,
 } from "./setup-cli.js";
 import { checkNodeVersion } from "../setup/node-version.js";
-import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { codingAgentHome, codingAgentStates, managedInstall, registrationRoot, type CodingAgentState, type ManagedInstall } from "../setup/coding-agents.js";
 import { missingClaudeHookScripts } from "../setup/registered-hooks.js";
 import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, lateCheckLines, readHookFailures, untakenWaitingLines } from "../harness/hook-failures.js";
 import { lastObservedEventAt } from "../runtime/session-store.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
-import { SETUP_FLAGS } from "../harness/setup-screens.js";
+import { andList, SETUP_FLAGS } from "../harness/setup-screens.js";
 import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
 import {
   ManagedUpdater,
@@ -110,6 +110,12 @@ import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
 import { formatDuration, streamProgress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
+
+/**
+ * Set-up as a person runs it with no managed install: through npx, since the `rerail` launcher runs
+ * `<home>/current` and fails while that holds no install. Set-up installs a version and points `current` at it.
+ */
+const SETUP_STEP = `npx ${RERAIL_PACKAGE_NAME} setup`;
 
 interface PackageManifest {
   name: string;
@@ -353,21 +359,47 @@ function gitLookup(): { found: true } | { found: false; looked: readonly string[
 
 async function runStatusCommand(home: string): Promise<number> {
   const lookup = await lookupDaemon(home);
-  if (neverSetUp(home, lookup)) {
-    process.stdout.write("Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.\n");
+  const install = managedInstall(home);
+  if (neverSetUp(home, lookup, install)) {
+    process.stdout.write(`Rerail is not installed on this computer. Install it with ${SETUP_STEP}.\n`);
     return 3;
   }
+  const agents = await connectedCodingAgents(home, install);
+  // First, since every other step a line below names runs through the launcher, which needs the install back.
+  if (install === "gone") process.stdout.write(`${goneInstallLine(home, agents)}\n`);
   process.stdout.write(workspaceStatus(process.cwd()));
   const code = printStartingDaemon(home, lookup) ?? printDaemonStatus(lookup);
-  for (const line of hookHealthLines(home, lookup)) process.stdout.write(`${line}\n`);
+  for (const line of hookHealthLines(home, lookup, install, agents)) process.stdout.write(`${line}\n`);
   printRemoteStatus(home);
-  await printCodingAgentDataAccess(home);
+  printCodingAgentDataAccess(agents);
   return code;
 }
 
-/** No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped. */
-function neverSetUp(home: string, lookup: DaemonLookup): boolean {
-  return lookup.status === "absent" && !existsSync(join(home, CURRENT_LINK)) && !existsSync(join(home, RERAIL_DATABASE_FILE));
+/**
+ * The coding agents connected to the install their registrations name: `<home>/current` while it holds one
+ * (`registrationRoot`), and still `current` once its install is gone, since that is what they were connected to.
+ */
+async function connectedCodingAgents(home: string, install: ManagedInstall): Promise<CodingAgentState[]> {
+  const root = install === "gone" ? join(home, CURRENT_LINK) : registrationRoot(home, packageRoot);
+  return (await codingAgentStates(root, codingAgentHome())).filter(agent => agent.connected);
+}
+
+/**
+ * What `rerail status` says once set-up's install is gone (`managedInstall`): Rerail runs in none of the coding agents
+ * connected to it, and the `rerail` launcher fails too, so set-up through npx is the one step that runs.
+ */
+function goneInstallLine(home: string, agents: readonly CodingAgentState[]): string {
+  const where = `Rerail's install at ${join(home, CURRENT_LINK)} is gone`;
+  const sessions = agents.length === 0 ? "" : `: Rerail does not run in ${andList(agents.map(agent => agent.name))}, so nothing is recorded,`;
+  return `${where}${sessions} and the rerail command, which runs from there, does not start. Run ${SETUP_STEP} first.`;
+}
+
+/**
+ * No managed install, no database and no daemon: Rerail was never set up here, so it is not merely stopped. A `current`
+ * whose install is gone still counts as set up: the coding agents connected to it are named.
+ */
+function neverSetUp(home: string, lookup: DaemonLookup, install: ManagedInstall): boolean {
+  return lookup.status === "absent" && install === "absent" && !existsSync(join(home, RERAIL_DATABASE_FILE));
 }
 
 /** What `rerail status` says of Rerail in `workspace`. */
@@ -403,10 +435,9 @@ function printRemoteStatus(home: string): void {
 }
 
 /** For each connected coding agent, whether its tools can read Rerail's data on this computer, and the step that changes it where there is one. */
-async function printCodingAgentDataAccess(home: string): Promise<void> {
-  for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
+function printCodingAgentDataAccess(agents: readonly CodingAgentState[]): void {
+  for (const agent of agents) {
     // Each sentence names its coding agent, and its step follows it.
-    if (!agent.connected) continue;
     process.stdout.write(`${agent.rerailData.why}\n`);
     if (agent.rerailData.fix !== null) process.stdout.write(`${agent.rerailData.fix}\n`);
   }
@@ -417,26 +448,27 @@ async function printCodingAgentDataAccess(home: string): Promise<void> {
  * hook fails before Rerail runs, the hook events Rerail could not record in the last day, with why, those that wait now
  * for the daemon `lookup` found, and those it checked late.
  */
-function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
-  const missing = missingClaudeHookScripts(codingAgentHome());
-  const registration = missing.length === 0 ? [] : [
-    `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run ${missingScriptsStep(home)}.`,
-  ];
+function hookHealthLines(home: string, lookup: DaemonLookup, install: ManagedInstall, agents: readonly CodingAgentState[]): string[] {
   const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
   const waiting = lookup.status === "absent" ? [] : untakenWaitingLines(home, lookup.state.pid);
-  return [...registration, ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
+  return [...claudeScriptLines(install, agents), ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
 }
 
 /**
- * The command that brings back the Rerail scripts Claude Code's settings run. `install --refresh` registers again only
- * the coding agents connected to the root registrations take (`registrationRoot`): the running package once
- * `<home>/current` holds no install, as after its version folders were deleted, and no registration of that package can
- * name a script that is missing, so the refresh changes nothing. Set-up installs a version and points `current` at it
- * again. It is named through npx, since the `rerail` launcher runs `current` too.
+ * Claude Code's registration naming Rerail scripts that are missing, with the step that brings them back. `install
+ * --refresh` registers again only the coding agents connected to the root registrations take (`registrationRoot`),
+ * which is the running package unless `<home>/current` holds an install, and no registration of that package names a
+ * script that is missing, so the refresh would change nothing there and the step is set-up.
  */
-function missingScriptsStep(home: string): string {
-  return registrationRoot(home, packageRoot) === join(home, CURRENT_LINK) ? "rerail install --refresh" : "npx @neralabs/rerail setup";
+function claudeScriptLines(install: ManagedInstall, agents: readonly CodingAgentState[]): string[] {
+  // Once the install is gone, the line `rerail status` printed first names Claude Code with every agent connected to it.
+  if (install === "gone" && agents.some(agent => agent.id === "claude-code")) return [];
+  const missing = missingClaudeHookScripts(codingAgentHome());
+  if (missing.length === 0) return [];
+  return [
+    `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run ${install === "installed" ? "rerail install --refresh" : SETUP_STEP}.`,
+  ];
 }
 
 /**
@@ -547,7 +579,7 @@ async function dispatchToManagedVersion(args: readonly string[], updater: Manage
   if (resolve(state.current.packageRoot) === packageRoot) return undefined;
   const managedCli = join(state.current.packageRoot, ENTRY_POINTS.cli);
   if (!existsSync(managedCli)) {
-    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run npx ${RERAIL_PACKAGE_NAME} setup to install Rerail again.`);
+    throw new Error(`Active Rerail launcher is missing: ${managedCli}. Run ${SETUP_STEP} to install Rerail again.`);
   }
   return await runChild(process.execPath, [managedCli, MANAGED_CHILD_ARGUMENT, ...args]);
 }

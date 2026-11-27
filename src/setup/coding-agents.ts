@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -42,10 +42,28 @@ export function codingAgentHome(): string {
   return homedir();
 }
 
-/** Registrations point at `<rerail home>/current` once set-up has run; before that, at the running package. */
-export function registrationRoot(rerailHome: string, packageRoot: string): string {
+/**
+ * What `<rerail home>/current` holds: set-up's install (`installed`); nothing, though set-up made it (`gone`: its
+ * version folders were deleted, so the coding agents connected to it and the `rerail` launcher, which runs it too, name
+ * files that are gone); or no entry at all (`absent`), as before set-up runs.
+ */
+export type ManagedInstall = "installed" | "gone" | "absent";
+
+export function managedInstall(rerailHome: string): ManagedInstall {
   const current = join(rerailHome, CURRENT_LINK);
-  return existsSync(join(current, "package.json")) ? current : packageRoot;
+  if (existsSync(join(current, "package.json"))) return "installed";
+  try {
+    // A link whose target is gone is still there: lstat reads the link, where existsSync follows it.
+    lstatSync(current);
+    return "gone";
+  } catch {
+    return "absent";
+  }
+}
+
+/** Registrations point at `<rerail home>/current` while it holds set-up's install; otherwise at the running package. */
+export function registrationRoot(rerailHome: string, packageRoot: string): string {
+  return managedInstall(rerailHome) === "installed" ? join(rerailHome, CURRENT_LINK) : packageRoot;
 }
 
 /** Where `codingAgentStates` looks for what keeps a coding agent out of Rerail's data; defaults are this computer's. */
