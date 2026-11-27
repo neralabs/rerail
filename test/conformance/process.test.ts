@@ -15,6 +15,17 @@ test("a child that exits without reading its input settles the run instead of en
 });
 
 test("a Git command on a repository of its own reads none of the variables a hook exports for another one", () => {
-  const env = isolatedGitEnv({ GIT_AUTHOR_NAME: "rerail" }, { PATH: "/bin", GIT_DIR: "/outer/.git", GIT_WORK_TREE: "/outer", GIT_INDEX_FILE: "/outer/.git/index" });
+  const outer = {
+    PATH: "/bin",
+    GIT_DIR: "/outer/.git",
+    GIT_WORK_TREE: "/outer",
+    GIT_INDEX_FILE: "/outer/.git/index",
+    GIT_CONFIG_PARAMETERS: "'core.hooksPath'='/outer/hooks'",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "commit.gpgsign",
+    GIT_CONFIG_VALUE_0: "true",
+    GIT_TEMPLATE_DIR: "/outer/templates",
+  };
+  const env = isolatedGitEnv({ GIT_AUTHOR_NAME: "rerail" }, outer);
   assert.deepEqual(env, { PATH: "/bin", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "rerail" });
 });
