@@ -3286,6 +3286,7 @@ dependencies = [
  "rerail-bitlex",
  "rerail-blocks",
  "rerail-compiler",
+ "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
  "sha2 0.11.1",

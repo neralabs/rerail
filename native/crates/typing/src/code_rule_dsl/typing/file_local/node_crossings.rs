@@ -99,10 +99,13 @@ impl<'v> NodeColumns<'v> {
                     flows.enter(n, || "asks for the nearest of a node".to_owned());
                     flows.enter(a, || "asks for the nearest of a node".to_owned());
                 }
-                Lit::Ast { node, captures, .. } => {
+                Lit::Ast { node, matcher, captures, .. } => {
                     flows.enter(node, || "matches an AST pattern".to_owned());
-                    for (_, s) in captures {
-                        flows.enter(s, || "matches an AST pattern".to_owned());
+                    // A metavariable's capture (`$NAME`) is a node; a regex's named group (`(?P<NAME>…)`) its text.
+                    for (name, s) in captures {
+                        if !regex_group_only(v.text(matcher), v.text(name)) {
+                            flows.enter(s, || "matches an AST pattern".to_owned());
+                        }
                     }
                 }
                 Lit::Cmp { .. } => {}
@@ -167,6 +170,16 @@ impl Flows {
     fn entry(&self) -> Option<&str> {
         self.entered.iter().zip(&self.inherited).find_map(|(e, inherited)| e.as_deref().filter(|_| !inherited))
     }
+}
+
+/// Whether capture `name` of an AST matcher (its JSON `matcher`) is only a regex's named group (`(?P<name>…)` or
+/// `(?<name>…)`), which binds the group's text, and no metavariable (`$name`), which binds a node.
+pub fn regex_group_only(matcher: &str, name: &str) -> bool {
+    let group = matcher.contains(&format!("(?P<{name}>")) || matcher.contains(&format!("(?<{name}>"));
+    let meta = matcher.match_indices(&format!("${name}")).any(|(at, m)| {
+        !matcher[at + m.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '_')
+    });
+    group && !meta
 }
 
 /// Whether term `t` holds a node id: a variable that does, or a function of one but `VALUES_OF_A_NODE`.
