@@ -1,14 +1,18 @@
 // scripts/check/check-folder-removal.mjs: every folder a test makes is removed through the helper that names a process
 // left running in it and waits out any other holder on Windows.
 
-import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { EXEMPT, folderRemovalProblems, HELPER } from "../../../scripts/check/check-folder-removal.mjs";
+import { printedPlaces, runCheck } from "../support/run-check.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
+
+/** A repository whose tests remove folders only through the helper, and whose src/ removes one itself. */
+const CLEAN = {
+  "test/a.test.ts": 'import { removeFolder } from "./support/platform/remove-folder.js";\nawait removeFolder(root);\n',
+  "test/b.test.ts": 'import { rm } from "node:fs/promises";\nawait rm(file, { force: true });\n',
+  "src/a.ts": 'import { rm } from "node:fs/promises";\nawait rm(path, { recursive: true });\n',
+};
 
 describe("check-folder-removal", () => {
   it("flags a test that removes its temp folder directly", () => {
@@ -44,9 +48,19 @@ describe("check-folder-removal", () => {
     ])).toEqual([]);
   });
 
-  it("passes on this checkout's test/", () => {
-    const run = spawnSync(process.execPath, [join(ROOT, "scripts/check/check-folder-removal.mjs")], { cwd: ROOT, encoding: "utf8" });
+  it("exits 0 as a process over a repository whose test/ removes folders only through the helper, reading test/ alone", () => {
+    const run = runCheck("check-folder-removal.mjs", CLEAN);
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
+    expect(run.stdout).toContain(": 2 files ");
+  });
+
+  it("exits 1 as a process, naming the file and line of each folder a test removes itself", () => {
+    const run = runCheck("check-folder-removal.mjs", {
+      ...CLEAN,
+      "test/c.test.ts": 'import { rmSync } from "node:fs";\nrmSync(root, { recursive: true, force: true });\n',
+    });
+    expect(printedPlaces(run.stderr)).toEqual(["test/c.test.ts:2"]);
+    expect(run.status).toBe(1);
   });
 });

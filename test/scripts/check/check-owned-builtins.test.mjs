@@ -1,12 +1,9 @@
 // scripts/check/check-owned-builtins.mjs: each built-in that one module owns is reached only through that module.
 
-import { spawnSync } from "node:child_process";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ownedBuiltinProblems, RULES } from "../../../scripts/check/check-owned-builtins.mjs";
+import { printedPlaces, runCheck } from "../support/run-check.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
 const rule = (id) => RULES.find(row => row.id === id);
 const member = (base, path) => `${base}${path.map(part => `.${part}`).join("")}`;
@@ -54,6 +51,13 @@ const FORMS = {
 
 /** A file each named rule covers, the owner aside. */
 const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts" };
+
+/** A repository whose src/ loads node:child_process only in its owner, and whose test/ loads it too. */
+const OWNED = {
+  [rule("child-process").owner]: 'import { spawn } from "node:child_process";\nexport { spawn };\n',
+  "src/a.ts": 'import { spawn } from "./engine/child-process.js";\nexport const start = program => spawn(program, []);\n',
+  "test/a.ts": 'import { spawn } from "node:child_process";\n',
+};
 
 describe("check-owned-builtins", () => {
   describe.each(Object.keys(COVERED))("the %s rule", (id) => {
@@ -175,9 +179,16 @@ describe("check-owned-builtins", () => {
     ])).toEqual([]);
   });
 
-  it("passes on this checkout's src/", () => {
-    const run = spawnSync(process.execPath, [join(ROOT, "scripts/check/check-owned-builtins.mjs")], { cwd: ROOT, encoding: "utf8" });
+  it("exits 0 as a process over a repository whose src/ reaches each owned built-in through its owner, reading src/ alone", () => {
+    const run = runCheck("check-owned-builtins.mjs", OWNED);
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
+    expect(run.stdout).toContain(": 2 files ");
+  });
+
+  it("exits 1 as a process, naming the file and line of each built-in reached past its owner", () => {
+    const run = runCheck("check-owned-builtins.mjs", { ...OWNED, "src/b.ts": 'import { execFile } from "node:child_process";\n' });
+    expect(printedPlaces(run.stderr)).toEqual(["src/b.ts:1"]);
+    expect(run.status).toBe(1);
   });
 });
