@@ -813,12 +813,12 @@ impl<'s> Walk<'s> {
         let src = self.t.src;
         loop {
             // The first byte past the spaces and tabs (one mask search). In the usual case it starts a token, and
-            // the scanner gives nothing: the token is read at once.
+            // the scanner gives nothing: the tokens are read at once, a run of them where it is code.
             let k = self.t.run_end(self.p, |b| b.sptab);
             if k < n && FAST[usize::from(src[k])] {
-                let kind = self.token(k)?;
+                let (kind, at) = if self.t.bit(k, |b| b.code) { self.run(k)? } else { (self.token(k)?, k) };
                 open = true;
-                header = kind == T::Colon && !self.in_brackets(k + 1);
+                header = kind == T::Colon && !self.in_brackets(at + 1);
                 continue;
             }
             let line_end = k >= n || matches!(self.t.src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c);
@@ -885,6 +885,70 @@ impl<'s> Walk<'s> {
             open = true;
             header = kind == T::Colon && !self.in_brackets(i + 1);
         }
+    }
+
+    /// A run of tokens from `k` (a token's start, in code), rr's run: the block's token starts one mask, each taken
+    /// by its lowest bit, a name's end its run of word bits. The run ends at the first byte of the block that is not
+    /// code (a string's or a comment's start: stratum 2's), a line's end, a form feed or a `\`, so no layout comes
+    /// between its tokens and no name of it is a string's prefix. The last token's kind and start.
+    #[inline(always)]
+    fn run(&mut self, k: usize) -> Result<(T, usize), Refusal> {
+        let src = self.t.src;
+        let n = src.len();
+        let base = k & !63;
+        let b = self.t.blk(k >> 6);
+        let q0 = (k & 63) as u32;
+        let valid = if n - base >= 64 { !0u64 } else { (1u64 << (n - base)) - 1 };
+        let ff = b.skip & !b.sptab & !b.lf;
+        let stop = (!b.code | b.eol | ff | b.bs | !valid) & (!0u64 << q0);
+        let before_stop = if stop == 0 { !0u64 } else { (stop & stop.wrapping_neg()) - 1 };
+        let mut starts = ((!b.skip & !(b.word & (b.word << 1)) & (!0u64 << q0)) | (1u64 << q0)) & before_stop;
+        let mut last = (T::Eof, k);
+        while starts != 0 {
+            let q = starts.trailing_zeros();
+            let pos = base + q as usize;
+            let c = src[pos];
+            let end = match CLASS[usize::from(c)] {
+                C_NAME => {
+                    let words = (!(b.word >> q)).trailing_zeros() as usize;
+                    let mut end = pos + words;
+                    // On past the block, or into a character past ASCII: the name's whole read.
+                    if q as usize + words == 64 || self.at(end) >= 0x80 {
+                        end = self.name_end(pos)?;
+                    }
+                    let (kind, soft) = lex::keyword(src, pos, end);
+                    self.toks.push(Tok { kind, soft, start: pos as u32, end: end as u32 });
+                    last = (kind, pos);
+                    end
+                }
+                C_DIGIT => {
+                    let (kind, end) = lex::number_at(src, pos);
+                    self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
+                    last = (kind, pos);
+                    end
+                }
+                // A byte past ASCII (an odd blank, a name's character) or a quote: the walk's own path.
+                C_HIGH | C_QUOTE => break,
+                cls => {
+                    let (kind, end) = if cls == C_DOT && self.at(pos + 1).is_ascii_digit() {
+                        lex::number_at(src, pos)
+                    } else {
+                        let (kind, len) = operator(c, self.at(pos + 1), self.at(pos + 2)).ok_or_else(|| refuse(pos))?;
+                        (kind, pos + len)
+                    };
+                    self.toks.push(Tok { kind, soft: 0, start: pos as u32, end: end as u32 });
+                    last = (kind, pos);
+                    end
+                }
+            };
+            self.p = end;
+            let e = end - base;
+            if e >= 64 {
+                break;
+            }
+            starts &= !0u64 << e;
+        }
+        Ok(last)
     }
 
     /// The lean lexer's `dedent_in_brackets`.

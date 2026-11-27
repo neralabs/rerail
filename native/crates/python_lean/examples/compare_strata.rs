@@ -85,7 +85,14 @@ fn main() {
     }
     println!("{} files: {same} the same, {differ} differ, {strata_refuses} the strata refuse, {lean_refuses} the lean lexer refuses, {both} both refuse", all.len());
     let bytes: usize = same_files.iter().map(|b| b.len()).sum();
-    let (l, a, _) = time(&same_files, secs, lean);
-    let (s, b, _) = time(&same_files, secs, strata);
-    println!("lexers over the {} files the same ({bytes} bytes): lean {l:.3} ns/B, strata {s:.3} ns/B ({:.2}x)   [{a} {b}]", same_files.len(), l / s);
+    // A pass of each in turn, so that both lexers meet the machine's same load.
+    let (mut tl, mut ts, mut passes, mut sum) = (0f64, 0f64, 0usize, 0usize);
+    let t0 = std::time::Instant::now();
+    while passes == 0 || t0.elapsed().as_secs_f64() < 2.0 * secs {
+        let (l, a, _) = time(&same_files, 0.0, lean);
+        let (s, b, _) = time(&same_files, 0.0, strata);
+        (tl, ts, passes, sum) = (tl + l, ts + s, passes + 1, sum.wrapping_add(a ^ b));
+    }
+    let (l, s) = (tl / passes as f64, ts / passes as f64);
+    println!("lexers over the {} files the same ({bytes} bytes), {passes} passes each in turn: lean {l:.3} ns/B, strata {s:.3} ns/B ({:.2}x)   [{sum}]", same_files.len(), l / s);
 }
