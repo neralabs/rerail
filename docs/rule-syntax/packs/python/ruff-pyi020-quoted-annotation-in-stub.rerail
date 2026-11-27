@@ -5,22 +5,34 @@
 .scope include "**/*.pyi"
 
 // Ruff PYI020 (flake8-pyi), stubs only: a quoted type. Stubs resolve forward references, so quotes are never
-// needed. Every type context counts (annotations, `X: TypeAlias = …`, cast, TypeVar bounds, a generic's
-// arguments anywhere), but not `Literal["x"]` or `Annotated[T, "meta"]`'s metadata. A quote inside a quoted
-// annotation is reported too.
+// needed. Every string Ruff's semantic model reads as a type definition counts (core's string_annotation: annotations,
+// `X: TypeAlias = …`, cast, TypeVar bounds, a generic's arguments, NamedTuple and TypedDict field types,
+// mypy_extensions' `Arg(T)`), but not `Literal["x"]`, `Annotated[T, "meta"]`'s metadata, or the arguments of any
+// other call inside a type (`x: F(subtype="a")`). A string is reported only when it parses as a type; a quote
+// inside a quoted annotation is reported too.
 //   def f(x: "int") -> list["str"]: ...     ← PYI020 twice
 //   x: Literal["a"]                          fine
+//   def f(x: "a)b"): ...                     fine: not a type (Ruff reports F722)
 #include "python/typing.rerail"
 
 .violation PYI020(at: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress ruff "PYI020"
-PYI020(s) :- quoted(s), type_ctx(s), in_stub(s).
-// The parsed contents of a string annotation (`"list['int']"`): its quoted parts, at any depth.
-PYI020(q) :- quoted(s), type_ctx(s), in_stub(s), parsed_within(s, q), quoted(q).
-.decl quoted(s: node)  // a str literal, adjacent pieces counted once at the whole
-quoted(s) :- plain_str(s, _), !inside_concat(s).
+PYI020(s) :- quoted(s), in_stub(s), parses(s).
+// The parsed contents of a string annotation (`"list['int']"`): its quoted types, at any depth.
+PYI020(q) :- quoted(s), in_stub(s), parses(s), parsed_within(s, q), quoted(q), parses(q).
+// quoted(s): a string type definition, adjacent pieces counted once at the whole (Ruff's StringLiteral).
+.decl quoted(s: node)
+quoted(s) :- string_annotation(s), plain_str(s, _), !inside_concat(s).
 .decl inside_concat(s: node)
 inside_concat(s) :- child(c, s, _), kind(c, "concatenated_string").
 .decl parsed_within(s: node, q: node)
-parsed_within(s, q) :- str_node(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
+parsed_within(s, q) :- quoted(s), parsed(s, "annotation", r), (q = r ; within(q, r)).
 parsed_within(s, q) :- parsed_within(s, p), quoted(p), parsed_within(p, q).
+// parses(s): Ruff parses the string as a type expression. The engine's "annotation" guest parses `( value )`, so a
+// trailing comment (`"SingleLine  # Comment"`, Ruff's `SingleLine`) hides the `)` and the guest is refused; such a
+// string still parses as a module of one expression statement. The guest takes a blank string, which Ruff refuses.
+.decl parses(s: node)
+parses(s) :- quoted(s), parsed(s, "annotation", _), plain_str(s, v), !match("\\s*", v).
+parses(s) :- quoted(s), parsed(s, "python", m), count : { child(m, x, _), !kind(x, "comment") } = 1,
+    child(m, e, _), kind(e, "expression_statement"), child(e, v, 0), !kind(v, "assignment"),
+    !kind(v, "augmented_assignment"), !kind(v, "yield").

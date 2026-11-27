@@ -12,4 +12,14 @@
 .violation PYI014(at: node) code "PYI014" "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple."
     suppress ruff "PYI014"
 PYI014(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), unset(a), kind(d, _),
-    !simple_value(d, "top").
+    !simple_value(d, "top"), !simple_display(d).
+// simple_display(e): a list, tuple or set of at most 10 simple items, or a dict of at most 10 simple pairs, counted
+// without line continuations. tree-sitter makes each `\` inside a display a child, which simple_value counts as an
+// item: `[1, …, 9, \` / `10]` has ten items to Ruff, eleven children to simple_value.
+.decl simple_display(e: node)
+simple_display(e) :- unparen(e, m), (kind(m, "list") ; kind(m, "tuple") ; kind(m, "set")),
+    count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation") } <= 10,
+    count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation"), !simple_item(x) } = 0.
+simple_display(e) :- unparen(e, m), kind(m, "dictionary"),
+    count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation") } <= 10,
+    count : { child(m, x, _), !kind(x, "comment"), !kind(x, "line_continuation"), !simple_pair(x) } = 0.

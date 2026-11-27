@@ -12,7 +12,7 @@
 //   if sys.version_info[0] == "3":       ← PYI003: not an int
 //   if sys.version_info >= (3, "8"):     ← PYI003: not all ints
 //   if sys.version_info >= (3, 8):       fine
-#include "python/typing.rerail"
+#include "python/pt1120-python-01.rerail"
 
 .violation PYI003(at: node, msg: symbol) code "PYI003" "{msg}"
     suppress ruff "PYI003"
@@ -22,6 +22,7 @@ PYI003(c, "Compare `sys.version_info[0]` against an integer literal such as `3`;
     stub_version_test(c, "major", r), !pyi_int(r).
 PYI003(c, "Compare `sys.version_info` against a tuple of integer literals such as `(3, 10)`; type checkers do not understand other comparands.") :-
     stub_version_test(c, f, r), f != "other", f != "major", !int_tuple(r, _).
-// stub_version_test(c, form, r): the stub `if` test c (or an operand of its and/or) compares sys.version_info.
+// stub_version_test(c, form, r): the stub `if` test c (or an operand of its and/or) compares sys.version_info. The
+// index is read as Ruff's AST has it: `[:(1)]` is `[:1]`, and a comment in the slice or the comparison is nothing.
 .decl stub_version_test(c: node, form: symbol, r: node)
-stub_version_test(c, f, r) :- stub_test(c), version_cmp(c, f, _, r).
+stub_version_test(c, f, r) :- stub_test(c), vi_cmp(c, f, _, r).

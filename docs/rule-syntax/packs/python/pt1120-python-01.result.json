@@ -1,0 +1,50 @@
+[
+  {
+    "id": "ruff-pyi002-complex-if-statement-in-stub",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi003-unrecognized-version-info-check",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi004-patch-version-comparison",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi005-wrong-tuple-length-version-comparison",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi013-ellipsis-in-non-empty-class-body",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi014-argument-default-in-stub",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi019-custom-type-var-for-self",
+    "status": "same"
+  },
+  {
+    "id": "ruff-pyi020-quoted-annotation-in-stub",
+    "status": "different",
+    "reason": "Both keys come from parsing the string. fixtures ruff/pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`): the value is a backslash line continuation before `list[int]`; Ruff 0.17.6 reports PYI020 at 32:4, and so does the translation (the engine's annotation guest parses it); the original does not. fixtures ruff/pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`): Ruff reports 41:14, and so does the original; the translation cannot parse the string: the engine's annotation guest wraps the value as `( value )` so the trailing comment hides the `)`, and the python-module fallback refuses the leading indentation (an engine gap, NOTES-pt1120-python-01.md).",
+    "right": "neither",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 1,
+        "translationOnly": 1
+      },
+      "samples-python": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]
