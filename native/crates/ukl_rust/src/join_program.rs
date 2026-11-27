@@ -2064,8 +2064,12 @@ unsafe fn ix_mark_range(bb: *const u8, rf: *const u8, keys: *const u32, places: 
     let row = |u: u32| (*places.add((eb + u) as usize)).wrapping_sub(eb);
     let tag = |r: u32| *rows.add(r as usize);
     // The places' rows, the sorted level's, are in key order: a document's rows apart. A pair compared reads each
-    // through its own found document (`Found`).
+    // through its own found document (`Found`). A place's key, once read, is kept for the places after it that look
+    // back to it (`Keys`): its tag's previous place is most often the one just before, whose key that place read as
+    // its own, so each row's key is read once, not twice (the compares' reads were most of the marks' cost).
     let (mut fu, mut ft) = (Found::new(), Found::new());
+    let nk = (p.ncols & !IX_LIVE).min(8) as usize;
+    let mut kept = Keys::new();
     for t in t0..t1 {
         let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
         let rt = row(t);
@@ -2076,11 +2080,51 @@ unsafe fn ix_mark_range(bb: *const u8, rf: *const u8, keys: *const u32, places: 
             if tag(ru) != tg {
                 continue;
             }
-            let (a, b) = (ix_row(bb, far, p, ru, &fu), ix_row(bb, far, p, rt, &ft));
-            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| a.get(p.cols[i], &mut fu) == b.get(p.cols[i], &mut ft));
+            let a = *kept.of(u, || ix_key(bb, far, p, ru, nk, &mut fu));
+            let b = kept.of(t, || ix_key(bb, far, p, rt, nk, &mut ft));
+            same = a[..nk] == b[..nk];
             break;
         }
         *rows.add((p.n + t) as usize) = tg | u32::from(same);
+    }
+}
+
+/// Row `r`'s key, its first `nk` values (`ix_row`'s columns `p.cols`).
+#[inline(always)]
+unsafe fn ix_key(bb: *const u8, far: *const u8, p: &IxP, r: u32, nk: usize, f: &mut Found<'_>) -> [i64; 8] {
+    let row = ix_row(bb, far, p, r, f);
+    let mut key = [0i64; 8];
+    for (i, k) in key.iter_mut().enumerate().take(nk) {
+        *k = row.get(p.cols[i], f);
+    }
+    key
+}
+
+/// The keys of the places a mark's look-back reaches (`MARK_REACH` before it, and itself), read once each: place `t`
+/// in slot `t % KEYS_KEPT`.
+struct Keys {
+    place: [u32; KEYS_KEPT],
+    key: [[i64; 8]; KEYS_KEPT],
+}
+
+/// Slots for a place and the `MARK_REACH` before it.
+const KEYS_KEPT: usize = 16;
+const _: () = assert!(KEYS_KEPT > MARK_REACH as usize);
+
+impl Keys {
+    fn new() -> Self {
+        Keys { place: [NONE; KEYS_KEPT], key: [[0; 8]; KEYS_KEPT] }
+    }
+
+    /// Place `t`'s key: kept, else `read` and kept.
+    #[inline(always)]
+    fn of(&mut self, t: u32, read: impl FnOnce() -> [i64; 8]) -> &[i64; 8] {
+        let s = t as usize % KEYS_KEPT;
+        if self.place[s] != t {
+            self.key[s] = read();
+            self.place[s] = t;
+        }
+        &self.key[s]
     }
 }
 
