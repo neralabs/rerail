@@ -613,21 +613,38 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Key::Slot(x) if is_arena(x) || deferred.contains_key(&x) => Some((c, x)),
                     _ => None,
                 }).collect();
-                let keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !by_text.iter().any(|&(t, _)| t == c)).collect();
+                let mut keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !by_text.iter().any(|&(t, _)| t == c)).collect();
                 let mut atom_binds: Vec<(usize, usize)> = atom_binds.iter().copied().collect();
                 let mut compared = None;
                 match by_text[..] {
                     [] => {}
-                    [(c, x)] => {
+                    [_] => {
                         if *neg {
                             return Err("a made text as a negated atom's key has no device form".into());
-                        }
-                        if keys.is_empty() {
-                            return Err("a made text as an atom's only key has no device form".into());
                         }
                         if own.is_some() {
                             return Err("a made text as a key of the component's own relation has no device form".into());
                         }
+                    }
+                    _ => return Err("an atom keyed by several made texts has no device form".into()),
+                }
+                match by_text[..] {
+                    [(c, x)] if keys.is_empty() => {
+                        // A made text as the atom's only key: the atom it is, found by its hash in the atoms
+                        // directory (`ROW_FIND`, decision 0666) into a slot of its own (a stage that counts no step),
+                        // and no row where none is: an input relation's column holds atoms, so a text no atom is is in
+                        // no row of it, as the CPU's probe by its interned value finds none. The atom is then probed
+                        // by that value.
+                        let tmp = extra;
+                        extra += 1;
+                        stages.push(find_stage(i, tmp, Key::Slot(x), &deferred, &origin, &known)?);
+                        if tmp >= bound.len() {
+                            bound.resize(tmp + 1, false);
+                        }
+                        bound[tmp] = true;
+                        keys.push((c, Key::Slot(tmp)));
+                    }
+                    [(c, x)] => {
                         if atom_binds.len() >= mj::MAX_BINDS {
                             return Err("an atom with more keys, tests or binds than a stage holds".into());
                         }
@@ -635,7 +652,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         atom_binds.push((c, extra - 1));
                         compared = Some((extra - 1, x));
                     }
-                    _ => return Err("an atom keyed by several made texts has no device form".into()),
+                    _ => {}
                 }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
                 for (k, &(c, key)) in keys.iter().enumerate() {
@@ -936,7 +953,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 } else if made {
                     // A cat of a made text (an arena text, a held cat's): made per row into the arena, a SIMD group a
                     // row (`ROWTEXT`). Read by a head's cat, that cat reads it from the arena.
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, out) && !matches!(s, Step::Atom { neg: false, .. })) {
                         return Err(format!("a cat's text read by {} has no device form", step_name(s)));
                     }
                     let op = if form == mj::CAT_PLAIN { mj::ROW_CONCAT } else { mj::ROW_CAT };
@@ -957,7 +974,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     deferred.insert(out, (a, b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else if bind {
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, out) && !matches!(s, Step::Atom { neg: false, .. })) {
                         return Err(format!("a cat's text read by {} has no device form", step_name(s)));
                     }
                     let mut st = copy_stage(i, out, a, b, form, &origin, &known)?;
@@ -1080,7 +1097,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     deferred.insert(*out, held);
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else {
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !(finds && matches!(s, Step::Atom { neg: false, .. }))) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { neg: false, .. })) {
                         return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                     }
                     let mut st = copy_stage(i, *out, Key::Slot(n), Key::Slot(n), mj::NODE_TEXT, &origin, &known)?;
@@ -1115,7 +1132,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 let target = if *bind {
                     let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !(finds && matches!(s, Step::Atom { neg: false, .. }))) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { neg: false, .. })) {
                         return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                     }
                     *out
@@ -1474,6 +1491,25 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         }
         _ => false,
     }
+}
+
+/// A positive atom reads a made text as a key: by the atom it is (`ROW_FIND`) where atoms alone read it, else compared
+/// as texts beside the atom's other keys, or found by a stage of its own (`find_stage`) where it is the only key.
+///
+/// A `ROW_FIND` stage of made text `x` (an arena text, a held cat's, a node's): the atom the text is, found by its
+/// hash in the atoms directory, into slot `out`, and no row where none is (decision 0666). It counts no step: the
+/// atom keyed by it counts its own.
+fn find_stage(first: usize, out: usize, x: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
+    let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+    let (keys, xk) = match x {
+        Key::Slot(s) if is_arena(s) => ([x, x], mj::OPND_ARENA),
+        Key::Slot(s) if let Some(&(a, b, form)) = deferred.get(&s) => ([a, b], held_kind(form)),
+        _ => return Err("a made text's atom found of no made text".into()),
+    };
+    let kind = text_keys(&mut d, &keys, origin, known, "a made text's atom")?;
+    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16 | mj::ROW_FIND, xk];
+    d.bind_slot[0] = out as u32;
+    Ok(PStage { first, span: 0, kind, desc: d, npassed: 0 })
 }
 
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its

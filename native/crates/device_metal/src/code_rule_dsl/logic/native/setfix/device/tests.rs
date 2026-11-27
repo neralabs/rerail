@@ -1511,6 +1511,10 @@ use rerail_blocks::vector::Vector;
             // part that may be a name.
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v1\nhead v0 v1", sym("^(?:(?<h>.*))$"), sym("h")),
             format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v3\nhead v0 v3", sym("^(?:(?<h>foo|Bar|SRC|x9).*)$"), sym("h")),
+            // A made text the head reads too (an arena text) as an atom's only key: the atom it is found by its own
+            // stage (`find_stage`), then probed by value; no row where the text is no atom.
+            format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {m} v2\nhead v2 v1"),
+            format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:3\npos {m} v2\nhead v2 v1"),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
