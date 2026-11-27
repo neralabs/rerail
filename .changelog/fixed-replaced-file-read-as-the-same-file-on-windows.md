@@ -1,0 +1,1 @@
+On Windows, a file removed and made again while it refused a session's walk is no longer recorded as a place the walk could not check: Rerail now tells the new file from the one the walk found by their file ids read whole, where two NTFS file ids could give one number.

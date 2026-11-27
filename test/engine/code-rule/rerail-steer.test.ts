@@ -289,7 +289,9 @@ describe("Rerail steer text", () => {
 
   it("puts the why? link on the word where the agent can draw one, and prints it after the word where it cannot", () => {
     const headline = { header: "◆ Rerail · a  steered", url: "http://127.0.0.1:4791/#rule/a" };
-    expect(headlineText(headline, "hyperlink")).toBe("◆ Rerail · a  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/a\u0007why?\u001b]8;;\u0007");
+    // The linked word is underlined: iTerm2's CPU renderer, among others, draws an OSC 8 link as plain text until hovered.
+    expect(headlineText(headline, "hyperlink"))
+      .toBe("◆ Rerail · a  steered  ·  \u001b]8;;http://127.0.0.1:4791/#rule/a\u0007\u001b[4mwhy?\u001b[24m\u001b]8;;\u0007");
     expect(headlineText(headline, "markdown")).toBe("`◆ Rerail · a  steered`  ·  [why?](http://127.0.0.1:4791/#rule/a)");
     expect(headlineText(headline, "plain")).toBe("◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a");
     expect(headlineText({ ...headline, url: undefined }, "hyperlink")).toBe("◆ Rerail · a  steered");

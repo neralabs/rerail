@@ -40,8 +40,9 @@ import {
   type RemoteAddress,
   type RemoteSource,
 } from "./checkouts/kept-remote.js";
+import { type GitCouldNotAnswerError, LEGACY_ID_ARGS, LOCATE_ARGS, legacyIdAnswer, locateAnswer } from "./checkouts/git-locate.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
+import { GitUnavailableError, runGit, runGitAsync, sharedRead, type GitReadOptions, type GitReads, type GitResult, type SharedRead } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -57,6 +58,12 @@ export interface RepositoryIdentityLocation {
   main: boolean;
   /** Set only outside Git, on a linked worktree whose Git folder was gone as this answer was read ({@link worktreeGitFolderGone}). */
   gitFolderGone?: true;
+  /**
+   * Set only outside Git, when the Git asked gave no answer (it could not start, ran past its time limit, was killed or
+   * failed otherwise): the folder reads as outside Git for this ask alone, and whatever would record or keep an answer
+   * from it refuses to ({@link resolveCloneId}, the map of which checkout owns a file).
+   */
+  unanswered?: GitCouldNotAnswerError;
 }
 
 function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIdentityLocation {
@@ -67,8 +74,19 @@ function nonGitLocation(requested: string, gitFolderGone = false): RepositoryIde
 /** The file in Git's common metadata directory that holds a clone's id, shared by every linked worktree. */
 export const GIT_IDENTITY_FILE = "rerail-repository-id";
 
-/** What {@link gitLocation} reads: Git's top level, common directory and Git directory, as absolute paths. */
-const LOCATE_ARGS = ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"];
+/**
+ * Where `requested` is by Git's answer `result` ({@link locateAnswer}), or by the disk where no Git ran (`result`
+ * undefined: Git would find none, `none`, or is not installed). Where Git ran and gave no answer it is outside Git for
+ * this ask, carrying `locateAnswer`'s error ({@link RepositoryIdentityLocation.unanswered}); a read its owner stopped
+ * (`signal` aborted) reads as outside Git with none, as before, and is kept by nothing.
+ */
+function locatedFrom(requested: string, result: GitResult | undefined, none: "outside" | "gone" | undefined, signal?: AbortSignal): RepositoryIdentityLocation {
+  const stopped = signal?.aborted === true && result?.status !== 0;
+  const answer = result === undefined || stopped ? undefined : locateAnswer(requested, result);
+  if (answer?.kind === "placed") return gitLocation(requested, answer.printed);
+  const outside = nonGitLocation(requested, none === "gone");
+  return answer?.kind === "no-answer" ? { ...outside, unanswered: answer.error } : outside;
+}
 
 /**
  * Git's answers for the folders it took for their own checkout's top level, each kept while what Git read to give it,
@@ -87,11 +105,11 @@ const heldTopLevels = new Map<string, { readonly stamp: string; readonly locatio
 const gitPlacedCommons = new Map<string, string>();
 
 /**
- * A folder's identity on its volume: its file id and when it was made, so a folder removed and made again at its path is
- * another one (Linux file systems give a freed file id out again; NTFS keeps a name's creation time for a while after the
- * name is removed). Undefined when it cannot be read.
+ * A folder's identity on its volume, or a file's: its file id and when it was made, so a folder removed and made again at
+ * its path is another one (Linux file systems give a freed file id out again; NTFS keeps a name's creation time for a
+ * while after the name is removed). Undefined when it cannot be read.
  */
-function folderIdentity(folder: string): string | undefined {
+export function folderIdentity(folder: string): string | undefined {
   try {
     const stats = lstatSync(folder);
     return `${stats.ino}:${stats.birthtimeMs}`;
@@ -111,7 +129,9 @@ function gitPlaced(common: string): boolean {
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). A folder that holds a `.git`
  * entry is answered as Git last answered while what Git reads there is unchanged, and a linked worktree of a repository
  * Git placed a checkout of is answered from its files ({@link linkedWorktreeFromFiles}); every other folder, and every
- * case those files do not decide, is asked of Git.
+ * case those files do not decide, is asked of Git. Where the Git asked gives no answer (it could not start, ran past
+ * its time limit, was killed or failed otherwise) the folder reads as outside Git for this call, nothing is kept, and
+ * the answer carries the reason ({@link RepositoryIdentityLocation.unanswered}), so the next call asks Git again.
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   return placed(resolve(workspace), false);
@@ -198,7 +218,7 @@ async function locatedWithoutBlocking(requested: string, gitFolderThere: boolean
   const searched = searchedUp(requested);
   const none = gitFindsNone(requested, gitFolderThere);
   const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, options).catch(noGitInstalled) : undefined;
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  const location = locatedFrom(requested, result, none, options.signal);
   return { location, byGit: true, searched };
 }
 
@@ -215,7 +235,7 @@ function locatedByGit(requested: string, gitFolderThere: boolean): Located {
   const searched = searchedUp(requested);
   const none = gitFindsNone(requested, gitFolderThere);
   const result = none === undefined ? locateInGit(requested) : undefined;
-  const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  const location = locatedFrom(requested, result, none);
   return { location, byGit: true, searched };
 }
 
@@ -314,7 +334,7 @@ export async function repositoryIdentityLocationAsync(workspace: string, signal?
   const requested = resolve(workspace);
   const none = gitFindsNone(requested);
   const result = none === undefined ? await runGitAsync(requested, LOCATE_ARGS, { signal }).catch(noGitInstalled) : undefined;
-  return result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
+  return locatedFrom(requested, result, none, signal);
 }
 
 /** Undefined when Git is not installed; any other failure is thrown again. */
@@ -446,6 +466,54 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
   gitAcceptances.delete(resolve(checkout));
   const again = registryAsPlaced(checkout);
   return again === ANOTHER_REGISTRY ? undefined : again;
+}
+
+/**
+ * The registries of the recorded checkouts asked about many worktrees in one synchronous pass, such as a read of the
+ * recorded checkouts that records each worktree of a started clone: each recorded checkout's registry is read once for
+ * the pass ({@link worktreeRegistry}), and each worktree it lists is resolved to its stored path at most once, as far
+ * as the questions need. A question per worktree read every registry file and resolved the listed worktrees again for
+ * each one, so a pass over a repository's n worktrees cost n times n file reads and real paths. A pass answers what the
+ * registry held at its first question: nothing else runs on the thread before its last one, and the next pass reads
+ * the registry again, so a worktree added, moved, removed or pruned meanwhile is answered at the next use.
+ */
+export class WorktreeRegistryPass {
+  readonly #listed = new Map<string, ListedWorktrees | undefined>();
+
+  /** Whether the registry the recorded `checkout` reads is in `commonDirectory` and lists the worktree at `root`, a stored path. */
+  lists(checkout: string, commonDirectory: string, root: string): boolean {
+    const listed = this.#listedBy(checkout);
+    return listed?.commonDirectory === commonDirectory && listed.has(root);
+  }
+
+  #listedBy(checkout: string): ListedWorktrees | undefined {
+    if (!this.#listed.has(checkout)) {
+      const registry = worktreeRegistry(checkout);
+      this.#listed.set(checkout, registry === undefined ? undefined : new ListedWorktrees(registry));
+    }
+    return this.#listed.get(checkout);
+  }
+}
+
+/** A registry's worktrees by stored path, each resolved once, in Git's order, until a question finds its answer. */
+class ListedWorktrees {
+  readonly commonDirectory: string;
+  readonly #unresolved: string[];
+  readonly #stored = new Set<string>();
+
+  constructor(registry: WorktreeRegistry) {
+    this.commonDirectory = registry.commonDirectory;
+    this.#unresolved = registry.worktrees.toReversed();
+  }
+
+  has(root: string): boolean {
+    while (!this.#stored.has(root)) {
+      const next = this.#unresolved.pop();
+      if (next === undefined) return false;
+      this.#stored.add(storedPath(next));
+    }
+    return true;
+  }
 }
 
 /** What {@link registryAsPlaced} gives when Git listed the registry of another common Git folder than the one placed. */
@@ -825,12 +893,13 @@ function readOrCreateIdentity(identityPath: string, candidate: () => string): st
 /**
  * The clone id of a checkout in Git: the identity file's, else a legacy `rerail.repository-id` config value when it is
  * well formed, else a new one. Git's config is read only while no identity file is there, since the file wins once it
- * is: so a repository's worktrees, which share one, start no Git process to be recorded.
+ * is: so a repository's worktrees, which share one, start no Git process to be recorded. A Git that gives no answer
+ * for the config value throws `GitCouldNotAnswerError` ({@link legacyIdAnswer}) and no id is written.
  */
 function gitCloneId(location: RepositoryIdentityLocation): string {
   const existing = readIdentityFile(location.identityPath);
   if (existing !== undefined) return existing;
-  const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
+  const legacyId = legacyIdAnswer(location.workspaceRoot, runGit(location.workspaceRoot, LEGACY_ID_ARGS));
   return readOrCreateIdentity(location.identityPath, () => CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`);
 }
 
@@ -846,6 +915,8 @@ export function resolveCloneId(
 ): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) return { cloneId: gitCloneId(location), location };
+  // No identity is made for a folder Git gave no answer for: it may be a checkout, and Git is asked again next time.
+  if (location.unanswered !== undefined) throw location.unanswered;
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a
   // real directory, never a symlink (lstat).

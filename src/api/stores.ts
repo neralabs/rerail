@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { installedPacksPrefix, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { databaseInstalledAt, openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { syncHistoryLog } from "../engine/storage/log-sync.js";
-import { onRecordsWritten } from "../engine/storage/record-writes.js";
+import { onRecordsWritten, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -70,6 +70,10 @@ export class DatabaseApiStores implements RerailApiStores {
   #changes: ChangeFeed | undefined;
   #stopConflicts: (() => void) | undefined;
   #stopRecords: (() => void) | undefined;
+  /** This instance's use of the database's record writer, for {@link writeWhenFree}: it opens with {@link database} and ends with the stores. */
+  #records: RecordWriter | undefined;
+  /** Ends what still waits for the write lock in {@link writeWhenFree} as the stores close: nothing more is made. */
+  readonly #closing = new AbortController();
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -116,8 +120,19 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   database(): RerailDatabase {
-    this.#database ??= openRerailDatabase(this.#path);
+    if (this.#database === undefined) {
+      this.#database = openRerailDatabase(this.#path);
+      // The record writer's use opens with the handle, as each store opens its own: never first at a write, which can
+      // come while another process holds the lock.
+      this.#records = openRecordWriter(this.#path);
+    }
     return this.#database;
+  }
+
+  async writeWhenFree(write: RecordWrite): Promise<boolean> {
+    this.database();
+    // Opened with the handle above.
+    return await this.#records!.writeWhenFree(write, this.#closing.signal);
   }
 
   ruleCatalog(): RuleCatalog {
@@ -207,6 +222,8 @@ export class DatabaseApiStores implements RerailApiStores {
     // Its hook commands get SIGTERM, its passes end at their next Git read, and its late answers record nothing, before
     // the database closes under them: a stop with no wait does all that in its call.
     void this.#ownMergeAssist?.stop(0);
+    this.#closing.abort();
+    this.#records?.close();
     this.#stopConflicts?.();
     this.#stopRecords?.();
     this.#changes?.close();

@@ -670,7 +670,7 @@ function onDecision(effects: readonly Effect[], context: Context): PortDecision 
   if (unsureOff !== undefined && ons.length > 0) return { on: "unknown", because: unsureOff.because };
   if (on !== undefined) return { on: true, explicit: on.explicit, because: on.because, ...on.options === true ? { config: { ok: false, reason: OPTIONS_NOT_MAPPED } } : {} };
   if (ons[0] !== undefined) return { on: "unknown", because: ons[0].because };
-  return { on: false, explicit: false, because: `${context.file} does not turn it on` };
+  return { on: false, explicit: false, because: `not turned on in ${context.file}` };
 }
 
 /** The decision `effects` come to: a rule disabled anywhere is off; one enabled anywhere is on; otherwise Biome leaves it off. */

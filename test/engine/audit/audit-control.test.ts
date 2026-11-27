@@ -318,7 +318,7 @@ describe("audit controls", () => {
     expect(queued.mode).toBe("log");
     expect(controls.claim("b", owner)).toBeUndefined();
     expect(controls.claim("a", owner)).toMatchObject({ id: queued.id, status: "running" });
-    controls.interrupt("a");
+    controls.endOwnership("a", owner);
     expect(controls.listAuditRequests("a").find(request => request.id === queued.id)).toMatchObject({ status: "interrupted" });
     const interrupted = controls.listAuditRequests("a").find(request => request.id === queued.id);
     controls.finish(queued.id, "interrupted", ["partial-run"], "Late native completion");

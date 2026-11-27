@@ -175,13 +175,12 @@ function versionButtons(version, latest, pre) {
 /* ---------- the update popover ----------
  * "Update available" opens a small popover under it, at page level (`#updatelayer`) like the repository menu: the
  * command to paste into a coding agent's session, Copy, and Details in Settings. A click opens it, not a hover, so it
- * stays open to reach Copy and works from the keyboard; a click outside it, Esc, or using Copy or the link closes it. */
+ * stays open to reach Copy and works from the keyboard. Copy leaves it open, reading Copied; a click outside it, Esc,
+ * or the link closes it. */
 
 let updateOpen = false;
 /** Copy takes the focus once the popover has drawn, when it has just opened. */
 let focusCopy = false;
-/** The chip takes the focus back once the popover has gone, when Copy closed it: the focus must not drop to the page. */
-let focusChip = false;
 
 /** The "Update available" chip, while a release is available (`availableRelease`). */
 const updateChip = () => (availableRelease(data.health) === null ? null : document.querySelector("#status .vnew"));
@@ -190,7 +189,7 @@ function renderUpdatePop() {
   const layer = $("updatelayer"), chip = updateChip();
   if (chip === null) updateOpen = false;
   else setAttr(chip, "aria-expanded", String(updateOpen));
-  if (!updateOpen) { setContent(layer, "", () => null); refocusChip(chip); return; }
+  if (!updateOpen) { setContent(layer, "", () => null); return; }
   const latest = availableRelease(data.health);
   setContent(layer, latest, () => updatePopover(latest));
   placeUnder(layer.firstChild, chip);
@@ -206,12 +205,6 @@ function updatePopover(latest) {
     updateDetailsLink());
 }
 
-function refocusChip(chip) {
-  if (!focusChip) return;
-  focusChip = false;
-  chip?.focus();
-}
-
 /** The popover hangs under the chip, its right edge on the chip's. */
 function placeUnder(pop, chip) {
   const at = chip.getBoundingClientRect();
@@ -222,19 +215,17 @@ function placeUnder(pop, chip) {
 /** Whether the update popover is open (it follows the chip on resize). */
 export const updatePopOpen = () => updateOpen;
 
-/** A click that leaves the popover open: on its chip (which toggles it), or in it but not on Copy or the link. */
+/** A click that leaves the popover open: on its chip (which toggles it), or in it but not on the link. */
 function keepsUpdatePop(target) {
   if (!(target instanceof Element)) return false;
   if (target.closest("#status .vnew")) return true;
-  return target.closest(".updpop") !== null && target.closest("[data-act]") === null;
+  return target.closest(".updpop") !== null && target.closest("[data-act]:not([data-act=cmdcopy])") === null;
 }
 
 /** Close the update popover after a click anywhere it does not stay open for; `true` when it was open. */
 export function closeUpdatePop(target) {
   if (!updateOpen || keepsUpdatePop(target)) return false;
   updateOpen = false;
-  // Details in Settings goes to another page, so only Copy hands the focus back to the chip.
-  focusChip = target instanceof Element && target.closest(".updpop [data-act=cmdcopy]") !== null;
   invalidate();
   return true;
 }

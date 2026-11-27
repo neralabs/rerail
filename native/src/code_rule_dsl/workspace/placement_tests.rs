@@ -1,12 +1,14 @@
 //! A code rule placed per folder of a checkout: where it runs, at which mode, whether linters'
 //! suppression comments silence it, and the result catalog its placement keys.
 
+use super::super::model::Capabilities;
 use super::super::test_support::CAPABILITIES;
 use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::persisted::candidate_catalog;
 use super::tests::WORKSPACE_TEST_SLOT;
 use crate::content_store::CandidateCatalogIdentity;
+use globset::GlobSet;
 use napi::Task;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -319,5 +321,129 @@ fn content_regexes_skip_a_leading_byte_order_mark_in_ecmascript_files() {
         found,
         [("a.py".to_owned(), 0, 3), ("a.ts".to_owned(), 3, 4)],
         "{evaluation}"
+    );
+}
+
+/// Where a workspace's first code rule keeps its canonical text and its clauses, and its placement.
+fn first_code_rule(workspace: &CodeRuleDslWorkspace) -> (*const u8, *const u8, usize, bool) {
+    let state = workspace.state.lock().unwrap();
+    let code_rule = &state.code_rules[0];
+    (
+        code_rule.canonical.as_ptr(),
+        code_rule.clauses.as_ptr().cast(),
+        code_rule.clauses.len(),
+        code_rule.scope.is_placed(),
+    )
+}
+
+/// A placement is all a workspace changes of a file-local code rule, so the workspaces that place one
+/// compiled code rule, each its own way, hold its canonical text and its clauses once between them:
+/// a copy in each cost a session's lane about 7 MB at the 382 rules of four packs, and a session
+/// opens one lane in each other worktree whose changes it audits.
+#[test]
+fn workspaces_placing_one_code_rule_share_its_text_and_clauses() {
+    let compiled = needle_code_rule();
+    let mut nested = CodeRuleDslWorkspace::new();
+    nested
+        .add_code_rule(&compiled, Some(NESTED.to_owned()))
+        .unwrap();
+    let mut whole = CodeRuleDslWorkspace::new();
+    whole
+        .add_code_rule(
+            &compiled,
+            Some(r#"[{"folder": "", "mode": "log"}]"#.to_owned()),
+        )
+        .unwrap();
+    let held: (*const u8, *const u8, usize, bool) = (
+        compiled.inner.canonical.as_ptr(),
+        compiled.inner.clauses.as_ptr().cast(),
+        compiled.inner.clauses.len(),
+        true,
+    );
+    assert_eq!(first_code_rule(&nested), held);
+    assert_eq!(first_code_rule(&whole), held);
+    // Each keeps its own placement: the same file is steered in one and logged in the other.
+    assert_eq!(
+        violations(&nested, &["web/a.ts"]),
+        [("web/a.ts".to_owned(), "steer".to_owned())]
+    );
+    assert_eq!(
+        violations(&whole, &["web/a.ts"]),
+        [("web/a.ts".to_owned(), "log".to_owned())]
+    );
+}
+
+/// A code rule with a global clause compiles it into clauses of the workspace's own (`global.rs`):
+/// those go into the workspace's copy, never into the compiled code rule another workspace shares.
+#[test]
+fn a_global_clause_compiles_into_the_workspace_copy_alone() {
+    let compiled = CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "placed-budget", "revision": 1,
+            "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{
+                "id": "budget", "violation": { "anchor": "witness.span", "code": "OVER",
+                    "message": "too many debugger statements" },
+                "budget": {
+                    "query": { "evidence": {
+                        "as": "usage",
+                        "query": { "ast": { "language": "typescript", "rule": {
+                            "kind": "debugger_statement" } } },
+                        "project": { "directory": "file.directory" }
+                    } },
+                    "group_by": ["usage.directory"],
+                    "count": { "lte": 1 }
+                }
+            }]
+        })
+        .to_string(),
+        "json".into(),
+        CAPABILITIES.to_owned(),
+    )
+    .unwrap();
+    let clauses = compiled.inner.clauses.len();
+    let mut first = CodeRuleDslWorkspace::new();
+    first
+        .add_code_rule(&compiled, Some(NESTED.to_owned()))
+        .unwrap();
+    let mut second = CodeRuleDslWorkspace::new();
+    second.add_code_rule(&compiled, None).unwrap();
+    assert_eq!(compiled.inner.clauses.len(), clauses);
+    assert!(first_code_rule(&first).2 > clauses);
+    assert_eq!(first_code_rule(&second).2, first_code_rule(&first).2);
+    assert_ne!(first_code_rule(&first).1, first_code_rule(&second).1);
+}
+
+/// Where a workspace's first code rule keeps its scope's globs and its capabilities.
+fn first_code_rule_globs(workspace: &CodeRuleDslWorkspace) -> [usize; 3] {
+    let state = workspace.state.lock().unwrap();
+    let code_rule = &state.code_rules[0];
+    [
+        std::ptr::from_ref::<GlobSet>(code_rule.scope.include_globs()).addr(),
+        std::ptr::from_ref::<GlobSet>(code_rule.scope.exclude_globs()).addr(),
+        std::ptr::from_ref::<Capabilities>(&code_rule.capabilities).addr(),
+    ]
+}
+
+/// The scope's globs and the capabilities are the rest of what a placed copy took from the compiled
+/// code rule unchanged: the workspaces that place one compiled code rule hold them once too (a copy
+/// of each was about 7 KB a code rule, 2.6 MB a lane at the 382 rules of four packs).
+#[test]
+fn workspaces_placing_one_code_rule_share_its_globs_and_capabilities() {
+    let compiled = needle_code_rule();
+    let mut nested = CodeRuleDslWorkspace::new();
+    nested
+        .add_code_rule(&compiled, Some(NESTED.to_owned()))
+        .unwrap();
+    let mut unplaced = CodeRuleDslWorkspace::new();
+    unplaced.add_code_rule(&compiled, None).unwrap();
+    assert_eq!(
+        first_code_rule_globs(&nested),
+        first_code_rule_globs(&unplaced)
+    );
+    assert_eq!(
+        violations(&nested, &["web/legacy/a.ts", "web/a.ts", "a.ts"]),
+        [("web/a.ts".to_owned(), "steer".to_owned())]
     );
 }

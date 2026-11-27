@@ -666,7 +666,8 @@ aside (or point `RERAIL_HOME` elsewhere), start again, then re-import your rules
 
 A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or a command, hook or status line that
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
-that cannot write the file gets an error naming those steps, and the file is left as it was.
+that cannot write the file gets an error naming those steps, and the file is left as it was. Once the file has this
+version's shape, an open only reads it, so it does not wait while another process writes, as `rerail scrub` does.
 
 Moving each audit's rule provenance to one shared copy is not part of a step: the step adds two tables and a column,
 and records the last audit the database holds; the daemon moves the provenance of the audits up to that one once it

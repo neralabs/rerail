@@ -245,6 +245,8 @@ body[data-panel="open"] .panel{display:flex}
 /* Remove pack on its page: an outline, danger text and a 45% danger stroke, no fill until hovered. */
 .btn.danger.outline{background:transparent;color:var(--danger-foreground);border-color:var(--fail-border)}
 .btn.danger.outline:hover{background:var(--danger-subtle);filter:none}
+/* A Copy that just copied: "✓ Copied", centred in the width its label had */
+.btn:has(> .copied){justify-content:center}
 .rangectl{display:inline-flex;gap:2px;background:var(--subtle);border-radius:var(--pill);padding:3px}
 .rangectl button{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:var(--pill);font-size:12px;color:var(--muted-foreground)}
 .rangectl button[aria-pressed="true"]{background:var(--card);color:var(--foreground);box-shadow:var(--lift)}

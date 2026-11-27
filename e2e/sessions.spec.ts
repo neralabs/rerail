@@ -258,6 +258,28 @@ test.describe("History by session", () => {
     await expect(resume).toHaveClass(/\bsolid\b/u);
   });
 
+  test("mature: the resume box's Copy copies a Claude Code session's resume command and reads Copied for a moment", async ({ page, rerail }) => {
+    const { manifest } = await rerail.scenario("mature");
+    const claude = manifest.sessionIds.findLast(id => id.endsWith("-claude-code"))!;
+    const url = await rerail.dashboard("mature", { hash: "sessions" });
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(url).origin });
+    await page.goto(url);
+    await rowOf(page, claude).click();
+    await expect(headerId(page)).toHaveAttribute("data-session", claude);
+    await page.locator('#content .shead .acts [data-act="resumetoggle"]').click();
+    const copy = page.locator('#content .sresume [data-act="resumecopy"]');
+    await expect(copy).toHaveText("Copy command");
+
+    await copy.click();
+
+    await expect(copy).toHaveText("Copied");
+    await expect(page.locator("#toast")).toHaveText("Resume command copied. Run it in your terminal.");
+    const copiedText = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copiedText).toBe(await page.locator("#resumeText").inputValue());
+    expect(copiedText).toContain(`claude --resume '${claude}'`);
+    await expect(copy).toHaveText("Copy command");
+  });
+
   test("mature: the header counts the violations, and the rule dropdown filters the timeline in both Show all events states", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature", { hash: "sessions" }));
     const cards = page.locator("#content .tl .corr");

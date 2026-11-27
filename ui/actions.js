@@ -88,7 +88,7 @@ export const commonActions = {
   session: id => { closePanel(); go({ view: "sessions", session: id, jump: true }); },
   actrule: id => go({ view: "history", filterRule: id }),
   range: id => { ui.range = Number(id); invalidate(); refreshNow(); },
-  cmdcopy: text => copyText(text, null, `Copied ${text}.`),
+  cmdcopy: (text, button) => copyText(text, { message: `Copied ${text}.`, button }),
   pickrepo: key => showRepository(key),
   repostart: key => setRepository(key, "start"),
   repostop: key => setRepository(key, "stop"),

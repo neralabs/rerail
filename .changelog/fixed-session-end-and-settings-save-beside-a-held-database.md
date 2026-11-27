@@ -1,0 +1,1 @@
+Ending a session or saving a rule setting in the dashboard while another program holds Rerail's database, as `rerail scrub` or `rerail reset` does for seconds, no longer holds every other session's hooks for 5 s. The end is recorded once the database is free; a save that waited 5 s is not made, and the dashboard says why.
