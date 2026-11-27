@@ -100,7 +100,7 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            machine TEXT, kind TEXT, key TEXT, name TEXT, interpreted INTEGER, compiled INTEGER, compile_seconds REAL,
            failed INTEGER, missing TEXT, first_at REAL, last_at REAL, PRIMARY KEY(machine, kind, key));",
     )?;
-    db.execute_batch(models::SCHEMA)?;
+    models::create(&db)?;
     sql_plans::create(&db)?;
     join_steps::create(&db)?;
     Ok(db)

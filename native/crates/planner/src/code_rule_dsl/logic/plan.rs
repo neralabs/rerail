@@ -10114,14 +10114,13 @@ mod climb_tests {
     }
 }
 
-/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names.
+/// SPIKE (join shapes): appends `line` to the file `RERAIL_SPIKE_SHAPES` names (a setting of the run, decision 0442),
+/// opened for each line, so no handle outlives it.
 fn spike_shapes_line(line: &str) {
     use std::io::Write;
-    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
-        let p = std::env::var_os("RERAIL_SPIKE_SHAPES")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(p).ok().map(std::sync::Mutex::new)
-    });
-    if let Some(f) = FILE.as_ref() {
-        let _ = writeln!(f.lock().unwrap(), "{line}");
+    let Some(p) = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_SHAPES")) else { return };
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        // One write of the whole line: appends from many threads do not interleave.
+        let _ = f.write_all(format!("{line}\n").as_bytes());
     }
 }

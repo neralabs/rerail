@@ -11860,3 +11860,28 @@ Tests:
 - parser-tests (test hooks) 95/95, cpu-stream (the compiler's tier 2, records and ladder tests) 74/74, compiler 46/46, tape-format 54/54, python-lean 9/9, json-aot 2/2.
 - c-directives 33/33: the two device-rung tests passed alone at one thread. At four threads with the rest, the run passed the 12 GB cap.
 - Relax: a test binary's kept compile (`kept_output`) keys on the running executable, which under Relax is Relax: each run had a fresh `TMPDIR`.
+
+### Q574. Roll-up 146 (Native-and-GPU-strata 897ba03ccd onto Pulling-it-all-together): what the merge chose
+
+Native-and-GPU-strata's fourteen commits: 0705 carried on (py_names and tsx_names asked, two rounds cold, an asked phase's held relations stored), chunk node numbers step 1 (a growth's ids in pages), the store counting its files' bytes by their rows, and rule fixes (PIE796, RUF057, a policy whose text does not read runs alone).
+
+- **A view directory's spare slot: the hub's `codes` (0697) with their page tables.** Both lines used `ViewDir`'s 4 bytes after `counted`: the hub for the codes' directory's home, theirs as padding before the growth's page table (`pages`, `by_number`, `numbered`). The merged layout is theirs with `codes` in that slot, in Rust (`clif::view_reads`, `ukl_rust::join_program`), the kernels' header (`ukl/reads/view.h`, its generator) and both makers (`made`, `device_chunk`): a made directory has the cache's home and the codes' home (`nhomes` 2 past the documents'). The reads table lists the hub's `codes_kind` and `codes_field`, then their `dir_doc_of_id` and `dir_local_of_id`.
+- **Their `remove_replaced` stands.** It removes the kept-facts files a merge's commit no longer names. A red it seemed to bring, logic's deferred product tests (missing `c2-…` blocks, two runs in five), was the store template's, below.
+
+Fixed on the way (red at the hub's head, or found by this merge's runs):
+- **A batch's rows never carry a text the walk holds.** A step that holds its text for a slot (`TEXT_OUT`, the walk's scratch) keeps it only while that step runs. A step after one was read in batches (0706 E1, roll-up 141), so the rows waited past it and named texts gone. `@cat("m", x)` of each function's name gave the one `m.`, and three of 0705's phase tests failed (`a_phase_makes_only_the_exports_its_reader_reads`, `a_phase_hands_on_its_exports_…`, `an_asked_phase_follows_a_reexport_in_rounds`; the first two red at the hub's head). `kinds::batches` batches no step after such a step. Test: tests-corpus `a_text_the_walk_holds_is_joined_whatever_steps_batch`, red without the change.
+- `cat`'s read of a text not in memory (`push_text`) reads it where it is, as `Interner::name` does: in memory, else the database. It read memory alone, and pushed no text for an atom not loaded.
+- **The store template, whole.** In a crate that registers no language, the template's fill fails (as designed) and `make` remade the staging store empty. The failed fill's queued writes were not drained, and the process still held the old store, so a late write's rows landed in the new store, naming kept-facts files its folder did not hold. Every copy then failed at its first run (logic's deferred tests, two runs in five). Now `make` drains the writes and forgets the staging store (`ContentStore::forget`) before removing it, and refuses to publish a template whose rows name a file it lacks (`held_whole`). Four runs since: all green, each template's chain empty.
+- Two maps 0104's list did not name (roll-up 141): `setfix::kinds`' `RERAIL_KIND_BATCH` and the planner's `RERAIL_SPIKE_SHAPES` file are settings of the run (`profile::setting`, 0442), not statics. The spike's file is opened for each line and written in one write.
+- Four thread-locals `run_state::STATE` did not list (roll-ups 141, 145): the compiler's proving trace (`START`, `LAST`), the CPU stream's `SPARE` buffers, and setfix's `AHEAD` (a call's).
+
+Checked with Relax: tests-corpus, the device crate, tests-lang, tests-rr, tests-logic, rerail-rr-root and the changed crates check with 0 errors.
+
+Tests:
+- logic 311/311 (four runs), store 237/237, setfix 144/145 (the step clock, red under load as since roll-up 139), clif 19/19, facts 18/18, tape-format 54/54, tests-lang 193/193, typing 13/13, ukl-rust 6/6, atoms 1/1, plan-base 29/29, costs 5/5, planner 6/6, tests-rr `rr::tape_tests` 20/20.
+- tests-corpus: base_tests 52/52, phases 18/18, `corpus::tests` 106/106 (one thread: at two the run passed the 12 GB cap), the other modules 127/127. Its two Metal tests (`a_contexts_rows_on_…`, `cpu_and_…_read_the_same_tape_values`) are the farm's; they failed here under the CPU device and were not run again.
+- store-base 26/27: `the_image_is_the_one_the_loader_names` fails under Relax (its code is in no image the loader lists), as since roll-up 104.
+- boot `tools` 48/51 in the run's 580 s; three red, all red at the hub's head too (an archive of 835c515865, run the same way):
+  - `the_python_main_pack_is_split_with_its_crossings_declared_6` and `_7`: FAST003's lowering joins two documents with no declaration (0652), and four relations hold node ids across files (0677). They passed at roll-up 137. sync-integration-hub-tape's 9d8911d52f (the crossings 0705 made, fixed) comes next.
+  - `a_nested_working_tree_batch_leaves_publication_to_its_caller`: no pending scope rows. Passed in no run of this series.
+- Not run: the device crate's tests (Metal) and `all` (no farm).

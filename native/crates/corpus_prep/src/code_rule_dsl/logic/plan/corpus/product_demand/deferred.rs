@@ -32,6 +32,9 @@ pub struct Plans {
     pub shared: Vec<String>,
     /// The joins left as written: the chunks make them, and a cross-file reader would state their requests.
     pub cross: Vec<String>,
+    /// The joins left as written because their readers ask for them at columns that hold none of their locations:
+    /// such requests name no document, and are made across files.
+    pub unlocated: Vec<String>,
     /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
     /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
     /// constant would read every file's rows. A constant only constants read is driven as any join is. And the joins
@@ -324,7 +327,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             let current = p.made.clone().unwrap_or_else(|| Arc::clone(input));
             let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&current)?;
             same_doc = split.row_documents.clone();
-            pairs.retain(|(rel, _, _)| {
+            pairs.retain(|(rel, cols, _)| {
                 // A constant a file's rule reads (decision 0665): its requests would be the files'.
                 if split.constants.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.constants.contains(p.head_rel(rules[i]))) {
                     plans.constants.push(rel.clone());
@@ -352,8 +355,18 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
                 let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
                 if cross {
                     plans.cross.push(rel.clone());
+                    return false;
                 }
-                !cross
+                // A file's relation asked for at columns that hold none of its locations (`call_q` by its qualified
+                // name alone): a request names no document, so the split makes the requests once over every file
+                // (read back from their located form), and the relation they guard with them, its nodes in the
+                // cross-file part (decision 0677). RUF057 alone asked `call_q(c, q)` by `q` from `param_slot`, and
+                // `call_q`, `call_param`, `typed_as` and three more crossed. Left as written, it is made in each file.
+                let unlocated = split.local.contains(rel) && cols.iter().all(|c| !split.locations.get(rel.as_str()).is_some_and(|locs| locs.contains(c)));
+                if unlocated {
+                    plans.unlocated.push(rel.clone());
+                }
+                !unlocated
             });
         }
         (pairs, guarded, broad, open_readers, recursive)
@@ -470,8 +483,12 @@ fn share(p: &mut Program<'_>, rel: &str, n: usize) -> Result<Option<String>, Str
     let label = format!("{rel} column {col} ({} literals)", part.len());
     let (part, other, id) = (part.clone(), parts[1 - side].clone(), rule.id());
     let mut qualifiers = p.f.qualifiers.clone();
+    // Each is read whole, and asked for by no reader's demand (`upstream`, `no_magic`): the factor's endpoints are the
+    // hot ones already. A demand on it was made from the pairs rule's other part, which binds the witness through the
+    // key the head projects away: RUF051's `call_q` asked `factor(c, f)` of every requested `(c, q)` and every `f` of
+    // that `q` (52 M rows over 50 files, 6.7 GB), where the factor itself is one `f` a hot call.
     for r in [&hot, &factor] {
-        qualifiers.entry(r.clone()).or_default().insert("no_inline".to_owned());
+        qualifiers.entry(r.clone()).or_default().extend(["no_inline".to_owned(), "no_magic".to_owned()]);
     }
     qualifiers.entry(hot.clone()).or_default().insert(crate::code_rule_dsl::typing::file_local::STRATEGY.to_owned());
     let made = p.derive(
@@ -544,7 +561,7 @@ impl ProgramPass for DeferJoins {
         let mut program = Program::of(version);
         let plans = rewrite(&mut program, version, self.deferral.adaptive, self.deferral.cache_pairs)?;
         cx.decide("deferred joins", || {
-            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}; left as written, constants: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross, plans.constants)
+            format!("pair demand: {:?}; endpoint demand: {:?}; reduced factors: {:?}; fanout sharing: {:?}; left as written, read across files: {:?}; left as written, asked at no location: {:?}; left as written, constants: {:?}", plans.pairs, plans.one_sided, plans.factors, plans.shared, plans.cross, plans.unlocated, plans.constants)
         });
         for mut join in plans.author {
             if let Access::Factors { cache: None } = &join.access {

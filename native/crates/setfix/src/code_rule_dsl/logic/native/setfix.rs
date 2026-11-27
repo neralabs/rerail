@@ -4915,11 +4915,18 @@ fn cat_held(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
     cat_held_read(syms, a, b)
 }
 
-/// Value `v`'s text pushed on `s`: a text the morsel deferred, or an atom's in memory.
+/// Value `v`'s text pushed on `s`, read where it is, as `Interner::name` reads it: a text the morsel deferred, an
+/// atom's in memory, or an atom's in the database. Read from memory alone, an atom not loaded was pushed as no text
+/// (`cat_read` is for texts not all in memory): `@cat("m", x)` of a function's name gave `m.`.
 fn push_text(syms: &Interner, s: &mut String, v: i64) {
-    match syms.deferred_text(v) {
-        Some(t) => s.push_str(t),
-        None => { syms.atoms.with_str(v as crate::content_store::atoms::Sym, |t| s.push_str(t)); }
+    if let Some(t) = syms.deferred_text(v) {
+        return s.push_str(t);
+    }
+    let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return };
+    if syms.atoms.with_str(atom, |t| s.push_str(t)).is_none()
+        && let Some(t) = syms.atoms.value(atom).ok().flatten()
+    {
+        s.push_str(&t);
     }
 }
 

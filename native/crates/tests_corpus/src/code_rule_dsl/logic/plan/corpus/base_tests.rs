@@ -1992,6 +1992,26 @@ left_kinds(l, k) :- kind(b, "binary_operator"), field(b, "left", x), node(_, x, 
     assert_eq!(of(&got[2]), ids);
 }
 
+/// A text the walk holds for a slot (its scratch, `TEXT_OUT`: a node's text read only to be joined) lives while the
+/// step that made it runs, so no step after one is read in batches: a batch's rows wait past it. Batched there, the
+/// rows named texts gone, and `@cat("m", x)` of each function's name was the one `m.`.
+#[test]
+fn a_text_the_walk_holds_is_joined_whatever_steps_batch() {
+    use crate::code_rule_dsl::logic::native::component::kind_batches_forced;
+    let body: String = (0..300).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let dir = corpus("held-texts-joined", &[("a.py", body.as_str())]);
+    let program = r#"
+.decl named(s: symbol)
+named(@cat("m", x)) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.output named
+"#;
+    kind_batches_forced(Some(true));
+    let got = run(&dir, program, &["named"]);
+    kind_batches_forced(None);
+    let names: BTreeSet<String> = got[0].iter().map(|r| r[0].trim_matches('"').to_owned()).collect();
+    assert_eq!(names, (0..300).map(|i| format!("m.f{i}")).collect::<BTreeSet<_>>());
+}
+
 /// Decision 0706 E5: a step probing a computed relation by bound slots and binding its other columns (`owner(n, f)`
 /// by `n`, `pair(f, g)` by `f`) probes a batch of rows sorted by their keys; a membership test by two slots
 /// (`seen(n, f)`) is probed as it comes (E2's). The rows are the same as each probed as it comes.

@@ -2760,6 +2760,9 @@ pub struct Growth {
     host: HashMap<u32, u32>,
     made: BTreeSet<&'static str>,
     block: Option<Arc<Block>>,
+    /// Its ids (plan "Chunk node numbers": its documents' numbers and its page table, in the block), shared as the
+    /// block is: every batch of the growth numbers its documents' ids in it.
+    ids: Option<Arc<made::Ids>>,
     /// Its documents' 16z blocks' cache (`batch_cache`): the block's, shared as the block is.
     cache: Option<Arc<ZCache>>,
     shared: Arc<parking_lot::Mutex<Shared>>,
@@ -3187,6 +3190,9 @@ struct Extra {
     /// A pattern's matches in a line's, node's or capture's text, by pattern and text, for the batch (decision 0081):
     /// each distinct text is scanned once. Each match's groups as (match, group, start, end), offsets in the text.
     rx_memo: HashMap<(usize, Box<str>), GroupSpans>,
+    /// The last document's later spans (its comments no node is, then its matches and groups): how many, which take
+    /// one run of the growth's ids (`Docs::later_ids`, plan "Chunk node numbers").
+    later: u32,
 }
 
 /// A text's matches of one pattern: each match's groups as (match, group, start, end), offsets in the text.
@@ -3430,6 +3436,7 @@ impl Extra {
         use granules::ExtraSpan;
         let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
         let source = f.source.as_str();
+        self.later = 0;
         if self.comment && let Some(dialect) = dialect {
             use crate::code_rule_dsl::language::is_comment_kind;
             let mut k = 0;
@@ -3454,6 +3461,7 @@ impl Extra {
                 };
                 self.comments.push([c, string(comment_body(whole)) as i64]);
             }
+            self.later = k as u32;
         }
         if !(self.spans() || self.line_count) {
             return Ok(());
@@ -3630,6 +3638,7 @@ impl Extra {
         if !rx.is_empty() {
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
         }
+        self.later += next as u32;
         Ok(())
     }
 
@@ -4058,6 +4067,7 @@ impl Batch {
             lines_of: Arc::clone(&grown.lines_of),
             failure: Default::default(),
             names: projection.wants("op").then(|| store.atoms_handle()),
+            ids: Arc::clone(grown.ids.get_or_insert_with(|| Arc::new(made::Ids::new(&block)))),
         };
         let mut renewed_at: Option<Vec<Option<usize>>> = None;
         let (docs, valued, prior_at) = match (&last, alone) {
@@ -4492,6 +4502,10 @@ impl Batch {
                 {
                     let _s = crate::code_rule_dsl::logic::profile::span(|| "extra document rows".into());
                     extra.document(p, d, dialect, rx, &span_ends[j], &mut rows.text, &mut string)?;
+                }
+                // Its comments' and matches' ids, one run of the growth's (plan "Chunk node numbers").
+                if extra.later > 0 {
+                    self.docs.later_ids(i, extra.later);
                 }
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "tree document rows".into());
                 tree.document(p, dialect, &mut string);

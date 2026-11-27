@@ -67,30 +67,13 @@ pub struct Place {
     pub len: usize,
 }
 
-/// The bytes of the store's segments on disk (the memo's, the tapes' and sources', the atoms', the kept facts'): the directories
-/// beside its file, as the store's disk budget counts them.
-pub fn segment_bytes(database: &Path) -> u64 {
-    let mut bytes = 0;
-    for suffix in [".memo", ".objects", ".atoms", ".facts"] {
-        let mut dir = database.as_os_str().to_owned();
-        dir.push(suffix);
-        let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };
-        // What each file takes on the disk: an open atoms block is sparse, its room not written yet taking none.
-        bytes += entries.flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| on_disk(&m)).sum::<u64>();
-    }
-    bytes
-}
-
-/// The bytes a file takes on the disk (its allocated blocks; its length where those are not known).
-fn on_disk(m: &std::fs::Metadata) -> u64 {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::MetadataExt::blocks(m).saturating_mul(512)
-    }
-    #[cfg(not(unix))]
-    {
-        m.len()
-    }
+/// The bytes of the file at `path`, 0 where there is none: what a row of the store's files (a segment, an atoms block,
+/// a space's kept facts) records of its file when it names it (`bytes`), and the store's disk budget sums
+/// (`store_bytes`, kept by the tables' triggers). Its length, not its allocated blocks: a block written through its
+/// mapping takes none until the OS writes it back, so its allocation read at a commit said 0 for a 12 MB atoms block,
+/// and the length is what the file holds or reserved.
+pub fn file_bytes(path: &Path) -> u64 {
+    std::fs::metadata(path).map_or(0, |m| m.len())
 }
 
 /// The file of segment `seg` in `dir`.
@@ -241,7 +224,8 @@ fn install<K>(t: &rusqlite::Connection, kind: &SegmentKind<'_>, seg: i64, kept: 
     if placed.files().len() != 1 {
         return Err(StoreError::Invalid(format!("the compaction of {} made more than one segment", kind.table)));
     }
-    t.execute(&format!("INSERT INTO {}({}) VALUES (?1)", kind.table, kind.column), [seg])?;
+    let bytes = placed.files().first().map_or(0, |f| file_bytes(f)) as i64;
+    t.execute(&format!("INSERT INTO {}({}, bytes) VALUES (?1, ?2)", kind.table, kind.column), [seg, bytes])?;
     for ((m, _), &i) in kept.iter().zip(&entry) {
         moved(&m.key, seg, placed.placed(i).1 as i64)?;
     }

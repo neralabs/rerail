@@ -126,8 +126,8 @@ sym_at(e, q0) :- up_chain_name(e, q0, "import"), !up_export(e, q0, _).
 // up_export(e, q0, q): q0 ("m.x"), the qualified name e's chain spells, is module m's export x, q (python/names'
 // export_at, for the names up_chain_name spells).
 .decl up_export(e: node, q0: symbol, q: symbol)
-up_export(e, q0, q) :- up_chain_name(e, q0, "import"), split_dot(q0, m, x), docof(e, d), doc(d, p, _),
-    py_names__reads_at(p, m), py_names__exports(m, x, q).
+up_export(e, q0, q) :- up_chain_name(e, q0, "import"), docof(e, d), doc(d, p, _), py_names__asked_at(p, q0),
+    py_names__resolved(q0, q).
 sym_at(e, q) :- up_chain_name(e, q, "def").
 sym_at(e, @dot("builtins", x)) :- ast_name(e, x), up_unbound(e), builtin(x).
 .decl up_chain_name(e: node, q: symbol, how: symbol)

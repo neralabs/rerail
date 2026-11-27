@@ -35,17 +35,22 @@ typedef struct ViewDir {
     uint32_t ends[27];
     uint32_t counted;
     uint32_t codes;
+    uint64_t pages;
+    uint64_t by_number;
+    uint32_t numbered;
+    uint32_t pad2;
 } ViewDir;
 UKL_STATIC_ASSERT(sizeof(ViewRow) == 296, "ViewRow: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, source) == 24, "ViewRow.source");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == 32, "ViewRow.homes");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 156, "ViewRow.view");
 UKL_STATIC_ASSERT(sizeof(ViewHome) == 16, "ViewHome: size");
-UKL_STATIC_ASSERT(sizeof(ViewDir) == 168, "ViewDir: size");
+UKL_STATIC_ASSERT(sizeof(ViewDir) == 192, "ViewDir: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == 32, "ViewDir.cache");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, by_key) == 40, "ViewDir.by_key");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, codes) == 160, "ViewDir.codes");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, pages) == 168, "ViewDir.pages");
 UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }
 UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }
 UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }

@@ -37,6 +37,9 @@ const FACT_STORE: &[&str] = &[
     // The segment files objects (sources, tapes) are in, by number (decision 0295), and each guest's key, an identity
     // interned to its number as `strings` and `hashes` are (decision 0391; frames retired, 0439).
     "object_segments",
+    // The sum of the bytes of the store's files its rows name (`bytes`), kept by their triggers: the store's
+    // bookkeeping its capacity check reads in one row, as `store_state` is.
+    "store_bytes",
     "guest_keys",
     "push_pending",
     "rows",
@@ -256,6 +259,12 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
     // The frame keys of the run under way, for its manifest to name: bound while the run runs, gone when it ends.
     ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
+    // The keys the run's phases declared on their exports (decision 0705), bound once they ran: the run's own
+    // binding, gone when it ends.
+    ("code_rule_dsl/logic/plan/phased.rs", "DeclaredKeys"),
+    // What an asked phase's first round measured (a chunk mix's constants), bound for its rounds alone (decision
+    // 0705): the rounds' own state, as a run's chunks share their first chunk's within it; gone when the rounds end.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "RoundsMeasured"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a

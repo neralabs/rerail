@@ -231,9 +231,13 @@ pub(super) fn batches(j: &JoinRule, on: bool, screened: Option<usize>, only: Opt
         if trace() { eprintln!("RERAIL_KIND_TRACE walk off: on {on} enabled {}", enabled()); }
         return Vec::new();
     }
+    // A batch's rows wait past the steps that made them. A text the walk holds for a slot (`TEXT_OUT`, its scratch)
+    // lives only while the step that made it runs: a row held after one named a text gone, and `@cat("m", x)` of a
+    // function's name gave `m.`. A step after one is not batched.
+    let texts_before = |i: usize| j.probes.iter().take(i).any(|&p| p & super::TEXT_OUT != 0);
     (0..j.steps.len())
         .map(|i| {
-            if i == 0 || only == Some(i) {
+            if i == 0 || only == Some(i) || texts_before(i) {
                 return None;
             }
             let keyed = |j: &JoinRule, i: usize| (screened != Some(i)).then(|| keyed(j, i)).flatten();
@@ -258,7 +262,7 @@ pub(super) fn keyed_enabled() -> bool {
 }
 
 /// `RERAIL_KIND_BATCH=off` tests each row as it comes; `=walk` batches the walker's only, `=closure` the closures'
-/// only (measurement aids).
+/// only (measurement aids). A setting of the run (decision 0442), read once a run.
 fn mode() -> &'static str {
     #[cfg(any(test, feature = "test-hooks"))]
     match FORCE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -266,8 +270,12 @@ fn mode() -> &'static str {
         2 => return "",
         _ => {}
     }
-    static MODE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| std::env::var("RERAIL_KIND_BATCH").unwrap_or_default());
-    MODE.as_str()
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_KIND_BATCH").as_deref() {
+        Ok("off") => "off",
+        Ok("walk") => "walk",
+        Ok("closure") => "closure",
+        _ => "",
+    })
 }
 fn enabled() -> bool {
     !matches!(mode(), "off" | "closure")

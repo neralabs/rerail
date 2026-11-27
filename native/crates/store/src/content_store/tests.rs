@@ -453,6 +453,38 @@ fn bulk_removal_is_scoped_and_idempotent() {
     }
 }
 
+/// The store's files beside it are counted by their rows (`store_bytes`, the tables' triggers): the total is what the
+/// files take on the disk, after writes of segments and atoms; rows an older binary wrote (`bytes` -1) are left out
+/// until the next open counts their files; and `capacity` is the database's files and that total, with no walk of
+/// the folders.
+#[test]
+fn the_store_counts_its_files_bytes_by_their_rows() {
+    let (path, store) = store("store-bytes");
+    let (a, b) = (b"the first source".to_vec(), b"the second, longer source".to_vec());
+    store.put_sources_placed(&[(&a, HashKey::sha256(&a), &[])]).unwrap();
+    store.put_sources_placed(&[(&b, HashKey::sha256(&b), &[])]).unwrap();
+    store.intern_atoms(&["alpha", "beta", "gamma"]).unwrap();
+    fn walk(dir: &std::path::Path) -> u64 {
+        let Ok(entries) = fs::read_dir(dir) else { return 0 };
+        entries.flatten().map(|e| if e.path().is_dir() { walk(&e.path()) } else { super::segments::file_bytes(&e.path()) }).sum()
+    }
+    let on_disk = || -> u64 { [".objects", ".memo", ".atoms", ".facts"].iter().map(|s| walk(std::path::Path::new(&format!("{}{s}", path.display())))).sum() };
+    let total = || -> i64 { rusqlite::Connection::open(&*path).unwrap().query_row("SELECT bytes FROM store_bytes", [], |r| r.get(0)).unwrap() };
+    assert!(on_disk() > 0);
+    assert_eq!(total() as u64, on_disk());
+    let files: u64 = ["", "-wal", "-shm"].iter().map(|s| fs::metadata(format!("{}{s}", path.display())).map_or(0, |m| m.len())).sum();
+    assert_eq!(store.capacity().unwrap().bytes, files + on_disk());
+    // An older binary's rows: not counted, until an open counts their files.
+    let raw = rusqlite::Connection::open(&*path).unwrap();
+    raw.execute_batch("UPDATE object_segments SET bytes = -1; UPDATE atom_blocks SET bytes = -1;").unwrap();
+    drop(raw);
+    assert_eq!(total(), 0);
+    drop(store);
+    let store = ContentStore::open(&path).unwrap();
+    assert_eq!(total() as u64, on_disk());
+    drop(store);
+}
+
 #[test]
 fn capacity_thresholds_are_exact() {
     assert_eq!(capacity_state(STORE_SOFT_LIMIT - 1), CapacityState::Normal);
@@ -613,6 +645,8 @@ fn snapshot_publication_is_atomic() {
         )
         .unwrap();
     assert_eq!(leaked, 0);
+    // The store's own calls take its connection: a write's capacity check reads the files' total (`store_bytes`).
+    drop(connection);
 
     let publication = SnapshotFilePublication {
         path: "src/b.py",
