@@ -20,7 +20,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
-- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update` and whose day-one welcome opens the first added pack's page; `pack` for
+- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update` and whose day-one welcome opens one of the added packs' pages; `pack` for
   a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
   first, each with why, then the others, and after the installed packs of each the ones only published on npm, each
   with the command that installs it, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their

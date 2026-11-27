@@ -75,8 +75,10 @@ const addedPacks = () => [...data.attachedPacks.keys()].map(id => packById(id)).
   .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
 /**
- * The welcome's lines under its title: that the added packs are in the menu, and a button to the first one's page,
- * where its rules show on or off (Add rule packs does not show that). With no pack added the button goes there still.
+ * The welcome's lines under its title: that the added packs are in the menu, and a button to one of their pages,
+ * where its rules show on or off (Add rule packs does not show that). With several packs the label names none ("View
+ * one of the packs"), so it holds whichever page opens: the first by name, as the Rules on tile opens. With no pack
+ * added the button goes to Add rule packs still.
  */
 function welcomeBody(packs) {
   const first = packs[0], one = packs.length === 1;
@@ -84,7 +86,7 @@ function welcomeBody(packs) {
   return [
     h("p", null, `The rule ${one ? "pack you added is" : "packs you added are"} in the menu, under Rule packs: ${andList(packs.map(pack => pack.name))}. `,
       `${one ? "It starts" : "Each pack starts"} some of its rules on and the rest off. Open ${one ? "it" : "one"} to see which are on, and to turn more on.`),
-    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": `pack/${first.id}` }, one ? `View the ${first.name} pack` : "View a rule pack")),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": `pack/${first.id}` }, one ? `View the ${first.name} pack` : "View one of the packs")),
   ];
 }
 
