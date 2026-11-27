@@ -828,24 +828,28 @@ impl<'s> Walk<'s> {
                         return Err(refuse(self.p));
                     }
                 } else {
-                    while let Some((indent, first_comment, _)) = self.scan(self.p)? {
-                        let current = *self.indents.last().expect("an indent");
-                        let p = self.p;
-                        if header && indent > current {
-                            self.indents.push(indent);
-                            self.push(T::Indent, p, p);
-                            open = false;
-                            header = false;
-                            break;
-                        } else if open {
-                            self.push(T::Newline, p, p);
-                            open = false;
-                            header = false;
-                        } else if indent < current && first_comment < i64::from(current) {
-                            self.indents.pop();
-                            self.push(T::Dedent, p, p);
-                        } else {
-                            break;
+                    // The layout tokens take no bytes, so the scanner's look from `p` is the same for each: it is
+                    // taken once.
+                    if let Some((indent, first_comment, _)) = self.scan(self.p)? {
+                        loop {
+                            let current = *self.indents.last().expect("an indent");
+                            let p = self.p;
+                            if header && indent > current {
+                                self.indents.push(indent);
+                                self.push(T::Indent, p, p);
+                                open = false;
+                                header = false;
+                                break;
+                            } else if open {
+                                self.push(T::Newline, p, p);
+                                open = false;
+                                header = false;
+                            } else if indent < current && first_comment < i64::from(current) {
+                                self.indents.pop();
+                                self.push(T::Dedent, p, p);
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
@@ -881,9 +885,9 @@ impl<'s> Walk<'s> {
                 }
                 _ => {}
             }
-            let kind = self.token(i)?;
+            let (kind, at) = if self.t.bit(i, |b| b.code) && FAST[usize::from(src[i])] { self.run(i)? } else { (self.token(i)?, i) };
             open = true;
-            header = kind == T::Colon && !self.in_brackets(i + 1);
+            header = kind == T::Colon && !self.in_brackets(at + 1);
         }
     }
 
