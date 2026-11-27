@@ -1,0 +1,10 @@
+[
+  { "id": "ruff-pyi045-iter-method-return-iterable", "status": "same" },
+  { "id": "ruff-pyi047-unused-private-type-alias", "status": "same" },
+  { "id": "ruff-pyi049-unused-private-typed-dict", "status": "same" },
+  { "id": "ruff-pyi051-redundant-literal-union", "status": "same" },
+  { "id": "ruff-pyi053-string-or-bytes-too-long", "status": "same" },
+  { "id": "ruff-pyi054-numeric-literal-too-long", "status": "same" },
+  { "id": "ruff-pyi055-unnecessary-type-union", "status": "same" },
+  { "id": "ruff-pyi056-unsupported-method-call-on-all", "status": "same" }
+]

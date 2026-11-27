@@ -6,14 +6,25 @@
 
 // Ruff PYI056 (flake8-pyi), every file: `__all__.append(…)`, `.extend(…)` or `.remove(…)`. Type checkers
 // understand `__all__ += […]` but not every method call. Any `__all__` name counts, in any scope; an attribute
-// `m.__all__` does not.
+// `m.__all__` does not. Ruff parses string annotations and other forward references (`cast("…", x)`, a
+// TypeAlias's string value, a string nested in one), and checks the calls in them too; not `Literal["…"]`.
 //   __all__.append("f")       ← PYI056: write `__all__ += ["f"]`
-#include "python/typing.rerail"
+//   x: "__all__.extend(['g'])"  ← PYI056
+#include "python/pt1120-python-02.rerail"   // str_tree
 
 .violation PYI056(at: node, msg: symbol) code "PYI056" "{msg}"
     suppress ruff "PYI056"
-PYI056(f, m) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, o0, x), unparen(o0, o),
-    kind(o, "identifier"), text(o, "__all__"), says(x, m).
+PYI056(at, m) :- kind(c, "call"), all_call(c, at, x), says(x, m).
+PYI056(at, m) :- str_tree(_, c), kind(c, "call"), all_call(c, at, x), says(x, m).
+// all_call(c, at, x): call c calls method x of `__all__`, whose expression starts at node at. tree-sitter reads
+// `[*__all__.append(1)]` as a call of the splat `*__all__.append`, and `[* # c⏎ __all__.append(1)]` as a call
+// of an attribute of the splat `* # c⏎ __all__`; Python's call is `__all__.append(1)` in both, starting at __all__.
+.decl all_call(c: node, at: node, x: symbol)
+all_call(c, at, x) :- field(c, "function", f0), (unparen(f0, f) ; kind(f0, "list_splat"), child(f0, g, _), unparen(g, f)),
+    attr_of(f, o0, x), all_obj(o0, at).
+.decl all_obj(o0: node, at: node)
+all_obj(o0, o0) :- unparen(o0, o), kind(o, "identifier"), text(o, "__all__").
+all_obj(o0, e) :- kind(o0, "list_splat"), child(o0, e, _), unparen(e, o), kind(o, "identifier"), text(o, "__all__").
 .decl says(x: symbol, msg: symbol)
 says(x, "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call.") :-
     (x = "append" ; x = "extend").

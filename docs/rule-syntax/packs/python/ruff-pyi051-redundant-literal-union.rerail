@@ -6,14 +6,21 @@
 
 // Ruff PYI051 (flake8-pyi), every file: a union (anywhere, at runtime too) with a `Literal[…]` member whose
 // value's type is also a member: `Literal["a"] | str` is `str`. The builtins are str, bytes, int, bool, float and complex
-// (`Literal[1J] | complex`). Reported at each redundant value inside the Literal.
+// (`Literal[1J] | complex`). Reported at each redundant value inside the Literal. Python's subscript has no
+// parentheses: `Literal[("a", "b")]` is `Literal["a", "b"]`, while `Literal[("a", "b"), "c"]` holds a tuple, and
+// so does a nested `Literal[1, Literal[("a", "b")]]` (Ruff unpacks the outer Literal's tuple only).
 //   def f(x: Literal["a", "b"] | str): ...     ← PYI051 at "a" and at "b"
 #include "python/typing.rerail"
 
 .violation PYI051(at: node, b: symbol) code "PYI051" "Drop `{at}` from this `Literal`: the union already includes `{b}`, which covers it. Remove the whole `Literal` if no values are left."
     suppress ruff "PYI051"
-PYI051(e, x) :- union_top(u), union_leaf(u, l), literal_leaf(l, e), pyi_literal_type(e, x),
+PYI051(e, x) :- union_top(u), union_leaf(u, l), literal_leaf(l, v), lit_value(l, v, e), pyi_literal_type(e, x),
     union_leaf(u, b), pyi_sym(b, q), split_dot(q, "builtins", x).
+// lit_value(l, v, e): e is member v of Literal l, or an element of v when v is a tuple and l's only argument.
+.decl lit_value(l: node, v: node, e: node)
+lit_value(l, v, v) :- literal_leaf(l, v).
+lit_value(l, v, e) :- literal_leaf(l, v), kind(v, "tuple"), tsub(l, _, 0, v), tsub_n(l, 1), child(v, e0, _),
+    type_bare(e0, e).
 // pyi_literal_type(e, x): the builtin type of literal value e (core.rerail's value_type_of is W's, of every value).
 .decl pyi_literal_type(e: node, x: symbol)
 pyi_literal_type(e, "str") :- plain_str(e, _).
