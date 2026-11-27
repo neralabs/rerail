@@ -136,7 +136,8 @@ export class DaemonUnreachableError extends Error {
 /** Socket errors that mean no daemon listens there, as against a daemon that answered with a failure. */
 const NO_LISTENER = new Set(["ENOENT", "ECONNREFUSED"]);
 
-function unreachable(error: unknown): unknown {
+/** A send's failure as `DaemonUnreachableError` where nothing listens at the socket, a hook's or the event stream's. */
+export function unreachable(error: unknown): unknown {
   const code = error instanceof Error && "code" in error ? error.code : undefined;
   return typeof code === "string" && NO_LISTENER.has(code)
     ? new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error })
@@ -144,11 +145,11 @@ function unreachable(error: unknown): unknown {
 }
 
 /**
- * The hook found no daemon because `RERAIL_AUTOSTART=0` kept it from starting one. That is what the person asked for,
- * so it is not a failure; `rerail status` says the daemon is not running and why (`daemonNotRunningMessage`), and so
- * does the session's start (`answerAutostartOff`).
+ * The hook, or an event of the event stream, found no daemon because `RERAIL_AUTOSTART=0` kept it from starting one.
+ * That is what the person asked for, so it is not a failure; `rerail status` says the daemon is not running and why
+ * (`daemonNotRunningMessage`), and so does the session's start (`answerAutostartOff`).
  */
-function autostartTurnedOff(error: unknown): boolean {
+export function autostartTurnedOff(error: unknown): boolean {
   return error instanceof DaemonUnreachableError && error.cause instanceof AutostartOffError;
 }
 
@@ -403,8 +404,8 @@ async function hookDaemon(options: HookOptions, startsSession: boolean): Promise
   }
 }
 
-/** What the hook failure log says of an event no daemon took. */
-function lostEventReason(daemon: Exclude<HookDaemon, { status: "running" }>): string {
+/** What the hook failure log says of an event no daemon took, a hook's or the event stream's. */
+export function lostEventReason(daemon: Exclude<HookDaemon, { status: "running" }>): string {
   const lost = "so this event was not recorded";
   if (daemon.status === "absent") return `no Rerail daemon answered, ${lost}`;
   if (daemon.status === "refused") return `the Rerail daemon (pid ${daemon.state.pid}) refused the access capability in daemon.json, ${lost}`;

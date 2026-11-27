@@ -1,0 +1,1 @@
+`rerail events` (internal testing) in an installed Rerail waits for a daemon start only at a session's start, as hooks do; another event that finds no daemon is answered at once, a start is launched in the background, and `rerail status` counts the lost event. Any event that reached no daemon, a session's start included, gets `internal-error`, not `invalid-event`.

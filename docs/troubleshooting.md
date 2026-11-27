@@ -627,7 +627,8 @@ Agents load hooks and commands when a session starts. Open a new session after s
 
 ### `rerail status` says `Hooks run but nothing was recorded`
 
-A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
+A coding agent ran Rerail's hooks, and Rerail could not record their events (or the `rerail events` stream's, under
+its own names for them, such as `user-prompt`). The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
 (it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
