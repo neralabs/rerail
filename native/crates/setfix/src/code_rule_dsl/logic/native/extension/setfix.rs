@@ -271,6 +271,8 @@ pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
             "probe" => probes.push(ProbeRule { head: num(toks[1])?, delta: num(toks[2])?, body: Body::Sql(unhex(toks[3])?), whole: None }),
             "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(st, conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
             "nowrite" => write = false,
+            // Where the placement put the stratum (`device`, `device host`): this extension evaluates it here either way.
+            "device" => {}
             "gate" => {
                 let list = |t: &str| -> Result<Vector<usize>> { if t == "-" { Ok(rerail_blocks::vector::Vector::new()) } else { t.split(',').map(num::<usize>).collect() } };
                 let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };

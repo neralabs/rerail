@@ -806,7 +806,7 @@ pub mod tests {
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
         assert_eq!(p.missing, vec![Form::Computed]);
         assert!(p.why().contains("no computed term"), "{}", p.why());
-        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding the host does.
         let mut plain = Shape::default();
         adds(&mut plain, &[atom("kind", false), atom("within", true)], &[T::Var("x")], 4e6, false);
         assert!(plain.missing_none());
@@ -814,7 +814,9 @@ pub mod tests {
         let p = place(&plain);
         drop(device);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
-        assert!(!place(&plain).gpu, "the CPU binding keeps it");
+        // Under the CPU binding no device takes it: the device's join program runs it on the host (`host_joins`).
+        let p = place(&plain);
+        assert!(!p.device && p.host, "the CPU binding runs it on the host's join program: {p:?}");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
         // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
         // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
