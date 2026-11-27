@@ -1,12 +1,12 @@
 {
   "format": "rerail.translation-equivalence/v1",
   "pack": "react",
-  "equivalent": false,
+  "equivalent": true,
   "untranslated": {},
   "different": {
     "react-hooks-immutability": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "samples-react, 2 original-only keys: useResizeObserver.test.tsx:71 and :73 (two copies of streamlit's test), `elementRef.current = node` in a useCallback whose dependencies list elementRef. They come from the original's deps-frozen-mutation clause; ESLint (eslint-plugin-react-hooks) does not report them, nor does the translation. The suppressed DataFrame.tsx:445 that react-01 recorded is gone: the engine applies the translation's declared suppress lines now. react-01.result.json, NOTES-react-01.md.",
+      "right": "translation",
       "counts": {
         "samples-react": {
           "originalOnly": 2,
@@ -15,8 +15,8 @@
       }
     },
     "react-hooks-refs": {
-      "reason": "recorded by the suite, not yet explained",
-      "right": "unknown",
+      "reason": "samples-react: the 1 original-only key, react-aria-components Modal.tsx:335, is the shorthand `modalRef` (a useRef binding) in the object of a context value, which the original's literal-element clause and ESLint report and the translation does not model (original right). The 5 translation-only keys are reported by ESLint (inline comments honoured) and missed by the original (translation right): mui Ad.tsx:131, 135 and 139 (`const { current: randomAdblock } = React.useRef(…)`, then the value used in render) and react-bootstrap Offcanvas.tsx:341 and its other copy's :344 (`manager={getModalManager()}`, a render-time call of a function that uses a ref). The suppressed UnitAmountInput.tsx:49 that react-01 recorded is gone: the engine applies the translation's declared suppress lines now. react-01.result.json, NOTES-react-01.md.",
+      "right": "neither",
       "counts": {
         "samples-react": {
           "originalOnly": 1,
