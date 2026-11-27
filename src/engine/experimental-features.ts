@@ -28,6 +28,7 @@ export const EXPERIMENTAL_FEATURES = {
   REMOTE_SINK: { name: "The remote sink", plural: false },
   ENGINE_TOOLS: { name: "The engine tools", plural: true },
   RELATIONAL_RULES: { name: "Relational rules", plural: true },
+  TRAY_ICON: { name: "The tray icon", plural: false },
 } as const satisfies Record<string, { name: string; plural: boolean }>;
 
 export type ExperimentalFeature = keyof typeof EXPERIMENTAL_FEATURES;
