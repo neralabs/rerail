@@ -11,8 +11,8 @@ function attachBackoffMs(failures: number): number {
 
 /** What an OMP or Pi extension gives the retry of its session's attach. */
 export interface AttachRetryHost<Context> {
-  /** The extension's serialized attach of `context`'s session; a failure rejects. */
-  initialize(context: Context): Promise<void>;
+  /** The extension's serialized attach of `context`'s session, its runtime built again when `rebuild` says; a failure rejects. */
+  initialize(context: Context, rebuild: boolean): Promise<void>;
   sessionId(context: Context): string;
   appendEntry(customType: string, data: unknown): void;
   /** Shows how many events the failing session has dropped; 0 clears it. */
@@ -39,6 +39,8 @@ export class AttachRetry<Context> {
   #failing: Context | undefined;
   /** What arrived for `#failing`'s session meanwhile: the attached runtime records it as a gap. */
   #drops: { sessionId: string; gap: DroppedEvents } | undefined;
+  /** The context whose attach was failing when the host detached, which its reattach attaches; a newer attach ends it. */
+  #detached: Context | undefined;
 
   constructor(host: AttachRetryHost<Context>) {
     this.#host = host;
@@ -50,23 +52,24 @@ export class AttachRetry<Context> {
   }
 
   /** The host's attach of `context`: a new generation, tried again after each failure until one attaches. */
-  attach(context: Context): Promise<void> {
+  attach(context: Context, rebuild = false): Promise<void> {
     clearTimeout(this.#timer);
     this.#failures = 0;
-    return this.#attachAs(context, ++this.#generation);
+    this.#detached = undefined;
+    return this.#attachAs(context, ++this.#generation, rebuild);
   }
 
-  async #attachAs(context: Context, generation: number): Promise<void> {
+  async #attachAs(context: Context, generation: number, rebuild: boolean): Promise<void> {
     try {
-      await this.#host.initialize(context);
+      await this.#host.initialize(context, rebuild);
     } catch (error) {
-      if (generation === this.#generation) this.#failed(context, generation);
+      if (generation === this.#generation) this.#failed(context, generation, rebuild);
       throw error;
     }
     if (generation === this.#generation) this.#attached(context);
   }
 
-  #failed(context: Context, generation: number): void {
+  #failed(context: Context, generation: number, rebuild: boolean): void {
     this.#failures += 1;
     this.#failing = context;
     // Another session's drops keep their marker in that session, which got their final count before the host left
@@ -76,7 +79,7 @@ export class AttachRetry<Context> {
       this.#host.reportDropped(0);
     }
     this.#host.failed(context);
-    this.#timer = setTimeout(() => { this.#attachAs(context, generation).catch(() => undefined); }, attachBackoffMs(this.#failures));
+    this.#timer = setTimeout(() => { this.#attachAs(context, generation, rebuild).catch(() => undefined); }, attachBackoffMs(this.#failures));
     this.#timer.unref();
   }
 
@@ -138,11 +141,26 @@ export class AttachRetry<Context> {
     this.#host.appendEntry(EVENTS_DROPPED_ENTRY_TYPE, { ...drops.gap, recovered: false });
   }
 
-  /** No try is made again, as for a host that detaches from Rerail; what was dropped stays for the session's marker. */
+  /**
+   * No try is made again, as for a host that detaches from Rerail; what was dropped stays for the session's marker, and the
+   * context that was failing for the host's reattach.
+   */
   cancel(): void {
     clearTimeout(this.#timer);
     this.#generation += 1;
+    this.#detached = this.#failing;
     this.#failing = undefined;
+  }
+
+  /**
+   * The host's reattach (after Rerail's start or stop, or a removal that failed), rebuilt: of the session whose attach is
+   * failing, or was when the host detached, which neither host holds a context of (a failed start never activated one; a
+   * failed switch holds the session left), else of `held`, the host's. One that fails is tried again; one that attaches
+   * records what was dropped.
+   */
+  resume(held: Context | undefined): Promise<void> {
+    const context = this.#failing ?? this.#detached ?? held;
+    return context === undefined ? Promise.resolve() : this.attach(context, true);
   }
 
   /** The host is shutting down in `context`: no try is made again, and the failing session's marker gets its final count. */

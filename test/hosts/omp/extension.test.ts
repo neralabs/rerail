@@ -12,14 +12,18 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => {
       daemonRoute.start?.() ?? actual.startDaemonForPackage(...args),
   };
 });
-/** The detach the extension hands OMP's commands, which `/rerail-uninstall` runs before it removes Rerail. */
-const hostCommands = vi.hoisted(() => ({ detach: undefined as (() => Promise<void>) | undefined }));
+/** The detach and reattach the extension hands OMP's commands, which `/rerail-uninstall` runs around a removal that fails. */
+const hostCommands = vi.hoisted(() => ({
+  detach: undefined as (() => Promise<void>) | undefined,
+  reattach: undefined as (() => Promise<void>) | undefined,
+}));
 vi.mock("../../../src/harness/host-commands.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/harness/host-commands.js")>("../../../src/harness/host-commands.js");
   return {
     ...actual,
     registerHostCommands: (...args: Parameters<typeof actual.registerHostCommands>) => {
       hostCommands.detach = args[1].detach;
+      hostCommands.reattach = args[1].reattach;
       actual.registerHostCommands(...args);
     },
   };
@@ -582,6 +586,8 @@ describe("OMP conversation-rules extension", () => {
       yield: undefined as (() => Promise<readonly AdapterDelivery[]>) | undefined,
     };
     const requests: Array<{ operation: string; sessionId: string }> = [];
+    /** Whether each initialize asked for its session's runtime to be built again. */
+    const rebuilds: boolean[] = [];
     const gaps: unknown[] = [];
     const ingested: unknown[] = [];
     vi.stubGlobal("fetch", async (url: URL, init: RequestInit) => {
@@ -589,6 +595,7 @@ describe("OMP conversation-rules extension", () => {
       const body: unknown = JSON.parse(String(init.body));
       const request = z.object({ operation: z.string(), sessionId: z.string() }).parse(body);
       requests.push(request);
+      if (request.operation === "initialize") rebuilds.push(z.object({ input: z.object({ rebuild: z.boolean() }) }).parse(body).input.rebuild);
       if (request.operation === "initialize" && state.hold !== undefined) {
         const { promise } = state.hold;
         state.hold = undefined;
@@ -601,7 +608,7 @@ describe("OMP conversation-rules extension", () => {
       const deliveries = answer === undefined ? [] : await answer();
       return Response.json({ result: null, deliveries, entries: [] });
     });
-    return { state, requests, gaps, ingested, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
+    return { state, requests, rebuilds, gaps, ingested, initializes: (sessionId: string) => requests.filter(r => r.operation === "initialize" && r.sessionId === sessionId).length };
   }
 
   describe("attach retry", () => {
@@ -970,6 +977,57 @@ describe("OMP conversation-rules extension", () => {
       expect(daemon.ingested).toEqual([]);
       expect(droppedMarkers(harness.entries)).toEqual([expect.objectContaining({ count: 1, kinds: { "assistant-delta": 1 }, recovered: false })]);
       vi.useRealTimers();
+    });
+
+    describe("when Rerail's removal fails after OMP detached from a failed start", () => {
+      /** The footer's dropped-events line as the person sees it last, if it shows one. */
+      const droppedShown = (footer: Array<string[] | undefined>) => footer.at(-1)?.find(line => line.includes("dropped"));
+      const failedStart = async () => {
+        const harness = await createHarness();
+        const daemon = flakyDaemon(harness.context.cwd);
+        const footer: Array<string[] | undefined> = [];
+        Object.assign(harness.context, { hasUI: true, mode: "tui", ui: { setWidget: (_key: string, lines?: string[]) => { footer.push(lines); } } });
+        vi.useFakeTimers();
+        vi.spyOn(process.stderr, "write").mockReturnValue(true);
+        createConversationRulesExtension({ modelPath: resolve("model"), registerTool: false })(harness.pi);
+        daemon.state.down.add("omp-test-session");
+        await expect(harness.handlers.get("session_start")!({ type: "session_start" }, harness.context)).rejects.toThrow("fetch failed");
+        const stream = (responseId: string) => harness.handlers.get("message_update")!(delta(responseId, "Guest checkout "), harness.context);
+        await stream("before-detach");
+        return { harness, daemon, footer, stream };
+      };
+
+      it("tries again after a reattach that fails, and records what was dropped before and after the detach once", async () => {
+        const { harness, daemon, footer, stream } = await failedStart();
+        await hostCommands.detach!();
+        await expect(hostCommands.reattach!()).rejects.toThrow("fetch failed");
+        await stream("after-reattach");
+        expect(droppedShown(footer)).toBe("Rerail: 2 session events dropped — daemon not answering");
+
+        // A second later it tries again and the daemon answers; the event after it waits for that try.
+        daemon.state.down.delete("omp-test-session");
+        await vi.advanceTimersByTimeAsync(1_000);
+        await stream("attached");
+        expect(daemon.rebuilds).toEqual([false, true, true]);
+        await vi.waitFor(() => expect(daemon.gaps).toEqual([expect.objectContaining({ count: 2, kinds: { "assistant-delta": 2 } })]));
+        expect(droppedMarkers(harness.entries).at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: true }));
+        expect(droppedShown(footer)).toBeUndefined();
+        vi.useRealTimers();
+      });
+
+      it("records what was dropped once the reattach attaches", async () => {
+        const { harness, daemon, footer, stream } = await failedStart();
+        await stream("before-detach-2");
+        await hostCommands.detach!();
+        daemon.state.down.delete("omp-test-session");
+        await hostCommands.reattach!();
+
+        expect(daemon.rebuilds).toEqual([false, true]);
+        await vi.waitFor(() => expect(daemon.gaps).toEqual([expect.objectContaining({ count: 2, kinds: { "assistant-delta": 2 } })]));
+        expect(droppedMarkers(harness.entries).at(-1)).toEqual(expect.objectContaining({ count: 2, recovered: true }));
+        expect(droppedShown(footer)).toBeUndefined();
+        vi.useRealTimers();
+      });
     });
   });
 

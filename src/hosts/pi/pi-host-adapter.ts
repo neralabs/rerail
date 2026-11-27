@@ -117,7 +117,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
     }
   };
   const attachRetry = new AttachRetry<ExtensionContext>({
-    initialize: context => initialize(context),
+    initialize,
     sessionId: context => context.sessionManager.getSessionId(),
     appendEntry: (customType, data) => pi.appendEntry(customType, data),
     ...runtime.attachGaps,
@@ -187,10 +187,7 @@ export function registerPiHostAdapter(pi: ExtensionAPI, runtime: PiHostAdapterRu
       databasePath: () => runtime.configuredDatabase?.(runtime.currentContext()?.cwd ?? process.cwd()),
       sessionId: () => runtime.activeSession()?.sessionId,
       detach: close,
-      reattach: async () => {
-        const context = runtime.currentContext();
-        if (context !== undefined) await initialize(context, true);
-      },
+      reattach: () => attachRetry.resume(runtime.currentContext()),
     });
   }
 

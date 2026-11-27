@@ -361,7 +361,12 @@ export function createPiConversationRulesExtension(options: PiConversationRulesO
         liveSessionId = context.sessionManager.getSessionId();
         return initialize(context, { rebuild });
       },
-      close: closeRuntime,
+      // Rerail's removal takes the footer down, as OMP's does: a failing attach's dropped count would stay in it after the
+      // removal. A reattach draws it again.
+      close: async () => {
+        presentation.stop();
+        await closeRuntime();
+      },
       shutdown: async () => {
         try {
           presentation.stop();

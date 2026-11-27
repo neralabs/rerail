@@ -302,7 +302,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     };
 
     const attachRetry = new AttachRetry<ExtensionContext>({
-      initialize: ctx => initialize(ctx),
+      initialize: (ctx, rebuild) => initialize(ctx, { rebuild }),
       sessionId: ctx => ctx.sessionManager.getSessionId(),
       appendEntry: (customType, data) => pi.appendEntry(customType, data),
       reportDropped: count => presentation.dropped(count),
@@ -482,9 +482,7 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
           presentation.stop();
           await closeRuntime();
         },
-        reattach: async () => {
-          if (currentContext !== undefined) await initialize(currentContext, { rebuild: true });
-        },
+        reattach: () => attachRetry.resume(currentContext),
       });
     }
     pi.on("session_start", (_event, ctx) => attach(ctx));
