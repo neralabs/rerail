@@ -14,8 +14,8 @@ pub(crate) type Entries = Vec<(String, Json)>;
 /// How many `extends` a configuration chain follows.
 const MAX_EXTENDS_DEPTH: usize = 8;
 
-/// How many configurations one walk (`Chains`) reads at most: where the bases fan out past it (each extending several
-/// others), the walk follows no more of them.
+/// How many configurations one configuration's chain (`Chains::of`) reads that the walk has not read before: where its
+/// bases fan out past it, the configuration is none.
 const MAX_CONFIGURATIONS: usize = 256;
 
 /// A file's project configuration: where it is, and its merged `compilerOptions`.
@@ -80,7 +80,9 @@ fn merge(mut base: Entries, own: Entries) -> Entries {
 
 /// The merged `compilerOptions` of configurations: those of each configuration one `extends` (later ones over earlier
 /// ones), its own over them. A walk reads each configuration once at each depth, however many configurations extend
-/// it (a diamond of shared bases, a folder's configurations over one base), and at most `MAX_CONFIGURATIONS` in all.
+/// it (a diamond of shared bases, a folder's configurations over one base). Each configuration asked for (`of`) reads
+/// at most `MAX_CONFIGURATIONS` it has not read before; one whose chain fans out past that is no configuration
+/// (`None`), not a partial merge, and nothing of its cut chain is kept.
 pub(crate) struct Chains<'a> {
     view: &'a View,
     /// Whether each configuration's `baseUrl` is made absolute from its own folder before the merge, as TypeScript
@@ -89,6 +91,10 @@ pub(crate) struct Chains<'a> {
     /// Each configuration's merged options, by its absolute path and its depth in the chain; `None` where it cannot be
     /// read.
     read: HashMap<(String, usize), Option<Entries>>,
+    /// How many more configurations the chain being read may read.
+    left: usize,
+    /// Whether the chain being read ran out of `left`.
+    cut: bool,
 }
 
 impl<'a> Chains<'a> {
@@ -97,26 +103,34 @@ impl<'a> Chains<'a> {
             view,
             based,
             read: HashMap::new(),
+            left: MAX_CONFIGURATIONS,
+            cut: false,
         }
     }
 
-    /// The merged `compilerOptions` of the configuration at `file` (absolute). `None` where it cannot be read.
+    /// The merged `compilerOptions` of the configuration at `file` (absolute). `None` where it cannot be read, or
+    /// where its chain reads more than `MAX_CONFIGURATIONS` configurations not read before.
     pub(crate) fn of(&mut self, file: &str) -> Option<Entries> {
-        self.options(file, 0)
+        (self.left, self.cut) = (MAX_CONFIGURATIONS, false);
+        let options = self.options(file, 0);
+        options.filter(|_| !self.cut)
     }
 
-    /// `of` for a configuration `depth` bases down a chain: read once.
+    /// `of` for a configuration `depth` bases down a chain: read once, and kept unless the chain was cut.
     fn options(&mut self, file: &str, depth: usize) -> Option<Entries> {
         let key = (file.to_owned(), depth);
         if let Some(known) = self.read.get(&key) {
             return known.clone();
         }
-        let made = if self.read.len() < MAX_CONFIGURATIONS {
-            self.merged(file, depth)
-        } else {
-            None
-        };
-        self.read.insert(key, made.clone());
+        if self.left == 0 {
+            self.cut = true;
+            return None;
+        }
+        self.left -= 1;
+        let made = self.merged(file, depth);
+        if !self.cut {
+            self.read.insert(key, made.clone());
+        }
         made
     }
 
@@ -299,5 +313,53 @@ mod tests {
                 .any(|(k, v)| k == "o0" && *v == Json::Bool(true))
         );
         assert!(options.iter().any(|(k, v)| k == "baseUrl" && v.as_str().is_some_and(|url| url.ends_with("/src"))));
+    }
+
+    /// Each configuration asked for has a budget of its own: a tree of more configurations than one budget, each over
+    /// one base, gives every one; a configuration whose own chain reads past its budget gives none, and the next is
+    /// read whole.
+    #[test]
+    fn each_configuration_reads_within_its_own_budget() {
+        let root = std::env::temp_dir().join(format!(
+            "rerail-tsconfig-budget-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("base.json"),
+            r#"{ "compilerOptions": { "strict": true } }"#,
+        )
+        .unwrap();
+        let n = MAX_CONFIGURATIONS + 44;
+        for k in 0..n {
+            std::fs::write(
+                root.join(format!("t{k}.json")),
+                r#"{ "extends": "./base.json" }"#,
+            )
+            .unwrap();
+            std::fs::write(root.join(format!("b{k}.json")), "{}").unwrap();
+        }
+        let wide: Vec<String> = (0..n).map(|k| format!("\"./b{k}.json\"")).collect();
+        std::fs::write(
+            root.join("wide.json"),
+            format!("{{ \"extends\": [{}] }}", wide.join(", ")),
+        )
+        .unwrap();
+        let view = View::new(Arc::new(HeldFiles::default()), Some(&root));
+        let mut chains = Chains::new(&view, false);
+        let read: Vec<Option<Entries>> = (0..n)
+            .map(|k| chains.of(&view.absolute(&format!("t{k}.json"))))
+            .collect();
+        let wide = chains.of(&view.absolute("wide.json"));
+        let after = chains.of(&view.absolute("t0.json"));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(read.iter().all(|o| {
+            o.as_ref()
+                .is_some_and(|o| o.iter().any(|(k, _)| k == "strict"))
+        }));
+        assert!(wide.is_none(), "its chain reads past its budget");
+        assert!(after.is_some_and(|o| o.iter().any(|(k, _)| k == "strict")));
     }
 }
