@@ -1437,12 +1437,13 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     await Promise.all([untaken.taken(), sweepIdle(routing, options, databasePath)]);
   };
   const answers: EngineAnswers = {
-    ingest: async (incoming, request, { signal, answer }) => {
+    // The walk of the other worktrees, which no answer waits for, pauses while a hook waits for this one.
+    ingest: async (incoming, request, { signal, answer }) => await routing.worktreeWalks.answers.during(async () => {
       // Every event hooks left before this one was sent begins its check first, in its session's queue.
       await untaken.taken();
       const caller = { signal, answer, readFacts: answerFactsReader(incoming, request.event, options) };
       await answerEngineEvent(request.event, caller, eventCaller => routeEngineEvent(request, options, routing, eventCaller));
-    },
+    }),
     recordReceipt: (receipt, configuration) => recordHandedReceipt(routing, options, receipt, configuration),
   };
   const server = createServer((incoming, response) => void answerEngineRequest(incoming, response, answers, options.accessToken));
@@ -1452,11 +1453,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     get socketPath() {
       return socketPath;
     },
-    ingest: async (event, configuration) => {
+    // An OMP or Pi session waits for this answer as a hook does for its own.
+    ingest: async (event, configuration) => await routing.worktreeWalks.answers.during(async () => {
       // Every event hooks left before this one was sent begins its check first, in its session's queue.
       await untaken.taken();
       return (await routeEngineEvent({ event, configuration }, options, routing)).deliveries;
-    },
+    }),
     untaken,
     openRuntimes: () => routing.runtimes.size,
     closeUnusedRuntimes: () => routing.kept.closeAll(),
