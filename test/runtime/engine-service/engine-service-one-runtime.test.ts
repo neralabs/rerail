@@ -112,14 +112,13 @@ describe("one session's runtime in the engine service", () => {
     expect(recorded(p.databasePath, "s")).toEqual(["s:start"]);
   }, 30_000);
 
-  it("records a session's event that names another database in a runtime of that database, as before", async () => {
+  it("records a session's event that names another database in a runtime of that database, the same checkout too, as before", async () => {
     const p = await service();
     const otherDatabase = join(p.root, "other", "rerail.sqlite");
-    const otherCheckout = join(p.root, "other", "repo");
-    await mkdir(otherCheckout, { recursive: true });
-    startTestRepository(otherCheckout, otherDatabase);
+    await mkdir(join(p.root, "other"));
+    startTestRepository(p.first, otherDatabase);
     await p.start("s", p.configured());
-    await p.prompt("s", "elsewhere", p.configured({ databasePath: otherDatabase, workspaceRoot: otherCheckout }));
+    await p.prompt("s", "elsewhere", p.configured({ databasePath: otherDatabase }));
     expect([recorded(p.databasePath, "s"), recorded(otherDatabase, "s")]).toEqual([["s:start"], ["s:elsewhere"]]);
     expect(p.engine.openRuntimes()).toBe(2);
   }, 30_000);

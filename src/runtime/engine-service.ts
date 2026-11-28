@@ -442,8 +442,8 @@ function eventSession(event: AdapterEvent): RoutedSession {
 }
 
 /**
- * The runtime the work of `session` goes to: the one its configuration and folder name, or, for a request that names
- * neither, the one runtime the session already uses.
+ * The runtime the work of `session` goes to: the one its configuration and folder name (`checkoutRoute`), or, for a
+ * request that names neither, the one runtime the session already uses.
  */
 function resolveRuntimeRoute(
   { sessionId, cwd }: RoutedSession,
@@ -454,15 +454,31 @@ function resolveRuntimeRoute(
   const workspaceRoot = configuration?.workspaceRoot ?? options.workspaceRoot ?? cwd;
   const configurationKey = configurationKeyOf(configuration, options);
   if (workspaceRoot === undefined) return { runtimeKey: knownRuntimeKey(sessionId, configurationKey, state) };
-  const runtimeOptions = routedRuntimeOptions(workspaceRoot, configuration, options);
-  const runtimeKey = JSON.stringify([
-    runtimeOptions.storageRoot,
-    runtimeOptions.modelPath,
-    runtimeOptions.databasePath,
-    runtimeOptions.workspaceRoot,
-  ]);
-  if (configurationKey !== undefined) state.runtimeKeysByConfiguration.set(configurationKey, runtimeKey);
-  return { runtimeKey, runtimeOptions };
+  const route = checkoutRoute(sessionId, routedRuntimeOptions(workspaceRoot, configuration, options), state);
+  if (configurationKey !== undefined) state.runtimeKeysByConfiguration.set(configurationKey, route.runtimeKey);
+  return route;
+}
+
+/**
+ * The runtime made with `runtimeOptions`, unless a runtime of this service already holds `sessionId` over the same
+ * database and checkout: then that one, whatever model folder or storage root it was made with. One session's hooks
+ * can name two of either: an event a hook left while the daemon did not read names the model folder of the Rerail
+ * version it ran, and the hooks after an update name the new version's; `RERAIL_MODEL_PATH` or `RERAIL_STORAGE_ROOT`
+ * can be set for some of a session's hooks and not others. A second runtime's claim on the session is refused while
+ * the first holds it, so each event sent there went unrecorded. Another database or checkout keeps a runtime of its own.
+ */
+function checkoutRoute(sessionId: string, runtimeOptions: RerailRuntimeOptions, state: EngineRoutingState): RuntimeRoute {
+  for (const runtimeKey of state.runtimeKeysBySession.get(sessionId) ?? []) {
+    const held = state.runtimeOptions.get(runtimeKey);
+    if (held !== undefined && sameCheckout(held, runtimeOptions)) return { runtimeKey, runtimeOptions: held };
+  }
+  const { storageRoot, modelPath, databasePath, workspaceRoot } = runtimeOptions;
+  return { runtimeKey: JSON.stringify([storageRoot, modelPath, databasePath, workspaceRoot]), runtimeOptions };
+}
+
+/** Whether runtimes made with `a` and `b` record one checkout in one database, whatever model folder or storage root each has. */
+function sameCheckout(a: RerailRuntimeOptions, b: RerailRuntimeOptions): boolean {
+  return a.databasePath === b.databasePath && a.workspaceRoot === b.workspaceRoot;
 }
 
 /** What names a request's configuration among the runtimes: its storage, model and database; none without one. */

@@ -1,0 +1,1 @@
+After `rerail update`, a session whose hook had waited for a busy daemon no longer has every later event refused with `already owned by a live runtime`. A session whose hooks name another model folder or storage root (`RERAIL_MODEL_PATH`, `RERAIL_STORAGE_ROOT`) keeps the one it opened with, so each of its events is recorded and checked.
