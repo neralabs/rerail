@@ -1,1 +1,0 @@
-With `RERAIL_AUTOSTART=0`, OMP and Pi sessions no longer start the daemon or replace another Rerail version's: a session's start says the daemon is not running, as hooks do, and the session attaches once it runs. `rerail start` says so too, in place of a dashboard link no daemon serves.

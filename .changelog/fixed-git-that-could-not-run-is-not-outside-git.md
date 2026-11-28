@@ -1,1 +1,0 @@
-When the Git Rerail asks about a checkout gave no answer (Windows could not start it, it timed out, was killed or failed), a starting session could record the checkout as a folder outside Git, or give a clone whose Git config holds its id a new one. That record now fails with the reason, which the daemon logs.
