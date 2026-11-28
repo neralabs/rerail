@@ -928,12 +928,22 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// One capturing test at a time: the machine has one place its captures go (`join_capture::capture_to`).
+    static CAPTURING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn capturing() -> std::sync::MutexGuard<'static, ()> {
+        CAPTURING.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// The join lab's captures (`join_capture`): a stratum's launch on the device written as what it reads, each
     /// block it reaches once, its own buffers before and after it, its labels the shapes it runs and their stratum;
     /// finished ("done"). The run is recorded (`run.txt`), and what the stratum made (`strata.txt`, `setfix::replay`):
     /// its relation's rows, by the identity its labels name.
     #[test]
     fn a_launch_captured_names_its_shapes_and_regions() {
+        let _one = capturing();
+        // A machine of its own: its captures hold its launches alone, none of another test's on the tests' machine.
+        let _run = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::on(&crate::code_rule_dsl::logic::profile::Machine::new()));
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
@@ -1053,6 +1063,9 @@ use rerail_blocks::vector::Vector;
     /// left, and by the program alike.
     #[test]
     fn each_part_over_a_chunk_leaves_what_the_program_left() {
+        let _one = capturing();
+        // A machine of its own: its captures hold its launches alone, none of another test's on the tests' machine.
+        let _run = crate::code_rule_dsl::logic::profile::within(crate::code_rule_dsl::logic::profile::Shared::on(&crate::code_rule_dsl::logic::profile::Machine::new()));
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }

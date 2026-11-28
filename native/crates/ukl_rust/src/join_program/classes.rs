@@ -212,6 +212,8 @@ pub struct Class {
     pub stages: &'static [&'static StageClass],
 }
 
+// Its forms are named by their codes, in hex.
+#[allow(non_upper_case_globals)]
 mod table;
 pub use table::CLASSES;
 
@@ -597,6 +599,13 @@ unsafe fn run<const F: u64>(kind: u32, st: &St, j: &Job, b: &Bufs, t0: u32, t1: 
     true
 }
 
+/// Whether a stage of form `F` runs on lanes (`stage_lanes::runs_at_lanes`, the program's choice): its form's part
+/// of the test fixed, its slots' and keys' counts (which the form caps) the record's.
+#[inline(always)]
+fn at_lanes<const F: u64>(s: &Stage) -> bool {
+    mode(F) <= 2 && matches!(read(F), R_REL | R_VIEW) && !parented(F) && s.nkeys <= 8 && s.nslots <= 16
+}
+
 unsafe fn count_range<const F: u64>(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     let s = st.s;
     let t1 = t1.min(s.cap_in.saturating_add(1));
@@ -606,8 +615,12 @@ unsafe fn count_range<const F: u64>(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32
     let n = unsafe { (*j.totals.add(s.in_slot as usize)).min(s.cap_in) };
     unsafe { fill_u32(b.c, t0.max(n), t1, 0) };
     let mut acc = [0u32; 17];
-    for t in t0..t1.min(n) {
-        unsafe { count_one::<F>(st, j, b, t, &mut acc) };
+    if at_lanes::<F>(s) {
+        unsafe { stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }, F>(st, j, b.c, b.v, t0.min(n), t1.min(n), &mut acc) };
+    } else {
+        for t in t0..t1.min(n) {
+            unsafe { count_one::<F>(st, j, b, t, &mut acc) };
+        }
     }
     if counted(F) {
         for (m, &a) in acc.iter().enumerate().filter(|(_, a)| **a > 0) {
@@ -683,6 +696,10 @@ unsafe fn scatter_range<const F: u64>(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u
     let n = unsafe { (*j.totals.add(s.in_slot as usize)).min(s.cap_in) };
     if t0 == 0 && t1 > 0 {
         unsafe { *j.totals.add(s.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0) };
+    }
+    if mode(F) == 0 && at_lanes::<F>(s) {
+        unsafe { stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }, F>(st, j, offsets, o, b.v, t0.min(n), t1.min(n)) };
+        return;
     }
     if mode(F) == 1 || mode(F) == 2 {
         // A binding kept as it is: its slots a run's copy of each column, its binds a row at a time.

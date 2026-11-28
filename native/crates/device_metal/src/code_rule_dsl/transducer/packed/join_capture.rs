@@ -82,10 +82,11 @@ struct ChosenState {
     next: u64,
 }
 
-/// The machine's join launches captured under `dir` from its next batch on (`RERAIL_JOIN_CAPTURE`'s, set by a caller).
+/// The machine's join launches captured under `dir` from its next batch on (`RERAIL_JOIN_CAPTURE`'s, set by a caller):
+/// a capture of its own, none of the shapes, blocks or bytes of one before it taken as written there.
 pub fn capture_to(dir: PathBuf) {
     crate::code_rule_dsl::logic::native::setfix::replay::capture_to(dir.clone());
-    crate::code_rule_dsl::logic::profile::machine::<Chosen>().0.lock().unwrap_or_else(|e| e.into_inner()).dir = Some(dir);
+    *crate::code_rule_dsl::logic::profile::machine::<Chosen>().0.lock().unwrap_or_else(|e| e.into_inner()) = ChosenState { dir: Some(dir), ..ChosenState::default() };
 }
 
 /// One region a launch reaches: its role, its memory, and where its bytes are kept.

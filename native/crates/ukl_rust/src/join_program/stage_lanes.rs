@@ -118,8 +118,9 @@ where
     m.select(si(1), si(0))
 }
 
-/// A stage's reads at `N` lanes.
-struct Lanes<'a> {
+/// A stage's reads at `N` lanes, of form `F` (`classes::form_of`): the record's fields its form fixes read as its
+/// constants, a class's (`classes`); `F` 0, read from the record, the program's.
+struct Lanes<'a, const F: u64 = 0> {
     st: &'a St<'a>,
     /// The relation's descriptor (`r + r_at`), its dead rows' (`r + r_dead`).
     d: *const u8,
@@ -147,7 +148,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     #[inline(always)]
-    fn new(l: &Lanes, t: R<N>, run: bool) -> Self {
+    fn new<const F: u64>(l: &Lanes<'_, F>, t: R<N>, run: bool) -> Self {
         BindAt { t, run, l: l.st.l, cap: l.st.s.cap_in, have: Cell::new(0), v: UnsafeCell::new([MaybeUninit::uninit(); 16]) }
     }
 
@@ -234,9 +235,9 @@ where
     /// The lanes' rows `id` of the stage's relation (`l.d`), or of its view: each lane's found once, a lane whose
     /// row repeats the one before's (consecutive candidates of one row) taking it.
     #[inline(always)]
-    unsafe fn new(l: &Lanes, id: R<N>) -> Self {
+    unsafe fn new<const F: u64>(l: &Lanes<'_, F>, id: R<N>) -> Self {
         let s = l.st.s;
-        let at = if s.r_view == 0 {
+        let at = if !l.of_view() {
             Found::Rel(ln::rel_at(l.d, id, l.far))
         } else {
             // Each lane's row found from the lane before's document (`super::Found`'s hint), its document's reads made
@@ -295,14 +296,59 @@ where
     /// A tile of `nt` bindings begins: each one's group's first place and length.
     fn tile(&mut self, _nt: u32, _first: &[u32], _len: &[u32]) {}
     /// Candidates `k..k + N` of a chunk: each lane's binding and row, `m` the lanes whose row matches.
-    unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32);
+    unsafe fn each<const F: u64>(&mut self, l: &Lanes<'_, F>, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32);
     /// A chunk's `n` candidates are done: the tile's bindings `lo..hi` had theirs at `sk[i]..ek[i]` of it.
     unsafe fn chunk(&mut self, _n: u32, _lo: u32, _hi: u32, _sk: &[u32], _ek: &[u32]) {}
     /// The tile of `nt` bindings from `ta` is done.
     unsafe fn tile_end(&mut self, _ta: u32, _nt: u32) {}
 }
 
-impl Lanes<'_> {
+impl<const F: u64> Lanes<'_, F> {
+    #[inline(always)]
+    fn mode(&self) -> u32 {
+        if F == 0 { self.st.s.mode } else { classes::mode(F) }
+    }
+    #[inline(always)]
+    fn nk(&self) -> u32 {
+        if F == 0 { self.st.s.nkeys.min(8) } else { classes::nkeys(F) }
+    }
+    #[inline(always)]
+    fn ntests(&self) -> u32 {
+        if F == 0 { self.st.s.ntests.min(8) } else { classes::ntests(F) }
+    }
+    #[inline(always)]
+    fn nbinds(&self) -> u32 {
+        if F == 0 { self.st.s.nbinds.min(16) } else { classes::nbinds(F) }
+    }
+    #[inline(always)]
+    fn nops(&self) -> u32 {
+        if F == 0 { self.st.s.nops.min(64) } else { classes::nops(F) }
+    }
+    #[inline(always)]
+    fn npassed(&self) -> u32 {
+        if F == 0 { self.st.s.npassed.min(16) } else { classes::npassed(F) }
+    }
+    #[inline(always)]
+    fn gated(&self) -> bool {
+        if F == 0 { self.st.s.last != NONE } else { classes::gated(F) }
+    }
+    #[inline(always)]
+    fn screened(&self) -> bool {
+        if F == 0 { self.st.s.screen != 0 && self.st.s.screen <= self.nk() } else { classes::screened(F) }
+    }
+    #[inline(always)]
+    fn dead_bits(&self) -> bool {
+        if F == 0 { self.st.s.r_dead != 0 } else { classes::dead(F) }
+    }
+    #[inline(always)]
+    fn of_view(&self) -> bool {
+        if F == 0 { self.st.s.r_view != 0 } else { classes::read(F) == classes::R_VIEW }
+    }
+    #[inline(always)]
+    fn key_of_slot(&self, k: u32) -> bool {
+        if F == 0 { self.st.s.key_kind[k as usize] == 1 } else { classes::key_slot(F, k) }
+    }
+
     #[inline(always)]
     fn colval<const N: usize>(&self, b: &BindAt<N>, row: &Row<N>, k: u32) -> I<N>
     where
@@ -329,7 +375,7 @@ impl Lanes<'_> {
         LaneCount<N>: SupportedLaneCount,
     {
         let (s, k) = (self.st.s, k as usize);
-        if s.key_kind[k] == 1 { b.slot(s.key_slot[k]) } else { si(s.key_const[k]) }
+        if self.key_of_slot(k as u32) { b.slot(s.key_slot[k]) } else { si(s.key_const[k]) }
     }
 
     /// Arithmetic bind `j`'s values and the lanes where they are defined (no overflow, no zero divisor), as `arith`.
@@ -378,7 +424,7 @@ impl Lanes<'_> {
     {
         let s = self.st.s;
         let mut ok = Mask::splat(true);
-        for k in 0..s.nbinds.min(16) as usize {
+        for k in 0..self.nbinds() as usize {
             if s.bind_kind[k] == 3 {
                 ok &= self.arith(b, row, s.bind_idx[k]).1;
             }
@@ -394,7 +440,7 @@ impl Lanes<'_> {
     {
         let s = self.st.s;
         let mut v = U::splat(0);
-        for x in 0..s.nops.min(64) {
+        for x in 0..self.nops() {
             let o = &s.ops[x as usize];
             let bit = |k: u32| (v >> U::splat(u64::from(k & 63))) & U::splat(1);
             let r: U<N> = match o[0] {
@@ -439,7 +485,7 @@ impl Lanes<'_> {
     {
         let s = self.st.s;
         let ok = self.defined(b, row);
-        if s.last == NONE {
+        if !self.gated() {
             return ok;
         }
         ok & self.out_bit(self.eval(b, row), s.last)
@@ -453,7 +499,7 @@ impl Lanes<'_> {
         LaneCount<N>: SupportedLaneCount,
     {
         let s = self.st.s;
-        let nk = s.nkeys.min(8);
+        let nk = self.nk();
         if nk == 0 {
             let first = sr(s.r_from);
             return (first, first + live.cast::<i32>().select(sr(self.st.rows()), sr(0)));
@@ -463,7 +509,7 @@ impl Lanes<'_> {
             h = ln::key_mix(h, self.key(b, k).cast::<u64>());
         }
         let mut go = live;
-        if s.screen != 0 && s.screen <= nk {
+        if self.screened() {
             let (lo, hi) = ln::bloom_hash(self.key(b, s.screen - 1).cast::<u64>());
             go &= ln::bloom_may(f.add(s.screen_at as usize), lo, hi).cast::<i64>();
         }
@@ -478,7 +524,7 @@ impl Lanes<'_> {
         LaneCount<N>: SupportedLaneCount,
     {
         let s = self.st.s;
-        let nk = s.nkeys.min(8) as usize;
+        let nk = self.nk() as usize;
         let iota = lane::<N>();
         let (mut first, mut len) = ([0u32; TILE + SLACK], [0u32; TILE + SLACK]);
         let (mut cb, mut cq) = ([0u32; CANDS + SLACK], [0u32; CANDS + SLACK]);
@@ -539,13 +585,13 @@ impl Lanes<'_> {
                     };
                     let row = Row::new(self, id);
                     let mut m = valid.cast::<i64>();
-                    if s.r_dead != 0 {
+                    if self.dead_bits() {
                         m &= !ln::rel_dead(self.dead, id).cast::<i64>();
                     }
                     for k in 0..nk {
                         m &= row.get(s.key_rcol[k]).simd_eq(self.key(&b, k as u32));
                     }
-                    for k in 0..s.ntests.min(8) as usize {
+                    for k in 0..self.ntests() as usize {
                         m &= row.get(s.test_a[k]).simd_eq(row.get(s.test_b[k]));
                     }
                     v.each(self, &b, &row, m, k);
@@ -568,7 +614,7 @@ impl Lanes<'_> {
         for k in 0..s.nslots.min(16) {
             out(b.slot(k), k);
         }
-        for k in 0..s.nbinds.min(16) as usize {
+        for k in 0..self.nbinds() as usize {
             let i = s.bind_idx[k];
             let v = match s.bind_kind[k] {
                 3 => {
@@ -629,18 +675,18 @@ where
         }
     }
 
-    unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
+    unsafe fn each<const F: u64>(&mut self, l: &Lanes<'_, F>, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
         let s = l.st.s;
-        let pass = if s.mode != 0 || !m.any() {
+        let pass = if l.mode() != 0 || !m.any() {
             m
         } else {
             self.p0 += ones(m);
             let ok = m & l.defined(b, row);
-            let v = if s.nops > 0 { l.eval(b, row) } else { U::splat(0) };
-            for (q, &bit) in self.q.iter_mut().zip(&s.passed).take(s.npassed.min(16) as usize) {
+            let v = if l.nops() > 0 { l.eval(b, row) } else { U::splat(0) };
+            for (q, &bit) in self.q.iter_mut().zip(&s.passed).take(l.npassed() as usize) {
                 *q += ones(if bit == NONE { ok } else { ok & l.out_bit(v, bit) });
             }
-            if s.last == NONE { ok } else { ok & l.out_bit(v, s.last) }
+            if !l.gated() { ok } else { ok & l.out_bit(v, s.last) }
         };
         let bits = pass.to_bitmask();
         st(self.pre.as_mut_ptr().add(k as usize), sr::<N>(self.run) + ranks::<N>(bits));
@@ -693,13 +739,13 @@ where
 
 /// Bindings `t0..t1` of a relational stage (`runs_at_lanes`), all below its input's rows: each one's count of rows
 /// out (a semi-join's and an anti-join's 0 or 1) into `counts`, its rows matched and passed into `acc`.
-pub(super) unsafe fn stage_count_lanes<const N: usize>(st: &St, j: &Job, counts: *mut u32, v: *mut i64, t0: u32, t1: u32, acc: &mut [u32; 17])
+pub(super) unsafe fn stage_count_lanes<const N: usize, const F: u64>(st: &St, j: &Job, counts: *mut u32, v: *mut i64, t0: u32, t1: u32, acc: &mut [u32; 17])
 where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
-    let v = if s.mode == 0 { v } else { core::ptr::null_mut() };
+    let l = Lanes::<F> { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
+    let v = if l.mode() == 0 { v } else { core::ptr::null_mut() };
     let mut v = Count::<N> {
         counts,
         cnt: [0; TILE + SLACK],
@@ -713,7 +759,7 @@ where
         seen: [0; TILE + SLACK],
         pb: [0; (CANDS + SLACK) / 64 + 2],
     };
-    if s.mode != 0 {
+    if l.mode() != 0 {
         // A semi-join's binding is 1 where its walk found a row, an anti-join's where it found none.
         struct Exists<const N: usize>(Count<N>, bool)
         where
@@ -725,7 +771,7 @@ where
             fn tile(&mut self, nt: u32, first: &[u32], len: &[u32]) {
                 self.0.tile(nt, first, len);
             }
-            unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
+            unsafe fn each<const F: u64>(&mut self, l: &Lanes<'_, F>, b: &BindAt<N>, row: &Row<N>, m: W<N>, k: u32) {
                 self.0.each(l, b, row, m, k);
             }
             unsafe fn chunk(&mut self, n: u32, lo: u32, hi: u32, sk: &[u32], ek: &[u32]) {
@@ -739,13 +785,13 @@ where
                 self.0.tile_end(ta, nt);
             }
         }
-        let mut e = Exists(v, s.mode == 2);
+        let mut e = Exists(v, l.mode() == 2);
         l.walk(j.f, t0, t1, &mut e);
         return;
     }
     l.walk(j.f, t0, t1, &mut v);
     acc[0] += v.p0.reduce_sum() as u32;
-    for (a, q) in acc[1..].iter_mut().zip(&v.q).take(s.npassed.min(16) as usize) {
+    for (a, q) in acc[1..].iter_mut().zip(&v.q).take(l.npassed() as usize) {
         *a += q.reduce_sum() as u32;
     }
 }
@@ -797,7 +843,7 @@ impl<const N: usize> Visit<N> for Scatter
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    unsafe fn each(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, m: W<N>, _: u32) {
+    unsafe fn each<const F: u64>(&mut self, l: &Lanes<'_, F>, b: &BindAt<N>, row: &Row<N>, m: W<N>, _: u32) {
         if !m.any() {
             return;
         }
@@ -808,7 +854,7 @@ where
 impl Scatter {
     /// The rows of lanes `w` out, in their order, from the next place.
     #[inline(always)]
-    unsafe fn put<const N: usize>(&mut self, l: &Lanes, b: &BindAt<N>, row: &Row<N>, w: W<N>)
+    unsafe fn put<const N: usize, const F: u64>(&mut self, l: &Lanes<'_, F>, b: &BindAt<N>, row: &Row<N>, w: W<N>)
     where
         LaneCount<N>: SupportedLaneCount,
     {
@@ -833,12 +879,12 @@ impl Scatter {
 
 /// Bindings `t0..t1` of a join (`runs_at_lanes`, mode 0), all its live bindings from `t0`: their rows out from `t0`'s
 /// offset (`offsets`, less `o0`; each binding's follow the one before's), below the stage's room.
-pub(super) unsafe fn stage_scatter_lanes<const N: usize>(st: &St, j: &Job, offsets: *const u32, o: *mut i64, finds: *const i64, t0: u32, t1: u32)
+pub(super) unsafe fn stage_scatter_lanes<const N: usize, const F: u64>(st: &St, j: &Job, offsets: *const u32, o: *mut i64, finds: *const i64, t0: u32, t1: u32)
 where
     LaneCount<N>: SupportedLaneCount,
 {
     let s = st.s;
-    let l = Lanes { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
+    let l = Lanes::<F> { st, d: (st.r as *const u8).wrapping_add(s.r_at as usize), dead: (st.r as *const u8).wrapping_add(s.r_dead as usize), far: st.far };
     let o0 = *offsets;
     let end = (*offsets.add(t1 as usize)).wrapping_sub(o0).min(s.cap_out);
     let mut v = Scatter { o, run: (*offsets.add(t0 as usize)).wrapping_sub(o0), end };
@@ -878,7 +924,7 @@ const PLACES8: [[u32; 8]; 256] = {
     t
 };
 
-impl Lanes<'_> {
+impl<const F: u64> Lanes<'_, F> {
     /// A tile's `nt` bindings from `ta` out by their finds (`f`, every one's kept): their candidates that are rows
     /// out, expanded into chunks in their order, `N` (8) rows a step, none probed or tested again.
     unsafe fn found<const N: usize>(&self, f: *const i64, ta: u32, nt: u32, v: &mut Scatter)
@@ -911,7 +957,7 @@ impl Lanes<'_> {
                 let (bi, q) = (ld::<N>(cb.as_ptr().add(k as usize)), ld::<N>(cq.as_ptr().add(k as usize)));
                 let (bi, q) = (valid.select(bi, sr(bi[0])), valid.select(q, sr(q[0])));
                 let b = BindAt::new(self, sr::<N>(ta) + bi, false);
-                let id = if s.nkeys == 0 {
+                let id = if self.nk() == 0 {
                     q
                 } else if valid.all() && q.simd_eq(sr::<N>(q[0]) + iota).all() {
                     ln::rel_group_rows(self.d, s.r_index, q[0])

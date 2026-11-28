@@ -2711,7 +2711,7 @@ unsafe fn stage_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
     // The stage's counters, the range's added once.
     let mut acc = [0u32; 17];
     if stage_lanes::runs_at_lanes(s) {
-        stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.v, t0.min(live), live, &mut acc);
+        stage_lanes::stage_count_lanes::<{ stage_lanes::LANES }, 0>(st, j, b.c, b.v, t0.min(live), live, &mut acc);
     } else {
         for t in t0..live {
             stage_count_one(st, j, b, t, &mut acc);
@@ -2762,7 +2762,7 @@ unsafe fn stage_scatter_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
         if t0 == 0 && t1 > 0 {
             *j.totals.add(s.out_slot as usize) = (*b.c.add(n as usize)).wrapping_sub(*b.c);
         }
-        stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }>(st, j, b.c, b.o, b.v, t0.min(n), t1.min(n));
+        stage_lanes::stage_scatter_lanes::<{ stage_lanes::LANES }, 0>(st, j, b.c, b.o, b.v, t0.min(n), t1.min(n));
         return;
     }
     if !matches!(s.mode, 1 | 2 | 7) {
