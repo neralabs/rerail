@@ -4,11 +4,14 @@
 #pragma once
 #define BODY_AT 320u
 #define MAX_SLOTS 30u
-#define CACHE_BYTES 40u
+#define CACHE_BYTES 64u
 #define CACHE_STATE_AT 328u
 #define CACHE_OPEN_AT 336u
 #define CACHE_HELD_AT 344u
 #define CACHE_USED_AT 352u
+#define CACHE_INDEX_AT 360u
+#define CACHE_FILLED_AT 368u
+#define CACHE_FREE_AT 376u
 #define NONE 4294967295u
 #define MAX_LAYERS 65u
 #define SHAPE_ARITY_AT 0u
@@ -110,8 +113,10 @@
 #define SKETCH_WORK 84352u
 #define PARTS_N_AT 328u
 #define PARTS_AT 336u
-#define CACHE_ENTRIES_AT 360u
+#define CACHE_ENTRIES_AT 384u
 #define CACHE_ENTRY_BYTES 32u
+#define CACHE_INDEX_COLS 5u
+#define CACHE_INDEX_LEAST 16u
 #define FENCE 64u
 #define DOCS_LEN_AT 320u
 #define DOCS_N_AT 328u

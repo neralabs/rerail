@@ -452,9 +452,8 @@ fn keep(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     // The documents gone, read where their parts block lists them, let go of their entries.
     {
         let ([gone], [cache]) = c.views([GONE], [CACHE]);
-        for g in crate::drop::parts(gone) {
-            crate::cache::forget(cache, g as u32);
-        }
+        let probes: u64 = crate::drop::parts(gone).map(|g| crate::cache::forget(cache, g as u32)).sum();
+        c.table.touch(probes);
     }
     let control = c.read(CONTROL);
     let ends: [u32; R] = words::<u32>(control, ENDS, R).try_into().expect("the relations' ends");
@@ -574,14 +573,15 @@ fn doc_nodes(table: &Table<'_>, docs: &[u8], i: usize) -> u64 {
 fn room_of(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let table = c.table;
     let ([cache, gone, docs], [room]) = c.views([O_CACHE, O_GONE, O_DOCS], [O_ROOM]);
-    let mut need = [0u64; R];
+    let (mut need, mut probes) = ([0u64; R], 0);
     for d in crate::drop::parts(gone) {
-        if let Some(s) = crate::cache::sizes(cache, d as u32) {
+        if let Some(s) = crate::cache::sizes_probed(cache, d as u32, &mut probes) {
             for (n, &k) in need.iter_mut().zip(s) {
                 *n += u64::from(k);
             }
         }
     }
+    table.touch(probes);
     let nodes: u64 = (0..docs_n(docs)).map(|i| doc_nodes(table, docs, i)).sum();
     for (r, n) in need.into_iter().enumerate() {
         set_word::<u64>(room, BODY_AT + 8 * r, n + nodes);

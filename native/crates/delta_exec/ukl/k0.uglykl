@@ -451,16 +451,6 @@ UKL_INLINE uint32_t k0_start(CBlk control, uint32_t nd, uint32_t items, uint32_t
     return item == items ? U32(control, K0_ENDS_AT + 4u * r) : PLACE(control, item, r);
 }
 
-// The cache's sizes entry for document `d` of `R` counts: its own, else a let-go one; NONE for neither.
-UKL_INLINE uint32_t k0_entry(CBlk h, uint32_t d) {
-    uint32_t end = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT), dead = NONE;
-    for (uint32_t at = CACHE_ENTRIES_AT; at < end; at = cache_next(h, at)) {
-        if (U32(h, at + 4u) != 0u || U32(h, at + 24u) != R) continue;
-        if (U32(h, at) == d) return at;
-        if (U32(h, at) == CACHE_DEAD && dead == NONE) dead = at;
-    }
-    return dead;
-}
 
 // `keep`: one item. L1's cache: the documents gone let go of their entries, then each document's sizes (the rows its
 // statements were given by relation), over its entry, a let-go one, or appended at the cursor, room asked past the
@@ -474,7 +464,11 @@ DELTA_ONE(k0_pass_keep)
     CBlk gone = SLOT(K0_GONE);
     for (uint32_t g = 0u; g < parts_len(gone); g++) {
         uint32_t at = cache_sizes(h, (uint32_t)parts_get(gone, g));
-        if (at != NONE) U32(h, at) = CACHE_DEAD;
+        if (at == NONE) continue;
+        // Let go, on the let-go list through its columns' words (a sizes entry has none).
+        U32(h, at) = CACHE_DEAD;
+        U32(h, at + 8u) = (uint32_t)U64(h, CACHE_FREE_AT);
+        U64(h, CACHE_FREE_AT) = at;
     }
     for (uint32_t r = 0u; r < R; r++)
         if (U32(control, K0_ENDS_AT + 4u * r) == K0_UNCLAIMED) return;
@@ -482,10 +476,16 @@ DELTA_ONE(k0_pass_keep)
     uint32_t nd = docs_len(docs), items = k0_total(control, nd), first = 0u;
     for (uint32_t k = 0u; k < nd; k++) {
         uint32_t n = U32(control, K0_DOCN_AT + 4u * k), d = (uint32_t)docs_module(docs, k);
-        uint32_t at = k0_entry(h, d), len = CACHE_ENTRY_BYTES + 4u * R;
-        bool append = at == NONE;
-        if (append) at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
-        if (append && !REACH(K0_CACHE, at + len)) return;
+        // Its own entry (by the index), else the first let-go one, else one appended; a new key's index room first.
+        uint32_t len = CACHE_ENTRY_BYTES + 4u * R, own = cache_sizes(h, d), fr = (uint32_t)U64(h, CACHE_FREE_AT);
+        if (own != NONE && U32(h, own + 24u) != R) own = NONE;
+        uint32_t free = own == NONE && fr != 0u && U32(h, fr + 24u) == R ? fr : NONE;
+        uint32_t room = own != NONE ? 0u : cache_index_room(h) + (free != NONE ? 0u : len);
+        if (room > 0u && !REACH(K0_CACHE, CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT) + room)) return;
+        if (own == NONE) cache_reindex(h);
+        if (free != NONE) U64(h, CACHE_FREE_AT) = U32(h, free + 8u);
+        bool append = own == NONE && free == NONE;
+        uint32_t at = own != NONE ? own : free != NONE ? free : CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
         U32(h, at + 4u) = 0u;
         for (uint32_t c = 0u; c < 4u; c++) *(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * c) = 0u;
         U32(h, at + 24u) = R;
@@ -494,6 +494,7 @@ DELTA_ONE(k0_pass_keep)
         // The document named last, and an appended entry counted last.
         U32(h, at) = d;
         if (append) U64(h, CACHE_USED_AT) = at + len - CACHE_ENTRIES_AT;
+        if (own == NONE) cache_index_one(h, at);
         first += n;
     }
 }

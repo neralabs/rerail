@@ -15,6 +15,9 @@ DELTA_ONE(cache_open_open)
     U64(h, CACHE_HELD_AT) = held ? 1u : 0u;
     if (!held) {
         U64(h, CACHE_USED_AT) = 0u;
+        U64(h, CACHE_INDEX_AT) = 0u;
+        U64(h, CACHE_FILLED_AT) = 0u;
+        U64(h, CACHE_FREE_AT) = 0u;
         U64(h, CACHE_STATE_AT) = 0u;
     }
     U64(h, CACHE_OPEN_AT) = 1u;
@@ -43,16 +46,8 @@ UKL_INLINE bool by_cols(ByCols c, uint32_t x, uint32_t y) {
     return x < y;
 }
 
-// The entry of layer `layer`'s order by `c`'s columns: where it lies, or NONE.
-UKL_INLINE uint32_t cache_order(CBlk h, uint32_t layer, ByCols c) {
-    uint32_t end = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
-    for (uint32_t at = CACHE_ENTRIES_AT; at < end; at = cache_next(h, at)) {
-        bool same = U32(h, at) == layer && U32(h, at + 4u) == c.n;
-        for (uint32_t k = 0u; same && k < c.n; k++) same = (uint32_t)(*(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * k)) == c.cols[k];
-        if (same) return at;
-    }
-    return NONE;
-}
+// The entry of layer `layer`'s order by `c`'s columns: where it lies, by the cache's index, or NONE.
+UKL_INLINE uint32_t cache_order(CBlk h, uint32_t layer, ByCols c) { return cache_find(h, layer, c.n, c.cols); }
 
 // `order` as phases (decision 0686): the layer's own ids sorted by the columns into a new entry at the cache's
 // cursor, with their fences (every FENCE-th id's first column), unless the cache holds it (every phase's count 0).
@@ -106,7 +101,10 @@ DELTA_LANES(order_open)
 {
     DELTA_ITEM(k);
     ORD;
-    if (!REACH(1, o.tmp + 4u * o.n)) return;
+    // The index's room first: the entry lies past it.
+    if (!REACH(1, o.tmp + 4u * o.n + cache_index_room(h))) return;
+    cache_reindex(h);
+    o = ord_of(t, slots, p);
     U32(h, o.at) = o.layer;
     U32(h, o.at + 4u) = o.c.n;
     for (uint32_t k = 0u; k < 4u; k++) *(CLIF_BLOCK_SPACE uint16_t*)(h + o.at + 8u + 2u * k) = (uint16_t)o.c.cols[k];
@@ -146,4 +144,5 @@ DELTA_LANES(order_seal)
     DELTA_ITEM(k);
     ORD;
     U64(h, CACHE_USED_AT) = o.words - CACHE_ENTRIES_AT;
+    cache_index_one(h, o.at);
 }

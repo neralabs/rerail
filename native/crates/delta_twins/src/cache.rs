@@ -17,10 +17,19 @@
 //! The cache holds row ids and keys, never rows: an index in it is a derived fact, not a copy (0353).
 //!
 //! The block's body: its length; the state's digest (0: ∅'s, a header just made); the open mark; whether the last
-//! `cache_open` found the state it was asked for; the bytes its entries take; then the entries, each a header (the
-//! layer's block id, the columns' count and the columns, the rows' and fences' counts), its row ids and its fences (the
-//! first key column's value at every `FENCE`th row of the order). The entries reach past the body, up to the block's
-//! capacity, which the `order` phase grows (`Bound::Capacity(Grow)`).
+//! `cache_open` found the state it was asked for; the bytes its entries take; where its index lies, and how many of
+//! the index's slots are filled; the first let-go sizes entry; then the entries, each a header (the layer's block id,
+//! the columns' count and the columns, the rows' and fences' counts), its row ids and its fences (the first key
+//! column's value at every `FENCE`th row of the order). The entries reach past the body, up to the block's capacity,
+//! which the `order` phase grows (`Bound::Capacity(Grow)`).
+//!
+//! An entry is found by its index (P1: a run's lookups cost what it looks up, not how many entries the cache holds, one
+//! a document): an entry of its own (`INDEX_COLS` columns), an open-addressed table of the entries' places by their
+//! keys' hash (`key_hash`), probed from the key's slot to an empty one, each slot's entry's key checked (a let-go
+//! entry's slot stays, and is passed over). When one more key would fill more than half its slots, a table twice the
+//! size is made at the cursor from the entries (`reindex`): each entry is indexed O(1) times amortized. A let-go sizes
+//! entry is pushed on a list through its unused columns' words (`FREE_AT`), and the next document's sizes of its
+//! length take it.
 
 use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::gens::{BODY_AT, set_word, word, words, words_mut};
@@ -44,11 +53,20 @@ crate::params! {
 }
 
 /// The header's body bytes.
-pub const CACHE_BYTES: usize = 40;
+pub const CACHE_BYTES: usize = 64;
 pub const STATE_AT: usize = BODY_AT + 8;
 pub const OPEN_AT: usize = BODY_AT + 16;
 pub const HELD_AT: usize = BODY_AT + 24;
 pub const USED_AT: usize = BODY_AT + 32;
+/// Where the index lies (0: none, the cache holds no entry), and how many of its slots are filled.
+pub const INDEX_AT: usize = BODY_AT + 40;
+pub const FILLED_AT: usize = BODY_AT + 48;
+/// The first let-go sizes entry (0: none); each one's next at its columns' words (`at + 8`).
+pub const FREE_AT: usize = BODY_AT + 56;
+/// The index entry's columns' count: none other has more than four.
+pub const INDEX_COLS: u32 = 5;
+/// The least index's slots.
+pub const INDEX_LEAST: usize = 16;
 /// Where the entries start.
 pub const ENTRIES_AT: usize = BODY_AT + CACHE_BYTES;
 /// An entry's header: the layer, the columns' count, four columns, the rows' and the fences' counts.
@@ -143,6 +161,108 @@ pub struct Entry {
     pub cols: Cols,
     pub n: usize,
     pub nf: usize,
+    /// The index's own entry.
+    pub index: bool,
+}
+
+/// An entry's key's hash (`(layer, columns)`: a sizes entry's layer is its document, its columns none), the slot its
+/// probe starts from. The kernels' (`cache_hash`) is the same.
+pub fn key_hash(layer: u32, cols: &[u16]) -> u32 {
+    let c = cols.iter().enumerate().fold(0u64, |p, (i, &c)| p | (u64::from(c) << (16 * i)));
+    let mut h = (u64::from(layer) ^ ((cols.len() as u64) << 40)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^= c.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+    h ^= h >> 29;
+    (h >> 32) as u32
+}
+
+/// Whether the entry at `at` is a live one of key `(layer, cols)`.
+fn is_key(cache: &[u8], at: usize, layer: u32, cols: &[u16]) -> bool {
+    word::<u32>(cache, at) == layer && word::<u32>(cache, at + 4) as usize == cols.len() && cols.iter().enumerate().all(|(i, &c)| word::<u16>(cache, at + 8 + 2 * i) == c)
+}
+
+/// The index's slots' count, and where they start (none: 0).
+fn index(cache: &[u8]) -> (usize, usize) {
+    match word::<u64>(cache, INDEX_AT) as usize {
+        0 => (0, 0),
+        at => (word::<u32>(cache, at + 24) as usize, at + ENTRY_BYTES),
+    }
+}
+
+/// The entry of key `(layer, cols)`: where it lies, by the index.
+pub fn find(cache: &[u8], layer: u32, cols: &[u16]) -> Option<usize> {
+    find_probed(cache, layer, cols, &mut 0)
+}
+
+/// `find`, its index's slots read counted into `probes` (the validation mode's reads: `Table::touch`).
+pub fn find_probed(cache: &[u8], layer: u32, cols: &[u16], probes: &mut u64) -> Option<usize> {
+    let (n, slots) = index(cache);
+    if n == 0 {
+        return None;
+    }
+    let mut i = key_hash(layer, cols) as usize & (n - 1);
+    loop {
+        *probes += 1;
+        match word::<u32>(cache, slots + 4 * i) as usize {
+            0 => return None,
+            at if is_key(cache, at, layer, cols) => return Some(at),
+            _ => i = (i + 1) & (n - 1),
+        }
+    }
+}
+
+/// Whether indexing one more key makes a new index (more than half its slots filled).
+fn grows(cache: &[u8]) -> bool {
+    2 * (word::<u64>(cache, FILLED_AT) as usize + 1) > index(cache).0
+}
+
+/// The bytes a new index takes at the cursor before one more key is indexed (0: none is made).
+pub fn index_room(cache: &[u8]) -> usize {
+    if grows(cache) { ENTRY_BYTES + 4 * (2 * index(cache).0).max(INDEX_LEAST) } else { 0 }
+}
+
+/// The entry at `at` indexed by its key, in the index's first empty slot from its key's; room made first (`reindex`).
+pub fn index_one(b: &mut [u8], at: usize) {
+    let (n, slots) = index(b);
+    let ncols = word::<u32>(b, at + 4) as usize;
+    let cols: [u16; 4] = core::array::from_fn(|i| word::<u16>(b, at + 8 + 2 * i));
+    let mut i = key_hash(word::<u32>(b, at), &cols[..ncols]) as usize & (n - 1);
+    while word::<u32>(b, slots + 4 * i) != 0 {
+        i = (i + 1) & (n - 1);
+    }
+    set_word::<u32>(b, slots + 4 * i, at as u32);
+    set_word::<u64>(b, FILLED_AT, word::<u64>(b, FILLED_AT) + 1);
+}
+
+/// Room in the index for one more key (`index_room` bytes at the cursor, reached first): when it would be over half
+/// full, a new index twice the size at the cursor, of every live entry in the cache's order. Made before the entry it
+/// makes room for is written (an entry appended lies past it, and is indexed once, by `index_one`).
+pub fn reindex(b: &mut [u8]) {
+    if !grows(b) {
+        return;
+    }
+    let n = (2 * index(b).0).max(INDEX_LEAST);
+    let at = ENTRIES_AT + used(b);
+    set_word::<u32>(b, at, 0);
+    set_word::<u32>(b, at + 4, INDEX_COLS);
+    for i in 0..4 {
+        set_word::<u16>(b, at + 8 + 2 * i, 0);
+    }
+    set_word::<u32>(b, at + 24, n as u32);
+    set_word::<u32>(b, at + 28, 0);
+    // An empty slot is 0: the slots are written before they are read.
+    words_mut::<u32>(b, at + ENTRY_BYTES, n).fill(0);
+    set_word::<u64>(b, USED_AT, (at + ENTRY_BYTES + 4 * n - ENTRIES_AT) as u64);
+    set_word::<u64>(b, INDEX_AT, at as u64);
+    set_word::<u64>(b, FILLED_AT, 0);
+    let mut e = ENTRIES_AT;
+    while e < at {
+        let (layer, ncols) = (word::<u32>(b, e), word::<u32>(b, e + 4));
+        let len = entry_len(word::<u32>(b, e + 24) as usize, word::<u32>(b, e + 28) as usize);
+        if ncols <= 4 && layer != DEAD {
+            index_one(b, e);
+        }
+        e += len;
+    }
 }
 
 /// The cache's entries, in the order they were added.
@@ -154,13 +274,13 @@ pub fn entries(cache: &[u8]) -> impl Iterator<Item = Entry> + '_ {
             return None;
         }
         let layer = word::<u32>(cache, at);
-        let ncols = word::<u32>(cache, at + 4) as usize;
+        let ncols = (word::<u32>(cache, at + 4) as usize).min(4);
         let mut cols = Cols { n: ncols as u8, c: [0; 4] };
         for (i, x) in cols.c.iter_mut().enumerate().take(ncols) {
             *x = word::<u16>(cache, at + 8 + 2 * i);
         }
         let (n, nf) = (word::<u32>(cache, at + 24) as usize, word::<u32>(cache, at + 28) as usize);
-        let e = Entry { at, layer, cols, n, nf };
+        let e = Entry { at, layer, cols, n, nf, index: word::<u32>(cache, at + 4) == INDEX_COLS };
         at += entry_len(n, nf);
         Some(e)
     })
@@ -168,7 +288,8 @@ pub fn entries(cache: &[u8]) -> impl Iterator<Item = Entry> + '_ {
 
 /// The order of layer `layer` by `cols`, if the cache holds it.
 pub fn order<'a>(cache: &'a [u8], layer: u32, cols: &[u16]) -> Option<Order<'a>> {
-    let Entry { at, n, nf, .. } = entries(cache).find(|e| e.layer == layer && *e.cols == *cols)?;
+    let at = find(cache, layer, cols)?;
+    let (n, nf) = (word::<u32>(cache, at + 24) as usize, word::<u32>(cache, at + 28) as usize);
     let ids = words::<u32>(cache, at + ENTRY_BYTES, n);
     let fences = words::<i64>(cache, at + ENTRY_BYTES + (4 * n).next_multiple_of(8), nf);
     Some(Order { ids, fences })
@@ -180,36 +301,64 @@ pub const DEAD: u32 = u32::MAX;
 /// Document `d`'s sizes, if the cache holds them: the rows its operator wrote for it, by output port. A sizes entry
 /// has no columns (an order has one to four); its layer word is the document.
 pub fn sizes(cache: &[u8], d: u32) -> Option<&[u32]> {
-    let e = entries(cache).find(|e| e.cols.is_empty() && e.layer == d)?;
-    Some(words::<u32>(cache, e.at + ENTRY_BYTES, e.n))
+    sizes_probed(cache, d, &mut 0)
+}
+
+/// `sizes`, its probes counted (`find_probed`).
+pub fn sizes_probed<'a>(cache: &'a [u8], d: u32, probes: &mut u64) -> Option<&'a [u32]> {
+    let at = find_probed(cache, d, &[], probes)?;
+    Some(words::<u32>(cache, at + ENTRY_BYTES, word::<u32>(cache, at + 24) as usize))
 }
 
 /// Document `d`'s entry let go, if the cache holds one (a document that goes takes its entry with it).
-pub fn forget(cache: &mut [u8], d: u32) {
-    let at = entries(cache).find(|e| e.cols.is_empty() && e.layer == d).map(|e| e.at);
-    if let Some(at) = at {
+pub fn forget(cache: &mut [u8], d: u32) -> u64 {
+    let mut probes = 0;
+    if let Some(at) = find_probed(cache, d, &[], &mut probes) {
         set_word::<u32>(cache, at, DEAD);
+        // On the let-go list, through its columns' words (a sizes entry has none).
+        set_word::<u32>(cache, at + 8, word::<u64>(cache, FREE_AT) as u32);
+        set_word::<u64>(cache, FREE_AT, at as u64);
     }
+    probes
 }
 
 /// Writes document `d`'s sizes into slot `slot`'s cache: over its entry, or a let-go one of the same length, in
 /// place; else appended at the cursor. False past the cache's capacity, room asked (`Ctx::reach`): the phase runs
 /// again over the grown block, and writes the same.
 pub fn keep_sizes(c: &mut Ctx<'_, '_, '_>, slot: usize, d: u32, counts: &[u32]) -> bool {
-    let (own, dead) = {
+    let mut probes = 0;
+    let (own, free, room) = {
         let b = c.read(slot);
-        let fits = |e: &Entry| e.cols.is_empty() && e.n == counts.len();
-        (entries(b).find(|e| fits(e) && e.layer == d).map(|e| e.at), entries(b).find(|e| fits(e) && e.layer == DEAD).map(|e| e.at))
+        let fits = |at: usize| at != 0 && word::<u32>(b, at + 24) as usize == counts.len();
+        let own = find_probed(b, d, &[], &mut probes).filter(|&at| fits(at));
+        let free = Some(word::<u64>(b, FREE_AT) as usize).filter(|&at| own.is_none() && fits(at));
+        // A new key: the index's room, and the entry's when it is appended.
+        let room = match (own, free) {
+            (Some(_), _) => 0,
+            (None, Some(_)) => index_room(b),
+            (None, None) => index_room(b) + entry_len(counts.len(), 0),
+        };
+        (own, free, room)
     };
-    let (at, append) = match own.or(dead) {
-        Some(at) => (at, false),
-        None => (ENTRIES_AT + used(c.read(slot)), true),
-    };
-    if append && !c.reach(slot, at + entry_len(counts.len(), 0)) {
+    c.table.touch(probes);
+    if room > 0 && !c.reach(slot, ENTRIES_AT + used(c.read(slot)) + room) {
         return false;
     }
     let ([], [b]) = c.views([], [slot]);
+    if own.is_none() {
+        reindex(b);
+    }
+    if let Some(at) = free {
+        set_word::<u64>(b, FREE_AT, u64::from(word::<u32>(b, at + 8)));
+    }
+    let (at, append) = match own.or(free) {
+        Some(at) => (at, false),
+        None => (ENTRIES_AT + used(b), true),
+    };
     put_sizes(b, at, d, counts, append);
+    if own.is_none() {
+        index_one(b, at);
+    }
     true
 }
 
@@ -230,9 +379,18 @@ pub fn put_sizes(b: &mut [u8], at: usize, d: u32, counts: &[u32], append: bool) 
     }
 }
 
+/// Document `d`'s sizes appended at the cursor and indexed (a cache made where it lies, a test's case): its room, and
+/// the index's, the block's already.
+pub fn append_sizes(b: &mut [u8], d: u32, counts: &[u32]) {
+    reindex(b);
+    let at = ENTRIES_AT + used(b);
+    put_sizes(b, at, d, counts, true);
+    index_one(b, at);
+}
+
 /// How many entries the cache holds.
 pub fn count(cache: &[u8]) -> usize {
-    entries(cache).count()
+    entries(cache).filter(|e| !e.index).count()
 }
 
 fn open(c: &mut Ctx<'_, '_, '_>, _: Tile) {
@@ -242,8 +400,11 @@ fn open(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     set_word::<u64>(h, BODY_AT, CACHE_BYTES as u64);
     set_word::<u64>(h, HELD_AT, u64::from(was));
     if !was {
-        // ∅, where it lies: the entries' length to 0, and the state ∅'s.
+        // ∅, where it lies: the entries' length to 0, no index and no let-go entry, and the state ∅'s.
         set_word::<u64>(h, USED_AT, 0);
+        set_word::<u64>(h, INDEX_AT, 0);
+        set_word::<u64>(h, FILLED_AT, 0);
+        set_word::<u64>(h, FREE_AT, 0);
         set_word::<u64>(h, STATE_AT, 0);
     }
     set_word::<u64>(h, OPEN_AT, 1);
@@ -265,18 +426,24 @@ fn add_order(c: &mut Ctx<'_, '_, '_>, _: Tile) {
     let p = <OrderP as crate::Params>::read(c.params);
     let cols = cols_of(&p);
     let layer_id = p.layer;
-    if order(c.read(ORDER_CACHE), layer_id, &cols).is_some() {
+    let mut probes = 0;
+    let held = find_probed(c.read(ORDER_CACHE), layer_id, &cols, &mut probes).is_some();
+    c.table.touch(probes);
+    if held {
         return;
     }
     let n = Layer::new(c.read(LAYER)).expect("a committed layer").n();
     let nf = n.div_ceil(FENCE);
-    let at = ENTRIES_AT + used(c.read(ORDER_CACHE));
     let len = entry_len(n, nf);
-    if !c.reach(ORDER_CACHE, at + len) {
+    let (cursor, room) = (ENTRIES_AT + used(c.read(ORDER_CACHE)), index_room(c.read(ORDER_CACHE)));
+    if !c.reach(ORDER_CACHE, cursor + room + len) {
         return;
     }
     let ([lb], [b]) = c.views([LAYER], [ORDER_CACHE]);
     let l = Layer::new(lb).expect("a committed layer");
+    // The index's room first: the entry lies past it.
+    reindex(b);
+    let at = ENTRIES_AT + used(b);
     set_word::<u32>(b, at, layer_id);
     set_word::<u32>(b, at + 4, cols.len() as u32);
     for i in 0..4 {
@@ -297,8 +464,9 @@ fn add_order(c: &mut Ctx<'_, '_, '_>, _: Tile) {
         let id = word::<u32>(b, at + ENTRY_BYTES + 4 * f * FENCE);
         set_word::<i64>(b, fat + 8 * f, l.get(id, cols[0] as usize));
     }
-    // The entry counted last: a reader never finds one half written.
+    // The entry counted last, then indexed: a reader never finds one half written.
     set_word::<u64>(b, USED_AT, (at + len - ENTRIES_AT) as u64);
+    index_one(b, at);
 }
 
 /// `cache_open`: one item, the header marked open, the cache reset to ∅ when it holds another state.
@@ -309,3 +477,46 @@ pub const CACHE_COMMIT: &[TwinPhase] = &[TwinPhase { name: "commit", items: |_| 
 
 /// `order`: one item, a layer's order added to the cache.
 pub const ORDER: &[TwinPhase] = &[TwinPhase { name: "order", items: |_| 1, run: add_order, again: None }];
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use std::{vec, vec::Vec};
+
+    /// A cache's bytes, ∅: its header's words, then room for `entries` bytes.
+    fn empty(entries: usize) -> Vec<u8> {
+        vec![0u8; ENTRIES_AT + entries]
+    }
+
+    /// Every entry found by its key through the index, as the index is made again past half full; a let-go one found
+    /// no more, its slot passed over; and an index's probes a few a lookup however many entries the cache holds.
+    #[test]
+    fn entries_are_found_by_the_index_whatever_their_count() {
+        let mut b = empty(1 << 20);
+        let counts = |d: u32| [d, d + 1, d + 2];
+        for d in 0..1000u32 {
+            append_sizes(&mut b, d * 7919, &counts(d));
+        }
+        assert_eq!(count(&b), 1000);
+        for d in (0..1000u32).filter(|d| d % 3 == 0) {
+            forget(&mut b, d * 7919);
+        }
+        let mut probes = 0;
+        for d in 0..1000u32 {
+            let s = sizes_probed(&b, d * 7919, &mut probes);
+            assert_eq!(s, (d % 3 != 0).then_some(&counts(d)[..]), "document {d}");
+        }
+        assert!(probes < 4 * 1000, "{probes} probes for 1000 lookups");
+        // The let-go entries are on the list, the last let go first.
+        assert_eq!(word::<u64>(&b, FREE_AT) as usize, find_slot_of_dead(&b, 999 * 7919));
+        // An order's key and a sizes key of the same layer are two keys.
+        assert!(find(&b, 7919, &[1]).is_none());
+    }
+
+    /// Where document `d`'s let-go entry lies: the entry whose sizes are `d`'s first count (`counts`).
+    fn find_slot_of_dead(b: &[u8], d: u32) -> usize {
+        let first = d / 7919;
+        entries(b).find(|e| !e.index && e.layer == DEAD && word::<u32>(b, e.at + ENTRY_BYTES) == first).expect("let go").at
+    }
+}

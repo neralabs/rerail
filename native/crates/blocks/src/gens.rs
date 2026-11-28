@@ -258,6 +258,14 @@ impl<'a> Table<'a> {
         Table { reads: Some(reads), ..self }
     }
 
+    /// `n` reads counted, where the table counts them (a read of a block that is no trace's state: a cache's
+    /// probes, `rerail_delta_twins::cache::find_probed`).
+    pub fn touch(&self, n: u64) {
+        if let Some(r) = self.reads {
+            r.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     /// Whether block `id` is a slot of the launch pinned to write.
     pub fn is_written(&self, id: Id) -> bool {
         self.row(id).is_some_and(|d| self.written.contains(&d.addr))

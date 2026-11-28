@@ -471,10 +471,11 @@ fn k0_launch(dir: &mut Directory, srcs: &[&str]) -> Case {
         let b = dir.block(cache.0).expect("just made");
         let mut w = pin_block(&b, "the cache", true).expect("a write pin");
         let bytes = w.bytes_mut().expect("a write pin");
-        set_word::<u64>(bytes, cache_twin::USED_AT, 0);
+        for w in [cache_twin::USED_AT, cache_twin::INDEX_AT, cache_twin::FILLED_AT, cache_twin::FREE_AT] {
+            set_word::<u64>(bytes, w, 0);
+        }
         for d in [2u32, 9] {
-            let at = cache_twin::ENTRIES_AT + cache_twin::used(bytes);
-            cache_twin::put_sizes(bytes, at, d, &[1; k0_twin::R], true);
+            cache_twin::append_sizes(bytes, d, &[1; k0_twin::R]);
         }
     }
     let gone = Parts::write(dir, 1, |put| put(9)).expect("the gone");
@@ -650,19 +651,19 @@ fn merge_launch(dir: &mut Directory, layers: &[Vec<(Vec<i64>, i32)>]) -> Case {
     Case { slots: vec![head, out, scratch], params: params(rerail_delta_twins::trace::MergeP { head: head.0, count: 2, below, pad: 0 }) }
 }
 
-/// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 5's kept rows take, and 1's
-/// and 3's nodes.
+/// A cache holding the sizes of documents 1 to 20, found by its index; 5 and 7 gone, 1 and 3 read: the room 5's and
+/// 7's kept rows take, and 1's and 3's nodes.
 fn room_of_case(dir: &mut Directory) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
-    let c = OpCache(dir.make(kind::CACHE, cache_twin::CACHE_BYTES + 256));
+    let c = OpCache(dir.make(kind::CACHE, cache_twin::CACHE_BYTES + 4096));
     c.open(&cpu, dir, 0).and_then(|_| c.commit(&cpu, dir, 0xd1)).expect("a committed cache");
     {
         let b = dir.block(c.0).expect("just made");
         let mut w = pin_block(&b, "the cache", true).expect("a write pin");
         let bytes = w.bytes_mut().expect("a write pin");
-        for d in [1u32, 2, 5] {
-            let at = cache_twin::ENTRIES_AT + cache_twin::used(bytes);
-            cache_twin::put_sizes(bytes, at, d, &core::array::from_fn::<u32, { k0_twin::R }, _>(|r| d * 10 + r as u32), true);
+        // Twenty documents' sizes: the index made again at the ninth and the seventeenth.
+        for d in 1u32..=20 {
+            cache_twin::append_sizes(bytes, d, &core::array::from_fn::<u32, { k0_twin::R }, _>(|r| d * 10 + r as u32));
         }
         set_word::<u64>(bytes, BODY_AT, (cache_twin::CACHE_BYTES + cache_twin::used(bytes)) as u64);
     }
@@ -696,6 +697,9 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("CACHE_OPEN_AT", cache_twin::OPEN_AT),
         ("CACHE_HELD_AT", cache_twin::HELD_AT),
         ("CACHE_USED_AT", cache_twin::USED_AT),
+        ("CACHE_INDEX_AT", cache_twin::INDEX_AT),
+        ("CACHE_FILLED_AT", cache_twin::FILLED_AT),
+        ("CACHE_FREE_AT", cache_twin::FREE_AT),
         // `rerail_delta_core::runs`, `::layer`, `::relation` and `::trace`.
         ("NONE", NONE as usize),
         ("MAX_LAYERS", MAX_LAYERS),
@@ -806,6 +810,8 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         // `rerail_delta_twins::cache`'s entries.
         ("CACHE_ENTRIES_AT", cache_twin::ENTRIES_AT),
         ("CACHE_ENTRY_BYTES", cache_twin::ENTRY_BYTES),
+        ("CACHE_INDEX_COLS", cache_twin::INDEX_COLS as usize),
+        ("CACHE_INDEX_LEAST", cache_twin::INDEX_LEAST),
         ("FENCE", cache_twin::FENCE),
         // `rerail_delta_twins::k0`'s docs block and the relations a pass writes.
         ("DOCS_LEN_AT", k0_twin::DOCS_LEN_AT),
