@@ -533,27 +533,28 @@ async function routeEngineEvent(
   const { sessionId } = session;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(session, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
-  // Made and held for the session when its route is chosen, not when its lane runs: the session's next event routed
-  // meanwhile (a pass of untaken events hands on its events without waiting) goes to this runtime (`checkoutRoute`). A
-  // runtime that cannot be made holds nothing.
-  const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
-  if (event.kind !== "session-end") holdSessionRuntime(state, sessionId, runtimeKey);
-  // The event's work holds its runtime until it has ended: nothing closes it for want of use meanwhile, under an end
-  // too, which notes no use.
-  const release = state.kept.claim(runtimeKey);
-  const execution = state.lanes.run(lane, async () => {
-    // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
-    if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    const deliveries = await runtime.ingest(event, { signal, observedAt });
-    // Read in the session's lane, so the facts are this event's and not those of the session's next one.
-    const routed = { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
-    // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
-    if (answer !== undefined) await keepUnheard(answer(routed), () => runtime.returnUndelivered(sessionId, deliveries));
-    return routed;
-  });
-  void execution.then(release, release);
-  track(state, execution);
   try {
+    // Made and held for the session when its route is chosen, not when its lane runs: the session's next event routed
+    // meanwhile (a pass of untaken events hands on its events without waiting) goes to this runtime (`checkoutRoute`).
+    // A runtime that cannot be made holds nothing, and a session's end it fails is still handled below.
+    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+    if (event.kind !== "session-end") holdSessionRuntime(state, sessionId, runtimeKey);
+    // The event's work holds its runtime until it has ended: nothing closes it for want of use meanwhile, under an end
+    // too, which notes no use.
+    const release = state.kept.claim(runtimeKey);
+    const execution = state.lanes.run(lane, async () => {
+      // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
+      if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
+      const deliveries = await runtime.ingest(event, { signal, observedAt });
+      // Read in the session's lane, so the facts are this event's and not those of the session's next one.
+      const routed = { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
+      // A hook past its own limit has closed its connection: the steers its answer took go to the session's next
+      // answer.
+      if (answer !== undefined) await keepUnheard(answer(routed), () => runtime.returnUndelivered(sessionId, deliveries));
+      return routed;
+    });
+    void execution.then(release, release);
+    track(state, execution);
     return await execution;
   } finally {
     if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
