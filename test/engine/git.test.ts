@@ -697,7 +697,8 @@ describe("runGitAsync", () => {
     const run = runGitAsync(root, ["status"], { timeout: 300 });
     const child = await started;
     const result = await Promise.race([run, stillWaiting(3_000)]);
-    expect(result).toMatchObject({ status: null, error: expect.objectContaining({ message: expect.stringMatching(/time limit/u) }) });
+    // Coded as `spawnSync` codes a Git past its time limit, so a caller tells it from a Git that failed otherwise.
+    expect(result).toMatchObject({ status: null, error: expect.objectContaining({ message: expect.stringMatching(/time limit/u), code: "ETIMEDOUT" }) });
     expect(endProcessTree).toHaveBeenCalledExactlyOnceWith(child);
     expect(ending(child)).not.toEqual({ exitCode: null, signalCode: null });
   }, 30_000);
@@ -713,6 +714,7 @@ describe("runGitAsync", () => {
     stopping.abort();
     const result = await Promise.race([run, stillWaiting(3_000)]);
     expect(result).toMatchObject({ status: null, error: expect.objectContaining({ message: expect.stringMatching(/stopped/u) }) });
+    expect(result).not.toHaveProperty("error.code");
     expect(endProcessTree).toHaveBeenCalledExactlyOnceWith(child);
     expect(ending(child)).not.toEqual({ exitCode: null, signalCode: null });
 

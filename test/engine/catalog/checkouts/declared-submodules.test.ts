@@ -5,7 +5,7 @@
 import type { ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,9 +16,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * caller's thread (`onThread`), answer, or run past its limit as `spawnSync` ends a Git that runs past Rerail's (at
  * 200 ms); off the thread (`offThread`), answer, run past a limit of 200 ms (`pastLimit`), end as a Git that cannot load
  * its libraries ends (`cannotStart`, exit 127), fail as a read that throws when no Git is found (`fails`), or stay until
- * Rerail's own limit or a stop ends it (`held`). Each start on the thread is counted (`blocking`), and each ask off it
- * (`asks`); every process started for an ask is kept until it has exited (`children`), and `heldStarted` settles with
- * the first one `held` starts.
+ * Rerail's own limit or a stop ends it (`held`). Each Git started on the thread is counted (`blocking`), and each ask
+ * off it at its first question (`asks`); every process started for an ask is kept until it has exited (`children`), and
+ * `heldStarted` settles with the first one `held` starts.
  */
 type Asked = "answers" | "pastLimit" | "cannotStart" | "fails" | "held";
 const git = vi.hoisted(() => {
@@ -59,7 +59,7 @@ vi.mock("../../../../src/engine/git.js", async () => {
   type Options = Parameters<typeof original.runGitAsync>[2];
   const runGitAsync = async (cwd: string, args: readonly string[], options: Options = {}): ReturnType<typeof original.runGitAsync> => {
     if (!git.reading(["-C", cwd, ...args])) return await original.runGitAsync(cwd, args, options);
-    git.asks += 1;
+    if (args.includes(".gitmodules")) git.asks += 1;
     if (git.offThread === "fails") throw new Error("a stand-in read that failed");
     return await original.runGitAsync(cwd, args, git.offThread === "pastLimit" ? { ...options, timeout: 200 } : options);
   };
@@ -67,11 +67,12 @@ vi.mock("../../../../src/engine/git.js", async () => {
 });
 
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
-import { stopAskingSubmodules, submodulesAskedAgain } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
+import { forgetGoneSubmodules, keptSubmoduleCount, stopAskingSubmodules, submodulesAskedAgain } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../../src/engine/audit/audit.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { type CodeRule, codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../../support/native-daemon.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 
@@ -79,6 +80,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   // Each Git asked off the thread has exited before its folder goes.
   await Promise.all(git.children.splice(0).map(async child => child.exitCode === null && child.signalCode === null ? await once(child, "exit") : undefined));
+  vi.unstubAllEnvs();
   Object.assign(git, { folder: "", onThread: "answers", offThread: "answers", blocking: 0, asks: 0, heldStarted: Promise.withResolvers<ChildProcess>() });
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
@@ -159,6 +161,8 @@ describe("a checkout's declared submodules while Git runs past its time limit re
     Object.assign(git, { onThread: "pastLimit", offThread: "held" });
     const owners = new CheckoutOwners();
     expect([owners.declaredSubmodules(alpha), owners.declaredSubmodules(alpha)]).toEqual([[], []]);
+    // The ask started its Git with the listing that began it.
+    expect(git.asks).toBe(1);
     const held = await git.heldStarted.promise;
 
     await stopAskingSubmodules();
@@ -177,15 +181,64 @@ describe("a checkout's declared submodules while Git runs past its time limit re
   it("waits once after the index changes, where Git answered before it", async () => {
     const { alpha, sub } = await checkoutWithSubmodule();
     const owners = new CheckoutOwners();
+    // Git answered both questions on the thread: the `.gitmodules` paths, then which the index holds.
     expect(owners.declaredSubmodules(alpha)).toEqual([sub]);
-    expect(git.blocking).toBe(1);
+    expect(git.blocking).toBe(2);
     writeFileSync(join(alpha, "notes.txt"), "alpha, changed\n");
     gitIn(alpha, "add", "notes.txt");
 
     Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
     for (let listing = 0; listing < 4; listing += 1) expect(owners.declaredSubmodules(alpha)).toEqual([]);
-    expect(git.blocking).toBe(2);
+    expect(git.blocking).toBe(3);
+    expect(git.asks).toBe(1);
     await submodulesAskedAgain(alpha);
+  });
+
+  it("stays kept when an ask runs past its limit again with no fact of the checkout read", async () => {
+    const { alpha } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
+    const owners = new CheckoutOwners();
+    expect(owners.declaredSubmodules(alpha)).toEqual([]);
+    // Git may read another index: no fact is read for the ask that this listing begins.
+    vi.stubEnv("GIT_INDEX_FILE", join(alpha, ".git", "other-index"));
+    expect(owners.declaredSubmodules(alpha)).toEqual([]);
+    await submodulesAskedAgain(alpha);
+    vi.unstubAllEnvs();
+
+    expect(owners.declaredSubmodules(alpha)).toEqual([]);
+    expect([git.blocking, git.asks]).toEqual([1, 2]);
+    await submodulesAskedAgain(alpha);
+  });
+
+  it("keeps nothing for a checkout that went while its ask ran", async () => {
+    const { root, alpha } = await checkoutWithSubmodule();
+    Object.assign(git, { onThread: "pastLimit", offThread: "pastLimit" });
+    const before = keptSubmoduleCount();
+    const owners = new CheckoutOwners();
+    expect([owners.declaredSubmodules(alpha), owners.declaredSubmodules(alpha)]).toEqual([[], []]);
+    expect(keptSubmoduleCount() - before).toBe(1);
+    const asking = submodulesAskedAgain(alpha);
+    const common = realpathSync.native(join(alpha, ".git"));
+    renameSync(alpha, join(root, "moved"));
+    forgetGoneSubmodules(common);
+    expect(keptSubmoduleCount() - before).toBe(0);
+
+    await asking;
+    expect(keptSubmoduleCount() - before).toBe(0);
+  });
+
+  it("ends the ask in flight with its Git as the daemon closes", async () => {
+    const { root, alpha } = await checkoutWithSubmodule();
+    const daemon = await startNativeTestDaemon(root);
+    cleanups.push(closeNativeTestDaemons);
+    Object.assign(git, { onThread: "pastLimit", offThread: "held" });
+    const owners = new CheckoutOwners();
+    expect([owners.declaredSubmodules(alpha), owners.declaredSubmodules(alpha)]).toEqual([[], []]);
+    expect(git.asks).toBe(1);
+    const held = await git.heldStarted.promise;
+
+    await daemon.close();
+    expect(held.exitCode !== null || held.signalCode !== null).toBe(true);
   });
 });
 

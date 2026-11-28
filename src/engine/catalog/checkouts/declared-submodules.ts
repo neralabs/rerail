@@ -88,7 +88,7 @@ export async function learnDeclaredSubmodules(root: string, options: GitReadOpti
 function keptPaths(root: string, facts: Facts | undefined): readonly string[] | undefined {
   const known = kept.get(root);
   if (known === undefined) return undefined;
-  if (pastLimit(known)) return answeredMeanwhile(root, known);
+  if (pastLimit(known)) return answeredMeanwhile(root, known, facts);
   return known.facts === facts?.text ? known.paths : undefined;
 }
 
@@ -96,26 +96,26 @@ function pastLimit(known: Answered | PastLimit): known is PastLimit {
   return "asking" in known;
 }
 
-/** What a checkout kept past its time limit answers: none, as Git gave none; Git asked again where no ask is in flight. */
-function answeredMeanwhile(root: string, known: PastLimit): readonly string[] {
-  known.asking ??= askedAgain(root, known);
+/**
+ * What a checkout kept past its time limit answers: none, as Git gave none; Git asked again where no ask is in flight,
+ * its answer to be kept under `facts`, read before it runs.
+ */
+function answeredMeanwhile(root: string, known: PastLimit, facts: Facts | undefined): readonly string[] {
+  known.asking ??= askedAgain(root, known, facts);
   return [];
 }
 
 /**
- * Asks Git off the thread for the submodules `root` declares, for the checkout `known` keeps past its time limit. An
- * answer is kept as any answer is ({@link keep}): Git's paths, or nothing where Git could not start or failed, which
- * leaves the checkout to the next call's Git as before. A Git that ran past its limit again leaves `known` as it is, and
- * so does a stopped ask ({@link stopAskingSubmodules}). It starts no ask after it.
+ * Asks Git off the thread for the submodules `root` declares, for the checkout `known` keeps past its time limit, and
+ * keeps the answer as any answer is kept ({@link keep}): Git's paths under `facts`; `known` as it is where Git ran past
+ * its limit again; nothing where Git could not start or failed, which leaves the checkout to the next call's Git as
+ * before. A stopped ask ({@link stopAskingSubmodules}) keeps nothing, and leaves `known` as it is. No ask follows it.
  */
-async function askedAgain(root: string, known: PastLimit): Promise<void> {
+async function askedAgain(root: string, known: PastLimit, facts: Facts | undefined): Promise<void> {
   const owner = asks;
-  // Read before Git runs: an index written while it runs reads as changed when the answer is next taken.
-  const facts = submoduleFacts(root);
   const answers = await owner.run(async signal => await askedWithoutBlocking(root, { signal })).catch(() => [NOT_STARTED]);
   known.asking = undefined;
-  if (owner.stopped || kept.get(root) !== known || answers.some(ranPastLimit)) return;
-  keep(root, facts === NONE ? undefined : facts, answers);
+  if (!owner.stopped && kept.get(root) === known) keep(root, facts, answers);
 }
 
 /** A read that threw before Git answered, as `runGitAsync` does when no Git is found: Git gave no answer, and not past its limit. */
@@ -201,21 +201,30 @@ function gitlinks(stdout: string): string[] {
 function keep(root: string, facts: Facts | undefined, answers: readonly GitResult[]): readonly string[] {
   const step = submoduleStep(answers);
   const paths = "paths" in step ? step.paths : [];
-  const next = facts === undefined ? undefined : keptAfter(facts, paths, answers, kept.get(root));
+  const next = keptAfter(facts, paths, answers, kept.get(root));
   if (next === undefined) kept.delete(root);
   else kept.set(root, next);
   return paths;
 }
 
 /**
- * What a checkout keeps after Git's `answers`: its `paths` under `facts` when Git answered each question to its end; the
- * checkout past its time limit (`known`, where it is kept so already) when a Git ran past its limit; nothing when a Git
- * could not start or failed otherwise, so the next call asks Git as before.
+ * What a checkout keeps after Git's `answers`: past its time limit when a Git ran past it ({@link pastLimitAfter});
+ * its `paths` under `facts` when Git answered each question to its end; else nothing, as where a Git could not start or
+ * failed otherwise, or no fact could be read, so the next call asks Git as before.
  */
-function keptAfter(facts: Facts, paths: readonly string[], answers: readonly GitResult[], known: Answered | PastLimit | undefined): Answered | PastLimit | undefined {
-  if (answers.every(answeredToItsEnd)) return { facts: facts.text, paths, common: facts.common };
-  if (!answers.some(ranPastLimit)) return undefined;
-  return known !== undefined && pastLimit(known) ? known : { common: facts.common, asking: undefined };
+function keptAfter(facts: Facts | undefined, paths: readonly string[], answers: readonly GitResult[], known: Answered | PastLimit | undefined): Answered | PastLimit | undefined {
+  if (answers.some(ranPastLimit)) return pastLimitAfter(facts, known);
+  if (facts === undefined || !answers.every(answeredToItsEnd)) return undefined;
+  return { facts: facts.text, paths, common: facts.common };
+}
+
+/**
+ * The checkout past its time limit after a Git ran past it: `known` where it is kept so already, whatever its facts
+ * read now, else kept so from now where its facts were read, which name the folder it leaves with.
+ */
+function pastLimitAfter(facts: Facts | undefined, known: Answered | PastLimit | undefined): PastLimit | undefined {
+  if (known !== undefined && pastLimit(known)) return known;
+  return facts === undefined ? undefined : { common: facts.common, asking: undefined };
 }
 
 /** Whether Git answered: `git config --get-regexp` exits 1 when nothing matches, and that is an answer too. */
