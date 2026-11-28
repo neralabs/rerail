@@ -1899,3 +1899,47 @@ document read since was asked there.
 A boot run on Metal (m1max, `the_boot_run_on_the_device_repeated`, 5 runs): 39 ms each, in the 34–56 ms of the
 last point: each launch still waits for its command. Queuing a run's launches between the host's two points
 (`answer_load` and `parse`) as one command, the needs and refusals read at its end, is the next step.
+
+## The delta laws, tested on the CPU, the device and mixed runners (2026-11-27)
+
+The shape and every invariant were recorded again (page *0686: Shape and Invariants*): the bistate, traces, blobs
+and caches; DeltaOp and the answerers; L1 and the boot's run; L1–L9, D1–D6, P1, the storage rules and the
+operations' checks, each mapped to its tests. The last proposal's new rule ids reopened O3 and were withdrawn: what
+leaves a module is judged by value. The tests that were missing:
+
+| Law | Test (CPU; and the device's) | What it holds |
+|---|---|---|
+| L2, L3, L4, E2 | `the_boot_runs_as_a_delta` (`_on_the_device_or_mixed`) | `boot::boot_chain` from pins: cold, ∅ → 14 rules; unchanged, every pin where it was, the cache unchanged, checks only, one launch (l0's load answer); comments above, between, inside and after, a new source and tape and the same program by value (`kform::by_value`: each module's ids in their order); a rule added, by value its rows alone; every run the plain function's. The device and three mixed seeds give the CPU's K-form, launches and identities run by run. |
+| L1–L5, D1 | `the_harness_passes_l1_over_edits_of_l0_on_disk` and `_under_a_changing_want` (`…_on_the_device_or_mixed`) | `boot::harness_over_edits`: the harness's laws over l0's edits on disk, the cache dropped at a seed's step, under a want cycling all, two and none of l0's relations |
+| L6 | `a_run_is_the_composed_reference_and_cuts_off` | `laws::composition_and_cutoff`: each threaded run is the cold composed run (load, parse, intern, L1) on its text, by the same atoms; l0 touched (its bytes the same) is read, not parsed nor interned, L1 checks only, one launch |
+| L7 | `one_edited_document_among_several_reads_and_writes_only_its_own` | `laws::edit_among`: only the edited module's partitions change (the outputs' `changed_parts`), the others' rows stay, the work is the edit's alone |
+| L8 | `edits_coalesce_two_as_one_and_an_undo_as_the_identity` | `laws::coalescing`: two edits stepped as one change give the two steps' output; an edit and its undo leave the output as it was, its change the identity, the input's the identity by value only (the module read again, O3) |
+| P1 | `the_work_of_one_edit_does_not_grow_with_the_rest` | one edit among 4, 8, 16 unchanged modules: L1's step's work and launches, the world's reads and the read's 6 launches equal |
+| D5 | `a_document_no_longer_asked_goes_and_is_not_read` | `laws::demand_moves`, now on the device and a mixed runner too |
+| L9 | `a_shape_carrying_a_node_out_of_its_partition_is_refused`, `node_ids_are_local_columns_of_the_kform_alone` | by column types (below) |
+
+The device's `the_laws_hold_on_the_device_or_mixed` runs L6, L7, L8 and D5's drivers on Metal and a mixed seed and
+gets the CPU's verdicts, work and launches.
+
+**L9 by column types.** `Shape::local` names the columns that hold an id local to the row's partition (a node of
+its document's tape). `encode` refuses one with no partition, the partition itself or past the columns.
+`PortSet::PER_PARTITION` marks a single-file wave (P§3): its ports are partitioned and may carry local ids.
+`ports_of`, under every instance and reference run, refuses an operator across partitions whose port carries one.
+The K-form's rule and term ids (`kform::ID_COLS`) are its shapes' local columns. The document set, the blobs, the
+world's leaves, answers and places, the want and the asks carry none. L1 is a single-file wave.
+
+**What the tests found.**
+- *A read launched once per document.* `DocSet::read` asked the world for one document at a time: each read of the
+  set launched `answer_load` once per document, changed or not (9 to 18 launches as the set grew 1 to 8). Now
+  `DocSet::read_all` reads several documents through one load answer (`Load::answer_all`: one `answer_load`, one
+  `parse` of the sources no home holds), interns each changed one, and makes the set's change as one `replace_rows`
+  and one commit. `read` is `read_all` of one. Below 4 documents beside the edit, the set's geometric roll-up (O5)
+  merges the edit's layer, as big as the set, in two launches more.
+- *An identity run made the set resident again.* `DocSet::resident` launched `named_blocks` on every run. It is now
+  skipped while the set's head and the residency's counts (slabs retired, dropped) are where the set was last made
+  resident.
+- *The E3 tests' square version* still took the tile parameters the device programs had before the wide launch
+  (c8576ff72a), and its kernels did not compile. It is now a phased program (`DELTA_COUNT`, `DELTA_LANES`).
+
+**Not reached.** D6 (no level of the boot negates an answer yet) and the self-reading check, P2 over l0 giving P2,
+which needs an executor of K-form.
