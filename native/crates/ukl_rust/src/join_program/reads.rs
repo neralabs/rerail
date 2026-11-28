@@ -251,10 +251,21 @@ impl<'a> Doc<'a> {
         Self::item(&self.e.kinds, self.tape.number(x))
     }
 
-    /// Numbered node `l`'s tape node.
+    /// The entry's node table (`ViewDoc::node_table`): by local id, the numbered node's tape node and its id's low
+    /// bits, derived once at the entry's making in its block; empty where it has none.
+    #[inline(always)]
+    unsafe fn node_table(&self) -> &'a [[u32; 2]] {
+        let r = &self.e.node_table;
+        if r.len == 0 { &[] } else { core::slice::from_raw_parts(items::<[u32; 2]>(r), r.len as usize) }
+    }
+
+    /// Numbered node `l`'s tape node: its node table's entry (one load), else a select of the numbering.
     #[inline]
     pub unsafe fn tape_node(&self, l: u32) -> u32 {
-        self.n.select(0, l)
+        match self.node_table().get(l as usize) {
+            Some(e) => e[0],
+            None => self.n.select(0, l),
+        }
     }
 
     /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
@@ -264,6 +275,8 @@ impl<'a> Doc<'a> {
             l
         } else if self.ids_tape() {
             self.tape_node(l)
+        } else if let Some(e) = self.node_table().get(l as usize) {
+            e[1]
         } else {
             self.n.low_of(0, l)
         };
@@ -661,6 +674,13 @@ impl<'a> Doc<'a> {
         } else if self.ids_tape() {
             // A tape position: the node there, if it is numbered, is its rank.
             if self.n.is(0, low) { self.n.rank(0, low) } else { NO_ROW }
+        } else if self.e.node_by_id.len != 0 {
+            // Its place among the granules' own nodes, then its number there in one load (`ViewDoc::node_by_id`):
+            // no search of the granule's children.
+            match self.n.own_place_of_near(low, hint) {
+                Some(p) if p < self.e.node_by_id.len as u32 => *items::<u32>(&self.e.node_by_id).add(p as usize),
+                _ => NO_ROW,
+            }
         } else {
             match self.n.number_of_near(low, hint) {
                 Some((0, l)) => l,

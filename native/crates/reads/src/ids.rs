@@ -570,6 +570,19 @@ impl Numbering {
         }
     }
 
+    /// `own_place_of`, its slot's entry first looked for at `hint` (`granule_of_low_near`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn own_place_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
+        // SAFETY: the caller's.
+        unsafe {
+            let (g, item, k) = self.granule_of_low_near(low, hint)?;
+            (item == 0).then(|| Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k))
+        }
+    }
+
     /// SPIKE (local fixes, 1): each granule's own nodes' numbers, by place (`own_place_of`), into `out` (as long as
     /// the last granule's `nodes` entry); returns how many.
     ///

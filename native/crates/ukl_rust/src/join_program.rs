@@ -925,6 +925,22 @@ impl St<'_> {
                 if axis == 0 && !self.has_kind(&dd, x) {
                     return none;
                 }
+                // The ancestor bound too (`has_other`), every ancestor admitted (not `nearest`'s first in the set):
+                // whether it contains the node is one comparison on the tape, not a climb (`within(n, b)`, both bound).
+                // Its one row, which `matches` checks as a climb's (its set, its id).
+                if axis != 2 && let Some(o) = self.has_other() {
+                    let Some((eb, lb)) = self.doc_node(kv[o]) else { return none };
+                    if eb != e {
+                        return none;
+                    }
+                    let xb = dd.tape_node(lb);
+                    if !(xb < x && x < dd.tape.end_of(xb)) {
+                        return none;
+                    }
+                    let r = first.wrapping_add(lb);
+                    self.last.set((r, Some(Row::View(dd.at_node(0, lb, xb)))));
+                    return Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 };
+                }
                 let up = |mut p: u32| {
                     p = dd.tape.parent(p);
                     while p != rerail_reads::views::NO_ROW && !dd.n.is(0, p) {
@@ -2259,6 +2275,61 @@ impl St<'_> {
     }
 }
 
+/// A scan every candidate of which is a row out: a relation's rows in order (walk 0), no keys, no column tests, no
+/// dead rows, no eval's bit, no counter. Its counts are ones, found by no pass over its rows, and its scatter writes
+/// a column at a time (`scan_scatter_all`). On all, 98.5% of the scans' candidates were rows out.
+fn scan_keeps_all(s: &Stage, c: &ScanCands) -> bool {
+    c.how == 0 && s.nkeys == 0 && s.ntests == 0 && s.r_dead == 0 && s.last == NONE && s.counter == NONE && s.v_has == 0 && s.r_view == 0
+}
+
+/// `scan_scatter_range`'s run of `len` rows from candidate `r` out at `a`, for a scan that keeps every candidate
+/// (`scan_keeps_all`): each slot a fill, each bound column read eight rows at a time where the relation lies.
+unsafe fn scan_scatter_all(st: &St, c: &ScanCands, o: *mut i64, r: u32, a: u32, len: u32) {
+    const N: usize = 8;
+    let s = st.s;
+    let id0 = c.lo.wrapping_add(r);
+    for k in 0..s.nslots {
+        fill_i64(colp_mut(o, k, s.cap_out, a), len, st.slot(k, 0));
+    }
+    for bi in 0..s.nbinds.min(16) as usize {
+        let i = s.bind_idx[bi];
+        let dst = colp_mut(o, s.bind_slot[bi], s.cap_out, a);
+        // The relation's column it reads, and whether its value is a document's (its high half); else a constant.
+        let (from, shift) = match s.bind_kind[bi] {
+            0 if s.col_kind[i as usize] == 0 => (s.col_idx[i as usize], s.col_doc[i as usize] != 0),
+            0 => {
+                fill_i64(dst, len, st.colval(i, 0, id0));
+                continue;
+            }
+            1 => {
+                fill_i64(dst, len, st.parval(i, 0));
+                continue;
+            }
+            2 => (i, false),
+            _ => {
+                for q in 0..len {
+                    *dst.add(q as usize) = st.arith(i, 0, id0 + q).unwrap_or(0);
+                }
+                continue;
+            }
+        };
+        let mut q = 0u32;
+        while q + N as u32 <= len {
+            let rows = ln::R::<N>::splat(id0 + q) + ln::R::<N>::from_array(core::array::from_fn(|x| x as u32));
+            let v = ln::rel_get::<N>(at_(st.r as *const u8, s.r_at), rows, from, st.rf);
+            for x in 0..N {
+                let w = v[x] as i64;
+                *dst.add((q as usize) + x) = if shift { w >> 32 } else { w };
+            }
+            q += N as u32;
+        }
+        for q in q..len {
+            let w = st.rget(id0 + q, from);
+            *dst.add(q as usize) = if shift { w >> 32 } else { w };
+        }
+    }
+}
+
 unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, kv: &[i64; 8], cands: &ScanCands, r: u32) {
     let s = st.s;
     let counts = b.c;
@@ -2841,6 +2912,11 @@ unsafe fn scan_count_range(st: &St, j: &Job, b: &Bufs, t0: u32, t1: u32) {
         crate::stage_prof::tally(1 + cands.how.min(6) as usize, 1);
     }
     fill_u32(b.c, t0.max(cands.n), t1, 0);
+    if scan_keeps_all(s, &cands) {
+        crate::stage_prof::tally(8, u64::from(t1.min(cands.n).saturating_sub(t0)));
+        fill_u32(b.c, t0, t1.min(cands.n), 1);
+        return;
+    }
     for r in t0..t1.min(cands.n) {
         scan_count_one(st, j, b, &kv, &cands, r);
     }
@@ -2917,7 +2993,12 @@ unsafe fn scan_scatter_range(st: &St, j: &Job, b: &Bufs, r0: u32, r1: u32) {
     if r0 == 0 && r1 > 0 {
         *j.totals.add(s.out_slot as usize) = (*offsets.add(cands.n as usize)).wrapping_sub(o0);
     }
+    let all = scan_keeps_all(s, &cands);
     kept_runs(offsets, o0, r0, r1.min(cands.n), |r, a, len| {
+        if all {
+            scan_scatter_all(st, &cands, b.o, r, a, below(a, len, s.cap_out));
+            return;
+        }
         for i in 0..below(a, len, s.cap_out) {
             let id = st.scan_cand(&cands, r + i).expect("a kept candidate is one of the scan's");
             st.write_row(0, id, b.o, a + i);
