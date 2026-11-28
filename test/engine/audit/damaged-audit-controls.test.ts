@@ -216,6 +216,20 @@ describe("a checkout's saved scan settings that parse to settings this version k
     expect(settingsText(path)).toBe("{\"scope\":\"touched-files\",\"mode\":\"steer\",\"constructor\":1,\"toString\":\"later\"}");
     controls.close();
   });
+
+  it("name a setting they leave out as one that runs with its default, not as a key they hold", async () => {
+    const { path, controls } = await fixture();
+    controls.updateSettings("a", { mode: "log" });
+    storeSettings(path, "{\"mode\":\"log\"}");
+    const logged = spyOnStderr();
+
+    const read = controls.getSettings("a");
+    expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
+    expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row `
+      + "leaves out scope: a setting left out runs with its default.\n");
+    controls.close();
+  });
 });
 
 describe("a session's scan requests whose stored text does not read", () => {

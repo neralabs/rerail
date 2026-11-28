@@ -132,29 +132,48 @@ function settingsUnderEither(database: RerailDatabase) {
   }).from(auditSettings).where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
 }
 /**
- * What a row's stored settings give this version: the settings it reads, and each stored field it does not read (a key
- * it does not know, or a value it does not take, as a newer build can write) with why, which a save keeps as stored.
+ * What a row's stored settings give this version: the settings it reads, each stored field it does not read (a key it
+ * does not know, or a value it does not take, as a newer build can write), which a save keeps as stored, and, when it
+ * reads them in part, why, in words that follow "the row".
  */
 interface StoredSettings { readonly settings: AuditSettings; readonly unread: Readonly<Record<string, unknown>>; readonly why?: string }
+/** A parse's `issues` in words, each after the path it names. */
+function issueWords(issues: readonly z.core.$ZodIssue[]): string {
+  return issues.map(issue => [...issue.path.map(String), issue.message].join(": ")).join("; ");
+}
+/**
+ * Why a row's settings read in part, in words that follow "the row": the `keys` of the fields it holds that this version
+ * does not read, with why (`words`), and each setting it leaves out (`left`), which runs with its default.
+ */
+function readInPartWhy(keys: readonly string[], words: string, left: readonly string[]): string {
+  const holds = keys.length === 0 ? [] : [`holds ${keys.join(", ")} (${words}), which this version does not read: a setting among them runs `
+    + "with its default, and a `rerail settings` there keeps each as stored"];
+  const leaves = left.length === 0 ? [] : [`leaves out ${left.join(", ")}: a setting left out runs with its default`];
+  return [...holds, ...leaves].join("; it ");
+}
 /**
  * The settings `text`, a row's stored settings, holds, or why it holds none, in words that follow "the row": text that
  * holds no JSON object holds none. Of an object, each field this version takes reads as stored, and each setting whose
- * stored value it does not take reads as its default.
+ * stored value it does not take, or that the object leaves out, reads as its default.
  */
 function storedSettings(text: string): StoredSettings | string {
   const stored = storedValue(text);
   if (typeof stored === "string") return `is not JSON (${stored})`;
   const parsed = auditSettingsSchema.safeParse(stored.value);
   if (parsed.success) return { settings: parsed.data, unread: {} };
-  const words = parsed.error.issues.map(issue => [...issue.path.map(String), issue.message].join(": ")).join("; ");
-  if (!isStoredItem(stored.value, "object")) return `holds no settings this version reads (${words})`;
-  // A field's issue names its key in its path; one issue lists every key this version does not know.
-  const keys = new Set(parsed.error.issues.flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys : [String(issue.path[0])]));
-  const fields = Object.entries(stored.value as Record<string, unknown>); // an object: `isStoredItem` tested it
+  if (!isStoredItem(stored.value, "object")) return `holds no settings this version reads (${issueWords(parsed.error.issues)})`;
+  const value = stored.value as Record<string, unknown>; // an object: `isStoredItem` tested it
+  // One issue lists every key this version does not know; any other names its setting's key in its path, a key the row
+  // holds unless it leaves that setting out.
+  const held = (issue: z.core.$ZodIssue): boolean => issue.code === "unrecognized_keys" || Object.hasOwn(value, String(issue.path[0]));
+  const unread = parsed.error.issues.filter(held);
+  const keys = new Set(unread.flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys : [String(issue.path[0])]));
+  const left = parsed.error.issues.filter(issue => !held(issue)).map(issue => String(issue.path[0]));
+  const fields = Object.entries(value);
   return {
     settings: auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...Object.fromEntries(fields.filter(([key]) => !keys.has(key))) }),
     unread: Object.fromEntries(fields.filter(([key]) => keys.has(key))),
-    why: `${[...keys].join(", ")} (${words})`,
+    why: readInPartWhy([...keys], issueWords(unread), left),
   };
 }
 /**
@@ -171,8 +190,7 @@ function saySettingsUnread(file: string, row: SettingsRow, why: string): void {
 function saySettingsReadInPart(file: string, row: SettingsRow, why: string): void {
   const [table, column] = [getTableName(auditSettings), auditSettings.settings.name];
   nameOnce(process.stderr, { file, place: `${table} ${row.workspaceRoot}` }, `rerail: ${file}: the scan settings saved for ${row.workspaceRoot} read in part: `
-    + `the ${column} of its ${table} row holds ${why}, which this version does not read: a setting among them runs with its default, and a `
-    + `\`rerail settings\` there keeps each as stored.\n`);
+    + `the ${column} of its ${table} row ${why}.\n`);
 }
 /**
  * An `audit_requests` row with its paths and audit ids as the text the database holds, which `storedRequest` reads, so
