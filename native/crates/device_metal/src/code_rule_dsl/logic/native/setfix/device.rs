@@ -2897,7 +2897,7 @@ fn made_before_encoding(rules: &[(&Plan, &JoinRule, usize)]) {
 }
 
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner, store: &Store) -> Result<Vec<Run<'static>>, String> {
-    // A lease past the Metal budget is refused here (decision 0126): the stratum then runs on the CPU, named.
+    // A lease past the Metal budget ends the run here, naming the `--metal-mb` it needs (decision 0126).
     rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names, store))
 }
 

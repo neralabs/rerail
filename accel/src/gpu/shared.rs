@@ -679,7 +679,8 @@ fn lease_file(kind: u32, bytes: usize, path: &std::path::Path, for_device: bool)
 pub fn lease_deferrable_within(kind: u32, bytes: usize, path: &std::path::Path) -> Result<rerail_blocks::deferrable::Deferrable, String> {
     let need = class(bytes.max(SLAB_MIN));
     if !make_room(need) {
-        return Err(format!("device budget: a deferrable lease of {} MB past the Metal budget of {} MB", need >> 20, crate::budget::metal() >> 20));
+        let why = format!("device budget: a deferrable lease of {} MB past the Metal budget of {} MB", need >> 20, crate::budget::metal() >> 20);
+        out_of_device_memory(&why, other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + need);
     }
     lease_deferrable(kind, bytes, path)
 }
@@ -820,9 +821,9 @@ pub fn make_room(need: usize) -> bool {
     }
 }
 
-/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
-/// refusal its caller runs on the CPU (or splits its batch), when the leases and the ledger's reservations would
-/// pass it after room is made (`make_room`). The device joins' buffers are leased so: without it, their waves and
+/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): when the leases and the
+/// ledger's reservations would pass it after room is made (`make_room`), the run ends, naming the `--metal-mb` that
+/// holds it (`more_device_memory`); never refused to the CPU. The device joins' buffers are leased so: without it, their waves and
 /// the strata run apart from them held up to 600 MB of a 512 MB budget.
 pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
     let need = class(bytes);
@@ -843,7 +844,7 @@ pub fn lease_within(bytes: usize) -> Result<Pooled, String> {
         if let Some(hook) = REFUSAL_HOOK.get() {
             hook(&why);
         }
-        return Err(why);
+        out_of_device_memory(&why, other() + live + reserved() + need);
     }
     lease(bytes).map(held_here)
 }
@@ -866,7 +867,8 @@ pub fn draw_reserved(bytes: usize) -> bool {
 /// it encodes anything (decision 0386: a wait holds no uncommitted command buffer); its bounded leases are then drawn
 /// from the reservation (`lease_within`). A reservation that does not fit waits for the leases other threads hold to
 /// come back, running the pool's jobs meanwhile (`exec::help_until_as`), instead of the stratum going to the CPU at
-/// once while the room it needs is about to be freed. It does not wait, and the stratum runs on the CPU:
+/// once while the room it needs is about to be freed. It does not wait, and the run ends naming the memory it needs
+/// (`more_device_memory`; never refused to the CPU):
 /// - when it is past the whole budget, which no lease coming back makes room for;
 /// - when the threads not waiting themselves hold less than it lacks (what a waiting thread holds comes back only
 ///   when it stops waiting, and its own thread's only when it goes on: waiting for either is a deadlock);
@@ -877,7 +879,7 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
         return Ok(Admitted { waited: 0.0 });
     }
     if bytes > budget {
-        return Err(format!("device admission: {} MB past the Metal budget of {} MB", bytes >> 20, budget >> 20));
+        out_of_device_memory(&format!("device admission: {} MB past the Metal budget of {} MB", bytes >> 20, budget >> 20), bytes);
     }
     let take = || {
         let fits = make_room(bytes);
@@ -916,7 +918,25 @@ pub fn admit(bytes: usize, patience: f64) -> Result<Admitted, String> {
         e.1 -= 1;
     }
     drop(h);
-    got.map(|()| Admitted { waited: t0.elapsed().as_secs_f64() })
+    if let Err(why) = got {
+        out_of_device_memory(&why, other() + dev().live.load(std::sync::atomic::Ordering::Relaxed) + reserved() + bytes);
+    }
+    Ok(Admitted { waited: t0.elapsed().as_secs_f64() })
+}
+
+/// The message a run dies with when device work does not fit the Metal budget: what did not fit, the device's memory
+/// now (`describe`), and the `--metal-mb` that holds what is in use with it, `total` bytes (rounded up to 256 MB).
+pub fn more_device_memory(why: &str, total: usize) -> String {
+    let mb = (total.div_ceil(1 << 20)).next_multiple_of(256).max((crate::budget::metal() >> 20) + 256);
+    format!("rerail: more device memory is needed: {why}; the device holds {}. Run again with --metal-mb {mb} or more.", describe())
+}
+
+/// Device work that does not fit the Metal budget ends the run, never refused to the CPU (the user, 2026-11-28: "the
+/// device path failed should be a panic and a message to increase the device memory, not a silent fallback").
+fn out_of_device_memory(why: &str, total: usize) -> ! {
+    let message = more_device_memory(why, total);
+    eprintln!("{message}");
+    panic!("{message}");
 }
 
 /// A measurement aid (Q203): `RERAIL_Q180_OFF`, a comma list of `est` (tables sized by the planner's estimates),
@@ -1010,8 +1030,8 @@ thread_local! {
 }
 
 /// Runs `f` with this thread's device-join leases (`crate::gpu::join::Held`) bounded by the Metal budget
-/// (`lease_within`): for a caller that runs its work on the CPU when a lease is refused (the logic engine's device
-/// joins). Elsewhere (the executor's GPU lane, which has no such fallback) a lease is never refused.
+/// (`lease_within`): the logic engine's device joins, whose run ends when one does not fit. Elsewhere (the executor's
+/// GPU lane) a lease is not bounded.
 pub fn within_budget<R>(f: impl FnOnce() -> R) -> R {
     let was = BOUNDED.with(|b| b.replace(true));
     let out = f();
@@ -1114,8 +1134,29 @@ mod tests {
         assert!(rerail_blocks::ledger::of_address(at).is_none());
     }
 
-    /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
-    /// are dropped.
+    /// The message `f` ends the run with: device work past the budget dies, naming the `--metal-mb` it needs.
+    fn dies(f: impl FnOnce() -> Result<(), String>) -> String {
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        let message = match out {
+            Err(p) => p.downcast_ref::<String>().cloned().unwrap_or_default(),
+            Ok(r) => panic!("not refused: {r:?}"),
+        };
+        assert!(message.contains("more device memory is needed") && message.contains("--metal-mb"), "{message}");
+        message
+    }
+
+    /// The `--metal-mb` a refusal names holds what is in use with the work that did not fit, past the budget set.
+    #[test]
+    fn a_refusal_names_the_metal_budget_that_holds_it() {
+        crate::budget::METAL_TEST.with(|m| m.set(1 << 30));
+        let message = more_device_memory("a lease", (1 << 30) + (300 << 20));
+        assert!(message.contains("--metal-mb 1536 "), "{message}");
+        assert!(more_device_memory("a lease", 10 << 20).contains("--metal-mb 1280 "), "never below the budget set");
+        crate::budget::METAL_TEST.with(|m| m.set(0));
+    }
+
+    /// A bounded lease past the Metal budget ends the run (naming the memory it needs), and fits again once the leases
+    /// before it are dropped.
     #[test]
     fn a_bounded_lease_keeps_within_the_metal_budget() {
         if layer().is_none() {
@@ -1125,10 +1166,9 @@ mod tests {
         let (live, _) = held_bytes();
         crate::budget::METAL_TEST.with(|m| m.set(live + (96 << 20)));
         let first = lease_within(64 << 20).expect("64 MB fits a budget of 96 MB more than is leased");
-        let refused = lease_within(64 << 20);
-        assert!(refused.as_ref().is_err_and(|e| e.contains("device budget")), "a second 64 MB passes the budget");
+        let refused = dies(|| lease_within(64 << 20).map(drop));
+        assert!(refused.contains("device budget") && refused.contains("--metal-mb"), "a second 64 MB passes the budget: {refused}");
         drop(first);
-        drop(refused);
         assert!(lease_within(64 << 20).is_ok(), "fits again once the first is dropped");
         crate::budget::METAL_TEST.with(|m| m.set(0));
     }
@@ -1145,7 +1185,7 @@ mod tests {
         let (live, _) = held_bytes();
         let budget = live + (96 << 20);
         crate::budget::METAL_TEST.with(|m| m.set(budget));
-        assert!(admit(budget + 1, 10.0).is_err_and(|e| e.contains("past the Metal budget")), "past the whole budget: no wait");
+        assert!(dies(|| admit(budget + 1, 10.0).map(drop)).contains("past the Metal budget"), "past the whole budget: no wait");
         // Another thread holds 64 MB for 200 ms: 48 MB waits for it, and is taken once it is back.
         let (held, go) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
         let other = std::thread::spawn(move || {
@@ -1158,7 +1198,7 @@ mod tests {
         held.1.recv().unwrap();
         // Past its patience: it gives up, and the 64 MB is still held.
         let t0 = std::time::Instant::now();
-        assert!(admit(48 << 20, 0.05).is_err_and(|e| e.contains("what waiting is worth")), "past its patience");
+        assert!(dies(|| admit(48 << 20, 0.05).map(drop)).contains("what waiting is worth"), "past its patience");
         assert!(t0.elapsed().as_secs_f64() < 1.0);
         go.0.send(()).unwrap();
         let room = admit(48 << 20, 10.0).expect("room once the other thread's lease is back");
@@ -1170,7 +1210,7 @@ mod tests {
         drop(room);
         // What this thread holds itself never comes back while it waits: no wait.
         let t0 = std::time::Instant::now();
-        assert!(admit(64 << 20, 10.0).is_err_and(|e| e.contains("held by threads that go on")), "its own leases: no wait");
+        assert!(dies(|| admit(64 << 20, 10.0).map(drop)).contains("held by threads that go on"), "its own leases: no wait");
         assert!(t0.elapsed().as_secs_f64() < 1.0, "refused at once, not at its patience");
         drop(mine);
         assert!(admit(64 << 20, 0.0).is_ok(), "fits once its own lease is back");
