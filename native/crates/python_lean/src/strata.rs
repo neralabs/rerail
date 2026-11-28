@@ -21,6 +21,8 @@
 //!    past the blanks, a name's end its run's, a string's stops one mask of its own kind, and whether a line end
 //!    is inside brackets one bit of `depth0`, not a count.
 
+pub mod middle;
+
 use crate::lex::{self, Extra, Lexed, MAX_NESTING, Quote, Refusal, T, Tok};
 use rerail_simd::prelude::*;
 use rerail_simd::Simd;
@@ -267,11 +269,34 @@ fn bytes_of<const K: usize>(src: &[u8], bi: usize, xs: [u8; K]) -> u64 {
 /// block's bytes.
 #[inline(never)]
 fn classes(src: &[u8]) -> Vec<B> {
+    let mut out = Vec::with_capacity(src.len().div_ceil(64) + 1);
+    classes_in(src, 0, src.len().div_ceil(64), &mut S1::default(), &mut out, usize::MAX, &mut S1::default());
+    out.push(B::default());
+    out
+}
+
+/// Stratum 1's carries into a block: the escape bit of a run of backslashes, of a `'\r'` an escaped one ends, and of a
+/// run of `{`.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct S1 {
+    carry: u64,
+    cr: u64,
+    lb: u64,
+}
+
+/// Blocks `from..to`'s classes after `out`, from the carries `c` into block `from` (left as those out of block `to - 1`),
+/// and the carries into block `at` kept in `at_c`.
+#[inline(always)]
+fn classes_in(src: &[u8], from: usize, to: usize, c: &mut S1, out: &mut Vec<B>, at: usize, at_c: &mut S1) {
     let n = src.len();
-    let mut out = Vec::with_capacity(n.div_ceil(64) + 1);
-    let (mut carry, mut cr_carry, mut lb_carry) = (0u64, 0u64, 0u64);
-    let mut at = 0;
-    while at < n {
+    let (mut carry, mut cr_carry, mut lb_carry) = (c.carry, c.cr, c.lb);
+    let mut at_b = from * 64;
+    let end = (to * 64).min(n);
+    while at_b < end {
+        if at_b >> 6 == at {
+            *at_c = S1 { carry, cr: cr_carry, lb: lb_carry };
+        }
+        let at = at_b;
         let v = match src.get(at..at + 64) {
             Some(b) => V::from_slice(b),
             None => {
@@ -293,10 +318,9 @@ fn classes(src: &[u8]) -> Vec<B> {
         cr_carry = esc_cr >> 63;
         b.lbu = b.lb & !escaped(b.lb, &mut lb_carry);
         out.push(b);
-        at += 64;
+        at_b += 64;
     }
-    out.push(B::default());
-    out
+    *c = S1 { carry, cr: cr_carry, lb: lb_carry };
 }
 
 /// The bracket depth's bound: a file past it is refused (decision 0698, item 93).
@@ -391,7 +415,9 @@ fn prefix_masks(src: &[u8], bi: usize, word: u64) -> Pfx {
 /// The text and its blocks' masks.
 struct Text<'s> {
     src: &'s [u8],
+    /// Blocks `first..`'s masks.
     b: Vec<B>,
+    first: usize,
 }
 
 #[inline(always)]
@@ -404,8 +430,11 @@ fn refuse(at: usize) -> Refusal {
 #[derive(Clone, Copy)]
 struct Masks<'a> {
     src: &'a [u8],
-    /// The text's blocks and one past its end.
+    /// The text's blocks and one past its end, from block `first`: a window of them where a chunk is lexed from the
+    /// middle, which says where a read went past it (`short`).
     b: &'a [B],
+    first: usize,
+    short: &'a core::cell::Cell<bool>,
 }
 
 impl<'a> Masks<'a> {
@@ -417,10 +446,16 @@ impl<'a> Masks<'a> {
     /// Block `bi`, at most the one past the text's end.
     #[inline(always)]
     fn blk(&self, bi: usize) -> &'a B {
-        debug_assert!(bi < self.b.len());
-        // SAFETY: `classes` makes a block for each 64 bytes and one more, and the reads ask for a block of a byte
-        // below the text's length, or the one after such a block.
-        unsafe { self.b.get_unchecked(bi) }
+        static NONE: B = B { word: 0, space: 0, sptab: 0, skip: 0, eol: 0, lf: 0, bare_lf: 0, sq: 0, dq: 0, bt: 0, bs: 0, esc: 0, hash: 0, ob: 0, cb: 0, lb: 0, rb: 0, lbu: 0, slow: 0, code: 0, depth0: 0, sstart: 0, send: 0 };
+        // The whole text's blocks hold every block a read asks for (`classes` makes one for each 64 bytes and one
+        // more); a window may not, and a read past it is made again over a longer one.
+        match self.b.get(bi.wrapping_sub(self.first)) {
+            Some(b) => b,
+            None => {
+                self.short.set(true);
+                &NONE
+            }
+        }
     }
 
     /// Whether byte `i`'s bit is set in a mask (`i` at most the text's length).
@@ -443,7 +478,7 @@ impl<'a> Masks<'a> {
                 return (bi * 64 + m.trailing_zeros() as usize).min(n);
             }
             bi += 1;
-            if bi * 64 >= n {
+            if bi * 64 >= n || self.short.get() {
                 return n;
             }
             m = f(self.blk(bi));
@@ -464,7 +499,7 @@ impl<'a> Masks<'a> {
                 return (bi * 64 + m.trailing_zeros() as usize).min(n);
             }
             bi += 1;
-            if bi * 64 >= n {
+            if bi * 64 >= n || self.short.get() {
                 return n;
             }
             m = f(bi, self.blk(bi));
@@ -505,14 +540,14 @@ fn from(a: u32) -> u64 {
 
 impl<'s> Text<'s> {
     #[inline(always)]
-    fn m(&self) -> Masks<'_> {
-        Masks { src: self.src, b: &self.b }
+    fn m<'a>(&'a self, short: &'a core::cell::Cell<bool>) -> Masks<'a> {
+        Masks { src: self.src, b: &self.b, first: self.first, short }
     }
 
     /// A string starts at `i`.
     #[inline(always)]
     fn mark(&mut self, i: usize) {
-        self.b[i >> 6].sstart |= 1 << (i & 63);
+        self.b[(i >> 6) - self.first].sstart |= 1 << (i & 63);
     }
 
     /// Where the string whose quote is bit `c` of block `bi` starts (its prefix's first letter), and whether it is a
@@ -521,11 +556,11 @@ impl<'s> Text<'s> {
     /// (one count of leading zeros), and the run above it.
     #[inline(always)]
     fn prefix(&self, bi: usize, c: u32) -> (usize, bool) {
-        let pw = if bi > 0 { self.b[bi - 1].word } else { 0 };
-        if (win(pw, self.b[bi].word) << 1) >> (64 + c) & 1 == 0 {
+        let pw = if bi > 0 { self.b[bi - 1 - self.first].word } else { 0 };
+        if (win(pw, self.b[bi - self.first].word) << 1) >> (64 + c) & 1 == 0 {
             return (bi * 64 + c as usize, false);
         }
-        let b = prefix_masks(self.src, bi, self.b[bi].word);
+        let b = prefix_masks(self.src, bi, self.b[bi - self.first].word);
         let p = if bi > 0 { prefix_masks(self.src, bi - 1, pw) } else { Pfx::default() };
         let below = (1u128 << (64 + c)) - 1;
         let not_pfx = !win(p.pfx, b.pfx) & below;
@@ -543,7 +578,7 @@ impl<'s> Text<'s> {
     /// A prefix of more letters than a block holds: the blocks below read until one is not all letters (rare).
     #[cold]
     fn prefix_far(&self, bi: usize, c: u32) -> (usize, bool) {
-        let m = |k: usize| prefix_masks(self.src, k, self.b[k].word);
+        let m = |k: usize| prefix_masks(self.src, k, self.b[k - self.first].word);
         let mut k = bi - 1;
         while k > 0 && m(k).pfx == !0 {
             k -= 1;
@@ -574,7 +609,7 @@ impl<'s> Text<'s> {
         let (mut p, mut open, mut taken, mut rbc) = (0u32, 0usize, 0u64, 0u64);
         let mut nest = 0u32;
         for bi in 0..blocks {
-            let (b, b1) = (self.b[bi], self.b[bi + 1]);
+            let (b, b1) = (self.b[bi - self.first], self.b[bi + 1 - self.first]);
             let base = bi * 64;
             let mut nc = taken;
             taken = 0;
@@ -609,7 +644,7 @@ impl<'s> Text<'s> {
                         let (start, format) = self.prefix(bi, c);
                         self.mark(start);
                         if start < base {
-                            self.b[bi - 1].code &= !(!0u64 << (start - (base - 64)));
+                            self.b[bi - 1 - self.first].code &= !(!0u64 << (start - (base - 64)));
                         }
                         let rel = start.max(base) - base;
                         let (q, triple) = self.quote(&b, &b1, c);
@@ -639,7 +674,7 @@ impl<'s> Text<'s> {
                             return Err(refuse(base + e as usize));
                         }
                         let end = e + k;
-                        self.b[bi].send |= 1 << e;
+                        self.b[bi - self.first].send |= 1 << e;
                         nc |= from(rel as u32) & !from(end);
                         if end > 64 {
                             taken = !from(end - 64);
@@ -706,7 +741,7 @@ impl<'s> Text<'s> {
                         let (start, format) = self.prefix(bi, c);
                         self.mark(start);
                         if start < base {
-                            self.b[bi - 1].code &= !(!0u64 << (start - (base - 64)));
+                            self.b[bi - 1 - self.first].code &= !(!0u64 << (start - (base - 64)));
                         }
                         open = start.max(base);
                         let (q, triple) = self.quote(&b, &b1, c);
@@ -728,7 +763,7 @@ impl<'s> Text<'s> {
                                 return Err(refuse(at));
                             }
                             // `\N{...}`: an escape's name, not an interpolation (not read here).
-                            let w = win(if bi > 0 { self.b[bi - 1].bs & !self.b[bi - 1].esc } else { 0 }, b.bs & !b.esc) << 2;
+                            let w = win(if bi > 0 { self.b[bi - 1 - self.first].bs & !self.b[bi - 1 - self.first].esc } else { 0 }, b.bs & !b.esc) << 2;
                             if w >> (64 + c) & 1 == 1 {
                                 let nm = win(if bi > 0 { bytes_of(self.src, bi - 1, *b"N") } else { 0 }, bytes_of(self.src, bi, *b"N")) << 1;
                                 if nm >> (64 + c) & 1 == 1 {
@@ -745,7 +780,7 @@ impl<'s> Text<'s> {
                             continue;
                         }
                         let k = if triple { 3 } else { 1 };
-                        self.b[bi].send |= 1 << c;
+                        self.b[bi - self.first].send |= 1 << c;
                         top = stack.pop().expect("a frame");
                         if top == F::Code {
                             let end = c + k;
@@ -816,7 +851,7 @@ impl<'s> Text<'s> {
                 nc |= from((open - base.min(open)) as u32);
                 open = base + 64;
             }
-            self.b[bi].code = !nc;
+            self.b[bi - self.first].code = !nc;
         }
         match top {
             F::Code | F::Comment => Ok(()),
@@ -856,9 +891,17 @@ impl<'s> Text<'s> {
     /// Stratum 3: each block's `depth0`.
     #[inline(never)]
     fn depth(&mut self) -> Result<(), Refusal> {
-        let blocks = self.src.len().div_ceil(64);
-        let mut carry = 0i8;
-        for (bi, b) in self.b[..blocks].iter_mut().enumerate() {
+        self.depth_in(0, self.src.len().div_ceil(64), &mut 0)
+    }
+
+    /// Stratum 3 over blocks `from..to`, from the depth `carry` into block `from` (left as the depth out of block
+    /// `to - 1`).
+    #[inline(always)]
+    fn depth_in(&mut self, from: usize, to: usize, carry_io: &mut i8) -> Result<(), Refusal> {
+        let mut carry = *carry_io;
+        let first = self.first;
+        for (k, b) in self.b[from - first..to - first].iter_mut().enumerate() {
+            let bi = from + k;
             let (up, down) = (b.ob & b.code, b.cb & b.code);
             if up | down == 0 {
                 b.depth0 = if carry == 0 { !0 } else { 0 };
@@ -871,6 +914,7 @@ impl<'s> Text<'s> {
             b.depth0 = zero;
             carry = out;
         }
+        *carry_io = carry;
         Ok(())
     }
 }
@@ -947,6 +991,17 @@ fn hold(s: u8, r: u64) -> (u64, u64, u8) {
     (lo, hi, ((lo >> 63) | ((hi >> 63) << 1)) as u8)
 }
 
+/// Variant B's stratum 2's carries into a block: the triples' and the one-line strings' machines' states, a comment's
+/// carry, the last bit of the comment's line-end mask, and the bytes a triple's closer from the block before takes.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct RB {
+    t0: u8,
+    s0: u8,
+    ccarry: u64,
+    cext_prev: u64,
+    tr_taken: u64,
+}
+
 impl<'s> Text<'s> {
     /// Stratum 2 with no step inside a block (variant B): each block's comments and strings from a fixed sequence of
     /// bit operations. Three layers, each a machine of `machine`'s, carried from block to block:
@@ -964,13 +1019,19 @@ impl<'s> Text<'s> {
     /// enclosing one-line string's quote).
     #[inline(never)]
     fn regions_b(&mut self) -> bool {
-        let n = self.src.len();
-        let blocks = n.div_ceil(64);
-        let (mut t0, mut s0) = (0u8, 0u8);
-        let (mut ccarry, mut cext_prev, mut tr_taken) = (0u64, 0u64, 0u64);
-        let mut prev = B::default();
-        for bi in 0..blocks {
-            let (b, b1) = (self.b[bi], self.b[bi + 1]);
+        let mut c = RB::default();
+        self.regions_b_in(0, self.src.len().div_ceil(64), &mut c) && c.t0 == 0 && c.s0 == 0
+    }
+
+    /// Variant B's stratum 2 over blocks `from..to`, from the carries `c` into block `from` (left as those out of block
+    /// `to - 1`); the block before `from` is in the window where `from` is not the text's first. False where B's
+    /// reading is wrong.
+    #[inline(always)]
+    fn regions_b_in(&mut self, from: usize, to: usize, c: &mut RB) -> bool {
+        let RB { mut t0, mut s0, mut ccarry, mut cext_prev, mut tr_taken } = *c;
+        let mut prev = if from > 0 { self.b[from - 1 - self.first] } else { B::default() };
+        for bi in from..to {
+            let (b, b1) = (self.b[bi - self.first], self.b[bi + 1 - self.first]);
             let (qs, qd) = (b.sq & !b.esc, b.dq & !b.esc);
             let runs = |q: u64, nq: u64, pq: u64| {
                 let (q1, q2, q3) = (q >> 1 | nq << 63, q >> 2 | nq << 62, q >> 3 | nq << 61);
@@ -1023,15 +1084,16 @@ impl<'s> Text<'s> {
             let s_region = (sb | sa) & !comment & !tr;
             let Some((pre, starts)) = self.prefixes_b(bi, s_open | t_open) else { return false };
             if bi > 0 {
-                self.b[bi - 1].code &= !(pre as u64);
-                self.b[bi - 1].sstart |= starts as u64;
+                self.b[bi - 1 - self.first].code &= !(pre as u64);
+                self.b[bi - 1 - self.first].sstart |= starts as u64;
             }
-            self.b[bi].code = !(comment | s_region | tr | (pre >> 64) as u64);
-            self.b[bi].sstart = (starts >> 64) as u64;
-            self.b[bi].send = ((qs | qd) & !tr & sb & !sa & !comment) | t_close;
+            self.b[bi - self.first].code = !(comment | s_region | tr | (pre >> 64) as u64);
+            self.b[bi - self.first].sstart = (starts >> 64) as u64;
+            self.b[bi - self.first].send = ((qs | qd) & !tr & sb & !sa & !comment) | t_close;
             (t0, s0, prev) = (t1, s1, b);
         }
-        t0 == 0 && s0 == 0
+        *c = RB { t0, s0, ccarry, cext_prev, tr_taken };
+        true
     }
 
     /// The prefixes of the strings that open at `openers` (block `bi`): in a window of the block and the one below
@@ -1042,11 +1104,11 @@ impl<'s> Text<'s> {
     #[inline(always)]
     fn prefixes_b(&self, bi: usize, openers: u64) -> Option<(u128, u128)> {
         let o = win(0, openers);
-        let pw = if bi > 0 { self.b[bi - 1].word } else { 0 };
-        if (win(pw, self.b[bi].word) << 1) & o == 0 {
+        let pw = if bi > 0 { self.b[bi - 1 - self.first].word } else { 0 };
+        if (win(pw, self.b[bi - self.first].word) << 1) & o == 0 {
             return Some((0, o));
         }
-        let c = prefix_masks(self.src, bi, self.b[bi].word);
+        let c = prefix_masks(self.src, bi, self.b[bi - self.first].word);
         let p = if bi > 0 { prefix_masks(self.src, bi - 1, pw) } else { Pfx::default() };
         let x = win(p.pfx, c.pfx).reverse_bits();
         let g = (o.reverse_bits() << 1) & x;
@@ -1308,6 +1370,10 @@ struct Walk<'s> {
     /// of the enclosing one-line string's quote, that reading is wrong, and the walk says so (`b_wrong`).
     b: bool,
     b_wrong: bool,
+    /// The walk stops at the first item that starts from `stop` on (a chunk's end, lexed from the middle).
+    stop: usize,
+    /// Whether the end of the text's token is read.
+    done: bool,
 }
 
 /// Which stratum 2 a lexer of strata reads with: the plan's step, block by block (A), or no step inside a block
@@ -1321,17 +1387,18 @@ pub enum Variant {
 /// `src` lexed by the strata (the lean lexer's `lex`), stratum 2 by `v`. Where variant B's layers or the walk say B's reading is wrong
 /// (rare), the text is read by A.
 pub(crate) fn lex_with(src: &[u8], v: Variant) -> Result<Lexed, Refusal> {
-    let mut t = Text { src, b: classes(src) };
+    let mut t = Text { src, b: classes(src), first: 0 };
     let b = v == Variant::B && t.regions_b();
     if !b {
         if v == Variant::B {
-            t = Text { src, b: classes(src) };
+            t = Text { src, b: classes(src), first: 0 };
         }
         t.regions()?;
     }
     t.depth()?;
-    let mut w = Walk { t: t.m(), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b, b_wrong: false };
-    match w.module() {
+    let short = core::cell::Cell::new(false);
+    let mut w = Walk { t: t.m(&short), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b, b_wrong: false, stop: usize::MAX, done: false };
+    match w.module(false, false).map(|_| ()) {
         Err(_) if w.b_wrong => lex_with(src, Variant::A),
         Err(r) => Err(r),
         Ok(()) => Ok(Lexed { toks: w.toks, extras: w.extras }),
@@ -1340,12 +1407,13 @@ pub(crate) fn lex_with(src: &[u8], v: Variant) -> Result<Lexed, Refusal> {
 
 /// Whether variant B reads `src` itself, not by A (for a measurement of how often it does not).
 pub fn b_reads(src: &[u8]) -> bool {
-    let mut t = Text { src, b: classes(src) };
+    let mut t = Text { src, b: classes(src), first: 0 };
     if !t.regions_b() || t.depth().is_err() {
         return false;
     }
-    let mut w = Walk { t: t.m(), toks: Vec::new(), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b: true, b_wrong: false };
-    w.module().is_ok() || !w.b_wrong
+    let short = core::cell::Cell::new(false);
+    let mut w = Walk { t: t.m(&short), toks: Vec::new(), extras: Vec::new(), p: 0, depth: 0, indents: vec![0], inside_interpolated_string: false, outer: None, b: true, b_wrong: false, stop: usize::MAX, done: false };
+    w.module(false, false).is_ok() || !w.b_wrong
 }
 
 impl<'s> Walk<'s> {
@@ -1371,6 +1439,10 @@ impl<'s> Walk<'s> {
         let src = self.t.src;
         let (mut i, mut eol, mut indent, mut first_comment) = (p, false, 0u32, -1i64);
         loop {
+            // A chunk's walk that read past its window reads nothing more (it is made again over a longer one).
+            if self.t.short.get() {
+                return Ok(None);
+            }
             match self.at(i) {
                 b'\n' => {
                     eol = true;
@@ -1448,11 +1520,14 @@ impl<'s> Walk<'s> {
 
     /// The whole file (the lean lexer's `module`, its bracket count read from `depth0`).
     #[inline(never)]
-    fn module(&mut self) -> Result<(), Refusal> {
+    fn module(&mut self, mut open: bool, mut header: bool) -> Result<(bool, bool), Refusal> {
         let n = self.t.src.len();
-        let (mut open, mut header) = (false, false);
         let src = self.t.src;
         loop {
+            // A chunk's walk stops at its end, or where it read past its window (made again over a longer one).
+            if self.p >= self.stop || self.t.short.get() {
+                return Ok((open, header));
+            }
             // The first byte past the spaces and tabs (one mask search). In the usual case it starts a token, and
             // the scanner gives nothing: the tokens are read at once, a run of them where it is code.
             let k = self.t.run_end(self.p, |b| b.sptab);
@@ -1498,7 +1573,8 @@ impl<'s> Walk<'s> {
             let i = self.blanks(k)?;
             if i >= n {
                 self.push(T::Eof, n, n);
-                return Ok(());
+                self.done = true;
+                return Ok((open, header));
             }
             match self.t.src[i] {
                 b'#' => {
@@ -1866,6 +1942,10 @@ impl<'s> Walk<'s> {
         let mut brackets = 0u32;
         let mut i = s + 1;
         loop {
+            // A chunk's walk that read past its window reads nothing more (it is made again over a longer one).
+            if self.t.short.get() {
+                return Err(refuse(i));
+            }
             if self.dedent_in_brackets(i)? {
                 return Err(refuse(i));
             }
@@ -1987,7 +2067,7 @@ pub fn check_with(src: &[u8], v: Variant) -> Check {
 /// The strata up to `upto` alone (1: classes, 2: regions, 3: depth, 4: the whole lexer), stratum 2 by `v`, for a
 /// measurement of each: a sum that keeps the work.
 pub fn upto(src: &[u8], upto: u8, v: Variant) -> usize {
-    let mut t = Text { src, b: classes(src) };
+    let mut t = Text { src, b: classes(src), first: 0 };
     if upto >= 2 && v == Variant::B && t.regions_b() {
     } else if upto >= 2 && t.regions().is_err() {
         return 0;
@@ -2061,7 +2141,7 @@ mod tests {
                     b"(([)]}{a  "[(x >> 8) as usize % 10]
                 })
                 .collect();
-            let mut t = Text { src: &src, b: classes(&src) };
+            let mut t = Text { src: &src, b: classes(&src), first: 0 };
             let mut d = 0i32;
             let mut want = Vec::new();
             for &c in &src {
@@ -2078,7 +2158,7 @@ mod tests {
             }
             t.depth().unwrap();
             for (i, &w) in want.iter().enumerate() {
-                assert_eq!(t.m().bit(i, |b| b.depth0), w == 0, "byte {i}");
+                assert_eq!(t.m(&core::cell::Cell::new(false)).bit(i, |b| b.depth0), w == 0, "byte {i}");
             }
         }
     }

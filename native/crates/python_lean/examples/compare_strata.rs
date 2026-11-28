@@ -1,5 +1,5 @@
 //! The lexer of strata (`rerail_python_lean::strata`, decision 0698 item 93) against the lean lexer, over the `.py`
-//! files under a directory: `compare_strata <dir> [seconds a side] [lean | strata | strata-b | 1 | 2 | 3 | 2b | 3b]`.
+//! files under a directory: `compare_strata <dir> [seconds a side] [lean | strata | strata-b | 1 | 2 | 3 | 2b | 3b | chunked]`.
 //!
 //! First each file's tokens and extras compared (the same, either refusing, or the first token that differs), then
 //! both lexers timed over the files both read the same, each many times on one thread. With `lean` or `strata` only
@@ -46,6 +46,29 @@ fn main() {
     let lean = |b: &[u8]| rerail_python_lean::token_count(b).unwrap_or(0);
     let strata = |b: &[u8]| strata::token_count(b).unwrap_or(0);
     let strata_b = |b: &[u8]| strata::token_count_with(b, Variant::B).unwrap_or(0);
+    if only == Some("chunked") {
+        // From the middle: each file in chunks of 1, 2, 3 and 16 blocks, each from the one before's exit, against the
+        // serial lexer (variant B's).
+        let sizes: Vec<usize> = std::env::var("CHUNK_BLOCKS").map_or(vec![1, 2, 3, 16], |v| v.split(',').filter_map(|x| x.parse().ok()).collect());
+        for blocks in sizes {
+            let t0 = std::time::Instant::now();
+            let (mut same, mut not_b, mut differ) = (0, 0, 0);
+            for (p, b) in &all {
+                match strata::middle::chunked_is_serial(b, blocks) {
+                    Ok(true) => same += 1,
+                    Ok(false) => not_b += 1,
+                    Err(e) => {
+                        differ += 1;
+                        if differ <= 3 {
+                            println!("{} :: {}", p.strip_prefix(dir).unwrap_or(p).display(), e.lines().skip(1).collect::<Vec<_>>().join("\n"));
+                        }
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: {same} the serial lexer's records, {differ} not, {not_b} read by A (B's reading wrong); {:.1} s", t0.elapsed().as_secs_f64());
+        }
+        return;
+    }
     if let Some(side) = only {
         let fs: Vec<&[u8]> = all.iter().map(|(_, b)| b.as_slice()).filter(|b| strata::check(b) == Check::Same).collect();
         let bytes: usize = fs.iter().map(|b| b.len()).sum();

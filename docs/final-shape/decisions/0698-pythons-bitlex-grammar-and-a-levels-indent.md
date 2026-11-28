@@ -698,3 +698,23 @@ statements and blocks end.
       measured equal and is not kept.
     - **As measured:** 1635 the same, 0 differ. B 1.01x to 1.04x the lean lexer's speed in turn (was 0.96x), A
       0.99x to 1.02x; stratum 1 1.34 cycles a byte with the `slow` mask, the walk about 5.5.
+
+97. **The lexer of strata from the middle: a chunk lexed from its entry** (0715's pass 2, as built; the design page
+    "Superposed Lexer Design").
+    - **Stratum 2 from the middle is variant B's.** Its carries are a few bits (the two machines' states, a
+      comment's carry, a line end's bit, a triple closer's taken bits), and an f-string is a plain string to it: its
+      interpolations are read by the walk inside the string's token, so the f-string nest never crosses a chunk's
+      start. A text B reads wrongly is read serially by A, as `lex_with` reads it.
+    - **What crosses a chunk's start** (`strata::middle::Entry`): stratum 1's three escape bits into block
+      `from - 2`, B's carries and the depth into block `from - 1` (the walk reads the depth below its first item, and
+      stratum 2 a string's prefix in the block below its quote), and the walk's state at its first item from byte
+      `64 * from` on: where it starts, whether the line has a token, whether it is a block's header, the indents.
+    - **Each stratum runs over a range of blocks from its carries** (`classes_in`, `regions_b_in`, `depth_in`); the
+      whole text's run is the range of all its blocks. The walk stops at its first item past the chunk's end, and
+      an item it started is read to its end. The strata are made over a window from block `from - 2` to one past
+      the chunk's end; where the walk reads past the window (`Masks::short`), the window is made again twice as
+      long.
+    - **As tested:** each chunk lexed from the exit of the one before is the serial lexer's records, on the corpus
+      (1644 files) at 1, 2, 3 and 16 blocks a chunk: 1641 the same, 0 differ, 3 read by A. Where both refuse, the
+      byte each refuses at is not compared (each its own order of reading). The serial lexer's speed is as before
+      (B 1.04x the lean lexer's in turn, the host loaded).
