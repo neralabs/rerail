@@ -455,13 +455,16 @@ pt_pmeth(ka, w, m) :- pt_rtvar(mm, ka, w), pt_aproto(ka), field(mm, "name", n), 
 // `o.__getitem__(i)`. A class's subscript (`list[int]`, a generic alias) is no call of it.
 .decl pt_icall(c: node, o: node, a: symbol)
 pt_icall(c, o, "__getitem__") :- pt_vpos(c), kind(c, "subscript"), field(c, "value", o).
-// A loop's statement holds its iterator, its target the iterator's next value; a `with` alias the value entered.
-pt_icall(a, it, "__iter__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async"), field(a, "right", it).
-pt_icall(l, a, "__next__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async").
-pt_icall(t, e, "__enter__") :- pt_rasg(_, _, t, a), kind(a, "with_statement"), !op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
+pt_icall(c, o, a) :- pt_scall(c, o, a).
+// pt_scall(c, o, a): a statement's implicit calls. A loop's statement holds its iterator, its target the iterator's
+// next value; a `with` alias the value entered.
+.decl pt_scall(c: node, o: node, a: symbol)
+pt_scall(a, it, "__iter__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async"), field(a, "right", it).
+pt_scall(l, a, "__next__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async").
+pt_scall(t, e, "__enter__") :- pt_rasg(_, _, t, a), kind(a, "with_statement"), !op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
     child(p, e, 0).
 // `async for`: the statement holds `it.__aiter__()`, a plain call; its target the awaited `__anext__()` of that.
-pt_icall(a, it, "__aiter__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async"), field(a, "right", it).
+pt_scall(a, it, "__aiter__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async"), field(a, "right", it).
 // pt_iawait(c, o, a): c's value is the result of awaiting o's method a, an implicit call: an `async for` target's
 // `__anext__()`, an `async with` alias's `__aenter__()`.
 .decl pt_iawait(c: node, o: node, a: symbol)
@@ -469,7 +472,7 @@ pt_iawait(l, a, "__anext__") :- pt_rasg(_, _, l, a), kind(a, "for_statement"), o
 pt_iawait(t, e, "__aenter__") :- pt_rasg(_, _, t, a), kind(a, "with_statement"), op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
     child(p, e, 0).
 pt_vroot(o) :- pt_iawait(_, o, _).
-pt_vroot(o) :- pt_icall(_, o, _).
+pt_vroot(o) :- pt_scall(_, o, _).
 // Class attributes: `x: T` or `x: T = v` in a class body binds x there; T's values are what instances may read.
 .decl pt_cann(c: node, x: symbol, t: node)
 pt_cann(c, x, t) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "type", t), nearest(a, c, pt_scope),
@@ -699,6 +702,9 @@ pt_vpos(c) :- pt_vpos(n), kind(n, "conditional_expression"), child(n, c, 2).
 pt_vpos(c) :- pt_vpos(n), kind(n, "boolean_operator"), child(n, c, _).
 pt_vpos(c) :- pt_vpos(n), kind(n, "assignment"), field(n, "right", c).
 pt_vpos(c) :- pt_vpos(n), kind(n, "named_expression"), field(n, "value", c).
+// A subscript's value, `o` of `o[i]`, read by its `__getitem__` (`pt_icall`).
+pt_vpos(o) :- pt_vpos(c), kind(c, "subscript"), field(c, "value", o), !host_node(o, _).
+.form pt_vpos tape.reach reads pt_vroot host_node args parenthesized_expression#0 conditional_expression#0 conditional_expression#2 boolean_operator#* assignment.right named_expression.value =subscript.value
 .decl pt_tracked(k: symbol)
 pt_tracked("identifier"). pt_tracked("attribute"). pt_tracked("call"). pt_tracked("parenthesized_expression"). pt_tracked("conditional_expression").
 pt_tracked("boolean_operator"). pt_tracked("assignment"). pt_tracked("named_expression").

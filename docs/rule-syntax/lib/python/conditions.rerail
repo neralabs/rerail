@@ -17,6 +17,7 @@ py_cond(c) :- kind(i, "elif_clause"), field(i, "condition", c).
 py_not(c, a) :- py_cond(c), kind(c, "not_operator"), field(c, "argument", a), !kind(a, "parenthesized_expression").
 py_not(c, a) :- py_cond(c), kind(c, "not_operator"), field(c, "argument", p), kind(p, "parenthesized_expression"), child(p, a, 0).
 py_cond(a) :- py_not(_, a).
+.form py_cond tape.reach args ^if_statement.condition ^elif_clause.condition not_operator.argument~parenthesized_expression
 .decl py_vtest(c: node, op: symbol, a: number, b: number)
 py_vtest(c, o, a, b) :- py_cond(c), kind(c, "comparison_operator"), op_at(c, 0, o), !op_at(c, 1, _), child(c, l, 0), name(l, "sys.version_info"),
     child(c, t, 1), kind(t, "tuple"), child(t, x, 0), value(x, u), child(t, y, 1), value(y, w), a = to_number(u), b = to_number(w).

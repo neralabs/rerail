@@ -369,3 +369,82 @@ fn a_walk_starts_form_gives_its_rules_rows() {
     let at = |x: &str| formed.iter().filter(|r| r[1] == x).map(|r| r[3].clone()).collect::<Vec<_>>();
     assert_eq!((at("xs"), at("d"), at("T"), at("r")), (vec!["class_definition".to_owned()], vec!["class_definition".to_owned()], vec!["class_definition".to_owned()], vec!["function_definition".to_owned()]), "{formed:?}");
 }
+
+/// `pos(n)`, python/points-to-file's `pt_vpos`: the positions whose value is read, down from roots (a call's arguments,
+/// a return's value, a statement's assignment) through parentheses, conditionals, `and`/`or`, assignments' values and
+/// walruses' values, and a subscript's value (`o[i]` reads `o`); a node within a call of `g` (standing in for a
+/// guest's) is no root.
+const REACH: &str = r#"#include "core.rerail"
+.decl host(n: node, h: node)
+host(n, c) :- kind(c, "call"), field(c, "function", g), text(g, "g"), (n = c ; within(n, c)).
+.decl root(e: node)
+root(a) :- kind(c, "call"), field(c, "arguments", l), child(l, a, _).
+root(e) :- kind(r, "return_statement"), child(r, e, 0).
+root(a) :- kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment").
+.decl pos(n: node)
+pos(e) :- root(e), !host(e, _).
+pos(c) :- pos(n), kind(n, "parenthesized_expression"), child(n, c, 0).
+pos(c) :- pos(n), kind(n, "conditional_expression"), child(n, c, 0).
+pos(c) :- pos(n), kind(n, "conditional_expression"), child(n, c, 2).
+pos(c) :- pos(n), kind(n, "boolean_operator"), child(n, c, _).
+pos(c) :- pos(n), kind(n, "assignment"), field(n, "right", c).
+pos(c) :- pos(n), kind(n, "named_expression"), field(n, "value", c).
+pos(o) :- pos(c), kind(c, "subscript"), field(c, "value", o), !host(o, _).
+.decl poss(b: number, k: symbol)
+poss(b, k) :- pos(n), node(_, n, k, b, _).
+.output poss
+"#;
+
+/// `pt_vpos`'s form gives its rules' rows.
+#[test]
+fn a_reach_form_gives_its_rules_rows() {
+    let text = "f(a if b else (c or d), g(1)[0], g(2), h(k)[m][n])\nx = y = (z := w)\ndef h():\n    return (p and q)[1]\n";
+    let run = |program: &str, tag: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.py"), text).unwrap();
+        rows(program, &dir, "poss")
+    };
+    let form = ".form pos tape.reach reads root host args parenthesized_expression#0 conditional_expression#0 conditional_expression#2 boolean_operator#* assignment.right named_expression.value =subscript.value\n";
+    let formed = run(&format!("{REACH}{form}"), "reach");
+    let ruled = run(REACH, "reach-rules");
+    assert_eq!(formed, ruled);
+    // Of the calls, `h(k)` (at 39, a subscript's value) alone: `g(1)` (24) is a subscript's value within a call of
+    // `g`, `g(2)` (33) one itself.
+    let calls: Vec<&str> = formed.iter().filter(|r| r[1] == "call").map(|r| r[0].as_str()).collect();
+    assert_eq!(calls, ["39"], "{formed:?}");
+    assert_eq!(formed.iter().filter(|r| r[1] == "named_expression").count(), 1, "{formed:?}");
+}
+
+/// `cond(c)`, python/conditions' `py_cond`: an `if`'s or `elif`'s condition, and what a `not` of one tests, through
+/// one pair of parentheses (`not (t)` tests `t`).
+const CONDS: &str = r#"#include "core.rerail"
+.decl cond(c: node)
+cond(c) :- kind(i, "if_statement"), field(i, "condition", c).
+cond(c) :- kind(i, "elif_clause"), field(i, "condition", c).
+.decl neg(c: node, a: node)
+neg(c, a) :- cond(c), kind(c, "not_operator"), field(c, "argument", a), !kind(a, "parenthesized_expression").
+neg(c, a) :- cond(c), kind(c, "not_operator"), field(c, "argument", p), kind(p, "parenthesized_expression"), child(p, a, 0).
+cond(a) :- neg(_, a).
+.decl conds(b: number, k: symbol, x: symbol)
+conds(b, k, x) :- cond(n), node(_, n, k, b, _), text(n, x).
+.output conds
+"#;
+
+/// `py_cond`'s form, its roots found on the tape, gives its rules' rows.
+#[test]
+fn a_reach_form_from_kinds_gives_its_rules_rows() {
+    let text = "if not (not x):\n    pass\nelif not y and z:\n    pass\nif a:\n    pass\nif not ((b)):\n    pass\n";
+    let run = |program: &str, tag: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("c.py"), text).unwrap();
+        rows(program, &dir, "conds")
+    };
+    let form = ".form cond tape.reach args ^if_statement.condition ^elif_clause.condition not_operator.argument~parenthesized_expression\n";
+    let formed = run(&format!("{CONDS}{form}"), "conds");
+    let ruled = run(CONDS, "conds-rules");
+    assert_eq!(formed, ruled);
+    let texts: Vec<&str> = formed.iter().map(|r| r[2].as_str()).collect();
+    assert!(texts.contains(&"x") && texts.contains(&"not x") && texts.contains(&"a") && texts.contains(&"(b)"), "{formed:?}");
+}
