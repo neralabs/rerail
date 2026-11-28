@@ -1767,8 +1767,9 @@ struct Run<'p> {
 fn placed(rel: &Arc<InRel>) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
     match &rel.view {
         // A source made on lookup numbers only the rows looked up so far; the relation it is bound by holds every pair
-        // (a layered axis's, its tape values' too, decision 0431 §8).
-        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block().filter(|b| b.rows as usize == rel.len() || view.src.made_on_lookup()).map(|b| (b, view.src.columns().len())),
+        // (a layered axis's, its tape values' too, decision 0431 §8). A stage reads the view whole: a source whose rows
+        // are made later makes them (`in_block_whole`; a batch's matcher relations, before any other read made them).
+        Some(view) if view.whole() && rel.ndead == 0 => view.src.in_block_whole().filter(|b| b.rows as usize == rel.len() || view.src.made_on_lookup()).map(|b| (b, view.src.columns().len())),
         _ => rel.in_block().map(|b| (b, rel.k)),
     }
 }

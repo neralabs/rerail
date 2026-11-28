@@ -2589,6 +2589,9 @@ impl Source for MadeRows {
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         self.done().and_then(|t| t.in_block())
     }
+    fn in_block_whole(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
+        self.target().in_block_whole()
+    }
     fn own_index(&self, _columns: &[usize]) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         self.done().and_then(|t| t.own_index(_columns))
     }

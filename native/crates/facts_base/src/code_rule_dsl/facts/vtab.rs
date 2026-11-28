@@ -563,6 +563,12 @@ pub trait Source: Send + Sync {
     fn in_block(&self) -> Option<super::rows::InBlock> {
         None
     }
+    /// `in_block`, for a reader about to read every row (the device's stage over a whole view): a source whose rows are
+    /// made later (a batch's documents, decision 0494) makes them now, the whole read the reader does, where
+    /// `in_block` answers `None` until another read has made them.
+    fn in_block_whole(&self) -> Option<super::rows::InBlock> {
+        self.in_block()
+    }
     /// Its own index on `columns` (decision 0325 step 5), where the source holds its rows to be probed so (`held`):
     /// found or built in its block, its number with the relation it indexes. A probe reads a bucket's rows, candidates
     /// whose key it checks. `None` by default: a source answers its lookups, and a whole one in a block is given an

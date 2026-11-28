@@ -7095,6 +7095,12 @@ impl crate::code_rule_dsl::facts::vtab::Source for Derived {
             None => self.0.in_block(),
         }
     }
+    fn in_block_whole(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
+        match &self.0.view {
+            Some(v) if self.2.is_none() && self.0.ndead == 0 && v.whole() && v.eqs.is_empty() && v.identity() => v.src.in_block_whole(),
+            _ => self.in_block(),
+        }
+    }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
         match &self.0.view {
