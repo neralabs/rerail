@@ -1,6 +1,6 @@
 # A damaged library rule or rule setting costs only itself
 
-For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 73c17644a7. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 7a2cdf4ac1. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #1222](https://github.com/neralabs/rerail/pull/1222), head 73c
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 696 lines in 17 files: 465 ship, 231 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
+| 850 lines in 17 files: 575 ship, 275 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -33,7 +33,7 @@ Found on 28 November 2026 through the built CLI, a real daemon and the Claude Co
 1. **Read first**, 10 min: `rule-configuration.ts`: `readSettings`, `#unreadOptionsOf`, `optionsText`, `readRows`. Can a configuration that reads get another rule set or signature than at `main`?
 2. 10 min: `rule-library.ts`, `rule-quarantine.ts`, `rule-bootstrap.ts`, `packs-calibrate.ts`, `repository-operations.ts`, `show-me.ts`, `rule-approval-cli.ts`: the other readers.
 
-**Then skim**, 8 min: Ten cases change one stored text by a byte and read through each reader: the library, the configuration, the export, approve, calibrate, the Rules page, show-me.
+**Then skim**, 8 min: Twelve cases change one stored text by a byte and read through each reader: the library, the configuration, the export, approve, calibrate, the Rules page, show-me.
 
 ## 4. Risk against verification
 
@@ -71,14 +71,14 @@ One change, low risk: a mistake quarantines one more row, or names one twice. St
 
 **What does a setting whose options are no JSON give its rule?**
 
-**We chose** a `configError`: the rule runs nowhere until its options are set again, as with options it no longer declares. **Would change our mind:** A maintainer wanting the rule to keep steering with its default options.
+**We chose** a `configError`: the rule runs nowhere until a change sets its options; a mode change alone keeps it so. **Would change our mind:** A maintainer wanting the rule to keep steering with its default options.
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
 | A `configError`, the setting's other fields kept **(chosen)** | The Rules page says why; every other rule runs. | That rule steers nothing until a person sets its options. | Nothing a person had at `main`: no rule ran there. |
-| Run it with its default options | It keeps steering. | Not as the person set it. | Options that narrowed the rule are lost silently. |
+| Run it with its default options, now or after any setting change | It keeps steering. | Not as the person set it. | Options that narrowed the rule are lost silently. |
 
-**Evidence.** The configuration cases: the damaged setting's rule carries the reason, keeps its mode, and runs again once its options are written.
+**Evidence.** The configuration cases: the damaged setting's rule carries the reason, keeps its mode, and runs again once its options are written. The settings API case: a mode change keeps the options as stored; `config: null` writes them and the rule runs.
 
 </details>
 
