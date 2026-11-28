@@ -1287,7 +1287,8 @@ pub fn tier2_loop_reads(x: &Input<'_>) -> Result<(String, Option<u32>), String> 
     }
     let out = loop_text(x, false)?;
     let split = loop_text(x, true)?;
-    Ok((out + &step_of(&split)?, None))
+    let phases = phases_of(&out, &split)?;
+    Ok((out + &step_of(&split)? + &phases, None))
 }
 
 /// The walk a record at a time (`split`'s `run_range`) as `run_step`, with its places' constants: its return places
@@ -1315,6 +1316,39 @@ fn step_of(split: &str) -> Result<String, String> {
         konst("CONT")?,
         konst("CYCLE")?
     ))
+}
+
+/// Tier 2 as phases (decision 0726): the phases' text, after the compiler's check that the split loop's levels are
+/// facts of the records: every push of a return place is in the arm of a byte the tier's `bracket` opens with, and
+/// every pop in the arm of one it closes with (an empty container's closer, a neighbour's fact, pops nothing). Else
+/// the phases' P1 could not know the levels from the records alone, and the grammar is refused, naming the byte.
+fn phases_of(tier: &str, split: &str) -> Result<String, String> {
+    let why = |w: String| format!("tier 2 as phases: {w}");
+    let (br, _) = fn_text(tier, "fn bracket(b: u8)").ok_or_else(|| why("no bracket".into()))?;
+    let mut roles: Vec<(u8, bool)> = Vec::new();
+    for l in br.lines() {
+        let l = l.trim();
+        if let Some((pat, role)) = l.split_once(" => Some((") {
+            let byte = pat.strip_prefix("0x").and_then(|b| u8::from_str_radix(b, 16).ok()).ok_or_else(|| why(format!("a bracket's byte: {l}")))?;
+            roles.push((byte, role.contains("true")));
+        }
+    }
+    let (body, _) = fn_text(split, "pub unsafe fn run_range<D: Out>(").ok_or_else(|| why("no split loop".into()))?;
+    let mut arm: Option<u8> = None;
+    for l in body.lines() {
+        let t = l.trim();
+        if let Some(pat) = t.strip_suffix(" => {") {
+            arm = pat.strip_prefix("0x").and_then(|b| u8::from_str_radix(b, 16).ok());
+        }
+        let (push, pop) = (t.starts_with("ret[depth] = "), t == "depth -= 1;");
+        if push || pop {
+            let b = arm.ok_or_else(|| why(format!("a {} in no byte's arm", if push { "push" } else { "pop" })))?;
+            if !roles.contains(&(b, push)) {
+                return Err(why(format!("byte 0x{b:02x} {} a level in one place but is not a level's {}: its records' levels depend on the place", if push { "opens" } else { "closes" }, if push { "opener" } else { "closer" })));
+            }
+        }
+    }
+    Ok(include_str!("one_loop/phases.in.rs").to_string())
 }
 
 /// A function of `text` by its head: its text to its braces' close, and the doc comment above it.
@@ -1582,5 +1616,19 @@ pub(super) fn drop_uncalled(mut out: String, parts: &[String]) -> String {
             }
             return out;
         }
+    }
+}
+
+#[cfg(test)]
+mod phases_check {
+    /// The phases' check: a push in an opener's arm and a pop in a closer's pass; a push in another byte's arm (its
+    /// level a fact of the place, not of the record) is refused, naming the byte.
+    #[test]
+    fn a_level_must_be_a_fact_of_its_record() {
+        let tier = "fn bracket(b: u8) -> Option<(u8, bool)> {\nmatch b {\n0x5b => Some((0, true)),\n0x5d => Some((0, false)),\n_ => None,\n}\n}\n";
+        let split = |byte: &str| format!("pub unsafe fn run_range<D: Out>(src: &[u8]) -> Stop {{\nmatch st {{\n0 => {{\nmatch b {{\n{byte} => {{\nret[depth] = 3;\ndepth += 1;\n}}\n0x5d => {{\ndepth -= 1;\n}}\n}}\n}}\n}}\n}}\n");
+        assert!(super::phases_of(tier, &split("0x5b")).is_ok());
+        let e = super::phases_of(tier, &split("0x22")).unwrap_err();
+        assert!(e.contains("0x22") && e.contains("depend on the place"), "{e}");
     }
 }
