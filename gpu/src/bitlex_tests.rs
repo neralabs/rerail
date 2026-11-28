@@ -325,6 +325,11 @@ fn json_batch_timings() {
     let lang = json_lang();
     let cores = std::thread::available_parallelism().map_or(8, |n| n.get());
     eprintln!("{}, {} groups; the CPU's {cores} threads", crate::device::backend(), groups());
+    // Each kernel's most threads a group (Metal's: below 1,024, its registers bound how many a core holds).
+    for (prog, name) in [(p1, "json_t1_lex"), (p, "json_t2_tokens"), (p, "json_t2_run_scan"), (p, "json_t2_run_walk"), (p, "json_t2_run_write"), (p, "json_t2_z_count"), (p, "json_t2_z_write")] {
+        let f = prog.function(name).unwrap();
+        eprintln!("  {name}: at most {:?} threads a group, {} bytes of threadgroup memory", f.max_threads_per_group(), f.threadgroup_bytes());
+    }
     for (bytes, counts) in [(2usize << 20, &[1usize, 2, 4, 8, 16][..]), (64 << 10, &[32, 128, 256][..])] {
         let most = *counts.last().unwrap();
         let fs: Vec<Vec<u8>> = (0..most).map(|k| json_of(bytes, 1000 * k)).collect();
@@ -340,7 +345,12 @@ fn json_batch_timings() {
         let mut kept: Vec<Kept> = (0..most).map(|_| Kept::default()).collect();
         let mut ms: Vec<Writer> = (0..most).map(|_| Writer::empty()).collect();
         let mut cpu_writers: Vec<Writer> = (0..cores).map(|_| Writer::empty()).collect();
+        // `RERAIL_BATCH=COUNT,KB`: that batch alone (a trace's).
+        let only: Option<(usize, usize)> = std::env::var("RERAIL_BATCH").ok().and_then(|v| v.split_once(',').map(|(c, k)| (c.parse().unwrap(), k.parse().unwrap())));
         for &count in counts {
+            if only.is_some_and(|(c, k)| c != count || k != bytes >> 10) {
+                continue;
+            }
             let total: usize = fs[..count].iter().map(Vec::len).sum();
             let (mut wall, mut gpu) = (std::time::Duration::MAX, f64::MAX);
             for _ in 0..3 {
@@ -386,6 +396,49 @@ fn json_batch_timings() {
             let held: usize = kept[..count].iter().map(Kept::held).sum();
             eprintln!("  {count:>4} files of {:>4} KB: the device {wall:>10.2?} wall ({:>7.0} MB/s), {:>6.2} ms GPU ({:>7.0} MB/s); the CPU's {} threads {cpu:>10.2?} ({:>6.0} MB/s); device buffers held {} MB", bytes >> 10, mbs(wall), gpu * 1e3, total as f64 / gpu / 1e6, cores.min(count), mbs(cpu), held >> 20);
         }
+    }
+}
+
+/// What finding better LZ4 matches would give 16z (the question of a suffix array or the matrix units finding them on
+/// the device): the 2 MB file's tape stored as 16z with the device's greedy parse (`lz4_greedy`), LZ4's fast parse,
+/// and LZ4's HC parse at levels 9 and 12 (12 the optimal parse: the most any match finder could give), each piece
+/// stored as the encoder gives it where that saves a tenth. Its bytes and the CPU's time. Run by name: `--ignored
+/// json_16z_match_finders`.
+#[test]
+#[ignore]
+fn json_16z_match_finders() {
+    let lang = json_lang();
+    let f = json_of(2 << 20, 0);
+    let mut w = json_writer(&lang, &f);
+    rerail_json_aot::parse(&rerail_json_aot::padded(&f), f.len(), &mut w).unwrap();
+    let t = w.finish().unwrap().tape.as_bytes().to_vec();
+    let lz4 = |level: i32| {
+        move |s: &[u8]| -> Vec<u8> {
+            let cap = unsafe { lz4_sys::LZ4_compressBound(s.len() as i32) } as usize;
+            let mut out = vec![0u8; cap];
+            // SAFETY: `out` holds the bound's bytes.
+            let n = unsafe {
+                if level == 0 {
+                    lz4_sys::LZ4_compress_default(s.as_ptr().cast(), out.as_mut_ptr().cast(), s.len() as i32, cap as i32)
+                } else {
+                    lz4_sys::LZ4_compress_HC(s.as_ptr().cast(), out.as_mut_ptr().cast(), s.len() as i32, cap as i32, level)
+                }
+            };
+            out.truncate(n as usize);
+            out
+        }
+    };
+    eprintln!("a tape of {} bytes ({} bytes of JSON) as 16z:", t.len(), f.len());
+    let encoders: [(&str, Box<dyn Fn(&[u8]) -> Vec<u8>>); 4] = [("the device's greedy parse", Box::new(rerail_tape_format::f16::lz4_greedy)), ("LZ4's fast parse", Box::new(lz4(0))), ("LZ4 HC, level 9", Box::new(lz4(9))), ("LZ4 HC, level 12 (optimal)", Box::new(lz4(12)))];
+    for (name, e) in &encoders {
+        let t0 = std::time::Instant::now();
+        let z = rerail_tape_format::f16::z_of(&t, e.as_ref()).unwrap();
+        eprintln!("  {name:<28} {:>8} bytes ({:.1}% of the tape), {:?}", z.len(), 100.0 * z.len() as f64 / t.len() as f64, t0.elapsed());
+    }
+    // For reference: the whole tape as one LZ4 stream (matches across the pieces; no piece read on its own).
+    for (name, level) in [("one stream, LZ4's fast parse", 0), ("one stream, LZ4 HC level 12", 12)] {
+        let z = lz4(level)(&t);
+        eprintln!("  {name:<28} {:>8} bytes ({:.1}% of the tape)", z.len(), 100.0 * z.len() as f64 / t.len() as f64);
     }
 }
 

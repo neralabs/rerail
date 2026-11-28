@@ -343,6 +343,73 @@ its wall time is 30 times the CPU's: the buffers sized by the length alone (abou
 mapped each run. The work to close it: buffers sized by what tier 1 finds, kept from file to file as the CPU's
 writer is, and tier 2's walk (5.5 to 19 ms, most of the GPU time) made cheaper.
 
+### 11. Rooms, wall time, the GPU's counters, batches, and 16z's matches (2026-11-27)
+
+The user, after §10: size for the average case times two and a bit, not the worst; keep the buffers (pinned) and
+never zero them; past a room, bail with the memory actually needed and run again. Then find what the wall time is,
+look at what the GPU does with Instruments, fill the GPU, and look at suffix arrays and the matrix units for 16z.
+
+**The wall time** was the host. Each run made about 1 GB of new buffers. Tier 2's pool alone, 537 MB, was built on
+the host and copied in, and the writer's 338 MB region was built and copied twice: 240–300 ms of a 270–360 ms wall.
+
+- The buffers are kept from file to file (`Kept`), grown by a quarter only when a file needs more, never zeroed.
+  A run writes its header and layout. The writer's region gets the state and each part's bytes in use
+  (`device_region_into`), not its room, since the writer's ops write before they read. The tests poison every new
+  buffer with 0xa5 (`RERAIL_T2_POISON`) and stay byte-exact.
+- The trees' arrivals exchange a per-run epoch into a buffer that only ever holds epochs (`ukl_run_meet`,
+  `ukl_lex_meet`): the second arrival finds it there, so no counter is reset between runs.
+- The rooms are twice the average so far and a bit: tier 1's records (0.3 a byte before any file), tier 2's pool
+  (half a word a record and 350 a run, scaled by what runs used). Tier 1 past its room says the records it needs
+  (`UKL_LEX_SHORT`) and writes nothing; tier 2's pool counts the words it took past its room. The host runs again
+  with what they said. The writes test starts from averages far too small and checks the bails happen.
+- The node room is the records plus the tokens' nodes, summed by the token pass a SIMD group at a time (it had run
+  one thread a group), and checked on the device.
+- One writer is kept too. With all of it, bytes to 16z on the M3 Max: 8.0 ms of wall, 15 µs of it the host's
+  before tier 2.
+
+**The counters.** The M3 Max and the M5 refuse Instruments' GPU counters ("Selected counter profile is not
+supported"); the M1 Max gives them. One 2 MB file ran at 2–6% compute occupancy, 3–6% ALU, under 10% bandwidth.
+The last 5.3 ms of tier 2's 14.5 ms ran at 0.6% occupancy: FIN set three device-wide atomic ORs a node into the
+document's presence words, the same few words for every block. A block now gathers its bits in registers and ORs
+each word once: FIN 2.8 → 1.8 ms at 16 records a chunk, 2.5 → 0.8 at 64, 2.0 → 0.5 at 256 (M3 Max).
+
+**Batches.** The device's queue has concurrent compute encoders and barriers (`set_concurrent`, `barrier`), and
+`batch` launches each phase of every file, then a barrier. Each file keeps its own buffers.
+`json_batch_gives_each_files_tape` checks each file's tape and 16z, twice over kept buffers. On the M3 Max
+(`json_batch_timings`), against Bitlex's CPU path to 16z on every core, a file a thread, each thread's writer kept:
+
+| files | the device, wall | GPU | the CPU's cores |
+|---|---|---|---|
+| 1 of 2 MB | 241–320 MB/s | 292–353 MB/s | 235–243 MB/s (1 thread) |
+| 2 of 2 MB | 492 MB/s | 542 MB/s | 453 MB/s |
+| 8 of 2 MB | 698–745 MB/s | 772–813 MB/s | 1,196–1,321 MB/s |
+| 16 of 2 MB | 765 MB/s | 812 MB/s | (one run of 183 MB/s, an outlier, not rerun) |
+| 256 of 64 KB | 448–522 MB/s | 552–652 MB/s | 1,454–2,156 MB/s |
+
+The device saturates near 800 MB/s from 8 files on; 256 to 2,048 groups a launch change nothing. The counters with
+8 files (M1 Max) say why. Occupancy stays at 14–18%, though every kernel allows 1,024 threads a group, so registers
+are not the bound. The walks (pass 2's count and write) are latency-bound: one lane a chunk, serial and divergent,
+8% ALU. One stretch runs at 58% MMU limiter and 78% write bandwidth: scattered writes over about 650 MB of buffers a
+file miss the TLB. Those are the shape of tier 2, not its launch: the next gains are a walk data-parallel by record,
+not by chunk, and buffers a few times the tape, not a hundred.
+
+**16z's matches** (`json_16z_match_finders`, the 2 MB file's tape of 2,678,063 bytes):
+
+| encoder | 16z bytes | CPU |
+|---|---|---|
+| the device's greedy parse (`lz4_greedy`) | 467,904 | 2.6 ms |
+| LZ4's fast parse | 467,668 | 1.0 ms |
+| LZ4 HC, level 9 | 452,500 | 7.7 ms |
+| LZ4 HC, level 12 (the optimal parse) | 451,748 | 32.6 ms |
+| one LZ4 stream for the whole tape, fast | 294,901 | |
+| one LZ4 stream for the whole tape, HC 12 | 270,541 | |
+
+The best a match finder could do within a piece, a suffix array or the matrix units among them, is 3.5%. Matches
+across pieces are worth 37%. So a suffix array pays only over bytes shared by the pieces (a dictionary for the
+tape, built once and searched by every piece at once), and that is a change to 16z's format. The matrix units
+multiply small float matrices; finding byte matches in them would spend a 256-wide one-hot product on each
+comparison a SIMD group's ballot makes in one instruction, so they are not a fit.
+
 ## Tests
 
 `rerail-json-aot`'s `tier2_entries_are_the_serial_walks`: 410 files (the stage-1 cases and `trees()`: lists of
