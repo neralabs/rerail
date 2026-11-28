@@ -140,7 +140,8 @@ describe("repository start state", () => {
     const again = recorder("terminal");
     const restarted = await startRerail(main, again, started(databasePath));
     expect(restarted).toMatchObject({ previous: "stopped", setUpRan: false, ruleCount: complexityRuleCount - 1 });
-    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount - 1} rules are on, as you left them.`]);
+    // It ends on the dashboard's link, as set-up does.
+    expect(again.lines).toEqual([`● Rerail is on in acme-web. ${complexityRuleCount - 1} rules are on, as you left them.`, "  http://127.0.0.1:4737/#rules"]);
     expect(attachedPacks(main, databasePath)).toEqual(["complexity@src"]);
     // The session-start note counts the rules on in this checkout, as the person left them.
     expect(sessionNoteRules(main, databasePath)).toEqual({ setUp: true, ruleCount: complexityRuleCount - 1 });

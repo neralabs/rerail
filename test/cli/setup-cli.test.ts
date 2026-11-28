@@ -1165,9 +1165,28 @@ describe("the daemon set-up links the dashboard to", () => {
     daemonStop.lookup = foundDaemon(await realpath(packageRoot), older);
     daemonStop.beforeStopped = async () => undefined;
     daemonStop.starts = [];
-    const link = await setupEnvironment(context, port).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false);
+    const link = await setupEnvironment(context, port).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false, "active");
     expect(daemonStop.machines).toHaveLength(starts.length);
     expect(daemonStop.starts).toEqual(starts);
     expect(link).toMatchObject({ url: expect.stringMatching(new RegExp(`^http://127\\.0\\.0\\.1:${port ?? 4737}/.*#rules$`, "u")), linkOnly: true });
+  });
+
+  // `rerail start` in a repository set up before keeps the daemon that answers, one of another package too, which a
+  // coding agent's next hook replaces; set-up replaces that one. Both replace one of a release before the engine's
+  // proof, which Rerail sends nothing, on the port it had.
+  it.each([
+    ["a start keeps one of another package", "running", false, []],
+    ["set-up replaces one of another package", "active", false, [4737]],
+    ["a start replaces one of Rerail 0.1.4 or earlier", "running", true, [4737]],
+  ] as const)("%s", async (_what, daemon, older, starts) => {
+    const { context } = await fixture();
+    vi.stubEnv("RERAIL_AUTOSTART", "1");
+    daemonStop.lookup = foundDaemon("/nowhere/rerail", older);
+    daemonStop.beforeStopped = async () => undefined;
+    daemonStop.starts = [];
+    const link = await setupEnvironment(context).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false, daemon);
+    expect(daemonStop.machines).toHaveLength(starts.length);
+    expect(daemonStop.starts).toEqual(starts);
+    expect(link).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:4737\/.*#rules$/u), linkOnly: true });
   });
 });

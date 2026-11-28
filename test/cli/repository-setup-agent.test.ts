@@ -122,7 +122,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const started = agentIo();
     expect(await startRerail(setup.repo, started, { databasePath: setup.databasePath, environment })).toMatchObject({ setUpRan: false, status: "started" });
     expect(started.text()).not.toContain("Start Rerail in acme-api with");
-    expect(started.text()).toMatch(/^● Rerail is on in acme-api\. .*, as you left them\.$/u);
+    expect(started.text()).toMatch(/^● Rerail is on in acme-api\. .*, as you left them\.\n {2}http:\/\/127\.0\.0\.1:4737\/#rules$/u);
     expect(selected(setup)).toEqual(["complexity"]);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
   });
@@ -141,7 +141,7 @@ describe("set-up in the coding agent's lane", { timeout: SETUP_TIMEOUT_MS }, () 
     const io = agentIo();
     const report = await startRerail(setup.repo, io, { databasePath: setup.databasePath, environment: fakeSetupEnvironment() });
     expect(report).toMatchObject({ previous: "stopped", setUpRan: false, status: "started", cancelled: false });
-    expect(io.text()).toMatch(/^● Rerail is on in acme-api\. .*, as you left them\.$/u);
+    expect(io.text()).toMatch(/^● Rerail is on in acme-api\. .*, as you left them\.\n {2}http:\/\/127\.0\.0\.1:4737\/#rules$/u);
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     const reader = openRerailDatabase(setup.databasePath, { readonly: true });
     try {

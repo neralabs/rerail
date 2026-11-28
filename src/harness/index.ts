@@ -8,7 +8,7 @@ export { bindSteerReceipt, type HookInput, type HookOptions, type HookOutput, ho
 export { olderNodeStep, withPendingFileLock } from "./hook-adapter.js";
 export { launcherRecordedNode } from "./launcher-node.js";
 export { hookFailureLines } from "./hook-failures.js";
-export { NativeSessionClient } from "./native-session-client.js";
+export { createNativeSession, NativeSessionClient } from "./native-session-client.js";
 export { MANAGED_SKILL_MARKER } from "./rerail-command-files.js";
 export { registerHostCommands, type HostCommandContext, type HostCommandHost } from "./host-commands.js";
 export { RERAIL_COMMANDS } from "./rerail-commands.js";

@@ -75,7 +75,7 @@ import { pinnedNodePath } from "../setup/node-path.js";
 import { setupPreflight, wslNote } from "../setup/preflight.js";
 import { addLauncherToPath, describeLauncherPath, LAUNCHER_PATH_FILE, launcherPathMarker, recordLauncherPath, removeLauncherFromPath, type LauncherPathChange } from "../setup/shell-path.js";
 import { TerminalInput } from "./setup-menu.js";
-import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
+import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardDaemon, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
 import { notRunLine, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
@@ -1037,22 +1037,32 @@ export function noBrowserReason(env: NodeJS.ProcessEnv, platform: NodeJS.Platfor
 const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
 
 /**
- * The daemon of the active install; it serves every repository. A running daemon from another package (an older
- * version), of a release before the engine's proof wherever it ran from ({@link daemonServesPackage}), or on another
- * port than `port` names, is replaced, on the port it had unless `port` names one. A daemon that does not answer is
- * never killed here; its pid may belong to another process by now, so `startDaemon`'s refusal (with how to stop it) is
- * the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's health check sets `0`) uses only a
- * daemon already running from this install, and starts or replaces none.
+ * The daemon a dashboard link is of; it serves every repository. A running daemon `daemon` does not keep
+ * ({@link KEPT_DAEMON}) is replaced by the active install's, on the port it had unless `port` names one, and where none
+ * runs the active install's starts. A daemon that does not answer is never killed here; its pid may belong to another
+ * process by now, so `startDaemon`'s refusal (with how to stop it) is the answer. `RERAIL_AUTOSTART=0` or `false`
+ * ({@link autostartOff}; the updater's health check sets `0`) uses only a daemon it keeps, and starts or replaces none.
  */
-async function activeDaemon(context: SetupContext, port: number | undefined): Promise<DaemonState> {
+async function dashboardDaemon(context: SetupContext, port: number | undefined, daemon: DashboardDaemon): Promise<DaemonState> {
   const packageRoot = await activePackageRoot(context);
   const lookup = await lookupDaemon(context.home);
-  const kept = await keptDaemon(lookup, packageRoot, port);
+  const kept = await KEPT_DAEMON[daemon](lookup, packageRoot, port);
   if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   const stopped = await stoppedPort(context.home, lookup);
   return await startActiveDaemon(context.home, packageRoot, port ?? stopped);
 }
+
+/**
+ * The running daemon a dashboard link keeps, of what `lookup` found ({@link DashboardDaemon}). `active`: one running
+ * from `packageRoot`, of a release with the engine's proof, on `port` when one is named ({@link keptDaemon}). `running`:
+ * any that answers, whatever its package or port, but one of a release before the engine's proof ({@link OlderDaemon}),
+ * which Rerail sends nothing and `rerail daemon start` replaces.
+ */
+const KEPT_DAEMON: Readonly<Record<DashboardDaemon, (lookup: DaemonLookup, packageRoot: string, port: number | undefined) => Promise<DaemonState | undefined>>> = {
+  active: keptDaemon,
+  running: async lookup => (lookup.status === "running" ? lookup.state : undefined),
+};
 
 /** The version directory of the active install, not the current link: the daemon and its SQLite binding belong to it. */
 async function activePackageRoot(context: SetupContext): Promise<string> {
@@ -1241,13 +1251,13 @@ export function setupEnvironment(context: SetupContext, port?: number): SetupEnv
       const consent = { sessions: { approvedAt: new Date().toISOString() } };
       await writeFile(path, `${JSON.stringify(consent, null, 2)}\n`, { mode: 0o600 });
     },
-    async dashboard(scope, page, open): Promise<DashboardLink> {
+    async dashboard(scope, page, open, daemon): Promise<DashboardLink> {
       let origin: string;
       try {
-        origin = (await activeDaemon(context, port)).url;
+        origin = (await dashboardDaemon(context, port, daemon)).url;
       } catch (error) {
         // Rerail may be on already; the link works once a session brings the daemon up.
-        const reason = `the dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
+        const reason = `The dashboard did not start: ${error instanceof Error ? error.message : String(error)}`;
         return { url: pageUrl(`http://127.0.0.1:${port ?? DEFAULT_DAEMON_PORT}/`, scope, page), browserOpened: false, noBrowserReason: reason };
       }
       const url = pageUrl(origin, scope, page);

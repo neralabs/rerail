@@ -772,11 +772,8 @@ async function runStartCommand(args: readonly string[], context: SetupContext, i
   }
   const carried = carriedFlags(({ flag }) => flags.has(flag));
   const report = await startRerail(workspace, io, startOptions(args, carried, options, context, { lane: io.lane, workspace }));
-  // The set-up's own summary ends on the dashboard link; ending its questions early is a failure.
-  if (report.setUpRan) return report.cancelled ? 1 : 0;
-  const page = await readRulesDashboard({ cwd: workspace });
-  if (page.url !== null) process.stdout.write(`  ${page.url}\n`);
-  return 0;
+  // Ending the set-up's questions early is a failure.
+  return report.setUpRan && report.cancelled ? 1 : 0;
 }
 
 /** What `rerail start` passes to `startRerail`: the answers given so far, and how the set-up may ask for the rest. */

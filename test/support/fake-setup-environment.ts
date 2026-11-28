@@ -4,7 +4,7 @@ import type { RulesDashboardScope } from "../../src/api/index.js";
 import { DatabaseApiStores } from "../../src/api/index.js";
 import type { Harness } from "../../src/setup/index.js";
 import type { ApiCaller } from "../../src/engine/index.js";
-import type { DashboardPage, SetupEnvironment } from "../../src/cli/index.js";
+import type { DashboardDaemon, DashboardPage, SetupEnvironment } from "../../src/cli/index.js";
 import type { DashboardLink } from "../../src/harness/index.js";
 import type { PackStore } from "../../src/setup/index.js";
 import { directoryPackStore } from "./directory-pack-store.js";
@@ -12,8 +12,8 @@ import { directoryPackStore } from "./directory-pack-store.js";
 export interface FakeSetupEnvironment extends SetupEnvironment {
   /** Every `connect` call that connects a coding agent, in order. */
   readonly connections: Array<{ agents: readonly Harness[]; repoRoot: string | undefined }>;
-  /** Every dashboard page set-up asked for, in order, with the checkout it is scoped to. */
-  readonly pages: Array<{ repoRoot: string | null; repositoryKey: string; page: DashboardPage; open: boolean }>;
+  /** Every dashboard page set-up asked for, in order, with the checkout it is scoped to and the daemon it keeps. */
+  readonly pages: Array<{ repoRoot: string | null; repositoryKey: string; page: DashboardPage; open: boolean; daemon: DashboardDaemon }>;
 }
 
 /** Records what set-up asks of the machine instead of registering coding agents or starting a daemon. */
@@ -34,6 +34,8 @@ export function fakeSetupEnvironment(options: {
   onPage?: (scope: RulesDashboardScope, page: DashboardPage) => void | Promise<void>;
   /** Where rule packs come from: this repository's TypeScript pack alone by default, as if no other were published. */
   packs?: PackStore;
+  /** Why no daemon could be had for a link, as `setupEnvironment` says it in `noBrowserReason`; none by default. */
+  noDaemon?: string;
 } = {}): FakeSetupEnvironment {
   let approved = options.sessionsApproved ?? true;
   const nodeHookFallback = options.nodeHookFallback === true;
@@ -72,10 +74,11 @@ export function fakeSetupEnvironment(options: {
     async setSessionsApproved(answer) {
       approved = answer;
     },
-    async dashboard(scope, page, open): Promise<DashboardLink> {
-      pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open });
+    async dashboard(scope, page, open, daemon): Promise<DashboardLink> {
+      pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open, daemon });
       await options.onPage?.(scope, page);
       const url = `http://127.0.0.1:4737/#${page === "rules" ? "rules" : "rule-packs?review=1"}`;
+      if (options.noDaemon !== undefined) return { url, browserOpened: false, noBrowserReason: options.noDaemon };
       if (!open) return { url, browserOpened: false, linkOnly: true };
       return options.browser === false
         ? { url, browserOpened: false, noBrowserReason: "this looks like a remote session" }

@@ -109,6 +109,11 @@ export interface RerailDaemonOptions {
   publicHosts?: readonly string[];
   /** `0` asks the OS for a free port; omitted, the remembered port, else the default one, unless another process holds it. */
   port?: number;
+  /**
+   * The port a daemon started in place of another tries first: the one that daemon held, so a dashboard link shown for
+   * it still answers. When it cannot be had, the start goes on as `port` says; an explicit `port` other than 0 wins.
+   */
+  preferredPort?: number;
   /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
   portFile?: string;
   /**
@@ -264,23 +269,52 @@ async function listen(server: DaemonServer, port: number, host: string): Promise
   await listening.promise;
 }
 
+/** The ports a start may listen on: the one asked for (`port`), the one to try first, and the one the home remembers. */
+interface ListenPorts {
+  port: number | undefined;
+  preferred: number | undefined;
+  remembered: number | undefined;
+}
+
 /**
- * An explicit port is bound or fails. Without one the daemon prefers the port it last listened on, then the default
- * port, and when those cannot be had, takes a free port instead; clients find it through the state file, never by the
- * port number. Held (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across
- * restarts) both move on; the remembered port moves on whatever its error, since only a deleted file would undo it.
+ * An explicit port other than 0 is bound or fails. Otherwise the daemon first tries the port of the daemon it was
+ * started in place of (`preferred`), then, without `port`, the port it last listened on and the default port, and when
+ * those cannot be had, takes a free port instead; clients find it through the state file, never by the port number. Held
+ * (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across restarts) both move
+ * on; the preferred and remembered ports move on whatever their error, since each is only a wish.
  */
-async function listenPreferred(server: DaemonServer, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
-  if (port !== undefined) return await listen(server, port, host);
-  for (const preferred of new Set([remembered ?? DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_PORT])) {
-    try {
-      return await listen(server, preferred, host);
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      if (preferred !== remembered && code !== "EADDRINUSE" && code !== "EACCES") throw error;
-    }
+async function listenPreferred(server: DaemonServer, ports: ListenPorts, host: string): Promise<void> {
+  if (ports.port !== undefined && ports.port !== 0) return await listen(server, ports.port, host);
+  for (const candidate of candidatePorts(ports)) {
+    if (await listenedOn(server, candidate, ports, host)) return;
   }
   await listen(server, 0, host);
+}
+
+/**
+ * Whether the server now listens on `candidate`; false when the start moves on to the next port. A wish (the preferred
+ * or the remembered port) moves on whatever its error; the default port only when it is held or refused.
+ */
+async function listenedOn(server: DaemonServer, candidate: number, ports: ListenPorts, host: string): Promise<boolean> {
+  try {
+    await listen(server, candidate, host);
+    return true;
+  } catch (error) {
+    if (candidate !== ports.preferred && candidate !== ports.remembered && !portTaken(error)) throw error;
+    return false;
+  }
+}
+
+/** The ports `listenPreferred` tries in order before a free one: the preferred port, then, without `port` 0, the remembered and the default. */
+function candidatePorts({ port, preferred, remembered }: ListenPorts): Set<number> {
+  const fallback = port === 0 ? [] : [remembered ?? DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_PORT];
+  return new Set(preferred === undefined ? fallback : [preferred, ...fallback]);
+}
+
+/** Whether a listen failed because the port is held (EADDRINUSE) or refused (EACCES), which moves a start on. */
+function portTaken(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return code === "EADDRINUSE" || code === "EACCES";
 }
 
 async function readRememberedPort(portFile: string): Promise<number | undefined> {
@@ -703,7 +737,7 @@ export class RerailDaemon {
       const server = createDaemonServer(options, app);
       started.server = server;
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
-      await listenPreferred(server, options.port, remembered, bindHost);
+      await listenPreferred(server, { port: options.port, preferred: options.preferredPort, remembered }, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
@@ -1059,6 +1093,8 @@ interface DaemonArguments {
   host: string;
   publicHosts: readonly string[];
   port?: number;
+  /** `--prefer-port`: the port of the daemon this one starts in place of ({@link RerailDaemonOptions.preferredPort}). */
+  preferredPort?: number;
   dev: boolean;
   stateFile?: string;
   /** The checkout native sessions address (`--workspace-root`); the folder it runs in when absent. */
@@ -1470,24 +1506,33 @@ function certificateFingerprint(pem: string): string {
 function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { flags, options } = parseArguments(
     argv,
-    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--workspace-root", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
+    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--prefer-port", "--state-file", "--workspace-root", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     (argument) => `Unknown daemon argument: ${argument}`,
   );
   const host = options.get("--host") ?? DEFAULT_DAEMON_HOST;
   assertHostBindable(host, flags.has("--allow-remote"));
   const publicHosts = parsePublicHosts(options.get("--public-host"));
   const { tls } = parseDaemonTransport({ flags, options }, host, publicHosts);
-  const port = options.get("--port");
   const stateFile = options.get("--state-file");
   const workspaceRoot = options.get("--workspace-root");
   return {
     host,
     publicHosts,
-    ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...portArguments(options),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
     ...(workspaceRoot === undefined ? {} : { workspaceRoot: resolve(workspaceRoot) }),
     ...(tls === undefined ? {} : { tls }),
+  };
+}
+
+/** `--port` and `--prefer-port`, each where it was given. */
+function portArguments(options: ReadonlyMap<string, string>): Pick<DaemonArguments, "port" | "preferredPort"> {
+  const port = options.get("--port");
+  const preferred = options.get("--prefer-port");
+  return {
+    ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...(preferred === undefined ? {} : { preferredPort: parsePort(preferred) }),
   };
 }
 
@@ -1638,10 +1683,11 @@ function daemonPage(arguments_: DaemonArguments): { dev: boolean; uiRoot: string
   return { dev, uiRoot };
 }
 
-/** The daemon options its arguments set only when given: its port, its state file and its TLS material. */
-function optionalDaemonOptions(arguments_: DaemonArguments, tls: DaemonTlsMaterial | undefined): Pick<RerailDaemonOptions, "port" | "stateFile" | "tls"> {
+/** The daemon options its arguments set only when given: its port, the port it tries first, its state file and its TLS material. */
+function optionalDaemonOptions(arguments_: DaemonArguments, tls: DaemonTlsMaterial | undefined): Pick<RerailDaemonOptions, "port" | "preferredPort" | "stateFile" | "tls"> {
   return {
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
+    ...(arguments_.preferredPort === undefined ? {} : { preferredPort: arguments_.preferredPort }),
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
     ...(tls === undefined ? {} : { tls }),
   };
