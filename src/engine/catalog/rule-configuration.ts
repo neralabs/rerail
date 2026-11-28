@@ -160,6 +160,23 @@ export function setRuleSetting(db: Queries, setting: RuleSetting, now: number = 
   writeSetting(db, setting, now);
 }
 
+/**
+ * Store a setting's fields but its options over its row, whose stored options text stays as it is: a change that names
+ * no options over options that do not read (`ReadSetting.unread`) keeps them, so the rule keeps its `configError`.
+ */
+export function setRuleSettingKeepingOptions(db: Queries, setting: RuleSetting, now: number = Date.now()): void {
+  const { ownerKind, ownerId } = ownerColumns(setting.owner);
+  db.update(ruleSettings)
+    .set({ on: setting.on, mode: setting.mode, suppressions: setting.suppressions ?? null, origin: setting.origin ?? null, updatedAt: now })
+    .where(and(
+      eq(ruleSettings.ownerKind, ownerKind),
+      eq(ruleSettings.ownerId, ownerId),
+      eq(ruleSettings.folder, normalizeFolder(setting.folder)),
+      eq(ruleSettings.targetKind, setting.targetKind),
+      eq(ruleSettings.targetId, setting.targetId),
+    )).run();
+}
+
 export interface SetUpChoice {
   readonly packs: readonly { readonly packId: string; readonly folder: string }[];
   readonly rules?: readonly { readonly sourceKind: RuleSourceKind; readonly sourceId: string; readonly folder: string }[];

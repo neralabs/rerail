@@ -101,19 +101,25 @@ describe("rule settings: suppressions and config", () => {
     expect(await ruleView()).toMatchObject({ config: null });
   });
 
-  it("shows a rule whose setting's stored options are no JSON as not running, with why, and lets a change of its mode clear them", async () => {
+  it("shows a rule whose setting's stored options are no JSON as not running, with why, until a change writes its options", async () => {
     expect(await setting({ mode: "log", config: { option: "type" } })).toMatchObject({ status: 200 });
     // The closing brace gone, as a damaged file or a hand edit leaves it.
+    const stored = stores.database().$client.prepare("SELECT config_json FROM rule_settings WHERE target_id = ?").pluck();
     stores.database().$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ?").run('{"option":"type"', RULE);
     const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     try {
       expect(await ruleView()).toMatchObject({ mode: "log", config: null, configError: expect.stringMatching(/no JSON object/u) });
       expect((await app.request(`/api/library-rules`)).status).toBe(200);
+
+      // A change that names no options keeps them as stored, and the rule still runs nowhere.
+      expect(await setting({ mode: "steer" })).toMatchObject({ status: 200, body: { settings: [{ mode: "steer", config: null }] } });
+      expect(stored.get(RULE)).toBe('{"option":"type"');
+      expect(await ruleView()).toMatchObject({ mode: "steer", config: null, configError: expect.stringMatching(/no JSON object/u) });
     } finally {
       log.mockRestore();
     }
 
-    expect(await setting({ mode: "steer" })).toMatchObject({ status: 200, body: { settings: [{ mode: "steer", config: null }] } });
+    expect(await setting({ config: null })).toMatchObject({ status: 200, body: { settings: [{ mode: "steer", config: null }] } });
     expect(await ruleView()).toMatchObject({ mode: "steer", config: null, configError: null });
   });
 

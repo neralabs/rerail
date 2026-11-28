@@ -233,7 +233,7 @@ So `config` merges per option: a checkout that sets `{ "option": "type" }` keeps
 
 `repository_rules_get` reports what decided each field of every effective rule as `onSource`, `modeSource`, `suppressionsSource` and `configSource`. `configSource` names, per option, this checkout's or a containing checkout's setting, the repository's setting, the pack's starting value, or the rule's default.
 
-If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why. The rule runs nowhere: it is quarantined with that reason. So is a rule by Rerail whose setting's stored options are no JSON object (a damaged file or a hand edit) until they are set again; its other fields still apply, and `daemon.log` names the setting once.
+If a stored `config` no longer applies to the rule's document (a later release removed the option), `configError` says why. The rule runs nowhere: it is quarantined with that reason. So is a rule by Rerail whose setting's stored options are no JSON object (a damaged file or a hand edit), until a change names its options again (`config`, `null` included): a change of only its other fields keeps the damaged ones. Its other fields still apply, and `daemon.log` names the setting once.
 
 Conversation rules, in [internal testing](../README.md#internal-testing), resolve the same way for the folder the session started in.
 
