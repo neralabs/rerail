@@ -1,6 +1,6 @@
 # A damaged session event no longer fails its page or rules activity
 
-For [pull request #1218](https://github.com/neralabs/rerail/pull/1218), head 77ef0f2f69. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #1218](https://github.com/neralabs/rerail/pull/1218), head ac2556e1dd. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #1218](https://github.com/neralabs/rerail/pull/1218), head 77e
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 588 lines in 12 files: 293 ship, 295 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
+| 598 lines in 12 files: 302 ship, 296 are tests and text | Automated. No high-risk path in `REVIEW.md`; the reviewer may approve. | Nothing. No CI run at this head yet: not pushed. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -33,7 +33,7 @@ Found on 28 November 2026 through the built CLI and a real daemon on Linux x64, 
 1. **Read first**, 10 min: `session-store.ts`: `readPastDamage`, `steeringCount`, `gaps`, `steersByRule`, `hudRules`, `storedPayload`. Can a history whose texts all read get a figure other than at `main`?
 2. 6 min: `support-bundle.ts`, `scrub-cli.ts`, `repository-start.ts`, `feedback-cli.ts`: the commands read past a damaged event.
 
-**Then skim**, 8 min: Six store cases change one event's stored text and read every figure; four command cases do the same through each command.
+**Then skim**, 8 min: Six store cases change one event's stored text and read every figure; five command cases do the same through each command, two of them feedback's.
 
 ## 4. Risk against verification
 
@@ -97,7 +97,7 @@ Nothing has to merge first: it stands on `main` 4e22417229. #1201 adds `storedVa
 
 **Smaller gaps**
 
-- **`rerail feedback` names no damaged receipt** it reads receipts only to find the session a note belongs to.
+- **`rerail feedback` and `rerail scrub` write no line for a damaged event** feedback reads receipts only to find the session a note belongs to; scrub scrubs such a text as text.
 
 **Limits that stay**
 
@@ -113,6 +113,6 @@ We ask no ruling.
 
 The description on GitHub is the record: "How you tested it" holds the runs over `main`'s source and here, and the cost of each read.
 
-**Sources.** The branch at 77ef0f2f69 and its diff against `main` 4e22417229, read on 28 November 2026; runs on Linux x64 machines and Windows 11 machines.
+**Sources.** The branch at ac2556e1dd and its diff against `main` 4e22417229, read on 28 November 2026; runs on Linux x64 machines and Windows 11 machines.
 
 </details>
