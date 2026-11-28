@@ -588,6 +588,201 @@ fn suffix_array_prefix_cost() {
     }
 }
 
+/// A format 16 tape's nodes as values read from the tape: code number, raw slot, subtree size, start, length.
+struct Nodes {
+    code: Vec<u32>,
+    slot: Vec<u64>,
+    size: Vec<u32>,
+    start: Vec<u32>,
+    len: Vec<u32>,
+    cw: usize,
+}
+
+fn nodes_of(t: &[u8]) -> Nodes {
+    use rerail_tape_format::reads::f16 as r;
+    let lang = json_lang();
+    let p = rerail_tape_format::f16::placement(t).unwrap();
+    let v = p.view(&lang, 0).unwrap();
+    let n = p.n as u32;
+    let mut prev = 0;
+    let start = (0..n)
+        .map(|i| {
+            prev = r::start_next(t, &v, i, prev);
+            prev
+        })
+        .collect();
+    Nodes {
+        code: (0..n).map(|i| r::number(t, &v, i)).collect(),
+        slot: (0..n).map(|i| r::slot(t, &v, i)).collect(),
+        size: (0..n).map(|i| r::size(t, &v, i)).collect(),
+        start,
+        len: (0..n).map(|i| r::length(t, &v, i)).collect(),
+        cw: p.cw,
+    }
+}
+
+/// The tree's at-rest form with what one pass rebuilds removed (the duplicated-code spike's closes form, 2087ba7391
+/// and 29f12edaf1): each node's leaf bit and the subtrees that close right after it (no sizes, no parent steps:
+/// copy-invariant), the gaps, a one-node subtree's length, an inner node's end as its distance past its last node's
+/// end. `residual` stores each gap less the previous node's length where that is a one-node subtree (a gap's bytes
+/// between two tokens: the separators). Returns its columns, each in node order, and the node each value belongs to.
+struct AtRest {
+    structure: Vec<u32>,
+    gap: Vec<u32>,
+    len1: Vec<(u32, u32)>,
+    trail: Vec<(u32, u32)>,
+}
+
+fn at_rest(nd: &Nodes, residual: bool) -> AtRest {
+    let n = nd.code.len();
+    let mut ar = AtRest { structure: vec![0; n], gap: vec![0; n], len1: Vec::new(), trail: Vec::new() };
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    for k in 0..n {
+        stack.push((k, k + nd.size[k] as usize));
+        if nd.size[k] == 1 {
+            ar.len1.push((k as u32, nd.len[k]));
+        }
+        let last_end = nd.start[k] + nd.len[k];
+        let mut c = 0;
+        while let Some(&(j, e)) = stack.last() {
+            if e > k + 1 {
+                break;
+            }
+            stack.pop();
+            c += 1;
+            if nd.size[j] > 1 {
+                ar.trail.push((k as u32, nd.start[j] + nd.len[j] - last_end));
+            }
+        }
+        ar.structure[k] = (nd.slot[k] & 1) as u32 | c << 1;
+        let prev_end = if k == 0 { 0 } else if residual && nd.size[k - 1] == 1 { nd.start[k - 1] + nd.len[k - 1] } else { nd.start[k - 1] };
+        ar.gap[k] = nd.start[k] - prev_end;
+    }
+    ar
+}
+
+/// The tape's slots, starts and lengths rebuilt from the at-rest form by one pass with a stack (the spike's
+/// `rest_check`): starts by a running sum of the gaps (with `residual`, of each gap and the previous one-node subtree's
+/// length), sizes by the closes, a leaf's slot from the node after it (its previous sibling, or every `K`-th sibling,
+/// its parent), an inner node's length from its last node's end and its trailing distance.
+fn rebuild(ar: &AtRest, residual: bool) -> (Vec<u64>, Vec<u32>, Vec<u32>) {
+    const K: u32 = rerail_tape_format::f16::K as u32;
+    let n = ar.structure.len();
+    let (mut slots, mut starts, mut lens) = (vec![0u64; n], vec![0u32; n], vec![0u32; n]);
+    // Frames: (node, children so far, last child).
+    let mut open: Vec<(u32, u32, u32)> = Vec::with_capacity(64);
+    let (mut li, mut ti, mut start, mut prev_end) = (0, 0, 0u32, 0u32);
+    for k in 0..n {
+        let i = k as u32;
+        start = prev_end + ar.gap[k];
+        starts[k] = start;
+        if let Some(f) = open.last_mut() {
+            let (p, idx, last) = *f;
+            f.1 += 1;
+            f.2 = i;
+            if i - 1 != p {
+                slots[k - 1] = if idx % K == 0 { u64::from(i - p) << 2 | 3 } else { u64::from(i - last) << 2 | 1 };
+            }
+        }
+        let c = ar.structure[k] >> 1;
+        if c == 0 {
+            open.push((i, 0, 0));
+            prev_end = start;
+            continue;
+        }
+        let end = start + ar.len1[li].1;
+        li += 1;
+        lens[k] = end - start;
+        if ar.structure[k] & 1 == 0 {
+            slots[k] = 1 << 1;
+        }
+        prev_end = if residual { end } else { start };
+        for _ in 1..c {
+            let (j, ..) = open.pop().unwrap();
+            slots[j as usize] = u64::from(i + 1 - j) << 1;
+            lens[j as usize] = end + ar.trail[ti].1 - starts[j as usize];
+            ti += 1;
+        }
+    }
+    (slots, starts, lens)
+}
+
+/// A column of values as format 16 stores one, in pieces of `PART` nodes: a byte a value, all ones an escape and the
+/// value as u32 in the piece's side bytes. `at` is the node each value belongs to.
+fn column_pieces(vals: impl Iterator<Item = (u32, u32)>, n: usize) -> Vec<Vec<u8>> {
+    const PART: usize = rerail_tape_format::f16::PART;
+    let mut fixed = vec![Vec::new(); n.div_ceil(PART)];
+    let mut side = vec![Vec::new(); n.div_ceil(PART)];
+    for (at, x) in vals {
+        let b = at as usize / PART;
+        if x < 255 {
+            fixed[b].push(x as u8);
+        } else {
+            fixed[b].push(255);
+            side[b].extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    fixed.into_iter().zip(side).map(|(mut f, s)| {
+        f.extend_from_slice(&s);
+        f
+    }).collect()
+}
+
+/// 16z's bytes for pieces: each LZ4 where that saves a tenth, else raw.
+fn z_bytes_of(ps: &[Vec<u8>], level: i32) -> usize {
+    ps.iter().map(|raw| if raw.len() >= 16 { let z = lz4_dict(raw, &[], level).len(); if z * 10 <= raw.len() * 9 { z } else { raw.len() } } else { raw.len() }).sum()
+}
+
+/// How much 16z gains when the tree is stored without what one pass rebuilds on decoding (the duplicated-code spike's
+/// closes form): each input's tape, its pieces re-encoded the same way (a byte a value, escapes aside, a piece every
+/// `PART` nodes, LZ4 fast and HC 12) as today's columns (code, slot, gap, length, and the raw checkpoints), as the
+/// closes form (code, leaf bit and closes, gap, one-node lengths, trailing distances; no checkpoints), and as it with
+/// residual gaps. Each form is rebuilt and checked exactly against the tape. Run by name: `--ignored z16_at_rest`.
+#[test]
+#[ignore]
+fn z16_at_rest() {
+    for (name, f) in inputs() {
+        let Some(t) = tape_of(&f) else { continue };
+        let nd = nodes_of(&t);
+        let n = nd.code.len();
+        let z16: usize = rerail_tape_format::f16::z_of(&t, &|s: &[u8]| lz4_dict(s, &[], 0)).unwrap().len();
+        let idx = |v: &[u32]| v.iter().enumerate().map(|(k, &x)| (k as u32, x)).collect::<Vec<_>>();
+        let codes = column_pieces(idx(&nd.code).into_iter(), n);
+        let slots: Vec<u32> = nd.slot.iter().map(|&s| s as u32).collect();
+        let gaps: Vec<u32> = (0..n).map(|k| if k == 0 { nd.start[0] } else { nd.start[k] - nd.start[k - 1] }).collect();
+        let ckpt = n.div_ceil(rerail_tape_format::f16::K) * nd.cw;
+        let today: Vec<Vec<u8>> = [codes.clone(), column_pieces(idx(&slots).into_iter(), n), column_pieces(idx(&gaps).into_iter(), n), column_pieces(idx(&nd.len).into_iter(), n)].concat();
+        let z16hc: usize = rerail_tape_format::f16::z_of(&t, &|s: &[u8]| lz4_dict(s, &[], 12)).unwrap().len();
+        let base: Vec<usize> = [0, 12].iter().map(|&l| z_bytes_of(&today, l) + ckpt).collect();
+        // The rest of 16z (header, parts, the newline index, presence): the same in every form.
+        let ours = [z16 - z_bytes_of(&pieces(&t), 0) - ckpt, z16hc - z_bytes_of(&pieces(&t), 12) - ckpt];
+        let mut line = format!("{name}: {n} nodes, 16z fast {z16} HC {z16hc} bytes, its rest {} / {}; the columns re-encoded fast {} HC {};", ours[0], ours[1], base[0], base[1]);
+        for (what, residual) in [("closes", false), ("closes, residual gaps", true)] {
+            let ar = at_rest(&nd, residual);
+            let t0 = std::time::Instant::now();
+            let (slots2, starts2, lens2) = rebuild(&ar, residual);
+            let ns = t0.elapsed().as_nanos() as f64 / n as f64;
+            assert_eq!(starts2, nd.start, "{name}: starts");
+            assert_eq!(lens2, nd.len, "{name}: lengths");
+            let bad = (0..n.saturating_sub(1)).filter(|&k| !(nd.size[k] == 1 && nd.slot[k] & 1 == 0) && slots2[k] != nd.slot[k]).count();
+            assert_eq!(bad, 0, "{name}: slots");
+            let ps: Vec<Vec<u8>> = [codes.clone(), column_pieces(idx(&ar.structure).into_iter(), n), column_pieces(idx(&ar.gap).into_iter(), n), column_pieces(ar.len1.iter().copied(), n), column_pieces(ar.trail.iter().copied(), n)].concat();
+            let z: Vec<usize> = [0, 12].iter().map(|&l| z_bytes_of(&ps, l)).collect();
+            let whole = [ours[0] + z[0], ours[1] + z[1]];
+            line += &format!(
+                " {what} fast {} ({:+.1}%, whole {:+.1}%) HC {} ({:+.1}%, whole {:+.1}%), rebuilt {ns:.1} ns a node;",
+                z[0],
+                100.0 * (z[0] as f64 / base[0] as f64 - 1.0),
+                100.0 * (whole[0] as f64 / z16 as f64 - 1.0),
+                z[1],
+                100.0 * (z[1] as f64 / base[1] as f64 - 1.0),
+                100.0 * (whole[1] as f64 / z16hc as f64 - 1.0)
+            );
+        }
+        eprintln!("{line}");
+    }
+}
+
 /// The suffix array on the device equals libsais's, entry by entry, and what it costs: each input's tape (and its
 /// JSON), the device's GPU time by round and in all, against libsais on one CPU thread. Run by name: `--ignored
 /// suffix_array_device_cost`.
