@@ -886,7 +886,11 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 // An export its phase declares a key for (decision 0705, a setting) is keyed by its declaration where
                 // no located probe reads it: a probe of values alone is not made for it.
                 let declared = crate::code_rule_dsl::typing::file_local::setting_input(e);
-                let (false, false) = (in_agg, fixed.is_empty() || (node.is_none() && (others.is_empty() || declared))) else {
+                // Values the file's own rows give: one of the other reads is no export. Where every one is another
+                // export's (`pt_type_of_all`'s `pt_vpos_t(n)` and `pt_btype(v, t)`, staged), the values are every file's,
+                // and two reads sharing no variable gave their product (25 M rows for `pt_tv`'s): read whole.
+                let own_rows = others.iter().any(|(_, l)| !matches!(l.view(), Lit::Atom(o) if probed(v.rel_name(o.rel()))));
+                let (false, false) = (in_agg, fixed.is_empty() || (node.is_none() && (others.is_empty() || declared || !own_rows))) else {
                     whole.insert(read_name(e));
                     continue;
                 };

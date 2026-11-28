@@ -47,7 +47,10 @@ lb_method(c, x) :- test_class(c, b), stmt_def(b, f), kind(f, "function_definitio
 // Cross-file: the corpus's count (decision 0652).
 .decl static_tests(n: number) cross_file
 .output static_tests
-static_tests(n) :- n = count : { lb_function(_) } + count : { lb_method(_, _) }.
+static_tests(n) :- n = sum k : { lb_in(_, k) }.
+// Counted in each file, and the counts summed over the corpus: no node crosses into the cross part (decision 0727).
+.decl lb_in(d: number, n: number)
+lb_in(d, n) :- doc(d, _, _), n = count : { lb_function(f), docof(f, d) } + count : { lb_method(c, _), docof(c, d) }.
 
 // ---- 2. pytest's count: the test_collection artifact -------------------------------------------------------------
 // What collect_test_counts returns: {"total_tests", "total_skipped", "by_directory"}. Collection imports the tests

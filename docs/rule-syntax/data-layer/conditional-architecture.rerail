@@ -263,10 +263,13 @@ ca_owner("executor", "impl.common.l2070_server_plan.sql_backend_executor.SqlBack
 .decl ca_owner_at(role: symbol, k: node)
 ca_owner_at(r, k) :- ca_owner(r, q, _, "class", _), ca_row(k, q).
 ca_owner_at(r, f) :- ca_owner(r, q, _, "function", _), ca_function(f, q).
-// ca_present(): some class or function has one of the four names, whichever kind; then the contracts are checked.
+// ca_present(r): some class or function, of any file, has role r's name, whichever kind; with any row, the contracts
+// are checked. Names over every file, staged before the program (decision 0709) and read by each file's findings in
+// that file (decision 0727 §3). Not a nullary flag (0709's step D), nor a plain union, which `locate` moves; names,
+// not a count, as a number column whose cone reads positions is not staged.
 // ca_role_found(d, r): file d has a class or function of role r's name, found in that file (decision 0677).
-.decl ca_present()
-ca_present() :- ca_role_found(_, _).
+.decl ca_present(r: symbol)
+ca_present(r) :- ca_owner(r, _, _, _, _), count : { ca_role_found(_, r) } > 0.
 .decl ca_role_found(d: number, r: symbol)
 ca_role_found(d, r) :- ca_owner(r, q, _, _, _), ca_row(k, q), docof(k, d).
 ca_role_found(d, r) :- ca_owner(r, q, _, _, _), ca_function(f, q), docof(f, d).
@@ -300,8 +303,11 @@ ca_first_check(f, l) :- ca_call_in(f, _, "step.require_sql_physical_conditional"
 ca_strategy_first(f, l) :- ca_first_check(f, l), ca_call_in(f, c, s), suffix("_conditional_strategy", s), node_line_number(c, k), k <= l.
 
 .violation CONDA005(at: node, why: symbol) code "CONDA-005" "{why}"
-CONDA005(k, m) :- ca_present(), ca_owner(r, _, _, _, m), ca_owner_at(r, k), !ca_valid(r).
-CONDA005(@place(p, 1), m) :- ca_present(), ca_owner(r, _, p, _, m), !ca_owner_at(r, _).
+CONDA005(k, m) :- ca_present(_), ca_owner(r, _, _, _, m), ca_owner_at(r, k), !ca_valid(r).
+CONDA005(@place(p, 1), m) :- ca_present(_), ca_owner(r, _, p, _, m), !ca_owner_found(r).
+// ca_owner_found(r): role r's owner is in some file, of its own kind: names over every file, as ca_present's.
+.decl ca_owner_found(r: symbol)
+ca_owner_found(r) :- ca_owner(r, _, _, _, _), count : { ca_owner_at(r, _) } > 0.
 // Every semantic ConditionalStep row must raise TypeError somewhere in its compile method.
 CONDA005(k, "semantic ConditionalStep must reject direct compilation with TypeError") :-
     ca_row(k, "l2070_batching.conditional_step.ConditionalStep"), !ca_compile_rejects(k).

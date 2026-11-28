@@ -444,8 +444,12 @@ item_entry(e, k, fn) :- it_last(k, fn), pe_last(e, k, fn).
 .decl cpl_word(k: symbol, dup: symbol, w: symbol)
 cpl_word("cached", "", "cached"). cpl_word("memoized", "memoized ", "memoized").
 
-cpl_msg(cat("duplicate ", p, "decorator entry: ", fn)) :- item_of(_, k, fn), cpl_word(k, p, _),
-    count : { item_of(_, k, fn) } > 1.
+cpl_msg(cat("duplicate ", p, "decorator entry: ", fn)) :- item_count(_, k, fn, _), cpl_word(k, p, _),
+    n = sum j : { item_count(_, k, fn, j) }, n > 1.
+// item_count(d, k, fn, n): file d's n items of kind k for fn, counted in the file; summed over files above, so no item
+// node crosses into the cross part (decision 0727).
+.decl item_count(d: number, k: symbol, fn: symbol, n: number)
+item_count(d, k, fn, n) :- item_of(x, k, fn), docof(x, d), n = count : { item_of(y, k, fn), docof(y, d) }.
 cpl_msg(cat("duplicate ", p, "policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k, p, _), count : { pe(_, k, fn) } > 1.
 cpl_msg(cat("unsigned ", w, " pure-lazy function: ", fn)) :- item_of(_, k, fn), cpl_word(k, _, w), !pe(_, k, fn).
 cpl_msg(cat("stale ", w, " pure-lazy policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k, _, w), !item_of(_, k, fn).

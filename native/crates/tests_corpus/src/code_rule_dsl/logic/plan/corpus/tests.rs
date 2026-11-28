@@ -2827,6 +2827,53 @@ used(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), defined(x
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A staging probe of values alone (`_v`, a rule binding no location) is the values the file's own rows fix an export's
+/// read at. Where every other read of the rule is another export's, the values are every file's: `pairs` reads `defs(x)`
+/// and `calls(y)`, staged (each has a per-file reader) and sharing no variable, and its probe of `both` was their product
+/// (25 M rows for the points-to rules' `pt_type_of_all`). Such a read is read whole, as a probe could key no entry by it.
+#[test]
+fn a_probe_of_other_exports_alone_is_not_their_product() {
+    const PROGRAM: &str = r#"
+.decl defs(x: symbol)
+defs(x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl calls(y: symbol)
+calls(y) :- kind(n, "call"), field(n, "function", f), text(f, y).
+.decl both(x: symbol, y: symbol)
+both(x, y) :- defs(x), calls(y), x != y.
+.decl used(n: node, x: symbol)
+used(n, x) :- kind(n, "call"), field(n, "function", f), text(f, x), defs(x).
+.decl defined_called(n: node, y: symbol)
+defined_called(n, y) :- kind(n, "function_definition"), field(n, "name", i), text(i, y), calls(y).
+.decl paired(n: node, x: symbol)
+paired(n, x) :- kind(n, "call"), field(n, "function", f), text(f, x), both(x, _).
+.decl pairs(x: symbol, y: symbol) cross_file
+pairs(x, y) :- defs(x), calls(y), both(x, y).
+.output used
+.output defined_called
+.output paired
+.output pairs
+"#;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("probe-product");
+    let _ = std::fs::remove_dir_all(&dir);
+    let names = ["a", "b", "c", "d", "e"];
+    for (i, x) in names.iter().enumerate() {
+        let to = dir.join("ws").join(format!("m{i}.py"));
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, format!("def {x}():\n    pass\n\n{}()\n", names[(i + 1) % names.len()])).unwrap();
+    }
+    crate::install_store_functions();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
+    super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let staging: Vec<String> = deciding.close().into_iter().map(|d| format!("{d:?}")).filter(|d| d.contains("staging") && d.contains("probes")).collect();
+    let pairs = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("pairs").map(|r| r.shown()).unwrap_or_default().len();
+    assert_eq!(pairs, names.len() * (names.len() - 1), "every def with every other call");
+    // The three per-file readers' probes, located by their calls and definitions; `pairs`' three reads, each of whose
+    // other reads are exports, are read whole.
+    assert!(staging.iter().any(|d| d.contains("3 staged") && d.contains("3 probes, 3 exports read whole")), "{staging:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0709 §1: a read leaving every location column open asks whether any file has such a row
 /// (`def(_, x)`: is `x` a function anywhere). The engine reads it from a relation of the names it fixes, which is staged:
 /// `called` is per-file, an edit adding `g` misses `a.py` and `b.py` (whose probe `g` has a row now) alone, and the rows
