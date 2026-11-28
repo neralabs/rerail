@@ -28,6 +28,7 @@ import {
   type RulePackLocalSource,
 } from "./rule-packs.js";
 import { packCompileChecks, type PackCompileChecks, type PackVerdict } from "./pack-compile-checks.js";
+import { checkoutRealpath } from "./checkout-control.js";
 import { engineRegexIssues } from "./rule-regexes.js";
 import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
@@ -471,15 +472,30 @@ function fileStamp(path: string): string {
 }
 
 /**
+ * The folder an installed pack's path resolves to: the folder `rerail packs add <folder>` linked, or the path itself.
+ * `-` when it cannot be resolved, which no real path equals, so a link that stops resolving reads as a change.
+ */
+function packFolder(directory: string): string {
+  try {
+    return checkoutRealpath(directory);
+  } catch {
+    return "-";
+  }
+}
+
+/**
  * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
- * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
- * a JSON rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to
- * reload. An edit to a `.rerail` rule's files is seen by `rerailFilesStamp`.
+ * files move, a pack's path links to another folder, or another core version becomes active (its range decides which
+ * packs load). The linked folder counts whatever its files' times: two folders linked within one tick of the file
+ * system's clock can give `package.json` and `pack.json` the same times and sizes. It does not see an edit to a JSON
+ * rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload. An
+ * edit to a `.rerail` rule's files is seen by `rerailFilesStamp`.
  */
 function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
   const prefix = installedPacksPrefix(home);
   const lock = join(prefix, "node_modules", ".package-lock.json");
-  return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))])].join("\0");
+  const packs = directories.flatMap(directory => [directory, packFolder(directory), fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))]);
+  return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...packs].join("\0");
 }
 
 /**
