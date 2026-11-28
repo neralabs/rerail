@@ -7242,8 +7242,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut waiting: Vec<(usize, String, Box<Driving>)> = Vec::new();
     // Strata suspended on their requests (decision 0114 §3), and the answers come for them so far, by ticket.
     let mut asked: Vec<Asked> = Vec::new();
-    // Each relation's stratum, by its index in the run's order: where a produced relation's request is made.
-    let stratum_of: HashMap<String, usize> = sccs.iter().enumerate().flat_map(|(j, s)| s.iter().map(move |r| (r.to_owned(), j))).collect();
+    // The produced relations whose requests were posted together (`posted_together`): asked once, their answers taken
+    // by their own strata (`Run::answered`), never asked again by a later stratum.
+    let mut produced_asked: HashSet<String> = HashSet::new();
     let mut arrived: HashMap<u64, Vec<(String, Vec<Vector<i64>>)>> = HashMap::new();
     // Relations no stratum reads, of strata that finished after the stratum following them ran: released or read
     // out at the next stratum, as they would have been at the one following them.
@@ -7882,14 +7883,16 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     .skip(at)
                     .filter(|s| s.iter().all(|r| f0.produced(r)))
                     .flat_map(|s| s.iter())
-                    .filter(|r| !run.answered.contains_key(*r))
+                    .filter(|r| !run.answered.contains_key(*r) && !produced_asked.contains(*r))
                     .filter(|r| f0.request_of(r).and_then(|q| stratum_of.get(q)).is_some_and(|&j| j < at))
                     .map(str::to_owned)
                     .collect();
+                produced_asked.extend(ready.iter().cloned());
                 if !ready.is_empty() {
+                    // Each request once, however many of its produced relations are ready: its answer gives them all.
+                    let requests: BTreeSet<String> = ready.iter().map(|rel| f0.request_of(rel).expect("a produced relation's request").to_owned()).collect();
                     let mut asks: Vec<(String, super::native::component::Asked)> = Vec::new();
-                    for rel in &ready {
-                        let req = f0.request_of(rel).expect("a produced relation's request").to_owned();
+                    for req in requests {
                         let asked = request_asked(&mut run, db, f0, &req)?;
                         asks.push((req, asked));
                     }

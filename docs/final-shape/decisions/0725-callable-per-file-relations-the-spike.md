@@ -236,3 +236,21 @@ program (`callable_tests::two_callables_asked_together_are_answered_in_one_call`
 entered (2 batches, 4 files entered before), the findings and both readers' rows the whole program's. PostHog's 291
 files, get-handler-writes (one callable): 1 batch, 2,260 requests to 163 files, 3 holders entered, 1,193 answer rows,
 the same 5 findings. Tests: `rerail-tests-rr` (298 passed), `calls::tests`, `answers::tests`, `complete_answer_tests`.
+
+**The cone's relations handed on in place.** The memory the call cost was two copies (decision 0353) of what the
+cone reads and makes, neither on 0353's list nor marked. At the cone's end, each relation the rest of the cross-file
+part reads was copied out as rows (`held_rows`, a heap vector a row) and copied again into columns for the bind; it
+is now handed on as the engine holds it (`held_source`: `component::derived`, the relation itself), or as the rounds
+hold it (`Retained::derived_source`, the kept relation or the frames' block, `InRel::source`); only answers and the
+rounds' views, which are rows when made, are made once into a relation. And the digest of each document's part of
+what the cone reads (`cone_digests`, the cone's reuse) collected every row of those exports per document, copied, to
+sort and hash them: it now reads them where they lie, twice, the document's nodes first (a node is digested as its
+rank among them) and then each row's hash summed per document, an order-free digest of the document's rows (the
+digests differ from the last run's once). PostHog's 291 files, get-handler-writes: peak memory 614.9 MB, against
+1,220.5 MB with the copies and 569.2 MB with no call; 795.3 G instructions against 780.4 G with no call (+1.9%); the
+same 5 findings.
+Calls in bulk had posted a request once per produced relation of it that was ready (`posted_together`): a request
+producing several, each its own stratum (the C preprocessor's `c_pp_tu_req`), was asked again for each (`corpus::tests::
+a_header_edit_asks_again_only_for_the_units_that_read_it`: each unit 7 times); each request is posted once now, and a
+produced relation once asked is not asked again. Tests: `rerail-tests-corpus` (281 passed, with the coverage ledger's
+one more `to_number`, the router's, and `RERAIL_ASKS` classified a measurement aid), `rerail-tests-rr` (298).

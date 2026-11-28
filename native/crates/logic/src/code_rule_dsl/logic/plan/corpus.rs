@@ -534,33 +534,51 @@ fn patched(old: &dyn crate::code_rule_dsl::facts::vtab::Source, plus: &dyn crate
 /// document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
 fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: &BTreeMap<String, Vector<usize>>, program: &super::fields::Fields<'_>, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
     use sha2::{Digest, Sha256};
-    let mut by_doc: HashMap<i64, Vec<(usize, Vector<i64>)>> = HashMap::new();
-    for (i, rel) in per_file.iter().enumerate() {
-        let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
-        let width = program.arity(rel).unwrap_or(0);
-        exports.visit(rel,width,|row| {
-            by_doc.entry(memo::document_of(row[at])).or_default().push((i,row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
+    // Read where the rows lie, twice (decision 0353: never the rows copied out, a document's rows held to be sorted).
+    // First each document's nodes its rows name, for their ranks: a node is digested as its rank among them, so the
+    // digest stays as the document's nodes renumber.
+    let located: Vec<(usize, &String, usize, usize)> = per_file
+        .iter()
+        .enumerate()
+        .filter_map(|(i, rel)| locations.get(rel).and_then(|l| l.first().copied()).map(|at| (i, rel, at, program.arity(rel).unwrap_or(0))))
+        .collect();
+    let mut nodes: HashMap<i64, BTreeSet<i64>> = HashMap::new();
+    for &(_, rel, at, width) in &located {
+        exports.visit(rel, width, |row| {
+            let d = memo::document_of(row[at]);
+            let mine = nodes.entry(d).or_default();
+            mine.extend(row.iter().copied().filter(|v| *v >= 1 << 32 && v >> 32 == d));
+        });
+    }
+    let rank: HashMap<i64, HashMap<i64, i64>> = nodes.into_iter().map(|(d, n)| (d, n.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect())).collect();
+    // Then each row's hash (its relation's place, its values with nodes ranked), summed per document: a digest of
+    // the document's set of rows whatever order they lie in.
+    let mut sums: HashMap<i64, (u64, [u64; 4])> = HashMap::new();
+    let none = HashMap::new();
+    for &(i, rel, at, width) in &located {
+        exports.visit(rel, width, |row| {
+            let d = memo::document_of(row[at]);
+            let ranks = rank.get(&d).unwrap_or(&none);
+            let mut h = Sha256::new();
+            h.update((i as u64).to_le_bytes());
+            for v in row {
+                h.update(ranks.get(v).copied().unwrap_or(*v).to_le_bytes());
+            }
+            let hash = h.finalize();
+            let (n, sum) = sums.entry(d).or_insert((0, [0; 4]));
+            *n += 1;
+            for (lane, bytes) in sum.iter_mut().zip(hash.chunks_exact(8)) {
+                *lane = lane.wrapping_add(u64::from_le_bytes(bytes.try_into().expect("8 bytes")));
+            }
         });
     }
     let mut out = BTreeMap::new();
     for (d, path) in docs {
-        let mut rows = by_doc.remove(d).unwrap_or_default();
-        let nodes: BTreeSet<i64> = rows.iter().flat_map(|(_, r)| r.iter().copied()).filter(|v| *v >= 1 << 32 && v >> 32 == *d).collect();
-        let rank: HashMap<i64, i64> = nodes.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect();
-        for (_, r) in &mut rows {
-            for v in r.iter_mut() {
-                if let Some(k) = rank.get(v) {
-                    *v = *k;
-                }
-            }
-        }
-        rows.sort();
+        let (n, sum) = sums.remove(d).unwrap_or((0, [0; 4]));
         let mut h = Sha256::new();
-        for (i, r) in &rows {
-            h.update((*i as u64).to_le_bytes());
-            for v in r {
-                h.update(v.to_le_bytes());
-            }
+        h.update(n.to_le_bytes());
+        for lane in sum {
+            h.update(lane.to_le_bytes());
         }
         out.insert(path.clone(), h.finalize().iter().map(|b| format!("{b:02x}")).collect());
     }
@@ -3762,7 +3780,8 @@ fn run_observed_within(
     let mut loaded_docs: Vec<(i64, String)> = Vec::new();
     let mut cone_inputs: BTreeMap<String, String> = BTreeMap::new();
     let no_loads = options.get("phase_no_loads").and_then(serde_json::Value::as_bool) == Some(true);
-    let mut loading_rows: Vec<(String, Vec<Vector<i64>>)> = Vec::new();
+    // The cone's relations the rest of the cross-file part reads, each where it lies (decision 0353), and the answers.
+    let mut loading_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
     let mut cone_kept: Option<(usize, usize)> = None;
     let mut cone_rounds = 0;
     let mut language_asked: Vec<(String, String)> = Vec::new();
@@ -6841,7 +6860,7 @@ fn run_observed_within(
         let decl_types: HashMap<String, Vec<u8>> = run_f.decls_by_name().into_iter().map(|(r, _)| (r.to_owned(), retain::types_of(&run_placed, &lowered.domains, r))).collect();
         let vocabulary_cone = Arc::clone(&vocabulary);
         let arena = in_memory.then(|| store.atoms_handle());
-        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vector<i64>>)>, Option<(usize, usize)>, usize)> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Option<(usize, usize)>, usize)> {
             let db2 = connections::Cone::take_db(&cone_slot, &db_path, arena)?;
             let statements = Statements::on_as(&db2, ".cone");
             statements.enter("cone");
@@ -6982,15 +7001,16 @@ fn run_observed_within(
                         let round_inputs: BTreeSet<&str> = round.as_ref().map(|r| r.placed.v.inputs().map(|a| r.placed.v.text(a)).collect()).unwrap_or_default();
                         for rel in kept_in.iter().filter(|r| !round_inputs.contains(r.as_str())) {
                             let store = cone_handle.as_ref().expect("rounds run with a store");
-                            // Kept, or a view of an input the rounds hold in place, made from the input (`Done::views`).
-                            let rows = match done.next.read_derived(store, rel)? {
-                                Some(rows) => rows,
-                                None => done.views.iter().find(|(v, _)| v == rel).map(|(_, rows)| rows.clone()).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?,
+                            // Kept, where it lies, or a view of an input the rounds hold in place, made from the
+                            // input (`Done::views`): its rows made once into a relation.
+                            let source = match done.next.derived_source(store, rel) {
+                                Some(source) => source,
+                                None => done.views.iter().find(|(v, _)| v == rel).map(|(_, rows)| rows_source(widths[rel.as_str()], rows)).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?,
                             };
-                            out.push((rel.clone(), rows));
+                            out.push((rel.clone(), source));
                         }
                         // The answers' relations as the rounds ended: the kept answers that still stand among them.
-                        out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).cloned());
+                        out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).map(|(r, rows)| (r.clone(), rows_source(widths[r.as_str()], rows))));
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || {
                             format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again: {:?}); answered: {:?}; {} file-system requests kept as the journal names no change there; {} rows written back", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.again_why, done.answered, done.still, done.written)
                         });
@@ -7055,7 +7075,7 @@ fn run_observed_within(
             }
             let mut out = Vec::new();
             for rel in &kept_in {
-                out.push((rel.clone(), held_rows(&db2, &got, rel, widths[rel.as_str()])?));
+                out.push((rel.clone(), held_source(&db2, &got, rel)?));
             }
             // The closing round over the fixpoint's answers, kept for the next run's rounds; only when the fixpoint
             // ran its strata (a cone kept whole, K3, asked nothing of this run).
@@ -7533,7 +7553,8 @@ fn run_observed_within(
         // What the main thread answered, for the relations the cone did not hand on whole (its rounds do).
         for (rel, rows) in answered {
             if !loading_rows.iter().any(|(r, _)| *r == rel) {
-                loading_rows.push((rel, rows));
+                let width = load_f.arity(&rel).expect("a relation of the cone");
+                loading_rows.push((rel, rows_source(width, &rows)));
             }
         }
         // Every file seen: the keeper ends here, so the digests read the run's exports (the counted ones).
@@ -8977,11 +8998,8 @@ fn run_observed_within(
     }
     // The cone of requests' rows and the answers, as the rest of the cross-file part reads them (decision 0065 §2a).
     if let Some((load, ..)) = &loading {
-        for (rel, rows) in std::mem::take(&mut loading_rows) {
-            let width = load.decl_of(&rel).expect("a relation of the cone").arity();
-            let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
-            let columns = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns);
+        let _ = load;
+        for (rel, source) in std::mem::take(&mut loading_rows) {
             // Loading answers are inputs to maintenance as well as to execution: bound with the cross-file part's
             // inputs, their digests taken with the others' (`input_digests`, else of their rows).
             if let Some((_, held)) = cross_inputs.iter_mut().find(|(r, _)| r == &rel) {
@@ -10591,6 +10609,25 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
 /// The relations a version's program derives, each with its declared width (`collect`'s), read from its fields.
 fn derived_widths_in<'v>(f: &super::fields::Fields<'v>) -> BTreeMap<&'v str, usize> {
     f.v.rules().map(|r| f.v.rel_name(r.head().rel())).map(|rel| (rel, f.width(rel))).collect()
+}
+
+/// A relation of the cone where it lies, for the rest of the cross-file part to bind (decision 0353): what the
+/// engine holds, read in place; only a SQL stratum's relation is in a table, read from it.
+fn held_source(db: &Connection, got: &Outcome, rel: &str) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    if let Some(held) = crate::code_rule_dsl::logic::native::component::derived(db, rel) {
+        return Ok(held);
+    }
+    if got.kept.contains(rel) {
+        return Err(Error::Plan(format!("{rel} is not held")));
+    }
+    Ok(Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?))
+}
+
+/// Rows made once into a relation of `width` columns `c0`, `c1`, …: an answer's rows, or a view's the rounds made.
+fn rows_source(width: usize, rows: &[Vector<i64>]) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+    let columns = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+    crate::code_rule_dsl::logic::native::component::columns_source(names, columns)
 }
 
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vector<i64>>> {

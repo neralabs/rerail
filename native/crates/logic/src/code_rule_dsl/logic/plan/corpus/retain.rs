@@ -3318,6 +3318,21 @@ impl Retained {
         Ok(true)
     }
 
+    /// Derived relation `rel` where it lies, as held or bound from the frames: a source of columns `c0`, `c1`, … over
+    /// the held relation itself (its live rows), for a reader that binds it (the cone's relations, handed on to the
+    /// rest of the cross-file part). Decision 0353: never its rows copied out.
+    pub(in crate::code_rule_dsl) fn derived_source(&self, store: &ContentStore, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        let names = |w: usize| (0..w).map(|c| format!("c{c}")).collect::<Vec<_>>();
+        if let Some(k) = self.rels.get(rel) {
+            return Some(k.rel.source(names(k.width)));
+        }
+        let frames = self.frames.as_ref().filter(|f| f.derived.contains_key(rel))?;
+        let name = &frames.names[rel];
+        let entry = frames.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, DOCS_PART))?;
+        let held = entry.rel(&store.atoms_handle())?;
+        Some(held.source(names(entry.width())))
+    }
+
     /// Derived relation `rel`'s rows, as held or read back from the frames.
     pub(in crate::code_rule_dsl) fn read_derived(&self, store: &ContentStore, rel: &str) -> Result<Option<Vec<Vector<i64>>>> {
         if let Some(k) = self.rels.get(rel) {
