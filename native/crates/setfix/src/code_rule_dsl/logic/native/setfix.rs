@@ -10711,10 +10711,12 @@ fn run_join_in_each_unframed(j: &JoinRule, head: usize, store: &Store, syms: &mu
                     return at_extreme(cx, i, slots, rows);
                 }
                 let walked = std::cell::Cell::new(0u64);
-                let build = |value: Option<usize>| {
-                    let _cpu=crate::code_rule_dsl::logic::profile::span(||"native scalar summary fold".into());
+                // A group's fold: no span of its own (the step's CPU is the join's table's), and from where the step's
+                // last probe ended (`hints`: the keys come sorted where they can).
+                let hints = &mut cx.hints[i];
+                let mut build = |value: Option<usize>| {
                     let mut inspected=0;
-                    let (rows, cands) = candidates(j, src, store, &cx.key, keys, &mut [0; runs::HINTS], &mut LastProbe::default(), 0, None, false);
+                    let (rows, cands) = candidates(j, src, store, &cx.key, keys, hints, &mut LastProbe::default(), 0, None, false);
                     let mut summary = scalars::Summary::default();
                     cands.any(|id| {
                         inspected+=1;

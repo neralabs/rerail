@@ -298,14 +298,11 @@ impl Pool {
         // (`explain`).
         let counted = crate::code_rule_dsl::logic::profile::on();
         let shard = self.shard(key);
-        // A hit: under the read lock.
-        {
+        // A hit: under the read lock, which also chooses the bag a miss builds for (its preferred value's).
+        let selected = {
             let pool = shard.read();
-            let memo = if bag.value.is_none() {
-                pool.get(bag).and_then(|m| m.preferred_value.as_ref()).map_or_else(|| pool.get(bag), |p| pool.get(p))
-            } else {
-                pool.get(bag)
-            };
+            let preferred = if bag.value.is_none() { pool.get(bag).and_then(|m| m.preferred_value.clone()) } else { None };
+            let memo = match &preferred { Some(p) => pool.get(p), None => pool.get(bag) };
             if let Some(memo) = memo
                 && memo.epoch == epoch
                 && let Some(summary) = memo.groups.get(key).or(memo.whole.then(Summary::default))
@@ -315,30 +312,23 @@ impl Pool {
                 }
                 return summary;
             }
-        }
-        let mut selected = bag.clone();
-        {
-            let mut pool = shard.write();
-            if selected.value.is_none() {
-                selected = pool
-                    .get(bag)
-                    .and_then(|m| m.preferred_value.clone())
-                    .unwrap_or(selected);
-            }
-            let memo = pool.entry(selected.clone()).or_default();
-            memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if memo.epoch != epoch {
-                memo.groups.clear();
-                memo.whole = false;
-                memo.epoch = epoch;
-            }
-            if let Some(summary) = memo.groups.get(key).or(memo.whole.then(Summary::default)) {
-                return summary;
-            }
-        }
+            preferred.unwrap_or_else(|| bag.clone())
+        };
+        // A miss: built outside the lock, then kept under one write lock. Every group of `public_best_len` is a miss
+        // (330 k groups of one row on idc): a write lock before the build as well, to look again, took a third of the
+        // step. A thread that built the same group meanwhile kept the same summary: its is taken.
         let summary = build(selected.value);
         let mut pool = shard.write();
-        let memo = pool.get_mut(&selected).unwrap();
+        let memo = pool.entry(selected).or_default();
+        memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if memo.epoch != epoch {
+            memo.groups.clear();
+            memo.whole = false;
+            memo.epoch = epoch;
+        }
+        if let Some(kept) = memo.groups.get(key) {
+            return kept;
+        }
         memo.builds += 1;
         memo.groups.insert(key, summary);
         summary

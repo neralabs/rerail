@@ -134,13 +134,29 @@ pub fn select64(m: u64, k: u32) -> u32 {
     // The bytes whose running count is at most `k` come before the bit's byte: one high bit for each.
     let byte = ((u64::from(k).wrapping_mul(ONES) | HIGH).wrapping_sub(sums) & HIGH).count_ones();
     let before = if byte == 0 { 0 } else { (sums >> (8 * (byte - 1))) & 0xff };
-    let mut bits = (m >> (8 * byte)) & 0xff;
-    // Clear the byte's lower set bits: at most 7.
-    for _ in 0..u64::from(k) - before {
-        bits &= bits - 1;
-    }
-    8 * byte + bits.trailing_zeros()
+    let bits = (m >> (8 * byte)) & 0xff;
+    // The bit within the byte, from a table: clearing the byte's lower set bits in a loop of 0 to 7 turns, its exit
+    // mispredicted, was 54% of `select`'s samples in an idc run (1,044 of 1,930).
+    8 * byte + u32::from(SELECT_IN_BYTE[bits as usize][(u64::from(k) - before) as usize])
 }
+
+/// `SELECT_IN_BYTE[b][j]`: the position of byte `b`'s set bit `j` (8 where it has none).
+const SELECT_IN_BYTE: [[u8; 8]; 256] = {
+    let mut t = [[8u8; 8]; 256];
+    let mut b = 0;
+    while b < 256 {
+        let (mut j, mut i) = (0, 0);
+        while i < 8 {
+            if b >> i & 1 != 0 {
+                t[b][j] = i as u8;
+                j += 1;
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    t
+};
 
 /// The first `i` in `lo..hi` for which `below(i)` is false, `below` true before it and false from it (`hi` where
 /// none is; the CLIF's `bisect_in`).
@@ -623,6 +639,65 @@ impl Numbering {
         at
     }
 
+    /// `number_of` of each of `lows`, ascending (a document's probes in a batch: the bulk read of t57's view reads),
+    /// into `out`: `item << 32 | number` each, `u64::MAX` for none. One pass: the slot table's entry found by moving on
+    /// from the last low's (a bisection of the rest past `STEPS` entries, as `number_of`'s guess falls back), and a
+    /// granule's child granules searched by moving on from the last number's while the granule and item are the same.
+    ///
+    /// # Safety
+    /// As every read's; `lows` ascending, `out` as long.
+    pub unsafe fn number_of_sorted(&self, lows: &[u32], out: &mut [u64]) {
+        const STEPS: u32 = 8;
+        debug_assert!(lows.is_sorted() && out.len() == lows.len());
+        // SAFETY: the caller's.
+        let (by_slot, nodes, tokens) = unsafe { (Self::of::<[u32; 3]>(&self.by_slot), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
+        let n = by_slot.len() as u32;
+        let mut at = 0u32;
+        // The last granule and item searched, and the child granules before the last number (`number_in`'s `i`).
+        let (mut last_g, mut last_item, mut i) = (u32::MAX, u32::MAX, 0u32);
+        for (o, &low) in out.iter_mut().zip(lows) {
+            *o = u64::MAX;
+            let slot = low >> INDEX_BITS;
+            let mut steps = 0;
+            while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
+                (at, steps) = (at + 1, steps + 1);
+            }
+            if steps == STEPS {
+                at = bisect(at, n, |e| by_slot[e as usize][0] < slot);
+            }
+            let Some(&[s, g, c]) = by_slot.get(at as usize) else { continue };
+            if s != slot {
+                continue;
+            }
+            let index = c << INDEX_BITS | low & ((1 << INDEX_BITS) - 1);
+            let g1 = g as usize + 1;
+            let own = nodes[g1].wrapping_sub(nodes[g as usize]);
+            let (item, k, all) = if index < own { (0, index, own) } else { (1, index - own, tokens[g1].wrapping_sub(tokens[g as usize])) };
+            if k >= all {
+                continue;
+            }
+            // SAFETY: the caller's.
+            let kids = unsafe { self.kids(g) };
+            let w = item as usize + 1;
+            if g != last_g || item != last_item || (i > 0 && kids[i as usize - 1][w] > k) {
+                (last_g, last_item) = (g, item);
+                i = bisect(0, kids.len() as u32, |t| kids[t as usize][w] <= k);
+            } else {
+                while (i as usize) < kids.len() && kids[i as usize][w] <= k {
+                    i += 1;
+                }
+            }
+            // SAFETY: the caller's.
+            let number = unsafe {
+                match i.checked_sub(1) {
+                    None => Self::u32_at(&self.rank_starts[item as usize], g).wrapping_add(k),
+                    Some(e) => Self::u32_at(&self.rank_ends[item as usize], kids[e as usize][0]).wrapping_add(k).wrapping_sub(kids[e as usize][w]),
+                }
+            };
+            *o = u64::from(item) << 32 | u64::from(number);
+        }
+    }
+
     /// Node number `l`'s order key: its stretch's run rank, then its index in its granule (its number itself where
     /// the keys are preorder indexes); `NONE` for none (`num_order_of`).
     ///
@@ -735,4 +810,28 @@ pub fn ukl() -> String {
         s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, {name}) == {at}, \"Numbering.{name}\");\n");
     }
     s
+}
+
+#[cfg(test)]
+mod select_tests {
+    /// `select64` finds set bit `k` of a word as a scan of its bits does: every set bit of words of every density,
+    /// each byte's every pattern among them.
+    #[test]
+    fn a_words_set_bit_k_is_where_a_scan_finds_it() {
+        let mut words: Vec<u64> = (0..256u64).flat_map(|b| (0..8).map(move |at| b << (8 * at))).collect();
+        let mut r = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..20_000 {
+            r ^= r << 13;
+            r ^= r >> 7;
+            r ^= r << 17;
+            // Sparse, even and dense words.
+            words.extend([r, r & r.rotate_left(17), r | r.rotate_left(29), u64::MAX, 1 << (r % 64)]);
+        }
+        for &m in &words {
+            let set: Vec<u32> = (0..64).filter(|&i| m >> i & 1 != 0).collect();
+            for (k, &want) in set.iter().enumerate() {
+                assert_eq!(super::select64(m, k as u32), want, "{m:#x} bit {k}");
+            }
+        }
+    }
 }

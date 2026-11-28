@@ -908,9 +908,16 @@ impl Source for Layered {
         let p = parts.get(self.name.as_str())?;
         p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
-    /// The base's (a part's node is read as text).
+    /// As `node_read`: the base, then each part that holds `n`'s key, each answering only a run of its atoms (the run's
+    /// `table`, decision 0706 E1). Not forwarded to the parts, every node text of a value a chunk's join read was made
+    /// as a string (7.6 M reads of an idc run, 227 ns each).
     fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: rerail_facts_base::code_rule_dsl::facts::vtab::AtomTableOf<'_>) -> Option<i64> {
-        self.base.node_atom(name, n, make, held, table)
+        if let Some(v) = self.base.node_atom(name, n, make, held, table) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(self.name.as_str())?;
+        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_atom(name, n, make, held, table))
     }
     /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
     /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's

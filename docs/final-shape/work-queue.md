@@ -12515,3 +12515,26 @@ relation's own document or node column, so every keyed ask names its file (0725:
 
 No conflicts. Checked under Relax: tests-rr callable_tests (5; 9 ignored, as the feeder has them). No Metal,
 farm or clippy runs.
+
+### Q604. Roll-up 176 (Typing-support-final-shape c021b6de24 onto Pulling-it-all-together): what the merge chose
+
+Typing-support-final-shape's six: a chunk's layered source reads a node's text atom through its base and parts; a
+scalar fold's miss takes one write lock; a view's index hashes its rows' keys in one walk of its source; a
+relation's heavy values counted from rows read a row at a time; a document's sorted lows numbered in one pass; a
+word's set bit found within its byte by a table.
+
+Conflicts, resolved by invariant:
+- `Layered::node_atom`: one, the base then each part holding the node's key (Typing's), each asked with the run's
+  atom table (decision 0706 E1, the hub's) through the hub's parts API.
+- The view index's one walk is the hub's already (`v.whole()`): the hub's kept.
+- The scalar fold: the hub's hit counted only when profiling, with Typing's miss under one write lock.
+
+Fixed on the way: under Typing's miss path the shared tail is a stale memo's only reset, and it reset its groups
+but not `whole` (the hub's 0706 E3 build-ahead mark, which Typing's file predates): a memo built whole in an earlier
+epoch would have answered every key of the new one with an empty summary. It resets `whole` too.
+
+Typing's text-atom test passes the store's atom table and reads `node_read` with no further keys, as the hub's
+signatures are.
+
+Checked under Relax: check of rerail-reads, rerail-setfix, tests-lang, tests-logic; rerail-reads (2), rerail-setfix
+(150), tests-lang syntax (115), tests-logic plan (114, one thread). No Metal, farm or clippy runs.

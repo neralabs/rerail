@@ -4870,3 +4870,25 @@ fn issued_ahead_child() {
         assert_eq!(o.len(), 2, "{rel}: {o:?}");
     }
 }
+
+/// Decision 0209 §6 on the CPU: a relation's heavy values, counted from rows read a row at a time
+/// (`Source::row_at_memo`), are the counts of each column's values read one at a time (`Source::value`), for every
+/// view of a batch's documents, every column, together.
+#[test]
+fn heavy_values_counted_by_rows_are_those_of_each_value() {
+    use crate::code_rule_dsl::facts::vtab::syntax;
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let store = ContentStore::open(&path).unwrap();
+    let sources = syntax::sources(&store, syntax::fixtures::documents()).unwrap();
+    let reqs: Vec<table::HeavyReq> = sources.iter().filter(|(_, s)| s.len() > 0).map(|(_, s)| (Some(Arc::clone(s)), None, (0..s.columns().len()).collect())).collect();
+    assert!(reqs.len() > 3, "{}", reqs.len());
+    let want: Vec<Option<Vec<table::HeavyCol>>> = reqs.iter().map(|(s, _, cols)| {
+        let s = s.as_ref().unwrap();
+        Some(cols.iter().map(|&c| {
+            let mut counts: HashMap<i64, u64> = HashMap::new();
+            (0..s.len()).for_each(|r| *counts.entry(s.value(r, c)).or_default() += 1);
+            table::HeavyCol::of_counts(counts)
+        }).collect())
+    }).collect();
+    assert_eq!(table::heavy_batch(reqs), want);
+}
