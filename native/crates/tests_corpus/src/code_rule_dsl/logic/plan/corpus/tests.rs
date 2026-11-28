@@ -5074,6 +5074,34 @@ fn repro_an_edit_closing_a_cycle_finds_every_import_on_it() {
     assert_eq!(kept, want, "kept {:?}, fresh {:?}", paths_of(kept), paths_of(want));
 }
 
+/// Repro 2, without recursion: `a -> b`, and `b.py`'s edit imports `a`. `closes("b", "a")` joins the edit's own
+/// `dep_from` row with a `dep` row the edit did not change; `closes("a", "b")` the edit's `dep` row with an old
+/// `dep_from` row. Both imports close the cycle.
+#[test]
+fn repro_an_edit_closing_a_two_file_cycle_finds_both_imports() {
+    const PROGRAM: &str = r#".policy "repro-pair" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+.decl impmod(i: node, m: symbol)
+impmod(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), text(n, m).
+.decl dep_from(a: number, m: symbol)
+dep_from(a, m) :- impmod(i, m), docof(i, a).
+.decl mod_doc(d: number, m: symbol)
+mod_doc(d, m) :- doc(d, _, m).
+.decl dep(a: number, b: number) cross_file
+dep(a, b) :- dep_from(a, m), mod_doc(b, m).
+.decl closes(ma: symbol, m: symbol)
+closes(ma, m) :- dep_from(a, m), mod_doc(a, ma), mod_doc(b, m), dep(b, a).
+.violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
+CYC(i) :- impmod(i, m), docof(i, a), mod_doc(a, ma), closes(ma, m).
+"#;
+    let runs = repro_runs("repro-pair", PROGRAM, &[("a.py", "from b import x\n"), ("b.py", "y = 1\n")], &[("b.py", "from a import y\n")]);
+    let (_, kept, want) = &runs[1];
+    assert_eq!(paths_of(want), ["a.py", "b.py"], "a fresh run finds both imports");
+    assert_eq!(kept, want, "kept {:?}, fresh {:?}", paths_of(kept), paths_of(want));
+}
+
 /// Repro 3 (an aggregate over a cross-file relation, derived again): a module's importers counted, one importer
 /// added. The count's stratum is maintained by its changed group (decision 0077 §3), not derived again ("a read
 /// changed without a version"), and its findings are a fresh run's.

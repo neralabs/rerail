@@ -93,6 +93,20 @@ fn node_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>) -
         .collect()
 }
 
+/// The variables of `atom` that place it in one document: its node columns (`node_vars`), and its same-document
+/// columns (`FileLocal::same_doc`: a file-local relation's locations, a base relation's node and document columns). Two
+/// atoms that share none of these are rows of two documents when they meet by a value alone: `dep_from(a, m),
+/// mod_doc(b, m)` joins one file's import with another file's module by the module's name, a cross-file join. Pushed
+/// whole into a file's part it found only the rows of files run together, so a kept run, which runs the edited file
+/// alone, missed the join with an unchanged file (2026-11-28, repro 2).
+fn place_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>, places: &BTreeMap<String, Vector<usize>>) -> BTreeSet<String> {
+    let mut vars = node_vars(v, f, rule, atom);
+    if let Some(columns) = places.get(v.rel_name(atom.rel())) {
+        vars.extend(atom.args().enumerate().filter(|(i, _)| columns.contains(i)).filter_map(|(_, t)| t.var()).map(|s| name(v, rule, s)));
+    }
+    vars
+}
+
 /// The chunks' domain of column `c` of a relation whose rules are `of`: each rule binds that column by a positive read
 /// of a file-local or base relation that narrows it (`WARNING(x, s) :- warn_at(x, s, p, l), !ignored(p, l)`: `warn_at`'s
 /// `x`), so those reads hold, file by file, every value the column takes. `None` where a rule binds it otherwise, or
@@ -123,7 +137,7 @@ fn domain<'v>(v: &'v Version, f: Fields<'v>, local: &BTreeSet<String>, of: &[Rul
 }
 
 /// `push_with`'s `independent_node_groups`, each group's variables.
-fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>], equal: &[(String, String)]) -> Vec<BTreeSet<String>> {
+fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>], equal: &[(String, String)], places: &BTreeMap<String, Vector<usize>>) -> Vec<BTreeSet<String>> {
     let documents: BTreeSet<String> = atoms
         .iter()
         .filter_map(|a| {
@@ -140,7 +154,7 @@ fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'
         if f.columns(v.rel_name(atom.rel())).is_none() {
             continue;
         }
-        let mut nodes = node_vars(v, f, rule, *atom);
+        let mut nodes = place_vars(v, f, rule, *atom, places);
         if nodes.is_empty() {
             let own: BTreeSet<String> = atom.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).filter(|x| !documents.contains(x)).collect();
             let met = atoms.iter().enumerate().any(|(bi, b)| bi != ai && b.args().any(|t| matches!(t, TermRef::Var(s) if own.contains(&name(v, rule, s)))));
@@ -170,9 +184,9 @@ fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'
 /// each a file's, joined in the cross part by that value, their interface. An atom of node columns goes with its
 /// group; one of none (a text test of `t`) with every group that binds all its variables, a filter of each; one that
 /// joins two groups by values alone stays in the rule. A component of one group is itself.
-fn by_node_group(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, body: &[LitRef<'_>], comp: (BTreeSet<usize>, BTreeSet<String>), equal: &[(String, String)]) -> Vec<(BTreeSet<usize>, BTreeSet<String>)> {
+fn by_node_group(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, body: &[LitRef<'_>], comp: (BTreeSet<usize>, BTreeSet<String>), equal: &[(String, String)], places: &BTreeMap<String, Vector<usize>>) -> Vec<(BTreeSet<usize>, BTreeSet<String>)> {
     let atoms: Vec<(usize, AtomRef<'_>)> = comp.0.iter().filter_map(|&j| body[j].atom().map(|a| (j, a))).collect();
-    let groups = node_groups(v, f, rule, &atoms.iter().map(|(_, a)| *a).collect::<Vec<_>>(), equal);
+    let groups = node_groups(v, f, rule, &atoms.iter().map(|(_, a)| *a).collect::<Vec<_>>(), equal, places);
     if groups.len() < 2 {
         return vec![comp];
     }
@@ -182,7 +196,7 @@ fn by_node_group(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, body: &[LitRef<'
     let mut parts: Vec<(BTreeSet<usize>, BTreeSet<String>)> = groups.into_iter().map(|g| (BTreeSet::new(), g)).collect();
     let mut rest = Vec::new();
     for &(j, a) in &atoms {
-        let mut nodes = node_vars(v, f, rule, a);
+        let mut nodes = place_vars(v, f, rule, a, places);
         close_under(&mut nodes, equal);
         match parts.iter_mut().find(|(_, g)| !nodes.is_empty() && !g.is_disjoint(&nodes)) {
             Some(part) => {
@@ -336,7 +350,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                 comps = rest;
                 comps.push(all);
             }
-            let comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = comps.into_iter().flat_map(|c| by_node_group(v, f, rule, &body, c, &equal)).collect();
+            let comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = comps.into_iter().flat_map(|c| by_node_group(v, f, rule, &body, c, &equal, &split.same_doc)).collect();
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, BodyItem<'v>)> = Vec::new();
             for (mut lits, mut vars) in comps {
@@ -378,7 +392,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, split: &FileLocal, keep_unr
                 if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
                 }
-                if node_groups(v, f, rule, &atoms, &equal).len() > 1 {
+                if node_groups(v, f, rule, &atoms, &equal, &split.same_doc).len() > 1 {
                     continue;
                 }
                 // The comparisons and negations the component takes with it (those over its variables alone): they
