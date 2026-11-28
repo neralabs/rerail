@@ -20,11 +20,16 @@
 //! (a name's home, read off the key by the language's library; an index of the files a key's rows lie in). Column 0
 //! then need not name the file. The split hands H the values asked, as rows of `H__ask(k)` (declared by the program,
 //! which H's rules read), and the request is `R__call(d, key..) :- the reader's body, H(k, d)`: the document first,
-//! which the calls route by. One router serves every callable whose column C holds its kind of key.
+//! which the calls route by. One router serves every callable whose column C holds its kind of key: the split writes
+//! each callable its own copy of the router's rules that read the asks (`H__ask` and what is made from it on the way
+//! to H, renamed `X__by_R`; the router's tables that read no ask stay one), so one callable's asks never wait on
+//! another's readers. A router shared by the asks of all would put every request in one component, and a callable
+//! whose answers a negation reads would then depend on itself through it.
 //!
 //! Refused at load, each naming what it refuses: a pattern of the wrong length or letters; column 0 unbound (it names
 //! the file) where no H routes; an H or `H__ask` of other columns than the key's; a column of type `node` (a call's answer is values: no node crosses, decision 0677); a callable with no
-//! rules, or an input; a reader that does not bind a bound column before its call; and a callable whose rules read a
+//! rules, or an input; a reader that does not bind a bound column before its call, or binds two by parts of its body
+//! that share no variable (its request would be their cross product); and a callable whose rules read a
 //! callable, or a relation made from calls' answers (its file's state would not stand while it answers).
 
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
@@ -153,6 +158,12 @@ pub fn routed(v: &Version, rel: &str) -> bool {
     routers(v).iter().any(|h| h == rel || rel.strip_suffix(ASK) == Some(h.as_str()))
 }
 
+/// Whether `rel` is declared callable (`.callable rel ..`): the split reads it by name, with the columns its
+/// declaration writes, so the passes before it leave it as written (no column projected, no rule inlined or merged).
+pub fn named(v: &Version, rel: &str) -> bool {
+    ProgramFields::setting_values(v, SETTING).iter().any(|t| t.split_whitespace().next() == Some(rel))
+}
+
 /// A callable's own program, answered in a file.
 #[derive(Clone)]
 pub struct Callee {
@@ -181,6 +192,54 @@ fn reads_of(v: &Version) -> BTreeMap<String, BTreeSet<String>> {
         out.entry(head).or_default().extend(r.reads().map(|a| v.rel_name(a.rel()).to_owned()));
     }
     out
+}
+
+/// Of a request's literals (`request_body`), those joined to its key: the literals that share a variable with the key's
+/// terms, and with those, until none is added. The others bind nothing the key reads, so a request without them asks
+/// for a superset, and is not their cross product with it (a reader whose call joined two parts of its body).
+fn joined_to_key<'a>(lits: &[LitRef<'_>], kept: &[usize], key: impl Iterator<Item = TermRef<'a>>) -> Vec<usize> {
+    let mut reach = VarSet::new();
+    for t in key {
+        term_vars(t, &mut reach);
+    }
+    let mut on = vec![false; lits.len()];
+    loop {
+        let mut changed = false;
+        for &j in kept {
+            if on[j] {
+                continue;
+            }
+            let vs = lit_vars(lits[j]);
+            if vs.iter().any(|x| reach.contains(x)) {
+                on[j] = true;
+                reach.extend(&vs);
+                changed = true;
+            }
+        }
+        if !changed {
+            return kept.iter().copied().filter(|&j| on[j]).collect();
+        }
+    }
+}
+
+/// A router's relations that read its asks, through its rules: `H__ask`, H, and what between them is made from the
+/// asks. The split writes them again for each callable routed by H (`routed_copy`).
+fn reading_asks(reads: &BTreeMap<String, BTreeSet<String>>, h: &str) -> BTreeSet<String> {
+    let mut cone: BTreeSet<String> = BTreeSet::from([h.to_owned()]);
+    let mut todo = vec![h.to_owned()];
+    while let Some(r) = todo.pop() {
+        for x in reads.get(&r).into_iter().flatten() {
+            if cone.insert(x.clone()) {
+                todo.push(x.clone());
+            }
+        }
+    }
+    made_from(reads, &BTreeSet::from([format!("{h}{ASK}")])).into_iter().filter(|r| cone.contains(r) || r.ends_with(ASK)).collect()
+}
+
+/// A router's relation `x` as callable `rel`'s copy writes it.
+fn routed_copy(x: &str, rel: &str) -> String {
+    format!("{x}__by_{rel}")
 }
 
 /// The relations made from any of `from`, through the rules (each of `from` too).
@@ -436,10 +495,43 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
     b.fields().set_field(Field::Answers(&BTreeMap::new()));
     let (program, _) = b.finish()?;
 
-    // The caller: R's rules gone, each read of R asking for it.
+    // The caller: R's rules gone, each read of R asking for it; a router's rules that read the asks written again for
+    // each callable it routes, under that callable's names.
     let mut b = Builder::derive(v);
+    let routed_by: BTreeMap<String, BTreeSet<String>> = callables.iter().filter_map(|c| c.by.as_ref()).map(|(h, _)| (h.clone(), reading_asks(&reads, h))).collect();
+    let copied: BTreeSet<&str> = routed_by.values().flatten().map(String::as_str).collect();
+    let qualifiers = ProgramFields::qualifiers(&**v);
+    struct Renamed<'a> {
+        v: &'a Version,
+        names: &'a BTreeSet<String>,
+        rel: &'a str,
+    }
+    impl crate::code_rule_dsl::logic::program_image::Rewrite for Renamed<'_> {
+        fn head_as(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Option<String> {
+            let n = self.v.rel_name(a.rel());
+            self.names.contains(n).then(|| routed_copy(n, self.rel))
+        }
+        fn atom_as(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Option<(String, bool, bool)> {
+            let n = self.v.rel_name(a.rel());
+            self.names.contains(n).then(|| (routed_copy(n, self.rel), a.neg(), a.gated()))
+        }
+    }
+    for c in &callables {
+        let Some((h, _)) = &c.by else { continue };
+        let names = &routed_by[h];
+        for r in v.rules().filter(|r| names.contains(v.rel_name(r.head().rel()))) {
+            b.rewrite(v, r, &mut Renamed { v, names, rel: &c.rel }).finish()?;
+        }
+        for x in names {
+            let cols: Vec<(String, String)> = v.decl_of(x).map(|d| d.cols().map(|(n, t)| (v.text(n).to_owned(), v.text(t).to_owned())).collect()).unwrap_or_default();
+            let copy = routed_copy(x, &c.rel);
+            b.fields().declare(&copy, &cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect::<Vec<_>>());
+            let words: Vec<(String, String)> = qualifiers.get(x).into_iter().flatten().map(|q| (copy.clone(), q.clone())).collect();
+            b.fields().add_qualifiers(&words);
+        }
+    }
     for r in v.rules() {
-        if by_name.contains_key(v.rel_name(r.head().rel())) {
+        if by_name.contains_key(v.rel_name(r.head().rel())) || copied.contains(v.rel_name(r.head().rel())) {
             continue;
         }
         b.keep(v, r);
@@ -466,6 +558,30 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
                 }
             }
             let key: Vec<T<'_>> = c.bound.iter().map(|&k| t_of(r, args[k])).collect();
+            // Each bound column's binders: two that share no literal and no variable make the request their cross
+            // product (`r(b, e) :- c(b, e), x(_, b), y(e)` asked `bb`), every pair of values asked: bind fewer columns.
+            let binders: Vec<(usize, Vec<usize>, VarSet)> = c
+                .bound
+                .iter()
+                .map(|&k| {
+                    let mut vs = VarSet::new();
+                    term_vars(args[k], &mut vs);
+                    (k, joined_to_key(&lits, &kept, std::iter::once(args[k])), vs)
+                })
+                .collect();
+            for (i, (ki, li, vi)) in binders.iter().enumerate() {
+                for (kj, lj, vj) in &binders[i + 1..] {
+                    if !li.is_empty() && !lj.is_empty() && !li.iter().any(|x| lj.contains(x)) && !vi.iter().any(|x| vj.contains(x)) {
+                        return Err(format!(
+                            "`{}`: columns {ki} and {kj} of callable {} are bound by parts of the rule that share no variable, so its request would be their cross product: bind one of them in its pattern {} and read the other after the call",
+                            v.show_rule(r),
+                            c.rel,
+                            c.pattern()
+                        ));
+                    }
+                }
+            }
+            let kept = joined_to_key(&lits, &kept, c.bound.iter().map(|&k| args[k]));
             match &c.by {
                 None => {
                     let mut w = b.rule().head(c.request.as_str(), &key);
@@ -476,7 +592,8 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
                 }
                 Some((h, on)) => {
                     // The values asked, H's to route; and the request, at each document H names.
-                    let ask = format!("{h}{ASK}");
+                    let ask = routed_copy(&format!("{h}{ASK}"), &c.rel);
+                    let router = routed_copy(h, &c.rel);
                     let k = t_of(r, args[*on]);
                     let mut w = b.rule().head(ask.as_str(), std::slice::from_ref(&k));
                     for &j in &kept {
@@ -490,7 +607,7 @@ pub fn split(v: &Arc<Version>) -> Result<Option<Split>, String> {
                     for &j in &kept {
                         w = w.lit(v, r, lits[j]);
                     }
-                    w.atom(h.as_str(), &at).finish()?;
+                    w.atom(router.as_str(), &at).finish()?;
                 }
             }
         }

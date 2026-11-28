@@ -3064,8 +3064,16 @@ fn run_observed_within(
     // What the callees read of a file: held to the cross part's end, each chunk's where its engine made it (`calls::Held`),
     // and in the entries as an asked phase's held relations are (decision 0705), for a file the memo gives.
     let call_reads: BTreeSet<String> = callees.iter().flat_map(|c| c.reads.iter().cloned()).collect();
-    if let Some(r) = call_reads.iter().find(|r| !split.file_local.contains(r.as_str()) || split.locations.get(r.as_str()).is_none_or(|l| l.is_empty())) {
-        return Err(Error::Plan(format!("a callable reads {r}, which is not a file's relation with a location column: a call reads its file's relations")));
+    let unheld = |r: &str| !split.file_local.contains(r) || split.locations.get(r).is_none_or(|l| l.is_empty());
+    let refused: Vec<String> = callees
+        .iter()
+        .filter_map(|c| {
+            let bad: Vec<&str> = c.reads.iter().map(String::as_str).filter(|r| unheld(r)).collect();
+            (!bad.is_empty()).then(|| format!("{} reads {}", c.callable.rel, bad.join(", ")))
+        })
+        .collect();
+    if !refused.is_empty() {
+        return Err(Error::Plan(format!("a callable reads what is not a file's relation with a location column (a call reads its file's relations): {}", refused.join("; "))));
     }
     let asked_held_rels: Arc<BTreeSet<String>> = Arc::new({
         let mut held = asked_held(&local_v, phased.keys().map(String::as_str), &split.locations, &split.exports, &split.base, &|r| syntax::has_view(projection.shape, r));
@@ -3161,16 +3169,16 @@ fn run_observed_within(
     let world_requests = world::answers(&whole_cross.fields()?);
     let world_reads = loading_run && !world_requests.is_empty();
     let files_cone = if world_reads { crate::code_rule_dsl::logic::answers::cone(&whole_cross, world_requests.keys().map(String::as_str)) } else { BTreeSet::new() };
-    let calls_why: Option<&str> = if callees.is_empty() {
+    let calls_why: Option<String> = if callees.is_empty() {
         None
     } else if std::env::var("RERAIL_CALLS_IN_CONE").is_ok_and(|v| v == "on") {
-        Some("RERAIL_CALLS_IN_CONE=on")
-    } else if callees.iter().any(|c| crate::code_rule_dsl::logic::answers::cone(&whole_cross, std::iter::once(c.callable.request.as_str())).contains(c.callable.rel.as_str())) {
-        Some("a request reads its answers")
-    } else if callees.iter().any(|c| files_cone.contains(c.callable.rel.as_str()) || files_cone.contains(c.callable.request.as_str())) {
-        Some("the file reads' cone reads a call")
+        Some("RERAIL_CALLS_IN_CONE=on".to_owned())
     } else {
-        None
+        callees
+            .iter()
+            .find(|c| crate::code_rule_dsl::logic::answers::cone(&whole_cross, std::iter::once(c.callable.request.as_str())).contains(c.callable.rel.as_str()))
+            .map(|c| format!("a request reads its answers ({}'s)", c.callable.rel))
+            .or_else(|| callees.iter().find(|c| files_cone.contains(c.callable.rel.as_str()) || files_cone.contains(c.callable.request.as_str())).map(|c| format!("the file reads' cone reads a call ({})", c.callable.rel)))
     };
     let calls_in_part = !callees.is_empty() && calls_why.is_none();
     crate::code_rule_dsl::logic::profile::decision("callable relations asked (the spike)", || match (callees.is_empty(), calls_why) {
@@ -9734,9 +9742,6 @@ fn run_observed_within(
                             }
                             let held = match held {
                                 Some(h) => h,
-                                // A callable's answers the run holds none of: none were given (the engine holds no
-                                // empty answers, and they have no table).
-                                None if call_rel(rel) && fields.produced(rel) => crate::code_rule_dsl::logic::native::component::InRel::flat(&[], retain::types_of(&placed, &part.domains, rel)),
                                 None => {
                                     let types = retain::types_of(&placed, &part.domains, rel);
                                     crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(db, &got, rel, width)?, types)

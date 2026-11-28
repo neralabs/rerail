@@ -408,12 +408,29 @@ pub type AnswerTogether<'a> = &'a mut dyn FnMut(&[(String, super::native::compon
 /// A request relation's rows where they are: the engine's (a relation it holds, read where its rows lie, decision
 /// 0353 step 8), none (one still to be made: no table, no rows), or its table's (SQL's rows, a relation the engine
 /// does not hold).
+/// Whether `rel` has a table on `db` (its own schema or the run's temporary one).
+fn table_exists(db: &Connection, rel: &str) -> Result<bool> {
+    let n: i64 = db.query_row(
+        "SELECT (SELECT count(*) FROM sqlite_master WHERE name = ?1 AND type IN ('table', 'view')) + (SELECT count(*) FROM temp.sqlite_master WHERE name = ?1 AND type IN ('table', 'view'))",
+        [rel],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 fn request_asked(run: &mut Run<'_, '_>, db: &Connection, f0: Fields<'_>, req: &str) -> Result<super::native::component::Asked> {
     let width = f0.width(req);
-    let native = run.native_rels.contains(req).then(|| super::native::component::kept_rel(db, req)).flatten();
+    // Where the engine holds it: made by this run, or kept from the last and adopted (a maintained run asks a stratum
+    // of answers again whose request did not move: its request is the kept one, bound by `Maintain::need`).
+    let native = super::native::component::kept_rel(db, req).filter(|_| run.native_rels.contains(req) || !run.pending.contains_key(req));
     Ok(if let Some(rel) = native.filter(|_| width > 0) {
         super::native::component::Asked::of_rel(&rel)
     } else if run.pending.contains_key(req) && !run.native_rels.contains(req) {
+        super::native::component::Asked::default()
+    } else if !(run.native_rels.contains(req) && super::native::component::kept_rel(db, req).is_some()) && !table_exists(db, req)? {
+        // Held by no one and in no table: made with no rows (the engine holds no empty relation), or kept by nothing
+        // (a request with no rows the last run, which keeps no frame of it): no rows, as the engine reads a relation
+        // it does not hold.
         super::native::component::Asked::default()
     } else {
         run.materialize(&[req.to_owned()])?;
@@ -7997,7 +8014,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 // A later program can reuse this producer even when the current cone has no local reader.
                 // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
-                if f0.is_input(rel) || rows.is_empty() {
+                // Empty answers are held too: a reader (the rest of the part, a later round, a kept frame) reads the
+                // relation where the engine holds it, and a relation held by no one has no table.
+                if f0.is_input(rel) {
                     continue;
                 }
                 if strata_kept.is_none()

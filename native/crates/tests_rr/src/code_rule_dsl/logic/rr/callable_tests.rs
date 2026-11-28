@@ -152,6 +152,78 @@ fn two_callables_asked_together_are_answered_in_one_call() {
     assert!(!touched.is_empty());
 }
 
+/// `ROUTED` and a second callable routed by `qhome` (`qtouched`), read by `touch_any`: `extra` is written into its
+/// reader's body.
+fn two_routed(extra: &str) -> String {
+    let second = format!(
+        ".decl qtouched(q: symbol, v: symbol)\n.callable qtouched bf by qhome\nqtouched(q, v) :- qtouch(_, q, v).\n\
+        .decl wanted(w: symbol) cross_file\nwanted(g) :- runs_in(_, _, g).\n\
+        .decl touch_any(b: symbol, f: symbol, v: symbol)\ntouch_any(b, f, v) :- runs_in(b, d, f), qf = cat(to_string(d), \":\", f), qtouched(qf, v){extra}.\n.output touch_any\n"
+    );
+    format!("{ROUTED}{second}")
+}
+
+/// The callable split of `program`, its caller's rules as text.
+fn caller_rules(program: &str) -> Vec<String> {
+    let v = crate::code_rule_dsl::logic::rr::parse_version(program).unwrap();
+    let v = crate::code_rule_dsl::logic::plan::corpus::preparation::callable::split(&v).unwrap().expect("a callable").caller;
+    v.rules().map(|r| v.show_rule(r)).collect()
+}
+
+/// Each callable a router routes has its own copy of the router's rules that read the asks (`qhome__by_qsame`,
+/// `qhome__by_qtouched`), and its request reads its own: one router's asks shared by every callable put every
+/// request in one component, and a callable a negation reads then depended on itself through it.
+#[test]
+fn each_routed_callable_has_its_own_router() {
+    let rules = caller_rules(&two_routed(""));
+    for c in ["qsame", "qtouched"] {
+        let request = rules.iter().filter(|r| r.starts_with(&format!("{c}__call("))).collect::<Vec<_>>();
+        assert!(!request.is_empty(), "{rules:#?}");
+        assert!(request.iter().all(|r| r.contains(&format!("qhome__by_{c}("))), "{request:#?}");
+        assert!(rules.iter().any(|r| r.starts_with(&format!("qhome__by_{c}(")) && r.contains(&format!("qhome__ask__by_{c}("))), "{rules:#?}");
+    }
+    assert!(!rules.iter().any(|r| r.contains("qhome__ask(") || r.starts_with("qhome(")), "{rules:#?}");
+}
+
+/// A request keeps only the reader's literals joined to its key: `wanted(w)` shares no variable with `qf`, so
+/// `qtouched`'s request leaves it out, and the reader keeps it.
+#[test]
+fn a_request_reads_only_what_binds_its_key() {
+    let rules = caller_rules(&two_routed(", wanted(w)"));
+    let request: Vec<&String> = rules.iter().filter(|r| r.starts_with("qtouched__call(") || r.starts_with("qhome__ask__by_qtouched(")).collect();
+    assert_eq!(request.len(), 2, "{rules:#?}");
+    assert!(request.iter().all(|r| !r.contains("wanted(")), "{request:#?}");
+    assert!(rules.iter().any(|r| r.starts_with("touch_any(") && r.contains("wanted(")), "{rules:#?}");
+}
+
+/// Two bound columns bound by parts of the reader that share no variable would make the request their cross product
+/// (every `qf` with every `w`): the split refuses the pattern, naming the columns.
+#[test]
+fn a_pattern_whose_request_is_a_cross_product_is_refused() {
+    let program = two_routed("").replace(".callable qtouched bf by qhome", ".callable qtouched bb by qhome").replace("qtouched(qf, v).", "wanted(v), qtouched(qf, v).");
+    let v = crate::code_rule_dsl::logic::rr::parse_version(&program).unwrap();
+    let e = crate::code_rule_dsl::logic::plan::corpus::preparation::callable::split(&v).err().expect("refused");
+    assert!(e.contains("columns 0 and 1 of callable qtouched") && e.contains("cross product"), "{e}");
+}
+
+/// A callable keeps the columns its declaration writes: `qtouched3`'s `d` is read by no reader (`_`), which a pass
+/// before the split projected away, and the split then refused the declaration's three letters. Asked, its readers'
+/// rows are those of the relation made whole.
+#[test]
+fn a_callable_keeps_a_column_no_reader_reads() {
+    let files = [("a.py", A), ("b.py", B), ("c.py", C)];
+    let third = ".decl qtouched3(q: symbol, v: symbol, d: number)\n.callable qtouched3 bff by qhome\nqtouched3(q, v, d) :- qtouch(d, q, v).\n\
+        .decl touch3(b: symbol, f: symbol, v: symbol)\ntouch3(b, f, v) :- runs_in(b, d, f), qf = cat(to_string(d), \":\", f), qtouched3(qf, v, _).\n.output touch3\n";
+    let program = format!("{ROUTED}{third}");
+    let dir = corpus("callable-unread-column", &files);
+    findings(&program, &dir);
+    let called = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "touch3").unwrap();
+    let made_dir = corpus("callable-unread-column-whole", &files);
+    findings(&program.replace(".callable qtouched3 bff by qhome\n", ""), &made_dir);
+    assert_eq!(called, crate::code_rule_dsl::logic::plan::output::shown(&made_dir.join("out"), "touch3").unwrap());
+    assert!(!called.is_empty());
+}
+
 /// Demand (`.pragma "magic-transform"`) keeps a callable's router: no output reads it, only the request the callable
 /// split writes after demand, so demand roots it as an output, free. Left out, it dropped the router's rules and the
 /// request read an empty router: no call, and `qsame` empty.

@@ -1281,6 +1281,7 @@ pt_cls_q_t(c__t, q) :- pt_cls_q(c, q), pt_tm(c, c__t).
 pt_type_of_all(n, q) :- pt_vpos_t(n), pt_cls_q_t(c, q), pt_pv(n, "inst", c).
 pt_type_of_all(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t).
 .decl pt_dtype_t(m: symbol, t: symbol)
+.callable pt_dtype_t bf by pt_tm_file
 pt_dtype_t(m__t, t) :- pt_dtype(m, t), pt_tm(m, m__t).
 pt_type_of_all(n, t) :- pt_vpos_t(n), pt_dtype_t(m, t), pt_tv(n, "decl", m).
 // A library's instance, by its class's qualified name (a builtin's bare, as `pt_btype` names one), and a library's
@@ -1298,6 +1299,7 @@ pt_type_of_all(n, "module") :- pt_ext_mod(n).
 // A name an `import` statement binds to a module outside the workspace (`import asyncio`), where nothing else binds it.
 .decl pt_ext_mod(n: symbol)
 .decl pt_ext_mod_l_0(n: symbol, s: symbol, x: symbol)
+.callable pt_ext_mod_l_0 fbb by pt_tm_file
 pt_ext_mod_l_0(n__t, s__t, x) :- pt_vpos(n), pt_look(n, x, s), !pt_rifrom(s, x, _, _), !pt_rasg(s, x, _, _), !pt_rdefn(s, x, _), pt_tm(n, n__t),
     pt_tm(s, s__t).
 pt_ext_mod(n) :- pt_ext_mod_l_0(n, s, x), pt_ext_import(s, x).

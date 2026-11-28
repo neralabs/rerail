@@ -331,3 +331,54 @@ Every run gave the same 5 findings.
 Tests: `rerail-tests-corpus` (281 passed), `rerail-tests-rr` (299, with
 `an_edit_asks_again_only_into_the_file_it_changed`), its callable tests with the cone asking (`RERAIL_CALLS_IN_CONE=on`,
 9), and `rerail-logic`'s calls and answers tests (14).
+
+**The other relations read by a term of their file, routed.** Of the 61 relations whose every keyed read binds a term
+of the answering file (the disposition above), each declared `.callable R PATTERN by pt_tm_file C`, the pattern the
+columns every reader binds and C a bound term column. Every key the run asked was at home or a guest's term, which
+`pt_tm_file` routes by its string's document. They went as follows on PostHog's 291 files, get-handler-writes:
+
+- **7 read the tape.** 5 read `kind`, `child` or `field` themselves (`pt_btype_l_0`, `pt_iattr_l_0`, `pt_vopen_l_9`,
+  `pt_vopen_l_10`, `pt_awaitf_l_0`); 2 read relations the simplifier inlines into them down to such reads
+  (`pt_outside_dec_l_0`: `field`, `guest_of`; `pt_tv_l_0`: `field`). A call reads the relations its file's chunk
+  holds, and the cross-file part has no tape: a file the memo gives was never loaded. They are made whole.
+- **9 close a cycle through a negation.** A request is its reader's body, and these readers bind the key from the
+  points-to solve, which reads the callable negated: `pt_aknown_l_2`'s `h` is bound by `pt_pv`, whose solve reads
+  `!pt_aclosed`, which reads `!pt_aopen`, which reads `!pt_aknown` (`pt_aknown_l_3`, `pt_callee_t`, `pt_live_asg_t`,
+  `pt_live_def_t`, `pt_base_l_0`, `pt_lbv_l_0`, `pt_pdefault_t`, `pt_vopen_l_5` the same). The program is not
+  stratifiable with them. They are made whole.
+- **36 are recursive.** A reader is a rule of the points-to solve's recursion (`pt_vopen`, `pt_pv`, `pt_tv`), so a
+  request reads its own answers (`pt_look_t`, `pt_vopen_l_1`, `pt_attr_of_t` and 33 more, 341,173 rows made whole).
+  The cross-file part asks a stratum of answers once its request is whole; with such a request every callable goes
+  to the cone, which asked them round by round past the run's 100 s cap. They are made whole.
+- **9 remain, and 3 of them are declared.** A request is its reader's body with its negations left out, so it can
+  be larger than the relation: `pt_mro_kept_l_0`'s was 598,457 rows against 29,034 made whole (`pt_bv`'s rows a
+  candidate), `pt_cann_t`'s 36,029 against 814, `pt_bytes_lit_t`'s 17,321 against 2. Smaller: `pt_vopen_l_8`
+  (2,260 against 79,319), `pt_dtype_t` (1,859 against 8,934), `pt_ext_mod_l_0` (5,472 against 13,360). Those three
+  are declared.
+
+Five things the engine got wrong on the way:
+
+- **A declared callable is kept as written** through the simplifier (`callable::named`, beside the routers in
+  `simplify::kept`). The projection of columns no reader reads had dropped `pt_iattr_l_0`'s third column before the
+  split, which then refused its three-letter pattern.
+- **Each callable a router routes has the router's rules that read the asks written again under its own names**
+  (`qhome__by_R`, `qhome__ask__by_R`; the router's tables that read no ask stay one). With one `H__ask` the asks of all
+  put every request in one component, and two callables that are stratifiable apart were not together.
+- **A request keeps only the reader's literals joined to its key** through shared variables (`joined_to_key`). One
+  whose call joined two parts of its reader's body was their cross product.
+- **A pattern whose bound columns are bound by parts of the reader that share no variable is refused**, naming the
+  columns. `pt_meta_open_l_1` `bb` was such a pattern: its request was every `pt_anc` value with every `pt_extb`
+  value, and the run passed the 3 GB cap. It is `bf` now, and `pt_extb(e)` is read after the call.
+- **Empty answers are held** like any others, and a request nothing holds and no table has is read as no rows. A
+  callable that gave no answers, or whose request was empty the last run and kept no frame, had no table for its
+  readers ("no such table: pt_dtype_t"). A refused callable read names every callable and what it reads, and the run's
+  decision names the callable that sends calls to the cone.
+
+Three callables against one on the same engine, in one store each: cold 783.7, 790.4 and 804.1 G against 779.7 G;
+the edit 93.0 and 95.7 G against 92.7 G; the revert 69.5 and 72.5 G against 68.3 G; the edit again 19.3 and 19.1 G
+against 18.7 G; the same 5 findings. The edit asks 9,591 requests, answers 9,332 by the last run's, and enters 3
+files. Cold runs vary by about 20 G here, so no gain or cost can be seen. The two relations no longer made whole are
+22,294 rows, and making them in each file was cheap. Tests: `rerail-tests-corpus` (281), `rerail-tests-rr` (303,
+with `each_routed_callable_has_its_own_router`, `a_request_reads_only_what_binds_its_key`,
+`a_pattern_whose_request_is_a_cross_product_is_refused` and `a_callable_keeps_a_column_no_reader_reads`), the
+callable tests with the cone asking (13), `rerail-logic`'s calls and answers tests (14), `rerail-planner`'s (6).
