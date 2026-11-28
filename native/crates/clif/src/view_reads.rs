@@ -621,8 +621,10 @@ impl B<'_, '_> {
     fn loc_line(&mut self, at_: Value) -> Value {
         self.call_lines("lines_line", &[at_])
     }
-    /// A `Loc` view's row: the id, then its place (`Viewed::loc_value`, `LineTable::place`).
-    fn loc(&mut self, place: Place) -> Value {
+    /// A `Loc` view's row: the id, then its place (`Viewed::loc_value`, `LineTable::place`). A row is its position;
+    /// a token's view's (`token`, decision 0724 §3, `Doc::token_loc`) are the positions the tape stores alone, the
+    /// first ones, so its row is read as theirs.
+    fn loc(&mut self, place: Place, _token: bool) -> Value {
         let (l, col) = (self.arg(0), self.arg(1));
         let c = self.f.ins().icmp_imm(IntCC::Equal, col, 0);
         self.either(I64, c, |b| b.loc_id(l), |b| {
@@ -665,19 +667,39 @@ impl B<'_, '_> {
 /// `end_line`, `col` and `docof` rows of position `l` (a node, a token, the whole text, a line, an end point).
 #[cfg(feature = "ir")]
 pub fn loc_line(b: &mut B<'_, '_>) -> Value {
-    b.loc(Place::Line)
+    b.loc(Place::Line, false)
 }
 #[cfg(feature = "ir")]
 pub fn loc_end(b: &mut B<'_, '_>) -> Value {
-    b.loc(Place::EndLine)
+    b.loc(Place::EndLine, false)
 }
 #[cfg(feature = "ir")]
 pub fn loc_col(b: &mut B<'_, '_>) -> Value {
-    b.loc(Place::Col)
+    b.loc(Place::Col, false)
 }
 #[cfg(feature = "ir")]
 pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
-    b.loc(Place::Docof)
+    b.loc(Place::Docof, false)
+}
+
+/// `view_tok_line(r, col)`, `view_tok_end`, `view_tok_col`, `view_tok_docof`: a token's `Loc` views (decision 0724
+/// §3): column `col` of token `r`'s `token_line_number`, `token_end_line_number`, `token_start_column` and
+/// `token_document` rows.
+#[cfg(feature = "ir")]
+pub fn tok_line(b: &mut B<'_, '_>) -> Value {
+    b.loc(Place::Line, true)
+}
+#[cfg(feature = "ir")]
+pub fn tok_end(b: &mut B<'_, '_>) -> Value {
+    b.loc(Place::EndLine, true)
+}
+#[cfg(feature = "ir")]
+pub fn tok_col(b: &mut B<'_, '_>) -> Value {
+    b.loc(Place::Col, true)
+}
+#[cfg(feature = "ir")]
+pub fn tok_docof(b: &mut B<'_, '_>) -> Value {
+    b.loc(Place::Docof, true)
 }
 
 #[cfg(feature = "ir")]

@@ -550,8 +550,10 @@ impl RulePass for HeadReads {
 /// `core.rerail`'s per-node relations a node read answers (decision 0353 step 3), each with its read: `text`'s at any
 /// length, and the values `CoreRows::node` makes (`syntax::LongTexts`). (`structural_*` is a view of the tape,
 /// `tape_rows`: its lookup by node reads it in place.)
-const NODE_READ_OF: [(&str, &str); 4] = [
+const NODE_READ_OF: [(&str, &str); 5] = [
     ("text", "rr_node_text_any"),
+    // A token's own read of its text (decision 0724 §3): the same read, of the token's id.
+    ("token_text", "rr_node_text_any"),
     ("name", "rr_node_name"),
     ("comment", "rr_node_comment"),
     ("strprefix", "rr_node_strprefix"),
@@ -664,8 +666,9 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
     tests
 }
 
-/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source` and its lines.
-const LINE_SPANS: [(&str, usize); 2] = [("source", 1), ("src_line", 2)];
+/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source`, its lines, and
+/// the token relations' tokens (`token_text`'s, decision 0724 §3: a token is a position the tape stores).
+const LINE_SPANS: [(&str, usize); 6] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1)];
 
 /// The columns of `v`'s relations that hold nodes alone (and, with `more`, those base columns too): a base relation's, `core.rerail`'s declared `node`
 /// (`facts::core::core_node_columns`) and a matcher's (`matchers`: its root and captures); and a file-local derived
@@ -873,7 +876,7 @@ impl RulePass for NodeReads {
                 let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
                 let a = args(a);
                 let arity = if self.tests.contains_key(name) { 1 } else { 2 };
-                let bound = if rel == "text" { &spans_bound } else { &bound };
+                let bound = if matches!(rel, "text" | "token_text") { &spans_bound } else { &bound };
                 Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))
             }
             _ => None,

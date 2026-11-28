@@ -1,5 +1,5 @@
 .policy "typed-reads" revision 1
-.description "A line's and a match's own reads (decision 0724 §3): each its own id, read by its own relations."
+.description "A line's, a match's and a token's own reads (decision 0724 §3): each its own id, read by its own relations."
 .language rust
 .mode log
 .scope include "**/*.rs"
@@ -20,6 +20,11 @@ FN_MATCH(m) :- document_line(_, l), line_regex_match("\\bfn\\b", l, m).
 .violation SOURCE_ZERO(at: line) "the source"
 SOURCE_ZERO(sp) :- document_source(_, sp), line_number(sp, 1).
 
+// A struct's name's token, read by a token's own reads alone: its text, line, column and document.
+.violation NAME_TOKEN(at: token) "a struct's name"
+NAME_TOKEN(t) :- kind(s, "struct_item"), field(s, "name", n), kind(n, "type_identifier"), node_to_first_token(n, t), token_text(t, "S"),
+    token_line_number(t, 3), token_end_line_number(t, 3), token_start_column(t, 7), token_document(t, d), doc(d, _, _).
+
 .test lines_are_read_by_their_own_reads exactly
     .fixture "a.rs" ```
         fn a() {}
@@ -33,4 +38,5 @@ SOURCE_ZERO(sp) :- document_source(_, sp), line_number(sp, 1).
     .expect FN_MATCH at "a.rs":1
     .expect FN_MATCH at "a.rs":5
     .expect SOURCE_ZERO at "a.rs":1
+    .expect NAME_TOKEN at "a.rs":3
 .end

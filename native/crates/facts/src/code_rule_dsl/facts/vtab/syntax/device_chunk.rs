@@ -30,6 +30,12 @@ pub const VIEW_ORDER: u32 = 12;
 pub const VIEW_OP: u32 = 13;
 /// `doc` (`tape_rows::DocRow`): a file's row of its key and its path's and module's atoms, read in its entry.
 pub const VIEW_DOC: u32 = 14;
+/// A token's places (`View::Loc` of a token's `Place`, decision 0724 §3): its first line, last line, start column and
+/// document, over its document's tokens alone.
+pub const VIEW_TOK_LINE: u32 = 15;
+pub const VIEW_TOK_END: u32 = 16;
+pub const VIEW_TOK_COL: u32 = 17;
+pub const VIEW_TOK_DOCOF: u32 = 18;
 
 /// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -52,7 +58,11 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_DEPTH => 11,
         VIEW_ORDER => 12,
         VIEW_OP => 13,
-        VIEW_DOC => 14,
+        VIEW_TOK_LINE => 14,
+        VIEW_TOK_END => 15,
+        VIEW_TOK_COL => 16,
+        VIEW_TOK_DOCOF => 17,
+        VIEW_DOC => 18,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -68,6 +78,10 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::EndLine) => VIEW_LOC_END,
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
+        View::Loc(Place::TokenLine) => VIEW_TOK_LINE,
+        View::Loc(Place::TokenEndLine) => VIEW_TOK_END,
+        View::Loc(Place::TokenCol) => VIEW_TOK_COL,
+        View::Loc(Place::TokenDocof) => VIEW_TOK_DOCOF,
         View::Line => VIEW_LINE,
         View::Tape => VIEW_TAPE,
         View::Depth => VIEW_DEPTH,

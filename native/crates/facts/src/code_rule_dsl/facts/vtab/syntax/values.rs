@@ -843,7 +843,7 @@ impl Layered {
             return None;
         }
         let views = &dir.views;
-        let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
+        let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view) || (super::device_chunk::VIEW_TOK_LINE..=super::device_chunk::VIEW_TOK_DOCOF).contains(&dv_ref.view);
         let (lines, locs) = views.holds();
         if (dv_ref.view == super::device_chunk::VIEW_LINE && !lines) || (loc && !locs) {
             return None;
