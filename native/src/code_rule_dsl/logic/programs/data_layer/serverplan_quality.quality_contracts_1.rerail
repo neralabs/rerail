@@ -74,51 +74,56 @@ quoted_atoms(q, ann, atom) :- ast(d, q, {"language": "python", "syntax": "valid"
 
 // ---- the SQL's IN-lists ----
 .decl in_list(list: symbol, v: symbol)
-in_list("excluded_kind", "comment"). in_list("excluded_kind", "string_start"). in_list("excluded_kind", "string_content").
-in_list("excluded_kind", "string_end"). in_list("excluded_kind", "escape_sequence"). in_list("excluded_kind", "line_continuation").
-in_list("desc_root_kind", "function_definition"). in_list("desc_root_kind", "class_definition"). in_list("desc_root_kind", "for_statement").
-in_list("desc_root_kind", "for_in_clause"). in_list("desc_root_kind", "assignment"). in_list("desc_root_kind", "delete_statement").
-in_list("desc_root_kind", "block"). in_list("desc_root_kind", "if_statement"). in_list("desc_root_kind", "elif_clause").
-in_list("desc_root_kind", "match_statement").
-in_list("desc_root_field", "name"). in_list("desc_root_field", "left"). in_list("desc_root_field", "right"). in_list("desc_root_field", "value").
-in_list("desc_root_field", "type"). in_list("desc_root_field", "function"). in_list("desc_root_field", "arguments"). in_list("desc_root_field", "object").
-in_list("desc_root_field", "body"). in_list("desc_root_field", "parameters"). in_list("desc_root_field", "condition"). in_list("desc_root_field", "consequence").
-in_list("non_argument", "comment"). in_list("non_argument", "keyword_argument"). in_list("non_argument", "list_splat"). in_list("non_argument", "dictionary_splat").
-in_list("param_kind", "identifier"). in_list("param_kind", "typed_parameter"). in_list("param_kind", "default_parameter"). in_list("param_kind", "typed_default_parameter").
+// The lists of node kinds, a column of kinds (in_list holds texts: a column holds one domain).
+.decl in_kinds(list: symbol, k: symbol)
+in_kinds("excluded_kind", "comment"). in_kinds("excluded_kind", "string_start"). in_kinds("excluded_kind", "string_content").
+in_kinds("excluded_kind", "string_end"). in_kinds("excluded_kind", "escape_sequence"). in_kinds("excluded_kind", "line_continuation").
+in_kinds("desc_root_kind", "function_definition"). in_kinds("desc_root_kind", "class_definition"). in_kinds("desc_root_kind", "for_statement").
+in_kinds("desc_root_kind", "for_in_clause"). in_kinds("desc_root_kind", "assignment"). in_kinds("desc_root_kind", "delete_statement").
+in_kinds("desc_root_kind", "block"). in_kinds("desc_root_kind", "if_statement"). in_kinds("desc_root_kind", "elif_clause").
+in_kinds("desc_root_kind", "match_statement").
+// The fields under which a node starts a description (desc_root): field names, a column of its own (in_list holds
+// kinds and texts).
+.decl root_field(f: symbol)
+root_field("name"). root_field("left"). root_field("right"). root_field("value").
+root_field("type"). root_field("function"). root_field("arguments"). root_field("object").
+root_field("body"). root_field("parameters"). root_field("condition"). root_field("consequence").
+in_kinds("non_argument", "comment"). in_kinds("non_argument", "keyword_argument"). in_kinds("non_argument", "list_splat"). in_kinds("non_argument", "dictionary_splat").
+in_kinds("param_kind", "identifier"). in_kinds("param_kind", "typed_parameter"). in_kinds("param_kind", "default_parameter"). in_kinds("param_kind", "typed_default_parameter").
 in_list("primary_path", "api/l2070_batching/executor.py"). in_list("primary_path", "impl/common/l2070_server_plan/base_server_plan.py").
 in_list("primary_path", "impl/common/l2070_server_plan/plan_helpers.py"). in_list("primary_path", "impl/common/l2070_server_plan/sql_backend_executor.py").
 in_list("primary_path", "l2070_batching/conditional_step.py"). in_list("primary_path", "impl/common/l2070_server_plan/steps/tests/test_conditional_compile_dialects.py").
 in_list("primary_path", "l2070_batching/compilation.py"). in_list("primary_path", "l2070_batching/optimizer.py"). in_list("primary_path", "l2070_batching/plan_prerequisites.py").
-in_list("name_owner", "function_definition"). in_list("name_owner", "class_definition"). in_list("name_owner", "keyword_argument").
-in_list("literal_kind", "string"). in_list("literal_kind", "concatenated_string"). in_list("literal_kind", "integer"). in_list("literal_kind", "float").
-in_list("literal_kind", "true"). in_list("literal_kind", "false"). in_list("literal_kind", "none").
-in_list("bool_kind", "true"). in_list("bool_kind", "false").
-in_list("ident_or_attr", "identifier"). in_list("ident_or_attr", "attribute").
+in_kinds("name_owner", "function_definition"). in_kinds("name_owner", "class_definition"). in_kinds("name_owner", "keyword_argument").
+in_kinds("literal_kind", "string"). in_kinds("literal_kind", "concatenated_string"). in_kinds("literal_kind", "integer"). in_kinds("literal_kind", "float").
+in_kinds("literal_kind", "true"). in_kinds("literal_kind", "false"). in_kinds("literal_kind", "none").
+in_kinds("bool_kind", "true"). in_kinds("bool_kind", "false").
+in_kinds("ident_or_attr", "identifier"). in_kinds("ident_or_attr", "attribute").
 in_list("projection_callee", "dict"). in_list("projection_callee", "model_dump").
 in_list("build_callee", "_add_intent"). in_list("build_callee", "_add_intent_by_ref"). in_list("build_callee", "_get_lazy_plan").
 in_list("build_callee", "enqueue_lazy_plan_intent"). in_list("build_callee", "execute_later"). in_list("build_callee", "return_result").
 in_list("direct_callee", "execute"). in_list("direct_callee", "execute_async"). in_list("direct_callee", "graph"). in_list("direct_callee", "graph_async").
 in_list("direct_callee", "load_with_includes"). in_list("direct_callee", "load_with_includes_async"). in_list("direct_callee", "query"). in_list("direct_callee", "query_async").
-in_list("branch_kind", "if_statement"). in_list("branch_kind", "elif_clause").
-in_list("else_kind", "else_clause"). in_list("else_kind", "elif_clause").
+in_kinds("branch_kind", "if_statement"). in_kinds("branch_kind", "elif_clause").
+in_kinds("else_kind", "else_clause"). in_kinds("else_kind", "elif_clause").
 in_list("eq_op", "=="). in_list("eq_op", "!="). in_list("in_op", "in"). in_list("in_op", "not in").
-in_list("collection_kind", "set"). in_list("collection_kind", "list"). in_list("collection_kind", "tuple").
-in_list("scalar_kind", "integer"). in_list("scalar_kind", "float"). in_list("scalar_kind", "true"). in_list("scalar_kind", "false"). in_list("scalar_kind", "none").
+in_kinds("collection_kind", "set"). in_kinds("collection_kind", "list"). in_kinds("collection_kind", "tuple").
+in_kinds("scalar_kind", "integer"). in_kinds("scalar_kind", "float"). in_kinds("scalar_kind", "true"). in_kinds("scalar_kind", "false"). in_kinds("scalar_kind", "none").
 in_list("preop_runtime", "_execute_compound_async"). in_list("preop_runtime", "_execute_compound_sync"). in_list("preop_runtime", "_run_sync").
 in_list("preop_runtime", "async_pre_op"). in_list("preop_runtime", "build_sql_fts_components"). in_list("preop_runtime", "build_sql_fts_components_async").
 in_list("preop_runtime", "execute_async"). in_list("preop_runtime", "execute_ir"). in_list("preop_runtime", "execute_ir_async"). in_list("preop_runtime", "execute_sync").
 in_list("preop_runtime", "get_sql_fts_components"). in_list("preop_runtime", "get_sql_fts_components_async"). in_list("preop_runtime", "materialize_ir").
 in_list("preop_runtime", "pre_op"). in_list("preop_runtime", "search_unversioned_scores"). in_list("preop_runtime", "search_unversioned_scores_async").
-in_list("scope_kind", "module"). in_list("scope_kind", "class_definition"). in_list("scope_kind", "function_definition").
-in_list("left_binding", "assignment"). in_list("left_binding", "augmented_assignment"). in_list("left_binding", "for_statement"). in_list("left_binding", "for_in_clause").
-in_list("fdcd", "function_definition"). in_list("fdcd", "class_definition").
+in_kinds("scope_kind", "module"). in_kinds("scope_kind", "class_definition"). in_kinds("scope_kind", "function_definition").
+in_kinds("left_binding", "assignment"). in_kinds("left_binding", "augmented_assignment"). in_kinds("left_binding", "for_statement"). in_kinds("left_binding", "for_in_clause").
+in_kinds("fdcd", "function_definition"). in_kinds("fdcd", "class_definition").
 in_list("metadata_origin", "typing.Literal"). in_list("metadata_origin", "typing_extensions.Literal").
 in_list("metadata_origin", "typing.Annotated"). in_list("metadata_origin", "typing_extensions.Annotated").
 in_list("literal_origin", "typing.Literal"). in_list("literal_origin", "typing_extensions.Literal").
 
 // ---- the syntax tables over the tape ----
 .decl snode(n: node)
-snode(n) :- node(d, n, k, _, _), syntax_gate(d), !in_list("excluded_kind", k).
+snode(n) :- node(d, n, k, _, _), syntax_gate(d), !in_kinds("excluded_kind", k).
 .decl module_root(d: number, m: node)
 module_root(d, m) :- node(d, m, "module", _, _), snode(m).
 .decl visible_child(p: node, c: node)
@@ -164,7 +169,7 @@ calls(c, f, k, t, t) :- snode(c), kind(c, "call"), field(c, "function", f), snod
 calls_receiver(c, o) :- calls(c, f, _, _, _), attributes(f, _, o, _).
 // position = row_number() OVER (PARTITION BY call ORDER BY __start) - 1: the count of arguments up to this one, less one.
 .decl argument_node(call: node, a: node)
-argument_node(c, n) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, n, _), snode(n), kind(n, k), !in_list("non_argument", k).
+argument_node(c, n) :- calls(c, _, _, _, _), field(c, "arguments", l), child(l, n, _), snode(n), kind(n, k), !in_kinds("non_argument", k).
 .decl argument_upto(call: node, a: node, b: node)
 argument_upto(c, n, m) :- argument_node(c, n), argument_node(c, m), start(n, s), start(m, t), t <= s.
 .decl arguments(call: node, a: node, position: number)
@@ -179,10 +184,10 @@ keyword_named(c, name) :- keywords(c, _, name, _).
 
 // ---- descendants: ancestor-or-self pairs below the roots (a `reachability` syntax stage) ----
 .decl desc_root(r: node)
-desc_root(r) :- snode(r), kind(r, k), in_list("desc_root_kind", k).
+desc_root(r) :- snode(r), kind(r, k), in_kinds("desc_root_kind", k).
 desc_root(p) :- snode(n), kind(n, "for_in_clause"), child(p, n, _).
 desc_root(c) :- snode(c), child(p, c, _), snode(p), kind(p, "comparison_operator").
-desc_root(c) :- snode(p), field(p, f, c), in_list("desc_root_field", f).
+desc_root(c) :- snode(p), field(p, f, c), root_field(f).
 desc_root(a) :- arguments(_, a, _).
 .decl descendants(root: node, n: node)
 descendants(r, r) :- desc_root(r), snode(r).
@@ -203,7 +208,7 @@ assignment_typed(a) :- assignments(a, _), field(a, "type", _).
 .decl assignment_fn(a: node, fn: node)
 assignment_fn(a, f) :- assignments(a, _), own_fn(a, f).
 .decl param_node(fn: node, p: node)
-param_node(f, p) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), snode(p), kind(p, k), in_list("param_kind", k).
+param_node(f, p) :- functions(f, _), field(f, "parameters", ps), child(ps, p, _), snode(p), kind(p, k), in_kinds("param_kind", k).
 // The name: the parameter itself if an identifier, else its first visible child when that is an identifier. Only
 // (fn, name) is read later; `position` is projected away.
 .decl parameters(fn: node, name: symbol)
@@ -246,7 +251,7 @@ import_descendants(r, n) :- snode(r), kind(r, "import_from_statement"), docof(r,
 import_identifiers(n) :- import_descendants(_, n), kind(n, "identifier").
 // Not a def/class/keyword name (`n.__start = p.name_start`), not an attribute's name, not inside an import.
 .decl py_name_excluded(n: node)
-py_name_excluded(n) :- snode(n), kind(n, "identifier"), child(p, n, _), kind(p, k), in_list("name_owner", k), field(p, "name", x), start(x, s), start(n, s).
+py_name_excluded(n) :- snode(n), kind(n, "identifier"), child(p, n, _), kind(p, k), in_kinds("name_owner", k), field(p, "name", x), start(x, s), start(n, s).
 py_name_excluded(n) :- snode(n), kind(n, "identifier"), child(p, n, _), kind(p, "attribute"), field(p, "attribute", x), start(x, s), start(n, s).
 .decl py_names(n: node, text: symbol)
 py_names(n, t) :- snode(n), kind(n, "identifier"), child(p, n, _), snode(p), text(n, t), !py_name_excluded(n), !import_identifiers(n).
@@ -263,13 +268,13 @@ class_levels(c, l) :- level_candidate(c, i), start(i, s), level_first(c, s), tex
 
 // ---- statements, literal_bools, strings ----
 .decl docstring_like(s: node)
-docstring_like(s) :- snode(s), kind(s, "expression_statement"), visible_child(s, v), kind(v, k), in_list("literal_kind", k).
+docstring_like(s) :- snode(s), kind(s, "expression_statement"), visible_child(s, v), kind(v, k), in_kinds("literal_kind", k).
 .decl statements(fn: node, s: node, kind: symbol)
 statements(f, s, k) :- functions(f, _), field(f, "body", b), visible_child(b, s), kind(s, k), k != "comment", !docstring_like(s).
 .decl statement_count(fn: node, k: number)
 statement_count(f, k) :- statements(f, _, _), k = count : { statements(f, _, _) }.
 .decl literal_bools(fn: node, value: symbol)
-literal_bools(f, k) :- statements(f, s, "return_statement"), visible_child(s, v), kind(v, k), in_list("bool_kind", k), statement_count(f, 1).
+literal_bools(f, k) :- statements(f, s, "return_statement"), visible_child(s, v), kind(v, k), in_kinds("bool_kind", k), statement_count(f, 1).
 .decl strings(x: node, value: symbol)
 strings(x, v) :- raw_strings(x, v).
 strings(x, v) :- raw_fstring_parts(x, v).
@@ -280,7 +285,7 @@ module_functions(f, n) :- functions(f, n), child(p, f, _), snode(p), kind(p, "mo
 module_functions(f, n) :- functions(f, n), child(p, f, _), snode(p), kind(p, "decorated_definition"), child(r, p, _), snode(r), kind(r, "module").
 .decl abstract_functions(f: node)
 abstract_functions(f) :- functions(f, _), child(w, f, _), snode(w), visible_child(w, dec), kind(dec, "decorator"), visible_child(dec, v), kind(v, k),
-    in_list("ident_or_attr", k), text(v, t), @rx_matches(t, "(?:^|\\.)abstractmethod$") = 1.
+    in_kinds("ident_or_attr", k), text(v, t), @rx_matches(t, "(?:^|\\.)abstractmethod$") = 1.
 abstract_functions(f) :- functions(f, _), statement_count(f, 1), statements(f, _, "pass_statement").
 // row_number() OVER (PARTITION BY cls, name ORDER BY __start DESC) = 1: the last definition.
 .decl method_start(cls: node, name: symbol, s: number)
@@ -334,13 +339,13 @@ execution_calls(c) :- exec_direct(c).
 
 // ---- branches, branch_flags ----
 .decl branches(b: node)
-branches(b) :- snode(b), kind(b, k), in_list("branch_kind", k).
+branches(b) :- snode(b), kind(b, k), in_kinds("branch_kind", k).
 .decl branch_then(b: node, t: node)
 branch_then(b, t) :- branches(b), field(b, "consequence", t).
 // else_start / else_end: min start / max end of the else/elif siblings after the branch (under the if_statement).
 .decl branch_alt(b: node, alt: node)
-branch_alt(b, a) :- branches(b), kind(b, "if_statement"), visible_child(b, a), kind(a, k), in_list("else_kind", k), start(a, as), start(b, bs), as > bs.
-branch_alt(b, a) :- branches(b), kind(b, "elif_clause"), child(p, b, _), visible_child(p, a), kind(a, k), in_list("else_kind", k), start(a, as), start(b, bs), as > bs.
+branch_alt(b, a) :- branches(b), kind(b, "if_statement"), visible_child(b, a), kind(a, k), in_kinds("else_kind", k), start(a, as), start(b, bs), as > bs.
+branch_alt(b, a) :- branches(b), kind(b, "elif_clause"), child(p, b, _), visible_child(p, a), kind(a, k), in_kinds("else_kind", k), start(a, as), start(b, bs), as > bs.
 .decl branch_alt_start(b: node, s: number)
 branch_alt_start(b, s) :- branch_alt(b, a), start(a, s).
 .decl branch_alt_end(b: node, e: number)
@@ -392,12 +397,12 @@ through_el(o, el) :- visible_child(o, el), string_at(el, "through").
 .decl through_el_count(o: node, k: number)
 through_el_count(o, k) :- through_el(o, _), k = count : { through_el(o, _) }.
 .decl through_bad_scalar(o: node)
-through_bad_scalar(o) :- visible_child(o, el), kind(el, k), in_list("scalar_kind", k).
+through_bad_scalar(o) :- visible_child(o, el), kind(el, k), in_kinds("scalar_kind", k).
 .decl through_other(o: node)
 through_other(o) :- visible_child(o, el), string_at(el, v), v != "through".
 .decl through_conditions(c: node)
 through_conditions(c) :- cmp_op(c, _, o, op), in_list("eq_op", op), descendants(o, lit), string_at(lit, "through").
-through_conditions(c) :- cmp_op(c, _, o, op), in_list("in_op", op), kind(o, k), in_list("collection_kind", k), through_el_count(o, 1),
+through_conditions(c) :- cmp_op(c, _, o, op), in_list("in_op", op), kind(o, k), in_kinds("collection_kind", k), through_el_count(o, 1),
     !through_bad_scalar(o), !through_other(o).
 
 // ---- preop_functions: a set recursion over the in-file call graph by name ----
@@ -407,7 +412,7 @@ preop_functions(d, n) :- functions(f, n), docof(f, d), descendants(f, c), calls(
 
 // ---- scopes, scope_owners, scope_chain ----
 .decl scopes(s: node, kind: symbol)
-scopes(s, k) :- snode(s), kind(s, k), in_list("scope_kind", k).
+scopes(s, k) :- snode(s), kind(s, k), in_kinds("scope_kind", k).
 // enclosing: NULL for the module; else the parent's ownership.fn, else the file's module.
 .decl scope_parent_fn(s: node)
 scope_parent_fn(s) :- scopes(s, k), k != "module", child(p, s, _), own_fn(p, _).
@@ -448,11 +453,11 @@ scope_imports(sc, h, h) :- direct_imports(st, i, n), kind(st, "import_statement"
 .decl binding_target(n: node, t: node)
 binding_target(n, n) :- snode(n), kind(n, "delete_statement").
 binding_target(n, t) :- snode(n), kind(n, "named_expression"), field(n, "name", t).
-binding_target(n, t) :- snode(n), kind(n, k), in_list("left_binding", k), field(n, "left", t).
+binding_target(n, t) :- snode(n), kind(n, k), in_kinds("left_binding", k), field(n, "left", t).
 .decl scope_shadows(scope: node, name: symbol)
 scope_shadows(sc, name) :- binding_target(n, t), scope_owners(n, sc), descendants(t, x), py_names(x, name).
 scope_shadows(f, name) :- parameters(f, name).
-scope_shadows(sc, name) :- snode(n), kind(n, k), in_list("fdcd", k), child(p, n, _), scope_owners(p, sc), field(n, "name", x), text(x, name).
+scope_shadows(sc, name) :- snode(n), kind(n, k), in_kinds("fdcd", k), child(p, n, _), scope_owners(p, sc), field(n, "name", x), text(x, name).
 scope_shadows(s, name) :- snode(n), kind(n, "global_statement"), docof(n, d), node(d, n, _, ns, ne), scopes(s, "module"), node(d, s, _, ss, se),
     ns >= ss, ne <= se, visible_child(n, x), kind(x, "identifier"), text(x, name).
 scope_shadows(s, name) :- snode(n), kind(n, "nonlocal_statement"), docof(n, d), node(d, n, _, ns, ne), scopes(s, "function_definition"), node(d, s, _, ss, se),
@@ -493,11 +498,11 @@ atom_origin_count(a, id, k) :- atom_imports(a, id, _), k = count : { atom_import
 // origin: the import's origin || the atom past its head; trusted: unshadowed and one distinct origin.
 .decl resolved_atoms(ann: node, atom_id: symbol, s: number, e: number, origin: symbol)
 resolved_atoms(a, id, s, e, o) :- annotation_atoms(a, _, id, s, e, t), atom_imports(a, id, io), h = @rx_extract(t, "^[A-Za-z_]\\w*", 0),
-    o = @concat(io, @substr(t, @length(h), @length(t))).
+    t = cat(h, r), o = @concat(io, r).
 resolved_atoms(a, id, s, e, t) :- annotation_atoms(a, _, id, s, e, t), !has_atom_import(a, id).
 .decl resolved_trusted(ann: node, atom_id: symbol, origin: symbol)
 resolved_trusted(a, id, o) :- annotation_atoms(a, _, id, _, _, t), atom_unshadowed(a, id, io), atom_origin_count(a, id, 1),
-    h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), o = @concat(io, @substr(t, @length(h), @length(t))).
+    h = @rx_extract(t, "^[A-Za-z_]\\w*", 0), t = cat(h, r), o = @concat(io, r).
 // Atoms inside a trusted Literal[…] (any argument) or Annotated[…] (past the first) of the annotation's type.
 .decl generic_arg(ann: node, origin: symbol, arg: node)
 generic_arg(a, io, arg) :- annotations(a, _), field(a, "type", ty), docof(a, d), node(d, ty, _, ts, te), node(d, g, "generic_type", gs, ge), snode(g),
@@ -528,15 +533,15 @@ in_list("conditional_receivers", "cs"). in_list("conditional_receivers", "condit
 in_list("raise_errors", "TypeError"). in_list("raise_errors", "NotImplementedError").
 in_list("plan_attrs", "_active_plan"). in_list("plan_attrs", "_lazy_plan"). in_list("plan_attrs", "_plan").
 in_list("plan_state_paths", "impl/common/l2070_server_plan/base_server_plan.py"). in_list("plan_state_paths", "impl/common/l2070_server_plan/plan_helpers.py").
-in_list("unpack_targets", "pattern_list"). in_list("unpack_targets", "tuple_pattern").
+in_kinds("unpack_targets", "pattern_list"). in_kinds("unpack_targets", "tuple_pattern").
 in_list("order_by_names", "JSON_EXISTS"). in_list("order_by_names", "JSON_GET"). in_list("order_by_names", "JSON_GET_BOOL").
 in_list("order_by_names", "JSON_GET_FLOAT"). in_list("order_by_names", "JSON_GET_INT"). in_list("order_by_names", "JSON_GET_TEXT").
 in_list("order_by_names", "JSON_KEYS"). in_list("order_by_names", "JSON_LENGTH"). in_list("order_by_names", "JSON_TYPE").
 in_list("order_by_names", "JsonAccessKind"). in_list("order_by_names", "SqlJsonAccess"). in_list("order_by_names", "SqlJsonPath").
 in_list("order_by_names", "SqlOrderByItem"). in_list("order_by_names", "SqlOrderByItems"). in_list("order_by_names", "build_query_spec_order_by").
-in_list("lock_stmt", "if_statement"). in_list("lock_stmt", "return_statement").
-in_list("lock_x_kinds", "attribute"). in_list("lock_x_kinds", "string"). in_list("lock_x_kinds", "concatenated_string").
-in_list("assignment_kinds", "assignment"). in_list("assignment_kinds", "augmented_assignment").
+in_kinds("lock_stmt", "if_statement"). in_kinds("lock_stmt", "return_statement").
+in_kinds("lock_x_kinds", "attribute"). in_kinds("lock_x_kinds", "string"). in_kinds("lock_x_kinds", "concatenated_string").
+in_kinds("assignment_kinds", "assignment"). in_kinds("assignment_kinds", "augmented_assignment").
 in_list("analysis_fields", "ordered_steps"). in_list("analysis_fields", "step_facts"). in_list("analysis_fields", "steps").
 in_list("analysis_writers", "__init__"). in_list("analysis_writers", "build").
 in_list("exec_helpers", "_execute_nested_steps"). in_list("exec_helpers", "_execute_nested_steps_async").
@@ -565,7 +570,7 @@ in_list("belongs_has", "BelongsTo"). in_list("belongs_has", "HasMany").
 in_list("relationship_info", "RelationshipInfo"). in_list("relationship_info", "relationship_type_from_contract").
 in_list("cleanup_kw", "steps"). in_list("cleanup_kw", "source_flush_context").
 in_list("graphql_compat_modules", "l9750_graphql.schema_builder"). in_list("graphql_compat_modules", "l9750_graphql.relationship_compat").
-in_list("list_tuple", "list"). in_list("list_tuple", "tuple").
+in_kinds("list_tuple", "list"). in_kinds("list_tuple", "tuple").
 in_list("projection_execs", "execute"). in_list("projection_execs", "execute_async"). in_list("projection_execs", "resolve"). in_list("projection_execs", "resolve_async").
 in_list("row_names", "all_rows"). in_list("row_names", "candidates"). in_list("row_names", "group_rows"). in_list("row_names", "items").
 in_list("row_names", "ordered_rows"). in_list("row_names", "out"). in_list("row_names", "page"). in_list("row_names", "page_rows").
@@ -579,7 +584,7 @@ in_list("runtime_state", "_active_plan"). in_list("runtime_state", "_base_txn").
 in_list("runtime_state", "_cursor"). in_list("runtime_state", "_session"). in_list("runtime_state", "_txn"). in_list("runtime_state", "executor_transaction").
 in_list("runtime_state", "session_validation_cache_target"). in_list("runtime_state", "session_validation_txn_state_target"). in_list("runtime_state", "sql_connection").
 in_list("connection_ids", "data_layer.types.ConnectionId"). in_list("connection_ids", "l1350_foundational_types.ConnectionId"). in_list("connection_ids", "l1400_types.ConnectionId").
-in_list("unwrap_kinds", "tuple"). in_list("unwrap_kinds", "list"). in_list("unwrap_kinds", "set").
+in_kinds("unwrap_kinds", "tuple"). in_kinds("unwrap_kinds", "list"). in_kinds("unwrap_kinds", "set").
 in_list("runtime_builder_kw", "async_capability"). in_list("runtime_builder_kw", "bundle"). in_list("runtime_builder_kw", "callback").
 in_list("runtime_builder_kw", "capability"). in_list("runtime_builder_kw", "fn"). in_list("runtime_builder_kw", "handler").
 in_list("runtime_builder_kw", "parse_fn"). in_list("runtime_builder_kw", "service"). in_list("runtime_builder_kw", "store").
@@ -704,11 +709,11 @@ inside_plan_analysis(n) :- classes(c, "PlanAnalysis"), docof(c, d), node(d, c, _
 analysis_writer(n) :- own_fn(n, f), functions(f, fname), in_list("analysis_writers", fname), inside_plan_analysis(n).
 // CASE stmt.kind WHEN if/elif THEN condition_id ELSE id
 .decl lock_root(st: node, r: node)
-lock_root(st, c) :- snode(st), kind(st, k), in_list("branch_kind", k), field(st, "condition", c).
-lock_root(st, st) :- snode(st), kind(st, k), !in_list("branch_kind", k).
+lock_root(st, c) :- snode(st), kind(st, k), in_kinds("branch_kind", k), field(st, "condition", c).
+lock_root(st, st) :- snode(st), kind(st, k), !in_kinds("branch_kind", k).
 .decl lock_x(x: node)
 lock_x(x) :- py_names(x, _), kind(x, "identifier").
-lock_x(x) :- snode(x), kind(x, k), in_list("lock_x_kinds", k).
+lock_x(x) :- snode(x), kind(x, k), in_kinds("lock_x_kinds", k).
 .decl diagnostics_1(n: node, issue: symbol, identity: symbol, detector: symbol)
 diagnostics_1(n, "SPQ-002", id, "_check_intent_boilerplate") :- classes(n, _), base_names(n, "ServerPlanStep"), class_levels(n, 4),
     methods(m, n, "compile", _), statements(m, s, "raise_statement"), !earlier_statement(m, s), raise_error_child(s),
@@ -722,7 +727,7 @@ diagnostics_1(n, "SPQ-007", id, "_check_lifecycle_entanglement") :- assignments(
 diagnostics_1(n, "SPQ-007", id, "_check_lifecycle_entanglement") :- assignments(n, t), !assignment_typed(n), attributes(t, attr, _, _), in_list("plan_attrs", attr),
     docof(n, d), node(d, n, _, ns, ne), module_functions(own, _), node(d, own, _, os, oe), os < ns, oe >= ne,
     doc(d, p), in_list("plan_state_paths", p), primary_file(d), id = @concat(@id(own), ":", @id(n)).
-diagnostics_1(n, "SPQ-008", id, "_check_unused_raw_data") :- assignments(n, t), !assignment_typed(n), kind(t, tk), in_list("unpack_targets", tk),
+diagnostics_1(n, "SPQ-008", id, "_check_unused_raw_data") :- assignments(n, t), !assignment_typed(n), kind(t, tk), in_kinds("unpack_targets", tk),
     assignment_value(n, v), calls(v, _, _, _, "_build_query_spec_and_raw"), visible_child(t, el), ordinal(el, 1), kind(el, "identifier"), text(el, "_"),
     docof(n, d), steps_file(d), primary_file(d), id = @id(n).
 diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- py_names(n, t), in_list("order_by_names", t), docof(n, d),
@@ -736,12 +741,12 @@ diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches")
 diagnostics_1(n, "SPQ-024", id, "_check_order_by_compile_helper_escape_hatches") :- strings(n, v), @rx_matches(v, "(?:^|\\s)(?:JSON_EXISTS|JSON_GET|JSON_GET_BOOL|JSON_GET_FLOAT|JSON_GET_INT|JSON_GET_TEXT|JSON_KEYS|JSON_LENGTH|JSON_TYPE|JsonAccessKind|SqlJsonAccess|SqlJsonPath|SqlOrderByItem|SqlOrderByItems|build_query_spec_order_by)(?:\\s|$)") = 1,
     node(d, n, _, s, e), doc(d, "impl/common/l2070_server_plan/steps/_compile_helpers.py"), primary_file(d), id = @printf("%d:%d", s, e).
 diagnostics_1(n, "SPQ-025", id, "_check_can_batch_lock_snapshot_policy") :- functions(n, "can_batch"), field(n, "body", b), visible_child(b, st), kind(st, sk),
-    in_list("lock_stmt", sk), lock_root(st, r), descendants(r, x), lock_x(x), text(x, t),
+    in_kinds("lock_stmt", sk), lock_root(st, r), descendants(r, x), lock_x(x), text(x, t),
     @rx_matches(@lower(t), "for_update|lock|locked|snapshot|use_for_update") = 1, docof(n, d), primary_file(d), id = @id(n).
-diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_list("assignment_kinds", k), field(n, "left", l),
+diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_kinds("assignment_kinds", k), field(n, "left", l),
     descendants(l, x), attributes(x, attr, _, "analysis"), in_list("analysis_fields", attr), !analysis_writer(n), docof(n, d), files(d, src),
     @instr(src, "PlanAnalysis") > 0, primary_file(d), id = @id(n).
-diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_list("assignment_kinds", k), field(n, "left", l),
+diagnostics_1(n, "SPQ-028", id, "_check_plan_analysis_field_reassignment") :- snode(n), kind(n, k), in_kinds("assignment_kinds", k), field(n, "left", l),
     descendants(l, x), attributes(x, attr, _, "self"), in_list("analysis_fields", attr), inside_plan_analysis(n), !analysis_writer(n), docof(n, d),
     files(d, src), @instr(src, "PlanAnalysis") > 0, primary_file(d), id = @id(n).
 diagnostics_1(n, "SPQ-012", id, "_check_executor_python_execution") :- functions(n, name), in_list("exec_helpers", name), docof(n, d), executor_scope(d),
@@ -876,8 +881,8 @@ diagnostics_4(n, "SPQ-038", id, "_check_serverplan_cleanup_ratchets") :- from_im
     docof(n, d), !in_tests(d), !relationship_compat_exempt(d), prim_or_fallback(d), start(n, s), from_import_alias_text(i, al),
     id = @printf("%d:%s:%s", s, name, al).
 diagnostics_4(n, "SPQ-046", id, "_check_sql_statement_batch_requires_category") :- calls(n, _, _, _, "SqlStatementBatch"), !keyword_named(n, "statement_kinds_per_stmt"),
-    keywords(n, _, "collect_results_per_stmt", cv), kind(cv, ck), in_list("list_tuple", ck), visible_child(cv, tv), kind(tv, "true"),
-    keywords(n, _, "needs_returning_per_stmt", nv), kind(nv, nk), in_list("list_tuple", nk), !non_false_child(nv),
+    keywords(n, _, "collect_results_per_stmt", cv), kind(cv, ck), in_kinds("list_tuple", ck), visible_child(cv, tv), kind(tv, "true"),
+    keywords(n, _, "needs_returning_per_stmt", nv), kind(nv, nk), in_kinds("list_tuple", nk), !non_false_child(nv),
     docof(n, d), primary_file(d), id = @concat("rowcounts:", @id(n)).
 diagnostics_4(n, "SPQ-043", id, "_check_projection_helper_execution_fallback") :- functions(n, _), docof(n, d), !in_tests(d), projection_prefix(d),
     scoped_nodes(n, c), calls(c, _, "attribute", _, ce), in_list("projection_execs", ce), projection_repairs(n), files(d, src),
@@ -976,10 +981,10 @@ diagnostics_5(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- an
 // ---- diagnostics_6 ----
 .decl diagnostics_6(n: node, issue: symbol, identity: symbol, detector: symbol)
 diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- assignments(n, tg), !assignment_typed(n), kind(tg, "identifier"), text(tg, tt),
-    @instr(tt, "UNWRAP") > 0, assignment_value(n, v), kind(v, vk), in_list("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
+    @instr(tt, "UNWRAP") > 0, assignment_value(n, v), kind(v, vk), in_kinds("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
     in_list("runtime_state", s), docof(n, d), !in_tests(d), primary_file(d), id = @concat("unwrap:", @id(n)).
 diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- assignments(n, tg), !assignment_typed(n), kind(tg, "identifier"), text(tg, tt),
-    @instr(tt, "OWNER") > 0, assignment_value(n, v), kind(v, vk), in_list("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
+    @instr(tt, "OWNER") > 0, assignment_value(n, v), kind(v, vk), in_kinds("unwrap_kinds", vk), visible_child(v, item), string_at(item, s),
     in_list("runtime_state", s), docof(n, d), !in_tests(d), primary_file(d), id = @concat("unwrap:", @id(n)).
 diagnostics_6(n, "SPQ-050", id, "_check_serverplan_runtime_state_ingress") :- attributes(n, "renewable_capability_bundle", _, _), docof(n, d), !in_tests(d),
     primary_file(d), id = @id(n).

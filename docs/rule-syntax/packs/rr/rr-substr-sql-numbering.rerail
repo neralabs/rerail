@@ -10,10 +10,13 @@
 //   @substr(t, @length(h) + 1, k)       the text after a prefix h starts at @length(h)    RR103
 //   @substr(t, @add(@length(h), 1), k)  the same                                         RR103
 //   @substr(p, 5)                       SQL's two-argument form, refused when lowered    RR104
+// The text after a prefix is best not cut by count at all: `t = cat(h, x)` with t bound binds x, the text after h
+// (and `p = cat(b, "/", q)` the path below directory b). It reads as what it means, and it runs as `str_between`,
+// whose prefix parts are read where they lie, not made; it holds no row where t does not start with h.
 // RR102 also flags a deliberate second character; write it as `@substr(n, 1, 1)` only with a comment saying so, or
 // suppress the finding there.
 .violation substr_from_one(at: node) code "RR102" "@substr counts from 0: a start of 1 is the second character (SQL's substr(s, 1, n) is @substr(s, 0, n))"
-.violation substr_after_length(at: node) code "RR103" "@substr counts from 0: the text after a prefix h starts at @length(h), not @length(h) + 1"
+.violation substr_after_length(at: node) code "RR103" "@substr counts from 0, so this skips one character past the prefix h; for the text after h write t = cat(h, x), and for one after h and a separator t = cat(h, \"/\", x)"
 .violation substr_two_arguments(at: node) code "RR104" "@substr takes three arguments (a text, a start counted from 0, a length)"
 
 // substr_arg(c, a, i): the i-th argument a (from 0) of an @substr call c.

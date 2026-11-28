@@ -38,7 +38,7 @@ dl_module_file(d, p, x) :- doc(d, p), @rx_matches(p, "[.]pyi?$") = 1, x = @rx_re
 .decl dl_module_path(d: number, q: symbol)
 dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), @rx_replace(r, "(^|/)[^/]*$", "") = "", q = p.
 dl_module_path(d, q) :- dl_module_file(d, p, x), dl_package_root(x, r), b = @rx_replace(r, "(^|/)[^/]*$", ""), b != "",
-    s = @cat(b, "/"), q = @substr(p, @length(s), @length(p)).
+    p = cat(b, "/", q).
 dl_module_path(d, q) :- dl_module_file(d, p, x), !dl_rooted(x), q = @rx_replace(p, "^.*/", "").
 .decl module_of(d: number, m: symbol)
 module_of(d, m) :- dl_module_path(d, q), m = @replace(@rx_replace(q, "(.)[.][^./]*$", "$1"), "/", ".").

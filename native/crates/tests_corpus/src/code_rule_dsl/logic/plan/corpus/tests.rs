@@ -3642,6 +3642,29 @@ fn substr_counts_from_zero_as_the_programs_write_it() {
     assert_eq!(got, [["impl", "_async", "impl/x", "x_async"]]);
 }
 
+/// The data-layer prelude's module path is the path below the package root's parent (`p = @cat(b, "/", q)`): a
+/// package at `src/impl` gives `impl/a.py`, one at the top gives the path itself.
+#[test]
+fn the_data_layer_module_path_is_below_the_package_roots_parent() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("dl-module-path");
+    for (path, text) in [("src/impl/__init__.py", ""), ("src/impl/a.py", "x = 1\n"), ("top/__init__.py", ""), ("top/b.py", "y = 2\n")] {
+        std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        std::fs::write(dir.join(path), text).unwrap();
+    }
+    let programs = crate::source_tree::native().join("src/code_rule_dsl/logic/programs/data_layer");
+    let prelude = std::fs::read_to_string(programs.join("prelude.rerail")).unwrap().replace(".input reference_edge\n", "reference_edge(n, n) :- kind(n, \"\\u0000\").\n");
+    let program = format!(".language python\n{prelude}\n.decl path_of(p: symbol, q: symbol)\npath_of(p, q) :- dl_module_path(d, q), doc(d, p).\n.output path_of\n");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    let ran = super::run_all(&[program.as_str()], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let mut got = crate::code_rule_dsl::logic::plan::output::shown(&out, "path_of").unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("{e}"));
+    got.sort();
+    assert_eq!(got, [["src/impl/__init__.py", "impl/__init__.py"], ["src/impl/a.py", "impl/a.py"], ["top/__init__.py", "top/__init__.py"], ["top/b.py", "top/b.py"]]);
+}
+
 /// internal_dead_code resolves each base of a class on its own, as the SQL's `coalesce` does per `raw_bases` row: a
 /// class with an imported base and a base of its own module has both edges, each at its own ordinal. (The fallback
 /// was keyed by the class: one imported base hid every module-local one, and every edge took every base's ordinal.)
