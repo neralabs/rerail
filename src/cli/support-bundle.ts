@@ -53,7 +53,8 @@ import {
 } from "../runtime/daemon-control.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 import { defaultStorageRoot } from "../runtime/session-paths.js";
-import { SqliteSessionReader, type SessionGaps } from "../runtime/session-store.js";
+import { sayLeftOut, SqliteSessionReader, type SessionGaps } from "../runtime/session-store.js";
+import { storedItems, type StoredListLog } from "../engine/storage/stored-list.js";
 import { seenCodingAgents } from "../setup/coding-agents.js";
 
 export const SUPPORT_BUNDLE_FORMAT = "rerail.support-bundle/v1";
@@ -455,6 +456,11 @@ type TimelineFields = Omit<SupportBundleTimelineEntry, "at" | "kind">;
 const toolOf = ({ tool }: TimelineRow): TimelineFields => (tool === null ? {} : { tool });
 const countOf = ({ count }: TimelineRow): TimelineFields => (count === null ? {} : { count });
 const boundaryOf = ({ boundary }: TimelineRow): TimelineFields => (boundary === null ? {} : { boundary });
+/** A receipt's rule ids, the strings of its `ruleIds` list as JSON (`->`); none where it has no list. */
+function ruleIdsOf({ ruleIds }: TimelineRow): TimelineFields {
+  const listed = ruleIds === null ? "none" : storedItems(ruleIds, "text");
+  return typeof listed === "string" ? {} : { ruleIds: listed.items as string[] };
+}
 
 /**
  * The fields of a stored event that may leave it, by kind. They are read with `json_extract`, so a payload's text never
@@ -463,7 +469,7 @@ const boundaryOf = ({ boundary }: TimelineRow): TimelineFields => (boundary === 
 const TIMELINE_FIELDS = new Map<string, (row: TimelineRow) => TimelineFields>([
   ["call", toolOf],
   ["result", row => ({ ...toolOf(row), ...(row.failed === 1 ? { failed: true } : {}) })],
-  ["steering-delivered", ({ ruleIds }) => (ruleIds === null ? {} : { ruleIds: JSON.parse(ruleIds) as string[] })],
+  ["steering-delivered", ruleIdsOf],
   ["events-dropped", countOf],
   ["events-lost", countOf],
   ["source-discovery-pending", boundaryOf],
@@ -475,18 +481,26 @@ function timelineEntry(row: TimelineRow): SupportBundleTimelineEntry {
   return { at: row.at, kind: row.kind, ...TIMELINE_FIELDS.get(row.kind)?.(row) };
 }
 
-function readTimeline(database: RerailDatabase, sessionId: string): SupportBundleTimelineEntry[] {
-  const field = (path: string) => sql<string | number | null>`json_extract(${events.payloadJson}, ${path})`;
+/**
+ * The session's last events, oldest first. An event whose text is no JSON, where `json_extract` would raise for the whole
+ * read, is recorded by its kind and time alone, and `stderr` names it once (`sayLeftOut`).
+ */
+function readTimeline(database: RerailDatabase, sessionId: string, stderr: StoredListLog): SupportBundleTimelineEntry[] {
+  const valid = sql<number>`json_valid(${events.payloadJson})`;
+  const field = (path: string) => sql<string | number | null>`CASE WHEN ${valid} THEN json_extract(${events.payloadJson}, ${path}) END`;
   const rows = database.select({
+    eventId: events.eventId,
+    valid,
     kind: events.kind,
     at: events.observedAt,
     tool: field("$.toolName"),
     failed: field("$.failed"),
-    ruleIds: field("$.ruleIds"),
+    ruleIds: sql<string | null>`CASE WHEN ${valid} THEN ${events.payloadJson} -> '$.ruleIds' END`,
     count: field("$.count"),
     boundary: field("$.boundary"),
     activeRuleCount: field("$.activeRuleCount"),
   }).from(events).where(eq(events.sessionId, sessionId)).orderBy(desc(events.sequence)).limit(MAX_TIMELINE_ENTRIES).all();
+  for (const row of rows) if (row.valid === 0) sayLeftOut({ database, log: stderr }, sessionId, row.eventId);
   return rows.reverse().map(row => timelineEntry(row as Parameters<typeof timelineEntry>[0]));
 }
 
@@ -618,12 +632,12 @@ function readSession(database: RerailDatabase, context: DatabaseReadContext, ses
   const eventCounts = Object.fromEntries(database.select({ kind: events.kind, total: count() }).from(events)
     .where(eq(events.sessionId, session.sessionId)).groupBy(events.kind).orderBy(asc(events.kind)).all().map(row => [row.kind, row.total]));
   const eventTotal = Object.values(eventCounts).reduce((sum, total) => sum + total, 0);
-  const timeline = readTimeline(database, session.sessionId);
+  const timeline = readTimeline(database, session.sessionId, stderr);
   // The ledger is where the session's hooks ran, which is the checkout's root or a folder the agent started in.
   const { steers, total: steerTotal, found } = readSteers([session.cwd, workspaceRoot], session.sessionId);
   const steered = eventCounts["steering-delivered"] ?? 0;
   if (!found && steered > 0) problems.push(`steers: the session steered ${steered} time${steered === 1 ? "" : "s"} and its ledger was not found, so their text is missing.`);
-  const sessionReader = new SqliteSessionReader(databasePath);
+  const sessionReader = new SqliteSessionReader(databasePath, { log: stderr });
   const auditReader = new SqliteAuditReader(databasePath, { log: stderr });
   try {
     const { audits, total: auditTotal } = auditReader.list({ sessionId: session.sessionId, limit: MAX_AUDITS });

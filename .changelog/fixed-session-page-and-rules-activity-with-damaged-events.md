@@ -1,0 +1,1 @@
+One damaged session event no longer fails its session's page in the dashboard (`sessions_get`), nor a damaged steer record the rules activity behind Overview, `rerail stop`, `rerail feedback`, `rerail scrub` or a support bundle. Pages leave it out and `daemon.log` names it; `rerail stop` and the bundle name it in their error output; feedback and scrub write no line.

@@ -278,6 +278,25 @@ function sampleLine(text: string): string {
 }
 
 describe("rerail scrub alongside running sessions", () => {
+  it("scrubs a stored event whose text is no JSON as text, and the events after it", async () => {
+    const { token, live } = await scrubFixture();
+    try {
+      const event = live.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES ('s1', ?, 'user-prompt', 1, ?)");
+      // The closing brace gone, as a damaged file or a hand edit leaves it.
+      event.run("e2", `{"text":"use ${token}"`);
+      event.run("e3", JSON.stringify({ text: `use ${token} again` }));
+
+      expect(await runScrubCommand([], () => "usage")).toBe(0);
+
+      const stored = live.$client.prepare("SELECT event_id AS id, payload_json AS json FROM events ORDER BY sequence").all() as Array<{ id: string; json: string }>;
+      expect(stored.map(row => row.id)).toEqual(["e1", "e2", "e3"]);
+      for (const row of stored) expect(row.json).not.toContain(token);
+      expect(stored[1]!.json.startsWith(`{"text":"use `)).toBe(true);
+    } finally {
+      live.$client.close();
+    }
+  });
+
   it("reports a database rewrite that fails, still scrubs the rows, ledgers and daemon.log, and exits 1", async () => {
     const { home, ledger, token, live, printed } = await scrubFixture();
     try {
