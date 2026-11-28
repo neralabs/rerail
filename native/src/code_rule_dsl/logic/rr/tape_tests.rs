@@ -539,7 +539,7 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
         lines
     };
     let own = lines(&alone, "ruff-c408-unnecessary-collection-call");
-    assert!(!own.is_empty() && !own.contains(&6), "C408 alone finds the string annotations, not the `Literal`'s text: {alone:#}");
+    assert_eq!(own, [3, 4, 5, 7], "C408 alone finds the string annotations, not the `Literal`'s text: {alone:#}");
     assert_eq!(lines(&batch, "ruff-c408-unnecessary-collection-call"), own, "{batch:#}");
     assert_eq!(lines(&batch, "t:c408-twin"), own, "{batch:#}");
     // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rerail` runs alone.

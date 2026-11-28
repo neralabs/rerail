@@ -12,4 +12,4 @@
 
 .decl todo_at(c: node, D: span)
 todo_at(c, D) :- todo_tag(c, _, _, _),
-    match("(?:.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?:[\\t -/:-@\\[-\\x60{-~].*)?", c).
+    match("(?:.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?:[^\\p{Alphabetic}\\p{N}].*)?", c).

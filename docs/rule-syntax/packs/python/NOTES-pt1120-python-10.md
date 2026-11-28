@@ -22,9 +22,9 @@ strings (python/names' `parsed_in`). Counterexamples, Ruff's findings:
   "pprint(8)" = 1`, is T203 (the module's `from pprint import pprint`, not the parameter); the old translation
   resolved the parameter. Likewise `def g(print): q: "print(11)" = 1` is T201, and with `def print(x): ...` at
   module level `cast("print(1)", 1)` is not.
-- Arguments: in a type string's tree `call_kwarg` sees no keywords, so `y: "print(9, file=fp)" = 1` was reported
-  (Ruff: not), and `None` has no `kind` row there, so `cast("print(1, file=None)", 1)` was missed (Ruff: T201).
-  `fwdref_kwarg` reads python-04's `ann_kwarg` there, and `stdio_value` takes the text `None`.
+- The native AST wave now includes parsed Python guests, so field-bound argument and `None` kind tests work.
+  `fwdref_kwarg` uses ordinary `call_kwarg`, and `stdio_value` uses the `none` kind; the argument and text
+  workarounds are removed. The complete T201 corpus has no original-only findings.
 
 `fwdref_lookup` is the forward-reference lookup: the module's import of the name when the module binds it by imports
 alone, else the builtin when the module does not bind it, else the lookup from the string's place. Not followed:
@@ -33,8 +33,8 @@ asks for one).
 
 **Library change proposed:** python-04's `guest_q` should look names up in this order (it takes a builtin only
 when the file binds the name nowhere), and python/names' `parsed_in` should resolve a type string's names module
-first; `fwdref_lookup` then goes. Engine gap (python-04 already names it): in a guest tree `kind` has no row for a node
-bound through `field`, so python/ruff's argument relations and `kind(v, "none")` see nothing there.
+first; `fwdref_lookup` then goes. The earlier engine gap for a constant kind bound through `field` is fixed:
+optimized matchers run on guest tapes as well as files.
 
 ## Tuples tree-sitter does not make tuple nodes (`comma_beside`): ISC004
 

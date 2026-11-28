@@ -186,6 +186,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/world.rs", "MODULE_RESOLVER"),
     ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
     ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
+    ("code_rule_dsl/logic/strings/functions.rs", "PY_PARSES"),
+    ("code_rule_dsl/logic/strings/functions.rs", "PY_CONSECUTIVE_NAMES"),
     ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
     // The rule being compiled: the step that first bound each slot, for a refusal's message.
     ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),

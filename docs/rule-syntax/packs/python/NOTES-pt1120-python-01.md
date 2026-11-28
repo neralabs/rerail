@@ -2,8 +2,9 @@
 
 Eight rules on #1120's line, checked with `translations:check` (ptcheck, engine `rerail-engine-1120`) against
 their JSON originals, and each differing key against Ruff 0.17.6 (`ruff check --select <CODE> --no-cache`) on a
-fleet box. Final: 7 `same`, PYI020 `different` (1 key each way, explained below). Every rule stays per file: no
-relation is declared `cross_file`, and a run of all eight with `RERAIL_SHOW_CROSSINGS=1` printed nothing.
+fleet box. Final: 7 `same`, PYI020 `different` (1 key each way, explained below; since, 1 translation-right key).
+Every rule stays per file: no relation is declared `cross_file`, and a run of all eight with
+`RERAIL_SHOW_CROSSINGS=1` printed nothing.
 
 New library: `lib/python/stub-version-checks.rerail` (PYI002–PYI005 share it): `one_cmp` (one comparison, comments
 and line continuations not operands), `vi_cmp` (Ruff's ExpectedComparator for `sys.version_info`, read through
@@ -62,7 +63,7 @@ parameters; the rule asks `tparam_named` of the def). Checked against Ruff as we
 and `self: "'_S'"` are not reported, `def c[T](self: "T")` is, and `cls: "type[_S]"` is not when the module
 binds `type`.
 
-## PYI020 quoted-annotation-in-stub: different (right: neither)
+## PYI020 quoted-annotation-in-stub: different (right: neither; since, right: translation)
 
 The type context is now core's native `string_annotation` (Ruff's own table of string type definitions) instead
 of python/typing's `type_ctx`, which entered every child of a type, a call's arguments included, and knew no
@@ -89,6 +90,10 @@ Left, both from the parse:
   `    ]  # Comment''']`. Ruff reports 41:14. Both guests the translation can ask refuse it: the "annotation" guest
   parses `( value )` and the trailing comment hides the `)`; the "python" guest (a module of one expression, the
   fallback that rescues lines 3, 17 and 22 of that file) refuses the leading indentation. An engine gap, below.
+
+Fixed since (rule fixes on #1120's line): the "annotation" guest wraps the value as `(value` newline `)`, so a
+trailing comment no longer hides the `)`. `translations:check`: fixtures 71 shared findings, UP037_2.pyi:41 among
+them, and UP037_2.pyi:32 the one translation-only key (translation right).
 
 ## Review fixes (origin/tbelanger/pt1120-python-01-review)
 
@@ -144,8 +149,8 @@ After: translations:check (ptcheck, integration ref c69c35b021): PYI002, 003, 00
 
 ## Engine gaps
 
-- The "annotation" guest wraps the value as `( value )`: a trailing comment swallows the `)`, and the guest is
-  refused (UP037_2.pyi:3, 17, 22, 41). Wrapping as `(value\n)` would parse what Ruff parses.
+- The "annotation" guest wrapped the value as `( value )`: a trailing comment swallowed the `)`, and the guest was
+  refused (UP037_2.pyi:3, 17, 22, 41). Fixed since: it wraps as `(value` newline `)`.
 - Names in a string's parsed tree get no `builtin_ref`/`pyi_sym` rows (the guest document has no module node).
 - A guest node of a decoded string stands at the host string's first line, so a nested quote on a later line of a
   triple-quoted annotation (`x: """list[` / `'int']"""`) is keyed at the host's line; Ruff reports its own line.

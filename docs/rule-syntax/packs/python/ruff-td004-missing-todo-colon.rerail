@@ -16,3 +16,22 @@
     "Put a colon right after `{tag}` or its author, as in `{tag}(name): text`, with the description after the colon."
     suppress ruff "TD004"
 TD004(t, D) :- todo_item(c, D, _), todo_shape(c, "no-colon"), todo_at(c, t).
+
+// Ruff's first word (TodoDirective::from_comment) is a run of `char::is_alphanumeric` characters, Unicode letters
+// and numbers: `→`, `：`, `_` and `€` end it, so those are tags; `é`, `²` and `Ⅻ` continue it, so those are not. A
+// later `#` piece is read the same way, after Unicode whitespace (here a no-break space).
+.test the_tag_ends_at_any_non_alphanumeric exactly
+    .fixture "app/todo.py" ```
+        # TODO→ arrow
+        # TODO：wide colon
+        # TODOé not a tag
+        # TODO² not a tag
+        # TODO_x underscore
+        # TODOⅫ roman
+        # see #  FIXME€ euro
+        ```
+    .expect TD004 at "app/todo.py":1
+    .expect TD004 at "app/todo.py":2
+    .expect TD004 at "app/todo.py":5
+    .expect TD004 at "app/todo.py":7
+.end

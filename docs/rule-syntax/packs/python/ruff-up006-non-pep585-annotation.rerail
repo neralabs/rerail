@@ -25,3 +25,122 @@ UP006(e, b) :- typing_ref(e, x), pep585(x, b), (ast_name(e, _) ; kind(e, "attrib
 UP006(e, b) :- str_typing_ref(e, x), pep585(x, b), str_rewritable(e, 9).
 .decl type_param_ref(e: node)  // e is the name of a PEP 695 type parameter, read inside its definition
 type_param_ref(e) :- ast_name(e, x), tparam_named(o, x, _), within(e, o).
+
+// A forward reference reads the module first (PEP 563, Ruff's resolve_load): in a stub's annotations, in deferred
+// annotations under `from __future__ import annotations`, and in string types, a name the module binds is the
+// module's binding, though a function around the read rebinds it (flake8_pyi/PYI036.pyi:82).
+.test a_forward_reference_reads_the_module_binding exactly
+    .fixture "a.pyi" ```
+        from typing import Type
+        def isolated():
+            from builtins import type as Type
+            class C:
+                def __exit__(self, typ: Type[BaseException] | None) -> None: ...
+            x: Type[int]
+        ```
+    .fixture "b.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h(List):
+            def g(x: List[int]) -> None: ...
+            y: List[int] = []
+            z: "List[int]" = []
+            return g, y, z
+        ```
+    .fixture "f.py" ```
+        from typing import List
+        def h(List):
+            z: "List[int]" = []
+            return z
+        ```
+    .expect UP006 at "a.pyi":5
+    .expect UP006 at "a.pyi":6
+    .expect UP006 at "b.py":4
+    .expect UP006 at "b.py":5
+    .expect UP006 at "b.py":6
+    .expect UP006 at "f.py":3
+.end
+
+// The module's binding is its last, after the whole walk; an unconditional `del` after it leaves the module
+// unbound, and the scopes around the read are asked as usual. A `del` under `if`, in an `except` body or in a loop's
+// or `try`'s `else` is conditional to Ruff (handle_node_delete): the module's typing.List still wins.
+.test the_module_binding_is_the_last_one exactly
+    .fixture "c.py" ```
+        from __future__ import annotations
+        from typing import List
+        def f(x: List[int]) -> "List[str]": ...
+        List = list
+        ```
+    .fixture "d.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h():
+            from typing import Dict as List
+            def g(x: List[int]) -> None: ...
+            return g
+        del List
+        ```
+    .fixture "g.py" ```
+        from __future__ import annotations
+        import sys
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
+        if sys.argv:
+            del List
+        ```
+    .fixture "i.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
+        try:
+            pass
+        except ValueError:
+            del List
+        ```
+    .fixture "j.py" ```
+        from __future__ import annotations
+        from typing import List
+        def h():
+            List = list
+            def g(x: List[int]) -> None: ...
+            return g
+        for _ in ():
+            pass
+        else:
+            del List
+        ```
+    .expect UP006 at "d.py":5
+    .expect UP006 at "g.py":6
+    .expect UP006 at "i.py":5
+    .expect UP006 at "j.py":5
+.end
+
+// A singledispatch implementation's non-variadic parameters and its return are runtime-required annotations, no
+// forward references: they read the function's `List = list`. Its `*a` and another def's annotations read the
+// module's typing.List.
+.test a_singledispatch_implementation_reads_its_scopes exactly
+    .fixture "e.py" ```
+        from __future__ import annotations
+        from functools import singledispatch
+        from typing import List
+        def outer():
+            List = list
+            @singledispatch
+            def fun(x): ...
+            @fun.register
+            def _(
+                x: List[int],
+                *a: List[int],
+            ) -> List[int]: ...
+            def plain(x: List[int]) -> None: ...
+            return fun, plain
+        ```
+    .expect UP006 at "e.py":11
+    .expect UP006 at "e.py":13
+.end

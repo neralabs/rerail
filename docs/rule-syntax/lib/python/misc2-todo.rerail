@@ -16,7 +16,7 @@
 // `#`s and whitespace and takes the first word (letters and digits). The first piece whose first word is a tag
 // gives the directive. So `# foo # TODO` has one and `# foo TODO` has none, and `# TODOs` has none (the word is
 // "TODOs"). One regex says the same: a `#`, then `#`s and spaces, then the tag, then a non-word character or the
-// end, at the leftmost `#` where that holds. Word characters are ASCII here; Ruff's are Unicode.
+// end, at the leftmost `#` where that holds. Word characters are Unicode alphanumerics, as Ruff's.
 //
 // A comment block is the comments with nothing but whitespace between them: no token. Two comments are in one
 // block when the token just before each is the same token (or neither has one).
@@ -28,12 +28,12 @@
 //   # https://github.com/a/b/issues/1
 //   # HACK: x                          todo_tag only; no todo_item
 
-// The tag must be the whole first word, which Ruff takes as a run of Unicode alphanumerics: what follows is
-// empty or starts with ASCII punctuation or a space, so `TODOé` and `TODO2` are not tags (a non-ASCII
-// punctuation mark right after the tag, such as `TODO：`, is missed: Ruff takes it as a tag).
+// The tag must be the whole first word, which Ruff takes as a run of Unicode alphanumerics (`char::is_alphanumeric`,
+// `\p{Alphabetic}` or `\p{N}`): what follows is empty or starts with any other character, so `TODOé`, `TODO2` and
+// `TODO²` are not tags, and `TODO：`, `TODO→` and `TODO_x` are.
 .decl todo_tag(c: node, pre: symbol, tag: symbol, rest: symbol)
 todo_tag(c, P, D, R) :- kind(c, "comment"), text(c, s),
-    match("(?<P>.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?<R>(?:[\\t -/:-@\\[-\\x60{-~].*)?)", s).
+    match("(?<P>.*?#[#\\s]*)(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX]|[hH][aA][cC][kK])(?<R>(?:[^\\p{Alphabetic}\\p{N}].*)?)", s).
 .decl todo_item(c: node, tag: symbol, rest: symbol)
 todo_item(c, D, R) :- todo_tag(c, _, D, R), !match("[hH][aA][cC][kK]", D).
 

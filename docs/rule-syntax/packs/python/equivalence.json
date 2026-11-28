@@ -85,16 +85,12 @@
       }
     },
     "ruff-era001-commented-out-code": {
-      "reason": "Ruff and the JSON do not report prose comments such as `# SIM103 (but not fixable)` or `# (See: http://example.test/revision)`. The translation's bounded regex grammar accepts 22 such fixture lines and 24 sample lines as Python. Exact parity needs a demand-driven native `py_parses(symbol)` relation using Ruff's Python parser.",
-      "right": "original",
+      "reason": "The translation uses Ruff's Python parser and trivia-skipping tokenizer rather than a bounded regex grammar, and matches Ruff's Unicode decimal-digit filter for issue hashes. Its 238 sample findings exactly match Ruff 0.17.6. Ruff reports the quoted-attribute annotation comment `'month'. Eg: \"Title must be unique for pub_date year\"` in six Django samples; the JSON original misses it. The prose false positives are gone.",
+      "right": "translation",
       "counts": {
-        "fixtures": {
-          "originalOnly": 0,
-          "translationOnly": 22
-        },
         "samples-python": {
           "originalOnly": 0,
-          "translationOnly": 24
+          "translationOnly": 6
         }
       }
     },
@@ -108,16 +104,6 @@
         }
       }
     },
-    "ruff-fly002-static-join-to-f-string": {
-      "reason": "Ruff and the JSON inspect expressions parsed from string annotations, including `x: \"''.join([a, b])\"`. The translation's ordinary tree relations do not receive those guest calls; explicitly demanding `parsed_in` and replacing child aggregates with an index walk still yielded no guest findings.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 4,
-          "translationOnly": 0
-        }
-      }
-    },
     "ruff-isc001-single-line-implicit-string-concatenation": {
       "reason": "ruff/flake8_implicit_str_concat/ISC_syntax_error.py lines 3, 4, 10 and ISC_syntax_error_2.py line 4 are in files that do not parse: the original fails on them (source-incomplete) and reports nothing, the translation reports ISC001 on tree-sitter's recovered tree. Ruff 0.17.6 reports ISC001 at each of these four lines (and at ISC_syntax_error.py:11 and ISC_syntax_error_2.py:2, 3, 5, 7, which neither side reports).",
       "right": "translation",
@@ -125,16 +111,6 @@
         "fixtures": {
           "originalOnly": 0,
           "translationOnly": 4
-        }
-      }
-    },
-    "ruff-n812-lowercase-imported-as-non-lowercase": {
-      "reason": "N812-normalized-alias-and-ignored-names.py:15, `from mod import foo as ˤx`: NFKC gives `ʕx`. Unicode 17 made U+0295 a caseless letter (Lo), so Ruff (Rust std, Unicode 17) finds `ʕx` not lowercase and reports it; the engine's regexes use regex-syntax's Unicode 16 tables, where U+0295 is Ll and in \\p{Lowercase}, so the translation reads `ʕx` as lowercase. An engine gap (regex Unicode tables), not expressible in the rule without special-casing the character.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
         }
       }
     },
@@ -149,11 +125,11 @@
       }
     },
     "ruff-pyi020-quoted-annotation-in-stub": {
-      "reason": "Both keys come from parsing the string. fixtures ruff/pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`): the string has an escape, so Ruff parses its value as a bare expression, and the value is a backslash line continuation before `list[int]`; Ruff 0.17.6 reports PYI020 at 32:4, and so does the translation (the engine's python guest parses the value as one expression statement); the original does not. fixtures ruff/pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`): Ruff reports 41:14, and so does the original; the translation cannot parse the string: Ruff parses it in parentheses, the engine's annotation guest wraps the value as `( value )` so the trailing comment hides the `)`, and the python guest refuses the leading indentation (an engine gap, NOTES-pt1120-python-01.md).",
-      "right": "neither",
+      "reason": "Ruff 0.17.6 reports pyupgrade/UP037_2.pyi:32, the escaped multiline type string whose decoded value is a line continuation before list[int]; the translation does, the JSON original does not. The annotation wrapper now puts its closing parenthesis on its own line, so the trailing comment in the string at line 41 no longer prevents parsing: both sides report it.",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 1,
+          "originalOnly": 0,
           "translationOnly": 1
         }
       }
@@ -228,53 +204,13 @@
         }
       }
     },
-    "ruff-td002-missing-todo-author": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-td003-missing-todo-link": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
-    "ruff-td004-missing-todo-colon": {
-      "reason": "The original is right. fixtures ruff/rerail/probes/FIX002-unicode-word-boundaries.py:3 (`# TODO→ arrow`): Ruff 0.17.6 takes the first word as a run of Unicode alphanumerics, so `→` ends it and TODO is a tag (TD002, TD003, TD004 at 3:3), as the original reports; misc2-todo's todo_tag and misc2-todo-span's todo_at allow only ASCII punctuation or a space after the tag. Fixed by one character class in those existing library files (proposed in NOTES-pt1120-python-08.md; checked on a box over fixtures and samples-python: exactly these keys are added), which this batch may not edit.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
-        }
-      }
-    },
     "ruff-up006-non-pep585-annotation": {
-      "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. Ruff also reports flake8_pyi/PYI036.pyi:82, `Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`: in a deferred annotation inside a function Ruff resolves the name to the module's typing.Type although the function rebinds it (also with a parameter or `List = list`, NOTES-python-10.md); the original follows Ruff, the translation follows Python's scoping.",
-      "right": "neither",
+      "reason": "Ruff 0.17.6 (py310) reports pyflakes/F401_0.py 44, 59 and 60 (Type[\"NamedTuple\"] in a class body; TypeVar bound=\"Dict\"; TypeVar constraints \"List\", \"Set\"): the translation does, the JSON original does not. flake8_pyi/PYI036.pyi:82 (`Type[BaseException]` in a stub method inside a function that does `from builtins import type as Type`) is reported by both now: python/upgrade's sym_at and python-10's str_sym read a forward reference (a typing-only deferred annotation, or a string type) through the module's binding first, as Ruff's resolve_load does (PEP 563).",
+      "right": "translation",
       "counts": {
         "fixtures": {
-          "originalOnly": 1,
+          "originalOnly": 0,
           "translationOnly": 3
-        }
-      }
-    },
-    "ruff-up012-unnecessary-encode-utf8": {
-      "reason": "pyupgrade/UP012.py:86, `x: '\"foo\".encode(\"utf-8\")'`: Ruff checks the call inside the string annotation, as the original does. The engine parses the string and the call is in the parsed tree, but strings of a parsed fragment have no `value` row, so python/ast's plain_str (and upgrade-format's str_lit and utf8_only_arg) hold for none of them. Engine gap: stamp `value` on parsed fragments' strings.",
-      "right": "original",
-      "counts": {
-        "fixtures": {
-          "originalOnly": 1,
-          "translationOnly": 0
         }
       }
     },

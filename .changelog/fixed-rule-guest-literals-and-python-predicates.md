@@ -1,0 +1,3 @@
+Parsed annotations and compiled templates now expose literal values, handle trailing comments and repeated annotations, and preserve findings when unrelated files are added. Python predicates match Ruff's parser, tokenizer and Unicode case properties; collection rules normalize parenthesized callees before lookup, including cast type strings.
+
+Guest parse memo budgets now include retained tapes.

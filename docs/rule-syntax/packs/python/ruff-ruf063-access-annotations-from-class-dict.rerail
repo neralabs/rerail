@@ -18,20 +18,9 @@ RUF063(c, "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annota
 RUF063(x, "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of `__dict__[\"__annotations__\"]`.") :-
     dict_index(x).
 .decl dict_get(c: node)
-dict_get(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "get"), attr_of(o, _, "__dict__"), call_nkwargs(c, 0),
-    call_nargs(c, n), n >= 1, n <= 2, ruff_arg(c, 0, k), unparen(k, s), plain_str(s, "__annotations__").
+dict_get(c) :- (kind(c, "call") ; in_ann_tree(c), kind(c, "call")), field(c, "function", f),
+    attr_of(f, o, "get"), attr_of(o, _, "__dict__"), call_nkwargs(c, 0), call_nargs(c, n),
+    n >= 1, n <= 2, ruff_arg(c, 0, k), unparen(k, s), plain_str(s, "__annotations__").
 .decl dict_index(x: node)
-dict_index(x) :- kind(x, "subscript"), field(x, "value", o), attr_of(o, _, "__dict__"), field(x, "subscript", k),
-    unparen(k, s), plain_str(s, "__annotations__").
-// In a string annotation's tree (ann_tree, python/python-04) kind has no row for a node bound by field, and
-// value none for a string (engine gaps, NOTES-python-04), so these walk children and test the literal's text.
-dict_get(c) :- in_ann_tree(c), kind(c, "call"), child(c, f, 0), kind(f, "attribute"), child(f, o, 0), child(f, g, 1),
-    text(g, "get"), ann_dunder_dict(o), ann_nitems(c, n), n >= 1, n <= 2, !ann_kwarg(c, _, _), ann_arg(c, 0, k),
-    ann_annotations_str(k).
-dict_index(x) :- in_ann_tree(x), kind(x, "subscript"), child(x, o, 0), ann_dunder_dict(o), child(x, k, 1),
-    !child(x, _, 2), ann_annotations_str(k).
-.decl ann_dunder_dict(o: node)
-ann_dunder_dict(o) :- in_ann_tree(o), kind(o, "attribute"), child(o, d, 1), text(d, "__dict__").
-.decl ann_annotations_str(k: node)
-ann_annotations_str(k) :- in_ann_tree(k), kind(k, "string"), text(k, t),
-    match("[uU]?(\"__annotations__\"|'__annotations__'|\"\"\"__annotations__\"\"\"|'''__annotations__''')", t).
+dict_index(x) :- (kind(x, "subscript") ; in_ann_tree(x), kind(x, "subscript")), field(x, "value", o),
+    attr_of(o, _, "__dict__"), field(x, "subscript", k), unparen(k, s), plain_str(s, "__annotations__").

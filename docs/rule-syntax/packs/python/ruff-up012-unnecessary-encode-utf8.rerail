@@ -17,7 +17,8 @@
 
 // encode_on(c, s): call c is `s.encode(…)`, the callee in parentheses or not: `("a".encode)()`.
 .decl encode_on(c: node, s: node)
-encode_on(c, s) :- kind(c, "call"), field(c, "function", f0), unparen(f0, f), attr_of(f, s, "encode").
+encode_on(c, s) :- (kind(c, "call") ; annotation(c), kind(c, "call")), field(c, "function", f0),
+    unparen(f0, f), attr_of(f, s, "encode").
 
 .violation bytes_literal(at: node) code "UP012"
     "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes."
@@ -29,3 +30,17 @@ bytes_literal(c) :- encode_on(c, s), str_lit(s, v), ascii_str(v), !wide_escape(s
     suppress ruff "UP012"
 default_encoding_argument(c) :- encode_on(c, s), utf8_only_arg(c), !wide_escape(s),
     (str_lit(s, v), !ascii_str(v) ; fstr_lit(s)).
+
+.test encode_calls_in_string_type_definitions exactly
+    .fixture "app/encodings.py" ```
+        from typing import Literal
+        x: '"foo".encode("utf-8")'
+        y: '"café".encode("utf-8")'
+        z: 'f"{foo}".encode("utf-8")'
+        ordinary = '"foo".encode("utf-8")'
+        literal: Literal['"foo".encode("utf-8")']
+        ```
+    .expect UP012 at "app/encodings.py":2
+    .expect UP012 at "app/encodings.py":3
+    .expect UP012 at "app/encodings.py":4
+.end

@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn case_predicates_use_rust_unicode_properties_not_regex_tables() {
+    use rusqlite::types::Value;
+    for (text, expected) in [
+        ("", [1, 1, 0, 0]),
+        ("_1", [1, 1, 0, 0]),
+        ("a1", [1, 0, 1, 0]),
+        ("A1", [0, 1, 0, 1]),
+        ("aA", [0, 0, 0, 0]),
+        ("日本", [0, 0, 0, 0]),
+        ("a日", [0, 0, 1, 0]),
+        ("A日", [0, 0, 0, 1]),
+        ("ǅx", [0, 0, 1, 0]),
+        // The pinned Unicode 17 tables classify U+0295 as alphabetic but uncased.
+        ("ʕ", [0, 0, 0, 0]),
+        ("ʕx", [0, 0, 1, 0]),
+    ] {
+        for (name, result) in ["is_lowercase", "is_uppercase", "is_cased_lowercase", "is_cased_uppercase"].into_iter().zip(expected) {
+            assert_eq!(functions::eval(name, &[text], &[]), Value::Integer(result), "{name}({text:?})");
+        }
+    }
+}
+
+#[test]
 fn literal_tests() {
     assert!(test("prefix", "_private", "_"));
     assert!(!test("prefix", "public", "_"));

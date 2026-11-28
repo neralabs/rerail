@@ -47,12 +47,12 @@
  {
   "id": "react-hooks-refs",
   "status": "different",
-  "reason": "samples-react: the 1 original-only line, Modal.tsx:335, is the shorthand `modalRef` (a useRef binding) in the object of a context value, which the original's literal-element clause and ESLint report and the translation does not model (original right). Of the 6 translation-only lines, UnitAmountInput.tsx:49 sits under `// eslint-disable-next-line react-hooks/refs -- …`, which rerail-engine run-policies does not apply (engine gap; original right); the other 5 are reported by ESLint (inline comments honoured) and missed by the original (translation right): mui Ad.tsx:131/135/139 (`const { current: randomAdblock } = React.useRef(…)`, then the value used in render) and react-bootstrap Offcanvas.tsx:341 (`manager={getModalManager()}`, a render-time call of a function that uses a ref).",
-  "right": "neither",
+  "reason": "samples-react: the 5 translation-only keys are reported by ESLint (inline comments honoured) and missed by the original (translation right): mui Ad.tsx:131, 135 and 139 (`const { current: randomAdblock } = React.useRef(…)`, then the value used in render) and react-bootstrap Offcanvas.tsx:341 and its other copy's :344 (`manager={getModalManager()}`, a render-time call of a function that uses a ref). react-aria-components Modal.tsx:335 (`let modalRef = props.modalRef`, then the shorthand `modalRef` in a context value after `ref={props.overlayRef}`) is reported by both now: the translation folds a local holding a member of a ref holder into the holder, as the compiler's temporaries sidemap does. UnitAmountInput.tsx:49, under `// eslint-disable-next-line react-hooks/refs -- …`, is reported by neither now: the engine applies the suppression.",
+  "right": "translation",
   "counts": {
    "examples": { "originalOnly": 0, "translationOnly": 0 },
    "fixtures": { "originalOnly": 0, "translationOnly": 0 },
-   "samples-react": { "originalOnly": 1, "translationOnly": 6 }
+   "samples-react": { "originalOnly": 0, "translationOnly": 5 }
   }
  }
 ]

@@ -30,15 +30,15 @@
   {
     "id": "ruff-pyi020-quoted-annotation-in-stub",
     "status": "different",
-    "reason": "Both keys come from parsing the string. fixtures ruff/pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`): the string has an escape, so Ruff parses its value as a bare expression, and the value is a backslash line continuation before `list[int]`; Ruff 0.17.6 reports PYI020 at 32:4, and so does the translation (the engine's python guest parses the value as one expression statement); the original does not. fixtures ruff/pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`): Ruff reports 41:14, and so does the original; the translation cannot parse the string: Ruff parses it in parentheses, the engine's annotation guest wraps the value as `( value )` so the trailing comment hides the `)`, and the python guest refuses the leading indentation (an engine gap, NOTES-pt1120-python-01.md).",
-    "right": "neither",
+    "reason": "Ruff 0.17.6 reports pyupgrade/UP037_2.pyi:32 (`a: '''\\\\` newline `list[int]''' = [42]`), the escaped multiline type string whose decoded value is a line continuation before list[int]; the translation does, the JSON original does not. pyupgrade/UP037_2.pyi:41 (`Foo['''` newline `    Bar` … `    ]  # Comment''']`) is reported by both now: the annotation wrapper puts its closing parenthesis on its own line, so the string's trailing comment no longer hides it.",
+    "right": "translation",
     "counts": {
       "examples": {
         "originalOnly": 0,
         "translationOnly": 0
       },
       "fixtures": {
-        "originalOnly": 1,
+        "originalOnly": 0,
         "translationOnly": 1
       },
       "samples-python": {

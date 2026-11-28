@@ -26,8 +26,6 @@
 //       def print(x): ...                     a module binding: `print` in a type string is this def from now on
 //   - python/names resolves the trees of annotations' strings from the string's place (parsed_in), as code there;
 //     python-04's guest_q takes a builtin only when the file binds the name nowhere. Neither is Ruff's order.
-//   - In a type string's tree python/ruff's argument relations (call_kwarg, ruff_arg) see no arguments
-//     (python-04: kind has no row for the argument list there); python-04's ann_kwarg and ann_arg read them.
 //   - Ruff's seen_module flag is set by every `from m import …`, `from m import *` too; misc-seen reads import_alias,
 //     which has no row for a star import. Ruff visits deferred code (def bodies, then annotations under `from
 //     __future__ import annotations`) after the module: a star import in a def gates those, not the module's code;
@@ -42,7 +40,7 @@
 //                                              stdio_value(<sys.stderr>)
 //   v = cast("cast(int, 1)", 2)                fwdref_call_q(<cast(int, 1)>, "typing.cast"),
 //                                              fwdref_arg0(<…>, <int>)
-#include "python/python-04.rerail"   // in_ann_tree, guest_file, ann_kwarg, ann_arg; python/ruff through it
+#include "python/python-04.rerail"   // in_ann_tree, guest_file; python/ruff's arguments work in parsed trees too
 #include "python/misc-seen.rerail"   // seen_module, seen_ask; module_text (python/imports)
 
 // ---- names -------------------------------------------------------------------------------------------------------
@@ -73,13 +71,11 @@ fwdref_mod_import(m, x, q) :- ibind(m, x, q), count : { binding(m, x, _, f), f !
 // ---- arguments ---------------------------------------------------------------------------------------------------
 .decl fwdref_kwarg(c: node, x: symbol, v: node)
 fwdref_kwarg(c, x, v) :- call_kwarg(c, x, v0), !in_ann_tree(c), unparen(v0, v).
-fwdref_kwarg(c, x, v) :- ann_kwarg(c, x, v0), unparen(v0, v).
+fwdref_kwarg(c, x, v) :- in_ann_tree(c), call_kwarg(c, x, v0), unparen(v0, v).
 .decl fwdref_arg0(c: node, a: node)
-fwdref_arg0(c, a) :- ann_arg(c, 0, a0), unparen(a0, a).
+fwdref_arg0(c, a) :- in_ann_tree(c), ruff_arg(c, 0, a0), unparen(a0, a).
 .decl stdio_value(v: node)
 stdio_value(v) :- kind(v, "none").
-// In a type string's tree the engine gives `None` no "none" row: cast("print(1, file=None)", x) is T201.
-stdio_value(v) :- in_ann_tree(v), text(v, "None").
 stdio_value(v) :- fwdref_qual(v, q), (q = "sys.stdout" ; q = "sys.stderr").
 
 // ---- modules a file imports --------------------------------------------------------------------------------------
