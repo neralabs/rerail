@@ -783,6 +783,215 @@ fn z16_at_rest() {
     }
 }
 
+/// The duplicated-code spike's suffix array to a depth (`Base::doubling`, native/lab/dupsa/src/incr.rs on
+/// jeremybarnes/duplicated-code-spike): Manber and Myers' prefix doubling with Larsson and Sadakane's re-sort of the
+/// groups still tied only, stopped at depth `w` (`usize::MAX`: wholly); here over bytes, one text. A counting sort by
+/// byte, then each round sorts every open group by the rank `h` further on, from the round's ranks. Returns the
+/// order (ties by position), the rounds, and the bytes the order covers.
+fn doubling_to(t: &[u8], w: usize) -> (Vec<u32>, usize, usize) {
+    let n = t.len();
+    if WIDE.with(|x| x.get()) {
+        return doubling_from_words(t, w);
+    }
+    let mut count = [0u32; 257];
+    for &x in t {
+        count[x as usize + 1] += 1;
+    }
+    for k in 1..257 {
+        count[k] += count[k - 1];
+    }
+    let mut sa = vec![0u32; n];
+    for (p, &x) in t.iter().enumerate() {
+        sa[count[x as usize] as usize] = p as u32;
+        count[x as usize] += 1;
+    }
+    // Ranks are a group's first index + 1 (0: past the end); groups of more than one are open.
+    let mut r = vec![0u32; n];
+    let mut groups: Vec<(u32, u32)> = Vec::new();
+    let mut k = 0;
+    while k < n {
+        let x = t[sa[k] as usize];
+        let mut e = k + 1;
+        while e < n && t[sa[e] as usize] == x {
+            e += 1;
+        }
+        for &p in &sa[k..e] {
+            r[p as usize] = k as u32 + 1;
+        }
+        if e - k > 1 {
+            groups.push((k as u32, e as u32));
+        }
+        k = e;
+    }
+    let (mut len, mut rounds) = (1usize, 0);
+    let mut keyed: Vec<(u32, u32)> = Vec::new();
+    while len < w && !groups.is_empty() {
+        rounds += 1;
+        let h = len.min(w - len);
+        keyed.clear();
+        for &(s, e) in &groups {
+            for &p in &sa[s as usize..e as usize] {
+                let q = p as usize + h;
+                keyed.push((if q < n { r[q] } else { 0 }, p));
+            }
+        }
+        let mut next = Vec::new();
+        let mut at = 0usize;
+        for &(s, e) in &groups {
+            let g = &mut keyed[at..at + (e - s) as usize];
+            at += (e - s) as usize;
+            g.sort_unstable();
+            let mut i = 0;
+            while i < g.len() {
+                let mut j = i + 1;
+                while j < g.len() && g[j].0 == g[i].0 {
+                    j += 1;
+                }
+                for (x, &(_, p)) in g[i..j].iter().enumerate() {
+                    sa[s as usize + i + x] = p;
+                    r[p as usize] = s + i as u32 + 1;
+                }
+                if j - i > 1 {
+                    next.push((s + i as u32, s + j as u32));
+                }
+                i = j;
+            }
+        }
+        groups = next;
+        len += h;
+    }
+    (sa, rounds, if groups.is_empty() { n } else { len })
+}
+
+thread_local! {
+    static WIDE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `doubling_to` started from each suffix's first 8 bytes (a big-endian word: past the end 0, and the suffix's length
+/// below 8 breaking the tie of a shorter one first), sorted by an LSD radix sort of 11-bit digits, so that the first
+/// round's ranks cover 8 bytes and each round doubles them: 16 bytes in one round, 32 in two.
+fn doubling_from_words(t: &[u8], w: usize) -> (Vec<u32>, usize, usize) {
+    let n = t.len();
+    let key = |p: usize| -> u64 {
+        let mut k = 0u64;
+        for j in 0..8 {
+            k = k << 8 | t.get(p + j).copied().unwrap_or(0) as u64;
+        }
+        // A suffix shorter than 8 bytes ties with one padded by zeros: its length, low, puts it first.
+        k
+    };
+    let short = |p: usize| (n - p).min(8) as u64;
+    // (key, length cap, position) as a u128 sorted by an LSD radix sort on the key's 64 bits and the cap's 4.
+    let mut a: Vec<(u64, u32)> = (0..n).map(|p| (key(p), p as u32)).collect();
+    let mut b = vec![(0u64, 0u32); n];
+    // The cap first (the least significant), then the key's 11-bit digits.
+    let digit = |x: &(u64, u32), d: usize| -> usize { if d == 0 { short(x.1 as usize) as usize } else { ((x.0 >> (11 * (d - 1))) & 0x7ff) as usize } };
+    for d in 0..7 {
+        let mut count = vec![0u32; 2049];
+        for x in &a {
+            count[digit(x, d) + 1] += 1;
+        }
+        for k in 1..count.len() {
+            count[k] += count[k - 1];
+        }
+        for x in &a {
+            let c = &mut count[digit(x, d)];
+            b[*c as usize] = *x;
+            *c += 1;
+        }
+        std::mem::swap(&mut a, &mut b);
+    }
+    let mut sa: Vec<u32> = a.iter().map(|x| x.1).collect();
+    let mut r = vec![0u32; n];
+    let mut groups: Vec<(u32, u32)> = Vec::new();
+    let mut k = 0;
+    while k < n {
+        let x = (a[k].0, short(a[k].1 as usize));
+        let mut e = k + 1;
+        while e < n && (a[e].0, short(a[e].1 as usize)) == x {
+            e += 1;
+        }
+        for &p in &sa[k..e] {
+            r[p as usize] = k as u32 + 1;
+        }
+        // A suffix of fewer than 8 bytes is whole: its group is one.
+        if e - k > 1 && x.1 == 8 {
+            groups.push((k as u32, e as u32));
+        }
+        k = e;
+    }
+    drop((a, b));
+    let (mut len, mut rounds) = (8usize, 0);
+    let mut keyed: Vec<(u32, u32)> = Vec::new();
+    while len < w && !groups.is_empty() {
+        rounds += 1;
+        let h = len.min(w - len);
+        keyed.clear();
+        for &(s, e) in &groups {
+            for &p in &sa[s as usize..e as usize] {
+                let q = p as usize + h;
+                keyed.push((if q < n { r[q] } else { 0 }, p));
+            }
+        }
+        let mut next = Vec::new();
+        let mut at = 0usize;
+        for &(s, e) in &groups {
+            let g = &mut keyed[at..at + (e - s) as usize];
+            at += (e - s) as usize;
+            g.sort_unstable();
+            let mut i = 0;
+            while i < g.len() {
+                let mut j = i + 1;
+                while j < g.len() && g[j].0 == g[i].0 {
+                    j += 1;
+                }
+                for (x, &(_, p)) in g[i..j].iter().enumerate() {
+                    sa[s as usize + i + x] = p;
+                    r[p as usize] = s + i as u32 + 1;
+                }
+                if j - i > 1 {
+                    next.push((s + i as u32, s + j as u32));
+                }
+                i = j;
+            }
+        }
+        groups = next;
+        len += h;
+    }
+    (sa, rounds, if groups.is_empty() { n } else { len })
+}
+
+/// The spike's prefix doubling (`doubling_to`) against libsais, one thread, on each input's tape and JSON: to 16, 32
+/// and 64 bytes and wholly, each checked sorted to the bytes it covers. Run by name: `--ignored
+/// suffix_array_doubling_cost`.
+#[test]
+#[ignore]
+fn suffix_array_doubling_cost() {
+    for (name, f) in inputs() {
+        let Some(t) = tape_of(&f) else { continue };
+        for (what, s) in [("tape", &t), ("JSON", &f)] {
+            let (_, _, cpu_s, _) = suffix_array(s);
+            let mut line = format!("  {name}'s {what}, {} bytes, libsais {:.2} ms:", s.len(), cpu_s * 1e3);
+            for (wide, w) in [16usize, 32, 64, usize::MAX].iter().flat_map(|&w| [(false, w), (true, w)]) {
+                WIDE.with(|x| x.set(wide));
+                let mut best = (f64::MAX, 0);
+                for _ in 0..2 {
+                    let t0 = std::time::Instant::now();
+                    let (sa, rounds, covered) = doubling_to(s, w);
+                    let took = t0.elapsed().as_secs_f64();
+                    assert!(prefix_sorted(s, &sa, covered.min(s.len())), "{name}'s {what}: not sorted to {covered} bytes");
+                    if took < best.0 {
+                        best = (took, rounds);
+                    }
+                }
+                let l = if w == usize::MAX { "all".to_string() } else { w.to_string() };
+                line += &format!(" {l}{}: {:.2} ms ({} rounds);", if wide { " from 8 bytes" } else { "" }, best.0 * 1e3, best.1);
+            }
+            eprintln!("{line}");
+        }
+    }
+}
+
 /// The suffix array on the device equals libsais's, entry by entry, and what it costs: each input's tape (and its
 /// JSON), the device's GPU time by round and in all, against libsais on one CPU thread. Run by name: `--ignored
 /// suffix_array_device_cost`.
