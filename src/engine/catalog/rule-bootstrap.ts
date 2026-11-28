@@ -15,7 +15,9 @@ import type { RerailDatabase } from "../storage/database.js";
 import { normalizeFolder, RULE_SETTING_ORIGINS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
 import { aliasesAfter, readableRepositoryRows } from "./repository-registry.js";
 import { approve, isApproved, ruleSubject } from "./rule-approval.js";
+import { readSettings } from "./rule-configuration.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
+import { stderrRowLog } from "./rule-quarantine.js";
 import { RULE_MODES } from "./rule-mode.js";
 import type { RuleDocument } from "./rule-store.js";
 import { clearSetupReview } from "./setup-review.js";
@@ -139,8 +141,14 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
   }));
   const attachments = db.select().from(ruleAttachments)
     .orderBy(asc(ruleAttachments.repositoryKey), asc(ruleAttachments.folder), asc(ruleAttachments.sourceKind), asc(ruleAttachments.sourceId)).all();
-  const settings = db.select().from(ruleSettings).where(eq(ruleSettings.ownerKind, "repository"))
-    .orderBy(asc(ruleSettings.ownerId), asc(ruleSettings.folder), asc(ruleSettings.targetKind), asc(ruleSettings.targetId)).all();
+  const settings = readSettings(db, {
+    where: eq(ruleSettings.ownerKind, "repository"),
+    order: [asc(ruleSettings.ownerId), asc(ruleSettings.folder), asc(ruleSettings.targetKind), asc(ruleSettings.targetId)],
+    named: stderrRowLog(db),
+  });
+  // A dump without a setting's options would import as a setting without them; each one is named on the error output.
+  const unread = settings.filter(setting => setting.unread !== null).length;
+  if (unread > 0) throw new Error(`cannot export ${unread} rule setting(s) whose stored options are no JSON object`);
   const repositoryRows = readableRepositoryRows(db);
   return {
     version: RULES_DUMP_VERSION,

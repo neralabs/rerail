@@ -16,6 +16,9 @@ import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCa
 import { experimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { libraryRules } from "../engine/storage/schema.js";
+import { storedLibraryRows } from "../engine/catalog/rule-library.js";
+import { storedObject } from "../engine/catalog/rule-quarantine.js";
+import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import { clean } from "../harness/setup-screens.js";
 import { agentRunsText, agentSession, type AgentSession } from "../engine/agent-session.js";
@@ -88,9 +91,20 @@ function approvalText(db: RerailDatabase, catalog: RuleCatalog, subject: RuleApp
     const ids = pack?.rules.map(rule => clean(rule.id)) ?? [];
     return `● pack ${clean(subject.id)}@${clean(pack?.version ?? "?")} ships ${ids.length} ${ids.length === 1 ? "rule" : "rules"}: ${ids.join(", ")}\n`;
   }
-  const document = db.select({ document: libraryRules.document }).from(libraryRules).where(eq(libraryRules.ruleId, subject.id)).get()?.document
-    ?? catalog.documents.get(subject.id);
-  return `● ${clean(subject.id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`;
+  return ruleApprovalText(db, catalog, subject.id);
+}
+
+/**
+ * A rule's content in full, as {@link approvalText} writes it: the library's, else the catalog's. A library rule whose
+ * stored document is no JSON object is quarantined and runs nowhere, so its line says that, and why.
+ */
+function ruleApprovalText(db: RerailDatabase, catalog: RuleCatalog, id: string): string {
+  const [row] = storedLibraryRows(db, eq(libraryRules.ruleId, id));
+  const stored = row === undefined ? undefined : storedObject(row.document);
+  if (typeof stored === "string") return `● ${clean(id)} has content that is no JSON object (${clean(stored)}), which only a damaged file or a hand edit leaves; it runs nowhere\n`;
+  // The library's own writer stored it as a rule document; `main` read it so unchecked.
+  const document = (stored as RuleDocument | undefined) ?? catalog.documents.get(id);
+  return `● ${clean(id)}${document === undefined ? "" : ` (${document.kind} rule)`} has this content:\n${visibleJson(document?.rule)}\n`;
 }
 
 /**

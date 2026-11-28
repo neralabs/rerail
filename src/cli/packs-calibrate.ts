@@ -15,7 +15,8 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { folderContains, normalizeFolder, type CheckoutContext, type RepositoryKey, type RuleConfig, type RuleSetting } from "../engine/catalog/repository-model.js";
 import { checkoutStatus, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import { readSettings, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import { stderrRowLog } from "../engine/catalog/rule-quarantine.js";
 import { openRerailDatabase, RERAIL_DATABASE_FILE, type RerailDatabase } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { ruleAttachments, ruleSettings } from "../engine/storage/schema.js";
@@ -160,13 +161,17 @@ function packIdsOf(database: RerailDatabase, repositoryKey: RepositoryKey): stri
   return [...new Set(rows.map(row => row.packId))].sort();
 }
 
-/** The repository's own rule settings, every folder, by rule and folder. */
+/**
+ * The repository's own rule settings, every folder, by rule and folder. A setting whose stored options do not read has
+ * none here (`readSettings`), so one the lint config gave is written again where the lint config gives the rule options, and
+ * a person's is kept as any of theirs is; it is named on the command's error output.
+ */
 function repositoryRuleRows(database: RerailDatabase, repositoryKey: RepositoryKey): SettingRow[] {
-  return database.select().from(ruleSettings).where(and(
-    eq(ruleSettings.ownerKind, "repository"),
-    eq(ruleSettings.ownerId, repositoryKey),
-    eq(ruleSettings.targetKind, "rule"),
-  )).orderBy(asc(ruleSettings.targetId), asc(ruleSettings.folder)).all();
+  return readSettings(database, {
+    where: and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey), eq(ruleSettings.targetKind, "rule")),
+    order: [asc(ruleSettings.targetId), asc(ruleSettings.folder)],
+    named: stderrRowLog(database),
+  });
 }
 
 /** Reconciles `lintConfig` with the repository's own rule settings as stored now; writes only when `write`. */

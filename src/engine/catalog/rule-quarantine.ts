@@ -2,6 +2,7 @@ import { assertCodeRuleCompiles, CodeRuleCompileError, type InactiveCodeRule } f
 import { languageNotSupportedOf } from "../code-rule/code-rule-language-support.js";
 import { codeRuleSchema, type CodeRule } from "../code-rule/code-rule-schema.js";
 import { RULE_KINDS, type RuleKind } from "../storage/schema.js";
+import type { StoredListLog } from "../storage/stored-list.js";
 import { ruleDocumentDigest } from "../stable-json.js";
 
 /** Digest of a stored rule body exactly as it sits in the row, valid or not. */
@@ -59,6 +60,37 @@ export interface QuarantinedRule {
   owner: string;
   reason: string;
   code?: InactiveCodeRule["code"];
+}
+
+/**
+ * The JSON object `text`, a rule's stored document or a setting's stored options, holds, or why it holds none. Rerail
+ * writes only objects there, so only a damaged file or a hand edit leaves anything else, and the reader quarantines
+ * that one row rather than failing every read that holds it.
+ */
+export function storedObject(text: string): Record<string, unknown> | string {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return (error as SyntaxError).message; // JSON.parse throws nothing else
+  }
+  return isJsonObject(value) ? value : "it parses to another JSON value";
+}
+
+/** Whether a parsed JSON value is an object: not null, not an array. */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Where a reader names a stored row whose text does not read: the database file, and the log the line goes to. */
+export interface StoredRowLog {
+  readonly file: string;
+  readonly log: StoredListLog;
+}
+
+/** The {@link StoredRowLog} of a reader of `database` whose lines go to its process's error output: `daemon.log` in the daemon. */
+export function stderrRowLog(database: { readonly $client: { readonly name: string } }): StoredRowLog {
+  return { file: database.$client.name, log: process.stderr };
 }
 
 const reported = new Set<string>();

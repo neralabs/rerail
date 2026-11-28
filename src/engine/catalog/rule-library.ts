@@ -2,9 +2,12 @@
  * The rule library: rules people wrote ("Created by you"), stored once per machine and added to
  * repositories by attachments. A library rule can't take a By Rerail rule's id, and one id keeps one kind.
  */
-import { and, asc, eq, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
-import { readStoredCodeRule, unknownRuleKind, type QuarantinedRule } from "./rule-quarantine.js";
+import { nameOnce } from "../storage/stored-list.js";
+import {
+  readStoredCodeRule, stderrRowLog, storedObject, unknownRuleKind, type QuarantinedRule, type StoredRowLog,
+} from "./rule-quarantine.js";
 import { storableCodeRule } from "../code-rule/code-rule-compile.js";
 import type { RuleCatalog, LibraryRule, RepositoryKey } from "./repository-model.js";
 import { assertEngineRegexes } from "./rule-regexes.js";
@@ -26,6 +29,22 @@ export const LIBRARY_OWNER = "library";
 
 type LibraryRow = typeof libraryRules.$inferSelect;
 type Queries = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
+
+/**
+ * A `library_rules` row with `document_json` as the text the database holds, which `readLibraryRow` parses, so one rule
+ * whose text a damaged file or a hand edit left is quarantined, never failing every read of the library that holds it.
+ */
+const STORED_COLUMNS = { ...getTableColumns(libraryRules), document: sql<string>`${libraryRules.document}` };
+/** A `library_rules` row as the database holds it: its document as text. */
+export type StoredLibraryRow = Omit<LibraryRow, "document"> & { readonly document: string };
+
+/** The library rows `where` selects (every one without it), by id, each as the database holds it. */
+export function storedLibraryRows(db: Pick<Queries, "select">, where?: SQL): StoredLibraryRow[] {
+  return db.select(STORED_COLUMNS).from(libraryRules).where(where).orderBy(asc(libraryRules.ruleId)).all();
+}
+
+/** What `readLibraryRow` gives: the rule, or the row quarantined with its reason. */
+export type LibraryRowRead = { ok: true; rule: LibraryRule } | { ok: false; quarantined: QuarantinedRule };
 
 export interface LibraryRuleWriteOptions {
   /** Conversation rules carry no revision; omit to bump the stored one. Code rules take `rule.revision`. */
@@ -61,7 +80,9 @@ export function validateLibraryDocument(document: unknown, kind: RuleKind): Json
 /** Write an already validated document; the caller owns the transaction. */
 export function writeLibraryRule(db: Queries, ruleCatalog: RuleCatalog, document: JsonRuleDocument, options: LibraryRuleWriteOptions = {}): void {
   const id = document.rule.id;
-  const existing = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  // Not the stored document: a write replaces it, and one a damaged file left must not stop the write that mends it.
+  const existing = db.select({ revision: libraryRules.revision, copiedFromRuleId: libraryRules.copiedFromRuleId, createdAt: libraryRules.createdAt })
+    .from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
   // A library rule written before a release bundled its id wins over that By Rerail rule, so it stays editable.
   if (ruleCatalog.documents.has(id) && existing === undefined && options.shadowBundled !== true) {
     throw new Error(`rule ${id} is a By Rerail rule id; give your rule another id`);
@@ -116,67 +137,78 @@ export function upsertLibraryRule(
   }, { behavior: "immediate" });
 }
 
-/** A stored row read and validated; a row that fails validation, or whose kind is unknown, is quarantined, never thrown. */
-export function readLibraryRow(row: LibraryRow): { ok: true; rule: LibraryRule } | { ok: false; quarantined: QuarantinedRule } {
-  const quarantine = (reason: string, kind: RuleKind = row.kind) => ({
-    ok: false as const,
-    quarantined: { ruleId: row.ruleId, kind, owner: LIBRARY_OWNER, reason },
-  });
-  const unknown = unknownRuleKind(row.kind, row.document);
-  if (unknown !== undefined) return quarantine(unknown.reason, unknown.kind);
-  let document: JsonRuleDocument;
-  if (row.kind === "code") {
-    const read = readStoredCodeRule(row.document.rule);
-    if (!read.ok) return quarantine(read.reason);
-    document = { kind: "code", rule: read.rule };
-  } else {
-    try {
-      document = { kind: "conversation", rule: parseConversationRule(row.document.rule) };
-    } catch (error) {
-      return quarantine(error instanceof Error ? error.message : String(error));
-    }
+/**
+ * A stored row read and validated; a row that fails validation, whose kind is unknown, or whose stored document is no
+ * JSON object, is quarantined, never thrown. The last, which only a damaged file or a hand edit leaves, is also named
+ * once in `named`'s log (`nameOnce`), since no validation of Rerail's own reports it.
+ */
+export function readLibraryRow(row: StoredLibraryRow, named?: StoredRowLog): LibraryRowRead {
+  const stored = storedObject(row.document);
+  if (typeof stored === "string") {
+    if (named !== undefined) sayUnreadDocument(named, row.ruleId, stored);
+    return quarantine(row, `its document in the database is no JSON object (${stored}), which only a damaged file or a hand edit leaves`);
   }
-  return {
-    ok: true,
-    rule: {
-      document,
-      revision: row.revision,
-      payloadHash: row.payloadHash,
-      copiedFromRuleId: row.copiedFromRuleId,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    },
-  };
+  const unknown = unknownRuleKind(row.kind, stored);
+  if (unknown !== undefined) return quarantine(row, unknown.reason, unknown.kind);
+  const document = validDocument(row.kind, stored.rule);
+  if (typeof document === "string") return quarantine(row, document);
+  const { revision, payloadHash, copiedFromRuleId, createdAt, updatedAt } = row;
+  return { ok: true, rule: { document, revision, payloadHash, copiedFromRuleId, createdAt, updatedAt } };
+}
+
+/** `row` quarantined for `reason`, under its own kind unless `kind` says another. */
+function quarantine(row: StoredLibraryRow, reason: string, kind: RuleKind = row.kind): LibraryRowRead {
+  return { ok: false, quarantined: { ruleId: row.ruleId, kind, owner: LIBRARY_OWNER, reason } };
+}
+
+/** A stored rule body of `kind` as a document, validated as a write validates it, or why it is not one. */
+function validDocument(kind: RuleKind, rule: unknown): JsonRuleDocument | string {
+  if (kind === "code") {
+    const read = readStoredCodeRule(rule);
+    return read.ok ? { kind: "code", rule: read.rule } : read.reason;
+  }
+  try {
+    return { kind: "conversation", rule: parseConversationRule(rule) };
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Names, once in `named`'s log, the library rule whose stored document is no JSON object, and why. */
+function sayUnreadDocument({ file, log }: StoredRowLog, ruleId: string, why: string): void {
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = libraryRules.document.name;
+  nameOnce(log, { file, place: `library rule ${ruleId} ${column}` }, `rerail: ${file}: library rule ${ruleId} is quarantined and runs `
+    + `nowhere: the ${column} of its row is no JSON object (${why}), which only a damaged file or a hand edit leaves.\n`);
 }
 
 function readRequired(db: Queries, id: string): LibraryRule {
-  const row = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  const [row] = storedLibraryRows(db, eq(libraryRules.ruleId, id));
   const read = row === undefined ? undefined : readLibraryRow(row);
   if (read?.ok !== true) throw new Error(`library rule ${id} could not be read back`);
   return read.rule;
 }
 
 export function getLibraryRule(db: RerailDatabase, id: string): LibraryRule | undefined {
-  const row = db.select().from(libraryRules).where(eq(libraryRules.ruleId, id)).get();
+  const [row] = storedLibraryRows(db, eq(libraryRules.ruleId, id));
   if (row === undefined) return undefined;
-  const read = readLibraryRow(row);
+  const read = readLibraryRow(row, stderrRowLog(db));
   return read.ok ? read.rule : undefined;
 }
 
 /** Readable library rules, by id; quarantined rows are left out (see {@link quarantinedLibraryRules}). */
 export function listLibraryRules(db: RerailDatabase, query: LibraryRuleQuery = {}): LibraryRule[] {
-  const rows = db.select().from(libraryRules)
-    .where(query.kind === undefined ? undefined : eq(libraryRules.kind, query.kind))
-    .orderBy(asc(libraryRules.ruleId)).all();
-  return rows.flatMap(row => {
-    const read = readLibraryRow(row);
+  const named = stderrRowLog(db);
+  return storedLibraryRows(db, query.kind === undefined ? undefined : eq(libraryRules.kind, query.kind)).flatMap(row => {
+    const read = readLibraryRow(row, named);
     return read.ok ? [read.rule] : [];
   });
 }
 
 export function quarantinedLibraryRules(db: RerailDatabase): QuarantinedRule[] {
-  return db.select().from(libraryRules).orderBy(asc(libraryRules.ruleId)).all().flatMap(row => {
-    const read = readLibraryRow(row);
+  const named = stderrRowLog(db);
+  return storedLibraryRows(db).flatMap(row => {
+    const read = readLibraryRow(row, named);
     return read.ok ? [] : [read.quarantined];
   });
 }

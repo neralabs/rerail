@@ -502,7 +502,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `rule_packs_published` | `GET /api/rule-packs/published?repository=&checkout=` | The packs `rerail packs recommend` offers, installed or not: version, rule count, installed version, and reason and folder where it fits the checkout. A person's read asks npm when no list is held or it is a day old; an agent's gets what is held. Installs nothing. |
 | `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`, and `fix`: what a person can do to keep the rest of its tools out, or null). Dry run; shown in Settings and `rerail status`. |
 | `rerail_rules_list` | `GET /api/rerail-rules?kind=` | By Rerail rules with their pack. |
-| `library_rules_list` | `GET /api/library-rules?kind=` | Rules created by you. |
+| `library_rules_list` | `GET /api/library-rules?kind=` | Rules created by you, and `quarantined`: those stored that fail validation, or whose stored document is no JSON (a damaged file or a hand edit), which run nowhere; `daemon.log` names such a document once. |
 | `library_rules_get` | `GET /api/library-rules/{id}` | One rule created by you. |
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |

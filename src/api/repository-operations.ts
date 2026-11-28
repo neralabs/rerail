@@ -38,7 +38,9 @@ import {
   type RepositoryListing,
 } from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
-import { addAttachment, listRepositoryRules, recordSetUp, removeAttachment, setRuleSetting } from "../engine/catalog/rule-configuration.js";
+import {
+  addAttachment, listRepositoryRules, readSettings, recordSetUp, removeAttachment, setRuleSetting, type ReadSetting,
+} from "../engine/catalog/rule-configuration.js";
 import {
   copyRerailRuleToLibrary,
   getLibraryRule,
@@ -464,16 +466,20 @@ function notSetUp(db: Pick<RerailDatabase, "select">, repositoryKey: string): bo
     .where(eq(repositories.repositoryKey, repositoryKey)).get()?.configuredAt === null;
 }
 
-/** The setting `owner` stores for `change`'s folder and target, if any. */
-function storedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange) {
-  return db.select({ on: ruleSettings.on, mode: ruleSettings.mode, suppressions: ruleSettings.suppressions, config: ruleSettings.config })
-    .from(ruleSettings).where(and(
+/**
+ * The setting `owner` stores for `change`'s folder and target, if any. Options whose stored text does not read are none
+ * here (`readSettings`), so a change that keeps the options writes none, and one that sets them mends the row.
+ */
+function storedSetting(db: Pick<RerailDatabase, "select">, owner: RuleSetting["owner"], change: SettingChange): ReadSetting | undefined {
+  return readSettings(db, {
+    where: and(
       eq(ruleSettings.ownerKind, owner.kind),
       eq(ruleSettings.ownerId, owner.kind === "repository" ? owner.repositoryKey : owner.checkoutPath),
       eq(ruleSettings.folder, change.folder),
       eq(ruleSettings.targetKind, change.targetKind),
       eq(ruleSettings.targetId, change.targetId),
-    )).get();
+    ),
+  })[0];
 }
 
 /** The mode `change` writes to `owner`'s setting, beside the mode stored there. */
