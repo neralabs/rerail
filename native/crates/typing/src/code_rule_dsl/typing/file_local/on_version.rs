@@ -2169,7 +2169,14 @@ impl<'v> Program<'v> {
         for (index, l) in rule.body().enumerate() {
             let (atom, plain) = match l.view() {
                 L::Atom(a) => (a, true),
-                L::Agg { atom, .. } => (atom, false),
+                L::Agg { var: x, op, over, atom } => {
+                    // `v = max o : { r(…o…) }`: `v` is one of `o`'s values, so in `o`'s document (under tape ids no
+                    // `OrderNodes` helper reads it back with its row, as under ids per definition).
+                    if let (crate::code_rule_dsl::logic::program_image::AggRef::Min | crate::code_rule_dsl::logic::program_image::AggRef::Max, Some(o)) = (op, over) {
+                        same_doc.push((var(x), var(o)));
+                    }
+                    (atom, false)
+                }
                 L::Ast { .. } => return Some("an AST pattern".to_owned()),
                 L::Nearest { n, a, .. } => {
                     groups.push(BTreeSet::from([var(n), var(a)]));
@@ -3507,6 +3514,9 @@ struct Form {
     /// The classes the body tests set (`!unset(x)`, `x != -1`): a nullable location column's variable among them is a
     /// node of its row's document, so it places as a location column does (decision 0708).
     set: Vec<u32>,
+    /// `v = min o : { … }` or `max`, by class: (v's, o's). `v` is one of `o`'s values, so of `o`'s document (under tape
+    /// ids no `OrderNodes` helper reads it back with its row).
+    picked: Vec<(u32, u32)>,
 }
 
 /// The functions a document's name is built through (decision 0665): a named group of a whole-text pattern (`match`'s
@@ -3631,7 +3641,14 @@ impl Form {
                 _ => None,
             })
             .collect();
-        Form { named, class, lits, splices, ids, binders, paths, built, set }
+        let picked = rule
+            .body()
+            .filter_map(|l| match l.view() {
+                L::Agg { var: x, op: crate::code_rule_dsl::logic::program_image::AggRef::Min | crate::code_rule_dsl::logic::program_image::AggRef::Max, over: Some(o), .. } => Some((class[x.0 as usize], class[o.0 as usize])),
+                _ => None,
+            })
+            .collect();
+        Form { named, class, lits, splices, ids, binders, paths, built, set, picked }
     }
 
     /// The slot a head argument is, when the body names it.
@@ -3936,6 +3953,9 @@ impl Form {
                 Lit::Cmp => {}
                 Lit::Same(a, b) => join(&mut root, *a, *b),
             }
+        }
+        for &(x, o) in &self.picked {
+            join(&mut root, x, o);
         }
         let mut roots: Vector<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
         roots.sort_unstable();

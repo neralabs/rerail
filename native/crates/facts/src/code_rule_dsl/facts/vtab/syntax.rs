@@ -1870,8 +1870,8 @@ struct DefIds {
 use granules::INDEX_BITS;
 pub use ranks::Item;
 
-/// Whether this process numbers nodes per definition: the default; `RERAIL_NODE_IDS=preorder` numbers them in
-/// preorder, to compare.
+/// Whether this process numbers nodes per definition (`RERAIL_NODE_IDS=definition`); by default ids are tape positions
+/// (`NodeIds::Tape`), and `RERAIL_NODE_IDS=preorder` numbers them in preorder, to compare.
 pub fn definition_ids() -> bool {
     node_ids() == NodeIds::Definition
 }
@@ -1879,13 +1879,14 @@ pub fn definition_ids() -> bool {
 /// How a node id's low 32 bits are numbered (`RERAIL_NODE_IDS`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NodeIds {
-    /// Per definition (`granules`): the default.
+    /// Per definition (`granules`, `definition`): a node's id survives edits to other definitions of its file. No
+    /// longer the default: the file is the grain, so its ids may renumber freely (0677, 0727).
     Definition,
     /// The node's preorder index among the projection's nodes (`preorder`), to compare.
     Preorder,
     /// The node's position on its document's tape (`tape`): a view reads the node there with no select of a rank, and
     /// an id is a rank's test away from its row. Tokens are their tape positions too; spans keep their top slots
-    /// (`granules::span_low`).
+    /// (`granules::span_low`). The default (decision 0724 §1: a node id is its tape position).
     Tape,
 }
 
@@ -1893,8 +1894,8 @@ pub enum NodeIds {
 pub fn node_ids() -> NodeIds {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| match crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_IDS").as_deref() {
         Ok("preorder") => NodeIds::Preorder,
-        Ok("tape") => NodeIds::Tape,
-        _ => NodeIds::Definition,
+        Ok("definition") => NodeIds::Definition,
+        _ => NodeIds::Tape,
     })
 }
 
