@@ -121,3 +121,36 @@ UKL_INLINE uint32_t text_len(Text x) {
     while ((n = text_next(x, &at, &u)) != 0u && n != TEXT_BAD) len += n;
     return len;
 }
+
+// A text's bytes one at a time: the next, or -1 at its end, -2 past a bad escape.
+typedef struct TextIt {
+    Text x;
+    uint32_t at, u, n, k;
+} TextIt;
+UKL_INLINE TextIt text_it(Text x) {
+    TextIt it;
+    it.x = x;
+    it.at = x.at;
+    it.u = 0u;
+    it.n = 0u;
+    it.k = 0u;
+    return it;
+}
+UKL_INLINE int32_t text_byte(UKL_PRIVATE TextIt* it) {
+    if (it->k == it->n) {
+        it->n = text_next(it->x, &it->at, &it->u);
+        it->k = 0u;
+        if (it->n == 0u) return -1;
+        if (it->n == TEXT_BAD) return -2;
+    }
+    return (int32_t)(it->u >> (8u * it->k++) & 0xFFu);
+}
+// Whether two texts are the same bytes (each read as written: raw, or its escapes decoded).
+UKL_INLINE bool text_same(Text x, Text y) {
+    TextIt a = text_it(x), b = text_it(y);
+    for (;;) {
+        int32_t p = text_byte(&a), q = text_byte(&b);
+        if (p != q) return false;
+        if (p < 0) return p == -1;
+    }
+}

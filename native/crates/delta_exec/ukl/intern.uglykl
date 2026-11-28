@@ -55,35 +55,114 @@ DELTA_LANES(intern_hash)
 // Bytes `at..end` of block `b`, as written.
 UKL_INLINE Text text_in(CBlk b, uint32_t at, uint32_t end) { Text x = {b, at, end, false}; return x; }
 
-// The language's names, interned once: on the first run that finds its last one missing.
-UKL_INLINE void intern_language(Atoms atoms, CBlk lang) {
-    uint32_t nn = rr_lang_names(lang);
-    Text last = rr_lang_name(lang, nn - 1u);
-    if (atoms_find(atoms, last, atom_hash(last)) != NONE) return;
-    for (uint32_t k = 0u; k < nn; k++) atoms_put(atoms, rr_lang_name(lang, k));
+// The scan's item `q`: the language's names (`nl` of them: on the first run that finds its last one missing), the
+// path and the module, then each node's text and value, in node order. Its text, whether it wants an id (a node's, as
+// the hash phase marked it), whether it is made (else found only), and where its id goes (NONE: nowhere).
+typedef struct Item {
+    Text x;
+    bool want, make;
+    uint32_t to;
+} Item;
+UKL_INLINE Item scan_item(UKL_PRIVATE const Rr* r, CBlk syms, uint32_t nl, uint32_t q) {
+    Item it;
+    it.want = true;
+    it.make = true;
+    it.to = NONE;
+    if (q < nl) { it.x = rr_lang_name(r->lang, q); return it; }
+    q -= nl;
+    uint32_t pl = U32(syms, SYMS_PATH_LEN_AT), ml = U32(syms, SYMS_MODULE_LEN_AT);
+    if (q == 0u) { it.x = text_in(syms, SYMS_NAMES_AT, SYMS_NAMES_AT + pl); it.to = SYMS_PATH_SYM_AT; return it; }
+    if (q == 1u) { it.x = text_in(syms, SYMS_NAMES_AT + pl, SYMS_NAMES_AT + pl + ml); it.to = SYMS_MODULE_SYM_AT; return it; }
+    uint32_t n = (q - 2u) / 2u, at = (uint32_t)rr_sym_at(r, n), mark = U32(syms, at + 4u * ((q - 2u) % 2u));
+    bool value = (q - 2u) % 2u == 1u;
+    it.to = at + (value ? 4u : 0u);
+    it.want = value ? mark == SYM_NEW : (mark == SYM_NEW || mark == SYM_FIND);
+    if (!it.want) { it.x = text_in(syms, 0u, 0u); return it; }
+    Names m = names_of(r, n);
+    it.want = value ? m.has_value : m.has_text;
+    it.make = value || mark == SYM_NEW;
+    it.x = value ? m.value : m.text;
+    return it;
 }
 
-// The scan: the language's names, the path and the module, then each marked name in node order.
-DELTA_ONE(intern_scan)
+// The scan (one threadgroup): its items in rounds of the group's threads, in order. Each item's text found; of those
+// to make and not found, the first of each text in the round (an earlier item's, by hash then bytes, else its own)
+// numbered by a scan and its bytes, end and hash written at their places; then one thread links them into the table,
+// in id order, as `atoms_append` would one at a time. An item found only sees the atoms made by the items before it.
+DELTA_COUNT(intern_scan_items) { return 1u; }
+DELTA_GROUPS(intern_scan)
 {
-    if (i != 0u) return;
+    DELTA_GROUP_ITEM(k);
     Rr r = doc_of(t, slots, p);
-    Atoms atoms = atoms_of(SLOT(2));
+    Atoms a = atoms_of(SLOT(2));
     Blk syms = SLOT(3);
-    intern_language(atoms, r.lang);
-    uint32_t pl = U32(syms, SYMS_PATH_LEN_AT), ml = U32(syms, SYMS_MODULE_LEN_AT);
-    U32(syms, SYMS_PATH_SYM_AT) = atoms_put(atoms, text_in(syms, SYMS_NAMES_AT, SYMS_NAMES_AT + pl));
-    U32(syms, SYMS_MODULE_SYM_AT) = atoms_put(atoms, text_in(syms, SYMS_NAMES_AT + pl, SYMS_NAMES_AT + pl + ml));
-    for (uint32_t n = 0u, len = syms_n(syms); n < len; n++) {
-        uint64_t at = rr_sym_at(&r, n);
-        uint32_t tx = U32(syms, at), vx = U32(syms, at + 4u);
-        if (tx != SYM_NEW && tx != SYM_FIND && vx != SYM_NEW) continue;
-        Names m = names_of(&r, n);
-        if (m.has_text && tx == SYM_NEW) U32(syms, at) = atoms_put(atoms, m.text);
-        if (m.has_text && tx == SYM_FIND) {
-            uint32_t id = atoms_find(atoms, m.text, atom_hash(m.text));
-            U32(syms, at) = id == NONE ? 0u : id;
+    uint32_t nn = rr_lang_names(r.lang);
+    Text last = rr_lang_name(r.lang, nn - 1u);
+    uint32_t nl = atoms_find(a, last, atom_hash(last)) == NONE ? nn : 0u, total = nl + 2u + 2u * syms_n(syms);
+    uint64_t first_id = atoms_word(a, ATOMS_FIRST_AT), cap = atoms_word(a, ATOMS_CAP_AT), bcap = atoms_word(a, ATOMS_BYTES_CAP_AT);
+    uint64_t room = (atoms_word(a, ATOMS_MASK_AT) + 1u) / 4u * 3u;
+    UKL_LOCAL uint32_t* ids = sh + 2u * lsz;
+    for (uint32_t base = 0u; base < total; base += lsz) {
+        uint32_t q = base + lid;
+        Item it;
+        it.want = false;
+        it.make = false;
+        it.to = NONE;
+        if (q < total) it = scan_item(&r, syms, nl, q);
+        uint64_t h = it.want ? atom_hash(it.x) : 0u;
+        uint32_t found = it.want ? atoms_find(a, it.x, h) : NONE;
+        bool need = it.want && it.make && found == NONE;
+        sh[2u * lid] = need ? q : NONE;
+        sh[2u * lid + 1u] = (uint32_t)h;
+        ukl_tg_barrier();
+        uint32_t dup = NONE;
+        for (uint32_t j = 0u; need && j < lid && dup == NONE; j++)
+            if (sh[2u * j] != NONE && sh[2u * j + 1u] == (uint32_t)h && text_same(scan_item(&r, syms, nl, sh[2u * j]).x, it.x)) dup = j;
+        bool first = need && dup == NONE;
+        uint32_t len = first ? text_len(it.x) : 0u;
+        UklScan rank = ukl_tg_exclusive_sum(first ? 1u : 0u, lid, lsz, scratch __UKL_ARGS);
+        UklScan off = ukl_tg_exclusive_sum(len, lid, lsz, scratch __UKL_ARGS);
+        uint64_t n = atoms_word(a, ATOMS_COUNT_AT), blen = atoms_word(a, ATOMS_BYTES_LEN_AT), placed = atoms_word(a, ATOMS_PLACED_AT);
+        // The firsts that fit, a prefix of them (each bound grows with the rank).
+        bool fits = first && n + rank.exclusive < cap && blen + off.exclusive + len <= bcap && placed + rank.exclusive < room;
+        uint32_t id = NONE;
+        if (fits) {
+            uint64_t s = atoms_span(a, ATOMS_STRINGS_AT, 1u) + blen + off.exclusive;
+            uint32_t xa = it.x.at, u, m;
+            while ((m = text_next(it.x, &xa, &u)) != 0u && m != TEXT_BAD)
+                for (uint32_t j = 0u; j < m; j++) a.b[s++] = (uint8_t)(u >> (8u * j));
+            U64(a.b, atoms_span(a, ATOMS_ENDS_AT, 8u) + 8u * (n + rank.exclusive)) = blen + off.exclusive + len;
+            U64(a.b, atoms_span(a, ATOMS_HASHES_AT, 8u) + 8u * (n + rank.exclusive)) = h;
+            id = (uint32_t)(first_id + n + rank.exclusive);
         }
-        if (m.has_value && vx == SYM_NEW) U32(syms, at + 4u) = atoms_put(atoms, m.value);
+        ids[lid] = id;
+        uint32_t made = ukl_tg_sum(fits ? 1u : 0u, lid, lsz, scratch __UKL_ARGS), bytes = ukl_tg_sum(fits ? len : 0u, lid, lsz, scratch __UKL_ARGS);
+        ukl_tg_barrier_device();
+        if (lid == 0u && made > 0u) {
+            uint64_t table = atoms_span(a, ATOMS_TABLE_AT, 8u), mask = atoms_word(a, ATOMS_MASK_AT);
+            for (uint64_t e = n; e < n + made; e++) {
+                uint64_t g = U64(a.b, atoms_span(a, ATOMS_HASHES_AT, 8u) + 8u * e), i = g & mask;
+                while (U64(a.b, table + 8u * i) != 0u) i = (i + 1u) & mask;
+                U64(a.b, table + 8u * i) = (g & 0xFFFFFFFF00000000ull) | (uint64_t)(first_id + e + 1u);
+            }
+            U64(a.b, a.r + ATOMS_PLACED_AT) = placed + made;
+            U64(a.b, a.r + ATOMS_BYTES_LEN_AT) = blen + bytes;
+            U64(a.b, a.r + ATOMS_COUNT_AT) = n + made;
+        }
+        ukl_tg_barrier_device();
+        if (it.want && it.to != NONE) {
+            uint32_t v = found;
+            if (!it.make && found == NONE) {
+                // Found only: an atom this round made counts when an item before it made it.
+                uint32_t again = atoms_find(a, it.x, h);
+                v = again != NONE && again < first_id + n + rank.exclusive ? again : 0u;
+            } else if (first) {
+                v = id;
+            } else if (need) {
+                v = ids[dup];
+            }
+            U32(syms, it.to) = v;
+        }
+        ukl_tg_barrier();
     }
 }

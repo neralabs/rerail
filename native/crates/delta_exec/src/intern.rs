@@ -20,6 +20,13 @@ static INTERN_PHASE: [Phase; 2] = [
     Phase { name: "scan", found: Found::Fixed, unit: Unit::Threadgroup, inside: Inside::Nothing, across: Across::Ordered, output: Output::ByScan, bounds: &[] },
 ];
 
+/// The UKL version's shape (`ukl/intern.uglykl`): the hash phase a lane a node; the scan one threadgroup, its items
+/// in rounds of the group's threads, in order.
+pub(crate) static INTERN_UKL: [Phase; 2] = [
+    Phase { unit: Unit::Lane, ..INTERN_PHASE[0] },
+    Phase { inside: Inside::GroupMemory, ..INTERN_PHASE[1] },
+];
+
 /// `intern`: read the document's source and tape (their blocks, which may be one) · rw the atoms · rw the document's
 /// symbols block · read the language's table (`intern::write_language`).
 pub static INTERN: Signature = Signature::of(

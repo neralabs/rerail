@@ -70,7 +70,7 @@ const VERSIONS: &[Ukl] = &[
     Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case], shape: None },
     Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case], shape: None },
     Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case], shape: None },
-    Ukl { sig: &INTERN, module: "intern", cases: &[intern_case], shape: None },
+    Ukl { sig: &INTERN, module: "intern", cases: &[intern_case, intern_cold_case], shape: Some(&crate::intern::INTERN_UKL) },
     Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case], shape: None },
     Ukl { sig: &CONSOLIDATE, module: "trace", cases: &[consolidate_first_case, consolidate_case, consolidate_one_col_case, consolidate_wide_case, consolidate_large_case], shape: Some(&crate::trace::TRACE_UKL) },
     Ukl { sig: &MERGE, module: "trace", cases: &[merge_case, merge_large_case], shape: Some(&crate::trace::TRACE_UKL) },
@@ -308,6 +308,20 @@ fn intern_case(dir: &mut Directory) -> Case {
     crate::intern::intern(&cpu, dir, &mut blobs, atoms, s, t, "a.rerail", "a").expect("the first interned");
     let (s, t) = doc(dir, &mut blobs, "// a comment\nq(y, \"t\\u{e9}\\n\\ud83d\\ude00\", \"\\q\") :- p(y), e(y, \"s\"), y != 3.\n");
     let (_, slots, p, _) = crate::intern::launch(dir, atoms, s, t, "b.rerail", "b").expect("the second's launch");
+    Case { slots: slots.to_vec(), params: p.to_vec() }
+}
+
+/// `intern` cold: the language's names first, then a document of many rules whose names repeat within a round of
+/// the scan and across rounds, some only once.
+fn intern_cold_case(dir: &mut Directory) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut blobs = crate::files::BlobRows::new();
+    let atoms = crate::sym::Atoms::new(dir);
+    let src: String = (0..60).map(|k| format!("r{}(x, y) :- e{}(x, \"s{}\"), y != {k}, w{k}(y).\n", k % 7, k % 3, k % 5)).collect();
+    let ids = crate::files::doc_of(&cpu, dir, &mut blobs, &src).expect("a document");
+    let place = |id| blobs.get(dir, id).unwrap().expect("a blob housed");
+    let (s, t) = (place(&ids.source), place(&ids.tape));
+    let (_, slots, p, _) = crate::intern::launch(dir, atoms, s, t, "c.rerail", "c").expect("the launch");
     Case { slots: slots.to_vec(), params: p.to_vec() }
 }
 
