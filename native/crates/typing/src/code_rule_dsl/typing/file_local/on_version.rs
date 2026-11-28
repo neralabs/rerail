@@ -1729,6 +1729,12 @@ impl<'v> Program<'v> {
                         if x == r || (rels.is_derived(x) && !local_now[x as usize] && !placeless[x as usize]) {
                             return Err(format!("own rule reads {}", self.name(x)));
                         }
+                        // A world answer (`dir_entry`, a directory's listing) is the cross part's: its requests are
+                        // asked there, and no chunk holds a row of it. Derived in a chunk, the view had none, and every
+                        // reader's test of it failed (python/modules.rerail's `py_stub_dir`, typeshed's distributions).
+                        if !rels.is_derived(x) && crate::code_rule_dsl::logic::rr::WORLD.iter().any(|&(answer, _)| answer == self.name(x)) {
+                            return Err(format!("own rule reads {}, a world answer no chunk holds", self.name(x)));
+                        }
                     }
                     L::Cmp { .. } | L::Nearest { .. } => {}
                     _ => return Err("own rule has an aggregate or pattern".into()),
