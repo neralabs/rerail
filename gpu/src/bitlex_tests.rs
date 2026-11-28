@@ -241,6 +241,82 @@ fn json_tier2_writes_from_the_middle_as_its_rust() {
     eprintln!("{}: tier 2 from the middle as one program, the tape finished on the device, {tapes} tapes in chunks of 1, 3 and 16 records ({chunks_run} chunks, at most {launches} launches): the serial walk's tape, {bytes_out} bytes; stored as 16z on the device in at most {zlaunches} launches, z_of's, {zbytes} bytes", crate::device::backend());
 }
 
+/// Timings of tier 2 from the middle on the device against the CPU's tiers, on a synthetic file of about 2 MB (objects
+/// with strings, numbers, booleans and arrays, a nest every 50th), warm, the best of 3: tier 1 (`lex`), the token
+/// pass, tier 2's serial walk into the writer (`parse_lexed`), its finish, and `z_of`, on the CPU; the two programs'
+/// GPU time (the device's clock: `gpu_seconds_awaited`), in chunks of 16, 64 and 256 records. Run by name:
+/// `--ignored json_tier2_timings`.
+#[test]
+#[ignore]
+fn json_tier2_timings() {
+    use rerail_json_aot::middle;
+    let Some(shared) = crate::shared::get() else { return };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let p = program("json_tier2.uglykl", rerail_json_aot::TIER2_UKL).unwrap();
+    let lang = json_lang();
+    let mut f = b"[".to_vec();
+    let mut i = 0usize;
+    while f.len() < 2 << 20 {
+        let nest = if i % 50 == 0 { format!(", \"deep\": [[{{\"x\": [1, [2, {{\"y\": [{i}]}}]]}}]]") } else { String::new() };
+        f.extend_from_slice(format!("{}{{\"id\": {i}, \"name\": \"item number {i}\", \"tags\": [\"a\", \"b{}\"], \"v\": {}.25, \"ok\": {}{nest}}}\n", if i == 0 { "" } else { "," }, i % 7, i * 3, i % 2 == 0).as_bytes());
+        i += 1;
+    }
+    f.push(b']');
+    let n = f.len();
+    let buf = rerail_json_aot::padded(&f);
+    let best = |run: &mut dyn FnMut()| {
+        let mut b = std::time::Duration::MAX;
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            run();
+            b = b.min(t.elapsed());
+        }
+        b
+    };
+    let lx = rerail_json_aot::lex(&buf, n);
+    let t1 = best(&mut || drop(std::hint::black_box(rerail_json_aot::lex(&buf, n))));
+    let types = rerail_json_aot::lex_typed(&buf, n, 16).types;
+    let toks = middle::tokens(&buf, &lx, &types, &middle::in_order);
+    let tt = best(&mut || drop(std::hint::black_box(middle::tokens(&buf, &lx, &types, &middle::in_order))));
+    let mut want = Vec::new();
+    let t2 = best(&mut || {
+        let mut w = json_writer(&lang, &f);
+        rerail_json_aot::parse_lexed(&buf, &lx, &mut w).unwrap();
+        std::hint::black_box(&w);
+    });
+    let mut tf = std::time::Duration::MAX;
+    for _ in 0..3 {
+        let mut w = json_writer(&lang, &f);
+        rerail_json_aot::parse_lexed(&buf, &lx, &mut w).unwrap();
+        let t = std::time::Instant::now();
+        want = w.finish().unwrap().tape.as_bytes().to_vec();
+        tf = tf.min(t.elapsed());
+    }
+    let mut want_z = Vec::new();
+    let tz = best(&mut || want_z = rerail_tape_format::f16::z_of(&want, &rerail_tape_format::f16::lz4_greedy).unwrap());
+    eprintln!("{}: {n} bytes, {} records, a tape of {} bytes, 16z {} bytes", crate::device::backend(), lx.count, want.len(), want_z.len());
+    eprintln!("CPU, one thread: tier 1 {t1:?}, the token pass {tt:?}, tier 2 serial {t2:?}, its finish {tf:?}, z_of {tz:?}");
+    for size in [16usize, 64, 256] {
+        let (mut chain, mut z, mut wall) = (f64::MAX, f64::MAX, std::time::Duration::MAX);
+        let mut launches = (0, 0);
+        for _ in 0..3 {
+            let mut m = json_writer(&lang, &f);
+            let (g0, t) = (crate::device::gpu_seconds_awaited(), std::time::Instant::now());
+            let run = Run::go(&mut q, p, &buf, &lx, &toks, size, &mut m);
+            let g1 = crate::device::gpu_seconds_awaited();
+            let (zb, zl) = run.z(&mut q, p, most_blocks(&lx));
+            let g2 = crate::device::gpu_seconds_awaited();
+            wall = wall.min(t.elapsed());
+            assert!(zb == want_z, "chunks of {size}: the 16z tape");
+            m.from_device_region(&read::<u8>(&run.t, run.region));
+            assert!(m.finished_on_device().unwrap().tape.as_bytes() == &want[..], "chunks of {size}: the tape");
+            (chain, z) = (chain.min(g1 - g0), z.min(g2 - g1));
+            launches = (run.launches, zl);
+        }
+        eprintln!("{}, {} groups, chunks of {size} records: tier 2 to the finished tape {:.2} ms GPU ({} launches), 16z {:.2} ms GPU ({} launches); wall with the test's buffers {wall:?}", crate::device::backend(), groups(), chain * 1e3, launches.0, z * 1e3, launches.1);
+    }
+}
+
 /// JSON's language for format 16 writers.
 fn json_lang() -> rerail_tape_format::f16::Lang {
     let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
@@ -250,6 +326,11 @@ fn json_lang() -> rerail_tape_format::f16::Lang {
 /// A format 16 writer of `f`'s tape, its blocks' presence kept.
 fn json_writer(lang: &rerail_tape_format::f16::Lang, f: &[u8]) -> rerail_tape_format::f16::Writer {
     rerail_tape_format::f16::Writer::new(lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16)
+}
+
+/// The programs' threadgroups: `RERAIL_T2_GROUPS` (the timings' knob), else 64.
+fn groups() -> u64 {
+    std::env::var("RERAIL_T2_GROUPS").ok().and_then(|v| v.parse().ok()).unwrap_or(64)
 }
 
 /// The most blocks a tape of the file's records and bytes has (`Run::go`'s room).
@@ -337,7 +418,7 @@ impl Run {
         let (retb, f1, th, f2) = (alloc::<u8>(runs * DEPTH).unwrap(), alloc::<u32>(room * 10).unwrap(), alloc::<u32>(room * 2).unwrap(), alloc::<u32>(room * 25).unwrap());
         let (qs, qc) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0, 0]).unwrap());
         // 64 groups of 64 threads, each SIMD group a worker of a budget twice an even share of the items.
-        let (groups, threads) = (64u64, 64u64);
+        let (groups, threads) = (groups(), 64u64);
         let workers = (groups * threads) as usize / crate::device::simd_width().max(1) as usize;
         let args = T2RArgs { count: lx.count as u32, len: lx.len as u32, ntoks: toks.len() as u32, size: size as u32, runs: runs as u32, most: blocks as u32, capacity: capacity as u32, budget: (2 * capacity / workers + 16) as u32 };
         let mut launches = 0;
@@ -383,7 +464,7 @@ impl Run {
         slots[0] = 1;
         let (zb, mb) = (alloc::<u8>(room).unwrap(), buffer_of(&vec![0u32; words]).unwrap());
         let (qs, qc) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0, 0]).unwrap());
-        let groups = 64u64;
+        let groups = groups();
         let args = T2ZArgs { capacity: capacity as u32, budget: (2 * capacity / groups as usize + 16) as u32 };
         let mut launches = 0;
         loop {
