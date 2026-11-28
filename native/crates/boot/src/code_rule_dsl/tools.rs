@@ -2853,6 +2853,34 @@ mod pack_split_tests {
         found
     }
 
+    /// A finding no file places (a gate at a written-out path, whose body reads no file) does not take a program's
+    /// findings at nodes to the cross part (decision 0727, `file_local::Locate`): `violation`'s rules that name their
+    /// document are located (`violation_at`) in their files, and the gate's stays with `violation`, moved to the cross
+    /// part. Before, the gate's rule blocked all of `violation`, which was moved whole, and with a guest read (findings
+    /// placed through a string) the cross part read `rr_placed_line`, a per-file relation of nodes (PHA000).
+    #[test]
+    fn a_finding_no_file_places_leaves_the_findings_at_nodes_in_their_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy = dir.path().join("gate.rerail");
+        std::fs::write(
+            &policy,
+            r#".policy "t:gate-beside-nodes" revision 1
+.language python
+.mode block
+.scope dirs "impl"
+.scope tests false
+.violation Hit(at: node) "a call"
+Hit(n) :- kind(n, "call"), !guest_of(n, _).
+.violation Gate(at: node) "the gate"
+Gate(@place("scripts/gate.py", 1)) :- !option("gate", "open").
+"#,
+        )
+        .unwrap();
+        let found = findings_of_all(&[policy.to_str().unwrap()], &[("impl/a.py", "f()\n"), ("impl/b.py", "x = 1\ng()\n"), ("tests/c.py", "h()\n")]);
+        let got: Vec<(&str, &str, i64)> = found.iter().map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        assert_eq!(got, [("Gate", "scripts/gate.py", 1), ("Hit", "impl/a.py", 1), ("Hit", "impl/b.py", 2)], "{found:#?}");
+    }
+
     /// plan-helpers-allowlist finds what its linter finds (scripts/lint_plan_helpers_allowlist.py, decision 0692): a
     /// name's helper is the latest write in its own file (the linter's map is one per file: `a.py` and `b.py` write `h`
     /// at the same visit index, each a helper of its own, and neither's `fetch` takes the other's), and a private or

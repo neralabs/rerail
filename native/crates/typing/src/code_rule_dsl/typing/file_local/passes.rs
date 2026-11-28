@@ -367,7 +367,32 @@ impl ProgramPass for Locate {
                 continue;
             };
             let of_rel: Vec<RuleRef<'_>> = items.iter().filter_map(|i| if let Item::Keep(r) = i { Some(*r) } else { None }).filter(|r| head(r) == rel).collect();
-            let Some(made) = of_rel.iter().map(|&rule| find_doc(rule, &twin_ok).map(|doc| (rule, doc))).collect::<Option<Vec<(RuleRef<'_>, Doc)>>>() else {
+            let found: Vec<(RuleRef<'_>, Option<Doc>)> = of_rel.iter().map(|&rule| (rule, find_doc(rule, &twin_ok))).collect();
+            let Some(made) = found.iter().map(|&(rule, doc)| doc.map(|doc| (rule, doc))).collect::<Option<Vec<(RuleRef<'_>, Doc)>>>() else {
+                // An output no file-local rule reads, holding no id, some of whose rules name their document (decision
+                // 0727: a finding is made in its node's file): those are located, and its other rules (a gate at a
+                // written-out path, whose body reads no file) stay with it, moved to the cross part with the read
+                // of the located form. Moved whole, its findings at nodes were the cross part's, and it read their
+                // files' relations of nodes (plan-helpers' `rr_placed_line`, decision 0677).
+                let ids = cols.iter().any(|(_, t)| matches!(*t, "node" | "line" | "match" | "token" | "place"));
+                let some: Vec<(RuleRef<'_>, Doc)> = found.iter().filter_map(|&(rule, doc)| doc.map(|doc| (rule, doc))).collect();
+                if !left && !read_locally && outputs.contains(rel.as_str()) && !ids && !some.is_empty() {
+                    let k = alloc(rel, &mut names, &mut ats, &cols);
+                    at_of.insert(rel.clone(), k);
+                    wanted.extend(some.iter().filter_map(|&(rule, doc)| twin_read(rule, doc)));
+                    let gone: Vec<u32> = some.iter().map(|(r, _)| r.id().0).collect();
+                    for (r, _) in &some {
+                        for a in reads(r) {
+                            if let Some(n) = readers.get_mut(a) {
+                                *n -= 1;
+                            }
+                        }
+                    }
+                    items.retain(|i| !matches!(i, Item::Keep(r) if gone.contains(&r.id().0)));
+                    items.extend(some.into_iter().map(|(rule, doc)| Item::Made { rule, at: k, doc }));
+                    items.push(Item::ReadAt { rel: rel.clone(), at: k, width: cols.len() });
+                    self.located.push(rel.clone());
+                }
                 if !left {
                     self.blocked.push(rel.clone());
                 }
