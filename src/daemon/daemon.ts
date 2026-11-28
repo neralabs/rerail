@@ -111,7 +111,7 @@ export interface RerailDaemonOptions {
   port?: number;
   /**
    * The port a daemon started in place of another tries first: the one that daemon held, so a dashboard link shown for
-   * it still answers. When it is held or refused, the start goes on as `port` says; an explicit `port` other than 0 wins.
+   * it still answers. When it cannot be had, the start goes on as `port` says; an explicit `port` other than 0 wins.
    */
   preferredPort?: number;
   /** Where the port the daemon listens on is remembered, so dashboard links outlive a restart. */
@@ -281,7 +281,7 @@ interface ListenPorts {
  * started in place of (`preferred`), then, without `port`, the port it last listened on and the default port, and when
  * those cannot be had, takes a free port instead; clients find it through the state file, never by the port number. Held
  * (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across restarts) both move
- * on; the remembered port moves on whatever its error, since only a deleted file would undo it.
+ * on; the preferred and remembered ports move on whatever their error, since each is only a wish.
  */
 async function listenPreferred(server: DaemonServer, ports: ListenPorts, host: string): Promise<void> {
   if (ports.port !== undefined && ports.port !== 0) return await listen(server, ports.port, host);
@@ -291,13 +291,16 @@ async function listenPreferred(server: DaemonServer, ports: ListenPorts, host: s
   await listen(server, 0, host);
 }
 
-/** Whether the server now listens on `candidate`; false when the start moves on to the next port. */
+/**
+ * Whether the server now listens on `candidate`; false when the start moves on to the next port. A wish (the preferred
+ * or the remembered port) moves on whatever its error; the default port only when it is held or refused.
+ */
 async function listenedOn(server: DaemonServer, candidate: number, ports: ListenPorts, host: string): Promise<boolean> {
   try {
     await listen(server, candidate, host);
     return true;
   } catch (error) {
-    if (candidate !== ports.remembered && !portTaken(error)) throw error;
+    if (candidate !== ports.preferred && candidate !== ports.remembered && !portTaken(error)) throw error;
     return false;
   }
 }
