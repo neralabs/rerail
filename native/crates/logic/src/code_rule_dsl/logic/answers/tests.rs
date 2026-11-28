@@ -80,6 +80,30 @@
         assert!(asks.iter().all(|r| r.body().all(|l| !matches!(l.view(), Lit::Agg { .. }) || l.atom().unwrap().gated())), "no ask reads an aggregate raw");
     }
 
+    /// A negated atom's variable that only a literal after it binds is no key of its gate: the ask is written from the
+    /// literals before the negation, so its head may name only what they bind. The data layer's `nameref` in the
+    /// annotation pass (0597 rule 8), `!kwpat_key_rr_kd($rr_kd, $n)` before the fresh nodes that bind `$rr_kd`, asked
+    /// `ask_…_bb($rr_kd, $n)` with `$rr_kd` bound by nothing: it had no native form, and its SQL ran inside the waves.
+    #[test]
+    fn a_negations_key_is_only_what_the_literals_before_it_bind() {
+        let prog = super::super::rr::parse_version(
+            ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(d: symbol, y: symbol)\n.decl seen(d: symbol, x: symbol)\n.decl tagged(d: symbol, x: symbol)\n.decl fresh(d: symbol, x: symbol)\n\
+             want(\"a\").\nwant(y) :- got(_, y).\nseen(d, y) :- got(d, y).\ntagged(d, y) :- got(d, y).\n\
+             fresh(d, x) :- want(x), !seen(d, x), !seen(x, x), tagged(d, x).\nreq(x) :- fresh(_, x).\n",
+        )
+        .unwrap();
+        let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
+        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
+        let gates = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::gates(&*gated);
+        let names: BTreeSet<&str> = gates.iter().map(|(d, _)| d.as_str()).collect();
+        assert_eq!(names, BTreeSet::from(["done_seen_bb", "done_seen_fb"]), "the first keyed by `x` alone");
+        for r in gated.rules().filter(|r| gated.rel_name(r.head().rel()).starts_with("ask_")) {
+            let bound: BTreeSet<_> = r.body().filter_map(|l| l.atom().filter(|a| !a.neg())).flat_map(|a| a.args().filter_map(|t| t.var()).collect::<Vec<_>>()).collect();
+            let negated = r.body().filter_map(|l| l.atom().filter(|a| a.neg())).flat_map(|a| a.args().filter_map(|t| t.var()).collect::<Vec<_>>());
+            assert!(r.head().args().filter_map(|t| t.var()).chain(negated).all(|s| bound.contains(&s)), "an ask's head and negations are bound by its body: {}", gated.show_rule(r));
+        }
+    }
+
     /// A rule with two negations inside a loading component: the second's ask reads the first gated, as the rule does,
     /// never bare: a bare negation of the component in an ask made the program unstratifiable (PYI's `type_root`, past
     /// `!typing_sym(h, "Literal")`, asking `annotated_meta`: "ask_annotated_meta_bb depends negatively on typing_sym

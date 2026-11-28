@@ -221,7 +221,9 @@ impl RulePass for GateRules<'_> {
                 .enumerate()
                 .filter(|(_, t)| match t {
                     TermRef::Wild => false,
-                    TermRef::Var(s) if agg => at_bound.contains(s),
+                    // A variable only the literals after it bind is no key: the ask is written from those before it
+                    // (`kwpat_key`'s document, `!k_rr_kd($rr_kd, $n)` before the fresh nodes that bind `$rr_kd`).
+                    TermRef::Var(s) => at_bound.contains(s),
                     _ => true,
                 })
                 .map(|(k, _)| k)
@@ -244,7 +246,14 @@ impl RulePass for GateRules<'_> {
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
                 let mut rb = out.rule().head(ask.as_str(), &key);
+                // An earlier negation that names a variable those literals do not bind is left out of the ask: it asks
+                // more keys, never fewer (`!kwpat_key_rr_kd($rr_kd, $n)` in `pat_tail`'s ask by `$n`, `$rr_kd`
+                // bound only after both).
+                let unbound = |j: usize| matches!(lits[j].view(), Lit::Atom(x) if x.neg() && x.args().any(|t| matches!(t, TermRef::Var(s) if !at_bound.contains(&s))));
                 for o in &outs {
+                    if matches!(o, Out::Copy(j) | Out::Gated(j) if unbound(*j)) {
+                        continue;
+                    }
                     rb = write(v, r, &lits, rb, o);
                 }
                 rb.finish()?;
