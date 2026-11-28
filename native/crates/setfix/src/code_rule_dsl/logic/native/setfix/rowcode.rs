@@ -394,7 +394,9 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                 }
             }
             // A test of an input whose keys read the row (`Src::In`: an input, fixed while the rule runs; the
-            // relations the stratum derives change under it): its verdicts a computed column.
+            // relations the stratum derives change under it): its verdicts a computed column. A key may be a value an
+            // earlier lookup of the chunk read (`Word::Look`, made before this test is asked, as a lookup's keys may
+            // be): `kind($v, $k), scope($k)` walked `pn_wstart`'s 1,572 rows through `scope` a step of its own.
             Step::Atom { src: super::Src::In(..), neg, ref keys, ref binds, .. } if ask && binds.is_empty() => {
                 let mut slots = Vec::new();
                 let mut row = false;
@@ -402,7 +404,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
                 for &(_, k) in keys {
                     if let Key::Slot(s) = k {
                         match val(&env, k) {
-                            Val::Row(w @ Word::Col(_)) => {
+                            Val::Row(w @ (Word::Col(_) | Word::Look(..))) => {
                                 row = true;
                                 slots.push((s, Bind::Column(usize::from(b.column(w)))));
                             }

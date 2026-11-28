@@ -8650,9 +8650,10 @@ impl JoinRule {
     /// Per plan step, whether it is walked as no step of its own, so no step of the join's work (`plan_work`): its first
     /// step runs inside an earlier atom's row program (`fused_at`, `rowcode`), one pass over the atom's rows with it,
     /// or it made no step (a test of a relation proven empty, folded away: `nameref`'s `!kwpat_key($n), !pat_tail($n)`,
-    /// charged 1,620 rows each it never read), its counts the rows it passes on (`plan_counts`).
+    /// charged 1,620 rows each it never read), its counts the rows it passes on (`plan_counts`), or its step is unused
+    /// (`Step::Unused`: a test true by construction, as after a last split; the walk passes its rows on).
     pub fn plan_unwalked(&self) -> Vec<bool> {
-        (0..self.plan_steps).map(|p| self.step_of(p).is_none_or(|i| (0..i).any(|k| self.fused_at(k).is_some_and(|f| i <= k + f.steps)))).collect()
+        (0..self.plan_steps).map(|p| self.step_of(p).is_none_or(|i| matches!(self.steps[i], Step::Unused { .. }) || (0..i).any(|k| self.fused_at(k).is_some_and(|f| i <= k + f.steps)))).collect()
     }
 }
 
