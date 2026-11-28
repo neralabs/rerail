@@ -18,6 +18,7 @@
 #[cfg(all(feature = "ir", target_family = "wasm"))]
 extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_reads::ids;
+pub use rerail_reads::packed;
 #[cfg(feature = "ir")]
 pub mod id_reads;
 #[cfg(feature = "ir")]

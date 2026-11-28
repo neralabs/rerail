@@ -74,8 +74,16 @@ pub struct ViewDoc {
     /// at the entry's making in its block: an id's slot entry is its bucket's first and a step or two
     /// (`number_of_by_buckets`). Empty (a document numbered by preorder or tape position): no slots.
     pub slot_buckets: Run,
+    /// Packed maps (`crate::packed`, about 1.25 bytes an entry), derived once at the entry's making in its block: by
+    /// number, a numbered node's tape node (`node_x`) and its id's low bits (`node_low`); by own place, a node's
+    /// number (`by_place`, `Numbering::number_of_packed`); by `field` row, its node's tape node (`field_x`). An
+    /// escaped entry, or an empty map, is read from the numbering.
+    pub node_x: Run,
+    pub node_low: Run,
+    pub by_place: Run,
+    pub field_x: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 16 + 16 + 16 * 4);
 
 /// `ViewDoc::place`'s kinds.
 pub const PLACE_NAMED: u32 = 1;

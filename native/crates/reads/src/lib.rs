@@ -8,9 +8,11 @@
 //!   reader's view;
 //! - [`tape`]: a tape's reads, of a slice or where it lies (formats 16 and 15; 16z through its batch's cache);
 //! - [`ids`]: a projection's numbering (`Numbering`) and its reads;
+//! - [`packed`]: a packed map of u32s, a byte an entry (the numbering's most asked answers);
 //! - [`views`]: a batch's views' entries (`ViewDoc`), its directory (`ViewDir`, `ViewRow`, `ViewHome`) and the
 //!   directory's searches.
 pub mod ids;
+pub mod packed;
 pub mod tape;
 pub mod view;
 pub mod views;

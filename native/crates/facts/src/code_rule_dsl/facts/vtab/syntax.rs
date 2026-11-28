@@ -2523,7 +2523,10 @@ impl Projected {
             Some(d) => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
                 if local < nodes {
-                    d.table.low_of(&self.ranks, Item::Node, local).expect("a numbered node")
+                    match rerail_clif::packed::get(self.entry_run(|e| &e.node_low), local) {
+                        rerail_clif::packed::NONE => d.table.low_of(&self.ranks, Item::Node, local).expect("a numbered node"),
+                        low => low,
+                    }
                 } else if local < nodes + tokens {
                     d.table.low_of(&self.ranks, Item::Token, local - nodes).expect("a numbered token")
                 } else {
@@ -2583,7 +2586,7 @@ impl Projected {
     pub fn local_of_near(&self, low: u32, hint: &mut u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
-            Some(d) => d.table.number_of_near(&self.ranks, self.slot_buckets(), low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            Some(d) => d.table.number_of_near(&self.ranks, self.slot_buckets(), self.entry_run(|e| &e.by_place), low, hint).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None if self.tape => self.tape_local(low),
             None => Some(low),
         }
@@ -2592,11 +2595,16 @@ impl Projected {
     /// bucket (`Numbering::number_of_by_buckets`).
     #[inline]
     fn slot_buckets(&self) -> &[u32] {
+        self.entry_run(|e| &e.slot_buckets)
+    }
+    /// The entry's run `f` of u32s once it is made, else none (its slot buckets, its packed maps).
+    #[inline]
+    fn entry_run(&self, f: impl FnOnce(&rerail_clif::view_reads::ViewDoc) -> &rerail_clif::ids::Run) -> &[u32] {
         if self.codes.get().is_none() {
             return &[];
         }
         // SAFETY: the entry's run, set where it was made (before `codes` was) to cells of its block, or empty.
-        unsafe { self.entry.slot_buckets.as_slice::<u32>() }
+        unsafe { f(&self.entry).as_slice::<u32>() }
     }
     /// The node, token or span whose id's low bits are `low`, where ids are tape positions: a rank, no select.
     #[inline]

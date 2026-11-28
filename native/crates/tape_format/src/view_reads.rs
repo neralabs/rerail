@@ -188,7 +188,10 @@ impl<'a> Doc<'a> {
         }
         // A scan's next row: the next numbered node from the last one, no sample read.
         // SAFETY: the entry's numbering (`numbering`).
-        let x = unsafe { if s.l != u32::MAX && s.l + 1 == l { self.numbering().next_at(0, s.x + 1) } else { self.numbering().select(0, l) } };
+        let x = match rerail_clif::packed::get(self.items(&self.entry.node_x), l) {
+            rerail_clif::packed::NONE => unsafe { if s.l != u32::MAX && s.l + 1 == l { self.numbering().next_at(0, s.x + 1) } else { self.numbering().select(0, l) } },
+            x => x,
+        };
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
     }
@@ -209,7 +212,10 @@ impl<'a> Doc<'a> {
     pub fn node_id(&self, l: u32) -> i64 {
         let low = match self.entry.preorder {
             // SAFETY: as `tape_node`.
-            0 => unsafe { self.numbering().low_of(0, l) },
+            0 => match rerail_clif::packed::get(self.items(&self.entry.node_low), l) {
+                rerail_clif::packed::NONE => unsafe { self.numbering().low_of(0, l) },
+                low => low,
+            },
             rerail_clif::view_reads::IDS_TAPE => self.tape_node(l),
             _ => l,
         };

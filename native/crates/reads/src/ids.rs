@@ -564,6 +564,17 @@ impl Numbering {
     #[inline]
     pub unsafe fn number_of_by_buckets(&self, low: u32, buckets: &[u32], hint: &mut u32) -> Option<(u32, u32)> {
         // SAFETY: the caller's.
+        unsafe { self.number_of_packed(low, buckets, &[], hint) }
+    }
+
+    /// `number_of_by_buckets`, a node's number read in `by_place` (`crate::packed`, the numbers by own place:
+    /// `own_numbers`) where it holds it, else searched among its granule's children (`number_in`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_of_packed(&self, low: u32, buckets: &[u32], by_place: &[u32], hint: &mut u32) -> Option<(u32, u32)> {
+        // SAFETY: the caller's.
         unsafe {
             if buckets.len() > 1 {
                 let slot = low >> INDEX_BITS;
@@ -575,7 +586,42 @@ impl Numbering {
                 }
                 *hint = at;
             }
-            self.number_of_near(low, hint)
+            let (g, item, k) = self.granule_of_low_near(low, hint)?;
+            if item == 0 && !by_place.is_empty() {
+                let n = crate::packed::get(by_place, Self::of::<u32>(&self.nodes)[g as usize].wrapping_add(k));
+                if n != crate::packed::NONE {
+                    return Some((0, n));
+                }
+            }
+            Some((item, self.number_in(g, item, k, None)))
+        }
+    }
+
+    /// The nodes' own places (`own_numbers`): the last granule's `nodes` entry.
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn own_places(&self) -> usize {
+        // SAFETY: the caller's.
+        unsafe { Self::of::<u32>(&self.nodes).last().copied().unwrap_or(0) as usize }
+    }
+
+    /// Each node's number by its own place, its granule's first place and its index there (`nodes[g] + k`), into `out`
+    /// (`own_places` long): the values of a packed map of them (`number_of_packed`).
+    ///
+    /// # Safety
+    /// As every read's.
+    pub unsafe fn own_numbers(&self, out: &mut [u32]) {
+        // SAFETY: the caller's.
+        unsafe {
+            let nodes = Self::of::<u32>(&self.nodes);
+            for g in 0..nodes.len().saturating_sub(1) {
+                for k in 0..nodes[g + 1].wrapping_sub(nodes[g]) {
+                    if let Some(o) = out.get_mut((nodes[g] + k) as usize) {
+                        *o = self.number_in(g as u32, 0, k, None);
+                    }
+                }
+            }
         }
     }
 

@@ -98,6 +98,32 @@ impl ViewEntry {
             // granule's slot, no word a node)
             Cells::build(block, n, |out: &mut [u32]| unsafe { num.slot_buckets(out) }).expect("a batch's block holds its entries")
         });
+        // The packed maps (`rerail_clif::packed`, about 1.25 bytes an entry): a numbered node's tape node and id's low
+        // bits by number, a node's number by own place, a field row's tape node.
+        let pack = |vals: &[u32]| {
+            // copy: derived (the numbering's answers, computed once from it, a byte an entry)
+            Cells::build(block, rerail_clif::packed::words(vals.len()), |out: &mut [u32]| rerail_clif::packed::build(vals, out).0)
+                .expect("a batch's block holds its entries")
+        };
+        let (mut xs, mut lows) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
+        for (l, x, low) in super::granules::ids(p.table(), p.ranks(), super::ranks::Item::Node, p.len()) {
+            (xs[l as usize], lows[l as usize]) = (x, low);
+        }
+        let node_x = (p.len() > 0).then(|| pack(&xs));
+        let node_low = (p.defs.is_some() && p.len() > 0).then(|| pack(&lows));
+        let by_place = slot_buckets.as_ref().map(|_| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let mut places = vec![0u32; unsafe { num.own_places() }];
+            unsafe { num.own_numbers(&mut places) };
+            pack(&places)
+        });
+        let field_x = (p.len() > 0).then(|| {
+            let num = p.ranks().numbering();
+            // SAFETY: the projection's numbering, read as every read of it.
+            let fx: Vec<u32> = (0..num.count[2]).map(|r| unsafe { num.select(2, r) }).collect();
+            pack(&fx)
+        });
         // copy: derived (an embedder's program's segments, as the reads find them: `SegmentMap::words`, written once
         // in the batch's block beside the entry)
         let segments = Self::locs(p).and_then(|x| match &x.host {
@@ -122,6 +148,11 @@ impl ViewEntry {
             (*d).parented = u32::from(p.parented() == p.len());
             if let Some(t) = &slot_buckets {
                 Run::set(&raw mut (*d).slot_buckets, t.as_ptr(), t.len());
+            }
+            for (run, cells) in [(&raw mut (*d).node_x, &node_x), (&raw mut (*d).node_low, &node_low), (&raw mut (*d).by_place, &by_place), (&raw mut (*d).field_x, &field_x)] {
+                if let Some(c) = cells {
+                    Run::set(run, c.as_ptr(), c.len());
+                }
             }
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());

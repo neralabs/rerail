@@ -251,10 +251,26 @@ impl<'a> Doc<'a> {
         Self::item(&self.e.kinds, self.tape.number(x))
     }
 
+    /// The entry's packed map `r` (`rerail_reads::packed`), empty where it has none.
+    #[inline(always)]
+    unsafe fn packed(r: &Run) -> &'a [u32] {
+        if r.len == 0 { &[] } else { core::slice::from_raw_parts(items::<u32>(r), r.len as usize) }
+    }
+
+    /// Item `item`'s number `r`'s tape node: its packed map's entry (`ViewDoc::node_x`, `field_x`) where it holds
+    /// it, else the numbering's select.
+    #[inline(always)]
+    unsafe fn select_packed(&self, map: &Run, item: u32, r: u32) -> u32 {
+        match rerail_reads::packed::get(Self::packed(map), r) {
+            rerail_reads::packed::NONE => self.n.select(item, r),
+            x => x,
+        }
+    }
+
     /// Numbered node `l`'s tape node.
     #[inline]
     pub unsafe fn tape_node(&self, l: u32) -> u32 {
-        self.n.select(0, l)
+        self.select_packed(&self.e.node_x, 0, l)
     }
 
     /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
@@ -265,7 +281,10 @@ impl<'a> Doc<'a> {
         } else if self.ids_tape() {
             self.tape_node(l)
         } else {
-            self.n.low_of(0, l)
+            match rerail_reads::packed::get(Self::packed(&self.e.node_low), l) {
+                rerail_reads::packed::NONE => self.n.low_of(0, l),
+                low => low,
+            }
         };
         u64::from(self.e.key) << 32 | u64::from(low)
     }
@@ -561,7 +580,7 @@ impl<'a> Doc<'a> {
         let x = match k {
             0 | 3 | 4 | 9 | 10 => self.tape_node(r),
             1 => self.tape_node(r.wrapping_add(1)),
-            2 => self.n.select(2, r),
+            2 => self.select_packed(&self.e.field_x, 2, r),
             12 => self.n.select(OP_ITEM, r),
             _ => 0,
         };
@@ -662,10 +681,9 @@ impl<'a> Doc<'a> {
             // A tape position: the node there, if it is numbered, is its rank.
             if self.n.is(0, low) { self.n.rank(0, low) } else { NO_ROW }
         } else {
-            // Its slot's entry by its bucket (`ViewDoc::slot_buckets`), else from `hint`.
-            let r = &self.e.slot_buckets;
-            let b = if r.len == 0 { &[][..] } else { core::slice::from_raw_parts(items::<u32>(r), r.len as usize) };
-            match self.n.number_of_by_buckets(low, b, hint) {
+            // Its slot's entry by its bucket (`ViewDoc::slot_buckets`), else from `hint`; its number by its own place
+            // (`by_place`), else searched in its granule.
+            match self.n.number_of_packed(low, Self::packed(&self.e.slot_buckets), Self::packed(&self.e.by_place), hint) {
                 Some((0, l)) => l,
                 _ => NO_ROW,
             }
