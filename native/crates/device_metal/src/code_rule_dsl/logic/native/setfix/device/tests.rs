@@ -3161,6 +3161,40 @@ use rerail_blocks::vector::Vector;
             got.sort_unstable();
             assert_eq!(got, want, "device {device}: every parent's children, the value's too");
         }
+        // By the parent and the place too (`child(p, n, i)` with `p` and `i` bound): the parent's children walked, the
+        // place checked on each, no index of the view built; every second row's pair asked.
+        db.execute_batch("CREATE TEMP TABLE q2 (c0, c1);").unwrap();
+        let asked: Vec<(i64, i64, i64)> = rows.iter().step_by(2).copied().collect();
+        for r in &asked {
+            db.execute("INSERT INTO q2 VALUES (?1, ?2)", [r.0, r.2]).unwrap();
+        }
+        let mut want2 = asked;
+        want2.sort_unstable();
+        want2.dedup();
+        let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
+        let rule = format!("pos {q2} v0 v2\npos {c} v0 v1 v2\nhead v0 v1 v2");
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h1; CREATE TEMP TABLE h1 (c0, c1, c2);").unwrap();
+            let mut spec = vec!["name child_place".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h1 iii empty".into());
+            spec.push(format!("seed 0 {}", hex(&rule)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "child_place", 0).unwrap();
+            let report = super::take_report();
+            super::super::close(&db, "child_place").unwrap();
+            if device {
+                let r = report.as_ref().expect("a device run");
+                assert!(r.refused.is_none(), "walked on the tape: {r:?}");
+                assert_eq!(r.sorts, 0, "no index of the view built: {r:?}");
+            }
+            let mut got: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.h1").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+            got.sort_unstable();
+            got.dedup();
+            assert_eq!(got, want2, "device {device}: each asked parent's child at its place");
+        }
     }
 
     /// A view chosen by a constant (`child … WHERE idx = 0`) is its source read in place, the constant a key of the

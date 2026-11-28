@@ -2283,7 +2283,9 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn by_parent(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
         use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_CHILD;
         let Some(v) = &rel.view else { return Ok(None) };
-        if v.kind != 1 + VIEW_CHILD || cols != [0] {
+        // By its parent first, and any other columns (`child(p, c, i)` by `p` and `i`): its children walked, the
+        // others checked on each (`matches`), as by the parent alone; no index of the view.
+        if v.kind != 1 + VIEW_CHILD || cols.first() != Some(&0) {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
