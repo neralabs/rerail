@@ -1,0 +1,77 @@
+.policy "rr-no-node-crosses-files" revision 1
+.description "A rule hands a node, line, match or token to the cross-file part: by a cross_file declaration, a place in a node column, or a read of an input that names no document."
+.language rr
+.mode steer
+.scope include "**/*.rerail"
+
+// Decision 0727: no node, line, match or token reaches the cross-file part, as a value of any relation, a finding's
+// place included. The split refuses a program that hands one on, and names each relation with its chain; this policy
+// finds three of its shapes in the rule files themselves, before a pack runs:
+//
+//   .decl used_at(n: node, q: symbol) cross_file        ← RR301: a cross-file relation holding a node
+//   listed(c, x, @place(f, l)) :- …                     ← RR302: a place in `listed`'s node column names no document,
+//                                                          so `locate` moves the relation to the cross part
+//   unpublished(at) :- …, npm_ignored(f), …             ← RR303: `npm_ignored(path)` names no document: the clause
+//                                                          is cross-file, and its node with it
+//
+// The fix is 0727's: the cross part derives a relation of names (staged before the files' rules, 0709), and the file
+// joins its own nodes to it (`unused(f) :- def(f, q), !used(q).`).
+//
+// The facts about declarations are relations of names, read from every file (a library declares what a pack reads);
+// each finding is made in its clause's own file. No relation of nodes reads one of them through a recursion.
+
+// ---- what the declarations say (names) -------------------------------------------------------------------------
+
+// node_col(rel, i): rel's column i is declared a node, line, match or token.
+.decl node_col(rel: symbol, i: number)
+node_col(rel, i) :- (kind(d, "declaration") ; kind(d, "violation_declaration")), field(d, "name", n), text(n, rel),
+    field(d, "columns", cl), child(cl, col, i), field(col, "type", ty), field(ty, "name", tn), text(tn, t),
+    (t = "node" ; t = "line" ; t = "match" ; t = "token").
+
+// holds_node(rel): some column of rel is one.
+.decl holds_node(rel: symbol)
+holds_node(rel) :- node_col(rel, _).
+
+// located_col(rel): some column of rel is a node or a number (a document key, `d`): a read of it can be placed.
+.decl located_col(rel: symbol)
+located_col(rel) :- holds_node(rel).
+located_col(rel) :- kind(d, "declaration"), field(d, "name", n), text(n, rel), field(d, "columns", cl), child(cl, col, _),
+    field(col, "type", ty), field(ty, "name", tn), text(tn, "number").
+
+// input_rel(rel): a `.input` directive names rel.
+.decl input_rel(rel: symbol)
+input_rel(rel) :- kind(io, "io_directive"), text(io, s), match("\\s*\\.input\\b.*", s), child(io, r, _), kind(r, "io_relation"),
+    text(r, rel).
+
+// nowhere_input(rel): an input none of whose columns places a row (`npm_ignored(path: symbol)`): every reader of it
+// reads it with no location. Not core.rerail's own (`option`, `unset`, `file`, …): the run binds those once, as
+// constants or functions, and a rule reading one joins no document by it.
+.decl nowhere_input(rel: symbol)
+nowhere_input(rel) :- input_rel(rel), kind(d, "declaration"), field(d, "name", n), text(n, rel), !located_col(rel),
+    !core_decl(rel).
+.decl core_decl(rel: symbol)
+core_decl(rel) :- kind(d, "declaration"), field(d, "name", n), text(n, rel), docof(d, f), doc(f, p, _),
+    match("(?:.*/)?core\\.rerail", p).
+
+// plain_node_col(rel, i): node_col from a `.decl`: a relation a rule reads on, not a finding (a finding's `@place`
+// is placed by its path, as `.violation` says).
+.decl plain_node_col(rel: symbol, i: number)
+plain_node_col(rel, i) :- node_col(rel, i), kind(d, "declaration"), field(d, "name", n), text(n, rel).
+
+// ---- the findings (each in its clause's file) ------------------------------------------------------------------
+
+.violation cross_node(at: node, rel: symbol) code "RR301"
+    "`{rel}` is declared cross_file and holds a node, line, match or token (decision 0727): derive a relation of names in the cross part, and join the file's nodes to it in a per-file rule"
+cross_node(q, rel) :- kind(d, "declaration"), field(d, "name", n), text(n, rel), child(d, q, _), kind(q, "identifier"),
+    text(q, "cross_file"), q != n, node_col(rel, _).
+
+.violation place_in_node(at: node, rel: symbol, i: number) code "RR302"
+    "`@place` in `{rel}`'s column {i}, declared a node: a place names no document, so the relation is moved to the cross-file part with its nodes (decision 0727). Keep the rule's node there, or give the place a relation of its own"
+place_in_node(a, rel, i) :- kind(c, "clause"), field(c, "head", h), field(h, "relation", r), text(r, rel),
+    field(h, "arguments", al), child(al, a, i), kind(a, "functor_call"), child(a, f, _), kind(f, "identifier"),
+    text(f, "place"), plain_node_col(rel, i).
+
+.violation reads_nowhere(at: node, rel: symbol, input: symbol) code "RR303"
+    "`{rel}` holds a node and reads `{input}`, an input that names no document: the clause is cross-file, and its node with it (decision 0727). Key the input by a document, or read it in a relation of names the file joins"
+reads_nowhere(a, rel, x) :- kind(c, "clause"), field(c, "head", h), field(h, "relation", r), text(r, rel), holds_node(rel),
+    field(c, "body", b), kind(a, "atom"), within(a, b), field(a, "relation", ar), text(ar, x), nowhere_input(x).

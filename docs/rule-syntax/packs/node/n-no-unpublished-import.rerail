@@ -1,4 +1,4 @@
-.policy "n-no-unpublished-import" revision 2
+.policy "n-no-unpublished-import" revision 3
 .description "In a file npm publishes, do not import files npm leaves out of the package or packages listed only in devDependencies; the published package cannot load them."
 .language typescript
 .mode steer

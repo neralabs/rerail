@@ -108,6 +108,7 @@ tryExtensions, the tsconfig paths and the .js->.ts map.
 ```
 .decl npm_ignored(path: symbol)   // npm leaves path out of the package: package.json `files`, else .npmignore,
 .input npm_ignored                // else .gitignore; README/LICENSE/CHANGELOG/package.json/main always in
+.keyed npm_ignored by_path        // a project setting (decision 0665): declared in core.rerail, beside package_for
 ```
 
 Today it is declared in `lib/tsx/node-package.rerail`.

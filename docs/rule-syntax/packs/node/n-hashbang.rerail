@@ -1,4 +1,4 @@
-.policy "n-hashbang" revision 2
+.policy "n-hashbang" revision 3
 .description "Start the files that package.json lists as bin executables with a node shebang line, and leave the shebang off every other file."
 .language typescript
 .mode steer

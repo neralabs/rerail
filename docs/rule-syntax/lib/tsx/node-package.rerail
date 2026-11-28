@@ -6,7 +6,7 @@
 //                            path rel from there (the plugin skips a file no package.json governs)
 //   pkg_bin_file(d)          package.json's `bin` (a string, or an object's values) names d, as the plugin's
 //                            isBinFile resolves it: the path itself, without `.js`, or a directory for its index.js
-//   npm_ignored(path)        PROPOSED core input: npm leaves the file out of its package (see below)
+//   npm_ignored(path)        core's setting (PROPOSED native input): npm leaves the file out of its package (see below)
 //   pkg_listed(d, opt)       the rule option opt (a list of gitignore patterns, as the `ignore` package reads them)
 //                            matches d's path in its package: hashbang's additionalExecutables
 //   src_shebang(d, t)        d starts with a `#!` line t (after a byte order mark, if any); t keeps a trailing \r
@@ -25,12 +25,13 @@
 // not list (README, LICENSE, CHANGELOG, package.json and `main` are always published); else the patterns of the
 // package's .npmignore, else of its .gitignore; and any path outside the package. npm's pattern language is
 // gitignore's, read from those files, so it is native, like the package.json reader; no Datalog here. Until core
-// has it, it is declared here and has no rows (every file counts as published).
+// is provided, it has no rows (every file counts as published). It is core's, a project setting by path (decision
+// 0665), as package_for is: bound beside every chunk, every file's row, so a file's rule reads it, about its own
+// path or an import's, and stays per file. Declared here, an input of no location, its readers were cross-file and
+// their nodes with them (decision 0727).
 //
 // Builds on core only: doc, package_for, package_field, kind, text, col, first_token, @join, @place.
 
-.decl npm_ignored(path: symbol)
-.input npm_ignored
 
 .decl pkg_file(d: number, dir: symbol, rel: symbol)
 pkg_file(d, "", f) :- doc(d, f, _), package_for(f, "").
@@ -59,7 +60,10 @@ src_env_shebang(d) :- src_shebang(d, t), prefix("#!/usr/bin/env", t).
 // Its first token starts its first child that is code (not a comment or the `#!` line).
 program_start(d, c) :- kind(p, "program"), docof(p, d), child(p, c, i), program_code(c),
     i = min j : { child(p, x, j), program_code(x) }.
-program_start(d, @place(f, 1)) :- doc(d, f, _), kind(p, "program"), docof(p, d), count : { child(p, x, _), program_code(x) } = 0.
+// program_empty(d): document d's program holds no code; a finding there is at its first line, a place the finding
+// makes itself (`@place` in program_start named no document, and moved it to the cross part, decision 0727).
+.decl program_empty(d: number)
+program_empty(d) :- doc(d, _, _), kind(p, "program"), docof(p, d), count : { child(p, x, _), program_code(x) } = 0.
 .decl program_code(c: node)
 program_code(c) :- child(p, c, _), kind(p, "program"), !kind(c, "comment"), !kind(c, "hash_bang_line").
 

@@ -1,4 +1,4 @@
-.policy "n-no-top-level-await" revision 2
+.policy "n-no-top-level-await" revision 3
 .description "Avoid top-level await in modules npm publishes; require() cannot load an ES module that uses it, so move the await into an async function the module exports or calls."
 .language typescript
 .mode steer

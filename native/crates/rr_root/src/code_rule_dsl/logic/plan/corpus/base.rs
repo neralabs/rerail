@@ -411,9 +411,11 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
     Ok(Some(changed))
 }
 
-/// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty. None now:
+/// The `core.rerail` relations a rule may read that the engine does not make yet (O76): each is empty.
 /// `string_annotation` is made (`facts::vtab::syntax::annotation`, Ruff's table) and `parsed` is a guest (0055).
-pub const NOT_MADE: [(&str, &str); 0] = [];
+/// `npm_ignored`, npm's publish view, is a project setting by path (decision 0665) the node pack reads; its reader of
+/// package.json's `files`, .npmignore and .gitignore is the pack's proposal C2 (docs/rule-syntax/packs/node/NOTES-node.md).
+pub const NOT_MADE: [(&str, &str); 1] = [("npm_ignored", "npm's publish view (the node pack's C2): every file counts as published")];
 
 /// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
 /// and their library files and names, resolved when the whole-run cutoff first asks (`reuse::rule_files`). Held by

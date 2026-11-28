@@ -1,4 +1,4 @@
-.policy "rr-node-span-columns" revision 1
+.policy "rr-node-span-columns" revision 2
 .description "A relation's column holds a node in one rule and a line, a token, an end point or a match in another."
 .language rr
 .mode steer
@@ -73,15 +73,26 @@ made("match_all", 2, "match").
 made("match_group", 2, "match").
 made("match_group", 4, "match").
 
-// holds(rel, i, k): rel's column i holds a k: a node, or a line, token, end point or match.
-.decl holds(rel: symbol, i: number, k: symbol)
-holds(rel, i, "node") :- declared(rel, i, "node").
-holds(rel, i, k) :- made(rel, i, k).
-holds(rel, i, k) :- head_arg(c, rel, i, x, _), var_holds(c, x, k).
+// holds_decl(rel, i, k): rel's column i holds a k, as its declaration or core's producer says: a relation of names,
+// read from every file (a library declares what a pack reads), staged before the files' rules (decision 0709).
+.decl holds_decl(rel: symbol, i: number, k: symbol)
+holds_decl(rel, i, "node") :- declared(rel, i, "node").
+holds_decl(rel, i, k) :- made(rel, i, k).
+
+// holds_here(d, rel, i, k): document d's own rules put a k in rel's column i. What the rules put there is followed
+// in the file alone: a relation of names read with the clauses' nodes through a recursion was the cross part's, its
+// nodes with it (decision 0727), so a column's kind that only another file's rules give is not seen.
+.decl holds_here(d: number, rel: symbol, i: number, k: symbol)
+holds_here(d, rel, i, k) :- head_arg(c, rel, i, x, _), var_holds(c, x, k), docof(c, d).
+
+// holds(c, rel, i, k): for clause c, rel's column i holds a k.
+.decl holds(c: node, rel: symbol, i: number, k: symbol)
+holds(c, rel, i, k) :- kind(c, "clause"), holds_decl(rel, i, k).
+holds(c, rel, i, k) :- kind(c, "clause"), docof(c, d), holds_here(d, rel, i, k).
 
 // var_holds(c, x, k): clause c's variable x is a k.
 .decl var_holds(c: node, x: symbol, k: symbol)
-var_holds(c, x, k) :- body_arg(c, rel, i, x), holds(rel, i, k), !loc_reader(rel, i).
+var_holds(c, x, k) :- body_arg(c, rel, i, x), holds(c, rel, i, k), !loc_reader(rel, i).
 var_holds(c, x, "match") :- captured(c, x, s), var_holds(c, s, k), (k = "node" ; span_kind(k)).
 var_holds(c, x, k) :- same(c, x, y), var_holds(c, y, k).
 
@@ -100,4 +111,4 @@ span_kind("match").
 
 .violation mixed_column(at: node, rel: symbol, i: number, k: symbol) code "RR201"
     "This column holds nodes in other rules and a line, token, end point or match here: give the column one type, and convert with a function where a rule needs the other"
-mixed_column(v, rel, i, k) :- head_arg(c, rel, i, x, v), var_holds(c, x, k), span_kind(k), holds(rel, i, "node").
+mixed_column(v, rel, i, k) :- head_arg(c, rel, i, x, v), var_holds(c, x, k), span_kind(k), holds(c, rel, i, "node").

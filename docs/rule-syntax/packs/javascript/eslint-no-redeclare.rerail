@@ -1,4 +1,4 @@
-.policy "eslint-no-redeclare" revision 5
+.policy "eslint-no-redeclare" revision 6
 .description "Don't declare a variable twice in the same JavaScript scope or redeclare a built-in global, including in global comments; the duplicate hides a mistake."
 .language typescript
 .mode steer
@@ -28,12 +28,18 @@ no_redeclare(id, cat("'", x, "' is already defined as a built-in global variable
     (var_site(s, x, id) ; lexical_site(s, x, id)), builtin_in(s, x).
 // A comment's item is reported on its own line (a place: the item is not a node). The built-in comes first
 // in every document, script or module: `/* global Array */` alone is reported.
-no_redeclare(at, cat("Remove '", x, "' from this global comment; it is already a built-in global.")) :-
-    listed(c, x, at), docof(c, d), builtin_doc(d, x).
-no_redeclare(at, cat("Remove '", x, "' from this global comment; a variable declaration already defines it.")) :-
-    listed(c, x, at), docof(c, d), !builtin_doc(d, x), program(d, p), script_declared(p, x).
-no_redeclare(at, cat("Remove this duplicate '", x, "' from the global comments; it is already listed.")) :-
-    listed(c, x, at), docof(c, d), program(d, p), !builtin_doc(d, x), !script_declared(p, x), listed(o, x, _),
+// The comment when the item is on its first line, else a place on the item's line: the place is the finding's own
+// (`@place` in a relation read on names no document, and the split moved it to the cross part, decision 0727).
+no_redeclare(c, msg) :- comment_finding(c, l, msg), node_line_number(c, l).
+no_redeclare(@place(f, l), msg) :- comment_finding(c, l, msg), !node_line_number(c, l), docof(c, d), doc(d, f, _).
+// comment_finding(c, l, msg): comment c's item on line l is reported with msg.
+.decl comment_finding(c: node, l: number, msg: symbol)
+comment_finding(c, l, cat("Remove '", x, "' from this global comment; it is already a built-in global.")) :-
+    listed(c, x, l), docof(c, d), builtin_doc(d, x).
+comment_finding(c, l, cat("Remove '", x, "' from this global comment; a variable declaration already defines it.")) :-
+    listed(c, x, l), docof(c, d), !builtin_doc(d, x), program(d, p), script_declared(p, x).
+comment_finding(c, l, cat("Remove this duplicate '", x, "' from the global comments; it is already listed.")) :-
+    listed(c, x, l), docof(c, d), program(d, p), !builtin_doc(d, x), !script_declared(p, x), listed(o, x, _),
     docof(o, d), earlier(o, c).
 
 // builtin_doc(d, x): with builtinGlobals, x is a built-in global of document d. A `/* global x */` comment
@@ -53,8 +59,6 @@ lexical_site(p, x, n) :- global_scope(p), kind(c, "class_declaration"), nearest(
     field(c, "name", n), text(n, x).
 .decl script_declared(p: node, x: symbol)
 script_declared(p, x) :- global_scope(p), (var_site(p, x, _) ; lexical_site(p, x, _)).
-// listed(c, x, at): comment c's item x declares the global x (an `off` item removes it instead); at is the
-// comment, or a place on the item's line when that is a later line of the comment.
-.decl listed(c: node, x: symbol, at: node)
-listed(c, x, c) :- global_item(c, x, v, l), v != "off", node_line_number(c, l).
-listed(c, x, @place(f, l)) :- global_item(c, x, v, l), v != "off", !node_line_number(c, l), docof(c, d), doc(d, f, _).
+// listed(c, x, l): comment c's item x, on line l, declares the global x (an `off` item removes it instead).
+.decl listed(c: node, x: symbol, l: number)
+listed(c, x, l) :- global_item(c, x, v, l), v != "off".

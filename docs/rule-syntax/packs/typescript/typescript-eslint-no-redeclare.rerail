@@ -1,4 +1,4 @@
-.policy "typescript-eslint-no-redeclare" revision 3
+.policy "typescript-eslint-no-redeclare" revision 4
 .description "Don't declare the same TypeScript variable twice in one scope or redeclare a built-in global; the second declaration silently shadows the first."
 .language typescript
 .mode steer
@@ -31,9 +31,14 @@ no_redeclare(id, cat("'", cat(x, "' is already defined as a built-in global vari
     global_home(s), builtin(s, x).
 no_redeclare(id, cat("'", cat(x, "' is already defined by a variable declaration."))) :- counted(s, x, id),
     global_home(s), !builtin(s, x), comment_decl(s, x, _, _).
-no_redeclare(at, cat("'", cat(x, "' is already defined as a built-in global variable."))) :- comment_decl(p, x, _, at),
+// A comment's finding is at the comment on its first line, else a place at the item's line: the place is the
+// finding's own (`@place` in a relation read on names no document, and the split moved it to the cross part, 0727).
+no_redeclare(c, msg) :- comment_finding(c, l, msg), node_line_number(c, l).
+no_redeclare(@place(f, l), msg) :- comment_finding(c, l, msg), !node_line_number(c, l), docof(c, d), doc(d, f, _).
+.decl comment_finding(c: node, l: number, msg: symbol)
+comment_finding(c, l, cat("'", cat(x, "' is already defined as a built-in global variable."))) :- comment_decl(p, x, c, l),
     builtin(p, x).
-no_redeclare(at, cat("'", cat(x, "' is already defined."))) :- comment_decl(p, x, c, at), !builtin(p, x),
+comment_finding(c, l, cat("'", cat(x, "' is already defined."))) :- comment_decl(p, x, c, l), !builtin(p, x),
     comment_decl(p, x, o, _), earlier(o, c).
 
 // ---- declarations by identifier ----
@@ -87,9 +92,6 @@ global_first(s, x) :- counted(s, x, _), global_home(s), (builtin(s, x) ; comment
 .decl builtin(p: node, x: symbol)  // x is a built-in global of program p's document
 builtin(p, x) :- (counted(p, x, _) ; comment_decl(p, x, _, _)), program(_, p), !option("builtinGlobals", "false"),
     es_builtin(x).
-// comment_decl(p, x, c, at): `/* global x */` comment c declares x (an `off` item declares nothing); at is c on its
-// first line, else a place at the item's line.
-.decl comment_decl(p: node, x: symbol, c: node, at: node)
-comment_decl(p, x, c, c) :- global_item(c, x, v, l), v != "off", node_line_number(c, l), docof(c, d), program(d, p).
-comment_decl(p, x, c, @place(f, l)) :- global_item(c, x, v, l), v != "off", !node_line_number(c, l), docof(c, d), program(d, p),
-    doc(d, f, _).
+// comment_decl(p, x, c, l): `/* global x */` comment c declares x on line l (an `off` item declares nothing).
+.decl comment_decl(p: node, x: symbol, c: node, l: number)
+comment_decl(p, x, c, l) :- global_item(c, x, v, l), v != "off", docof(c, d), program(d, p).
