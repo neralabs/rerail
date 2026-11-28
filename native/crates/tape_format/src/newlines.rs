@@ -455,3 +455,176 @@ pub(crate) mod tests {
         }
     }
 }
+
+/// The ends (each terminator's last byte) in `source[a..b]`, to `f`: the terminators found in the bytes from 4 before
+/// `a` to 4 past `b` (a terminator is at most 3 bytes, and whether a `\r` ends one reads the byte after it), those
+/// ending inside kept. A read of the chunk and its neighbours.
+fn ends_in(source: &[u8], terminators: Terminators, a: usize, b: usize, mut f: impl FnMut(u64)) {
+    let (lo, hi) = (a.saturating_sub(4), (b + 4).min(source.len()));
+    terminators.each(&source[lo..hi], |at, length| {
+        let end = lo + at + length - 1;
+        if (a..b).contains(&end) {
+            f(end as u64);
+        }
+    });
+}
+
+/// `index_into` by phases (decision 0726's tier 2 as phases), the source in chunks of `size` bytes, each phase's
+/// chunks on their own in `order`'s order: N1 each chunk's terminators counted, their prefix sum each one's rank;
+/// N2 each newline's high bit and low part written at its rank; N3 the high bits' words in chunks, each word's zeros
+/// and ones counted, their prefix sum placing the samples each word holds. The index is `index_into`'s byte for byte.
+pub fn index_by_phases(out: &mut crate::Vector<u8>, source: &[u8], terminators: Terminators, size: usize, order: crate::phases::Order<'_>) {
+    use crate::phases::{each, prefix};
+    let size = size.max(1);
+    let u = source.len() as u64;
+    let chunks = source.len().div_ceil(size).max(1);
+    let bounds = |c: usize| (c * size, ((c + 1) * size).min(source.len()));
+    // N1: each chunk's newlines, their ranks.
+    let counts: Vec<u64> = each(chunks, order, |c| {
+        let (a, b) = bounds(c);
+        let mut k = 0u64;
+        ends_in(source, terminators, a, b, |_| k += 1);
+        k
+    });
+    let (ranks, m) = prefix(&counts, 0, order, |a, b| a + b);
+    let (l, words, zs, os) = shape(u, m);
+    let len = index_len(u, m);
+    out.clear();
+    out.resize(len + 8, 0);
+    let buckets = (u >> l) + 1;
+    let bits = m + buckets;
+    let (high_at, low_at) = (HEAD + 8 * (zs + os), HEAD + 8 * (zs + os + words));
+    let mask = if l > 0 { (1u64 << l) - 1 } else { 0 };
+    // N2: each newline's high bit at `(o >> L) + i`, its low part at bit `i * L` (each bit its own: ORed in).
+    let o: &mut [u8] = out;
+    let at = o.as_mut_ptr() as usize;
+    each(chunks, order, |c| {
+        let (a, b) = bounds(c);
+        let mut i = ranks[c];
+        ends_in(source, terminators, a, b, |off| {
+            let or = |byte: usize, v: u8| {
+                // SAFETY: inside the index's room (`index_len + 8` bytes); each bit is one newline's.
+                unsafe { *((at + byte) as *mut u8) |= v };
+            };
+            let h = (off >> l) + i;
+            or(high_at + (h / 8) as usize, 1 << (h % 8));
+            if l > 0 {
+                let part = off & mask;
+                let bit = i * u64::from(l);
+                for k in 0..u64::from(l) {
+                    if part >> k & 1 != 0 {
+                        let p = bit + k;
+                        or(low_at + (p / 8) as usize, 1 << (p % 8));
+                    }
+                }
+            }
+            i += 1;
+        });
+    });
+    // N3: the high words' zeros and ones, their prefix sum; each word's samples.
+    let word_at = |w: usize| u64::from_le_bytes(o[high_at + 8 * w..high_at + 8 * w + 8].try_into().expect("8 bytes"));
+    let wc = words.div_ceil(size).max(1);
+    let wb = |c: usize| (c * size, ((c + 1) * size).min(words));
+    let zo = |w: usize| {
+        let valid = if (w + 1) * 64 <= bits as usize { 64 } else { bits - 64 * w as u64 };
+        let set = u64::from(word_at(w).count_ones());
+        (valid - set, set)
+    };
+    let sums: Vec<(u64, u64)> = each(wc, order, |c| (wb(c).0..wb(c).1).map(zo).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)));
+    let (before, _) = prefix(&sums, (0, 0), order, |a, b| (a.0 + b.0, a.1 + b.1));
+    let sample = SAMPLE as u64;
+    let mut put = Vec::new();
+    for c in order(wc) {
+        let (mut zeros, mut ones) = before[c];
+        for w in wb(c).0..wb(c).1 {
+            let (z_here, o_here) = zo(w);
+            // The samples whose zero (one) lies in this word: the k with k · SAMPLE in its range.
+            let mut kz = zeros.div_ceil(sample);
+            while kz * sample < zeros + z_here && kz * sample < buckets {
+                put.push((HEAD + 8 * kz as usize, w as u32, zeros as u32));
+                kz += 1;
+            }
+            let mut ko = ones.div_ceil(sample);
+            while ko * sample < ones + o_here && ko * sample < m {
+                put.push((HEAD + 8 * (zs + ko as usize), w as u32, ones as u32));
+                ko += 1;
+            }
+            zeros += z_here;
+            ones += o_here;
+        }
+    }
+    for (p, w, n) in put {
+        o[p..p + 4].copy_from_slice(&w.to_le_bytes());
+        o[p + 4..p + 8].copy_from_slice(&n.to_le_bytes());
+    }
+    for (k, v) in [m as u32, l, zs as u32, os as u32, words as u32].into_iter().enumerate() {
+        o[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    out.truncate(len);
+}
+
+#[cfg(test)]
+mod by_phases {
+    use super::*;
+
+    /// A random order of `n` chunks, from `seed`.
+    fn shuffled(seed: u64) -> impl Fn(usize) -> Vec<usize> {
+        move |n| {
+            let mut v: Vec<usize> = (0..n).collect();
+            let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+            for i in (1..n).rev() {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                v.swap(i, (x % (i as u64 + 1)) as usize);
+            }
+            v
+        }
+    }
+
+    /// The index by phases is `index_into`'s, byte for byte: every terminator set, sources of every terminator and
+    /// none, chunks of 1 to 64 bytes, in order and at random.
+    #[test]
+    fn the_index_by_phases_is_the_serial_index() {
+        let mut x = 0x1234_5678_9abc_def1u64;
+        let mut next = |m: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x % m
+        };
+        let pieces: [&[u8]; 9] = [b"a", b"bc", b"\n", b"\r", b"\r\n", b"\n\r", "\u{2028}".as_bytes(), "\u{85}".as_bytes(), b"\x0c"];
+        let mut sources: Vec<Vec<u8>> = vec![Vec::new(), b"x".to_vec(), b"\n".to_vec(), b"\r\n\r\n".to_vec()];
+        for len in [3usize, 17, 64, 65, 300, 2000, 9000] {
+            for _ in 0..4 {
+                let mut s = Vec::new();
+                while s.len() < len {
+                    let p = pieces[next(pieces.len() as u64) as usize];
+                    let reps = if next(4) == 0 { 1 } else { 1 + next(20) as usize };
+                    for _ in 0..if p.len() == 1 && p[0].is_ascii_alphabetic() { reps } else { 1 } {
+                        s.extend_from_slice(p);
+                    }
+                }
+                sources.push(s);
+            }
+        }
+        let mut checked = 0;
+        for (k, src) in sources.iter().enumerate() {
+            for t in (0..Terminators::COUNT).filter_map(Terminators::of_index) {
+                let mut want = crate::Vector::new();
+                index_into(&mut want, src, t);
+                for size in [1usize, 2, 3, 7, 64, 1000] {
+                    for seed in [0u64, 1, 2] {
+                        let random = shuffled(k as u64 * 7 + size as u64 + seed);
+                        let order: crate::phases::Order<'_> = if seed == 0 { &crate::phases::in_order } else { &random };
+                        let mut got = crate::Vector::new();
+                        index_by_phases(&mut got, src, t, size, order);
+                        assert!(got[..] == want[..], "source {k} ({} bytes), {t:?}, chunks of {size}, order {seed}: differs at byte {:?}", src.len(), got.iter().zip(want.iter()).position(|(a, b)| a != b));
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("{checked} indexes by phases, each the serial index");
+    }
+}

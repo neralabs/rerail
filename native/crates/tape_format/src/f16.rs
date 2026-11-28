@@ -3579,6 +3579,50 @@ mod tests {
         }
     }
 
+    /// `finish_by_phases` (decision 0726's tier 2 as phases) is `finish` byte for byte, its presence and faults
+    /// too: a tree with side lists and ERROR nodes, its blocks made final at the end (one commit) or as they are
+    /// written (a commit a node), each phase's blocks in order and at random.
+    #[test]
+    fn the_finish_by_phases_is_the_finish() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: if k % 37 == 5 { crate::ERROR_CODE } else { k % 300 }, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let random = |seed: u64| {
+            move |n: usize| {
+                let mut v: Vec<usize> = (0..n).collect();
+                let mut x = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+                for i in (1..n).rev() {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    v.swap(i, (x % (i as u64 + 1)) as usize);
+                }
+                v
+            }
+        };
+        let mut checked = 0;
+        for every in [1usize, 1_000_000] {
+            let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+            by_ops(&mut w, &nodes, every);
+            let want = w.finish().unwrap();
+            let Written::F16(want_t) = &want.tape else { panic!("16") };
+            assert!(want_t.faults().is_some_and(|f| !f.is_empty()), "the tree has faults");
+            for seed in [0u64, 1, 2] {
+                let r = random(seed);
+                let order: crate::phases::Order<'_> = if seed == 0 { &crate::phases::in_order } else { &r };
+                let mut w = Writer::new(&lang, &source, crate::newlines::Terminators::Lf, 0, false, true, nodes.len());
+                by_ops(&mut w, &nodes, every);
+                let got = w.finish_by_phases(order).unwrap();
+                let Written::F16(t) = &got.tape else { panic!("16") };
+                assert!(t.as_bytes() == want_t.as_bytes(), "a commit every {every}, order {seed}: differs at byte {:?}", t.as_bytes().iter().zip(want_t.as_bytes()).position(|(a, b)| a != b));
+                checked += 1;
+            }
+        }
+        eprintln!("{checked} tapes finished by phases, each the finish's");
+    }
+
     /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0434, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).

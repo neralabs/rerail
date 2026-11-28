@@ -29,11 +29,9 @@ pub const STEP_ENDS: u8 = 254;
 const NO: u32 = u32::MAX;
 
 /// The exclusive prefix sum of `outs` by `merge` (`unit` its identity): each chunk's value the merge of all before it.
-/// The library's one scan (Hillis and Steele, `scan`), the same for every phase.
+/// The library's one scan (`rerail_tape_format::phases::prefix`), the same for every phase.
 pub fn prefix<T: Clone>(outs: &[T], unit: T, order: Order<'_>, merge: impl Fn(&T, &T) -> T) -> Vec<T> {
-    let n = outs.len();
-    let inc = scan(outs.to_vec(), order, &merge);
-    each(n, order, |c| if c == 0 { unit.clone() } else { inc[c - 1].clone() })
+    rerail_tape_format::phases::prefix(outs, unit, order, merge).0
 }
 
 /// The chunks of `n` elements, `size` each: their bounds.

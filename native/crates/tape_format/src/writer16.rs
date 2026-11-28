@@ -784,49 +784,27 @@ impl State {
             let keep = self.flags & 1 != 0;
             let bytes = u64::from(self.kw + self.fw) * 8;
             let mine = pres + ((u64::from(b) + 1) * bytes) as usize;
-            let set_bit = |base: usize, word0: u64, bit: u32| {
-                let at = base + ((u64::from(bit >> 6) + word0) * 8) as usize;
-                st64(at, ld64(at) | 1u64 << (bit & 63));
-            };
-            let mut low = 0u32;
-            for j in 0..rows {
-                let byte = ld8(block.room + j as usize);
-                let mut number = byte;
-                if byte >= cut {
-                    // The next entry of the codes' side list, where it is this node's.
-                    let mut r = 0u32;
-                    if low < codes.count {
-                        if codes.j(low) == j {
-                            r = codes.v(low) as u32;
-                        }
-                        low += 1;
-                    }
-                    number = cut + (byte - cut) * per + r;
-                }
-                let kf = if u64::from(number) < numbers { ld32(kinds + 4 * number as usize) } else { 0 };
-                let (kind, field) = (kf & KIND_MASK, kf >> 16);
-                // A MISSING code sets the fault bit too (`presence::kind_word`).
-                let fault = kf & FAULT != 0;
-                set_bit(pres, 0, kind);
-                set_bit(pres, kw, field);
-                if fault {
-                    set_bit(pres, 0, u32::from(ERROR_CODE));
-                }
+            let room = block.room;
+            let rows_of = |f: &mut dyn FnMut(u32, u32, u32, bool)| decode_rows(Decode { room, codes, cut, per, kinds, numbers }, rows, f);
+            // Its faults counted, their room checked, then each row's presence bits and its fault listed.
+            let mut faults = 0u32;
+            rows_of(&mut |_, kind, _, fault| faults += u32::from(kind == u32::from(ERROR_CODE) || fault));
+            let len = self.len(part::ERRORS);
+            self.room(part::ERRORS, len + 4 * u64::from(faults))?;
+            let errors = self.part(part::ERRORS) + len as usize;
+            let mut k = 0usize;
+            rows_of(&mut |j, kind, field, fault| {
+                present(pres, kw, kind, field, fault);
                 if keep {
-                    set_bit(mine, 0, kind);
-                    set_bit(mine, kw, field);
-                    if fault {
-                        set_bit(mine, 0, u32::from(ERROR_CODE));
-                    }
+                    present(mine, kw, kind, field, fault);
                 }
                 // An ERROR node or a MISSING one listed in the ERRORS part, beside the fault bit it set.
                 if kind == u32::from(ERROR_CODE) || fault {
-                    let len = self.len(part::ERRORS);
-                    self.room(part::ERRORS, len + 4)?;
-                    st32(self.part(part::ERRORS) + len as usize, b * Z + j);
-                    self.set_len(part::ERRORS, len + 4);
+                    st32(errors + 4 * k, b * Z + j);
+                    k += 1;
                 }
-            }
+            });
+            self.set_len(part::ERRORS, len + 4 * u64::from(faults));
             for q in 0..4 {
                 self.lay(b, q, rows)?;
             }
@@ -848,33 +826,10 @@ impl State {
     unsafe fn lay(&mut self, b: u32, q: usize, rows: u32) -> R {
         // SAFETY: block `b` is made, its side area not yet given back.
         unsafe {
-            let list = List::of(self.block(b).area, q);
-            let count = list.count;
-            let laid = self.part(part::LAID);
             let start = self.len(part::LAID);
-            let vw = u64::from(self.vw[q]);
-            let nsub = rows.div_ceil(BLOCK);
-            let ends = 2 * u64::from(nsub);
-            let len = if count != 0 { ends + u64::from(count) + u64::from(count) * vw } else { 0 };
+            let len = self.laid_len(b, q, rows);
             self.room(part::LAID, start + len)?;
-            if count != 0 {
-                let at = laid + start as usize;
-                let mut k = 0u32;
-                for s in 0..nsub {
-                    while k < count && list.j(k) / BLOCK == s {
-                        k += 1;
-                    }
-                    st16(at + 2 * s as usize, k);
-                }
-                let offs = at + ends as usize;
-                for m in 0..count {
-                    st8(offs + m as usize, list.j(m));
-                }
-                let values = offs + count as usize;
-                for m in 0..count {
-                    cell_put(values + (u64::from(m) * vw) as usize, vw, list.v(m));
-                }
-            }
+            self.lay_into(b, q, rows, self.part(part::LAID) + start as usize);
             self.set_len(part::LAID, start + len);
             let need = (u64::from(b) + 1) * LAID_AT;
             self.room(part::LAID_AT, need)?;
@@ -884,6 +839,235 @@ impl State {
             st32(e + 4, len as u32);
         }
         Ok(())
+    }
+
+    // ---- the document's end by phases (decision 0726's tier 2 as phases): a block operator a block, its counts'
+    // prefix sums placing what each writes; the host runs the phases (`f16::Writer::finish_by_phases`) ----
+
+    /// The finish's start (as `finish_blocks`'s): no node open, the last node's slot. Then F1, F2 and the tail.
+    pub(crate) unsafe fn phases_begin(&mut self) -> R {
+        if self.bad != 0 {
+            return Err(self.bad);
+        }
+        if self.open_len != 0 {
+            return self.fail(fail::UNCLOSED, self.n);
+        }
+        if self.n != 0 {
+            // SAFETY: the last node's block is made.
+            unsafe { self.put(0, self.n - 1, 1)? };
+        }
+        Ok(())
+    }
+
+    /// The tape's nodes and blocks.
+    pub(crate) fn phases_shape(&self) -> (u32, u32) {
+        (self.n, self.n.div_ceil(Z))
+    }
+
+    /// Whether block `b` is already final (made so as it was written), and its side lists' laid bytes then.
+    pub(crate) unsafe fn final_lens(&self, b: u32) -> Option<[u32; 4]> {
+        // SAFETY: block `b` is made; a final one's laid entries are written.
+        unsafe {
+            (ld32(self.entry(b) + 8) != 0).then(|| std::array::from_fn(|q| ld32(self.part(part::LAID_AT) + (u64::from(b) * LAID_AT) as usize + 8 * q + 4)))
+        }
+    }
+
+    /// F1, block `b` of `rows` rows: its kinds and fields seen ORed into `words` (the presence's `kw + fw`), its faults
+    /// and its side lists' laid bytes.
+    pub(crate) unsafe fn block_counts(&self, b: u32, rows: u32, words: &mut [u64]) -> (u32, [u32; 4]) {
+        // SAFETY: block `b` is made, not yet final.
+        unsafe {
+            let block = self.block(b);
+            let (kinds, numbers) = (self.part(part::KINDS), self.len(part::KINDS) >> 2);
+            let mut faults = 0u32;
+            let at = words.as_mut_ptr() as usize;
+            decode_rows(Decode { room: block.room, codes: List::of(block.area, 0), cut: self.cut, per: self.per, kinds, numbers }, rows, &mut |_, kind, field, fault| {
+                present(at, u64::from(self.kw), kind, field, fault);
+                faults += u32::from(kind == u32::from(ERROR_CODE) || fault);
+            });
+            (faults, std::array::from_fn(|q| self.laid_len(b, q, rows) as u32))
+        }
+    }
+
+    /// F2, block `b` of `rows` rows made final at its places (`at`): its faults from the ERRORS part's byte `errors`,
+    /// its side lists from the LAID part's byte `laid` (`lens`: each one's, F1's), its side area given back at the FREE
+    /// part's byte `free`, its own presence (`words`, F1's) where each block's is kept. The parts' lengths are the
+    /// host's.
+    pub(crate) unsafe fn block_final_at(&self, b: u32, rows: u32, at: FinalAt, lens: [u32; 4], words: &[u64]) {
+        let FinalAt { errors, laid, free } = at;
+        // SAFETY: block `b` is made, not yet final; the places are F1's sums, each block's its own.
+        unsafe {
+            let e = self.entry(b);
+            st32(e + 8, 1);
+            let block = self.block(b);
+            let (kinds, numbers) = (self.part(part::KINDS), self.len(part::KINDS) >> 2);
+            if self.flags & 1 != 0 {
+                let bytes = u64::from(self.kw + self.fw) * 8;
+                let mine = self.part(part::PRESENCE) + ((u64::from(b) + 1) * bytes) as usize;
+                for (k, w) in words.iter().enumerate() {
+                    st64(mine + 8 * k, *w);
+                }
+            }
+            let at = self.part(part::ERRORS) + errors as usize;
+            let mut k = 0usize;
+            decode_rows(Decode { room: block.room, codes: List::of(block.area, 0), cut: self.cut, per: self.per, kinds, numbers }, rows, &mut |j, kind, _, fault| {
+                if kind == u32::from(ERROR_CODE) || fault {
+                    st32(at + 4 * k, b * Z + j);
+                    k += 1;
+                }
+            });
+            let mut start = laid;
+            for (q, &len) in lens.iter().enumerate() {
+                self.lay_into(b, q, rows, self.part(part::LAID) + start as usize);
+                let le = self.part(part::LAID_AT) + (u64::from(b) * LAID_AT) as usize + 8 * q;
+                st32(le, start as u32);
+                st32(le + 4, len);
+                start += u64::from(len);
+            }
+            st32(self.part(part::FREE) + free as usize, ld32(e + 4));
+            st32(e + 4, NONE);
+        }
+    }
+
+    /// The parts F2 writes, grown to the totals (F1's; `count` the blocks it makes final): checked against their room,
+    /// then their lengths set.
+    pub(crate) fn phases_parts(&mut self, faults: u64, laid: u64, count: u32) -> Result<(u64, u64, u64), u32> {
+        let (e0, l0, f0) = (self.len(part::ERRORS), self.len(part::LAID), self.len(part::FREE));
+        self.room(part::ERRORS, e0 + 4 * faults)?;
+        self.room(part::LAID, l0 + laid)?;
+        self.room(part::LAID_AT, u64::from(self.n.div_ceil(Z)) * LAID_AT)?;
+        self.room(part::FREE, f0 + 4 * u64::from(count))?;
+        self.set_len(part::ERRORS, e0 + 4 * faults);
+        self.set_len(part::LAID, l0 + laid);
+        self.grow(part::LAID_AT, u64::from(self.n.div_ceil(Z)) * LAID_AT);
+        self.set_len(part::FREE, f0 + 4 * u64::from(count));
+        Ok((e0, l0, f0))
+    }
+
+    /// The document's presence: `words` (every block's, ORed: F1's total) into its first words.
+    pub(crate) unsafe fn phases_presence(&self, words: &[u64]) {
+        let pres = self.part(part::PRESENCE);
+        for (k, w) in words.iter().enumerate() {
+            // SAFETY: the presence's first `kw + fw` words.
+            unsafe { st64(pres + 8 * k, ld64(pres + 8 * k) | *w) };
+        }
+    }
+
+    /// The tail's start (as `finish_tail`'s): the last block's columns moved down to its rows, the tail's room checked;
+    /// the blocks' end. Format 16's (the middle writes no 16z).
+    pub(crate) unsafe fn tail_begin(&mut self) -> Result<u64, u32> {
+        if self.bad != 0 {
+            return Err(self.bad);
+        }
+        let (n, count) = self.phases_shape();
+        let out = self.part(part::OUT);
+        let w = self.w.map(u64::from);
+        let cw = u64::from(self.cw);
+        let befores = [1, 1 + w[0], 1 + w[0] + w[1], 1 + w[0] + w[1] + w[2]];
+        let mut blocks_end = HEAD16;
+        if count != 0 {
+            let lb = count - 1;
+            let rows = u64::from(n - lb * Z);
+            // SAFETY: the last block's room.
+            unsafe {
+                let room = self.block(lb).room;
+                for r in 1..5 {
+                    let len = if r == 4 { rows.div_ceil(u64::from(K)) * cw } else { rows * w[r - 1] };
+                    let to = room + (rows * befores[r - 1]) as usize;
+                    copy(to, room + self.at[r] as usize, len);
+                    if r == 4 {
+                        blocks_end = (to + len as usize - out) as u64;
+                    }
+                }
+            }
+        }
+        let need = blocks_end + self.len(part::LAID) + (u64::from(count) + 1) * 16 + self.len(part::LINES) + 8 * 6 + 8;
+        self.room(part::OUT, need)?;
+        Ok(blocks_end)
+    }
+
+    /// Z2, block `b`: its side list `q` (`len` bytes, at the LAID part's byte its LAID_AT entry gives) copied to the
+    /// tape's byte `pos`, and its start (`before`: the list's bytes of the blocks before it) at the tape's byte `at`.
+    pub(crate) unsafe fn tail_block(&self, b: u32, q: usize, pos: u64, at: u64, before: u32) {
+        // SAFETY: the tail's room (`tail_begin`); block `b`'s laid entry.
+        unsafe {
+            let out = self.part(part::OUT);
+            let e = self.part(part::LAID_AT) + b as usize * LAID_AT as usize + 8 * q;
+            copy(out + pos as usize, self.part(part::LAID) + ld32(e) as usize, u64::from(ld32(e + 4)));
+            st32(out + at as usize, before);
+        }
+    }
+
+    /// The tail's zero words, before Z2 writes the lists and starts over their bytes past them: the word before the
+    /// lists (at `first - 8`), the one after each list (`ends`), and the padding word (`pad`), whose last bytes the
+    /// first starts overwrite.
+    pub(crate) unsafe fn tail_zeros(&self, first: u64, ends: [u64; 4], pad: u64) {
+        // SAFETY: the tail's room (`tail_begin`).
+        unsafe {
+            let out = self.part(part::OUT);
+            st64(out + first as usize - 8, 0);
+            for e in ends {
+                st64(out + e as usize, 0);
+            }
+            st64(out + pad as usize, 0);
+        }
+    }
+
+    /// The tail's end: each list's last start (`lasts`, its total, at the tape's byte `at`), the newline index at
+    /// `lines_at`, the header.
+    pub(crate) unsafe fn tail_end(&mut self, tail: &mut [u64; 10], lasts: [(u64, u32); 4], lines_at: u64) {
+        // SAFETY: the tail's room (`tail_begin`).
+        unsafe {
+            let out = self.part(part::OUT);
+            for (at, v) in lasts {
+                st32(out + at as usize, v);
+            }
+            let lines_len = self.len(part::LINES);
+            copy(out + lines_at as usize, self.part(part::LINES), lines_len);
+            st64(out + (lines_at + lines_len) as usize, 0);
+            let end = lines_at + lines_len + 8;
+            self.set_len(part::OUT, end);
+            tail[8] = lines_at;
+            tail[9] = end;
+            self.write_head(out, MAGIC16, tail);
+        }
+    }
+
+    /// Block `b`'s side list `q` as `lay` stores it: its bytes.
+    unsafe fn laid_len(&self, b: u32, q: usize, rows: u32) -> u64 {
+        // SAFETY: block `b` is made, its side area not yet given back.
+        let count = unsafe { List::of(self.block(b).area, q) }.count;
+        if count != 0 { 2 * u64::from(rows.div_ceil(BLOCK)) + u64::from(count) * (1 + u64::from(self.vw[q])) } else { 0 }
+    }
+
+    /// Block `b`'s side list `q` stored at `at` (`laid_len` bytes): a u16 count a sub-block, each entry's offset in its
+    /// sub-block, then the values at `vw[q]` bytes.
+    unsafe fn lay_into(&self, b: u32, q: usize, rows: u32, at: usize) {
+        // SAFETY: block `b` is made, its side area not yet given back; `at` holds `laid_len` bytes.
+        unsafe {
+            let list = List::of(self.block(b).area, q);
+            let count = list.count;
+            if count == 0 {
+                return;
+            }
+            let vw = u64::from(self.vw[q]);
+            let nsub = rows.div_ceil(BLOCK);
+            let mut k = 0u32;
+            for s in 0..nsub {
+                while k < count && list.j(k) / BLOCK == s {
+                    k += 1;
+                }
+                st16(at + 2 * s as usize, k);
+            }
+            let offs = at + 2 * nsub as usize;
+            for m in 0..count {
+                st8(offs + m as usize, list.j(m));
+            }
+            let values = offs + count as usize;
+            for m in 0..count {
+                cell_put(values + (u64::from(m) * vw) as usize, vw, list.v(m));
+            }
+        }
     }
 
     /// Fails unless node `i` is written and its block not final.
@@ -1443,6 +1627,69 @@ unsafe fn starts(out: usize, mut pos: u64, la: usize, q: usize, count: u32) -> u
     pos
 }
 
+/// Where F2 makes a block final: its faults', side lists' and freed area's bytes in their parts (F1's sums).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FinalAt {
+    pub errors: u64,
+    pub laid: u64,
+    pub free: u64,
+}
+
+/// What a block's rows decode through: its room, its codes' side list, the cut and the codes past it a byte, the
+/// kinds' part and its numbers.
+#[derive(Clone, Copy)]
+struct Decode {
+    room: usize,
+    codes: List,
+    cut: u32,
+    per: u32,
+    kinds: usize,
+    numbers: u64,
+}
+
+/// A block's `rows` rows decoded, each one's row, kind, field and fault to `f`: its byte in `room`, past the cut its
+/// codes' side list's entry (the block's own cursor over it), its number's kind and field in `kinds` (`numbers` of
+/// them). `finalize`'s and the phases' one decode.
+unsafe fn decode_rows(x: Decode, rows: u32, f: &mut dyn FnMut(u32, u32, u32, bool)) {
+    let Decode { room, codes, cut, per, kinds, numbers } = x;
+    let mut low = 0u32;
+    for j in 0..rows {
+        // SAFETY: the caller's: the block's room and side list, and the kinds' part.
+        unsafe {
+            let byte = ld8(room + j as usize);
+            let mut number = byte;
+            if byte >= cut {
+                // The next entry of the codes' side list, where it is this node's.
+                let mut r = 0u32;
+                if low < codes.count {
+                    if codes.j(low) == j {
+                        r = codes.v(low) as u32;
+                    }
+                    low += 1;
+                }
+                number = cut + (byte - cut) * per + r;
+            }
+            let kf = if u64::from(number) < numbers { ld32(kinds + 4 * number as usize) } else { 0 };
+            // A MISSING code sets the fault bit too (`presence::kind_word`).
+            f(j, kf & KIND_MASK, kf >> 16, kf & FAULT != 0);
+        }
+    }
+}
+
+/// A row's kind and field (and a fault's bit) set in the presence words at `base` (`kw` kind words, then the fields').
+unsafe fn present(base: usize, kw: u64, kind: u32, field: u32, fault: bool) {
+    let set_bit = |word0: u64, bit: u32| {
+        let at = base + ((u64::from(bit >> 6) + word0) * 8) as usize;
+        // SAFETY: the caller's: the presence words' room.
+        unsafe { st64(at, ld64(at) | 1u64 << (bit & 63)) };
+    };
+    set_bit(0, kind);
+    set_bit(kw, field);
+    if fault {
+        set_bit(0, u32::from(ERROR_CODE));
+    }
+}
+
 /// A 64-bit hash of `n` bytes, a word at a time (the seen pieces').
 unsafe fn hash(src: usize, n: u64) -> u64 {
     let mut h = n;
@@ -1799,6 +2046,15 @@ unsafe fn lz_count(src: usize, p: i64, m: i64, limit: i64) -> i64 {
 }
 
 // ---- the ops, as the JIT's and the device's are called ------------------------------------------------------------
+
+/// The state at `desc`, for the host's phases (`f16::Writer::finish_by_phases`).
+///
+/// # Safety
+/// As `state`'s.
+pub(crate) unsafe fn state_of<'s>(desc: *const u8) -> &'s mut State {
+    // SAFETY: the caller's.
+    unsafe { state(desc) }
+}
 
 /// The state at `desc`.
 ///

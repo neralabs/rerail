@@ -10,6 +10,7 @@ pub mod tape;
 pub mod f16;
 pub mod home;
 pub mod newlines;
+pub mod phases;
 /// The tape's reads in Rust, written directly (decision 0534): this crate's readers'.
 pub mod reads;
 /// The views' reads in Rust, written directly (decision 0353 step 3 on the CPU): the host executor's reads of a

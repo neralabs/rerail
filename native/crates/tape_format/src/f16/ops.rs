@@ -652,6 +652,110 @@ impl Writer {
         finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
     }
 
+    /// `finish` by phases, for a tape written from the middle (format 16): F1 each block's counts (its faults, its
+    /// side lists' bytes, its kinds and fields seen), their prefix sums placing what F2 writes, each block made final
+    /// at its places; then the tail, each list's parts placed by a prefix sum of their bytes a block (Z1), each block's
+    /// copied there (Z2). Each phase's blocks on their own, in `order`'s order. The tape is `finish`'s byte for byte.
+    pub fn finish_by_phases(&mut self, order: crate::phases::Order<'_>) -> Result<Finished, String> {
+        use crate::phases::{each, prefix};
+        let why = |r: u32| format!("the writer's ops failed: {r:#x}");
+        if self.z {
+            return Err("finish by phases: format 16's, not 16z's".into());
+        }
+        let count = (self.state.n as usize).div_ceil(Z);
+        self.reserve_final(count);
+        let (kw, fw) = self.presence_words;
+        let words = kw + fw;
+        let desc = self.desc();
+        // SAFETY: the state is the writer's own, its parts reserved (`reserve_final`).
+        let st = unsafe { crate::writer16::state_of(desc) };
+        unsafe { st.phases_begin() }.map_err(why)?;
+        let (n, blocks) = st.phases_shape();
+        let rows = |b: usize| (n - b as u32 * Z as u32).min(Z as u32);
+        // F1: each block's faults, side lists' bytes and presence; a block already final (made so as it was written)
+        // has its parts written, and its lists' bytes count only in the tail.
+        type F1 = (u64, u64, Vec<u64>, u64);
+        let f1: Vec<(u32, [u32; 4], Vec<u64>, bool)> = each(blocks as usize, order, |b| {
+            // SAFETY: block `b` is made.
+            if let Some(lens) = unsafe { st.final_lens(b as u32) } {
+                return (0, lens, vec![0; words], true);
+            }
+            let mut ws = vec![0u64; words];
+            // SAFETY: block `b` is made, not yet final.
+            let (faults, lens) = unsafe { st.block_counts(b as u32, rows(b), &mut ws) };
+            (faults, lens, ws, false)
+        });
+        let sums: Vec<F1> = f1.iter().map(|(f, l, w, done)| if *done { (0, 0, w.clone(), 0) } else { (u64::from(*f), l.iter().map(|&x| u64::from(x)).sum(), w.clone(), 1) }).collect();
+        let (at, total) = prefix(&sums, (0, 0, vec![0; words], 0), order, |a, b| (a.0 + b.0, a.1 + b.1, a.2.iter().zip(&b.2).map(|(x, y)| x | y).collect(), a.3 + b.3));
+        // The parts F2 writes, at their totals.
+        let (e0, l0, f0) = st.phases_parts(total.0, total.1, total.3 as u32).map_err(why)?;
+        // F2: each block not yet final made final at its places.
+        each(blocks as usize, order, |b| {
+            if !f1[b].3 {
+                // SAFETY: block `b` is made, not yet final; its places are F1's sums.
+                unsafe { st.block_final_at(b as u32, rows(b), crate::writer16::FinalAt { errors: e0 + 4 * at[b].0, laid: l0 + at[b].1, free: f0 + 4 * at[b].3 }, f1[b].1, &f1[b].2) };
+            }
+        });
+        // SAFETY: as above.
+        unsafe { st.phases_presence(&total.2) };
+        // The tail's room, as `finish_ops` reserves it; then its start.
+        let (laid, lines) = (self.len_of(part::LAID), self.len_of(part::LINES));
+        let s = &self.state;
+        let blocks_end = if count == 0 {
+            w::HEAD16 as usize
+        } else {
+            let r = s.n as usize - (count - 1) * Z;
+            w::HEAD16 as usize + (count - 1) * s.stride as usize + r * (s.at[4] as usize / Z) + r.div_ceil(K) * s.cw as usize
+        };
+        let need = blocks_end + laid + 16 * (count + 1) + lines + 8 * 6 + 8;
+        let need = need + 8 + super::presence::HEAD + 8 * (kw + fw) * (1 + if self.keep_blocks { count } else { 0 });
+        self.reserve(part::OUT, need);
+        let desc = self.desc();
+        // SAFETY: as above.
+        let st = unsafe { crate::writer16::state_of(desc) };
+        let blocks_end = unsafe { st.tail_begin() }.map_err(why)?;
+        // Z1: each list's bytes a block, their prefix sum: each list's part's start, each block's place in it.
+        let lens: Vec<[u32; 4]> = f1.iter().map(|x| x.1).collect();
+        let (before, tot) = prefix(&lens, [0; 4], order, |a, b| std::array::from_fn(|q| a[q].wrapping_add(b[q])));
+        let mut tail = [0u64; 10];
+        let mut pos = blocks_end + 8;
+        let mut ends = [0u64; 4];
+        for q in 0..4 {
+            tail[q] = pos;
+            pos += u64::from(tot[q]);
+            ends[q] = pos;
+            pos += 8;
+        }
+        // The padding to the starts' alignment: a zero word at `pad` (the starts after it overwrite its last bytes).
+        let pad = pos;
+        pos = (pos + 3) & !3;
+        for q in 0..4 {
+            tail[4 + q] = pos;
+            pos += 4 * (u64::from(blocks) + 1);
+        }
+        let lines_at = pos;
+        // SAFETY: as above.
+        unsafe { st.tail_zeros(tail[0], ends, pad) };
+        // Z2: each block's lists copied to their places, and their starts.
+        each(blocks as usize, order, |b| {
+            for q in 0..4 {
+                // SAFETY: the tail's room (`tail_begin`); the places are Z1's.
+                unsafe { st.tail_block(b as u32, q, tail[q] + u64::from(before[b][q]), tail[4 + q] + 4 * b as u64, before[b][q]) };
+            }
+        });
+        let lasts = std::array::from_fn(|q| (tail[4 + q] + 4 * u64::from(blocks), tot[q]));
+        // SAFETY: as above.
+        unsafe { st.tail_end(&mut tail, lasts, lines_at) };
+        let count = (self.state.n as usize).div_ceil(Z);
+        let end = self.len_of(part::OUT);
+        let faults = self.len_of(part::ERRORS);
+        let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
+        self.given = (out.as_ptr() as usize, out.len());
+        out.truncate(end);
+        let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
+        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
+    }
+
     /// `finish`'s ops, each with the room it can need reserved first.
     fn finish_ops(&mut self) -> Result<(), String> {
         let count = (self.state.n as usize).div_ceil(Z);

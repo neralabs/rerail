@@ -366,9 +366,10 @@ fn serial_places(buf: &[u8], lx: &crate::tier1::Lexed) -> Vec<u8> {
     }
 }
 
-/// Tier 2 as phases (decision 0726), step 1: at chunks of 1, 2, 3 and 16 records and in order and two random
-/// orders, each chunk's place at its start (P4's sum) is the serial walk's at that record, every tape is the serial
-/// tape byte for byte, and every verdict the serial walk's (a refusal at its byte).
+/// Tier 2 as phases (decision 0726): at chunks of 1, 2, 3 and 16 records and in order and two random orders, each
+/// chunk's place at its start (P4's sum) is the serial walk's at that record, every verdict the serial walk's (a
+/// refusal at its byte), and every tape the serial tape byte for byte, made wholly by phases: its newline index
+/// (`newlines::index_by_phases`), its rows (`parse_phases`) and its blocks and tail (`finish_by_phases`).
 #[test]
 fn tier2_by_phases_is_the_serial_tape() {
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
@@ -400,12 +401,14 @@ fn tier2_by_phases_is_the_serial_tape() {
                         }
                     }
                 }
-                let mut m = writer(f);
+                let mut m = rerail_tape_format::f16::Writer::empty();
+                let doc = rerail_tape_format::f16::Document { lang: &lang, source: f, tag: 0, z: false, blocks: true, nodes: f.len() / 2 + 16 };
+                m.begin_with(&doc, |out| rerail_tape_format::newlines::index_by_phases(out, f, rerail_tape_format::newlines::Terminators::Newlines, 16 * size, order));
                 let got = crate::middle::parse_phases(&buf, &lx, &types, &mut m, size, order);
                 assert_eq!(got, parsed, "file {k} ({:?}), chunks of {size}, order {seed}: the verdict", String::from_utf8_lossy(&f[..f.len().min(60)]));
                 match &want {
                     Some(want) => {
-                        let have = m.finish().expect("the tape by phases").tape.as_bytes().to_vec();
+                        let have = m.finish_by_phases(order).expect("the tape by phases").tape.as_bytes().to_vec();
                         assert!(have == *want, "file {k}, chunks of {size}, order {seed}: the tape by phases differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
                         tapes += 1;
                     }
