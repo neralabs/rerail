@@ -3294,6 +3294,24 @@ use rerail_blocks::vector::Vector;
                 db.execute("INSERT INTO q VALUES (?1, ?2)", [by, f]).unwrap();
             }
         }
+        // Each document's root as the parent, with every field: its rows are its own fielded tape children, walked
+        // as any parent's where every numbered node's tape parent is numbered (`ViewDoc::parented`), not its
+        // document's every row (`rf_param_site`'s module-level scopes).
+        let node = sources.iter().find(|(n, _)| n == "node").expect("the chunk's node view").1.clone();
+        let mut roots: HashMap<i64, (i64, i64)> = HashMap::new();
+        for r in 0..node.len() {
+            let (d, n, span) = (node.value(r, 0), node.value(r, 1), node.value(r, 4) - node.value(r, 3));
+            if roots.get(&d).is_none_or(|&(_, s)| span > s) {
+                roots.insert(d, (n, span));
+            }
+        }
+        assert_eq!(roots.len(), 2, "both documents' roots");
+        let fields: std::collections::BTreeSet<i64> = rows.iter().map(|r| r.1).collect();
+        for &(root, _) in roots.values() {
+            for &f in &fields {
+                db.execute("INSERT INTO q VALUES (?1, ?2)", [root, f]).unwrap();
+            }
+        }
         let q = format!("t:x:{}:{}:ii", hex("temp.q"), hex("c0, c1"));
         for (name, rule, want) in [
             // h0(p, f, c) :- q(p, f), field(p, f, c): by the parent and the field.

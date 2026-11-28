@@ -312,7 +312,11 @@ UKL_INLINE void by_parent(StageP s, int64_t key, UKL_PRIVATE uint32_t* lo, UKL_P
     // walk 6); the root's, its document's rows, each tested (a node under an unnumbered one is the root's).
     if (s->r_view == 3u) {
         uint32_t f0 = e->rows[2];
-        if (l == 0u) { *lo = f0; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[2] : s->nr; return; }
+        // The root's rows where a numbered node's parent is left out (`ViewDoc::parented` 0): its document's rows,
+        // which `matches` tests. Else a field row's parent column is its tape parent's id, the root's only for its own
+        // fielded tape children: walked as any parent's (a module-level scope bound as the parent scanned its
+        // document's every field row for each binding).
+        if (l == 0u && ((UKL_GLOBAL const ViewDoc*)(ch + e->entry))->parented == 0u) { *lo = f0; *hi = a + 1u < d->ndocs ? view_rows(d)[a + 1u].rows[2] : s->nr; return; }
         if ((int64_t)clif_view_order(ch, e->entry, t, e->view, ls, la, l, 0u) != key) return;
         uint32_t f = clif_view_field_first(ch, e->entry, t, e->view, ls, la, l);
         if (f == NONE) return;

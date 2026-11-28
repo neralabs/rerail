@@ -968,7 +968,11 @@ impl St<'_> {
             // document's rows, each checked (its rows' parent column is the root's for a node under an unnumbered one).
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
             let first = (*e).rows[2];
-            if l == 0 {
+            // The root's rows where a numbered node's parent is left out (`ViewDoc::parented` 0) are its document's,
+            // each checked. Else a field row's parent column is its tape parent's id, the root's only for the root's
+            // own fielded tape children, walked as any parent's: a module-level scope bound as the parent scanned its
+            // document's every field row for each binding (`rf_param_site`, 0.18 -> 5.6 G cycles at f4185cb081).
+            if l == 0 && doc(d, e).e.parented == 0 {
                 let a = e.offset_from(view_rows(d)) as u32;
                 let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[2] } else { s.nr };
                 return Walk { lo: first, hi, how: 0, tag: 0 };
