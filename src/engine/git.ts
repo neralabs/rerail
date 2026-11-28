@@ -1159,7 +1159,7 @@ type RunGitAsyncOptions = RunGitOptions & GitReadOptions & {
  * {@link runGit} without blocking: the same safe configuration, environment and timeout, and `input` written to Git's
  * stdin. Rejects with {@link GitUnavailableError} when Git is missing, never on a non-zero exit; a Git that could not
  * start, timed out, was stopped by `signal` or overflowed `maxBuffer` (1 MiB by default, for stdout and stderr each)
- * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
+ * answers a null status with its error, a timed-out one's coded `ETIMEDOUT` as {@link runGit} gives it. The timeout and `signal` end Git as they end a batch read
  * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
  * ({@link GitReadOptions}); once `signal` is aborted it starts no Git. When the Git kept for the process is gone, it
  * runs once more with the Git found again, looked for off this thread while this call waits, all within its one time
@@ -1206,8 +1206,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
     child.stderr.destroy();
     const output = { stdout: printed.stdout.join(""), stderr: printed.stderr.join("") };
     if (ended) {
-      const why = signal?.aborted === true ? "the read was stopped" : `it ran past its time limit of ${timeout} ms`;
-      settle({ status: null, ...output, error: new Error(`Git was ended: ${why}`) });
+      settle({ status: null, ...output, error: endedError(signal?.aborted === true, timeout) });
     } else if (failure !== undefined || child.exitCode === null) {
       settle({ status: null, ...(child.signalCode === null ? {} : { signal: child.signalCode }), ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
     } else settle({ status: child.exitCode, ...output });
@@ -1217,6 +1216,15 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * The error of a Git {@link runGitAsync} ended: one its owner's signal stopped, or one that ran past its time limit,
+ * which carries `ETIMEDOUT`, as `spawnSync` names the same ending, so a caller tells it from every other failure.
+ */
+function endedError(stopped: boolean, timeout: number): Error {
+  if (stopped) return new Error("Git was ended: the read was stopped");
+  return Object.assign(new Error(`Git was ended: it ran past its time limit of ${timeout} ms`), { code: "ETIMEDOUT" });
 }
 
 /**

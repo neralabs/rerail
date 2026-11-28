@@ -13,6 +13,7 @@ import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { prepareDaemonGit } from "../engine/git.js";
+import { stopAskingSubmodules } from "../engine/catalog/checkouts/declared-submodules.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, dashboardLink, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
@@ -1008,6 +1009,9 @@ export class RerailDaemon {
       } finally {
         this.#worktreeWalks.close();
         await this.#mergeAssist?.stop();
+        // Once the sessions have closed, which list nested checkouts no more: a checkout's submodules asked again off
+        // the thread end here, with their Git.
+        await stopAskingSubmodules();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);
         // Last, once nothing of this daemon is open and its record is gone. Where a step above threw, the process's exit

@@ -1,0 +1,1 @@
+While Git runs past its 10-second limit reading which submodules a repository declares, Rerail waits on that read once instead of at every tool call: later checks take the repository as declaring none and ask Git again in the background, so no session's hooks wait behind those reads again.
