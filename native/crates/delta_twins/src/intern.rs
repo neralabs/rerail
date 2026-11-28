@@ -25,18 +25,18 @@ use rerail_blocks::maps::{HashBytes, hash_bytes};
 use rerail_rr_syntax::tape::{FIRST_ANONYMOUS, KIND_NAMES, Kind};
 
 crate::params! {
-    /// Where the document's source and tape lie in their blocks, by offset and length, and the tape's view there
-    /// (`f16::Placement::view`): what the device's tape reads read it by (`<ukl/reads/tape.h>`).
+    /// Where the document's source and tape lie in their blocks, by offset and length.
     pub struct InternP {
         pub src_at: u64,
         pub src_len: u64,
         pub tape_at: u64,
         pub tape_len: u64,
-        pub view: [u32; VIEW_WORDS],
     }
 }
 
-/// A tape's view, in words (`rerail_clif::view::TapeView`).
+/// A tape's view, in words (`rerail_clif::view::TapeView`): its reads' offsets from the tape's first byte
+/// (`f16::Placement::view` at base 0), what the device's tape reads read it by (`<ukl/reads/tape.h>`). A fact of the
+/// tape's bytes alone, written once into its document's symbols block.
 pub const VIEW_WORDS: usize = 34;
 
 /// K-form's step kinds, which a pass writes as symbols.
@@ -56,29 +56,33 @@ pub const PATH_SYM_AT: usize = BODY_AT + 16;
 pub const MODULE_SYM_AT: usize = BODY_AT + 20;
 pub const PATH_LEN_AT: usize = BODY_AT + 24;
 pub const MODULE_LEN_AT: usize = BODY_AT + 28;
-pub const NAMES_AT: usize = BODY_AT + 32;
+pub const VIEW_AT: usize = BODY_AT + 32;
+pub const NAMES_AT: usize = VIEW_AT + 4 * VIEW_WORDS;
 
 /// The language block's words, at `BODY_AT`: its body's length, its codes' and its names' counts; then each code's
-/// entry by its number in the table (its kind, and `LANG_EXTRA`: a comment); each name's end in the names' bytes; the
-/// names' bytes, back to back.
+/// entry by its number in the table (its kind, its field at `LANG_FIELD`, and `LANG_EXTRA`: a comment); each name's
+/// end in the names' bytes; the names' bytes, back to back.
 pub const LANG_CODES_N_AT: usize = BODY_AT + 8;
 pub const LANG_NAMES_N_AT: usize = BODY_AT + 12;
 pub const LANG_CODES_AT: usize = BODY_AT + 16;
-/// A language entry's bit for a comment.
-pub const LANG_EXTRA: u32 = 1 << 16;
+/// A language entry's field's shift, and its bit for a comment.
+pub const LANG_FIELD: u32 = 16;
+pub const LANG_EXTRA: u32 = 1 << 31;
 
 /// The names the scan interns once, in order: the language's kinds and fields, and K-form's step kinds.
 pub fn language_names() -> impl DoubleEndedIterator<Item = &'static str> + Clone {
     KIND_NAMES.iter().chain(rerail_rr_syntax::tape::FIELD_NAMES).chain(&STEP_KINDS).copied().filter(|n| !n.is_empty())
 }
 
-/// The `.rerail` language's table, by code number: each code's kind (`entry_kind_field`'s) and whether it is extra.
+/// The `.rerail` language's table, by code number: each code's kind and field (`entry_kind_field`'s) and whether it
+/// is extra.
 fn language_codes() -> impl Iterator<Item = u32> {
     let t = rerail_rr_syntax::tape::lang().table();
     (0..t.len() as u32).map(move |n| {
         let e = t.entry(n);
-        let (k, _) = rerail_rr_syntax::tape::entry_kind_field(e);
-        u32::from(k) | if e.flags & rerail_rr_syntax::tape_format::CODE_EXTRA != 0 { LANG_EXTRA } else { 0 }
+        let (k, f) = rerail_rr_syntax::tape::entry_kind_field(e);
+        assert!(f < 1 << 15, "a field below 2^15");
+        u32::from(k) | u32::from(f) << LANG_FIELD | if e.flags & rerail_rr_syntax::tape_format::CODE_EXTRA != 0 { LANG_EXTRA } else { 0 }
     })
 }
 
@@ -115,10 +119,14 @@ pub fn syms_bytes(n: usize, path: &str, module: &str) -> usize {
     nodes_at(path.len(), module.len()) + 8 * n - BODY_AT
 }
 
-/// A symbols block's header, written by the host before `intern` runs: the nodes' count, the path and the module.
-pub fn init_syms(bytes: &mut [u8], n: usize, path: &str, module: &str) {
+/// A symbols block's header, written by the host before `intern` runs: the nodes' count, the tape's view, the path
+/// and the module.
+pub fn init_syms(bytes: &mut [u8], n: usize, view: &[u32; VIEW_WORDS], path: &str, module: &str) {
     set_word::<u64>(bytes, LEN_AT, syms_bytes(n, path, module) as u64);
     set_word::<u64>(bytes, N_AT, n as u64);
+    for (k, &w) in view.iter().enumerate() {
+        set_word::<u32>(bytes, VIEW_AT + 4 * k, w);
+    }
     set_word::<u32>(bytes, PATH_LEN_AT, path.len() as u32);
     set_word::<u32>(bytes, MODULE_LEN_AT, module.len() as u32);
     bytes[NAMES_AT..NAMES_AT + path.len()].copy_from_slice(path.as_bytes()); // copy: derived (the answer's path, written once)

@@ -322,8 +322,6 @@ pub type Twin = &'static [TwinPhase];
 /// A fixed-width integer a params struct holds, with its C type for UKL. Native byte order, as blocks are.
 pub trait Scalar: Copy {
     const C: &'static str;
-    /// Its elements, for an array (`[u32; N]`: a C array of `N`); 0 for one value.
-    const N: usize = 0;
     const SIZE: usize;
     fn read(b: &[u8]) -> Self;
     fn write(self, b: &mut [u8]);
@@ -347,26 +345,10 @@ macro_rules! scalar {
 }
 scalar!(u32 => "uint32_t", u64 => "uint64_t", i32 => "int32_t", i64 => "int64_t");
 
-/// An array of words: a C array of `N`.
-impl<const N: usize> Scalar for [u32; N] {
-    const C: &'static str = "uint32_t";
-    const N: usize = N;
-    const SIZE: usize = 4 * N;
-    fn read(b: &[u8]) -> Self {
-        core::array::from_fn(|k| u32::read(&b[4 * k..]))
-    }
-    fn write(self, b: &mut [u8]) {
-        for (k, w) in self.into_iter().enumerate() {
-            w.write(&mut b[4 * k..]);
-        }
-    }
-}
-
-/// One field of a params struct: its name, C type, elements (0: one value) and offset.
+/// One field of a params struct: its name, C type and offset.
 pub struct Field {
     pub name: &'static str,
     pub c: &'static str,
-    pub n: usize,
     pub at: usize,
 }
 
@@ -410,7 +392,6 @@ macro_rules! params {
             const FIELDS: &'static [$crate::Field] = &[$($crate::Field {
                 name: stringify!($f),
                 c: <$t as $crate::Scalar>::C,
-                n: <$t as $crate::Scalar>::N,
                 at: core::mem::offset_of!($name, $f),
             }),*];
             const SIZE: usize = core::mem::size_of::<$name>();

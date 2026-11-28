@@ -87,14 +87,14 @@ pub fn intern_at(ops: &Runner, dir: &mut Directory, blobs: &mut BlobRows, atoms:
 }
 
 /// `intern`'s launch over the document at `src` and `tape`: its symbols block made (kept where the directory keeps
-/// what lasts: a pure answer, kept by key, D4, while the store's atoms keep their ids), its header written; its slots,
-/// its params (the tape's view where it lies) and the symbols block's body bytes.
+/// what lasts: a pure answer, kept by key, D4, while the store's atoms keep their ids), its header written (the tape's
+/// view among it); its slots, its params and the symbols block's body bytes.
 pub(crate) fn launch(dir: &mut Directory, atoms: Atoms, src: Placed, tape: Placed, path: &str, module: &str) -> Result<(BlockId, [BlockId; 5], [u8; InternP::SIZE], usize), String> {
     let n = crate::files::nodes(dir, src, tape)?;
     let view = {
         let l = dir.read("intern's tape", &[tape.block])?;
         let bytes = &l.block(0)[tape.at..tape.at + tape.len];
-        let v = rerail_rr_syntax::tape_format::f16::placement(bytes)?.view(rerail_rr_syntax::tape::lang(), tape.at)?;
+        let v = rerail_rr_syntax::tape_format::f16::placement(bytes)?.view(rerail_rr_syntax::tape::lang(), 0)?;
         // SAFETY: a view is `VIEW_WORDS` u32s (`TapeView`, `repr(C)`), its size checked by the transmute.
         unsafe { core::mem::transmute::<_, [u32; twin::VIEW_WORDS]>(v) }
     };
@@ -103,14 +103,14 @@ pub(crate) fn launch(dir: &mut Directory, atoms: Atoms, src: Placed, tape: Place
     let id = dir.make_placed(dir.lasting(), kind::FACTS, body, 0)?;
     let b = dir.block(id).expect("just made");
     let mut w = pin_block(&b, "intern", true)?;
-    twin::init_syms(w.bytes_mut().expect("a write pin"), n, path, module);
+    twin::init_syms(w.bytes_mut().expect("a write pin"), n, &view, path, module);
     let mut p = [0u8; InternP::SIZE];
-    InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64, view }.write(&mut p);
+    InternP { src_at: src.at as u64, src_len: src.len as u64, tape_at: tape.at as u64, tape_len: tape.len as u64 }.write(&mut p);
     Ok((id, [src.block, tape.block, atoms.0, id, lang], p, body))
 }
 
 /// The `.rerail` language's table for `intern`'s kernels (`intern::write_language`): made once a directory, frozen.
-fn language(dir: &mut Directory) -> Result<BlockId, String> {
+pub(crate) fn language(dir: &mut Directory) -> Result<BlockId, String> {
     if let Some(id) = dir.language {
         return Ok(id);
     }

@@ -33,7 +33,8 @@ static K0_PHASES: [Phase; 4] = [
 ];
 
 /// `k0_pass`: read the documents (a docs block, their tape and symbols blocks by reference) and the atoms · rw
-/// control · read the documents gone (a parts block) · write each K-form relation's δ runs · rw L1's cache (Bootstrap, Figure 2).
+/// control · read the documents gone (a parts block) · write each K-form relation's δ runs · rw L1's cache (Bootstrap,
+/// Figure 2) · read the language's table.
 pub static K0_PASS: Signature = Signature::of(
     &crate::op::interfaces::K0_PASS,
     ParamsLayout::of::<K0P>(),
@@ -304,7 +305,7 @@ impl DocsIn {
     }
 
     /// A run's documents `docs`, written in turn (the tests' documents in hand).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn of(dir: &mut Directory, docs: &[K0Doc]) -> Result<DocsIn, String> {
         let id = dir.make(kind::CONTROL, twin::docs_bytes(docs.len().max(1)));
         let list = Parts::write(dir, 3 * docs.len(), |put| {
@@ -372,10 +373,12 @@ pub fn k0_pass(ops: &Runner, dir: &mut Directory, atoms: BlockId, docs: &DocsIn,
         }
         let mut p = [0u8; K0P::SIZE];
         K0P { docs: u64::from(docs.first.0), diff: i64::from(diff) }.write(&mut p);
-        let mut slots = [control; twin::CACHE + 1];
+        let lang = crate::intern::language(dir).map_err(fail)?;
+        let mut slots = [control; twin::LANG + 1];
         (slots[twin::DOCS], slots[twin::ATOMS], slots[twin::GONE]) = (docs.first, atoms, gone.id());
         slots[twin::RUNS..twin::CACHE].copy_from_slice(runs);
         slots[twin::CACHE] = cache.or(own_cache).expect("a cache");
+        slots[twin::LANG] = lang;
         ops.run(dir, &K0_PASS, &slots, &p, Tiling::WHOLE).map_err(fail)?;
         let l = dir.read("k0_pass", &[control]).map_err(fail)?;
         match twin::refused(l.block(0)) {

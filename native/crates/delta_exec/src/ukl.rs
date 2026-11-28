@@ -10,7 +10,7 @@ use crate::cache::{CACHE_COMMIT, CACHE_OPEN, ORDER, OpCache};
 use crate::contract::push_layer;
 use crate::dir::Directory;
 use crate::drop::{DROP_PARTS, Parts};
-use crate::k0::{DOCS_OF, NAMED_BLOCKS, ROOM_OF};
+use crate::k0::{DOCS_OF, K0_PASS, NAMED_BLOCKS, ROOM_OF};
 use crate::intern::INTERN;
 use crate::semi::{CHANGE_ROWS, REPLACE_ROWS, SEMI_CHANGE};
 use rerail_blocks::block::kind;
@@ -29,6 +29,7 @@ use rerail_delta_twins::k0::{self as k0_twin, DocAt, DocsOfP, NamedP};
 use rerail_delta_twins::semi::{ReplaceP, SemiP};
 use rerail_delta_twins::intern as intern_twin;
 use rerail_blocks::atoms::AtomsRoot;
+use rerail_rr_syntax::tape::Kind;
 
 /// Every backend a UKL version runs on.
 const EVERY_BACKEND: Devices = Devices(Devices::CPU.0 | Devices::METAL.0 | Devices::CUDA.0 | Devices::HIP.0 | Devices::OPENCL.0);
@@ -40,7 +41,7 @@ const TILINGS: [Tiling; 2] = [Tiling::WHOLE, Tiling { tile: 3, seed: 7 }];
 struct Ukl {
     sig: &'static Signature,
     module: &'static str,
-    case: fn(&mut Directory) -> Case,
+    cases: &'static [fn(&mut Directory) -> Case],
 }
 
 /// The modules' kernels, by name.
@@ -54,17 +55,18 @@ const MODULES: &[(&str, &str)] = &[
 
 /// The operations with a UKL version.
 const VERSIONS: &[Ukl] = &[
-    Ukl { sig: &CACHE_OPEN, module: "cache", case: cache_open_case },
-    Ukl { sig: &CACHE_COMMIT, module: "cache", case: cache_commit_case },
-    Ukl { sig: &ORDER, module: "cache", case: order_case },
-    Ukl { sig: &DROP_PARTS, module: "drop", case: drop_parts_case },
-    Ukl { sig: &SEMI_CHANGE, module: "semi", case: semi_change_case },
-    Ukl { sig: &CHANGE_ROWS, module: "semi", case: change_rows_case },
-    Ukl { sig: &REPLACE_ROWS, module: "semi", case: replace_rows_case },
-    Ukl { sig: &DOCS_OF, module: "k0", case: docs_of_case },
-    Ukl { sig: &ROOM_OF, module: "k0", case: room_of_case },
-    Ukl { sig: &NAMED_BLOCKS, module: "k0", case: named_blocks_case },
-    Ukl { sig: &INTERN, module: "intern", case: intern_case },
+    Ukl { sig: &CACHE_OPEN, module: "cache", cases: &[cache_open_case] },
+    Ukl { sig: &CACHE_COMMIT, module: "cache", cases: &[cache_commit_case] },
+    Ukl { sig: &ORDER, module: "cache", cases: &[order_case] },
+    Ukl { sig: &DROP_PARTS, module: "drop", cases: &[drop_parts_case] },
+    Ukl { sig: &SEMI_CHANGE, module: "semi", cases: &[semi_change_case] },
+    Ukl { sig: &CHANGE_ROWS, module: "semi", cases: &[change_rows_case] },
+    Ukl { sig: &REPLACE_ROWS, module: "semi", cases: &[replace_rows_case] },
+    Ukl { sig: &DOCS_OF, module: "k0", cases: &[docs_of_case] },
+    Ukl { sig: &ROOM_OF, module: "k0", cases: &[room_of_case] },
+    Ukl { sig: &NAMED_BLOCKS, module: "k0", cases: &[named_blocks_case] },
+    Ukl { sig: &INTERN, module: "intern", cases: &[intern_case] },
+    Ukl { sig: &K0_PASS, module: "k0", cases: &[k0_pass_case, k0_refused_case] },
 ];
 
 /// Each operation's UKL version checked on `device` against its twin, at `TILINGS`, and registered as the device's
@@ -84,7 +86,11 @@ pub(crate) fn register_on(reg: &mut Registry, device: &dyn Kernels) -> Result<()
             let twin = reg.reference(op).ok_or_else(|| format!("{}: no twin", u.sig.name))?;
             let name: &'static str = Box::leak(format!("{} ukl", u.sig.name).into_boxed_str());
             let v = crate::op::Version { name, imp: Impl::Ukl { source, entry: u.sig.name }, devices: EVERY_BACKEND, status: Status::Default, ..*twin };
-            let checked = reg.check_on(&v, device, &u.case, &TILINGS)?;
+            let mut checked = None;
+            for case in u.cases {
+                checked = Some(reg.check_on(&v, device, case, &TILINGS)?);
+            }
+            let checked = checked.ok_or_else(|| format!("{}: no case", u.sig.name))?;
             reg.register(v, checked)?;
         }
     }
@@ -298,6 +304,63 @@ fn intern_case(dir: &mut Directory) -> Case {
     Case { slots: slots.to_vec(), params: p.to_vec() }
 }
 
+/// Documents `srcs` read, interned and listed for `k0_pass` (module `k + 1` each), its launch over them with control
+/// at room for two statements (`count` grows it) and a cache holding document 2's sizes and a gone document's.
+fn k0_launch(dir: &mut Directory, srcs: &[&str]) -> Case {
+    let cpu = Runner::new().expect("the CPU's runner");
+    let mut blobs = crate::files::BlobRows::new();
+    let atoms = crate::sym::Atoms::new(dir);
+    let mut docs = Vec::new();
+    for (k, src) in srcs.iter().enumerate() {
+        let ids = crate::files::doc_of(&cpu, dir, &mut blobs, src).expect("a document");
+        let place = |dir: &Directory, blobs: &crate::files::BlobRows, id| blobs.get(dir, id).unwrap().expect("a blob housed");
+        let (s, t) = (place(dir, &blobs, &ids.source), place(dir, &blobs, &ids.tape));
+        let path = format!("m{k}.rerail");
+        let syms = crate::intern::intern(&cpu, dir, &mut blobs, atoms, s, t, &path, &path[..2]).expect("interned");
+        docs.push(crate::k0::K0Doc { module: k as i64 + 1, src: s, tape: t, syms: place(dir, &blobs, &syms).block });
+    }
+    let d = crate::k0::DocsIn::of(dir, &docs).expect("the docs");
+    let control = dir.make_capped(kind::CONTROL, k0_twin::control_bytes(2), 0, 1 << 20);
+    {
+        let b = dir.block(control).expect("just made");
+        k0_twin::init_control(pin_block(&b, "control", true).expect("a write pin").bytes_mut().expect("a write pin"));
+    }
+    let cache = OpCache::new(dir);
+    {
+        let b = dir.block(cache.0).expect("just made");
+        let mut w = pin_block(&b, "the cache", true).expect("a write pin");
+        let bytes = w.bytes_mut().expect("a write pin");
+        set_word::<u64>(bytes, cache_twin::USED_AT, 0);
+        for d in [2u32, 9] {
+            let at = cache_twin::ENTRIES_AT + cache_twin::used(bytes);
+            cache_twin::put_sizes(bytes, at, d, &[1; k0_twin::R], true);
+        }
+    }
+    let gone = Parts::write(dir, 1, |put| put(9)).expect("the gone");
+    let mut slots = vec![control; k0_twin::LANG + 1];
+    (slots[k0_twin::DOCS], slots[k0_twin::ATOMS], slots[k0_twin::GONE]) = (d.first, atoms.0, gone.id());
+    for k in 0..k0_twin::R {
+        slots[k0_twin::RUNS + k] = Trace::new(&crate::kform::shape(k)).expect("a trace").open(dir, 64);
+    }
+    (slots[k0_twin::CACHE], slots[k0_twin::LANG]) = (cache.0, crate::intern::language(dir).expect("the language"));
+    Case { slots, params: params(rerail_delta_twins::k0::K0P { docs: u64::from(d.first.0), diff: -1 }) }
+}
+
+/// Three documents of every K0 form: rules and facts, atoms, negations, comparisons, and
+/// terms of each kind (strings with escapes, numbers to an i64's end, wildcards), a comment among them.
+fn k0_pass_case(dir: &mut Directory) -> Case {
+    k0_launch(dir, &[
+        "e(1, 2).\np(x) :- e(x, _), !q(x).\n",
+        "// a comment\nq(y, \"t\\u{e9}\") :- e(y, 0), y != 9223372036854775807, r(\"a\\\"b\").\nr(\"s\").\n",
+        "g(z) :- e(z, _).\nf(a, b) :- e(a, b), a != b.\n",
+    ])
+}
+
+/// A run with a document past K0 between two that are: refused, the first refusal by document and node order named.
+fn k0_refused_case(dir: &mut Directory) -> Case {
+    k0_launch(dir, &["e(1, 2).\n", "p(x) :- e(x, _).\nn(c) :- c = count : { e(_, _) }.\n", "q(1).\n"])
+}
+
 /// A cache holding the sizes of documents 1, 2 and 5; 5 and 7 gone, 1 and 3 read: the room 1's and 5's take.
 fn room_of_case(dir: &mut Directory) -> Case {
     let cpu = Runner::new().expect("the CPU's runner");
@@ -403,12 +466,53 @@ pub fn layout() -> Vec<(&'static str, usize)> {
         ("LANG_NAMES_N_AT", intern_twin::LANG_NAMES_N_AT),
         ("LANG_CODES_AT", intern_twin::LANG_CODES_AT),
         ("LANG_EXTRA", intern_twin::LANG_EXTRA as usize),
-        ("KIND_IDENTIFIER", rerail_rr_syntax::tape::Kind::Identifier as usize),
-        ("KIND_VARIABLE", rerail_rr_syntax::tape::Kind::Variable as usize),
-        ("KIND_STRING", rerail_rr_syntax::tape::Kind::String as usize),
+        ("KIND_IDENTIFIER", Kind::Identifier as usize),
+        ("KIND_VARIABLE", Kind::Variable as usize),
+        ("KIND_STRING", Kind::String as usize),
         ("FIRST_ANONYMOUS", rerail_rr_syntax::tape::FIRST_ANONYMOUS as usize),
         ("VIEW_WORDS", intern_twin::VIEW_WORDS),
+        ("SYMS_VIEW_AT", intern_twin::VIEW_AT),
+        ("LANG_FIELD", intern_twin::LANG_FIELD as usize),
+        ("KIND_NUMBER", Kind::Number as usize),
+        ("KIND_WILDCARD", Kind::Wildcard as usize),
+        ("KIND_CLAUSE", Kind::Clause as usize),
+        ("KIND_CONJUNCTION", Kind::Conjunction as usize),
+        ("KIND_ATOM", Kind::Atom as usize),
+        ("KIND_NEGATION", Kind::Negation as usize),
+        ("KIND_COMPARISON", Kind::Comparison as usize),
+        ("FIELD_RELATION", field("relation")),
+        ("FIELD_HEAD", field("head")),
+        ("FIELD_MODAL", field("modal")),
+        ("FIELD_EDIT", field("edit")),
+        ("FIELD_ARGUMENTS", field("arguments")),
+        ("FIELD_BODY", field("body")),
+        ("FIELD_OPERAND", field("operand")),
+        ("FIELD_OPERATOR", field("operator")),
+        ("FIELD_LEFT", field("left")),
+        ("FIELD_RIGHT", field("right")),
+        // `rerail_delta_twins::k0`'s slots and control.
+        ("K0_DOCS", k0_twin::DOCS),
+        ("K0_ATOMS", k0_twin::ATOMS),
+        ("K0_CONTROL", k0_twin::CONTROL),
+        ("K0_GONE", k0_twin::GONE),
+        ("K0_RUNS", k0_twin::RUNS),
+        ("K0_CACHE", k0_twin::CACHE),
+        ("K0_LANG", k0_twin::LANG),
+        ("K0_REFUSED_NODE_AT", k0_twin::REFUSED_NODE),
+        ("K0_REFUSED_WHY_AT", k0_twin::REFUSED_WHY),
+        ("K0_REFUSED_DOC_AT", k0_twin::REFUSED_DOC),
+        ("K0_PLACED_AT", k0_twin::PLACED),
+        ("K0_REFUSED_MODULE_AT", k0_twin::REFUSED_MODULE),
+        ("K0_ENDS_AT", k0_twin::ENDS),
+        ("K0_PLACES_AT", k0_twin::PLACES),
+        ("K0_UNCLAIMED", k0_twin::UNCLAIMED as usize),
+        ("CACHE_DEAD", cache_twin::DEAD as usize),
     ]
+}
+
+/// The `.rerail` field named `f`'s number.
+fn field(f: &str) -> usize {
+    rerail_rr_syntax::tape::FIELD_NAMES.iter().position(|n| *n == f).expect("an rr field")
 }
 
 /// `<ukl/delta/layout.h>`'s text: `layout`'s constants.

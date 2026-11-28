@@ -1,6 +1,9 @@
 // The K0 pass's operations over its documents (`rerail_delta_twins::k0`): `docs_of`, the documents a selection reads;
-// `room_of`, the room a run's runs need; `named_blocks`, the blocks a document set names. Each is one item.
+// `room_of`, the room a run's runs need; `named_blocks`, the blocks a document set names, each one item; and
+// `k0_pass`, the walk of every document's statements into K-form's δ runs.
 #include <ukl/delta/docs.h>
+#include <ukl/delta/rr.h>
+#include <ukl/delta/atoms.h>
 #include <ukl/delta/runs.h>
 #include <ukl/delta/parts.h>
 #include <ukl/delta/cache.h>
@@ -89,3 +92,315 @@ DELTA_ONE(named_blocks_named_blocks)
     parts_seal(blocks, nb);
     parts_seal(missing, nm);
 }
+
+// ---- k0_pass -------------------------------------------------------------------------------------------------------
+
+#define R K0_RELATIONS
+
+// Each K-form relation's arity (`kform::RELATIONS`).
+UKL_INLINE uint32_t k_arity(uint32_t r) {
+    const uint32_t a[R] = {3u, 6u, 6u, 3u, 3u, 3u, 2u, 2u};
+    return a[r];
+}
+
+// Document `k` of the docs block, read where it lies.
+UKL_INLINE Rr k0_doc(CBlk t, CBlk docs, CBlk lang, uint32_t k) {
+    return rr_of(blk(t, (uint32_t)DOC(docs, k, 1u)), DOC(docs, k, 4u), blk(t, (uint32_t)DOC(docs, k, 2u)), DOC(docs, k, 6u), blk(t, (uint32_t)DOC(docs, k, 3u)), lang);
+}
+
+// A document's statements: the root's counted children.
+UKL_INLINE uint32_t k0_statements(UKL_PRIVATE const Rr* r) {
+    uint32_t n = 0u;
+    RR_CHILDREN(r, 0u, c) n += rr_counted(r, c) ? 1u : 0u;
+    return n;
+}
+
+// The statements of every document, in order: the pass's items.
+UKL_INLINE uint32_t k0_items(CBlk t, CBlk docs, CBlk lang) {
+    uint32_t n = 0u;
+    for (uint32_t k = 0u; k < docs_len(docs); k++) {
+        Rr r = k0_doc(t, docs, lang, k);
+        n += k0_statements(&r);
+    }
+    return n;
+}
+
+// Item `item`'s statement: its document's place (`*k`) and its node.
+UKL_INLINE uint32_t k0_statement(CBlk t, CBlk docs, CBlk lang, uint32_t item, UKL_PRIVATE uint32_t* k, UKL_PRIVATE Rr* r) {
+    for (*k = 0u; *k < docs_len(docs); (*k)++) {
+        *r = k0_doc(t, docs, lang, *k);
+        RR_CHILDREN(r, 0u, c) {
+            if (!rr_counted(r, c)) continue;
+            if (item == 0u) return c;
+            item--;
+        }
+    }
+    return NONE;
+}
+
+// Where a walk's rows go: counted (`runs` unset), or written at `at[r]` of each relation's runs block with `diff`.
+typedef struct Put {
+    uint32_t n[R], at[R];
+    Blk runs[R];
+    bool place;
+    int32_t diff;
+} Put;
+
+UKL_INLINE void k0_put(UKL_PRIVATE Put* o, uint32_t r, UKL_PRIVATE const int64_t* row) {
+    if (o->place && o->at[r] != K0_UNCLAIMED) {
+        for (uint32_t c = 0u; c < k_arity(r); c++) runs_set(o->runs[r], o->at[r], c, row[c]);
+        runs_diff(o->runs[r], o->at[r], o->diff);
+        o->at[r]++;
+    }
+    o->n[r]++;
+}
+
+#define PUT(r, ...) do { const int64_t row_[] = {__VA_ARGS__}; k0_put(o, r, row_); } while (0)
+// A refusal: the node, and why (the twins' `WHY`); a walk returns it at once.
+#define REFUSE(node, why) do { *bad = (node); return (why); } while (0)
+#define TRY(x) do { uint32_t w_ = (x); if (w_ != NONE) return w_; } while (0)
+#define OK NONE
+
+// The walk's reads: the document, its module and its step kinds' symbols.
+typedef struct Walk {
+    Rr r;
+    int64_t d, atom, not_, cmp;
+} Walk;
+
+UKL_INLINE int64_t k0_text(UKL_PRIVATE const Walk* w, uint32_t n) { return (int64_t)rr_sym_text(&w->r, n); }
+
+// A term: what it is, by its node.
+UKL_INLINE uint32_t k0_term(UKL_PRIVATE const Walk* w, UKL_PRIVATE Put* o, uint32_t n, UKL_PRIVATE uint32_t* bad) {
+    uint32_t k = rr_kind(&w->r, n);
+    int64_t v;
+    if (k == KIND_VARIABLE) PUT(3u, w->d, n, k0_text(w, n));
+    else if (k == KIND_STRING) {
+        if (rr_sym_value(&w->r, n) == 0u) REFUSE(n, 0u);
+        PUT(4u, w->d, n, rr_sym_value(&w->r, n));
+    } else if (k == KIND_NUMBER) {
+        if (!rr_number(&w->r, n, &v)) REFUSE(n, 1u);
+        PUT(5u, w->d, n, v);
+    } else if (k == KIND_WILDCARD) PUT(6u, w->d, n);
+    else REFUSE(n, 2u);
+    return OK;
+}
+
+// An argument list's arguments, as step `k`'s of clause `c`.
+UKL_INLINE uint32_t k0_args(UKL_PRIVATE const Walk* w, UKL_PRIVATE Put* o, uint32_t c, int64_t k, uint32_t list, UKL_PRIVATE uint32_t* bad) {
+    int64_t i = 0;
+    RR_CHILDREN(&w->r, list, a) {
+        if (!rr_counted(&w->r, a)) continue;
+        PUT(2u, w->d, c, k, -1, i++, a);
+        TRY(k0_term(w, o, a, bad));
+    }
+    return OK;
+}
+
+// Node `n`'s relation's symbol.
+UKL_INLINE uint32_t k0_relation(UKL_PRIVATE const Walk* w, uint32_t n, UKL_PRIVATE int64_t* rel, UKL_PRIVATE uint32_t* bad) {
+    uint32_t f = rr_child(&w->r, n, FIELD_RELATION);
+    if (f == NONE) REFUSE(n, 3u);
+    *rel = k0_text(w, f);
+    return OK;
+}
+
+// An atom's or a negated atom's step `i` of clause `c` (`kind`: its step kind's symbol), and its arguments.
+UKL_INLINE uint32_t k0_atom(UKL_PRIVATE const Walk* w, UKL_PRIVATE Put* o, uint32_t c, int64_t i, int64_t kind, uint32_t a, UKL_PRIVATE uint32_t* bad) {
+    int64_t rel;
+    TRY(k0_relation(w, a, &rel, bad));
+    PUT(1u, w->d, c, i, -1, kind, rel);
+    uint32_t list = rr_child(&w->r, a, FIELD_ARGUMENTS);
+    return list == NONE ? OK : k0_args(w, o, c, i, list, bad);
+}
+
+// Statement `c`'s rows (`k0::statement`): its head, then its body's literals in the order written.
+UKL_INLINE uint32_t k0_walk(UKL_PRIVATE const Walk* w, UKL_PRIVATE Put* o, uint32_t c, UKL_PRIVATE uint32_t* bad) {
+    UKL_PRIVATE const Rr* r = &w->r;
+    if (rr_kind(r, c) != KIND_CLAUSE) REFUSE(c, 4u);
+    uint32_t h = NONE, heads = 0u;
+    RR_CHILDREN(r, c, x) if (rr_field(r, x) == FIELD_HEAD) { h = heads == 0u ? x : h; heads++; }
+    if (heads != 1u) REFUSE(c, 5u);
+    if (rr_child(r, h, FIELD_MODAL) != NONE) REFUSE(h, 6u);
+    if (rr_child(r, c, FIELD_EDIT) != NONE) REFUSE(c, 7u);
+    int64_t rel;
+    TRY(k0_relation(w, h, &rel, bad));
+    PUT(0u, w->d, c, rel);
+    uint32_t list = rr_child(r, h, FIELD_ARGUMENTS);
+    if (list != NONE) TRY(k0_args(w, o, c, -1, list, bad));
+    uint32_t b = rr_child(r, c, FIELD_BODY);
+    if (b == NONE) return OK;
+    if (rr_kind(r, b) != KIND_CONJUNCTION) REFUSE(b, 8u);
+    int64_t i = 0;
+    RR_CHILDREN(r, b, l) {
+        if (!rr_counted(r, l)) continue;
+        uint32_t lk = rr_kind(r, l);
+        if (lk == KIND_ATOM) TRY(k0_atom(w, o, c, i, w->atom, l, bad));
+        else if (lk == KIND_NEGATION) {
+            uint32_t a = rr_child(r, l, FIELD_OPERAND);
+            if (a == NONE) REFUSE(l, 9u);
+            if (rr_kind(r, a) != KIND_ATOM) REFUSE(a, 10u);
+            TRY(k0_atom(w, o, c, i, w->not_, a, bad));
+        } else if (lk == KIND_COMPARISON) {
+            uint32_t op = rr_child(r, l, FIELD_OPERATOR);
+            if (op == NONE) REFUSE(l, 11u);
+            PUT(1u, w->d, c, i, -1, w->cmp, k0_text(w, op));
+            for (uint32_t j = 0u; j < 2u; j++) {
+                uint32_t a = rr_child(r, l, j == 0u ? FIELD_LEFT : FIELD_RIGHT);
+                if (a == NONE) REFUSE(l, 12u);
+                PUT(2u, w->d, c, i, -1, j, a);
+                TRY(k0_term(w, o, a, bad));
+            }
+        } else REFUSE(l, 13u);
+        i++;
+    }
+    return OK;
+}
+
+// The launch's statement `item`: its walk's reads, its document's place and its node.
+UKL_INLINE uint32_t k0_item(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p, uint32_t item, UKL_PRIVATE Walk* w, UKL_PRIVATE uint32_t* k) {
+    CBlk docs = blk(t, (uint32_t)PARAMS(K0P).docs), lang = SLOT(K0_LANG);
+    uint32_t c = k0_statement(t, docs, lang, item, k, &w->r);
+    w->d = docs_module(docs, *k);
+    // The step kinds' symbols: the language's last three names (`intern::STEP_KINDS`), found in the atoms (0: none).
+    Atoms atoms = atoms_of(SLOT(K0_ATOMS));
+    int64_t kinds[3];
+    for (uint32_t j = 0u; j < 3u; j++) {
+        Text x = rr_lang_name(lang, rr_lang_names(lang) - 3u + j);
+        uint32_t id = atoms_find(atoms, x, atom_hash(x));
+        kinds[j] = id == NONE ? 0 : (int64_t)id;
+    }
+    w->atom = kinds[0];
+    w->not_ = kinds[1];
+    w->cmp = kinds[2];
+    return c;
+}
+UKL_INLINE uint32_t k0_n(CBlk t, UKL_GLOBAL const uint32_t* slots, UKL_GLOBAL const uint8_t* p) {
+    return k0_items(t, blk(t, (uint32_t)PARAMS(K0P).docs), SLOT(K0_LANG));
+}
+
+// Statement `item`'s words in control: its rows by relation (counts, then places after `scan`).
+#define PLACE(control, item, r) U32(control, K0_PLACES_AT + 4u * (R * (item) + (r)))
+
+// `count`: each statement's rows by relation; a refused one marks its first word K0_UNCLAIMED (`scan` finds the first
+// by document and node order: the first statement so marked).
+DELTA_KERNEL(k0_pass_count_items) { if (i == 0u) res[0] = k0_n(t, slots, p); }
+DELTA_KERNEL(k0_pass_count)
+{
+    DELTA_ITEM(item);
+    if (!REACH(K0_CONTROL, K0_PLACES_AT + 4u * R * (item + 1u))) return;
+    Walk w;
+    uint32_t k, bad = NONE;
+    uint32_t c = k0_item(t, slots, p, item, &w, &k);
+    Put o = {{0u}, {0u}, {0}, false, 0};
+    uint32_t why = k0_walk(&w, &o, c, &bad);
+    Blk control = SLOT(K0_CONTROL);
+    for (uint32_t r = 0u; r < R; r++) PLACE(control, item, r) = o.n[r];
+    if (why != OK) PLACE(control, item, 0u) = K0_UNCLAIMED;
+}
+
+// `scan`: one item. The first refused statement's refusal into control; else the counts' exclusive prefix sums by
+// relation, from the places claimed in each runs block at once.
+DELTA_ONE(k0_pass_scan)
+{
+    if (i != 0u) return;
+    Blk control = SLOT(K0_CONTROL);
+    uint32_t items = k0_n(t, slots, p);
+    for (uint32_t item = 0u; item < items; item++) {
+        if (PLACE(control, item, 0u) != K0_UNCLAIMED) continue;
+        Walk w;
+        uint32_t k, bad = NONE;
+        uint32_t c = k0_item(t, slots, p, item, &w, &k);
+        Put o = {{0u}, {0u}, {0}, false, 0};
+        U32(control, K0_REFUSED_WHY_AT) = k0_walk(&w, &o, c, &bad);
+        U64(control, K0_REFUSED_NODE_AT) = bad;
+        U32(control, K0_REFUSED_DOC_AT) = k;
+        I64(control, K0_REFUSED_MODULE_AT) = w.d;
+        return;
+    }
+    uint32_t total[R] = {0u}, placed = 0u;
+    for (uint32_t item = 0u; item < items; item++)
+        for (uint32_t r = 0u; r < R; r++) {
+            uint32_t n = PLACE(control, item, r);
+            PLACE(control, item, r) = total[r];
+            total[r] += n;
+        }
+    for (uint32_t r = 0u; r < R; r++) {
+        uint32_t base = total[r] == 0u ? 0u : runs_claim(SLOT(K0_RUNS + r), total[r]);
+        for (uint32_t item = 0u; item < items; item++) PLACE(control, item, r) = base == NONE ? K0_UNCLAIMED : base + PLACE(control, item, r);
+        U32(control, K0_ENDS_AT + 4u * r) = base == NONE ? K0_UNCLAIMED : base + total[r];
+        placed += base == NONE ? 0u : total[r];
+    }
+    U64(control, K0_PLACED_AT) = placed;
+}
+
+// `place`: each statement walked again, its rows written at its places with the run's sign.
+DELTA_KERNEL(k0_pass_place_items) { if (i == 0u) res[0] = k0_n(t, slots, p); }
+DELTA_KERNEL(k0_pass_place)
+{
+    DELTA_ITEM(item);
+    Blk control = SLOT(K0_CONTROL);
+    if (U64(control, K0_REFUSED_NODE_AT) != 0xFFFFFFFFFFFFFFFFull) return;
+    Walk w;
+    uint32_t k, bad = NONE;
+    uint32_t c = k0_item(t, slots, p, item, &w, &k);
+    Put o = {{0u}, {0u}, {0}, true, (int32_t)PARAMS(K0P).diff};
+    for (uint32_t r = 0u; r < R; r++) {
+        o.at[r] = PLACE(control, item, r);
+        o.runs[r] = SLOT(K0_RUNS + r);
+    }
+    k0_walk(&w, &o, c, &bad);
+}
+
+// Statement `item`'s first place in relation `r` (past the last: the relation's end).
+UKL_INLINE uint32_t k0_start(CBlk control, uint32_t items, uint32_t item, uint32_t r) {
+    return item == items ? U32(control, K0_ENDS_AT + 4u * r) : PLACE(control, item, r);
+}
+
+// The cache's sizes entry for document `d` of `R` counts: its own, else a let-go one; NONE for neither.
+UKL_INLINE uint32_t k0_entry(CBlk h, uint32_t d) {
+    uint32_t end = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT), dead = NONE;
+    for (uint32_t at = CACHE_ENTRIES_AT; at < end; at = cache_next(h, at)) {
+        if (U32(h, at + 4u) != 0u || U32(h, at + 24u) != R) continue;
+        if (U32(h, at) == d) return at;
+        if (U32(h, at) == CACHE_DEAD && dead == NONE) dead = at;
+    }
+    return dead;
+}
+
+// `keep`: one item. L1's cache: the documents gone let go of their entries, then each document's sizes (the rows its
+// statements were given by relation), over its entry, a let-go one, or appended at the cursor, room asked past the
+// cache's capacity. A refused run, or one whose runs were too small, keeps no size.
+DELTA_ONE(k0_pass_keep)
+{
+    if (i != 0u) return;
+    CBlk control = SLOT(K0_CONTROL);
+    if (U64(control, K0_REFUSED_NODE_AT) != 0xFFFFFFFFFFFFFFFFull) return;
+    Blk h = SLOT(K0_CACHE);
+    CBlk gone = SLOT(K0_GONE);
+    for (uint32_t g = 0u; g < parts_len(gone); g++) {
+        uint32_t at = cache_sizes(h, (uint32_t)parts_get(gone, g));
+        if (at != NONE) U32(h, at) = CACHE_DEAD;
+    }
+    for (uint32_t r = 0u; r < R; r++)
+        if (U32(control, K0_ENDS_AT + 4u * r) == K0_UNCLAIMED) return;
+    CBlk docs = blk(t, (uint32_t)PARAMS(K0P).docs), lang = SLOT(K0_LANG);
+    uint32_t items = k0_n(t, slots, p), first = 0u;
+    for (uint32_t k = 0u; k < docs_len(docs); k++) {
+        Rr r = k0_doc(t, docs, lang, k);
+        uint32_t n = k0_statements(&r), d = (uint32_t)docs_module(docs, k);
+        uint32_t at = k0_entry(h, d), len = CACHE_ENTRY_BYTES + 4u * R;
+        bool append = at == NONE;
+        if (append) at = CACHE_ENTRIES_AT + (uint32_t)U64(h, CACHE_USED_AT);
+        if (append && !REACH(K0_CACHE, at + len)) return;
+        U32(h, at + 4u) = 0u;
+        for (uint32_t c = 0u; c < 4u; c++) *(CLIF_BLOCK_SPACE uint16_t*)(h + at + 8u + 2u * c) = 0u;
+        U32(h, at + 24u) = R;
+        U32(h, at + 28u) = 0u;
+        for (uint32_t x = 0u; x < R; x++) U32(h, at + CACHE_ENTRY_BYTES + 4u * x) = k0_start(control, items, first + n, x) - k0_start(control, items, first, x);
+        // The document named last, and an appended entry counted last.
+        U32(h, at) = d;
+        if (append) U64(h, CACHE_USED_AT) = at + len - CACHE_ENTRIES_AT;
+        first += n;
+    }
+}
+#undef R

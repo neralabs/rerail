@@ -179,6 +179,8 @@ pub const RUNS: usize = 4;
 pub const R: usize = 8;
 /// L1's cache (read-write): each document's sizes, the rows it was given by relation (`cache::keep_sizes`).
 pub const CACHE: usize = RUNS + R;
+/// The `.rerail` language's table (read; `intern::write_language`): what a kernel reads a node's kind and field by.
+pub const LANG: usize = CACHE + 1;
 
 /// A docs block's words, at `BODY_AT`: its body's length, its documents' count, the first document a blob of which no
 /// blobs' row names (`NO_DOC`: none; `docs_of`'s); then each document's: its module, its source's, its tape's and its
@@ -294,11 +296,11 @@ pub const REFUSED_DOC: usize = BODY_AT + 12;
 pub const PLACED: usize = BODY_AT + 16;
 pub const REFUSED_MODULE: usize = BODY_AT + 24;
 /// Each relation's end in its runs block after `scan` (its first place past the run's rows; `UNCLAIMED`: none).
-const ENDS: usize = BODY_AT + 32;
+pub const ENDS: usize = BODY_AT + 32;
 /// Where control's statement places start.
-const PLACES: usize = ENDS + 4 * R;
+pub const PLACES: usize = ENDS + 4 * R;
 /// A relation whose places could not be claimed (its runs block too small: the driver runs again).
-const UNCLAIMED: u32 = u32::MAX;
+pub const UNCLAIMED: u32 = u32::MAX;
 
 /// Control's body bytes for `n` statements' places.
 pub fn control_bytes(n: usize) -> usize {

@@ -65,6 +65,7 @@ DECLARE_KERNEL2(delta_exec, k0_pass,
     WOBUFFER, ukl_scratch_block, k_wild, "[block]",
     WOBUFFER, ukl_scratch_block, k_order, "[block]",
     RWBUFFER, ukl_cache_block, cache, "[block]",
+    ROBUFFER, ukl_control_block, lang, "[block]",
     ARGS, K0P, p, )
 
 // rerail_delta_exec::k0
