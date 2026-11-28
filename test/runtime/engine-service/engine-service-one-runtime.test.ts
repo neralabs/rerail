@@ -54,12 +54,15 @@ async function service() {
   return { root, databasePath, first, second, otherModel, clock, engine, configured, start, prompt, end };
 }
 
-/** The ids of the events `databasePath` records for `sessionId`, in the order they were recorded. */
+/**
+ * The ids of the events the test sent for `sessionId` that `databasePath` records, in the order they were recorded; the
+ * records the runtime makes of its own beside them (`hud-tracking-start`, ids it draws) are left out.
+ */
 function recorded(databasePath: string, sessionId: string): string[] {
   const database = new Database(databasePath, { readonly: true });
   try {
     const rows = database.prepare("SELECT event_id AS eventId FROM events WHERE session_id = ? ORDER BY sequence").all(sessionId) as Array<{ eventId: string }>;
-    return rows.map(row => row.eventId);
+    return rows.map(row => row.eventId).filter(eventId => eventId.startsWith(`${sessionId}:`));
   } finally {
     database.close();
   }
