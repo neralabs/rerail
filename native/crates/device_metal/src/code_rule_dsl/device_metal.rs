@@ -12,6 +12,18 @@ pub(crate) struct Metal;
 pub(crate) static METAL: Metal = Metal;
 
 /// Registers Metal as the logic's and the transducer's device.
+/// Test hook: the device path's indexes built so far, ahead of the strata that probe them (decision 0707) and by a
+/// stratum's own batch.
+pub fn index_builds_for_tests() -> [u64; 2] {
+    joins::index_builds()
+}
+
+/// Test hook: each index a stratum's own batch built so far, by what (`rel (cols) by [keys]`) and stratum.
+#[cfg(feature = "test-hooks")]
+pub fn stratum_index_builds_for_tests() -> Vec<(String, String)> {
+    joins::stratum_builds()
+}
+
 pub fn register() {
     crate::code_rule_dsl::logic::device::register("rerail-device-metal", &METAL);
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);

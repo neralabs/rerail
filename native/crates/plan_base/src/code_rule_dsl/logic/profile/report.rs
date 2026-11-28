@@ -261,9 +261,9 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("gaps.tsv"), gaps_tsv)?;
     let state = super::merged();
-    let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
+    let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\tcycles\town_cycles\tinstructions\town_instructions\n");
     for (p, t) in &state.spans {
-        let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise);
+        let _ = writeln!(spans_tsv, "{p}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", t.calls, t.total, t.own, t.alloc, t.own_alloc, t.freed, t.rise, t.own_rise, t.cycles, t.own_cycles, t.instructions, t.own_instructions);
     }
     std::fs::write(dir.join("spans.tsv"), spans_tsv)?;
     std::fs::write(dir.join("memory.tsv"), memory::sampled_tsv())?;

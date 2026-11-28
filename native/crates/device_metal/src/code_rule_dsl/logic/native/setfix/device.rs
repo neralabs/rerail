@@ -478,8 +478,9 @@ fn binds(d: &mut mj::Stage, f: &rowcode::Fused, filter: bool) {
 fn readable(rel: &InRel, keys: usize) -> Result<(), String> {
     match &rel.view {
         // A kind-set axis or containment is made whole by the batch's solve, and read so (decision 0277).
-        // A `has` axis probed by one key is read off the tape (decision 0353 step 5, `resident`): nothing is made.
-        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys == 1 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
+        // A walked axis probed by either key or both is read off the tape (decision 0353 step 5, `resident`): nothing
+        // is made.
+        Some(v) if keys > 0 && v.src.made_on_lookup() && !v.src.complete_rows() && !(keys <= 2 && rel.ndead == 0 && v.src.has_walk().is_some()) => Err("an atom read by keys over a relation made on lookup".into()),
         _ => Ok(()),
     }
 }
@@ -1778,7 +1779,109 @@ fn with_consts(mut d: mj::Stage, consts: &[(u32, i64)]) -> mj::Stage {
 /// by `batch`). Nothing is uploaded (decision 0353 step 6): rows read neither way refuse the stratum (`Err`), which
 /// runs on the CPU.
 #[allow(clippy::type_complexity)]
+/// A probe's index, counted (`rep.sorts`, `rep.sort_hits`) and, profiled, by its relation and key columns: built by
+/// this batch, or found where an earlier one built it (a measurement aid for which indexes the strata build).
+fn index_counted(rel: &Arc<InRel>, ix: &mj::DevIndex, rep: &mut Report) {
+    index_counted_as(|| match &rel.view {
+        Some(view) => format!("{} ({})", view.of().unwrap_or("view"), view.src.columns().join(",")),
+        None => rel.table_name().unwrap_or("?").to_owned(),
+    }, ix, rep);
+}
+
+/// Indexes built: ahead of the strata that probe them (`build_indexes`, decision 0707), and by a stratum's own batch.
+static INDEX_BUILDS: [std::sync::atomic::AtomicU64; 2] = [std::sync::atomic::AtomicU64::new(0), std::sync::atomic::AtomicU64::new(0)];
+
+thread_local! {
+    /// Whether this thread builds indexes ahead (`build_indexes`).
+    static BUILDING_AHEAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test hook: each index a stratum's own batch built, by what and by `stratum` (the profile's path: none where profiling
+/// is off).
+#[cfg(feature = "test-hooks")]
+static STRATUM_BUILDS: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Test hook: `STRATUM_BUILDS` so far.
+#[cfg(feature = "test-hooks")]
+pub(in crate::code_rule_dsl) fn stratum_builds() -> Vec<(String, String)> {
+    STRATUM_BUILDS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Test hook: the indexes built so far, ahead and by strata (`INDEX_BUILDS`).
+pub(in crate::code_rule_dsl) fn index_builds() -> [u64; 2] {
+    INDEX_BUILDS.each_ref().map(|a| a.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// `index_counted` of an index named by `what`.
+fn index_counted_as(what: impl FnOnce() -> String, ix: &mj::DevIndex, rep: &mut Report) {
+    if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+    if ix.built {
+        INDEX_BUILDS[usize::from(!BUILDING_AHEAD.get())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(feature = "test-hooks")]
+    if ix.built && !BUILDING_AHEAD.get() {
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let at = p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).unwrap_or("").to_owned();
+        STRATUM_BUILDS.lock().unwrap_or_else(|e| e.into_inner()).push((format!("{} by {:?}", what(), ix.cols), at));
+        return;
+    }
+    if crate::code_rule_dsl::logic::profile::on() {
+        let what: String = what().chars().take(80).collect();
+        // Where: the planner's build ahead (decision 0707) or the stratum whose batch asked.
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let at = if p.contains("device wave (indexes)") { "ahead".to_owned() } else { p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).map_or("?", |c| c.trim_end_matches(" (in a job)")).chars().take(40).collect() };
+        let how = if ix.built { "built" } else { "found" };
+        crate::code_rule_dsl::prof::count_named_args(format_args!("device.index {how}: {what} by {:?} @ {at}", ix.cols), ix.rows);
+        crate::code_rule_dsl::prof::count_named_args(format_args!("device.indexes {how}: {what} by {:?} @ {at}", ix.cols), 1);
+    }
+}
+
+/// Whether a stage probing `rel` by `cols` would walk it on the tape (`resident`'s first branch), where its source has
+/// a walk (`Source::has_walk`).
+fn walked_by(rel: &Arc<InRel>, cols: &[usize]) -> bool {
+    rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1] | [0, 1] | [1, 0])
+}
+
 fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: &mut mj::Batch, rep: &mut Report) -> Result<(Rc<mj::DevRel>, Option<Rc<mj::DevIndex>>, Vector<u32>, Consts), String> {
+    // A `has` axis probed by its columns is read off the tape (decision 0353 step 5): a stage walks each binding's
+    // rows there (`mj::Batch::by_has`), nothing made, uploaded or indexed. First: where its pairs were solved into a
+    // block (`placed`), an index of them is not built either. Scanned whole, its rows are read where they lie.
+    // Containment (`within`) is `has` of every kind, and `inside` and `nearest` the same walks; probed by both
+    // columns, the node's climb.
+    let walked = walked_by(rel, cols);
+    // A measurement aid: why a containment or axis view probed here is not walked.
+    if crate::code_rule_dsl::logic::profile::on()
+        && let Some(v) = rel.view.as_ref()
+        && let Some(of) = v.of().filter(|o| o.contains("within") || o.contains("has") || o.contains("nearest") || o.contains("inside"))
+    {
+        let why = if !walked { "its columns or dead rows" } else if v.src.has_walk().is_none() { "no walk of its source" } else { "walked" };
+        crate::code_rule_dsl::prof::count_named_args(format_args!("device.walk {why}: {} by {cols:?} ndead {} src {}", of.chars().take(60).collect::<String>(), rel.ndead, v.src.as_any().map_or("?", |a| if a.is::<crate::code_rule_dsl::facts::vtab::syntax::within::Within>() { "Within" } else if a.is::<crate::code_rule_dsl::facts::vtab::syntax::values::Layered>() { "Layered" } else { "other" })), 1);
+    }
+    // A measurement aid: a `node` view probed by its kind, by its source.
+    if crate::code_rule_dsl::logic::profile::on()
+        && let Some(v) = rel.view.as_ref()
+        && v.src.columns().get(2).is_some_and(|c| c == "kind")
+        && v.src.columns().len() == 5
+        && cols.iter().any(|&c| owner_col(rel, c) == 2)
+    {
+        use crate::code_rule_dsl::facts::vtab::syntax::values::Layered;
+        let src = v.src.as_any().map_or("?", |a| match a.downcast_ref::<Layered>() {
+            Some(l) if l.values_admitted() => "layered, values admitted",
+            Some(_) => "layered, none admitted",
+            None => "the batch's",
+        });
+        let by: Vec<usize> = cols.iter().map(|&c| owner_col(rel, c)).collect();
+        crate::code_rule_dsl::prof::count_named_args(format_args!("device.bykind {src} by {by:?} whole {}", v.whole()), rel.len());
+    }
+    if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
+        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds, w.axis).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
+        rep.in_place += 1;
+        crate::code_rule_dsl::prof::count(["device.view_read.has", "device.view_read.inside", "device.view_read.nearest", "device.view_read.within"][w.axis as usize], 1);
+        let place: Vector<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
+        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
+    }
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
@@ -1790,20 +1893,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         }
         let by: Vector<usize> = cols.iter().map(|&c| place[c] as usize).collect();
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
-        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        index_counted(rel, &ix, rep);
         return Ok((dev, Some(ix), place, Vec::new()));
-    }
-    // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5): a stage walks each
-    // binding's rows there (`mj::Batch::by_has`), nothing made or uploaded. Read otherwise, its rows are uploaded.
-    let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1]);
-    if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
-        let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
-        rep.in_place += 1;
-        crate::code_rule_dsl::prof::count("device.view_read.has", 1);
-        let place: Vector<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
-        let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
-        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     // A view filtered by constants is read in place whole (decision 0353 step 4): its constants are keys its stage adds
     // (`with_consts`), so a probe's index is over its key columns and theirs and every candidate is checked against
@@ -1832,8 +1923,15 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
             return Ok((dev, Some(Rc::new(ix)), place, consts));
         }
         let keyed: Vec<usize> = by.iter().copied().chain(consts.iter().map(|&(c, _)| c as usize)).collect();
+        // `node` by its kind (a constant's or a key's): its batches' lists, the others checked on each (decision 0706
+        // step 0).
+        if let Some(ix) = batch.by_kind(&dev, &keyed, view.src.kind_table()).map_err(|e| format!("{e:?}: a probe by kind"))? {
+            crate::code_rule_dsl::prof::count("device.view_read.by_kind", 1);
+            rep.kind_walks += 1;
+            return Ok((dev, Some(Rc::new(ix)), place, consts));
+        }
         let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered view's {} rows", dev.rows))?);
-        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        index_counted(rel, &ix, rep);
         return Ok((dev, Some(ix), place, consts));
     }
     // A view filtered by constants of a source in a block is read there whole (decision 0353 step 6), as a view the
@@ -1850,7 +1948,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
         let keyed: Vec<usize> = cols.iter().map(|&c| place[c] as usize).chain(consts.iter().map(|&(c, _)| c as usize)).collect();
         let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered relation's {} rows", dev.rows))?);
-        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        index_counted(rel, &ix, rep);
         return Ok((dev, Some(ix), place, consts));
     }
     let whole = matches!(&rel.view, Some(v) if v.whole() && rel.ndead == 0);
@@ -1918,9 +2016,15 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     if let Some(ix) = batch.by_own(&dev, &by).map_err(|e| format!("{e:?}: a probe by own id"))? {
         return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
+    // `node` by its kind: its batches' lists, no index of the view (decision 0706 step 0).
+    if let Some(ix) = batch.by_kind(&dev, &by, rel.view.as_ref().and_then(|v| v.src.kind_table())).map_err(|e| format!("{e:?}: a probe by kind"))? {
+        crate::code_rule_dsl::prof::count("device.view_read.by_kind", 1);
+        rep.kind_walks += 1;
+        return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
+    }
     let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
     // Found where a stratum before built it (a view's, in its block), or built here.
-    if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+    index_counted(rel, &ix, rep);
     Ok((dev, Some(ix), place, Vec::new()))
 }
 
@@ -2366,12 +2470,35 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
 pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, String> {
     on_lane("index builds", plans.len(), || {
         let _in = in_device();
+        BUILDING_AHEAD.set(true);
+        struct Ahead;
+        impl Drop for Ahead {
+            fn drop(&mut self) {
+                BUILDING_AHEAD.set(false);
+            }
+        }
+        let _ahead = Ahead;
+        let _tag = rerail_ukl_rust::stage_prof::on().then(|| StageTag(rerail_ukl_rust::stage_prof::set_tag(rerail_ukl_rust::stage_prof::intern("(build ahead)"))));
         let mut batch = direct_batch(None)?;
         let mut rep = Report::default();
         let mut held = Vec::new();
         for s in plans.iter().flat_map(|p| &p.stages) {
             let Kind::Atom { rel, cols } = &s.kind else { continue };
-            if cols.is_empty() || !read_in_place(rel) {
+            // An axis its stage walks on the tape has no index to build; asking where its rows lie (`read_in_place`)
+            // would solve the whole axis on the host, ahead of the level (`Within::in_block`): 2,000 samples of the
+            // build ahead on `all` (2026-11-27).
+            if cols.is_empty() || walked_by(rel, cols) && rel.view.as_ref().is_some_and(|v| v.src.has_walk().is_some()) {
+                continue;
+            }
+            if crate::code_rule_dsl::logic::profile::on() {
+                let what = match &rel.view {
+                    Some(view) => format!("{} ({})", view.of().unwrap_or("view"), view.src.columns().join(",")),
+                    None => rel.table_name().unwrap_or("?").to_owned(),
+                };
+                let ok = read_in_place(rel) || filtered_in_place(rel, cols);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("device.ahead {}: {what} by {cols:?}", if ok { "offered" } else { "not in place" }), 1);
+            }
+            if cols.is_empty() || !(read_in_place(rel) || filtered_in_place(rel, cols)) {
                 continue;
             }
             // One its stratum cannot read either is refused there, with why.
@@ -2383,6 +2510,13 @@ pub(in crate::code_rule_dsl) fn build_indexes(plans: &[&Plan]) -> Result<usize, 
         drop(held);
         Ok(rep.sorts as usize)
     })
+}
+
+/// Whether a stage probing `rel` by `cols` reads it as a view filtered by its constants, in place (`resident`'s first
+/// branch: the constants keys of its index beside `cols`). Left to its stratum, `field(a, "left", n)` was not built
+/// ahead: 11,669 of the stages the build ahead was offered on `all` (2026-11-27).
+fn filtered_in_place(rel: &Arc<InRel>, cols: &[usize]) -> bool {
+    rel.view.as_ref().is_some_and(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && v.arity() == rel.k && cols.len() + v.eqs().len() <= mj::MAX_KEYS && v.src.device_view().is_some())
 }
 
 /// Whether a stage reads `rel` where it lies (`resident`): in its block, or a whole view its directory reads.
@@ -2410,6 +2544,15 @@ fn spliced(n: usize, live: &[usize], rows: Vector<u64>) -> Vector<u64> {
     out
 }
 
+/// The thread's `stage_prof` tag before a device run's, put back as it ends.
+struct StageTag(u32);
+
+impl Drop for StageTag {
+    fn drop(&mut self) {
+        rerail_ukl_rust::stage_prof::set_tag(self.0);
+    }
+}
+
 fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String> {
     // A rule over an empty input makes no row, and its steps see none: it is not encoded, as the CPU does not walk it.
     let live = live(rules);
@@ -2419,6 +2562,12 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
     }
     let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
+    // A measurement aid (`RERAIL_STAGE_PROF`): the join program's items counted by the stratum they are this one's.
+    let _tag = rerail_ukl_rust::stage_prof::on().then(|| {
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let name = p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).map_or(p.as_str(), |c| c.trim_end_matches(" (in a job)"));
+        StageTag(rerail_ukl_rust::stage_prof::set_tag(rerail_ukl_rust::stage_prof::intern(name)))
+    });
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
     let mut out = rerail_blocks::vector::Vector::with_capacity(rules.len());
@@ -2682,9 +2831,11 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
         let room = admitted(rules, rep)?;
         let mut batch = direct_batch(None)?;
         batch.again_on_rewrap();
+        let span = crate::code_rule_dsl::logic::profile::span(|| "encode".into());
         let runs = encode_runs(rules, &mut batch, rep, names, store)?;
         // Its heads' rows placed in the same program (decision 0603: a stratum is one launch), from the device's counts.
         let pre = encode_place(&runs, rules, store, fresh, rep, &mut batch)?;
+        drop(span);
         // Its arena is address space mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps
         // more, and nothing runs again. Where the host reads a placed table of it (a head read back, every head not
         // placed by the program), one the host reads (on Metal a wrapped one, not private storage).
@@ -2692,7 +2843,9 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
         batch.arena_reserved(!placed_all);
         drop(room);
         let (t0, w0) = (Instant::now(), thread_cpu());
+        let span = crate::code_rule_dsl::logic::profile::span(|| "run the program".into());
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
+        drop(span);
         if done.rewrapped {
             // Nothing of it ran: its heads' rooms given back, and its report the encoding's to come.
             if let Some(pre) = pre {
@@ -2709,6 +2862,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
         rep.wait_cpu += thread_cpu() - w0;
         tally(rep, &done);
         let full = if done.arena_full { done.arena_wanted.max(1) } else { 0 };
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "complete (rows into the store)".into());
         return complete(runs, rules, store, names, fresh, rep, full, pre.filter(|_| !done.stopped));
     }
     Err(format!("a stratum's encoding grew a block its work had bound {REWRAPS_MOST} times"))
@@ -3263,7 +3417,7 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
                 let dev = mj::DevRel::in_block(&held, k).map_err(|e| format!("{e:?}: a relation in its block"))?;
                 let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
                 rep.in_place += 1;
-                if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+                index_counted_as(|| "a head's own rows (less those it holds)".into(), &ix, rep);
                 let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
                 for c in 0..k {
                     d.key_rcol[c] = c as u32;
@@ -3405,7 +3559,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             let dev = mj::DevRel::in_block_from(held, k, *from, *n).map_err(|e| format!("{e:?}: a relation in its block"))?;
             let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
             rep.in_place += 1;
-            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            index_counted_as(|| "a head's own rows (less those it holds)".into(), &ix, rep);
             let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
             for c in 0..k {
                 d.key_rcol[c] = c as u32;
@@ -3507,12 +3661,12 @@ impl Own {
         // derived nothing from it.
         if let Some(ix) = self.sorts.get(&key).cloned() {
             let ix = batch.again(&dev, &ix).map_err(|e| format!("{e:?}: an index of {} rows found again", dev.rows))?;
-            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            index_counted_as(|| "a recursive stratum's own relation (its room, not rows built)".into(), &ix, rep);
             self.sorts.insert(key, ix.clone());
             return Ok(Some((dev, Some(ix))));
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
-        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        index_counted_as(|| "a recursive stratum's own relation (its room, not rows built)".into(), &ix, rep);
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }
@@ -3645,6 +3799,12 @@ pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], de
 }
 
 fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
+    // A measurement aid (`RERAIL_STAGE_PROF`): the rounds' items counted by their stratum, as a stratum's joins' are.
+    let _tag = rerail_ukl_rust::stage_prof::on().then(|| {
+        let p = crate::code_rule_dsl::logic::profile::current_path();
+        let name = p.split('/').rev().find_map(|c| c.strip_prefix("stratum ")).map_or(p.as_str(), |c| c.trim_end_matches(" (in a job)"));
+        StageTag(rerail_ukl_rust::stage_prof::set_tag(rerail_ukl_rust::stage_prof::intern(&format!("{name} (rounds)"))))
+    });
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 

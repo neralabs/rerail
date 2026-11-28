@@ -4958,6 +4958,10 @@ pub enum Ver {
 /// its probes name.
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vector<usize>, ids: Option<OnceLock<Vector<u32>>>, eqs: Vec<(usize, i64)>, of: Option<Arc<str>> }
 impl View {
+    /// The relation it is a view of, by name, where it was made for one (a measurement aid's label).
+    pub fn of(&self) -> Option<&str> {
+        self.of.as_deref()
+    }
     /// Its rows' places in the source, a view of some rows': found when first asked, for a filtered one.
     fn ids(&self) -> Option<&[u32]> {
         self.ids.as_ref().map(|ids| ids.get_or_init(|| self.filtered()).as_slice())
@@ -9185,7 +9189,7 @@ pub fn prefetch_joins(conn: &Connection, specs: &[Join]) -> Result<usize> {
 /// Decision 0707: the indexes the joins `specs` probe their relations by, built on the device before the strata that
 /// run them (`SolverDevice::build_indexes`), as the device would compile them (`host`: its join programs the host's).
 /// How many it built; none with no device.
-pub fn prefetch_device_indexes(conn: &Connection, specs: &[Join], host: bool) -> Result<usize> {
+pub fn prefetch_device_indexes(conn: &Connection, specs: &[&Join], host: bool) -> Result<usize> {
     let Some(dev) = solver().filter(|d| d.join_available()) else { return Ok(0) };
     let _host = host.then(rerail_accel::gpu::shared::on_host);
     let symbols = symbols(conn)?;

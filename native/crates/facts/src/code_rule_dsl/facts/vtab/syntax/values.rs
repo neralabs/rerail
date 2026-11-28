@@ -371,6 +371,9 @@ pub(super) struct Dir {
     /// 2,000 builds of `child`'s index of 58-70 K rows, 47 of the join program's 61 s, 2026-11-25).
     homes: [std::sync::OnceLock<Option<(usize, Arc<crate::code_rule_dsl::facts::rows::IndexHome>)>>; 16],
     batches: Vec<Arc<super::Batch>>,
+    /// The `node` view's rows by kind over the directory (`Batch::kind_table_over`: the chunk's batch's lists, then
+    /// each value's), its offset in the chunk's block: made the first time a stage probes the layered view by kind.
+    kinds: std::sync::OnceLock<u64>,
 }
 
 impl Values {
@@ -499,7 +502,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, homes: Default::default(), batches: batches.clone(), kinds: std::sync::OnceLock::new() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -721,6 +724,10 @@ impl Layered {
         keys.dedup();
         *held = (admitted, Arc::from(keys));
         Arc::clone(&held.1)
+    }
+    /// Whether values with rows of this relation are admitted (`has_parts`): a measurement aid's question.
+    pub fn values_admitted(&self) -> bool {
+        self.has_parts()
     }
     fn has_parts(&self) -> bool {
         let admitted = self.values.admitted() as u64;
@@ -1588,6 +1595,50 @@ impl Source for Layered {
             return self.solved_in_block();
         }
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
+    }
+    /// `has` and containment off the tape (`Within::has_walk`): the chunk's, or with values admitted one walk over the
+    /// layered directory of the batch and its values (`views_over`), each value's axis the base's (its mode and set). A
+    /// pair is one document's (none crosses documents), so a node's walk is its own document's tape, whichever batch.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn has_walk(&self) -> Option<crate::code_rule_dsl::facts::vtab::HasWalk> {
+        if !self.has_parts() {
+            return self.base.has_walk();
+        }
+        // A measurement aid: why a layered walk is none.
+        let no = |why: &str| {
+            crate::code_rule_dsl::prof::count_named_args(format_args!("layered walk none: {} ({why})", self.name), 1);
+            None
+        };
+        let Some(base) = self.base.as_any().and_then(|a| a.downcast_ref::<super::within::Within>()) else { return no("base not within") };
+        let parts = self.values.parts.load();
+        let Some(p) = parts.get(self.name.as_str()) else { return no("no parts") };
+        let same = p.list.iter().all(|x| x.src.as_any().and_then(|a| a.downcast_ref::<super::within::Within>()).is_some_and(|w| base.walks_as(w)));
+        if !same {
+            return no("a part not the same walk");
+        }
+        let Some(dir) = self.values.dir(base.batch()) else { return no("no directory") };
+        if dir.batches.len() != p.list.len() {
+            return no("directory and parts differ");
+        }
+        let keep = Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>;
+        let (_, nodes) = dir.views.node_view(&base.batch().block, Arc::clone(&keep))?;
+        base.walk_over(&dir.views, nodes, keep)
+    }
+    /// The `node` view's rows by kind (`Source::kind_table`): the base's, or with values admitted the layered
+    /// directory's, over the chunk's batch's lists and each value's, where the layered view is read in place.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn kind_table(&self) -> Option<crate::code_rule_dsl::facts::vtab::KindTableAt> {
+        if !self.has_parts() {
+            return self.base.kind_table();
+        }
+        self.base.kind_table()?;
+        let batch = self.base.python_batch()?;
+        let dir = self.values.dir(&batch)?;
+        let at = *dir.kinds.get_or_init(|| {
+            let all: Vec<&super::Batch> = std::iter::once(&*batch).chain(dir.batches.iter().map(|b| &**b)).collect();
+            super::Batch::kind_table_over(&all)
+        });
+        Some(crate::code_rule_dsl::facts::vtab::KindTableAt { at, dirs: [dir.views.host.dir, dir.views.dir.unwrap_or(0)], dir_at: dir.views.at as u64 })
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView> {

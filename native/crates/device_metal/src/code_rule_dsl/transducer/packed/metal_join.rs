@@ -633,8 +633,10 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
-    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
+    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each; and its axis
+    /// (`HasWalk::axis`: every kind, containment, reads none of them).
     has: Option<Words>,
+    has_axis: u32,
     /// Its rows are its length as the device claims it, `rows` at most (`live`): a recursive component's relation that
     /// grows round after round within one launch (decision 0603 step 3).
     live: bool,
@@ -675,7 +677,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None, far: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), from: 0, kept: None, has: None, has_axis: 0, live: false, mapped: None, far: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -699,18 +701,23 @@ impl DevRel {
     /// A `has` axis read off the tape (decision 0353 step 5): the batch's `node` view in place (`view`, of `nodes`
     /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
     /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
-    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
+    /// `axis`: which ancestors are a node's (`HasWalk::axis`); of every kind (containment), its walks read no kind.
+    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64], axis: u32) -> Result<DevRel, Error> {
+        if kinds.len() >= 1 << HAS_AXIS || axis > 3 {
+            return Err(Error::UnsupportedFeature("a walked axis's set past its stage's bits"));
+        }
         // Nothing indexes it (`Batch::by_has` walks the tape): its relation of no columns has no room for an index.
         let part = crate::code_rule_dsl::facts::rows::Part::for_device_unindexed(nodes).map_err(|_| Error::BackendCapacity)?;
         let mut dev = DevRel::of_part(part, 0, nodes)?;
         dev.cols = 2;
         dev.view = Some(view);
-        let set = Words::zeroed(2 * kinds.len())?;
+        let set = Words::zeroed(2 * kinds.len().max(1))?;
         for (i, &k) in kinds.iter().enumerate() {
             set.set(2 * i, k as u32);
             set.set(2 * i + 1, (k >> 32) as u32);
         }
         dev.has = Some(set);
+        dev.has_axis = axis;
         Ok(dev)
     }
 
@@ -775,7 +782,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, live: false, mapped: None, far: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), from: 0, kept: None, has: None, has_axis: 0, live: false, mapped: None, far: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -792,7 +799,7 @@ impl DevRel {
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
         let far = b.far().map(|f| held_block(device, &f, Box::new(f.clone()))).transpose()?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, live: false, mapped: None, far }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), from: 0, kept: b.part.clone(), has: None, has_axis: 0, live: false, mapped: None, far }.noted())
     }
 
     /// The buffer its kernels bind as its far base's block (`far`): `bound`, the buffer its own reads bind, when its
@@ -1057,14 +1064,17 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
-    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
+    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 4 a view's own row by its id (`by_own`); 5 the
+    /// `node` view's rows of a kind, its batches' lists (`by_kind`); 0 an index.
     walk: u32,
     /// Its block's buffer, taken once the index has its room, and its builder's bind; the block is held by it. Its
     /// probes bind the block's wrap as it is when they are encoded (`DevRel::wrap`): a block grown past its wrap
     /// since, by another index's room, is wrapped anew.
     buffer: Held,
     /// The relation's columns it is by (`Batch::index`'s `cols`), to find it again (`Batch::again`).
-    cols: Vec<usize>,
+    pub(in crate::code_rule_dsl) cols: Vec<usize>,
+    /// A walk by kind's table (`walk` 5, `by_kind`): its address where the stage reads the view's directory.
+    table: u64,
 }
 
 impl DevIndex {
@@ -1104,6 +1114,10 @@ pub(in crate::code_rule_dsl) struct Screen {
     pub(in crate::code_rule_dsl) key: u32,
 }
 
+/// Where a walked axis's stage holds its axis (`HasWalk::axis`): its set size's (`Stage::v_nset`) top two bits, as
+/// the join programs read it (`HAS_AXIS`).
+pub(in crate::code_rule_dsl) const HAS_AXIS: u32 = 30;
+
 /// A stage's probed relation `rel` (and its index, read by keys) into its fields.
 fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.nr = rel.rows as u32;
@@ -1114,16 +1128,22 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
-    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), (set.len / 2) as u32, 0));
+    // The set's size, its axis in the top bits (`HAS_AXIS`): of every kind, each node is in it, its words not read.
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().expect("a has axis's set where views are read in place"), if rel.has_axis == 3 { u32::MAX } else { (rel.has_axis << HAS_AXIS) | (set.len / 2) as u32 }, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
         // Walks of the tape (`DevIndex::walk`): a parent's children (1), a `has` climb or subtree (2, 3), a node's own
         // row by its id (4).
+        // The `node` view by its kind (5): its batches' lists, by its table (`KindTable`, in the directory's block).
         stage.v_parent = match ix.walk {
             1 => 1,
             4 => 2,
+            5 => 3,
             _ => 0,
         };
+        if ix.walk == 5 {
+            stage.v_set = ix.table;
+        }
         stage.v_has = if matches!(ix.walk, 2 | 3) { ix.walk - 1 } else { 0 };
     }
 }
@@ -2267,36 +2287,58 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
     }
 
     /// `rel`, the `node` or `child` view read in place, probed by its id (column 1, with any others): no index of it is
     /// built, as a stage finds the id's document and node (`view_number`) and its one row there, the others checked on
-    /// it, as the host's probe by a node's own id (`Batch::node_hint`). `None` for any other relation or key.
+    /// it, as the host's probe by a node's own id (`Batch::node_hint`). A `Loc` view (`line`, `end_line`, `col`,
+    /// `docof`) by its id (column 0): the id's position (`view_loc_number`), its one row (decision 0706 step 0: `docof`
+    /// by `n`, or by `n` and `d`, is `d = file(n)`, read). `None` for any other relation or key.
     pub(in crate::code_rule_dsl) fn by_own(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
-        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_NODE};
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::{VIEW_CHILD, VIEW_LOC_DOCOF, VIEW_LOC_LINE, VIEW_NODE};
         let Some(v) = &rel.view else { return Ok(None) };
-        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD) || !cols.contains(&1) || rel.is_has() {
+        let loc = (1 + VIEW_LOC_LINE..=1 + VIEW_LOC_DOCOF).contains(&v.kind);
+        let own = if loc { 0 } else { 1 };
+        if !(v.kind == 1 + VIEW_NODE || v.kind == 1 + VIEW_CHILD || loc) || !cols.contains(&own) || rel.is_has() {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 4, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
     }
 
-    /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
-    /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
-    /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
+    /// `rel`, the `node` view read in place, probed by its kind (column 2, with any others but its id: `by_own`'s): no
+    /// index of it is built, as a stage reads the kind's runs of its batches' lists (`KindTable` at `table`, in the
+    /// view's directory's block), the others checked on each (decision 0706 step 0). `None` for any other relation or
+    /// key.
+    /// `table` is the source's (`Source::kind_table`), read only where it is over the view's directory.
+    pub(in crate::code_rule_dsl) fn by_kind(&self, rel: &DevRel, cols: &[usize], table: Option<crate::code_rule_dsl::facts::vtab::KindTableAt>) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_NODE;
+        let Some(v) = &rel.view else { return Ok(None) };
+        if v.kind != 1 + VIEW_NODE || !cols.contains(&2) || cols.contains(&1) || rel.is_has() {
+            return Ok(None);
+        }
+        let Some(t) = table.filter(|t| v.dir != 0 && t.dirs.contains(&v.dir)) else { return Ok(None) };
+        // Its address where the stage reads the directory: the directory's, less its offset in the block.
+        let table = v.dir - t.dir_at + t.at;
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 5, buffer: bound(&home)?, cols: Vec::new(), table }))
+    }
+
+    /// A `has` axis probed by its columns (decision 0353 step 5): no index, each binding's rows walked on the tape
+    /// (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree; by both, the node's climb,
+    /// each ancestor checked against the bound one. `None` for any other relation; an error for a probe by none.
     pub(in crate::code_rule_dsl) fn by_has(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
         if !rel.is_has() {
             return Ok(None);
         }
         let walk = match cols {
-            [0] => 2,
+            [0] | [0, 1] | [1, 0] => 2,
             [1] => 3,
-            _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
+            _ => return Err(Error::UnsupportedFeature("a has axis probed by none of its columns")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new(), table: 0 }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -2353,7 +2395,7 @@ impl Batch {
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows. A live
             // relation's index is built again for each round (below): none found.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32).filter(|_| !rel.live) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new(), table: 0 });
             }
             // This batch's own build: read by its stages after it. One in the open submission is ordered before them
             // (a submission's launches run in order); one in a submission already committed is not, as another batch's
@@ -2372,7 +2414,7 @@ impl Batch {
                     drop(held);
                     let buffer = bound(&home)?;
                     self.queue_index(rel, cols, &room, &buffer)?;
-                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() });
+                    return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: true, walk: 0, buffer, cols: Vec::new(), table: 0 });
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
@@ -2385,7 +2427,7 @@ impl Batch {
                     Some(buffer) => Held::of_block(buffer, rerail_blocks::region::whole(&home.block), Box::new(home.clone())),
                     None => bound(&home)?,
                 };
-                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer, cols: Vec::new() });
+                return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer, cols: Vec::new(), table: 0 });
             }
             // Another batch's, its work committed: taken, not built again. Building it again here took the block's room
             // twice (row 9 of 0353: two waves of a level each built [0,1], and the [0] after found no bytes left, and
@@ -2430,7 +2472,7 @@ impl Batch {
             // Read again at this batch's finish (`borrowed`): its builder's program may yet stop before the build (a
             // later stack, a park), as its control words then say.
             self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
-            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
+            return Ok(DevIndex { index: room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new(), table: 0 });
         }
         let Some(room) = room else {
             // A live relation grows where it lies: its index has room there, or it is refused.
@@ -2504,7 +2546,7 @@ impl Batch {
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
         self.building[held].encoded = true;
-        Ok(DevIndex { index: room.index as u32, rows: n, fresh: None, built: true, walk: 0, buffer, cols: Vec::new() })
+        Ok(DevIndex { index: room.index as u32, rows: n, fresh: None, built: true, walk: 0, buffer, cols: Vec::new(), table: 0 })
     }
 
     /// Commits the open work as a submission of its own (`submit_open`), and opens the next pass with what was resident
@@ -2551,9 +2593,11 @@ impl Batch {
         if n == 0 {
             return Ok(());
         }
-        // Its rows, by whether it is built again each round (a live relation's: a recursive stratum's own, decision
-        // 0707's 13.9 M rows) or once.
-        crate::code_rule_dsl::prof::count_named(if rel.live { "device.index rows built: a live relation's, again each round" } else { "device.index rows built: once" }.into(), n);
+        // Its rows built, or a live relation's room for them: a recursive stratum's own index is built over the rows its
+        // rounds claimed (`IX_LIVE`), which the host does not know here, and `n` is its bound. Counted as built, the
+        // bound read as 8.9-13.9 M rows rebuilt each round (decision 0707), where the stage profile measured the
+        // device's index work for that stratum at under 0.01 G cycles of 119 G (2026-11-27).
+        crate::code_rule_dsl::prof::count_named(if rel.live { "device.index room reserved (not rows built): a live relation's bound" } else { "device.index rows built: once" }.into(), n);
         assert!(cols.len() <= 8, "an index of {} columns", cols.len());
         let mut ix = IxParams { n: m as u32, ncols: cols.len() as u32 | if rel.live { IX_LIVE } else { 0 }, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0, from: rel.from, pad: 0 };
         for (k, &c) in cols.iter().enumerate() {

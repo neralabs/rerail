@@ -86,13 +86,39 @@ pub struct ViewInPlace {
     pub grows: Option<Arc<super::rows::IndexHome>>,
 }
 
+/// A `node` view's rows by kind (`Source::kind_table`): the table's offset in its directory's block, and that
+/// directory's addresses, the host's and the device's (0 for none): a stage reads it only where its view's directory
+/// is one of them (a layered view's directory is made anew as values are admitted).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[derive(Clone, Copy, Debug)]
+pub struct KindTableAt {
+    pub at: u64,
+    pub dirs: [u64; 2],
+    /// The directory's offset in the block (`ViewsInPlace::at`): the table's address is a directory's less it, and `at`.
+    pub dir_at: u64,
+}
+
 /// A `has` axis read off the tape (`Source::has_walk`): its batch's `node` view in place, of `nodes` rows, through which
-/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending.
+/// a stage climbs a node's ancestors or reads a node's subtree, and its set's kind atoms, ascending. `axis`: which
+/// ancestors are a node's (`HasWalk::HAS` and the rest).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub struct HasWalk {
     pub nodes: usize,
     pub view: ViewInPlace,
     pub kinds: Arc<[i64]>,
+    pub axis: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl HasWalk {
+    /// Every ancestor, where the node is in the set (`has`).
+    pub const HAS: u32 = 0;
+    /// Every ancestor in the set (`inside`).
+    pub const INSIDE: u32 = 1;
+    /// The nearest ancestor in the set (`nearest`).
+    pub const NEAREST: u32 = 2;
+    /// Every ancestor, the set every kind (`kinds` none): containment, `within(n, a)`, `n` strictly below `a`.
+    pub const EVERY: u32 = 3;
 }
 
 /// A batch's 16z cache as its views' directory names it (decision 0353 step 4b, `view::cache`): the batch's one cache
@@ -591,6 +617,14 @@ pub trait Source: Send + Sync {
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<HasWalk> {
+        None
+    }
+    /// The `node` view's rows by kind over its directory (`rerail_reads::views::KindTable`, decision 0706 step 0): its
+    /// offset in the directory's block, where a stage probing the view by its kind reads its batches' lists, no index
+    /// of the view built; and the directory it is over (`KindTableAt::dirs`). `None` for any other source, or a view
+    /// not read in place.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn kind_table(&self) -> Option<KindTableAt> {
         None
     }
     /// The `node` view of the batch whose nodes' texts this source reads (`node_read`), where the device reads every

@@ -182,6 +182,35 @@ pub struct ViewDir {
 }
 const _: () = assert!(std::mem::size_of::<ViewDir>() == (48 + 4 * ROWS + 8).next_multiple_of(8));
 
+/// The `node` view's rows by kind over a views' directory (decision 0706 step 0: `node` probed by its kind reads its
+/// batches' lists, no index of the view), in the directory's block beside it, self-relative: the directory's kinds,
+/// ascending (`kinds`, i64s), each kind's candidates `vstart[k]..vstart[k + 1]` (u32s, `nkinds + 1`), and the
+/// segments they lie in (`segs`, ascending by `v`): each a kind's run of one batch's list (`KindRows`' `at`, one
+/// `[document, local id, tape node]` a node, the document the batch's), where its first candidate is (`v`), that
+/// batch's first row of the directory (`doc_base`), and the run's first entry (`at`, an offset in the block). A
+/// candidate `q`'s row: its segment's entry `q - v`, `rows[doc_base + document].rows[0] + local id`. Offsets are in
+/// the block, which both executors read at their own base.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KindTable {
+    pub nkinds: u32,
+    pub nsegs: u32,
+    pub kinds: u64,
+    pub vstart: u64,
+    pub segs: u64,
+}
+const _: () = assert!(std::mem::size_of::<KindTable>() == 32);
+
+/// A segment of a `KindTable`.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct KindSeg {
+    pub v: u32,
+    pub doc_base: u32,
+    pub at: u64,
+}
+const _: () = assert!(std::mem::size_of::<KindSeg>() == 16);
+
 /// No document (`ViewDir::doc_of_key`).
 pub const NO_DOC: u32 = u32::MAX;
 

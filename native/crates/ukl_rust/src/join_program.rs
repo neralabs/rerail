@@ -144,7 +144,7 @@ struct Stage {
 const _: () = assert!(size_of::<Stage>() == 2352 && core::mem::offset_of!(Stage, ops) == 208);
 const _: () = assert!(core::mem::offset_of!(Stage, arith) == 2176 && core::mem::offset_of!(Stage, v_dir) == 2304);
 
-use rerail_reads::views::{ViewDir, ViewRow};
+use rerail_reads::views::{KindSeg, KindTable, ViewDir, ViewRow};
 #[repr(C)]
 struct PlacedDir {
     dir: *const ViewDir,
@@ -681,13 +681,43 @@ impl St<'_> {
         self.s.r_dead == 0 || rel_dead(self.r as *const u8, self.s.r_dead, r) == 0
     }
 
-    /// Whether node row `q`'s kind atom is in the stage's set (ascending).
+    /// A walked axis's kind (`Stage::v_nset`'s top bits, `metal_join::HAS_AXIS`): `has` (0), `inside` (1), `nearest`
+    /// (2), every kind, containment (3).
+    fn has_axis(&self) -> u32 {
+        self.s.v_nset >> HAS_AXIS
+    }
+
+    /// Whether node row `q`'s kind atom is in the stage's set (ascending): every node where the set is every kind
+    /// (axis 3, containment).
     unsafe fn has_member(&self, q: u32) -> bool {
         let s = self.s;
+        if self.has_axis() == 3 {
+            return true;
+        }
         // A `has` stage's rows are `node`'s (`row`): a walk's candidate is the row it holds.
         let k = self.row(q).get(2);
-        let set = core::slice::from_raw_parts(s.v_set, s.v_nset as usize);
+        let set = core::slice::from_raw_parts(s.v_set, (s.v_nset & ((1 << HAS_AXIS) - 1)) as usize);
         set.binary_search(&k).is_ok()
+    }
+
+    /// Whether a walk's candidate `r` is a row of the axis: of a climb (`v_has` 1), `inside`'s where it is in the set
+    /// (the others' candidates are theirs by the probe: `has`'s node is in it, `nearest`'s one); of a subtree (2),
+    /// `has`'s where it is in the set (the others' ancestor is in it, by the probe).
+    unsafe fn has_admits(&self, r: u32) -> bool {
+        match (self.s.v_has, self.has_axis()) {
+            (1, 1) | (2, 0) => self.has_member(r),
+            _ => true,
+        }
+    }
+
+    /// The row past `node` row `q`'s subtree (`nearest`'s walk of a subtree, `how` 4, steps past a nearer member's).
+    unsafe fn has_skip(&self, q: u32) -> u32 {
+        let d = self.s.v_dir;
+        let a = dir_doc_of_row(view_block(d), (*d).at, 0, q, self.doc.get());
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let first = (*e).rows[0];
+        first.wrapping_add(doc(d, e).end(q.wrapping_sub(first)))
     }
 
     /// Whether row `r` has the binding's keys and passes the relation's column tests.
@@ -695,12 +725,27 @@ impl St<'_> {
     unsafe fn matches(&self, r: u32, kv: &[i64; 8], key: bool) -> bool {
         let s = self.s;
         if s.v_has != 0 {
-            return s.ntests == 0 && (s.v_has == 1 || self.has_member(r));
+            // Probed by both columns: the node's climb, the ancestor the bound one (`has_other`).
+            let other = self.has_other();
+            return s.ntests == 0 && self.has_admits(r) && other.is_none_or(|i| self.rget(r, 1) == kv[i]);
         }
         if !self.row_live(r) {
             return false;
         }
         (key || self.keys_are(r, kv)) && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
+    }
+
+    /// A `has` stage's key that its walk starts from: the node's (relation column 0) for a climb (`v_has` 1), the
+    /// ancestor's (1) for a subtree.
+    fn has_key(&self) -> usize {
+        let want = if self.s.v_has == 1 { 0 } else { 1 };
+        (0..self.s.nkeys.min(8) as usize).find(|&i| self.s.key_rcol[i] == want).unwrap_or(0)
+    }
+
+    /// A `has` stage's other key, checked on each candidate (probed by both columns), if it has one.
+    fn has_other(&self) -> Option<usize> {
+        let k = self.has_key();
+        (0..self.s.nkeys.min(8) as usize).find(|&i| i != k)
     }
 
     /// Whether a walk's candidates hold the binding's only key by their making: a parent's children (walk 2, a
@@ -734,19 +779,55 @@ impl St<'_> {
     /// numbered node, its id checked (as a parent's is, `by_parent`), and its one row there, kept with its node as the
     /// stage's last (`row`), so its other keys and columns read it with no search; as the host's probe by a node's own
     /// id (`Batch::node_hint`). None where no node has the id (a `child` row: the root has none).
+    ///
+    /// A `Loc` view's (`line`, `end_line`, `col`, `docof`: views 5 to 8, the id column 0): the id's position
+    /// (`loc_number`), within the document's rows, its id read back.
     unsafe fn by_own(&self, kv: &[i64; 8]) -> Walk {
         let s = self.s;
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
-        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 1) else { return none };
+        let k = s.r_view - 1;
+        let loc = (5..=8).contains(&k);
+        let own = if loc { 0 } else { 1 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == own) else { return none };
+        if loc {
+            return self.by_own_loc(k, kv[i]);
+        }
         let Some((e, l)) = self.doc_node(kv[i]) else { return none };
         let d = doc(s.v_dir, e);
-        let k = s.r_view - 1;
         if d.node_id(l) != kv[i] as u64 || (k == 1 && l == 0) {
             return none;
         }
         let local = l - k;
         let r = (*e).rows[k as usize].wrapping_add(local);
         self.last.set((r, Some(Row::View(d.at(k, local)))));
+        Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
+    }
+
+    /// `by_own` of `Loc` view `k` by id `key`: its document, its position there, its one row.
+    unsafe fn by_own_loc(&self, k: u32, key: i64) -> Walk {
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let d = self.s.v_dir;
+        if key < 0 || (*d).ndocs == 0 {
+            return none;
+        }
+        let a = dir_doc_of_key(view_block(d), (*d).at, ((key as u64) >> 32) as u32, self.doc.get());
+        if a == NONE {
+            return none;
+        }
+        self.doc.set(a);
+        let e = view_rows(d).add(a as usize);
+        let dd = doc(d, e);
+        let p = dd.loc_number(key as u32);
+        let past = if a + 1 < (*d).ndocs { (*e.add(1)).rows[k as usize] } else { (*d).ends[k as usize] };
+        if p == NONE || p >= past.wrapping_sub((*e).rows[k as usize]) {
+            return none;
+        }
+        let at = dd.at(k, p);
+        if at.col(0) as i64 != key {
+            return none;
+        }
+        let r = (*e).rows[k as usize].wrapping_add(p);
+        self.last.set((r, Some(Row::View(at))));
         Walk { lo: r, hi: r.wrapping_add(1), how: 0, tag: 0 }
     }
 
@@ -760,19 +841,35 @@ impl St<'_> {
         let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         let d = s.v_dir;
         if s.v_has != 0 {
-            let Some((e, l)) = self.doc_node(kv[0]) else { return none };
+            let Some((e, l)) = self.doc_node(kv[self.has_key()]) else { return none };
             let first = (*e).rows[0];
+            let axis = self.has_axis();
             if s.v_has == 1 {
-                if !self.has_member(first.wrapping_add(l)) {
+                // `has`: the node in the set, every ancestor; `nearest`: the first ancestor in the set, alone.
+                if axis == 0 && !self.has_member(first.wrapping_add(l)) {
                     return none;
                 }
-                let u = doc(d, e).up(l);
+                let mut u = doc(d, e).up(l);
+                if axis == 2 {
+                    while u != NONE && !self.has_member(first.wrapping_add(u)) {
+                        u = doc(d, e).up(u);
+                    }
+                    return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: first.wrapping_add(u).wrapping_add(1), how: 0, tag: 0 } };
+                }
                 return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
             }
-            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how: 0, tag: 0 };
+            // `inside` and `nearest`: the ancestor in the set; `nearest`'s subtree less what lies below a nearer member.
+            if matches!(axis, 1 | 2) && !self.has_member(first.wrapping_add(l)) {
+                return none;
+            }
+            let how = if axis == 2 { 4 } else { 0 };
+            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(doc(d, e).end(l)), how, tag: 0 };
         }
         if s.v_parent == 2 {
             return self.by_own(kv);
+        }
+        if s.v_parent == 3 {
+            return self.by_kind(kv);
         }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
@@ -815,7 +912,40 @@ impl St<'_> {
 
     /// Candidate `q`'s row.
     unsafe fn cand_row(&self, how: u32, q: u32) -> u32 {
-        if how == 1 { rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q) } else { q }
+        match how {
+            1 => rel_group_row(self.r as *const u8, self.s.r_at, self.s.r_index, q),
+            5 => self.kind_row(q),
+            _ => q,
+        }
+    }
+
+    /// The `node` view's rows by kind (`Stage::v_parent` 3, `Batch::by_kind`, `KindTable`), at `v_set`, its offsets
+    /// in the directory's block (decision 0706 step 0).
+    #[inline]
+    unsafe fn kind_table(&self) -> (*const u8, &KindTable) {
+        (view_block(self.s.v_dir), &*(self.s.v_set as *const KindTable))
+    }
+
+    /// Kind `kv`'s candidates (the key of column 2): `vstart[k]..vstart[k + 1]`, walk 5; none for a kind the
+    /// directory has no node of.
+    unsafe fn by_kind(&self, kv: &[i64; 8]) -> Walk {
+        let s = self.s;
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
+        let Some(i) = (0..s.nkeys.min(8) as usize).find(|&i| s.key_rcol[i] == 2) else { return none };
+        let (c, t) = self.kind_table();
+        let kinds = core::slice::from_raw_parts(c.add(t.kinds as usize) as *const i64, t.nkinds as usize);
+        let Ok(a) = kinds.binary_search(&kv[i]) else { return none };
+        let vstart = c.add(t.vstart as usize) as *const u32;
+        Walk { lo: *vstart.add(a), hi: *vstart.add(a + 1), how: 5, tag: 0 }
+    }
+
+    /// Candidate `q` of a walk by kind: its node's row, its segment's entry `q - v` (`[document, local id, tape node]`).
+    unsafe fn kind_row(&self, q: u32) -> u32 {
+        let (c, t) = self.kind_table();
+        let segs = core::slice::from_raw_parts(c.add(t.segs as usize) as *const KindSeg, t.nsegs as usize);
+        let g = &segs[segs.partition_point(|g| g.v <= q).saturating_sub(1)];
+        let at = (c.add(g.at as usize) as *const [u32; 3]).add((q - g.v) as usize);
+        (*view_rows(self.s.v_dir).add((g.doc_base + (*at)[0]) as usize)).rows[0] + (*at)[1]
     }
 
     /// A walk of the tape (`how` 2: a parent's children from `child` row `q`; 3: a node's numbered ancestors from
@@ -893,7 +1023,8 @@ impl St<'_> {
             if !f(self.cand_row(w.how, q), q, key || known) {
                 return;
             }
-            q = q.wrapping_add(1);
+            // `nearest`'s subtree: past a member, past its subtree (its nodes' nearest is it or lower).
+            q = if w.how == 4 && self.has_member(q) { self.has_skip(q) } else { q.wrapping_add(1) };
         }
     }
 
@@ -996,6 +1127,9 @@ struct Walk {
     /// An index group's (`how` 1): its key's tag (decision 0671), which its places' marks are read against.
     tag: u32,
 }
+
+/// Where a `has` stage's set size (`v_nset`) holds its axis (`metal_join::HAS_AXIS`): its top two bits.
+const HAS_AXIS: u32 = 30;
 
 /// A mark's `MARK_SAME` (decision 0671, `rerail_blocks::relation::MARK_SAME`).
 const MARK_SAME: u32 = 1;
@@ -1823,7 +1957,8 @@ struct ScanCands {
     lo: u32,
     n: u32,
     tag: u32,
-    grouped: bool,
+    /// The walk's (`Walk::how`): 1 an index group's places, 5 a kind's candidates (`kind_row`), else rows.
+    how: u32,
 }
 
 impl St<'_> {
@@ -1836,11 +1971,11 @@ impl St<'_> {
         }
         let rows = if *j.totals.add(s.in_slot as usize) == 0 { 0 } else { self.rows() };
         if s.nkeys == 0 || s.v_parent == 1 || s.v_has != 0 || rows == 0 {
-            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, grouped: false });
+            return (kv, ScanCands { lo: s.r_from, n: rows, tag: 0, how: 0 });
         }
         // Its keys' index group, or a node's own row (`by_own`).
         let w = self.probe(&kv);
-        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, grouped: w.how == 1 })
+        (kv, ScanCands { lo: w.lo, n: w.hi.wrapping_sub(w.lo).min(rows), tag: w.tag, how: w.how })
     }
 
     /// Thread `r`'s candidate of `c`: its row; `None` past them, or at a place of another key's tag (as a probe's walk
@@ -1850,7 +1985,10 @@ impl St<'_> {
         if r >= c.n {
             return None;
         }
-        if !c.grouped {
+        if c.how == 5 {
+            return Some(self.kind_row(c.lo.wrapping_add(r)));
+        }
+        if c.how != 1 {
             return Some(c.lo.wrapping_add(r));
         }
         let s = self.s;
@@ -3815,10 +3953,41 @@ impl Prog {
         if !listed {
             it.group = group;
         }
-        if !self.item(it) {
+        let prof = crate::stage_prof::on();
+        let since = if prof { crate::stage_prof::counts() } else { [0; 2] };
+        let whole = self.item(it);
+        if prof {
+            let (kind, read, rows) = self.prof_key(it);
+            crate::stage_prof::add(kind, read, since, rows);
+        }
+        if !whole {
             *self.slots.add(ctl_at(self.ctl, 3).fetch_add(1, SeqCst) as usize) = item;
             ctl_at(self.ctl, 6).fetch_or(32, SeqCst);
         }
+    }
+
+    /// Item `it`'s kind, its stage's read and its rows, for `stage_prof`: a stage's mode, its view (0: a relation) at
+    /// bit 4, keyed at bit 9; an index's view at bit 4 and key columns (its rows once, at its keys' first group).
+    unsafe fn prof_key(&self, it: Item) -> (u32, u32, u64) {
+        let (kind, x) = (it.what >> 24, it.what & 0xff_ffff);
+        if matches!(kind, PK_IX_KEY | PK_IX_MARK | PK_IX_OFFS | PK_IX_PLACE) {
+            let p = &*((*self.jobs.add(x as usize)).p as *const IxP);
+            let rows = if kind == PK_IX_KEY && it.group == 0 { u64::from(p.n) } else { 0 };
+            return (kind, (p.kind as u32 & 31) << 4 | (p.ncols & !IX_LIVE).min(15), rows);
+        }
+        if !matches!(kind, PK_STAGE_COUNT | PK_SCAN_COUNT | PK_WITNESS_COUNT | PK_ROW_TEXT | PK_STAGE_SCATTER | PK_SCAN_SCATTER | PK_ROW_SCATTER | PK_COPY) {
+            return (kind, 0, 0);
+        }
+        let j = &*self.jobs.add(x as usize);
+        if kind == PK_COPY {
+            return (kind, (*(j.p as *const Copy)).r_view << 4, 0);
+        }
+        let s = if kind == PK_STAGE_SCATTER { j.ws } else { j.s };
+        if s.is_null() {
+            return (kind, 0, 0);
+        }
+        let s = &*s;
+        (kind, s.mode | s.r_view << 4 | u32::from(s.nkeys > 0) << 9, 0)
     }
 
     /// Item `it`'s work, every thread of the group's: whether it is whole (a size script that parked is not).

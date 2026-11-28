@@ -983,6 +983,73 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
 }
+/// `view_loc_number(low)`: the `Loc` position (`loc_id`'s inverse: a node, then a token, then a span) whose id's low
+/// 32 bits are `low` (its document's: the key is the caller's to match), or `NO_ROW`: `low` itself where ids are local
+/// ids. A span's in the top slots; a node's or token's by the numbering (`num_number_of`, or where ids are tape
+/// positions the item there, `num_is`, and its rank). Past the document's positions is the caller's to refuse.
+#[cfg(feature = "ir")]
+pub fn loc_number(b: &mut B<'_, '_>) -> Value {
+    use crate::ids::{INDEX_BITS, SLOT_BITS, SPAN_SLOTS};
+    let low = b.arg(0);
+    let preorder = b.word_at(I32, b.tape, at::PREORDER);
+    let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
+    b.either(I32, local, |_| low, |b| {
+        let slot = b.f.ins().ushr_imm(low, i64::from(INDEX_BITS));
+        let first_span = i64::from((1u32 << SLOT_BITS) - SPAN_SLOTS);
+        let span = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, slot, first_span);
+        let nodes = b.word_at(I32, b.tape, at::NODES);
+        b.either(I32, span, |b| {
+            // `loc_id`'s span: slot `last - hi`, then its index.
+            let last = b.c32(i64::from((1u32 << SLOT_BITS) - 1));
+            let hi = b.f.ins().isub(last, slot);
+            let hi = b.f.ins().ishl_imm(hi, i64::from(INDEX_BITS));
+            let index = b.f.ins().band_imm(low, i64::from((1u32 << INDEX_BITS) - 1));
+            let j = b.f.ins().bor(hi, index);
+            let tokens = b.word_at(I32, b.tape, at::TOKENS);
+            let past = b.f.ins().iadd(nodes, tokens);
+            b.f.ins().iadd(past, j)
+        }, |b| {
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| {
+                // A tape position: the node there, else the token there, by its rank.
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                let is = b.call_at("num_is", numbering, &[node, low]);
+                let is_node = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+                b.either(I32, is_node, |b| {
+                    let numbering = b.follow(b.tape, at::NUMBERING);
+                    let node = b.c32(0);
+                    b.call_at("num_rank", numbering, &[node, low])
+                }, |b| {
+                    let numbering = b.follow(b.tape, at::NUMBERING);
+                    let token = b.c32(1);
+                    let is = b.call_at("num_is", numbering, &[token, low]);
+                    let is_token = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+                    let numbering = b.follow(b.tape, at::NUMBERING);
+                    let token = b.c32(1);
+                    let rank = b.call_at("num_rank", numbering, &[token, low]);
+                    let at = b.f.ins().iadd(nodes, rank);
+                    let no = b.c32(i64::from(NO_ROW));
+                    b.f.ins().select(is_token, at, no)
+                })
+            }, |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let found = b.call_at("num_number_of", numbering, &[low]);
+                // Item 0 a node's, 1 a token's, in the high word.
+                let item = b.f.ins().ushr_imm(found, 32);
+                let item = b.f.ins().ireduce(I32, item);
+                let number = b.f.ins().ireduce(I32, found);
+                let is_node = b.f.ins().icmp_imm(IntCC::Equal, item, 0);
+                let is_token = b.f.ins().icmp_imm(IntCC::Equal, item, 1);
+                let token_at = b.f.ins().iadd(nodes, number);
+                let no = b.c32(i64::from(NO_ROW));
+                let token = b.f.ins().select(is_token, token_at, no);
+                b.f.ins().select(is_node, number, token)
+            })
+        })
+    })
+}
+
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// Numbered node `l`'s depth, the root's 0: its numbered strict tape ancestors, by a climb of the tape's parents
