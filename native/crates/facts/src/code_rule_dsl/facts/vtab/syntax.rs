@@ -1845,6 +1845,9 @@ pub struct Projected {
     defs: Option<DefIds>,
     /// Node and token ids are their tape positions (`NodeIds::Tape`): no granule table, and spans in their top slots.
     tape: bool,
+    /// Under tape ids, the granules node paths are read by (`path_table`, decision 0722): numbered when a path is first
+    /// asked for, never the ids'.
+    path_granules: OnceLock<granules::Table>,
     /// Its positions with `text` (`View::Text`); its nodes with text are `Item::Text`'s.
     text_spans: TextSpans,
     /// Each term of its tape's index (`DocIndex::term`): its text's atom, interned at the first read of a leaf of it
@@ -2221,6 +2224,7 @@ impl Projected {
             extra: None,
             defs: None,
             tape: node_ids() == NodeIds::Tape,
+            path_granules: OnceLock::new(),
             facts: Arc::clone(&facts),
             cache: cache.clone(),
             text_spans: if shape == Shape::Core { text.map(|(_, spans)| spans).unwrap_or_default() } else { TextSpans::default() },
@@ -2619,6 +2623,15 @@ impl Projected {
     /// The granule table, where ids are by definition (decision 0353 step 2).
     pub fn table(&self) -> Option<&granules::Table> {
         self.defs.as_ref().map(|d| &d.table)
+    }
+    /// The granules node paths are read by (decision 0722): the ids' table where ids are by definition; under tape
+    /// ids, the granules numbered the first time a path is asked for (a derived fact, written once in the projection).
+    /// `None` under preorder ids.
+    pub fn path_table(&self, dialect: &Dialect) -> Option<&granules::Table> {
+        if let Some(t) = self.table() {
+            return Some(t);
+        }
+        self.tape.then(|| self.path_granules.get_or_init(|| granules::number(self, dialect, &[], None)))
     }
     /// The ids' low bits (nodes, then tokens) and the order keys as arrays, numbered again: the reference the table is
     /// checked and measured against, not a reader's path.
@@ -3108,7 +3121,7 @@ impl Batch {
             return made.clone();
         }
         let p = &self.docs[i];
-        let own = !p.anchored && p.extra.is_some() && p.len() > 0 && p.table().is_some();
+        let own = !p.anchored && p.extra.is_some() && p.len() > 0 && (p.table().is_some() || p.tape);
         let whole = if own { None } else { Some(self.docs.whole(i)?) };
         let q = whole.as_ref().unwrap_or(p);
         let made = self.dialects.get(q.tag()).and_then(|d| paths::DocPaths::new(q, d, &self.path_root(i))).map(|paths| Arc::new(NodePaths { paths, whole }));
