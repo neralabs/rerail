@@ -5411,7 +5411,7 @@ pub fn retain_with(conn: impl Scoped, table: &str, rows: Vec<Vector<i64>>, types
 pub fn retain_cells(conn: impl Scoped, table: &str, mut cells: Vector<i64>, types: Vec<u8>) -> Result<()> {
     let conn = conn.db();
     let k = types.len();
-    if k == 0 || cells.len() % k != 0 { return Err(err(format!("{table}: native result width differs from its declaration"))); }
+    if k == 0 || !cells.len().is_multiple_of(k) { return Err(err(format!("{table}: native result width differs from its declaration"))); }
     let n = sort_cells(cells.as_mut_slice(), k);
     cells.truncate(n * k);
     let mut rel = InRel::of_cells(cells, n, types);
