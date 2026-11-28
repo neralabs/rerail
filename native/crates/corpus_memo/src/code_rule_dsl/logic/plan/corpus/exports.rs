@@ -95,6 +95,11 @@ impl Held {
     /// Row `id` kept unless the set holds its like: then it is marked dead. Whether it was kept.
     fn keep_once(&mut self, id: u32) -> bool {
         let h = self.row_hash(id);
+        self.keep_once_hashed(id, h)
+    }
+
+    /// `keep_once`, the row's hash `h` taken where the row was read (its part), not by reading it again here.
+    fn keep_once_hashed(&mut self, id: u32, h: u64) -> bool {
         let (rows, width) = (&self.rows, self.width());
         if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == rows.get(id, c))).is_some() {
             self.kill(id);
@@ -163,7 +168,7 @@ impl Exports {
         let start = held.len() as u32;
         let in_place = crate::code_rule_dsl::logic::native::component::held_rows(rows)
             .filter(|(r, n, ..)| r.width() == width && r.rows() == *n);
-        let given: usize = match in_place {
+        match in_place {
             Some((r, n, dead, types)) => {
                 held.types.get_or_insert_with(|| types.to_vec());
                 // Each of the chunk's parts whole: taken as a segment of the export where it lies, not written again
@@ -179,6 +184,17 @@ impl Exports {
                     {
                         held.set_all();
                     }
+                    // Each row's hash and its document's column, read once in its part as the parts are walked: a
+                    // read of the export's row `id` searches its hundreds of segments (one a memo entry) each time
+                    // (the replay's `exports appended`: 82 of `keep_once`'s 97 samples in that read).
+                    let doc_col = own.map(|(at, _)| at).or(held.at);
+                    let mut read: Vector<[u64; 2]> = Vector::with_capacity(n);
+                    r.each_run(0, n as u32, |p, lo, hi, _| {
+                        for i in lo..hi {
+                            read.push([Held::hash((0..width).map(|c| p.get(i, c))), doc_col.map_or(0, |c| p.get(i, c)) as u64]);
+                        }
+                    });
+                    let doc_at = |held: &Held, id: u32, i: usize, at: usize| if Some(at) == doc_col { read[i][1] as i64 } else { held.get(id, at) };
                     // The own documents' rows, unchecked: runs of ids, and the documents they are of.
                     let mut unchecked: Option<[u32; 2]> = None;
                     let mut added = 0;
@@ -189,7 +205,7 @@ impl Exports {
                             continue;
                         }
                         if let Some((at, mine)) = own {
-                            let d = super::memo::document_of(held.get(id, at));
+                            let d = super::memo::document_of(doc_at(held, id, i, at));
                             if mine(d) {
                                 held.at = Some(at);
                                 held.unset_docs.put(d);
@@ -207,10 +223,10 @@ impl Exports {
                         }
                         // A row of a document whose own rows were appended unchecked may be one of them: they are set
                         // first.
-                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(held.get(id, at)))) {
+                        if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(doc_at(held, id, i, at)))) {
                             held.set_all();
                         }
-                        if held.keep_once(id) {
+                        if held.keep_once_hashed(id, read[i][0]) {
                             added += 1;
                         }
                     }
@@ -245,29 +261,29 @@ impl Exports {
                 });
                 return added;
             }
+            // Rows of another source (a memo hit's shared rows, gathered as columns): each looked up by its values
+            // as they are read, and written only when new (`insert`), not written and then read back to be hashed
+            // and marked dead (the replay's `exports appended`: 82 of its 97 samples in that read).
             None => {
+                held.rows.reserve(rows.len() * width);
                 let mut row = rerail_blocks::vector![0i64; width];
+                let mut added = 0;
                 for r in 0..rows.len() {
                     for (c, v) in row.iter_mut().enumerate() {
                         *v = rows.value(r, c);
                     }
-                    held.rows.extend_from_slice(&row);
+                    // A row of a document whose own rows were appended unchecked may be one of them: they are set
+                    // first.
+                    if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(row[at]))) {
+                        held.set_all();
+                    }
+                    if held.insert(&row) {
+                        added += 1;
+                    }
                 }
-                rows.len()
-            }
-        };
-        let mut added = 0;
-        for i in 0..given {
-            let id = start + i as u32;
-            // A row of a document whose own rows were appended unchecked may be one of them: they are set first.
-            if !held.unset.is_empty() && held.at.is_none_or(|at| held.unset_docs.contains_key(&super::memo::document_of(held.get(id, at)))) {
-                held.set_all();
-            }
-            if held.keep_once(id) {
-                added += 1;
+                added
             }
         }
-        added
     }
 
     /// Appends rows (`columns`, `width` of them) to export `rel` without looking for them among those it holds, as
@@ -476,7 +492,7 @@ pub mod tests {
         dead[0] |= 1 << 2;
         // Rows [3, 4] (given by `a` too), [5, 6], and [9, 9], dead in its relation.
         let b = InRel::held(Rows::frozen(2, rerail_blocks::vector![3, 4, 5, 6, 9, 9], 3), 3, vec![b'i', b'i'], dead).source(names());
-        // Not an engine relation: its rows are written, [5, 6] again and [11, 12].
+        // Not an engine relation: its new row is written ([11, 12]); [5, 6], given already, is not written at all.
         let c = crate::code_rule_dsl::logic::native::component::columns_source(names(), vec![Some(rerail_blocks::vector![5, 11]), Some(rerail_blocks::vector![6, 12])]);
         let mut exports = Exports::default();
         assert_eq!(exports.add("e", 2, a.as_ref()), 3);
@@ -490,7 +506,7 @@ pub mod tests {
             assert_eq!((theirs(ra), theirs(rb)), (1, 1), "each chunk's part held where it lies");
             assert_eq!((ra.rows(), rb.rows()), (3, 3), "nothing written into a chunk's relation");
             assert_eq!(held.rows.parts().count(), 3, "the two parts and a tail of its own");
-            assert_eq!((held.rows.rows(), held.live()), (8, 5), "the repeats and the dead row dead, not written");
+            assert_eq!((held.rows.rows(), held.live()), (7, 5), "the repeats and the dead row dead, not written; another source's repeat not written");
         }
         assert_eq!(exports.len("e"), 5);
         let s = exports.source("e", 2);
