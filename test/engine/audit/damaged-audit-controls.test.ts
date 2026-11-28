@@ -217,18 +217,23 @@ describe("a checkout's saved scan settings that parse to settings this version k
     controls.close();
   });
 
-  it("name a setting they leave out as one that runs with its default, not as a key they hold", async () => {
-    const { path, controls } = await fixture();
-    controls.updateSettings("a", { mode: "log" });
-    storeSettings(path, "{\"mode\":\"log\"}");
+  it("name a setting they leave out as one that runs with its default, not as a key they hold, alone or beside a key they hold", async () => {
+    const [alone, beside] = [await fixture(), await fixture()];
+    for (const { controls } of [alone, beside]) controls.updateSettings("a", { mode: "log" });
+    storeSettings(alone.path, "{\"mode\":\"log\"}");
+    storeSettings(beside.path, "{\"mode\":\"log\",\"later\":true}");
     const logged = spyOnStderr();
 
-    const read = controls.getSettings("a");
-    expect(read.settings).toEqual({ ...DEFAULT_AUDIT_SETTINGS, mode: "log" });
-    expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    const [read, readBeside] = [alone.controls.getSettings("a"), beside.controls.getSettings("a")];
+    expect([read.settings, readBeside.settings]).toEqual([{ ...DEFAULT_AUDIT_SETTINGS, mode: "log" }, { ...DEFAULT_AUDIT_SETTINGS, mode: "log" }]);
+    expect(logged().match(/rerail: /gu)).toHaveLength(2);
     expect(logged()).toContain(`: the scan settings saved for ${read.workspaceRoot} read in part: the settings_json of its audit_settings row `
       + "leaves out scope: a setting left out runs with its default.\n");
-    controls.close();
+    expect(logged()).toContain(`: the scan settings saved for ${readBeside.workspaceRoot} read in part: the settings_json of its audit_settings row `
+      + "holds later (Unrecognized key: \"later\"), which this version does not read: a setting among them runs with its default, and a "
+      + "`rerail settings` there keeps each as stored; it leaves out scope: a setting left out runs with its default.\n");
+    alone.controls.close();
+    beside.controls.close();
   });
 });
 
