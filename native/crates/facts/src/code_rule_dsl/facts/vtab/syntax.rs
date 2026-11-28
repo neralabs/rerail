@@ -2523,7 +2523,7 @@ impl Projected {
             Some(d) => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
                 if local < nodes {
-                    match rerail_clif::packed::get(self.entry_run(|e| &e.node_low), local) {
+                    match rerail_clif::packed::two::get(self.entry_run(|e| &e.node_low), local) {
                         rerail_clif::packed::NONE => d.table.low_of(&self.ranks, Item::Node, local).expect("a numbered node"),
                         low => low,
                     }

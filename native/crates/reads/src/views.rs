@@ -74,8 +74,9 @@ pub struct ViewDoc {
     /// at the entry's making in its block: an id's slot entry is its bucket's first and a step or two
     /// (`number_of_by_buckets`). Empty (a document numbered by preorder or tape position): no slots.
     pub slot_buckets: Run,
-    /// Packed maps (`crate::packed`, about 1.25 bytes an entry), derived once at the entry's making in its block: by
-    /// number, a numbered node's tape node (`node_x`) and its id's low bits (`node_low`); by own place, a node's
+    /// Packed maps (`crate::packed`, about 1.25 bytes an entry; `node_low` two clusters a block, `packed::two`, 2
+    /// bytes), derived once at the entry's making in its block: by number, a numbered node's tape node (`node_x`)
+    /// and its id's low bits (`node_low`); by own place, a node's
     /// number (`by_place`, `Numbering::number_of_packed`); by `field` row, its node's tape node (`field_x`). An
     /// escaped entry, or an empty map, is read from the numbering.
     pub node_x: Run,

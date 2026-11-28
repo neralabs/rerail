@@ -287,7 +287,7 @@ impl<'a> Doc<'a> {
         } else if self.ids_tape() {
             self.tape_node(l)
         } else {
-            match rerail_reads::packed::get(Self::packed(&self.e.node_low), l) {
+            match rerail_reads::packed::two::get(Self::packed(&self.e.node_low), l) {
                 rerail_reads::packed::NONE => self.n.low_of(0, l),
                 low => low,
             }

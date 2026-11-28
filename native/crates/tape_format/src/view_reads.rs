@@ -212,7 +212,7 @@ impl<'a> Doc<'a> {
     pub fn node_id(&self, l: u32) -> i64 {
         let low = match self.entry.preorder {
             // SAFETY: as `tape_node`.
-            0 => match rerail_clif::packed::get(self.items(&self.entry.node_low), l) {
+            0 => match rerail_clif::packed::two::get(self.items(&self.entry.node_low), l) {
                 rerail_clif::packed::NONE => unsafe { self.numbering().low_of(0, l) },
                 low => low,
             },

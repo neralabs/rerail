@@ -110,7 +110,13 @@ impl ViewEntry {
             (xs[l as usize], lows[l as usize]) = (x, low);
         }
         let node_x = (p.len() > 0).then(|| pack(&xs));
-        let node_low = (p.defs.is_some() && p.len() > 0).then(|| pack(&lows));
+        // An id's low bits jump where consecutive numbers lie in different granules (a slot is a hash): two clusters a
+        // block (`packed::two`).
+        let node_low = (p.defs.is_some() && p.len() > 0).then(|| {
+            // copy: derived (each node's id's low bits, computed once from the numbering, two bytes an entry)
+            Cells::build(block, rerail_clif::packed::two::words(lows.len()), |out: &mut [u32]| rerail_clif::packed::two::build(&lows, out).0)
+                .expect("a batch's block holds its entries")
+        });
         let by_place = slot_buckets.as_ref().map(|_| {
             let num = p.ranks().numbering();
             // SAFETY: the projection's numbering, read as every read of it.
