@@ -318,3 +318,114 @@ fn int8_window_join() {
         eprintln!("  {name:<22} ({qt} tiles an owner) {:>8.3} ms: {:>7.1} G window pairs/s, {:>6.1} T int8 ops/s (a product's)", best * 1e3, pairs / best / 1e9, pairs * 32.0 * 2.0 / best / 1e12);
     }
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SaArgs {
+    n: u32,
+    h: u32,
+    b: u32,
+    pad: u32,
+}
+unsafe impl crate::Pod for SaArgs {}
+
+/// The suffix array of `t` on the device, by prefix doubling over the rows not yet alone in their group: its entries,
+/// each round's GPU seconds (its sort's, its ranks' and its compaction's) and rows sorted, and the launches. Each sort
+/// takes a multiple of 16 bits, an even number of passes, so the rows end in the pair they started in.
+fn suffix_array_device(q: &mut crate::device::ComputeQueue, t: &[u8]) -> (Vec<u32>, Vec<(f64, usize)>, usize) {
+    use crate::kernels::{alloc, buffer_of, launch, program_with, read};
+    use crate::library::{radix_sort_pairs_in, scan_exclusive_u32_in, RadixSpace, ScanSpace, Sorted};
+    let p = program_with("match_tests.uglykl", MATCH, &[]).unwrap();
+    let n = t.len();
+    let tb = buffer_of(t).unwrap();
+    let [keys, k1] = [alloc::<u64>(n).unwrap(), alloc::<u64>(n).unwrap()];
+    let [mut pos, mut p1] = [alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap()];
+    let w = || alloc::<u32>(n + 1).unwrap();
+    let (heads, sid, oheads, soid, first, ofirst, rank, keep, koff) = (w(), w(), w(), w(), w(), w(), w(), w(), w());
+    let (space, sspace) = (RadixSpace::new(n as u32).unwrap(), ScanSpace::new(n as u32).unwrap());
+    let b = 32 - (n as u32 + 1).leading_zeros();
+    let (mut launches, mut rounds) = (2, Vec::new());
+    let grid = |m: usize| [m.div_ceil(256).max(1) as u64];
+    let mut g0 = crate::device::gpu_seconds_awaited();
+    launch(q, p.function("sa_init").unwrap()).value("args", &SaArgs { n: n as u32, h: 0, b, pad: 0 }).buffer("T", &tb).buffer("keys", &keys).buffer("pos", &pos).run(&grid(n), &[256]).unwrap();
+    let (mut m, mut h, mut bits, mut first_round) = (n, 7u32, 64u32, true);
+    loop {
+        let a = SaArgs { n: m as u32, h, b, pad: first_round as u32 };
+        let (sorted, made) = radix_sort_pairs_in::<u64>(q, [&keys, &pos], [&k1, &p1], m as u32, bits, &space).unwrap();
+        assert_eq!(sorted, Sorted::InPlace);
+        launch(q, p.function("sa_heads").unwrap()).value("args", &a).buffer("keys", &keys).buffer("heads", &heads).buffer("oheads", &oheads).run(&grid(m), &[256]).unwrap();
+        let s1 = scan_exclusive_u32_in(q, &heads, &sid, m as u32, false, &sspace).unwrap();
+        let s2 = scan_exclusive_u32_in(q, &oheads, &soid, m as u32, false, &sspace).unwrap();
+        launch(q, p.function("sa_firsts").unwrap()).value("args", &a).buffer("heads", &heads).buffer("sid", &sid).buffer("oheads", &oheads).buffer("soid", &soid).buffer("first", &first).buffer("ofirst", &ofirst).run(&grid(m), &[256]).unwrap();
+        launch(q, p.function("sa_rerank").unwrap())
+            .value("args", &a)
+            .buffer("keys", &keys)
+            .buffer("pos", &pos)
+            .buffer("heads", &heads)
+            .buffer("sid", &sid)
+            .buffer("oheads", &oheads)
+            .buffer("soid", &soid)
+            .buffer("first", &first)
+            .buffer("ofirst", &ofirst)
+            .buffer("rank", &rank)
+            .buffer("keep", &keep)
+            .run(&grid(m), &[256])
+            .unwrap();
+        let s3 = scan_exclusive_u32_in(q, &keep, &koff, m as u32, false, &sspace).unwrap();
+        launch(q, p.function("sa_compact").unwrap()).value("args", &a).buffer("pos", &pos).buffer("keep", &keep).buffer("koff", &koff).buffer("out", &p1).run(&grid(m), &[256]).unwrap();
+        launches += made + s1 + s2 + s3 + 5;
+        q.flush().await_().unwrap();
+        let left = read::<u32>(&koff, m + 1)[m] as usize;
+        let g1 = crate::device::gpu_seconds_awaited();
+        rounds.push((g1 - g0, m));
+        g0 = g1;
+        std::mem::swap(&mut pos, &mut p1);
+        if left == 0 {
+            break;
+        }
+        (m, first_round) = (left, false);
+        launch(q, p.function("sa_keys").unwrap()).value("args", &SaArgs { n: m as u32, h, b, pad: n as u32 }).buffer("pos", &pos).buffer("rank", &rank).buffer("keys", &keys).run(&grid(m), &[256]).unwrap();
+        launches += 1;
+        h *= 2;
+        bits = (2 * b).next_multiple_of(16);
+    }
+    let sa = alloc::<u32>(n).unwrap();
+    launch(q, p.function("sa_out").unwrap()).value("args", &SaArgs { n: n as u32, h: 0, b, pad: 0 }).buffer("rank", &rank).buffer("sa", &sa).run(&grid(n), &[256]).unwrap();
+    q.flush().await_().unwrap();
+    rounds.last_mut().unwrap().0 += crate::device::gpu_seconds_awaited() - g0;
+    (read::<u32>(&sa, n), rounds, launches)
+}
+
+/// The suffix array on the device equals libsais's, entry by entry, and what it costs: each input's tape (and its
+/// JSON), the device's GPU time by round and in all, against libsais on one CPU thread. Run by name: `--ignored
+/// suffix_array_device_cost`.
+#[test]
+#[ignore]
+fn suffix_array_device_cost() {
+    let Some(shared) = crate::shared::get() else { return };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let cpu = crate::device::backend() == "CPU";
+    eprintln!("{} ({})", crate::device::backend(), shared.device.name());
+    let mut all: Vec<(String, Vec<u8>)> = Vec::new();
+    for (name, f) in inputs() {
+        if let Some(t) = tape_of(&f) {
+            all.push((format!("{name}'s tape"), t));
+        }
+        all.push((format!("{name}'s JSON"), f));
+    }
+    for (name, s) in &all {
+        let s: &[u8] = if cpu { &s[..s.len().min(20_000)] } else { s };
+        let (want, _, cpu_s, _) = suffix_array(s);
+        let mut best: Option<(f64, Vec<(f64, usize)>, usize)> = None;
+        for _ in 0..3 {
+            let (got, rounds, launches) = suffix_array_device(&mut q, s);
+            assert!(got.iter().zip(&want).all(|(&g, &w)| g as i32 == w), "{name}: the device's suffix array is not libsais's");
+            let total: f64 = rounds.iter().map(|r| r.0).sum();
+            if best.as_ref().is_none_or(|b| total < b.0) {
+                best = Some((total, rounds, launches));
+            }
+        }
+        let (total, rounds, launches) = best.unwrap();
+        eprintln!("  {name}: {} bytes: the device {:.2} ms GPU ({:.0} MB/s; {} rounds (ms, rows sorted) {:?}, {launches} launches), libsais {:.2} ms", s.len(), total * 1e3, s.len() as f64 / total / 1e6, rounds.len(), rounds.iter().map(|r| ((r.0 * 1e4).round() / 10.0, r.1)).collect::<Vec<_>>(), cpu_s * 1e3);
+    }
+}

@@ -133,3 +133,135 @@ DEFINE_KERNEL2(tests, m_threads,
     }
     out[q] = found;
 }
+
+// ---- A suffix array by prefix doubling (decision 0727): the radix sort (`ukl/radix.h`, the host's passes) and an
+// exclusive scan, between these. Ranks are 1 and up; 0 is past the text's end, so a shorter suffix sorts first.
+
+typedef struct SaArgs {
+    uint32_t n;
+    uint32_t h;
+    uint32_t b;
+    uint32_t pad;
+} SaArgs;
+UKL_REFLECT_STRUCT(SaArgs, n, h, b, pad)
+
+// Each suffix's first 7 bytes, 9 bits a symbol (a byte + 1; 0 past the end), high symbol first; its position.
+DEFINE_KERNEL2(tests, sa_init,
+               ARGS,     SaArgs,   args, ,
+               ROBUFFER, uint8_t,  T,    "[1]",
+               RWBUFFER, uint64_t, keys, "[1]",
+               RWBUFFER, uint32_t, pos,  "[1]",
+               GID0,     uint32_t, i,    )
+{
+    if (i >= args.n)
+        return;
+    uint64_t k = 0u;
+    for (uint32_t c = 0u; c < 7u; c++)
+        k = (k << 9) | (i + c < args.n ? (uint64_t)T[i + c] + 1u : 0u);
+    keys[i] = k;
+    pos[i] = i;
+}
+
+// Ranks are a group's first slot in the order so far, plus 1 (0 is past the text's end); each round sorts only the
+// rows not yet alone in their group (`m` of them), by (rank, rank h on), `b` bits each.
+
+// Whether sorted row `k` opens a group of the new order (its key not the row before's), and of the old (its rank
+// part not the row before's; in the first round, one old group).
+DEFINE_KERNEL2(tests, sa_heads,
+               ARGS,     SaArgs,   args,   ,
+               ROBUFFER, uint64_t, keys,   "[1]",
+               RWBUFFER, uint32_t, heads,  "[1]",
+               RWBUFFER, uint32_t, oheads, "[1]",
+               GID0,     uint32_t, k,      )
+{
+    if (k >= args.n)
+        return;
+    heads[k] = (k == 0u || keys[k] != keys[k - 1u]) ? 1u : 0u;
+    oheads[k] = (k == 0u || (args.pad == 0u && (keys[k] >> args.b) != (keys[k - 1u] >> args.b))) ? 1u : 0u;
+}
+
+// Each group's first row, new (`first`) and old (`ofirst`), at the group's number (the heads' scans).
+DEFINE_KERNEL2(tests, sa_firsts,
+               ARGS,     SaArgs,   args,   ,
+               ROBUFFER, uint32_t, heads,  "[1]",
+               ROBUFFER, uint32_t, sid,    "[1]",
+               ROBUFFER, uint32_t, oheads, "[1]",
+               ROBUFFER, uint32_t, soid,   "[1]",
+               RWBUFFER, uint32_t, first,  "[1]",
+               RWBUFFER, uint32_t, ofirst, "[1]",
+               GID0,     uint32_t, k,      )
+{
+    if (k >= args.n)
+        return;
+    if (heads[k] != 0u)
+        first[sid[k]] = k;
+    if (oheads[k] != 0u)
+        ofirst[soid[k]] = k;
+}
+
+// Each row's suffix's new rank, its old group's slot and its new group's offset in it; whether the row stays (its
+// new group is not it alone).
+DEFINE_KERNEL2(tests, sa_rerank,
+               ARGS,     SaArgs,   args,   ,
+               ROBUFFER, uint64_t, keys,   "[1]",
+               ROBUFFER, uint32_t, pos,    "[1]",
+               ROBUFFER, uint32_t, heads,  "[1]",
+               ROBUFFER, uint32_t, sid,    "[1]",
+               ROBUFFER, uint32_t, oheads, "[1]",
+               ROBUFFER, uint32_t, soid,   "[1]",
+               ROBUFFER, uint32_t, first,  "[1]",
+               ROBUFFER, uint32_t, ofirst, "[1]",
+               RWBUFFER, uint32_t, rank,   "[1]",
+               RWBUFFER, uint32_t, keep,   "[1]",
+               GID0,     uint32_t, k,      )
+{
+    if (k >= args.n)
+        return;
+    uint32_t id = sid[k] + heads[k] - 1u, oid = soid[k] + oheads[k] - 1u;
+    uint32_t base = args.pad != 0u ? 1u : (uint32_t)(keys[k] >> args.b);
+    rank[pos[k]] = base + first[id] - ofirst[oid];
+    keep[k] = (heads[k] != 0u && (k + 1u == args.n || heads[k + 1u] != 0u)) ? 0u : 1u;
+}
+
+// The rows that stay, packed in order.
+DEFINE_KERNEL2(tests, sa_compact,
+               ARGS,     SaArgs,   args, ,
+               ROBUFFER, uint32_t, pos,  "[1]",
+               ROBUFFER, uint32_t, keep, "[1]",
+               ROBUFFER, uint32_t, koff, "[1]",
+               RWBUFFER, uint32_t, out,  "[1]",
+               GID0,     uint32_t, k,    )
+{
+    if (k >= args.n)
+        return;
+    if (keep[k] != 0u)
+        out[koff[k]] = pos[k];
+}
+
+// Each staying row's key for the next round: its suffix's rank, then the rank `h` on (0 past the end, `len` the
+// text's length).
+DEFINE_KERNEL2(tests, sa_keys,
+               ARGS,     SaArgs,   args, ,
+               ROBUFFER, uint32_t, pos,  "[1]",
+               ROBUFFER, uint32_t, rank, "[1]",
+               RWBUFFER, uint64_t, keys, "[1]",
+               GID0,     uint32_t, k,    )
+{
+    if (k >= args.n)
+        return;
+    uint32_t p = pos[k], len = args.pad;
+    uint64_t r2 = p + args.h < len ? (uint64_t)rank[p + args.h] : 0u;
+    keys[k] = ((uint64_t)rank[p] << args.b) | r2;
+}
+
+// The suffix array from the final ranks: each suffix at its slot.
+DEFINE_KERNEL2(tests, sa_out,
+               ARGS,     SaArgs,   args, ,
+               ROBUFFER, uint32_t, rank, "[1]",
+               RWBUFFER, uint32_t, sa,   "[1]",
+               GID0,     uint32_t, p,    )
+{
+    if (p >= args.n)
+        return;
+    sa[rank[p] - 1u] = p;
+}
