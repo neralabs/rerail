@@ -2825,10 +2825,15 @@ use rerail_blocks::vector::Vector;
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
-        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE u (c0);").unwrap();
         for &id in &ids {
             db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
         }
+        // u(t): some nodes' texts, as symbols, for a negated atom keyed by the text (`la_base_name`'s shape).
+        for t in ["os", "x", "a", "self", "1"] {
+            db.execute("INSERT INTO u VALUES (?1)", [t]).unwrap();
+        }
+        let u = format!("t:x:{}:{}:s", hex("temp.u"), hex("c0"));
         // The run's binding of the long-text nodes, which a node read finds on the connection (`bound_source`).
         let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
         modules.bind(&db, LONG_TEXT_NODES, Arc::clone(&nodes)).unwrap();
@@ -2840,7 +2845,8 @@ use rerail_blocks::vector::Vector;
             // The lines' texts among the any-length read's, none among the long-text twin's.
             let lines = want.iter().filter(|(_, id)| line_ids.contains(id)).count();
             assert_eq!(lines, if f == "rr_node_text" { 0 } else { line_ids.len() }, "{f}: the lines' texts");
-            let rule = format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0");
+            // h0(t, n) :- q(n), t = f(n).    h0(t, n) :- q(n), t = f(n), !u(t).   (read by a negated atom too)
+            for (negated, rule) in [(false, format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0")), (true, format!("pos {q} v0\nfunc {f} v1 v0\nneg {u} v1\nhead v1 v0"))] {
             let mut got = Vec::new();
             for device in [false, true] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2863,9 +2869,16 @@ use rerail_blocks::vector::Vector;
                 rows.sort_unstable();
                 got.push((rows, counts));
             }
-            assert_eq!(got[0].0, want, "{f}: the CPU's rows are the host's reads");
-            assert_eq!(got[1].0, got[0].0, "{f}: the device's rows are the CPU's");
-            assert_eq!(got[1].1, got[0].1, "{f}: the device's counts per step are the CPU's");
+            if negated {
+                let kept: Vec<(String, i64)> = want.iter().filter(|(t, _)| !["os", "x", "a", "self", "1"].contains(&t.as_str())).cloned().collect();
+                assert!(f == "rr_node_text" || kept.len() < want.len(), "{f}: some texts are u's atoms");
+                assert_eq!(got[0].0, kept, "{f}: the CPU's rows are the host's reads, u's texts left out");
+            } else {
+                assert_eq!(got[0].0, want, "{f}: the CPU's rows are the host's reads");
+            }
+            assert_eq!(got[1].0, got[0].0, "{f} (negated: {negated}): the device's rows are the CPU's");
+            assert_eq!(got[1].1, got[0].1, "{f} (negated: {negated}): the device's counts per step are the CPU's");
+            }
         }
     }
 

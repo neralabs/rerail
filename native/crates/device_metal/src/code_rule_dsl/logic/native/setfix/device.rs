@@ -1190,7 +1190,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     deferred.insert(*out, held);
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else {
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { neg: false, .. })) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { .. })) {
                         return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                     }
                     let mut st = copy_stage(i, *out, Key::Slot(n), Key::Slot(n), mj::NODE_TEXT, &origin, &known)?;
@@ -1221,11 +1221,12 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 // Bound and read only as positive atoms' keys (the CPU's `PROBE_OUT`: a text no atom is matches no
                 // row): its value is the atom the text is, found in the atoms directory (`ROW_FIND`, decision 0666),
                 // and no row where none is, as the CPU drops it at the function. A symbol: its atoms probe by value,
-                // one keyed by it alone too.
+                // one keyed by it alone too. Read by a negated atom too, it is made: the atom's own find stage keeps
+                // a text no atom is (`ROW_FIND_NONE`), and the negation passes it.
                 let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 let target = if *bind {
                     let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { neg: false, .. })) {
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out) && !matches!(s, Step::Atom { .. })) {
                         return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                     }
                     *out
