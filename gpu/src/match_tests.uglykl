@@ -367,3 +367,90 @@ DEFINE_KERNEL2(tests, m_lz,
                 ukl_atomic_max(out + qt + ukl_mma_row(i, at), best[t][i]);
     }
 }
+
+// `m_lz` over chosen queries only: `args.nq` positions `qp[k]` (each from `args.q0`, ascending), 16 a tile, their
+// windows read into threadgroup memory a row each (the A fragments' stage: the memory hierarchy, not a copy), each
+// query's nearest equal window + 1 into `out[k]`. The lookback's tiles run from the tile's first query's piece start
+// to its last query.
+DEFINE_KERNEL2(tests, m_lz_at,
+               ARGS,     MatchArgs, args,   ,
+               ROBUFFER, int8_t,    T,      "[1]",
+               ROBUFFER, int32_t,   P,      "[1]",
+               ROBUFFER, uint32_t,  starts, "[1]",
+               ROBUFFER, uint32_t,  qp,     "[1]",
+               RWBUFFER, uint32_t,  out,    "[1]",
+               SHARED,   int8_t,    As,     M_QT * 16 * 32,
+               TGID0,    uint32_t,  tile,   ,
+               LID0,     uint32_t,  lid,    )
+{
+    UklMmaAt at = ukl_mma_at(lid);
+    const uint32_t M = UKL_MMA_M(i8), N = UKL_MMA_N(i8);
+    uint32_t q = tile * M * M_QT;
+    if (q >= args.nq)
+        return;
+    const uint32_t KS = UKL_MMA_K(i8), STEPS = M_W / UKL_MMA_K(i8);
+    for (uint32_t k = lid; k < M_QT * M * M_W; k += UKL_MMA_LANES) {
+        uint32_t row = min(q + k / M_W, args.nq - 1u);
+        As[k] = T[args.q0 + qp[row] + k % M_W];
+    }
+    ukl_tg_barrier();
+    uint32_t best[M_QT][UKL_MMA_RB], ps[M_QT][UKL_MMA_RB], qas[M_QT][UKL_MMA_RB];
+    ukl_mma_a_i8 a[M_QT][M_W / UKL_MMA_K(i8)];
+    uint32_t jlo = 0xffffffffu, jhi = 0u;
+    for (uint32_t t = 0u; t < M_QT; t++) {
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {
+            best[t][i] = 0u;
+            uint32_t qa = args.q0 + qp[min(q + t * M + ukl_mma_row(i, at), args.nq - 1u)];
+            qas[t][i] = qa;
+            uint32_t lo = 0u, hi = args.r0;
+            while (hi - lo > 1u) {
+                uint32_t mid = (lo + hi) >> 1;
+                if (starts[mid] <= qa)
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            ps[t][i] = starts[lo];
+        }
+        uint32_t qa0 = args.q0 + qp[min(q + t * M, args.nq - 1u)], qa1 = args.q0 + qp[min(q + t * M + M - 1u, args.nq - 1u)];
+        uint32_t lo = 0u, hi = args.r0;
+        while (hi - lo > 1u) {
+            uint32_t mid = (lo + hi) >> 1;
+            if (starts[mid] <= qa0)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        jlo = min(jlo, starts[lo] & ~(N - 1u));
+        jhi = max(jhi, qa1);
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_a_i8_local(&a[t][s], As + t * M * M_W + s * KS, M_W, UKL_ROW_MAJOR, at);
+    }
+    uint32_t nd = args.nr / N, no = jhi > jlo ? (jhi - jlo + N - 1u) / N : 0u;
+    for (uint32_t u = 0u; u < nd + no; u++) {
+        uint32_t j = u < nd ? u * N : jlo + (u - nd) * N;
+        ukl_mma_b_i8 b[M_W / UKL_MMA_K(i8)];
+        for (uint32_t s = 0u; s < STEPS; s++)
+            ukl_mma_load_b_i8(&b[s], T + j + s * KS, 1u, UKL_ROW_MAJOR, at);
+        for (uint32_t t = 0u; t < M_QT; t++) {
+            ukl_mma_c_i32 c;
+            ukl_mma_fill_c_i32(&c, 0, at);
+            for (uint32_t s = 0u; s < STEPS; s++)
+                ukl_mma_i8(&c, &a[t][s], &b[s], at __UKL_ARGS);
+            for (uint32_t e = 0u; e < UKL_MMA_C_PER; e++) {
+                uint32_t r = e / UKL_MMA_CB, jj = j + ukl_mma_col(e % UKL_MMA_CB, at);
+                uint32_t qa = qas[t][r];
+                bool ok = u < nd ? jj + M_W <= args.nr : jj >= ps[t][r] && jj < qa;
+                int32_t d = P[qa] + P[jj] - 2 * c.x[e];
+                if (ok && d == 0 && jj + 1u > best[t][r])
+                    best[t][r] = jj + 1u;
+            }
+        }
+    }
+    for (uint32_t t = 0u; t < M_QT; t++)
+        for (uint32_t i = 0u; i < UKL_MMA_RB; i++) {
+            uint32_t k = q + t * M + ukl_mma_row(i, at);
+            if (best[t][i] != 0u && k < args.nq)
+                ukl_atomic_max(out + k, best[t][i]);
+        }
+}

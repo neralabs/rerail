@@ -676,6 +676,35 @@ fn int8_lz4_matches() {
             }
             (l, kept)
         };
+        // The units on the inner nodes' positions only (`m_lz_at`): each kept query's answer is `m_lz`'s.
+        let (_, kin0) = aligned(2);
+        let mut kept = Vec::with_capacity(kin0);
+        for (k, &(node0, fixed, cell)) in pn.iter().enumerate() {
+            let s = starts[k] as usize - d;
+            for j in (0..fixed).step_by(cell) {
+                if nd.size[node0 + j / cell] >= 2 {
+                    kept.push((s + j) as u32);
+                }
+            }
+        }
+        let nk = kept.len();
+        let (kb, ko) = (buffer_of(&kept).unwrap(), alloc::<u32>(nk.max(1)).unwrap());
+        let mut gpu_at = f64::MAX;
+        for _ in 0..3 {
+            let none = vec![0u32; nk];
+            // SAFETY: the buffer holds nk words; no launch runs.
+            unsafe { std::ptr::copy_nonoverlapping(none.as_ptr(), ko.contents().cast::<u32>(), nk) };
+            launch(&q, p.function("m_squares").unwrap()).value("args", &MatchArgs { nq: n as u32, qs: 1, q0: 0, nr: 0, r0: 0, pad: [0; 3] }).buffer("T", &tb).buffer("P", &pb).run(&[n.div_ceil(64) as u64], &[64]).unwrap();
+            let a = MatchArgs { nq: nk as u32, qs: 1, q0: d as u32, nr: d as u32, r0: ps.len() as u32, pad: [0; 3] };
+            launch(&q, p.function("m_lz_at").unwrap()).value("args", &a).buffer("T", &tb).buffer("P", &pb).buffer("starts", &sb).buffer("qp", &kb).buffer("out", &ko).run(&[nk.div_ceil(32) as u64], &[c[4] as u64]).unwrap();
+            let e = q.flush();
+            e.await_().unwrap();
+            gpu_at = gpu_at.min(e.gpu_seconds());
+        }
+        let at: Vec<u32> = read(&ko, nk);
+        let bad = (0..nk).filter(|&i| at[i] != long[kept[i] as usize]).count();
+        assert!(bad == 0, "{name}: {bad} of {nk} kept queries' windows are not m_lz's");
+        line += &format!(" m_lz_at on the {nk} inner nodes' positions {:.2} ms GPU ({:.2}x);", gpu_at * 1e3, gpu / gpu_at);
         let side: usize = pn.iter().zip(&ps).map(|(&(_, fixed, _), p)| p.len() - fixed).sum();
         line += &format!(" side bytes {:.1}%;", 100.0 * side as f64 / raw as f64);
         let (inner, kin) = aligned(2);
