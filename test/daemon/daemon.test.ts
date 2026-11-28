@@ -15,6 +15,7 @@ import {
   defaultEngineSocketPath,
   parsePublicHosts,
   RerailDaemon,
+  relaunchArguments,
   type RerailDaemonOptions,
 } from "../../src/daemon/daemon.js";
 import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
@@ -1006,24 +1007,29 @@ describe("Rerail daemon", () => {
     return ports;
   }
 
-  // OMP's and Pi's attach starts a daemon on any free port in place of one of another package. It tries that daemon's
-  // port first, so a dashboard link shown for it still answers, and takes a free one where another program holds it;
-  // either way the port is a throwaway one, so later starts keep the port the home remembers.
-  it("asked for any free port in place of another daemon, takes that daemon's port or else a free one, and remembers neither", async () => {
+  // A daemon started in place of another tries that daemon's port first, so a dashboard link shown for it still answers:
+  // OMP's and Pi's attach asks for any free port, a hook's replacement and the daemon's own restart for none. Where
+  // another program holds that port it goes on as it would without one, and its start does not fail. Either way that
+  // port stays the other daemon's, so later starts keep the port the home remembers.
+  it.each([
+    { asked: "any free port", port: 0, then: "a free one" },
+    { asked: "no port", port: undefined, then: "the remembered one" },
+  ])("asked for $asked in place of another daemon, takes that daemon's port or else $then, and remembers neither", async ({ port }) => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
     process.env.RERAIL_HOME = join(root, "home");
     const portFile = join(root, "daemon-port.json");
     const stateFile = join(root, "daemon.json");
     const [old = 0, remembered = 0] = await freePorts(2);
     await writeFile(portFile, `${JSON.stringify({ port: remembered })}\n`);
-    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, stateFile, port: 0, preferredPort: old };
+    const options = { version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, nativeHealth: healthyNative, portFile, stateFile, preferredPort: old, ...(port === undefined ? {} : { port }) };
 
     const blocker = createServer();
     await new Promise<void>((resolveListening) => blocker.listen(old, "127.0.0.1", () => resolveListening()));
     try {
       const moved = await RerailDaemon.start(options);
       daemons.push(moved);
-      expect([old, remembered]).not.toContain(moved.port);
+      if (port === undefined) expect(moved.port).toBe(remembered);
+      else expect([old, remembered]).not.toContain(moved.port);
       // Every link Rerail shows comes from the state file.
       expect((JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).url).toBe(`http://127.0.0.1:${moved.port}/`);
       await moved.close();
@@ -1035,6 +1041,23 @@ describe("Rerail daemon", () => {
     daemons.push(back);
     expect(back.port).toBe(old);
     expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: remembered });
+  });
+
+  // A daemon started on a port the person named restarts with that port and the same one to try first; it is theirs.
+  it("remembers a port it was given, even where it is also the port to try first", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-"));
+    const portFile = join(root, "daemon-port.json");
+    const [named = 0] = await freePorts(1);
+    const daemon = await start({ port: named, preferredPort: named, portFile });
+    expect(daemon.port).toBe(named);
+    expect(JSON.parse(await readFile(portFile, "utf8"))).toEqual({ port: named });
+  });
+
+  it("restarts itself trying first the port it listens on, in place of any it was given to try", () => {
+    const entry = "/package/dist/daemon/daemon-entry.js";
+    expect(relaunchArguments([entry, "--port", "0", "--state-file", "/home/daemon.json"], 41234))
+      .toEqual([entry, "--port", "0", "--state-file", "/home/daemon.json", "--prefer-port", "41234"]);
+    expect(relaunchArguments([entry, "--prefer-port", "4737", "--port", "0"], 41234)).toEqual([entry, "--port", "0", "--prefer-port", "41234"]);
   });
 
   // A port below 1024 is refused (EACCES) to an unprivileged process on most systems, as a port Windows reserved is.

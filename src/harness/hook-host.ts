@@ -13,12 +13,10 @@ import {
   autostartDaemon,
   autostartOff,
   AutostartOffError,
+  autostartOffLine,
   daemonEngineEndpoint,
   daemonLeftEventUntaken,
-  daemonNotRunningMessage,
   engineEndpointAt,
-  OtherDaemonKeptError,
-  otherDaemonKeptMessage,
   runningDaemonEngineEndpoint,
   type DaemonState,
   type HookDaemon,
@@ -168,14 +166,11 @@ export function answerAutostartOff<Output>(error: unknown, startsSession: boolea
 }
 
 /**
- * What a session's start tells the person when `RERAIL_AUTOSTART` kept its hook from reaching a daemon it may use: none
- * runs (`daemonNotRunningMessage`, the line `rerail status` prints), or one runs that the hook may neither use nor
- * replace (`otherDaemonKeptMessage`); undefined for any other failure.
+ * What a session's start tells the person when `RERAIL_AUTOSTART` kept its hook from reaching a daemon it may use
+ * (`autostartOffLine`: none runs, or one runs that the hook may neither use nor replace); undefined for any other failure.
  */
 function autostartLine(error: unknown): string | undefined {
-  const cause = error instanceof DaemonUnreachableError ? error.cause : undefined;
-  if (cause instanceof AutostartOffError) return daemonNotRunningMessage();
-  return cause instanceof OtherDaemonKeptError ? otherDaemonKeptMessage() : undefined;
+  return error instanceof DaemonUnreachableError ? autostartOffLine(error.cause) : undefined;
 }
 
 /**

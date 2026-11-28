@@ -87,6 +87,8 @@ async function fixture(createAuditor?: RerailRuntimeOptions["createAuditor"]) {
 
 describe("rerail scan and settings CLI", () => {
   it("starts, stops, and restarts this repository through slash commands", async () => {
+    // A person who runs the daemon themselves: the restart below ends on the line saying none runs.
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
     const { root } = await fixture();
     const name = basename(root);
     const commands = new Map<string, Parameters<HostCommandHost["registerCommand"]>[1]>();
@@ -143,9 +145,10 @@ describe("rerail scan and settings CLI", () => {
     ].join("\n"));
 
     await commands.get("rerail-start")!.handler("", { ui });
-    // Restarting a set-up repository ends on its scoped rules link, as the terminal's `rerail start` does. The launcher
-    // finds no daemon of this home and the suite's RERAIL_AUTOSTART=0 keeps it from starting one, so the reason follows.
-    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}http:\/\/\S+\?repository=[^#\s]+&checkout=[^#\s]+#rules\n {2}△ The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it$/u);
+    // Restarting a set-up repository ends as the terminal's `rerail start` does. The launcher finds no daemon of this
+    // home, and RERAIL_AUTOSTART=0 keeps it from starting one, so the line saying so, and how to start one,
+    // takes the place of the link and its reason.
+    expect(notices.at(-1)).toMatch(/rules are on, as you left them\.\n {2}△ The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs\. Start it with rerail daemon start\.$/u);
     expect(isRerailStarted(root)).toBe(true);
     // Every command that changed something rebuilds the runtime; the cancelled set-up changed nothing.
     expect(reattached).toBe(3);

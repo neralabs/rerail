@@ -236,7 +236,24 @@ function extensionErrors(run: Run): string[] {
     .map((line) => line.trim().replace(/^.*(default|pi)-extension\.js\): /u, "").slice(0, 160));
 }
 
-async function project(): Promise<Workspace> {
+/**
+ * The host's environment: the user's own, for the real HOME's credentials and model choice, with the run's private
+ * Rerail home. Orca's terminal injects ORCA_* variables that redirect OMP's agent directory, so those stay out. An OMP
+ * session sends its events to a daemon, which its attach starts in the run's Rerail home, as for a person with autostart
+ * on: the setting is cleared for it whatever the shell says. Pi from this checkout runs Rerail in its own process, whose
+ * session start would launch a daemon too; RERAIL_AUTOSTART=0 keeps that one out.
+ */
+function hostEnvironment(host: Host, rerailHome: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { RERAIL_AUTOSTART: "0" };
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && !key.startsWith("ORCA_")) env[key] = value;
+  }
+  env.RERAIL_HOME = rerailHome;
+  if (host === "omp") delete env.RERAIL_AUTOSTART;
+  return env;
+}
+
+async function project(host: Host): Promise<Workspace> {
   const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-"));
   await mkdir(join(root, "api"), { recursive: true });
   await writeFile(join(root, "api", "existing.py"), "def existing():\n    return 1\n");
@@ -255,14 +272,7 @@ async function project(): Promise<Workspace> {
   } finally {
     database.$client.close();
   }
-  // Orca's terminal injects ORCA_* variables that redirect OMP's agent directory; the run must see the
-  // user's real HOME (credentials, model choice) and nothing else. RERAIL_AUTOSTART=0 keeps the daemon out.
-  const env: NodeJS.ProcessEnv = { RERAIL_AUTOSTART: "0" };
-  for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("ORCA_")) env[key] = value;
-  }
-  env.RERAIL_HOME = rerailHome;
-  return { root, env, databasePath, sessionDir: join(root, ".host-sessions") };
+  return { root, env: hostEnvironment(host, rerailHome), databasePath, sessionDir: join(root, ".host-sessions") };
 }
 
 function textOf(content: z.infer<typeof Content>): string {
@@ -445,7 +455,7 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
 async function main(): Promise<void> {
   const { host, extra } = parseArgs(process.argv);
   await ensureFresh(EXTENSION[host]);
-  const workspace = await project();
+  const workspace = await project(host);
   const evidence = await gather(host, extra, workspace).finally(async () => {
     if (process.env.LIFECYCLE_KEEP) process.stdout.write(`kept ${workspace.root}\n`);
     else await rm(workspace.root, { recursive: true, force: true });

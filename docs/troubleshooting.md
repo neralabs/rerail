@@ -690,11 +690,12 @@ an event it could not check, and is removed where it can be. While events wait, 
 has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
 read from the transcript stay unread until the next hook the daemon answers, which checks them.
 
-With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
-what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
-show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
-`rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
-nothing is recorded until it runs, and to start it with `rerail daemon start`. A daemon that runs but that hooks may
+With `RERAIL_AUTOSTART=0` (or `false`) hooks and OMP and Pi sessions start no daemon, and a hook that finds none logs
+nothing, since that is what you asked for. A session that starts with no daemon running says so as it starts: Claude
+Code, Codex, OMP and Pi show the line under the session's start, and Cursor's agent is asked to begin its first reply
+with it. The line, which `rerail status` and `rerail start` print too, says the daemon is not running, that
+`RERAIL_AUTOSTART=0` keeps hooks from starting it, so nothing is recorded until it runs, and to start it with
+`rerail daemon start`; an OMP or Pi session attaches once it runs. A daemon that runs but that hooks may
 not use, one of another Rerail package or, on Windows, one of Rerail 0.1.4 or earlier, is not replaced either: the
 session's start says that nothing is recorded until a daemon from the active package runs, and to run
 `rerail daemon stop`, then `rerail daemon start`. Each event lost beside it goes to the hook failure log above.
@@ -800,8 +801,10 @@ there too. `rerail status` says whether the daemon is running.
 The daemon reuses the port in `~/.rerail/daemon-port.json`: 4737 at first, or the one `rerail daemon start --port <n>`
 named. Only when another program holds that port and 4737 does it take a free port, and keep it, so old links stop
 working. A taken `--port` fails the start instead (below). A daemon an OMP or Pi session starts takes a free port and
-does not keep it; one that replaces a running daemon of another Rerail version tries that daemon's port first, and
-takes a free one where another program holds it.
+does not keep it. A daemon started in place of another, by a coding agent's hook or session when the running one is
+another Rerail version's, or by the daemon's own restart, tries that daemon's port first, so links shown for it keep
+working, but does not keep it in place of the remembered port; where another program took that port meanwhile, it
+goes on as above.
 
 </details>
 

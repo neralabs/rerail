@@ -1189,4 +1189,41 @@ describe("the daemon set-up links the dashboard to", () => {
     expect(daemonStop.starts).toEqual(starts);
     expect(link).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:4737\/.*#rules$/u), linkOnly: true });
   });
+
+  // A person who runs the daemon themselves: a link starts and replaces none, and where it has no daemon to keep, it
+  // carries the line a session's start says then, which `rerail start` shows in place of a link no daemon serves.
+  const notRunning = "The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.";
+  const otherKept = "The running Rerail daemon is from another Rerail package or an earlier release, and RERAIL_AUTOSTART=0 keeps hooks from replacing it, so nothing is recorded until a daemon from the active package runs. Run rerail daemon stop, then rerail daemon start.";
+  it.each([
+    ["a start with none running says none runs", "running", undefined, notRunning],
+    ["a start beside one of Rerail 0.1.4 or earlier says it is kept", "running", true, otherKept],
+    ["set-up beside one of another package says it is kept", "active", false, otherKept],
+    ["a start beside one of another package keeps its link", "running", false, undefined],
+  ] as const)("under RERAIL_AUTOSTART=0, %s", async (_what, daemon, older, line) => {
+    const { context } = await fixture();
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    // None stands in where none runs: the fixture's home has no daemon.
+    daemonStop.lookup = older === undefined ? undefined : foundDaemon("/nowhere/rerail", older);
+    daemonStop.beforeStopped = async () => undefined;
+    daemonStop.starts = [];
+    const link = await setupEnvironment(context).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false, daemon);
+    expect(daemonStop.starts).toEqual([]);
+    expect(link.notRunning).toBe(line);
+  });
+
+  // A daemon that runs but does not answer is no state a session's start names, so the link keeps set-up's reason,
+  // which `rerail start` shows after it, and no line.
+  it("under RERAIL_AUTOSTART=0, a start beside a daemon that does not answer carries the reason and no line", async () => {
+    const { context } = await fixture();
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    daemonRun.found = { status: "unresponsive", state: foundDaemon("/nowhere/rerail", false).state };
+    daemonStop.starts = [];
+    const link = await setupEnvironment(context).dashboard({ repositoryKey: "repo", checkoutPath: null }, "rules", false, "running");
+    expect(daemonStop.starts).toEqual([]);
+    expect(link).toEqual({
+      url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:4737\/.*#rules$/u),
+      browserOpened: false,
+      noBrowserReason: "The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it",
+    });
+  });
 });

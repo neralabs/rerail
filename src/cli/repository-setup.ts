@@ -1033,7 +1033,8 @@ const rulesNoun = (count: number): string => `${count} ${count === 1 ? "rule is"
  * checkout of its repository. A repository that is not set up runs set-up's questions first, which end on the
  * dashboard's link; one set up before ends on it too, shown without opening a browser: the running daemon's, of
  * whichever package, or the active install's started for it (`running`, {@link DashboardDaemon}), and where none could
- * be had, why. Both forms of `rerail start` end here, so `--json` changes only the form of the answer.
+ * be had, why ({@link dashboardLines}). Both forms of `rerail start` end here, so `--json` changes only the form of the
+ * answer.
  */
 export async function startRerail(workspace: string, io: RepositorySetupIo, options: RepositorySetupOptions): Promise<RepositoryStartReport> {
   const databasePath = options.databasePath ?? defaultRerailDatabasePath();
@@ -1058,10 +1059,19 @@ export async function startRerail(workspace: string, io: RepositorySetupIo, opti
     ? `● Rerail is already on in ${name}. ${rulesNoun(ruleCount)}.`
     : `● Rerail is on in ${name}. ${rulesNoun(ruleCount)}, as you left them.`);
   const link = await options.environment.dashboard(scope, "rules", false, "running");
-  io.say(`  ${link.url}`);
-  // A link shown without opening a browser carries a reason only where no daemon could be had for it.
-  if (link.noBrowserReason !== undefined) io.say(`  △ ${link.noBrowserReason}`);
+  for (const line of dashboardLines(link)) io.say(line);
   return { previous, setUpRan: false, repositoryName: name, ruleCount, cancelled: false, status: "started" };
+}
+
+/**
+ * What `rerail start` shows for the dashboard (`link`): the link, and on the next line why no daemon serves it where none
+ * could be had. Where `RERAIL_AUTOSTART` left none (`notRunning`), that line alone, saying none runs and how to start
+ * one: no daemon serves the link until the person starts one, so the link would only refuse the connection.
+ */
+function dashboardLines(link: DashboardLink): string[] {
+  if (link.notRunning !== undefined) return [`  △ ${link.notRunning}`];
+  // A link shown without opening a browser carries a reason only where no daemon could be had for it.
+  return link.noBrowserReason === undefined ? [`  ${link.url}`] : [`  ${link.url}`, `  △ ${link.noBrowserReason}`];
 }
 
 /**

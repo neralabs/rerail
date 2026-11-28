@@ -2,37 +2,23 @@
  * `rerail start` and `rerail start --json` in a repository set up and started before, through the built CLI and a real
  * daemon, as a person runs them: autostart on unless a case turns it off, a Rerail home and a user home of their own, no
  * browser. `--json` changes the form of the answer only: each form ends on the dashboard's link and leaves the daemon as
- * the other does. In OMP and Pi the extension attaches its session again right after `/rerail-start`, and the link it
- * showed still answers.
+ * the other does. In OMP and Pi the extension attaches its session again right after `/rerail-start`, and a coding
+ * agent's hook may replace another package's daemon after `rerail start`: the link shown before still answers afterwards.
  */
-import { execFile, execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { text } from "node:stream/consumers";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { createNativeSession, type NativeSessionClient } from "../../src/harness/index.js";
-import { removeFolder } from "../../test/support/platform/remove-folder.js";
-import { setUpTestRepository } from "../../test/support/repository-rules.js";
+import { answerOf, makePlace, otherPackage, PACKAGE_ROOT, recorded, removePlaces, rerail, type Place } from "../support/rerail-place.js";
 
-const run = promisify(execFile);
-const PACKAGE_ROOT = realpathSync.native(process.cwd());
-const CLI = join("dist", "cli", "cli.js");
 const ALREADY_ON = "● Rerail is already on in app. 0 rules are on.";
 /** Six commands and up to three daemon starts, a few seconds each on a loaded Windows machine. */
 const TEST_TIMEOUT_MS = 120_000;
-const places: Place[] = [];
-/** Every folder a case made, removed after it even where making its place failed part way. */
-const roots: string[] = [];
-
-/** A Rerail home and user home of their own, and the repository `app` set up and started there with no rules. */
-interface Place {
-  root: string;
-  home: string;
-  repo: string;
-  repositoryKey: string;
-  env: NodeJS.ProcessEnv;
-}
+/** Claude Code's hook command, as set-up writes it: the launcher, the node it runs on, and the hook. */
+const CLAUDE_HOOK = [join(PACKAGE_ROOT, "dist", "harness", "hook-launcher.js"), process.execPath, join(PACKAGE_ROOT, "dist", "hosts", "claude", "claude-hook.js")];
 
 /** What a start left: its exit code, the lines it showed with the daemon's origin as `<daemon>/`, and that daemon. */
 interface Outcome {
@@ -41,56 +27,18 @@ interface Outcome {
   daemon: string;
 }
 
-afterEach(async () => {
-  // Whichever daemon runs, this package's or the other's, holds files under the folder until it ends.
-  for (const place of places.splice(0)) await rerail(PACKAGE_ROOT, place, ["daemon", "stop"]);
-  for (const root of roots.splice(0)) await removeFolder(root);
-});
-
-function makePlace(): Place {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "rerail-start-link-")));
-  roots.push(root);
-  const user = join(root, "user-home");
-  const home = join(root, "rerail-home");
-  const repo = join(root, "app");
-  for (const folder of [user, home, repo]) mkdirSync(folder);
-  const env: NodeJS.ProcessEnv = { ...process.env, RERAIL_HOME: home, HOME: user, USERPROFILE: user, BROWSER: "none" };
-  // A person's shell has autostart on; the test run's own setting keeps every other test from starting a daemon.
-  delete env.RERAIL_AUTOSTART;
-  writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-11-01T00:00:00.000Z" } }));
-  writeFileSync(join(repo, "a.py"), "x = 1\n");
-  const git = ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid"];
-  for (const args of [["init", "-q"], ["add", "a.py"], ["commit", "-q", "-m", "base"]]) execFileSync("git", [...git, ...args], { cwd: repo, stdio: "ignore" });
-  const place = { root, home, repo, repositoryKey: setUpTestRepository(repo, {}, join(home, "rerail.sqlite")), env };
-  places.push(place);
-  return place;
-}
-
-/** `rerail <args>` in the repository, from the package at `packageRoot`: its exit code and stdout. */
-async function rerail(packageRoot: string, place: Place, args: readonly string[]): Promise<{ code: number; stdout: string }> {
-  try {
-    return { code: 0, stdout: (await run(process.execPath, [join(packageRoot, CLI), ...args], { cwd: place.repo, env: place.env })).stdout };
-  } catch (error) {
-    const failed = error as { code?: unknown; stdout?: string };
-    return { code: typeof failed.code === "number" ? failed.code : -1, stdout: failed.stdout ?? "" };
-  }
-}
-
-/** The daemon the home records: its pid, the real path of the package it runs from, and its origin. */
-function recorded(place: Place): { pid: number; packageRoot: string; url: string } | undefined {
-  try {
-    const { pid, packageRoot, url } = JSON.parse(readFileSync(join(place.home, "daemon.json"), "utf8")) as { pid: number; packageRoot: string; url: string };
-    return { pid, packageRoot: realpathSync.native(packageRoot), url };
-  } catch {
-    return undefined;
-  }
-}
+afterEach(removePlaces);
 
 /** What a start showed: its text, or with `--json` its step's `screen`; a step not `done` shows whole, saying what it was. */
 function shownLines(stdout: string, json: boolean): string[] {
   const step = json ? JSON.parse(stdout) as { step: string; screen: string; question: unknown } : undefined;
   const done = step !== undefined && step.step === "done" && step.question === null;
   return (done ? step.screen : stdout.trimEnd()).split("\n");
+}
+
+/** The first link among a start's lines, as a person copies it. */
+function linkIn(lines: readonly string[]): string {
+  return lines.map(line => line.trim()).find(line => line.startsWith("http")) ?? `no link in ${lines.join(" | ")}`;
 }
 
 /** `rerail start`, or with `json` its `--json` form, from this package: the lines it showed and the daemon after it. */
@@ -118,27 +66,12 @@ function rememberedPort(place: Place): string {
 }
 
 /**
- * A copy of this package another daemon runs from, as a version `rerail update` replaced runs from its own folder: its
- * own `dist` and `package.json`, and links to the rest.
- */
-function otherPackage(place: Place): string {
-  const other = join(place.root, "other-package");
-  mkdirSync(other);
-  cpSync(join(PACKAGE_ROOT, "package.json"), join(other, "package.json"));
-  cpSync(join(PACKAGE_ROOT, "dist"), join(other, "dist"), { recursive: true });
-  for (const entry of readdirSync(PACKAGE_ROOT)) {
-    // A junction on Windows, which an account without the right to make symbolic links can make.
-    if (["node_modules", "native", "model", "packs", "docs", "hooks", "skills"].includes(entry)) symlinkSync(join(PACKAGE_ROOT, entry), join(other, entry), "junction");
-  }
-  return other;
-}
-
-/**
  * The attach OMP's and Pi's extension makes once `/rerail-start` ends (`createNativeSession`), from this package, with
  * the place's Rerail home and user home; the session it opens is closed again.
  */
 async function attachAsTheExtension(place: Place): Promise<void> {
   for (const name of ["RERAIL_HOME", "HOME", "USERPROFILE"] as const) vi.stubEnv(name, place.env[name]);
+  vi.stubEnv("RERAIL_AUTOSTART", "1");
   const opened: NativeSessionClient[] = [];
   try {
     await createNativeSession({
@@ -157,22 +90,21 @@ async function attachAsTheExtension(place: Place): Promise<void> {
   }
 }
 
+/** A Claude Code session's start in the repository, through this package's built hook as Claude Code runs it. */
+async function claudeSessionStart(place: Place): Promise<void> {
+  const child = spawn(process.execPath, CLAUDE_HOOK, {
+    cwd: place.repo, env: { ...place.env, CLAUDE_PROJECT_DIR: place.repo }, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  });
+  child.stdin.end(JSON.stringify({ session_id: "s1", cwd: place.repo, hook_event_name: "SessionStart", source: "startup" }));
+  await Promise.all([text(child.stdout), text(child.stderr), once(child, "close")]);
+}
+
 /** Whose daemon the home records, and whether it serves the origin of `link`. */
 function daemonServing(place: Place, link: string): string {
   const daemon = recorded(place);
   if (daemon === undefined) return "none";
   const whose = daemon.packageRoot === PACKAGE_ROOT ? "this" : "another";
   return `${whose} package's, ${link.startsWith(daemon.url) ? "on the link's origin" : `on ${daemon.url}`}`;
-}
-
-/** Whether `link` answers as a browser opening it finds: any HTTP answer, or the error that came instead. */
-async function answerOf(link: string): Promise<string> {
-  try {
-    await fetch(link, { signal: AbortSignal.timeout(10_000) });
-    return "answers";
-  } catch (error) {
-    return `no answer (${(error as { cause?: { code?: string } }).cause?.code ?? String(error)})`;
-  }
 }
 
 describe("rerail start in a repository set up before, with and without --json", () => {
@@ -191,7 +123,7 @@ describe("rerail start in a repository set up before, with and without --json", 
     const other = otherPackage(place);
     expect((await rerail(other, place, ["daemon", "start", "--port", "0"])).code).toBe(0);
     const before = recorded(place);
-    expect(before?.packageRoot).toBe(realpathSync.native(other));
+    expect(before?.packageRoot).toBe(other);
     const ended = { code: 0, lines: [ALREADY_ON, rulesLink(place)], daemon: `another package's, pid ${before?.pid}` };
     expect(await start(place, false)).toEqual(ended);
     expect(await start(place, true)).toEqual(ended);
@@ -204,20 +136,32 @@ describe("rerail start in a repository set up before, with and without --json", 
     const place = makePlace();
     expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
     const step = await rerail(PACKAGE_ROOT, place, ["start", "--json"]);
-    const link = shownLines(step.stdout, true).map(line => line.trim()).find(line => line.startsWith("http")) ?? `no link in ${step.stdout}`;
+    const link = linkIn(shownLines(step.stdout, true));
     const remembered = rememberedPort(place);
     await attachAsTheExtension(place);
     expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
       .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered });
   }, TEST_TIMEOUT_MS);
 
-  // A person who starts the daemon themselves: the link opens only once one runs, and each form says why it may not.
-  test("with RERAIL_AUTOSTART=0 and none running, ends on the link and why no daemon serves it", async () => {
-    const place = makePlace();
-    place.env.RERAIL_AUTOSTART = "0";
-    const notStarted = "  △ The dashboard did not start: RERAIL_AUTOSTART=0 keeps set-up from starting it";
-    const ended = { code: 0, lines: [ALREADY_ON, rulesLink(place, "http://127.0.0.1:4737/"), notStarted], daemon: "none" };
+  // A person who starts the daemon themselves: no daemon serves a link until they start one, so each form says that,
+  // and how, in place of the link.
+  test("with RERAIL_AUTOSTART=0 and none running, ends on the line that none runs and how to start one, in place of the link", async () => {
+    const place = makePlace({ autostart: "0" });
+    const notRunning = "  △ The Rerail daemon is not running, and RERAIL_AUTOSTART=0 keeps hooks from starting it, so nothing is recorded until it runs. Start it with rerail daemon start.";
+    const ended = { code: 0, lines: [ALREADY_ON, notRunning], daemon: "none" };
     expect(await start(place, false)).toEqual(ended);
     expect(await start(place, true)).toEqual(ended);
+  }, TEST_TIMEOUT_MS);
+
+  // Another package's daemon on a free port, as its OMP or Pi extension starts one: the home remembers no port for it. A
+  // Claude Code, Codex or Cursor session of this package then replaces it with this package's, on that port, which the
+  // home still does not remember: it was the other daemon's.
+  test("the link rerail start showed still answers once a coding agent's hook replaces another package's daemon on a free port", async () => {
+    const place = makePlace();
+    expect((await rerail(otherPackage(place), place, ["daemon", "start", "--port", "0"])).code).toBe(0);
+    const link = linkIn(shownLines((await rerail(PACKAGE_ROOT, place, ["start"])).stdout, false));
+    await claudeSessionStart(place);
+    expect({ link: await answerOf(link), daemon: daemonServing(place, link), remembered: rememberedPort(place) })
+      .toEqual({ link: "answers", daemon: "this package's, on the link's origin", remembered: "no file" });
   }, TEST_TIMEOUT_MS);
 });

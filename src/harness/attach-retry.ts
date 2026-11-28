@@ -1,4 +1,5 @@
 import type { AdapterEvent } from "../engine/adapter-contract.js";
+import { autostartOffLine } from "../runtime/daemon-control.js";
 import { EVENTS_DROPPED_ENTRY_TYPE, type DroppedEvents } from "../runtime/session-state.js";
 import { countDroppedEvent } from "./native-session-client.js";
 
@@ -19,6 +20,11 @@ export interface AttachRetryHost<Context> {
   reportDropped(count: number): void;
   /** Told of each failed try of the current attach, so the footer can follow the failing session. */
   failed(context: Context): void;
+  /**
+   * Shows the person `line`, what a session's start says when `RERAIL_AUTOSTART` kept the attach of `context`'s session
+   * from a daemon it may use (`autostartOffLine`), in place of the failure.
+   */
+  say(context: Context, line: string): void;
   /** The runtime attached to `sessionId` now, which records that session's gap; undefined when none is. */
   recorder(sessionId: string): { recordDropped(gaps: readonly DroppedEvents[]): void } | undefined;
 }
@@ -54,12 +60,32 @@ export class AttachRetry<Context> {
     return this.#failing;
   }
 
-  /** The host's attach of `context`: a new generation, tried again after each failure until one attaches. */
+  /**
+   * The host's attach of `context`: a new generation, tried again after each failure until one attaches. One that
+   * `RERAIL_AUTOSTART` kept from a daemon it may use is no failure of Rerail's: the host shows the line a hook's session
+   * start says ({@link AttachRetryHost.say}), and the tries go on, so the session attaches once the person starts the
+   * daemon.
+   */
   attach(context: Context, rebuild = false): Promise<void> {
     clearTimeout(this.#timer);
     this.#failures = 0;
     this.#requested = context;
-    return this.#attachAs(context, ++this.#generation, rebuild);
+    const generation = ++this.#generation;
+    return this.#attachAs(context, generation, rebuild).catch((error: unknown) => {
+      const line = autostartOffLine(error);
+      if (line === undefined) throw error;
+      // An attach a newer one, a cancel or a stop overtook says nothing: the host has left its context.
+      if (generation === this.#generation) this.#say(context, line);
+    });
+  }
+
+  /** Shows `line` in `context`; a host that cannot show it fails no attach, whose tries go on either way. */
+  #say(context: Context, line: string): void {
+    try {
+      this.#host.say(context, line);
+    } catch {
+      // The line is lost; the session still attaches once the person starts the daemon.
+    }
   }
 
   async #attachAs(context: Context, generation: number, rebuild: boolean): Promise<void> {

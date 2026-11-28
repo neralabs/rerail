@@ -485,14 +485,14 @@ describe("Rerail daemon control", () => {
   });
 
   // The start a hook makes before it sends its settings replaces a running daemon of another package. One found in its
-  // start that answers as another package's is replaced the same way, once it answers, never used. OMP's and Pi's attach
-  // takes any port and launches the replacement to try the port the replaced daemon had first, so a dashboard link shown
-  // for that daemon still answers, and to take a free one where that port is held; a hook's start names no port, and the
-  // daemon takes the one it remembers.
+  // start that answers as another package's is replaced the same way, once it answers, never used. Each launches the
+  // replacement to try the port the replaced daemon had first, so a dashboard link shown for that daemon still answers,
+  // and to go on as its own port says where that one cannot be had: a hook's start names none, so the daemon then takes
+  // the one it remembers, and OMP's and Pi's attach takes any.
   it.each([
-    ["a hook's start, which names no port", {}, "unset", false],
-    ["OMP's and Pi's attach, which takes any port", { port: 0 }, "0", true],
-  ])("%s: replaces a daemon of another package found in its start once it answers, as it replaces a running one", async (_start, port, portArgument, foundPortFirst) => {
+    ["a hook's start, which names no port", {}, "unset"],
+    ["OMP's and Pi's attach, which takes any port", { port: 0 }, "0"],
+  ])("%s: replaces a daemon of another package found in its start once it answers, as it replaces a running one", async (_start, port, portArgument) => {
     const daemon = await recordedStartingDaemon({ packageRoot: "/older/rerail" });
     let stopped = false;
     const signals: string[] = [];
@@ -515,7 +515,7 @@ describe("Rerail daemon control", () => {
     try {
       await expect(startDaemonForPackage(control, { dev: true, ...port }, machine)).rejects.toThrow("Rerail daemon exited with code 3 before it was ready");
       expect(signals).toEqual([`${process.pid} SIGTERM`]);
-      expect(launched).toEqual([`4242 --port ${portArgument} --prefer-port ${foundPortFirst ? daemon.port : "unset"}`]);
+      expect(launched).toEqual([`4242 --port ${portArgument} --prefer-port ${daemon.port}`]);
     } finally {
       daemon.close();
     }
@@ -1633,8 +1633,9 @@ describe("a state file Windows left behind", () => {
         running = false;
         return "ended";
       },
-      spawnDetached: () => {
-        events.push("launch");
+      spawnDetached: ({ args }) => {
+        // The port the ended daemon had, tried first, so a link shown for it still answers.
+        events.push(`launch, port first ${args.includes("--prefer-port") ? args[args.indexOf("--prefer-port") + 1] : "unset"}`);
         writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: launched, starting: true }));
         writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: launched, kernelSocketPath: PIPE })));
         return { pid: launched };
@@ -1644,7 +1645,7 @@ describe("a state file Windows left behind", () => {
     const control = { home, packageRoot: OWN_ROOT, onWaiting: (pid: number) => void told.push(pid), ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
     const result = await startDaemon(control, { dev: true, port: 0 }, machine);
     expect(result).toMatchObject({ started: true, daemon: { state: { pid: launched } }, replaced: { pid: DEAD_PID, version: "0.1.4" } });
-    expect(events).toEqual(["end", "launch"]);
+    expect(events).toEqual(["end", "launch, port first 1"]);
     expect(told).toEqual([]);
     expect(probes).toBe(2);
   });

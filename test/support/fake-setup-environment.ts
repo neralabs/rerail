@@ -16,6 +16,15 @@ export interface FakeSetupEnvironment extends SetupEnvironment {
   readonly pages: Array<{ repoRoot: string | null; repositoryKey: string; page: DashboardPage; open: boolean; daemon: DashboardDaemon }>;
 }
 
+/**
+ * The link the fake gives where no daemon could be had for it, as `setupEnvironment` gives it: with the line
+ * `RERAIL_AUTOSTART` leaves (`notRunning`) beside its reason, or with the reason alone (`noDaemon`); else undefined.
+ */
+function linkWithoutDaemon(url: string, options: { noDaemon?: string; notRunning?: string }): DashboardLink | undefined {
+  if (options.notRunning !== undefined) return { url, browserOpened: false, noBrowserReason: "The dashboard did not start", notRunning: options.notRunning };
+  return options.noDaemon === undefined ? undefined : { url, browserOpened: false, noBrowserReason: options.noDaemon };
+}
+
 /** Records what set-up asks of the machine instead of registering coding agents or starting a daemon. */
 export function fakeSetupEnvironment(options: {
   found?: readonly Harness[];
@@ -36,6 +45,8 @@ export function fakeSetupEnvironment(options: {
   packs?: PackStore;
   /** Why no daemon could be had for a link, as `setupEnvironment` says it in `noBrowserReason`; none by default. */
   noDaemon?: string;
+  /** The line a link carries where `RERAIL_AUTOSTART` left it no daemon ({@link DashboardLink.notRunning}); none by default. */
+  notRunning?: string;
 } = {}): FakeSetupEnvironment {
   let approved = options.sessionsApproved ?? true;
   const nodeHookFallback = options.nodeHookFallback === true;
@@ -78,7 +89,8 @@ export function fakeSetupEnvironment(options: {
       pages.push({ repoRoot: scope.checkoutPath, repositoryKey: scope.repositoryKey, page, open, daemon });
       await options.onPage?.(scope, page);
       const url = `http://127.0.0.1:4737/#${page === "rules" ? "rules" : "rule-packs?review=1"}`;
-      if (options.noDaemon !== undefined) return { url, browserOpened: false, noBrowserReason: options.noDaemon };
+      const withoutDaemon = linkWithoutDaemon(url, options);
+      if (withoutDaemon !== undefined) return withoutDaemon;
       if (!open) return { url, browserOpened: false, linkOnly: true };
       return options.browser === false
         ? { url, browserOpened: false, noBrowserReason: "this looks like a remote session" }

@@ -61,6 +61,11 @@ export interface DashboardLink {
   readonly noBrowserReason?: string;
   /** Set-up did not try to open a browser (an earlier run did, or a coding agent runs it): the link alone, with no E6 line. */
   readonly linkOnly?: boolean;
+  /**
+   * No daemon serves `url`: `RERAIL_AUTOSTART` kept Rerail from starting one, or from replacing the one that runs. The
+   * line a session's start says then, which `rerail start` shows in place of the link and its reason.
+   */
+  readonly notRunning?: string;
 }
 
 /**

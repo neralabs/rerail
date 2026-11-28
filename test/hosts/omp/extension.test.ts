@@ -54,9 +54,12 @@ import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/nat
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { withAutostartOn } from "../../support/environment/autostart.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
+// The attach starts or replaces a daemon only with autostart on, as a person's shell has it.
+withAutostartOn();
 
 /** The steer block a `mode` conversation rule delivers for a step of the conversation. */
 function deliveredSteer(ruleId: string, guidance: string, mode: RuleMode = "steer"): string {

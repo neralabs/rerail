@@ -1547,8 +1547,10 @@ export async function startDaemon(
 
 /**
  * Ends the daemon of a release before the engine's proof that a start found ({@link OlderDaemon}) through its process,
- * as a hook's start does, then starts this release's daemon in its place: a person who upgraded needs one command. A
- * launch still in its start carries the ended daemon to the wait outside the start lock ({@link ComingUp}).
+ * as a hook's start does, then starts this release's daemon in its place, trying the port the ended one had first
+ * ({@link DaemonLaunchOptions.preferredPort}): a person who upgraded needs one command, and a link shown for the old
+ * daemon still answers. A launch still in its start carries the ended daemon to the wait outside the start lock
+ * ({@link ComingUp}).
  */
 async function replacedOlderDaemon(
   control: DaemonControl,
@@ -1557,7 +1559,7 @@ async function replacedOlderDaemon(
   machine: DaemonMachine,
 ): Promise<StartDaemonResult | ComingUp> {
   const ended = await stopFound(control.home, older, machine);
-  const started = await spawnDaemon(control, options, machine);
+  const started = await spawnDaemon(control, { ...options, preferredPort: older.state.port }, machine);
   // The start names only a daemon its end read as ended. A pid that passed to a later process since the lookup was let
   // alone; a daemon whose end could not be read and whose pid was free afterwards may have exited by itself or by that
   // end, so the start does not name it.
@@ -1601,10 +1603,11 @@ export async function startDaemonForPackage(
 /**
  * The daemon a hook's start found running (`found`), kept when it was launched from the hook's package, else ended and
  * replaced by one launched from it: always for a daemon of a release before the engine's proof ({@link OlderDaemon}).
- * A caller that takes any port (`port: 0`, as OMP's and Pi's attach does) launches it to try the port `found` had first
- * ({@link DaemonLaunchOptions.preferredPort}), so a dashboard link shown for `found` still answers: `/rerail-start` shows
- * one just before the extension attaches again. Where another program holds that port it takes a free one, and as on
- * any port it remembers neither, so later starts keep the port the person or the default made theirs.
+ * The replacement tries the port `found` had first ({@link DaemonLaunchOptions.preferredPort}), so a dashboard link
+ * shown for `found` still answers: `rerail start` shows one before a coding agent's hook, and `/rerail-start` just
+ * before the extension attaches again. Where that port cannot be had, it goes on as the caller's `port` says (a free
+ * one for OMP's and Pi's `port: 0`). It never remembers `found`'s port, so later starts keep the port the person or the
+ * default made theirs.
  */
 async function keptOrReplaced(
   control: DaemonControl,
@@ -1616,7 +1619,7 @@ async function keptOrReplaced(
     return { started: false, daemon: { state: found.state, health: found.health } };
   }
   await stopFoundDaemon(control.home, found, machine);
-  return await spawnDaemon(control, options.port === 0 ? { ...options, preferredPort: found.state.port } : options, machine);
+  return await spawnDaemon(control, { ...options, preferredPort: found.state.port }, machine);
 }
 
 /**
@@ -1683,6 +1686,17 @@ export function otherDaemonKeptMessage(env: NodeJS.ProcessEnv = process.env): st
 }
 
 /**
+ * What a session's start tells the person when `RERAIL_AUTOSTART` kept `error`'s caller from a daemon it may use: none
+ * runs ({@link AutostartOffError}: {@link daemonNotRunningMessage}), or one runs it may neither use nor replace
+ * ({@link OtherDaemonKeptError}: {@link otherDaemonKeptMessage}); undefined for any other error. A hook's start, OMP's
+ * and Pi's attach and `rerail start` say it alike.
+ */
+export function autostartOffLine(error: unknown): string | undefined {
+  if (error instanceof AutostartOffError) return daemonNotRunningMessage();
+  return error instanceof OtherDaemonKeptError ? otherDaemonKeptMessage() : undefined;
+}
+
+/**
  * The engine endpoint main host clients send events to; only the daemon evaluates them, since it alone opens
  * the machine-wide content store. `replaceOtherPackage` brings up this package's daemon in place of one from
  * another package or of a release before the engine's proof ({@link daemonServesPackage}), which is how a hook keeps
@@ -1705,14 +1719,32 @@ export async function daemonEngineEndpoint(
   const daemon = autostartOff(machine.env)
     ? await runningDaemon(control.home, deadline, machine)
     : await startedDaemon(control, replaceOtherPackage, deadline, machine);
-  // Only the lookup an off autostart makes finds no daemon, so this error spells the setting as the person set it.
+  return engineEndpointOf((await usableDaemon(daemon, replaceOtherPackage, machine.env)).state);
+}
+
+/**
+ * Under `RERAIL_AUTOSTART=0`, the daemon a session's start may send to, looked up as a hook's session start looks it up
+ * ({@link daemonEngineEndpoint}) and never started or replaced: it throws `AutostartOffError` when none runs and
+ * `OtherDaemonKeptError` beside one of another package or of a release before the engine's proof, which a session's
+ * start answers with its line ({@link autostartOffLine}). OMP's and Pi's attach asks here (`createNativeSession`).
+ */
+export async function sessionDaemonAutostartOff(machine: DaemonMachine = THIS_MACHINE): Promise<RunningDaemon> {
+  return await usableDaemon(await runningDaemon(defaultRerailHome(machine.env), undefined, machine), true, machine.env);
+}
+
+/**
+ * The daemon a caller found or started (`daemon`), when it may send to it: one of this package unless
+ * `replaceOtherPackage` is false, and never one of a release before the engine's proof. Only the lookup an off autostart
+ * makes finds none (undefined), so `AutostartOffError` spells the setting as the person set it.
+ */
+async function usableDaemon(daemon: FoundRunning | undefined, replaceOtherPackage: boolean, env: NodeJS.ProcessEnv): Promise<RunningDaemon> {
   if (daemon === undefined) {
-    throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+    throw new AutostartOffError(`RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
-  if (daemon.status === "older" || (replaceOtherPackage && !(await daemonServesPackage(daemon, control.packageRoot)))) {
-    throw otherPackageDaemon(machine.env);
+  if (daemon.status === "older" || (replaceOtherPackage && !(await daemonServesPackage(daemon, PACKAGE_ROOT)))) {
+    throw otherPackageDaemon(env);
   }
-  return engineEndpointOf(daemon.state);
+  return daemon;
 }
 
 /**

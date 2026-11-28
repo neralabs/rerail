@@ -4,7 +4,14 @@ import superjson from "superjson";
 import type { AdapterDelivery, AdapterEvent, AdapterSession } from "../engine/adapter-contract.js";
 import type { NativeSemanticToolRuntime } from "./native-semantic-tools.js";
 import type { ProjectionSpec, RelationSpec, SelectionSpec, WatermarkChange } from "../engine/native/semantic-types.js";
-import { daemonAccessHeaders, daemonFetch, startDaemonForPackage } from "../runtime/daemon-control.js";
+import {
+  autostartOff,
+  daemonAccessHeaders,
+  daemonFetch,
+  sessionDaemonAutostartOff,
+  startDaemonForPackage,
+  type RunningDaemon,
+} from "../runtime/daemon-control.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
@@ -131,29 +138,8 @@ export async function createNativeSession<Context>(
   initialization: NativeSessionInitializationOptions,
 ): Promise<NativeSessionRoute> {
   const current = host.current();
-  // A pi session from a checkout keeps its in-process runtime over that checkout's own store. The main build's
-  // pi goes through the daemon like omp: the daemon is the machine's one main instance, and an in-process main
-  // runtime would be a second one opening the machine-wide content store.
-  if (session.host === "pi" && !isMainRerailBuild()) {
-    if (current !== undefined) await host.close();
-    return "host";
-  }
-  const { daemon } = await startDaemonForPackage({
-    home: defaultRerailHome(),
-    packageRoot: PACKAGE_ROOT,
-  }, {
-    dev: false,
-    port: 0,
-    cwd: session.cwd,
-  });
-  const instance = {
-    workspaceRoot: daemon.health.workspaceRoot,
-    url: new URL(daemon.state.url),
-    ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }),
-    ...(daemon.state.tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: daemon.state.tlsFingerprint256 }),
-  };
-  const token = daemon.state.nativeToken;
-  if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
+  if (await keptInProcess(host, current, session)) return "host";
+  const { instance, token } = sessionEndpoint(await attachedDaemon(session.cwd));
   const input = { ...initialization, cwd: session.cwd, rebuild };
   if (current !== undefined && host.matchesCurrent(session) && current.matches(instance, token)) {
     await current.initialize(input, host.entries(context));
@@ -176,6 +162,44 @@ export async function createNativeSession<Context>(
     deliver: host.deliver,
     reattach: () => host.reattach(context),
   });
+  await activateReplacement(host, context, session, { client, current, input });
+  return "attached";
+}
+
+/** Whether `session` keeps its in-process runtime; the host's runtime of the daemon (`current`) is then closed. */
+async function keptInProcess<Context>(
+  host: NativeSessionHost<Context>,
+  current: NativeSessionClient | undefined,
+  session: Pick<NativeSessionClientOptions, "host">,
+): Promise<boolean> {
+  // A pi session from a checkout keeps its in-process runtime over that checkout's own store. The main build's
+  // pi goes through the daemon like omp: the daemon is the machine's one main instance, and an in-process main
+  // runtime would be a second one opening the machine-wide content store.
+  if (session.host !== "pi" || isMainRerailBuild()) return false;
+  if (current !== undefined) await host.close();
+  return true;
+}
+
+/** Where a session's runtime reaches `daemon`, and the token its native sessions take; a daemon without them throws. */
+function sessionEndpoint(daemon: RunningDaemon): { instance: NativeSessionEndpoint; token: string } {
+  const instance = {
+    workspaceRoot: daemon.health.workspaceRoot,
+    url: new URL(daemon.state.url),
+    ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }),
+    ...(daemon.state.tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: daemon.state.tlsFingerprint256 }),
+  };
+  const token = daemon.state.nativeToken;
+  if (token === undefined) throw new Error("Rerail daemon lacks native session support; run rerail daemon stop and retry.");
+  return { instance, token };
+}
+
+/** Starts `client` in the host in place of `current`, the runtime the host held; one that fails is closed, and it throws. */
+async function activateReplacement<Context>(
+  host: NativeSessionHost<Context>,
+  context: Context,
+  session: AdapterSession,
+  { client, current, input }: { client: NativeSessionClient; current: NativeSessionClient | undefined; input: unknown },
+): Promise<void> {
   try {
     await client.initialize(input);
     // The runtime this one replaces in the same session hands over its gaps once it has drained its requests, so a
@@ -192,7 +216,17 @@ export async function createNativeSession<Context>(
     await client.close().catch(() => undefined);
     throw error;
   }
-  return "attached";
+}
+
+/**
+ * The daemon a session attaches to: this package's, started where none runs on any free port, and in place of another
+ * package's, on the port that one had when it can be had ({@link startDaemonForPackage}). Under `RERAIL_AUTOSTART=0` it
+ * is only looked up, as a hook's session start looks it up, and none started or replaced: the attach then fails with
+ * the error the extension answers with the hooks' line (`autostartOffLine`).
+ */
+async function attachedDaemon(cwd: string): Promise<RunningDaemon> {
+  if (autostartOff()) return await sessionDaemonAutostartOff();
+  return (await startDaemonForPackage({ home: defaultRerailHome(), packageRoot: PACKAGE_ROOT }, { dev: false, port: 0, cwd })).daemon;
 }
 
 type StreamedOrExplicitOperation = "initialize" | "ingest" | "cosine" | "semantic" | "poll" | "yield" | "close";

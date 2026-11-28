@@ -906,7 +906,9 @@ describe("the daemon's tray service", () => {
     expect((await probeDaemon(state)).status).toBe("unreachable");
   }, 60_000);
 
-  it("the tray's restart closes the daemon, tray first, and relaunches it with the same arguments", async () => {
+  // A daemon started on any free port (`--port 0`, as OMP's and Pi's attach starts one) comes back on the port a link
+  // shown for it names: the next one tries that port first.
+  it("the tray's restart closes the daemon, tray first, and relaunches it with the same arguments, trying first the port it listened on", async () => {
     root = await mkdtemp(join(tmpdir(), "rerail-daemon-tray-"));
     const home = join(root, "home");
     await mkdir(home, { recursive: true });
@@ -929,7 +931,7 @@ describe("the daemon's tray service", () => {
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveReturnedWith(true);
     expect(existsSync(stateFile)).toBe(false);
-    expect(relaunched.calls).toEqual([[process.argv.slice(1), join(home, "daemon.log")]]);
+    expect(relaunched.calls).toEqual([[[...process.argv.slice(1), "--prefer-port", String(state.port)], join(home, "daemon.log")]]);
     expect(exit).toHaveBeenCalledWith(0);
     expect((await probeDaemon(state)).status).toBe("unreachable");
   }, 60_000);
