@@ -46,10 +46,6 @@ vi.mock("../../src/engine/catalog/repository-identity.js", async () => {
       after?.();
       return location;
     },
-    readRemoteAddress: (...parameters: Parameters<typeof original.readRemoteAddress>) => {
-      if (reads.counting) reads.remotes += 1;
-      return original.readRemoteAddress(...parameters);
-    },
     readRemoteAnswer: (...parameters: Parameters<typeof original.readRemoteAnswer>) => {
       if (reads.counting) reads.remotes += 1;
       return original.readRemoteAnswer(...parameters);
