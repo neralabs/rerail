@@ -234,29 +234,40 @@ describe("a session's scan requests whose stored text does not read", () => {
     controls.close();
   });
 
-  it("fail when they come first in the queue, and the next one is claimed", async () => {
+  it("fail when they come first in the queue, named once as failed with why, and the next one is claimed", async () => {
     const { path, controls, claim, ids: [first, second, third] } = await threeQueued();
-    cutShort(path, "audit_requests", "paths_json", first);
-    spyOnStderr();
+    const paths = cutShort(path, "audit_requests", "paths_json", first);
+    const logged = spyOnStderr();
 
+    expect(controls.listAuditRequests("a").map(request => request.id)).toEqual([second, third]);
     expect(controls.claim("a", claim)?.id).toBe(second);
     expect(controls.claim("a", claim)?.id).toBe(third);
     expect(controls.claim("a", claim)).toBeUndefined();
+    const client = new Database(path, { readonly: true });
+    const failed: unknown = client.prepare("SELECT status, error FROM audit_requests WHERE id = ?").get(first);
+    client.close();
+    expect(failed).toEqual({ status: "failed", error: "The request's stored paths_json is not a JSON array of strings" });
     expect(controls.hasQueuedRequest("a")).toBe(false);
+    expect(logged().match(/rerail: /gu)).toHaveLength(2);
+    expect(logged()).toContain(`: scan request ${first} of session a is left out of the session's scans: the paths_json of its audit_requests row `);
+    expect(logged()).toContain(`: scan request ${first} of session a failed in place of running: the paths_json of its audit_requests row `
+      + `is not a JSON array of strings (${parseError(paths)})`);
     controls.close();
   });
 
-  it("leave a scan's finish whole when they are damaged while it runs", async () => {
+  it("leave a scan's finish whole when they are damaged while it runs, named once as not recorded", async () => {
     const { path, controls, claim, ids: [first] } = await threeQueued();
     expect(controls.claim("a", claim)?.id).toBe(first);
     cutShort(path, "audit_requests", "paths_json", first);
-    spyOnStderr();
+    const logged = spyOnStderr();
 
     expect(() => controls.finish(first, "completed", ["audit-1"])).not.toThrow();
     const client = new Database(path);
     expect(client.prepare("SELECT status, audit_ids_json FROM audit_requests WHERE id = ?").get(first))
       .toEqual({ status: "completed", audit_ids_json: "[\"audit-1\"]" });
     client.close();
+    expect(logged().match(/rerail: /gu)).toHaveLength(1);
+    expect(logged()).toContain(`: scan request ${first} of session a ended, but is not recorded as its checkout's repository audit: the paths_json `);
     controls.close();
   });
 

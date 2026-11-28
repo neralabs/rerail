@@ -196,12 +196,17 @@ function storedRequest(row: RequestRow): AuditRequest | UnreadList {
 function settledStatus(status: AuditRequest["status"]): "completed" | "failed" | "interrupted" {
   return status === "queued" || status === "running" ? "interrupted" : status;
 }
-/** The line that names a request left out of its session's scans (`storedRequest`), once for each request. */
-function sayRequestUnread(file: string, row: RequestRow, { column, why }: UnreadList): void {
+/** What a request whose stored text does not read costs a reader of the session's scans. */
+const LEFT_OUT = "is left out of the session's scans";
+/**
+ * The line that names a request whose stored text does not read (`storedRequest`) and what that cost it (`outcome`),
+ * once for each request and outcome.
+ */
+function sayRequestUnread(file: string, row: RequestRow, { column, why }: UnreadList, outcome: string): void {
   // The table name the schema gives, so the line names the place a person mends.
   const table = getTableName(auditRequests);
-  nameOnce(process.stderr, { file, place: `${table} ${row.id}` }, `rerail: ${file}: scan request ${row.id} of session ${row.sessionId} is left out `
-    + `of the session's scans: the ${column} of its ${table} row is not a JSON array of strings (${why}), which only a damaged file or a hand edit leaves.\n`);
+  nameOnce(process.stderr, { file, place: `${table} ${row.id} ${outcome}` }, `rerail: ${file}: scan request ${row.id} of session ${row.sessionId} ${outcome}: `
+    + `the ${column} of its ${table} row is not a JSON array of strings (${why}), which only a damaged file or a hand edit leaves.\n`);
 }
 /** A session's folder as it spelt it, and the repository Rerail recorded the session in; a caller's folder has none. */
 interface SpeltFolder { readonly cwd: string; readonly repositoryId?: string | null }
@@ -780,16 +785,19 @@ export class SqliteAuditControlStore {
     return this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(eq(auditRequests.sessionId, sessionId))
       .orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).all().flatMap(row => this.#readRequest(row) ?? []);
   }
-  /** The request `id` names, as `#readRequest` reads it; undefined where there is none. */
-  #request(id: string): AuditRequest | undefined {
+  /** The request `id` names, as `#readRequest` reads it with `outcome`; undefined where there is none. */
+  #request(id: string, outcome: string): AuditRequest | undefined {
     const row = this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(eq(auditRequests.id, id)).get();
-    return row === undefined ? undefined : this.#readRequest(row);
+    return row === undefined ? undefined : this.#readRequest(row, outcome);
   }
-  /** The request `row` holds; undefined, its row named once, when its stored paths or audit ids do not read. */
-  #readRequest(row: RequestRow): AuditRequest | undefined {
+  /**
+   * The request `row` holds; undefined, its row named once with what that costs it (`outcome`), when its stored paths or
+   * audit ids do not read.
+   */
+  #readRequest(row: RequestRow, outcome = LEFT_OUT): AuditRequest | undefined {
     const request = storedRequest(row);
     if (!("why" in request)) return request;
-    sayRequestUnread(this.path, row, request);
+    sayRequestUnread(this.path, row, request, outcome);
     return undefined;
   }
   /** Atomically claims one queued request for the owning live runtime. */
@@ -801,16 +809,18 @@ export class SqliteAuditControlStore {
     });
   }
   /**
-   * Claims the session's oldest queued request. One whose stored text does not read (`#readRequest`) cannot run, so it
-   * fails, rather than stand first in the queue for good, and the next is claimed.
+   * Claims the session's oldest queued request. One whose stored text does not read (`storedRequest`) cannot run, so it
+   * fails, named once, with the column that does not read, rather than stand first in the queue for good, and the next
+   * is claimed. The queue is read once, so the claim ends after its last request whatever its writes do.
    */
   #claimOldest(sessionId: string): AuditRequest | undefined {
-    for (;;) {
-      const queued = this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued")))
-        .orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).limit(1).get();
-      if (queued === undefined) return undefined;
-      if (this.#readRequest(queued) === undefined) {
-        this.#database.update(auditRequests).set({ status: "failed", finishedAt: Date.now(), error: "The request's stored paths or audit ids do not read" })
+    const queue = this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued")))
+      .orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).all();
+    for (const queued of queue) {
+      const request = storedRequest(queued);
+      if ("why" in request) {
+        sayRequestUnread(this.path, queued, request, "failed in place of running");
+        this.#database.update(auditRequests).set({ status: "failed", finishedAt: Date.now(), error: `The request's stored ${request.column} is not a JSON array of strings` })
           .where(eq(auditRequests.id, queued.id)).run();
         continue;
       }
@@ -818,6 +828,7 @@ export class SqliteAuditControlStore {
         .where(and(eq(auditRequests.id, queued.id), eq(auditRequests.status, "queued"))).returning(REQUEST_COLUMNS).get();
       return claimed === undefined ? undefined : this.#readRequest(claimed);
     }
+    return undefined;
   }
   finish(id: string, status: "completed" | "failed" | "interrupted", auditIds: readonly string[], error: string | null = null): void {
     const finishedAt = Date.now();
@@ -835,7 +846,7 @@ export class SqliteAuditControlStore {
    * started and finished; a request that does not read (`#readRequest`) records none.
    */
   #recordRepositoryAudit(id: string): void {
-    const request = this.#request(id);
+    const request = this.#request(id, "ended, but is not recorded as its checkout's repository audit");
     const auditId = request?.auditIds.at(-1);
     if (request === undefined || auditId === undefined) return;
     const { sessionId, startedAt, finishedAt, error } = request;
