@@ -109,6 +109,48 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("passes") {
+        // From the middle, its passes: with no STAGE, the counts per chunk size (chunks, lanes not known, waits, by a
+        // lane or lexed again); with STAGE (1 to 6, `strata::middle::Stage`; 0 the setup alone, 7 the serial lexer),
+        // PASSES passes over the files lexed from the middle at CHUNK_BLOCKS, for `/usr/bin/time -l`'s cycles.
+        use strata::middle::{MiddleCounts, Stage, lex_middle_to};
+        let env = |k: &str, d: usize| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+        let stage = std::env::var("STAGE").ok().and_then(|v| v.parse::<usize>().ok());
+        let Some(stage) = stage else {
+            println!("| Chunk size (blocks) | Chunks | Lanes not known | Waits | By the lane before | Lexed again |");
+            println!("|---|---|---|---|---|---|");
+            for blocks in [1, 2, 3, 16, 256] {
+                let mut c = MiddleCounts::default();
+                for (_, b) in &all {
+                    let _ = lex_middle_to(b, blocks, &strata::middle::in_order, Stage::Lexed, &mut c);
+                }
+                println!("| {blocks} | {} | {} | {} | {} | {} |", c.chunks, c.unknown_lanes, c.waits, c.by_lane, c.lexed_again);
+            }
+            return;
+        };
+        let blocks = env("CHUNK_BLOCKS", 16);
+        let passes = env("PASSES", 20);
+        let fs: Vec<&[u8]> = all.iter().map(|(_, b)| b.as_slice()).filter(|b| matches!(strata::middle::lex_middle(b, blocks, &strata::middle::in_order), Ok(strata::middle::Middle::Lexed(_)))).collect();
+        let bytes: usize = fs.iter().map(|b| b.len()).sum();
+        let stages = [Stage::StrataSummaries, Stage::StrataScan, Stage::WalkInputs, Stage::WalkSummaries, Stage::WalkScan, Stage::Lexed];
+        let t0 = std::time::Instant::now();
+        let mut sum = 0usize;
+        for _ in 0..if stage == 0 { 0 } else { passes } {
+            for b in &fs {
+                sum = sum.wrapping_add(match stage {
+                    7 => strata_b(b),
+                    s => match lex_middle_to(b, blocks, &strata::middle::in_order, stages[s - 1], &mut MiddleCounts::default()) {
+                        Ok(strata::middle::Middle::Stopped(x)) => x,
+                        Ok(strata::middle::Middle::Lexed(l)) => l.toks.len(),
+                        _ => 1,
+                    },
+                });
+            }
+        }
+        let ns = t0.elapsed().as_secs_f64() * 1e9 / (bytes * passes.max(1)) as f64;
+        println!("stage {stage}, {blocks} blocks a chunk: {} files, {bytes} bytes, {passes} passes, {ns:.3} ns/B   [{sum}]", fs.len());
+        return;
+    }
     if only == Some("rare") {
         // The blocks whose starts are rare, by cause.
         let (mut code, mut strs, mut blocks) = ([0usize; 6], [0usize; 8], 0);

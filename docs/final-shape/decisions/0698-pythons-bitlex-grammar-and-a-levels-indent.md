@@ -1049,3 +1049,39 @@ statements and blocks end.
       lanes not known of 685017 (4521 before), at 16 blocks 735 (2487). The scan in fixed size knows 191939
       entries at 1 block a chunk (143215 before). From the middle is still the serial lexer's in 1644 of 1644
       files. The block functions keep 0 conditional branches and 0 calls on AArch64 and x86-64.
+113. **From the middle, measured: lanes, waits and cycles a byte per pass** (as built: `middle::lex_middle_to`,
+    `Stage`, `MiddleCounts`, `compare_strata … passes`).
+    - **How:** `lex_middle_to` stops after a pass and counts the chunks, the lanes masks do not know, and the
+      waits. `compare_strata … passes` gives the counts per chunk size. With `STAGE` it runs `PASSES` passes to
+      that stage over the files lexed from the middle; stage 0 is the setup alone, stage 7 the serial lexer
+      (variant B). A pass's cycles a byte is its stage's process cycles (`/usr/bin/time -l`) less the stage
+      before's, over the passes' bytes.
+    - **Lanes and waits** (the 1644-file corpus; chunks of the files B reads; a wait is a chunk the scan gives no
+      entry: the chunk before's lane enters it, or it is lexed again from the chunk before's entry):
+
+      | Chunk size (blocks) | Chunks | Lanes not known | Waits | By the lane before | Lexed again |
+      |---|---|---|---|---|---|
+      | 1 | 230,899 | 1,263 | 36,400 | 34,772 | 365 |
+      | 2 | 115,867 | 1,173 | 18,117 | 17,157 | 335 |
+      | 3 | 77,557 | 1,002 | 12,062 | 11,369 | 278 |
+      | 16 | 15,216 | 735 | 2,258 | 2,006 | 182 |
+      | 256 | 2,125 | 588 | 130 | 56 | 71 |
+
+    - **Cycles a byte per pass** (an M3 Max, one thread, the host at load 30; 1632 files, 14.3 MB, 5 passes):
+
+      | Pass | 16 blocks a chunk | 1 block a chunk |
+      |---|---|---|
+      | Strata's summaries (pass 1) | 131.2 | 150.7 |
+      | Strata's scan (pass 3) | 8.4 | 235.2 |
+      | The walk's inputs (firsts, fills) | 5.8 | 26.6 |
+      | The walk's summaries (pass 1) | 60.3 | 150.0 |
+      | The walk's scan and waits (pass 3) | 8.7 | 160.0 |
+      | Each chunk lexed (pass 2) | 20.7 | 36.5 |
+      | From the middle, all | 235 | 759 |
+      | The serial lexer | 9.7 | |
+
+      At 1 block a chunk the setup's own runs of `lex_middle` leave the serial stage's difference unmeasured.
+    - **Where the cycles go** (`sample`, 16 blocks a chunk): in the strata's summaries, `block_map` 2754 of
+      about 3000 samples. It runs B's layers once for each of its 144 lanes, each with its own depth by prefix
+      sums (28831 instructions a block). In the walk's summaries, `walk_block` 835 samples beside `block_map`'s.
+      At 1 block a chunk the two Hillis and Steele scans cost most: each round composes every chunk's summary.

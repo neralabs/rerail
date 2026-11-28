@@ -1488,6 +1488,31 @@ pub enum Middle {
     NotB,
     /// The first chunk an entry was not known for, and why.
     Unknown(usize, &'static str),
+    /// Stopped after a pass (`lex_middle_to`): a sum of its results, so they are kept.
+    Stopped(usize),
+}
+
+/// Where `lex_middle_to` stops: after the strata's summaries (pass 1), their scan (pass 3), the walk's inputs (each
+/// chunk's firsts and their fills), the walk's summaries (pass 1), its scan and the waits (pass 3), or not (pass 2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage {
+    StrataSummaries = 1,
+    StrataScan,
+    WalkInputs,
+    WalkSummaries,
+    WalkScan,
+    Lexed,
+}
+
+/// What `lex_middle_to` counts: the chunks, the lanes masks do not know, the chunks the scan gives no entry (they
+/// wait), and of those the ones entered by the chunk before's lane and the ones lexed again from its entry.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MiddleCounts {
+    pub chunks: usize,
+    pub unknown_lanes: usize,
+    pub waits: usize,
+    pub by_lane: usize,
+    pub lexed_again: usize,
 }
 
 impl core::fmt::Debug for Middle {
@@ -1497,6 +1522,7 @@ impl core::fmt::Debug for Middle {
             Middle::Refused(r) => write!(f, "Refused({r:?})"),
             Middle::NotB => write!(f, "NotB"),
             Middle::Unknown(c, why) => write!(f, "Unknown(chunk {c}: {why})"),
+            Middle::Stopped(x) => write!(f, "Stopped({x})"),
         }
     }
 }
@@ -1512,12 +1538,24 @@ impl core::fmt::Debug for Middle {
 ///
 /// Where the chunks lexed from their entries leave an entry that is not the next chunk's, that is an error (`Err`).
 pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle, String> {
+    lex_middle_to(src, blocks, order, Stage::Lexed, &mut MiddleCounts::default())
+}
+
+/// `lex_middle` up to `stop`, with its counts.
+pub fn lex_middle_to(src: &[u8], blocks: usize, order: Order<'_>, stop: Stage, counts: &mut MiddleCounts) -> Result<Middle, String> {
     let n = src.len().div_ceil(64);
     let blocks = blocks.max(1);
     let k = n.div_ceil(blocks).max(1);
+    counts.chunks += k;
     let range = |c: usize| (c * blocks, (c + 1) * blocks);
     let sums = each(k, order, |c| summary_superposed(src, range(c).0, range(c).1));
+    if stop == Stage::StrataSummaries {
+        return Ok(Middle::Stopped(sums.len()));
+    }
     let strata = entries_in(&sums, order);
+    if stop == Stage::StrataScan {
+        return Ok(Middle::Stopped(strata.iter().flatten().count()));
+    }
     let Some(strata) = strata.into_iter().collect::<Option<Vec<_>>>() else { return Ok(Middle::NotB) };
     // Each chunk's place and the first content after it, from the chunks after it.
     let inputs = match walk_inputs(src, blocks, &strata, order) {
@@ -1525,7 +1563,15 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
         Err(c) => return Ok(Middle::Unknown(c, "a chunk's strata")),
     };
     let places = &inputs.places;
-    let wsums = each(k, order, |c| inputs.summary(src, blocks, &strata, c).0);
+    if stop == Stage::WalkInputs {
+        return Ok(Middle::Stopped(places.iter().map(|p| p.0).sum::<usize>() ^ inputs.afters.iter().map(|f| f.at).fold(0, usize::wrapping_add)));
+    }
+    let wsums = each(k, order, |c| inputs.summary(src, blocks, &strata, c));
+    counts.unknown_lanes += wsums.iter().flat_map(|(_, w)| w).filter(|&&w| w != 0).count();
+    let wsums: Vec<_> = wsums.into_iter().map(|(s, _)| s).collect();
+    if stop == Stage::WalkSummaries {
+        return Ok(Middle::Stopped(wsums.iter().flatten().filter(|l| matches!(l, WalkLane::Goes { .. })).count()));
+    }
     let mut walks = walk_entries_in(&wsums, order);
     // A chunk the scan gives no entry waits for the one before's: by that chunk's lane where masks know it, else by
     // lexing that chunk from its entry.
@@ -1533,6 +1579,7 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
         if !matches!(walks[c], WalkEntry::Unknown) {
             continue;
         }
+        counts.waits += 1;
         let WalkEntry::At { open, header, indents, toks, extras } = walks[c - 1].clone() else { continue };
         let by_lane = match &wsums[c - 1][usize::from(combo(open, header))] {
             WalkLane::Goes { exit, sym, toks: t, extras: x } => sym.apply(&indents).map(|(indents, dedents)| {
@@ -1543,8 +1590,12 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
             WalkLane::Unknown => None,
         };
         walks[c] = match by_lane {
-            Some(w) => w,
+            Some(w) => {
+                counts.by_lane += 1;
+                w
+            }
             None => {
+                counts.lexed_again += 1;
                 let Place(p, done) = places[c - 1];
                 let e = Entry { s1: s1_at(src, firsts(range(c - 1).0).0), rb: strata[c - 1].0, depth: strata[c - 1].1, p, open, header, indents, done };
                 let (mut t, mut x) = (Vec::new(), Vec::new());
@@ -1556,6 +1607,9 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
                 }
             }
         };
+    }
+    if stop == Stage::WalkScan {
+        return Ok(Middle::Stopped(walks.len()));
     }
     for (c, w) in walks.iter().enumerate() {
         match w {
