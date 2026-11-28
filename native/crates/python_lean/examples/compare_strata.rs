@@ -109,6 +109,22 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("codes") {
+        // How many different codes a block's lanes read: blocks by that count.
+        let (mut a, mut k) = (vec![0usize; 73], vec![0usize; 73]);
+        for (_, b) in &all {
+            let (x, y) = strata::middle::distinct_codes(b);
+            a.iter_mut().zip(x).for_each(|(p, q)| *p += q);
+            k.iter_mut().zip(y).for_each(|(p, q)| *p += q);
+        }
+        println!("different codes a block: by its bytes of code / by its brackets in code");
+        for i in 0..73 {
+            if a[i] + k[i] > 0 {
+                println!("  {i:>2}: {:>7} / {:>7}", a[i], k[i]);
+            }
+        }
+        return;
+    }
     if only == Some("passes") {
         // From the middle, its passes: with no STAGE, the counts per chunk size (chunks, lanes not known, waits, by a
         // lane or lexed again); with STAGE (1 to 6, `strata::middle::Stage`; 0 the setup alone, 7 the serial lexer),

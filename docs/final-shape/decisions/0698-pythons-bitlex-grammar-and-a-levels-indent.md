@@ -1085,3 +1085,21 @@ statements and blocks end.
       about 3000 samples. It runs B's layers once for each of its 144 lanes, each with its own depth by prefix
       sums (28831 instructions a block). In the walk's summaries, `walk_block` 835 samples beside `block_map`'s.
       At 1 block a chunk the two Hillis and Steele scans cost most: each round composes every chunk's summary.
+114. **The strata's pass 1 shares its lanes' depths** (the user: "the entire point of superposition is to share
+    work"; as built: `middle::block_lanes`, `block_map`, `Sets`, `block_map_each`).
+    - **What the lanes share:** a lane's depth reads only the brackets in its code. A lane's code is the same for
+      both values of `cext_prev`, so the 144 lanes have 72 codes (`block_lanes`). The codes hold few different
+      sets of brackets: over the corpus's 230843 blocks, at most 6 a block, at most 3 in 98.4% (`distinct_codes`,
+      `compare_strata … codes`). By the whole code there are up to 9.
+    - **The block function:** the sets chosen once each, by selections over the 72 codes written out (`Sets`, at
+      most `REPS` = 6). Each set's depth made once, and each lane's read from its set's. The map is written into
+      the caller's lane by lane, not returned and copied. A block with more sets is `block_map_each`'s, a depth
+      for each code: the loop over blocks takes it there.
+    - **As tested:** `shared_depths_are_each_codes`: the shared map's exits and live depths are `block_map_each`'s
+      for every block of the test texts and of 3000 random texts of brackets, quotes, comments and line ends.
+      Some of those have more sets than `REPS`, so the fallback path is tested too. From the middle is still the
+      serial lexer's in 1644 of 1644 files. `block_map` has 0 conditional branches and 0 calls on AArch64 and
+      x86-64: 15270 instructions a block on AArch64, from 28831.
+    - **As measured** (as item 113, 16 blocks a chunk): the strata's summaries 64.5 cycles a byte, from 131.2. From
+      the middle, all passes 168.8, from 235. The rest of `block_map` is its layers: the strings' machine for each
+      of the triples' 12 states, and the rest for each of the 36 and 144 beneath them.

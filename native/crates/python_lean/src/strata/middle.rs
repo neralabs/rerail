@@ -364,8 +364,100 @@ macro_rules! each_of {
 /// for each of the triples' 12, the comments' addition for each of the strings' 36), B's checks as masks, and each
 /// lane's depth by masks. No branch and no loop: the lanes are unrolled, and where B's reading is wrong the lane's
 /// exit is selected as `WRONG`.
+///
+/// The lanes share their depths: a lane's depth reads only the brackets in its code, and the lanes' codes hold few
+/// different sets of them (in the corpus at most 6 a block, at most 3 in 98% of blocks). So the block's sets are
+/// chosen once each (`REPS` of them, by selections over the codes), each set's depth made once, and each lane's
+/// read from its set's. Where a block has more sets (`more`), its map is `block_map_each`'s: the loop over blocks
+/// takes it there.
 #[inline(never)]
-pub(super) fn block_map(prev: &B, blk: &B, b1: &B) -> BlockMap {
+pub(super) fn block_map(prev: &B, blk: &B, b1: &B, out: &mut BlockMap) -> bool {
+    let (exit, codes) = block_lanes(prev, blk, b1);
+    let br = blk.ob | blk.cb;
+    let mut sets = Sets { keys: [0; REPS], n: 0, of: [0; CODES], more: false };
+    // A code is live where one of its two lanes is not at `WRONG` (a lane there reads no depth).
+    let live = |c: usize| (usize::from(exit[(c / 4) * 8 + c % 4]) != WRONG) | (usize::from(exit[(c / 4) * 8 + c % 4 + 4]) != WRONG);
+    // The codes' steps written out (a loop of them may stay a loop).
+    each_of!(c in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71] {
+        sets.step(c, live(c), codes[c] & br);
+    });
+    let k = sets.keys;
+    let by_set = [
+        Depth::of_masks(blk.ob & k[0], blk.cb & k[0]),
+        Depth::of_masks(blk.ob & k[1], blk.cb & k[1]),
+        Depth::of_masks(blk.ob & k[2], blk.cb & k[2]),
+        Depth::of_masks(blk.ob & k[3], blk.cb & k[3]),
+        Depth::of_masks(blk.ob & k[4], blk.cb & k[4]),
+        Depth::of_masks(blk.ob & k[5], blk.cb & k[5]),
+    ];
+    const _: () = assert!(REPS == 6);
+    // Each lane's depth its set's (the set's index clamped, so no bounds check), the lanes written out.
+    macro_rules! by {
+        ($l:expr) => {
+            by_set[usize::from(sets.of[code_of($l)]).min(REPS - 1)]
+        };
+    }
+    // Into `out` lane by lane: a map made and returned would be copied (2304 bytes).
+    out.exit = exit;
+    each_of!(l in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143] {
+        out.depth[l] = by!(l);
+    });
+    sets.more
+}
+
+/// The most different sets of brackets in code a block's lanes share their depths among.
+const REPS: usize = 6;
+
+/// The sets of brackets in code a block's codes hold: each set's brackets (`keys`, `n` of them), each code's set,
+/// and whether there are more than `REPS`.
+struct Sets {
+    keys: [u64; REPS],
+    n: usize,
+    of: [u8; CODES],
+    more: bool,
+}
+
+impl Sets {
+    /// Code `c`'s brackets in code `key`: its set where one holds them, else a new set (where `live`). No branch.
+    #[inline(always)]
+    fn step(&mut self, c: usize, live: bool, key: u64) {
+        let mut found = false;
+        let mut at = 0u8;
+        each_of!(j in [5usize, 4, 3, 2, 1, 0] {
+            let eq = (j < self.n) & (self.keys[j] == key);
+            found |= eq;
+            at = pick(eq, j as u8, at);
+        });
+        let add = live & !found;
+        self.more |= add & (self.n == REPS);
+        let slot = self.n.min(REPS - 1);
+        self.keys[slot] = pick(add, key, self.keys[slot]);
+        self.of[c] = pick(found, at, slot as u8);
+        self.n = pick(add, (self.n + 1).min(REPS), self.n);
+    }
+}
+
+/// `block_map` with a depth made for each code: a block whose codes hold more than `REPS` sets of brackets.
+#[inline(never)]
+fn block_map_each(prev: &B, blk: &B, b1: &B) -> BlockMap {
+    let (exit, codes) = block_lanes(prev, blk, b1);
+    let by_code: [Depth; CODES] = core::array::from_fn(|c| Depth::of_masks(blk.ob & codes[c], blk.cb & codes[c]));
+    BlockMap { exit, depth: core::array::from_fn(|l| by_code[code_of(l)]) }
+}
+
+/// The lanes of a block's map that read different bytes as code: a lane's code is the same for both values of
+/// `cext_prev` (a comment's end carried in decides only where the next line starts).
+const CODES: usize = LANES / 2;
+
+/// Lane `l`'s index among the `CODES` (its `cext_prev` dropped).
+#[inline(always)]
+const fn code_of(l: usize) -> usize {
+    (l / 8) * 4 + l % 4
+}
+
+/// `block_map`'s layers: each lane's exit (`WRONG` where B's reading is wrong) and each code's bytes of code.
+#[inline(always)]
+fn block_lanes(prev: &B, blk: &B, b1: &B) -> ([u8; LANES], [u64; CODES]) {
     let (pqs, pqd) = (prev.sq & !prev.esc, prev.dq & !prev.esc);
     let (qs, qd) = (blk.sq & !blk.esc, blk.dq & !blk.esc);
     let runs = |q: u64, nq: u64, pq: u64| {
@@ -381,7 +473,7 @@ pub(super) fn block_map(prev: &B, blk: &B, b1: &B) -> BlockMap {
     // refusal of the reading (`prefixes_b`'s none).
     let x = super::win(prev.pfx, blk.pfx).reverse_bits();
     let mut exit_of = [0u8; LANES];
-    let mut depth: [Depth; LANES] = [Depth::default(); LANES];
+    let mut codes = [0u64; CODES];
     each_of!(t0 in [0u8, 1, 2] {
         let (tl, th, t1) = super::run_from(&m3, t0);
         let ta = tl | th;
@@ -403,6 +495,8 @@ pub(super) fn block_map(prev: &B, blk: &B, b1: &B) -> BlockMap {
                     let (y, o2) = y.overflowing_add(ccarry);
                     let cc_out = usize::from(o1 | o2);
                     let comment = g | (a & (y ^ a ^ g));
+                    let code = !(comment | ((sb | sa) & !comment & !tr) | tr);
+                    codes[usize::from(t0) * 24 + usize::from(s0) * 8 + ccarry as usize * 4 + tr_taken as usize] = code;
                     each_of!(cext_prev in [0u64, 1] {
                         let cext = comment | (blk.eol & !blk.lf & (comment << 1 | cext_prev));
                         let lend = cext << 1 | cext_prev;
@@ -410,20 +504,43 @@ pub(super) fn block_map(prev: &B, blk: &B, b1: &B) -> BlockMap {
                         let s_open = (qs | qd) & !tr & !sb & !comment;
                         let o = super::win(0, s_open | t_open);
                         let (_, over) = x.overflowing_add((o.reverse_bits() << 1) & x);
-                        let code = !(comment | ((sb | sa) & !comment & !tr) | tr);
                         let l = usize::from(t0) * 48 + usize::from(s0) * 16 + ccarry as usize * 8 + cext_prev as usize * 4 + tr_taken as usize;
                         let exit = usize::from(t1) * 48 + usize::from(s1) * 16 + cc_out * 8 + (cext >> 63) as usize * 4 + tr_out;
                         let bad = u8::from(all_wrong | (wrong != 0) | over);
                         // A select by mask: `WRONG` where bad.
                         let keep = bad.wrapping_sub(1);
                         exit_of[l] = (exit as u8 & keep) | (WRONG as u8 & !keep);
-                        depth[l] = Depth::of_masks(blk.ob & code, blk.cb & code);
                     });
                 });
             });
         });
     });
-    BlockMap { exit: exit_of, depth }
+    (exit_of, codes)
+}
+
+/// How many different codes a block's lanes read (`block_lanes`), over a text's blocks: by the bytes of code, and by
+/// the brackets in code alone (what a lane's depth reads); a lane at `WRONG` from both its values of `cext_prev`
+/// not counted. Each a histogram of blocks by that count.
+pub fn distinct_codes(src: &[u8]) -> ([usize; CODES + 1], [usize; CODES + 1]) {
+    let blocks = src.len().div_ceil(64);
+    let mut b: Vec<B> = vec![B::default()];
+    classes_in(src, 0, blocks, &mut s1_at(src, 0), &mut b, usize::MAX, &mut S1::default());
+    b.push(B::default());
+    b.push(B::default());
+    let (mut by_code, mut by_brackets) = ([0; CODES + 1], [0; CODES + 1]);
+    for w in b.windows(3).take(blocks) {
+        let (exit, codes) = block_lanes(&w[0], &w[1], &w[2]);
+        let live: Vec<usize> = (0..CODES).filter(|&c| (0..LANES).any(|l| code_of(l) == c && usize::from(exit[l]) != WRONG)).collect();
+        let mut a: Vec<u64> = live.iter().map(|&c| codes[c]).collect();
+        let mut k: Vec<u64> = live.iter().map(|&c| codes[c] & (w[1].ob | w[1].cb)).collect();
+        a.sort_unstable();
+        a.dedup();
+        k.sort_unstable();
+        k.dedup();
+        by_code[a.len()] += 1;
+        by_brackets[k.len()] += 1;
+    }
+    (by_code, by_brackets)
 }
 
 /// The lanes' runs through the blocks so far (`exit`, `dep`, from each lane of the chunk's entry), on through block
@@ -461,8 +578,15 @@ pub fn summary_superposed(src: &[u8], from: usize, to: usize) -> Summary {
     }
     let mut exit: [u8; LANES] = core::array::from_fn(|l| l as u8);
     let mut dep = [Depth::default(); LANES];
+    // The block's map, written by each block over the last's.
+    let mut m = BlockMap { exit: [0; LANES], depth: [Depth::default(); LANES] };
     for w in b[r0 + lead - c0 - 1..r1 + lead - c0 + 1].windows(3) {
-        then_block(&mut exit, &mut dep, &block_map(&w[0], &w[1], &w[2]));
+        // The loop over blocks: a block whose lanes hold more sets of brackets than `block_map` shares among is
+        // `block_map_each`'s.
+        if block_map(&w[0], &w[1], &w[2], &mut m) {
+            m = block_map_each(&w[0], &w[1], &w[2]);
+        }
+        then_block(&mut exit, &mut dep, &m);
     }
     // At the text's end, a string open is B's reading wrong: selected by masks.
     let at_end = u8::from(r1 == blocks);
@@ -2174,6 +2298,54 @@ mod tests {
             }
         }
         assert!(same > 3000, "{same}");
+    }
+
+    /// The shared depths (`block_map`) against a depth for each code (`block_map_each`): each lane's exit, and the
+    /// depth of each lane not at `WRONG`, for every block of `src`. The blocks that had more sets than `REPS`.
+    fn shared_is_each(src: &[u8]) -> usize {
+        let blocks = src.len().div_ceil(64);
+        let mut b: Vec<B> = vec![B::default()];
+        classes_in(src, 0, blocks, &mut s1_at(src, 0), &mut b, usize::MAX, &mut S1::default());
+        b.push(B::default());
+        b.push(B::default());
+        let mut more = 0;
+        for (bi, w) in b.windows(3).take(blocks).enumerate() {
+            let mut m = BlockMap { exit: [0; LANES], depth: [Depth::default(); LANES] };
+            if block_map(&w[0], &w[1], &w[2], &mut m) {
+                more += 1;
+                continue;
+            }
+            let e = block_map_each(&w[0], &w[1], &w[2]);
+            for l in 0..LANES {
+                assert_eq!(m.exit[l], e.exit[l], "block {bi}, lane {l}: {src:?}");
+                if usize::from(e.exit[l]) != WRONG {
+                    assert_eq!(m.depth[l], e.depth[l], "block {bi}, lane {l}: {src:?}");
+                }
+            }
+        }
+        more
+    }
+
+    #[test]
+    fn shared_depths_are_each_codes() {
+        for t in texts() {
+            shared_is_each(t.as_bytes());
+        }
+        // Random texts of brackets, quotes of every kind, comments and line ends: many sets of brackets a block.
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |k: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 8) % k
+        };
+        let pieces: [&str; 16] = ["(", ")", "[", "]", "{", "}", "'", "\"", "'''", "\"\"\"", "#", "\n", "x", " ", "\\", "f'"];
+        let mut more = 0;
+        for _ in 0..3000 {
+            let t: String = (0..(10 + rnd(200))).map(|_| pieces[rnd(16) as usize]).collect();
+            more += shared_is_each(t.as_bytes());
+        }
+        assert!(more > 0, "no block had more sets than REPS");
     }
 
     #[test]
