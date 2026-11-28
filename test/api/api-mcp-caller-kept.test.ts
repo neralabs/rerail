@@ -80,35 +80,43 @@ async function recordedCheckout(): Promise<string> {
   return app;
 }
 
-/** The checkout and folder a bridge started in `folder` is resolved to, or the reason its header is refused. */
-function resolved(folder: string): { checkout: string | undefined; folder: string } | string {
-  const caller = callerFromHeader(encodeURIComponent(folder));
+/** The request's checkout lookup, as the MCP endpoint passes it to {@link callerFromHeader}. */
+type CheckoutLookup = Parameters<typeof callerFromHeader>[2];
+
+/**
+ * The checkout and folder a bridge started in `folder` is resolved to, beside the request's checkout lookup `resolver`
+ * where one is given, or the reason its header is refused.
+ */
+function resolved(folder: string, resolver?: CheckoutLookup): { checkout: string | undefined; folder: string } | string {
+  const caller = callerFromHeader(encodeURIComponent(folder), undefined, resolver);
   if (typeof caller === "string") return caller;
   return caller.kind === "agent" ? { checkout: caller.checkout, folder: caller.folder } : "a person";
 }
 
 /** {@link resolved}, with the processes it started and the `.git` entries it looked at. */
-function counted(folder: string) {
+function counted(folder: string, resolver?: CheckoutLookup) {
   Object.assign(reads, { starts: 0, looked: [], counting: true });
   try {
-    const answer = resolved(folder);
+    const answer = resolved(folder, resolver);
     return { answer, starts: reads.starts, gitEntries: reads.looked.filter(path => basename(path) === ".git").length };
   } finally {
     reads.counting = false;
   }
 }
 
-/**
- * Tool calls to the MCP endpoint of daemon stores over the database in `root`, each from a bridge in `folder`: the
- * call's result, or the text of its refusal.
- */
-function mcpCalls(root: string) {
+/** The daemon's stores over the database in `root`. */
+function daemonStores(root: string): DatabaseApiStores {
   const path = join(root, "rerail.sqlite");
   const stores = new DatabaseApiStores(path, {
     health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }),
     origin: () => "http://127.0.0.1:4737",
   });
   cleanups.push(async () => stores.close());
+  return stores;
+}
+
+/** Tool calls to the MCP endpoint of `stores`, each from a bridge in `folder`: the call's result, or the text of its refusal. */
+function mcpCalls(stores: DatabaseApiStores) {
   const mcp = createRerailMcpHandler(stores, operations, { version: "0.0.0-test" });
   return async (name: string, args: Record<string, unknown>, folder: string): Promise<unknown> => {
     const response = await mcp(new Request("http://localhost:4737/mcp", {
@@ -189,12 +197,15 @@ describe("the checkout kept for an MCP bridge's folder", () => {
     const app = await recordedCheckout();
     const web = join(app, "web");
     mkdirSync(web);
-    const call = mcpCalls(dirname(app));
+    const stores = daemonStores(dirname(app));
+    const call = mcpCalls(stores);
     // The bridge's placement alone runs past its limit; the request's resolver then asks Git, which answers.
     Object.assign(placements, { unanswered: 1, pastLimit: true });
     await call("repository_context_get", {}, web);
     expect(placements.unanswered).toBe(0);
 
+    // The resolver's location, with no Git; a fresh read gives the same answer with one Git.
+    expect(counted(web, stores.checkouts())).toMatchObject({ answer: { checkout: app, folder: "web" }, starts: 0 });
     expect(await call("repository_context_get", {}, web)).toMatchObject({ checkout: { checkoutPath: app, folder: "web" } });
     expect(await call("repository_stop", { checkout: app, scope: "checkout" }, web)).toMatchObject({ checkout: { checkoutPath: app, state: "stopped" } });
   });
@@ -203,12 +214,15 @@ describe("the checkout kept for an MCP bridge's folder", () => {
     const app = await recordedCheckout();
     const web = join(app, "web");
     mkdirSync(web);
-    const call = mcpCalls(dirname(app));
+    const stores = daemonStores(dirname(app));
+    const call = mcpCalls(stores);
     Object.assign(placements, { unanswered: 1, pastLimit: true });
     await call("repository_context_get", {}, web);
     // A second clone of the repository made at the folder before the bridge's next call.
     repositoryAt(web, "git@github.com:acme/app.git");
 
+    // The kept entry, with no Git; a fresh read gives the same answer with one Git.
+    expect(counted(web, stores.checkouts())).toMatchObject({ answer: { checkout: web, folder: "" }, starts: 0 });
     expect(await call("repository_context_get", {}, web)).toMatchObject({ checkout: { checkoutPath: web, folder: "" } });
   });
 });
