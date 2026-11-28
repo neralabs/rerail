@@ -339,6 +339,91 @@ impl<'a> NodeDocs<'a> {
         Ok(docs)
     }
 
+    /// The at-rest structure check: each document encoded as closes (subtrees ending after each node), the length of
+    /// every one-node subtree, an inner node's end as its distance past its last node's end, and the gaps; then
+    /// decoded by one pass with a stack into format 16's slots and lengths, compared with the tape's. Returns
+    /// (nodes, slot mismatches, length mismatches, decode nanoseconds).
+    pub fn rest_check(&self) -> (u64, u64, u64, u128) {
+        let (mut nodes, mut bad_slot, mut bad_len, mut ns) = (0u64, 0u64, 0u64, 0u128);
+        for d in 0..self.files.len() {
+            let (t, v) = (self.image(d), &self.tape(d).1);
+            let n = self.tape(d).0.n;
+            // Encode, from the tape's reads.
+            let size: Vec<u32> = (0..n as u32).map(|i| reads::size(t, v, i)).collect();
+            let mut prev = 0u32;
+            let starts: Vec<u32> = (0..n as u32)
+                .map(|i| {
+                    prev = reads::start_next(t, v, i, prev);
+                    prev
+                })
+                .collect();
+            let gaps: Vec<u32> = (0..n).map(|i| if i == 0 { starts[0] } else { starts[i] - starts[i - 1] }).collect();
+            let (mut closes, mut len1, mut trail) = (vec![0u8; n], Vec::new(), Vec::new());
+            let mut stack: Vec<(u32, u32)> = Vec::new();
+            for k in 0..n {
+                stack.push((k as u32, k as u32 + size[k]));
+                if size[k] == 1 {
+                    len1.push(reads::length(t, v, k as u32));
+                }
+                let last_end = reads::end(t, v, k as u32);
+                while let Some(&(j, e)) = stack.last() {
+                    if e as usize > k + 1 {
+                        break;
+                    }
+                    stack.pop();
+                    closes[k] += 1;
+                    if size[j as usize] > 1 {
+                        trail.push(reads::end(t, v, j) - last_end);
+                    }
+                }
+            }
+            // Decode: format 16's slots and lengths from the at-rest arrays alone.
+            let t0 = std::time::Instant::now();
+            let (mut slots, mut lens) = (vec![0u64; n], vec![0u32; n]);
+            // Frames: (node, its start, children so far, last child).
+            let mut open: Vec<(u32, u32, u32, u32)> = Vec::with_capacity(64);
+            let (mut start, mut li, mut ti) = (0u32, 0usize, 0usize);
+            for k in 0..n {
+                let i = k as u32;
+                start = start.wrapping_add(gaps[k]);
+                if let Some(f) = open.last_mut() {
+                    let (p, idx, last) = (f.0, f.2, f.3);
+                    f.2 += 1;
+                    f.3 = i;
+                    if i - 1 != p {
+                        slots[k - 1] = if idx % f16::K as u32 == 0 { u64::from(i - p) << 2 | 3 } else { u64::from(i - last) << 2 | 1 };
+                    }
+                }
+                let c = closes[k];
+                if c == 0 {
+                    open.push((i, start, 0, 0));
+                    continue;
+                }
+                // Node k is a one-node subtree; the c - 1 frames above it close too.
+                let end = start + len1[li];
+                li += 1;
+                lens[k] = end - start;
+                for _ in 1..c {
+                    let (j, js, ..) = open.pop().unwrap();
+                    slots[j as usize] = u64::from(i + 1 - j) << 1;
+                    lens[j as usize] = end + trail[ti] - js;
+                    ti += 1;
+                }
+            }
+            ns += t0.elapsed().as_nanos();
+            nodes += n as u64;
+            for k in 0..n {
+                let i = k as u32;
+                // A one-node inner subtree's slot is its size (2); a leaf's is set by the node after it.
+                let want = reads::slot(t, v, i);
+                let got = if size[k] == 1 && want & 1 == 0 { want } else { slots[k] };
+                bad_slot += u64::from(got != want && k + 1 != n);
+                bad_len += u64::from(lens[k] != reads::length(t, v, i));
+            }
+        }
+        (nodes, bad_slot, bad_len, ns)
+    }
+
     /// The variants derived from the tree in order: sizes, closes and previous siblings by one pass with a stack.
     fn rows_derived(&self, d: usize, mut f: impl FnMut(u128)) {
         let (t, v, src) = (self.image(d), &self.tape(d).1, self.source(d));

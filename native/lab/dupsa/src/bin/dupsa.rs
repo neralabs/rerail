@@ -874,6 +874,14 @@ fn main() {
         Some("explain") => opts(&args[1..]).and_then(explain_command),
         Some("probe") => opts(&args[1..]).and_then(probe_command),
         Some("dumpcols") => opts(&args[1..]).and_then(dumpcols_command),
+        Some("restcheck") => opts(&args[1..]).and_then(|o| {
+            let capture = Capture::load(Path::new(&o.pos[0]))?;
+            let tag = capture.files[0].tag;
+            let docs = NodeDocs::bare(&capture, tag, Cells::Decoded)?;
+            let (n, bs, bl, ns) = docs.rest_check();
+            println!("nodes {n}; slot mismatches {bs}; length mismatches {bl}; decode {:.2} ns/node", ns as f64 / n as f64);
+            Ok(())
+        }),
         _ => Err("usage: dupsa lines <root> … | dupsa nodes <capture> …".into()),
     };
     if let Err(e) = r {
