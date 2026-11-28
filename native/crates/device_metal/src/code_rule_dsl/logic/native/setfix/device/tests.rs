@@ -116,6 +116,60 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// The join lab's catalogue (`shape_of`, `shapes.yaml`): two joins of the same steps over relations of other names
+    /// are one shape, a join with a negation after them another, and each shape's rows per stage are the program's.
+    #[test]
+    fn joins_of_the_same_steps_over_other_relations_are_one_shape() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE sa (c0, c1); CREATE TEMP TABLE sb (c0, c1); CREATE TEMP TABLE sc (c0, c1); CREATE TEMP TABLE sd (c0, c1); CREATE TEMP TABLE sn (c0);").unwrap();
+        for v in 0..400i64 {
+            db.execute("INSERT INTO sa VALUES (?1, ?2)", [v, v % 37]).unwrap();
+            db.execute("INSERT INTO sb VALUES (?1, ?2)", [v % 41, v + 1000]).unwrap();
+            db.execute("INSERT INTO sc VALUES (?1, ?2)", [v * 3, v % 29]).unwrap();
+            db.execute("INSERT INTO sd VALUES (?1, ?2)", [v % 31, v + 5000]).unwrap();
+        }
+        for v in 0..100i64 {
+            db.execute("INSERT INTO sn VALUES (?1)", [v + 1000]).unwrap();
+        }
+        let src = |t: &str, cols: &str, types: &str| format!("t:x:{}:{}:{types}", hex(&format!("temp.{t}")), hex(cols));
+        let (sa, sb, sc, sd, sn) = (src("sa", "c0, c1", "ii"), src("sb", "c0, c1", "ii"), src("sc", "c0, c1", "ii"), src("sd", "c0, c1", "ii"), src("sn", "c0", "i"));
+        let rules = [
+            format!("pos {sa} v0 v1\npos {sb} v1 v2\nhead v0 v2"),
+            format!("pos {sc} v0 v1\npos {sd} v1 v2\nhead v0 v2"),
+            format!("pos {sa} v0 v1\npos {sb} v1 v2\nneg {sn} v2\nhead v0 v2"),
+        ];
+        let joined = |l: &str, r: &str| -> u64 { db.query_row(&format!("SELECT count(*) FROM temp.{l} JOIN temp.{r} ON {l}.c1 = {r}.c0"), [], |r| r.get::<_, i64>(0)).unwrap() as u64 };
+        let (ab, cd) = (joined("sa", "sb"), joined("sc", "sd"));
+        // The run's records (`profile::merged`) this test's, so it reads them after the stratum's run.
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        crate::code_rule_dsl::logic::profile::set(true);
+        db.execute_batch("CREATE TEMP TABLE sh (c0, c1);").unwrap();
+        let mut spec = vec!["name dev_shapes".to_owned(), "device".into(), "rel sh ii empty".into()];
+        spec.extend(rules.iter().map(|r| format!("seed 0 {}", hex(r))));
+        super::super::open(&db, &spec.join("\n")).unwrap();
+        super::super::run(&db, "dev_shapes", 0).unwrap();
+        let report = super::take_report();
+        super::super::close(&db, "dev_shapes").unwrap();
+        let shapes = crate::code_rule_dsl::logic::profile::take_join_shapes();
+        crate::code_rule_dsl::logic::profile::set(false);
+        assert!(report.as_ref().is_some_and(|r| r.refused.is_none()), "{report:?}");
+        // Other tests' shapes may be counted beside these: ours are those whose last stage made `ab` and `cd` rows.
+        let last = |t: &crate::code_rule_dsl::logic::profile::ShapeTotal| t.stages.last().map_or(0, |r| r[1]);
+        let two = shapes.iter().find(|(_, t)| t.runs == 2 && last(t) == ab + cd);
+        let (name, t) = two.unwrap_or_else(|| panic!("no shape run twice making {} rows: {:?}", ab + cd, shapes.iter().map(|(n, t)| (n, t.runs, last(t))).collect::<Vec<_>>()));
+        assert_eq!(t.instances.len(), 2, "two joins, one shape: {name}");
+        assert!(t.form.contains("kind: derived, arity: 2"), "its inputs are derived relations: {}", t.form);
+        let negated = shapes.iter().filter(|(n, t)| *n != name && t.runs == 1 && t.form.contains("mode: anti")).count();
+        assert_eq!(negated, 1, "the negated join is another shape: {:?}", shapes.keys().collect::<Vec<_>>());
+    }
+
     /// Heads whose sorted dedups' keys are each a full 64 bits (a 16-bit tag and two columns of 24 bits each), four in
     /// one stratum: each sorts its keys in a level of its own, for no rank fits above them (t58 increment A's wide
     /// sort), and the stratum runs on the device, in one program, its rows the CPU's.

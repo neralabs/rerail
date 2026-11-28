@@ -4886,7 +4886,97 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
 /// and the growth seen, for the next chunk's guesses.
 /// The run's counts into its rule's, and the growth each stage saw, for the next runs' guesses: (stage, rows out per
 /// row of its input's space), filed into the joins' memo too.
+/// A stage mode's name in `shapes.yaml`.
+fn mode_name(mode: u32) -> &'static str {
+    match mode {
+        mj::JOIN => "join",
+        mj::SEMI => "semi",
+        mj::ANTI => "anti",
+        mj::FILTER => "filter",
+        mj::AGG => "agg",
+        mj::STRCMP => "names",
+        mj::TEXTOP => "textop",
+        9 => "textfn",
+        mj::ROWTEXT => "rowtext",
+        mj::WITNESS => "witness",
+        _ => "other",
+    }
+}
+
+/// Run `r`'s join as a join shape (`rerail_join_shapes`, the join lab's catalogue): its stages as encoded, each with
+/// how its input is read, its constants counted and not kept.
+fn shape_of(r: &Run<'_>, plan: &Plan) -> rerail_join_shapes::Shape {
+    use rerail_join_shapes::{Input, StageForm};
+    let stages = plan.stages.iter().enumerate().map(|(k, s)| {
+        let d = &s.desc;
+        let kind = match &s.kind {
+            Kind::Pass => "pass",
+            Kind::Map => "map",
+            Kind::Filter => "filter",
+            Kind::Atom { .. } => "atom",
+            Kind::Own { .. } => "own",
+            Kind::Verdict { .. } => "verdict",
+            Kind::Names => "names",
+            Kind::RowText { .. } => "rowtext",
+            Kind::Witness { .. } => "witness",
+        };
+        let input = match (&s.kind, &r.rels[k]) {
+            (Kind::Pass | Kind::Map | Kind::Filter, _) => Input::None,
+            (Kind::Own { delta, .. }, _) => Input::Own { delta: *delta },
+            (_, Some((rel, ix))) => {
+                let walk = ix.as_ref().map_or(0, |i| i.walk());
+                if rel.is_axis() {
+                    Input::Axis { walk }
+                } else if rel.view.is_some() {
+                    Input::View { view: d.r_view, parent: walk == 1 }
+                } else if rel.at == 0 {
+                    Input::Words
+                } else {
+                    Input::Derived { arity: rel.cols as u32, dead: rel.dead != 0, from: rel.from != 0 || rel.is_live(), indexed: ix.is_some() }
+                }
+            }
+            (_, None) => Input::None,
+        };
+        let n = |x: u32, max: usize| (x as usize).min(max);
+        let keys: Vec<[u32; 3]> = (0..n(d.nkeys, mj::MAX_KEYS)).map(|q| [d.key_kind[q], d.key_slot[q], d.key_rcol[q]]).collect();
+        let params: Vec<[u32; 3]> = (0..n(d.nparams, mj::MAX_PARAMS)).map(|q| [d.par_kind[q], d.par_slot[q], d.par_doc[q]]).collect();
+        StageForm {
+            kind,
+            mode: d.mode,
+            mode_name: mode_name(d.mode),
+            input: Some(input),
+            span: s.span as u32,
+            key_consts: keys.iter().filter(|k| k[0] == mj::CONST).count() as u32 + r.consts[k].len() as u32,
+            par_consts: params.iter().filter(|p| p[0] == mj::CONST).count() as u32,
+            keys,
+            tests: (0..n(d.ntests, mj::MAX_TESTS)).map(|q| [d.test_a[q], d.test_b[q]]).collect(),
+            ops: d.ops[..n(d.nops, mj::MAX_OPS)].to_vec(),
+            params,
+            binds: (0..n(d.nbinds, mj::MAX_BINDS)).map(|q| [d.bind_slot[q], d.bind_kind[q], d.bind_idx[q]]).collect(),
+            cols: (0..n(d.ncols, mj::MAX_COLS)).map(|q| [d.col_kind[q], d.col_idx[q], d.col_doc[q]]).collect(),
+            outputs: d.outputs[..n(d.noutputs, mj::MAX_OUTPUTS)].to_vec(),
+            passed: d.passed[..n(d.npassed, mj::MAX_OUTPUTS)].to_vec(),
+            agg: d.agg,
+            arith: d.arith.iter().take_while(|a| **a != [0; 4]).copied().collect(),
+            screened: r.screens[k].is_some(),
+        }
+    }).collect();
+    rerail_join_shapes::Shape {
+        slots: plan.nslots as u32,
+        stages,
+        head: plan.head.iter().enumerate().map(|(c, h)| if h.is_some() { None } else { plan.head_slots.get(c).map(|&s| s as u32) }).collect(),
+        made_texts: plan.arena.clone(),
+    }
+}
+
 fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usize, f64)> {
+    if rerail_prof::code_rule_dsl::logic::profile::on() {
+        // The join lab's catalogue: this run's shape, and its stages' rows in and out.
+        let get = |slot: usize| if slot == 0 { 1u64 } else { u64::from(r.totals.get(slot)) };
+        let rows: Vec<[u64; 2]> = r.io.iter().map(|&(i, o)| [get(i), get(o)]).collect();
+        let shape = shape_of(r, plan);
+        rerail_prof::code_rule_dsl::logic::profile::join_shape(shape.name(), || shape.yaml("  "), &format!("rule {:016x}", plan.key), &rows);
+    }
     let mut grew = Vec::new();
     // Counts as the CPU's walk makes them: each stage's entries are the rows out of the stage before.
     let get = |slot: usize| if slot == 0 { 1u64 } else { u64::from(r.totals.get(slot)) };

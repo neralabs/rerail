@@ -104,6 +104,8 @@ rerail-accel = { path = "../../../accel" }
 rerail-accel-gpu = { path = "../../../accel/gpu" }
 # The join program's Rust on the host, and the texts it was written from (`program_pipe`: another is fatal).
 rerail-ukl-rust = { path = "../ukl_rust" }
+# A join's shape for the join lab's catalogue (`setfix::device::shape_of`).
+rerail-join-shapes = { path = "../join_shapes" }
 # The device layer's buffers and host-memory wraps, which the joins' and row programs' kernels bind (decision 0440).
 rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }

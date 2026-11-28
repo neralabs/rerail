@@ -652,6 +652,16 @@ pub(in crate::code_rule_dsl) struct DevRel {
 }
 
 impl DevRel {
+    /// Whether it is a `has` axis read off the tape (`DevRel::has`): a join shape's input kind (`setfix::device`).
+    pub(in crate::code_rule_dsl) fn is_axis(&self) -> bool {
+        self.has.is_some()
+    }
+
+    /// Whether its rows are its length as the device claims it (`live`): a join shape's input kind.
+    pub(in crate::code_rule_dsl) fn is_live(&self) -> bool {
+        self.live
+    }
+
     /// `self`, its descriptor's arity and base rows noted as they are now (`made`).
     fn noted(mut self) -> DevRel {
         if self.home.is_some() {
@@ -1074,6 +1084,11 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
+    /// How it is read: 0 an index, 1 `child` by its parent, 2 a `has` axis by its node, 3 by its ancestor (`walk`).
+    pub(in crate::code_rule_dsl) fn walk(&self) -> u32 {
+        self.walk
+    }
+
     /// The relation its probes read: `rel`, or a view's new relation of no values it was built on.
     pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
         self.fresh.as_deref().unwrap_or(rel)

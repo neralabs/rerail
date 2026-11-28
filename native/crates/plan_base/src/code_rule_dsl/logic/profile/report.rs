@@ -300,6 +300,22 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         }
     }
     std::fs::write(dir.join("native_shapes.tsv"), shapes_tsv)?;
+    // The join program's shapes (the join lab's catalogue), by their rows walked, most first: each its form, the
+    // joins it ran for, and per stage the rows into it and out of it.
+    let mut joins: Vec<_> = state.join_shapes.iter().collect();
+    joins.sort_by_key(|(name, t)| (std::cmp::Reverse(t.stages.iter().map(|r| r[0]).sum::<u64>()), (*name).clone()));
+    let mut yaml = String::from("# The join program's shapes (rerail_join_shapes), by rows into their stages, most first.\n");
+    for (name, t) in joins {
+        let _ = writeln!(yaml, "- shape: {name}\n  runs: {}", t.runs);
+        yaml.push_str(&t.form);
+        let rows: Vec<String> = t.stages.iter().map(|[i, o]| format!("[{i}, {o}]")).collect();
+        let _ = writeln!(yaml, "  rows_in_out: [{}]", rows.join(", "));
+        let _ = writeln!(yaml, "  instances:");
+        for ((span, head), n) in &t.instances {
+            let _ = writeln!(yaml, "    - {{span: {span:?}, head: {head:?}, runs: {n}}}");
+        }
+    }
+    std::fs::write(dir.join("shapes.yaml"), yaml)?;
     let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\trules\tgpu_views\tgpu_s\tgpu_rounds\tgpu_handed\tlacking\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
