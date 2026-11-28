@@ -359,6 +359,74 @@ pub unsafe fn p1_write(src: &[u8], starts: &[u32], n: usize, a: usize, b: usize,
     }
 }
 
+/// The keys of a level sort's digit.
+pub const KEYS: usize = 256;
+
+/// A sum of one word: no count.
+///
+/// # Safety
+/// `out` has room for a word.
+pub unsafe fn add1_unit(out: *mut Rec) {
+    unsafe { *out = 0 };
+}
+
+/// One word's sum.
+///
+/// # Safety
+/// `a` and `b` hold a word each, `out` has room for one.
+pub unsafe fn add1_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    unsafe { *out = a[0] + b[0] };
+}
+
+/// P2's unit: no key counted.
+///
+/// # Safety
+/// `out` has room for `KEYS` words.
+pub unsafe fn p2_unit(out: *mut Rec) {
+    for g in 0..KEYS {
+        unsafe { *out.add(g) = 0 };
+    }
+}
+
+/// P2's merge: the keys' counts added.
+///
+/// # Safety
+/// `a` and `b` hold `KEYS` words each, `out` has room for as many.
+pub unsafe fn p2_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    for g in 0..KEYS {
+        unsafe { *out.add(g) = a[g] + b[g] };
+    }
+}
+
+/// P2, items `a..b` (three words each: level, record, head), the digit at `shift` of each one's level: each key's
+/// count.
+///
+/// # Safety
+/// `items` holds the chunk's items, `out` has room for `KEYS` words.
+pub unsafe fn p2_run(items: &[u32], a: usize, b: usize, shift: u32, out: *mut Rec) {
+    unsafe { p2_unit(out) };
+    for x in a..b {
+        let g = ((items[3 * x] >> shift) & 0xff) as usize;
+        unsafe { *out.add(g) += 1 };
+    }
+}
+
+/// P2's writes, items `a..b`: each at its key's start (`keys`) and the chunk's count of its key before it (its sum,
+/// `sum`, counted on in place).
+///
+/// # Safety
+/// `sum` is the chunk's own (`KEYS` words), `out` has room for every item.
+pub unsafe fn p2_write(items: &[u32], a: usize, b: usize, shift: u32, sum: *mut Rec, keys: &[u32], out: *mut u32) {
+    for x in a..b {
+        let g = ((items[3 * x] >> shift) & 0xff) as usize;
+        let at = (keys[g] + unsafe { *sum.add(g) }) as usize;
+        unsafe { *out.add(3 * at) = items[3 * x] };
+        unsafe { *out.add(3 * at + 1) = items[3 * x + 1] };
+        unsafe { *out.add(3 * at + 2) = items[3 * x + 2] };
+        unsafe { *sum.add(g) += 1 };
+    }
+}
+
 /// A record's bracket, by its first byte (`n`: the file's end, none).
 fn bracket_of(src: &[u8], lx: &crate::tier1::Lexed, r: usize) -> Option<(u8, bool)> {
     if r < lx.count { bracket(src[lx.starts[r] as usize]) } else { None }
@@ -625,42 +693,49 @@ fn level_start(items: &[Item], x: usize) -> bool {
     x == 0 || items[x - 1].level != items[x].level
 }
 
-/// `items` stably sorted by level: two phases of keyed counts over chunks of `size` items, an 8-bit digit each.
+/// `items` stably sorted by level: per 8-bit digit of the level, the chunks' keyed counts (`p2_run`) and their prefix
+/// sum (`p2_merge`), the keys' starts (a prefix sum over the keys' totals), each chunk's items scattered from its sum
+/// (`p2_write`): the block operators the device runs too.
 fn sort_by_level(items: Vec<Item>, size: usize, order: Order<'_>) -> Vec<Item> {
-    let mut xs = items;
+    let mut xs: Vec<u32> = items.iter().flat_map(|x| [x.level, x.record, u32::from(x.head)]).collect();
+    let n = items.len();
     for shift in [0u32, 8] {
-        let ic = chunks_of(xs.len(), size);
-        let digit = |x: &Item| ((x.level >> shift) & 0xff) as usize;
-        let counts: Vec<[u32; 256]> = each(ic.len(), order, |c| {
-            let mut k = [0u32; 256];
-            for x in &xs[ic[c].0..ic[c].1] {
-                k[digit(x)] += 1;
-            }
+        let ic = chunks_of(n, size);
+        let counts: Vec<[u32; KEYS]> = each(ic.len(), order, |c| {
+            let mut k = [0u32; KEYS];
+            // SAFETY: `KEYS` words; the chunk's items.
+            unsafe { p2_run(&xs, ic[c].0, ic[c].1, shift, k.as_mut_ptr()) };
             k
         });
-        let add = |a: &[u32; 256], b: &[u32; 256]| {
-            let mut s = *a;
-            for (s, b) in s.iter_mut().zip(b) {
-                *s += b;
-            }
+        let add = |a: &[u32; KEYS], b: &[u32; KEYS]| {
+            let mut s = [0u32; KEYS];
+            // SAFETY: `KEYS` words each.
+            unsafe { p2_merge(a, b, s.as_mut_ptr()) };
             s
         };
-        let at = prefix(&counts, [0; 256], order, add);
+        let mut unit = [0u32; KEYS];
+        // SAFETY: `KEYS` words.
+        unsafe { p2_unit(unit.as_mut_ptr()) };
+        let mut at = prefix(&counts, unit, order, add);
         let total = add(&at[ic.len() - 1], &counts[ic.len() - 1]);
-        // The digits' starts: a prefix sum over the 256 keys.
-        let key_at = prefix(&total.map(|t| [t; 1]), [0], order, |a, b| [a[0] + b[0]]);
-        let mut out = vec![Item::default(); xs.len()];
-        for c in order(ic.len()) {
-            let mut k = at[c];
-            for x in &xs[ic[c].0..ic[c].1] {
-                let g = digit(x);
-                out[(key_at[g][0] + k[g]) as usize] = *x;
-                k[g] += 1;
-            }
-        }
+        // The keys' starts: a prefix sum over the keys' totals.
+        let add1 = |a: &[u32; 1], b: &[u32; 1]| {
+            let mut s = [0u32; 1];
+            // SAFETY: a word each.
+            unsafe { add1_merge(a, b, s.as_mut_ptr()) };
+            s
+        };
+        let keys: Vec<u32> = prefix(&total.map(|t| [t; 1]), [0], order, add1).iter().map(|k| k[0]).collect();
+        let mut out = vec![0u32; 3 * n];
+        let op = out.as_mut_ptr();
+        let ap = at.as_mut_ptr();
+        each(ic.len(), order, |c| {
+            // SAFETY: each chunk its own sum, and its own items' places (its keys' ranges past its sum).
+            unsafe { p2_write(&xs, ic[c].0, ic[c].1, shift, (*ap.add(c)).as_mut_ptr(), &keys, op) };
+        });
         xs = out;
     }
-    xs
+    xs.chunks_exact(3).map(|w| Item { level: w[0], record: w[1], head: w[2] != 0 }).collect()
 }
 
 /// `src`'s tape into `w` by phases: P1-P5, then each chunk written from its state (P6), twice (each block's side-list

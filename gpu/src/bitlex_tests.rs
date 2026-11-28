@@ -1252,11 +1252,11 @@ const T2_H: usize = PH_H + 32;
 
 /// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
 /// the layout laid from the records the device found, each chunk's depth summary a leaf of P1's arrival tree, each
-/// chunk's records' depths and items written from its sum walked down. Each record's depth is the CPU phases'
-/// (`Phases::run`), and the items, ordered by level as P2 orders them, are the CPU's, for the files and the nested
+/// chunk's records' depths and items written from its sum walked down, the items sorted by level (P2, two digits of
+/// keyed counts). Each record's depth is the CPU phases' (`Phases::run`), and the items in level order are the CPU's, for the files and the nested
 /// trees, in chunks of 1, 7 and 64 records.
 #[test]
-fn json_tier2_phases_p1_are_the_cpus() {
+fn json_tier2_phases_are_the_cpus() {
     use rerail_json_aot::middle;
     let Some(shared) = crate::shared::get() else {
         eprintln!("no device: tier 2 as phases did not run");
@@ -1282,9 +1282,12 @@ fn json_tier2_phases_p1_are_the_cpus() {
             let at = |what: &str| format!("{}: file {k}, chunks of {size}: {what}", crate::device::backend());
             // The room from the records' bound (the device's layout says what it takes).
             let chunks = (lex.records + 1).div_ceil(size);
-            let ms = 2 * chunks + 40;
-            let room = T2_H + 3 * (ms + 2 * chunks);
-            let aroom = 7 * (lex.records + 1);
+            // The level sort's chunks at their bound (two items a record).
+            let ichunks = (2 * (lex.records + 1)).div_ceil(size);
+            let ms = 2 * ichunks + 40;
+            let tree = |leaves: usize, w: usize| w * (2 * leaves + 40 + 2 * leaves);
+            let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1));
+            let aroom = 13 * (lex.records + 1) + 512;
             let pb = kept.get("phases pool", 4 * room);
             let ab = kept.get("phases arrays", 4 * aroom);
             let meet = kept.meet("phases meet", 12 * ms);
@@ -1295,7 +1298,7 @@ fn json_tier2_phases_p1_are_the_cpus() {
                 (h[0], h[1]) = (epoch, ms as u32);
                 (h[PH_H], h[PH_H + 1], h[PH_H + 8]) = (size as u32, room as u32, aroom as u32);
             }
-            for phase in 0..3u32 {
+            for phase in 0..11u32 {
                 launch(&mut q, f)
                     .value("args", &T2PArgs { phase, pad: 0 })
                     .buffer("src", &lex.src)
@@ -1321,12 +1324,14 @@ fn json_tier2_phases_p1_are_the_cpus() {
                 panic!("{}", at(&format!("record {r}'s depth of {}: {:?}, the CPU's {:?}", count + 1, &depth[lo..(r + 3).min(depth.len())], &ph.depth[lo..(r + 3).min(ph.depth.len())])));
             }
             let (oi, ni) = (m[PH_H + 6] as usize, m[PH_H + 7] as usize);
-            let mut items: Vec<middle::phases::Item> = arr[oi..oi + 3 * ni].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
-            items.sort_by_key(|x| x.level);
-            assert_eq!(items, ph.items, "{}", at("the items by level"));
+            let items: Vec<middle::phases::Item> = arr[oi..oi + 3 * ni].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
+            assert_eq!(items.len(), ph.items.len(), "{}", at("the items"));
+            if let Some(x) = (0..ni).find(|&x| items[x] != ph.items[x]) {
+                panic!("{}", at(&format!("item {x} of {ni} by level: {:?}, the CPU's {:?}", items[x], ph.items[x])));
+            }
             runs += 1;
             records += count;
         }
     }
-    eprintln!("{}: tier 2 as phases, P1 on the device: {runs} runs, {records} records' depths and items the CPU phases'", crate::device::backend());
+    eprintln!("{}: tier 2 as phases, P1 and P2 on the device: {runs} runs, {records} records' depths and items in level order the CPU phases'", crate::device::backend());
 }

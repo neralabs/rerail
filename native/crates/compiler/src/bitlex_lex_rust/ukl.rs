@@ -521,6 +521,8 @@ impl Fx<'_> {
             E::Id(n) if n == "None" => "UKL_NONE".into(),
             E::Id(n) => match self.consts.get(n) {
                 Some((v, _)) => v.clone(),
+                // A local or a parameter is itself, whatever a function of its name is printed as.
+                None if self.var(n).is_some() => n.clone(),
                 None => self.name(n),
             },
             E::Call(f, args) if matches!(&**f, E::Id(n) if n == "Ok" || n == "Err" || n == "Some") => {
@@ -2033,10 +2035,11 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
     ph.insert("bracket_byte".into(), format!("{p}bracket"));
     ph.insert("NONE".into(), format!("{p}NONE"));
     ph.insert("D0".into(), format!("{p}D0"));
+    ph.insert("KEYS".into(), format!("{p}KEYS"));
     for f in PHASE_FNS {
         ph.insert((*f).into(), format!("{p}{f}"));
     }
-    let _ = writeln!(out, "#define {p}D0 {}u", 1u32 << 30);
+    let _ = writeln!(out, "#define {p}D0 {}u\n#define {p}KEYS 256u", 1u32 << 30);
     for f in PHASE_FNS {
         print_fn(&lines, f, &format!("{p}{f}"), "", p, &ph, &returns, &mut out)?;
     }
@@ -2047,13 +2050,23 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
 {{
     if (op == UKL_T2_OP_P1)
         {p}p1_merge(a, b, out);
+    else if (op == UKL_T2_OP_ADD1)
+        {p}add1_merge(a, b, out);
+    else if (op == UKL_T2_OP_KEYS)
+        {p}p2_merge(a, b, out);
 }}
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {{
     if (op == UKL_T2_OP_P1)
         {p}p1_unit(out);
+    else if (op == UKL_T2_OP_ADD1)
+        {p}add1_unit(out);
+    else if (op == UKL_T2_OP_KEYS)
+        {p}p2_unit(out);
 }}
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p1_run(src, starts, n, a, b, out); }}
+UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) {{ {p}p2_run(items, a, b, shift, out); }}
+UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) {{ {p}p2_write(items, a, b, shift, sum, keys, out); }}
 UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items) {{ {p}p1_write(src, starts, n, a, b, sum, depth, items); }}
 "#
     );
@@ -2061,7 +2074,7 @@ UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const 
 }
 
 /// The phases' block operators the printer prints, in order (each after the ones it calls).
-const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write"];
+const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write"];
 
 /// Tier 2's two programs as UKL kernels, launched a phase at a time in order (decision 0726). `<ukl/middle_run.h>`'s
 /// phases are three kernels, each its phases a constant mask, so it holds their code alone (its compile and its

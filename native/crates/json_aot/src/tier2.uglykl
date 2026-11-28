@@ -1986,6 +1986,7 @@ DEFINE_KERNEL2(tier2, json_t2_z_write,
     ukl_z16_worker(&r, lane __UKL_ARGS);
 }
 #define json_t2_D0 1073741824u
+#define json_t2_KEYS 256u
 UKL_INLINE uint32_t json_t2_bracket_code(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t r)
 {
 if ((r >= n)) {
@@ -2074,15 +2075,70 @@ d -= 1u;
 }
 }
 
+UKL_INLINE void json_t2_add1_unit(UKL_COHERENT uint32_t* out)
+{
+(*out) = 0u;
+}
+
+UKL_INLINE void json_t2_add1_merge(UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+(*out) = (a[0u] + b[0u]);
+}
+
+UKL_INLINE void json_t2_p2_unit(UKL_COHERENT uint32_t* out)
+{
+for (uint32_t g = 0u; g < json_t2_KEYS; g++) {
+(*(out + g)) = 0u;
+}
+}
+
+UKL_INLINE void json_t2_p2_merge(UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
+{
+for (uint32_t g = 0u; g < json_t2_KEYS; g++) {
+(*(out + g)) = (a[g] + b[g]);
+}
+}
+
+UKL_INLINE void json_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out)
+{
+json_t2_p2_unit(out);
+for (uint32_t x = a; x < b; x++) {
+uint32_t g = ((uint32_t)(((items[(3u * x)] >> shift) & 0xffu)));
+(*(out + g)) += 1u;
+}
+}
+
+UKL_INLINE void json_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out)
+{
+for (uint32_t x = a; x < b; x++) {
+uint32_t g = ((uint32_t)(((items[(3u * x)] >> shift) & 0xffu)));
+uint32_t at = ((uint32_t)((keys[g] + (*(sum + g)))));
+(*(out + (3u * at))) = items[(3u * x)];
+(*(out + ((3u * at) + 1u))) = items[((3u * x) + 1u)];
+(*(out + ((3u * at) + 2u))) = items[((3u * x) + 2u)];
+(*(sum + g)) += 1u;
+}
+}
+
 UKL_INLINE void ukl_ph_merge(uint32_t op, UKL_COHERENT const uint32_t* a, UKL_COHERENT const uint32_t* b, UKL_COHERENT uint32_t* out)
 {
     if (op == UKL_T2_OP_P1)
         json_t2_p1_merge(a, b, out);
+    else if (op == UKL_T2_OP_ADD1)
+        json_t2_add1_merge(a, b, out);
+    else if (op == UKL_T2_OP_KEYS)
+        json_t2_p2_merge(a, b, out);
 }
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {
     if (op == UKL_T2_OP_P1)
         json_t2_p1_unit(out);
+    else if (op == UKL_T2_OP_ADD1)
+        json_t2_add1_unit(out);
+    else if (op == UKL_T2_OP_KEYS)
+        json_t2_p2_unit(out);
 }
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) { json_t2_p1_run(src, starts, n, a, b, out); }
+UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) { json_t2_p2_run(items, a, b, shift, out); }
+UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) { json_t2_p2_write(items, a, b, shift, sum, keys, out); }
 UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* depth, UKL_GLOBAL uint32_t* items) { json_t2_p1_write(src, starts, n, a, b, sum, depth, items); }
