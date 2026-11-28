@@ -610,6 +610,9 @@ pub fn is_probe(rel: &str) -> bool {
     rel.starts_with(PROBE)
 }
 
+/// A stage's setting: the program it is cut from loads (`stage`), so the stage is prepared as a loading run is.
+pub const STAGE_OF_LOADING: &str = "stage_of_loading";
+
 /// The prefix of a probe's name (`Staged::probes`).
 pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
 
@@ -677,6 +680,7 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
             }
         }
     }
+    let loads = super::world::wanted(&**v, &super::shape::Shape::of(v));
     // Its name: a digest of its rules.
     let name = {
         use sha2::Digest as _;
@@ -709,6 +713,13 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
         }
         b.fields().add_setting("phase", &name);
         b.fields().add_setting("export", &exports.join(", "));
+        // A stage runs over the program's documents, prepared as the program is: where the program loads, its joins are
+        // neither factorized nor deferred (`corpus::prepare`'s `loading_run`), and the stage's are not either. Prepared
+        // as a run that loads nothing, a stage's per-file joins (`ghw_model_instance` over `dj_model_at`) were cut into
+        // factors and pair caches the cross part met, and nodes crossed (decision 0727).
+        if loads {
+            b.fields().add_setting(STAGE_OF_LOADING, "true");
+        }
         b.finish().map(|(v, _)| v).map_err(Error::Plan)
     }).transpose()?;
     // The program it leaves: no rule makes a staged relation, and each read of one reads the stage's export.

@@ -2454,7 +2454,8 @@ fn run_observed_within(
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
     // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
-    let loading_run = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the run loads".into()); world::wanted(&*v, &shape) };
+    // A stage is prepared as the program it is cut from (`phases::STAGE_OF_LOADING`).
+    let loading_run = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the run loads".into()); world::wanted(&*v, &shape) || !v.setting_values(phases::STAGE_OF_LOADING).is_empty() };
     // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
     // (`import_closure`, `components.rerail`).
     let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
