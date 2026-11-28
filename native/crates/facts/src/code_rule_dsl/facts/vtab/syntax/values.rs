@@ -902,9 +902,6 @@ impl Source for Layered {
         p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     /// The base's (a part's node is read as text).
-    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
-        self.base.node_atom(name, n, make, held, table)
-    }
     /// Every node's text where it lies (`LongTexts::node_texts_in_place`), the chunk's documents' and its values': a
     /// node is found through the directory over the chunk's batch and its values (`views_over`), each document's
     /// source where it lies, as `node_read` finds it through the batch that holds its document.
@@ -926,6 +923,16 @@ impl Source for Layered {
         let read = dir.views.read_of(super::device_chunk::VIEW_NODE, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>);
         why(if read.is_some() { "read in place (a layered binding)" } else { "refused: the layered directory on no device" });
         read
+    }
+    /// As `node_read`: the base, then each part that holds `n`'s key. Not forwarded, every node text a chunk's join
+    /// read took the trait's `None` and was made as a string (7.6 M reads of an idc run, 227 ns each).
+    fn node_atom(&self, name: &str, n: i64, make: bool, held: &dyn Fn(&str) -> Option<i64>, table: (*const (), Option<&std::path::Path>)) -> Option<i64> {
+        if let Some(v) = self.base.node_atom(name, n, make, held, table) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(self.name.as_str())?;
+        p.by_key.parts(rerail_blocks::located::Located(n).key(), p.list.len()).find_map(|i| p.list[i].src.node_atom(name, n, make, held, table))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

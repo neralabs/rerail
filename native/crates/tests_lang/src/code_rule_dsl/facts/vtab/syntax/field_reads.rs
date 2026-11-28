@@ -166,3 +166,43 @@ fn a_nodes_text_atom_made_is_the_stores_atom_of_its_text() {
     }
     assert!(made > 50, "{made}");
 }
+
+/// A chunk's layered source reads a node's text atom as its batch's source does, for the nodes of the chunk's own
+/// documents and of a value admitted past them, made and as held: whatever `node_read` reads, `node_atom` gives that
+/// text's atom.
+#[test]
+fn a_layered_sources_node_atom_is_the_atom_of_the_text_it_reads() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    use crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES;
+    let store = ContentStore::open(&temp("layered-atoms")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g{k}(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, vec![file(5)], &[], &tests, Binding::Cpu, &projection).unwrap());
+    let (name, base) = sources.iter().find(|(n, _)| n.as_str() == LONG_TEXT_NODES).expect("the node texts' source");
+    let source = super::values::Layered::new(name, Arc::clone(base), Arc::clone(&values));
+    let none = |_: &str| None;
+    // The run's symbols' table: the store's atoms, which the batch's and its values' are.
+    let table = (std::sync::Arc::as_ptr(&store.atoms_handle()).cast::<()>(), None);
+    let mut read = [0usize; 2];
+    // Every value any layered source holds, as a candidate id: the nodes are among them.
+    let ids: BTreeSet<i64> = sources.iter().flat_map(|(nm, s)| {
+        let l = super::values::Layered::new(nm, Arc::clone(s), Arc::clone(&values));
+        let w = l.columns().len();
+        (0..l.len()).flat_map(move |r| (0..w).map(move |c| (r, c))).map(|(r, c)| l.value(r, c)).collect::<Vec<_>>()
+    }).filter(|&v| [5i64, 20, 23].contains(&(v >> 32))).collect();
+    {
+        for &n in &ids {
+            let key = n >> 32;
+            let Some(rusqlite::types::Value::Text(t)) = source.node_read("rr_node_text_any", n, &[]) else { continue };
+            let want = store.atom(&t).unwrap().map(i64::from);
+            assert_eq!(source.node_atom("rr_node_text_any", n, true, &none, table), want, "made, node {n:#x} ({t:?})");
+            let held = |s: &str| store.atom(s).unwrap().map(i64::from);
+            assert_eq!(source.node_atom("rr_node_text_any", n, false, &held, table), want, "held, node {n:#x} ({t:?})");
+            read[usize::from(key == 5)] += 1;
+        }
+    }
+    assert!(read[0] > 10 && read[1] > 3, "{read:?}");
+}
