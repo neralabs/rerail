@@ -268,6 +268,10 @@ pub(super) fn sample() {
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
             let mut ticks = 0u64;
+            // The holders last read, and the footprint and time they were read at. Reading them checks every block's
+            // pages (`mincore`), which on every rising tick took a core (8,072 of a 30 s sample's, the data layer,
+            // 2026-11-28): they are read again for a kept row, or a peak 8 MB or 250 ms past the last read.
+            let (mut held, mut held_at, mut held_fp) = ([0usize; 24], f64::NEG_INFINITY, 0u64);
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(every_ms));
                 // The queues the system's nameless threads serve, about every 50 ms (`note_dispatch_labels`).
@@ -299,7 +303,10 @@ pub(super) fn sample() {
                     e.1 = e.1.max(now);
                 }
                 last_max = max;
-                let sample = Sample { at, unix, footprint: now, max, live, resident, open, threads, holders: holders() };
+                if keep || (top && (now.abs_diff(held_fp) >= 8 << 20 || at - held_at >= 0.25)) {
+                    (held, held_at, held_fp) = (holders(), at, now);
+                }
+                let sample = Sample { at, unix, footprint: now, max, live, resident, open, threads, holders: held };
                 if top {
                     s.top = sample.clone();
                     // The heap by span at the peak, again each 16 MB it rises (a scan of the sampler's table).

@@ -675,8 +675,19 @@ pub fn free_kept_split() -> (usize, usize) {
 /// (`block::kind`, 0 for none set), and the rest's (pooled leases and the blocks over them, file mappings). A range
 /// inside another (a block over a lease) is counted once. A profile's measure.
 pub fn resident_split() -> ([usize; 9], usize) {
-    let ranges: Vec<(usize, usize, Option<u32>)> =
-        blocks().iter().filter_map(|(a, b, l)| l.upgrade().map(|l| (*a, *b, l.pages.then(|| l.ext.kind.load(Relaxed))))).collect();
+    // An anonymous block's memory is its used extent (`Extent::top`), not its reservation: `mincore` over every
+    // block's whole reservation took the profile's memory sampler a core (8,388 of a 30 s sample's, the data layer,
+    // 2026-11-28). A lease's or mapping's range is all its own.
+    let ranges: Vec<(usize, usize, Option<u32>)> = blocks()
+        .iter()
+        .filter_map(|(a, b, l)| {
+            l.upgrade().map(|l| {
+                let kind = l.pages.then(|| l.ext.kind.load(Relaxed));
+                let end = if l.pages { (*b).min(a.saturating_add(l.ext.top.load(Relaxed))) } else { *b };
+                (*a, end, kind)
+            })
+        })
+        .collect();
     let (mut anon, mut rest, mut end) = ([0; 9], 0, 0);
     for (a, b, kind) in ranges {
         if b <= end {
