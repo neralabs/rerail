@@ -6313,6 +6313,12 @@ pub fn left_on(db: &Connection) -> std::sync::Arc<parking_lot::Mutex<Left>> {
 /// `cls_late`'s 192,165 rows went through three anti-joins before `bound_in` kept 15,521 of them, and `rf_builtin`'s
 /// 628,398 through `!rf_after_310` before `builtin` kept 44,635. The first step (a seed's or a delta's driver) stays
 /// first. Whether the order changed.
+/// A `let` (`$x = e`, a computed value or a split, its inputs bound) is of the run too, ranked with the tests that
+/// call a function, and a step that reads what a `let` of the run made is a level past that `let`: by level, then
+/// rank. The tests ahead of a call run before it, and after an atom inside its row program (`rowcode`, which runs no
+/// call): `nameref`'s `rr_ast_7($n), $x = @rr_node_text_any($n), $n < c, !kwpat_key($n), !pat_tail($n)` walked its
+/// 1,620 rows through each test a step of its own. A level's own steps keep the ranks' order: `rf_own_fn`'s
+/// membership `rr_any_rf_named_fn_0($q)`, which drops its 144 rows, before the calls that check `$q`'s parts.
 pub(in crate::code_rule_dsl) fn tests_ordered(b: &Body<'_>, order: &mut [Step]) -> bool {
     let rank = |at: usize| -> Option<u8> {
         match b.view(at) {
@@ -6326,17 +6332,37 @@ pub(in crate::code_rule_dsl) fn tests_ordered(b: &Body<'_>, order: &mut [Step]) 
     let mut k = 0;
     while k < order.len() {
         let mut end = k;
-        while k > 0 && end < order.len() && rank(order[end].at).is_some() && b.vars(order[end].at).is_subset(&bound) {
+        // The run's steps' (level, rank), each slot its `let`s made with its level, and what is bound after it.
+        let (mut keys, mut made, mut after): (Vec<(u8, u8)>, Vec<(VarSlot, u8)>, VarSet) = (Vec::new(), Vec::new(), bound.clone());
+        let level = |vars: &VarSet, made: &[(VarSlot, u8)]| made.iter().filter(|(s, _)| vars.contains(*s)).map(|&(_, l)| l).max().unwrap_or(0);
+        while k > 0 && end < order.len() {
+            let at = order[end].at;
+            let Some(r) = rank(at) else { break };
+            let vars = b.vars(at);
+            let key = if vars.is_subset(&after) {
+                (level(vars, &made), r)
+            } else if matches!(b.view(at), Lit::Cmp { .. }) && b.ready(at, &after) {
+                let new = vars.minus(&after);
+                let l = level(&vars.minus(&new), &made);
+                made.extend(new.iter().map(|s| (s, l + 1)));
+                (l, 3)
+            } else {
+                break;
+            };
+            after.extend(vars);
+            keys.push(key);
             end += 1;
         }
-        if end > k + 1 {
-            let run = &mut order[k..end];
-            if run.windows(2).any(|w| rank(w[0].at) > rank(w[1].at)) {
-                run.sort_by_key(|s| rank(s.at));
-                changed = true;
+        if end > k + 1 && keys.windows(2).any(|w| w[0] > w[1]) {
+            let mut run: Vec<((u8, u8), Step)> = keys.iter().copied().zip(order[k..end].iter().cloned()).collect();
+            run.sort_by_key(|(key, _)| *key);
+            for (slot, (_, st)) in order[k..end].iter_mut().zip(run) {
+                *slot = st;
             }
+            changed = true;
         }
         if end > k {
+            bound = after;
             k = end;
             continue;
         }
@@ -6346,3 +6372,46 @@ pub(in crate::code_rule_dsl) fn tests_ordered(b: &Body<'_>, order: &mut [Step]) 
     changed
 }
 
+
+#[cfg(test)]
+mod tests_ordered_tests {
+    use super::super::super::program_image::{Builder, CmpOp, T};
+    use super::*;
+
+    /// `tests_ordered` over rule `rule`'s body in its literals' order: the literals as it leaves them.
+    fn ordered(rule: impl FnOnce(&mut Builder)) -> Vec<usize> {
+        let mut b = Builder::base();
+        for (rel, cols) in [("r", &[("n", "number")][..]), ("k", &[("n", "number")]), ("m", &[("n", "number")]), ("h", &[("n", "number"), ("x", "number")])] {
+            b.fields().declare(rel, cols);
+        }
+        rule(&mut b);
+        let ver = b.finish().unwrap().0;
+        let r = ver.rules().next().unwrap();
+        let body = Body::of(&ver, r);
+        let mut order: Vec<Step> = (0..body.len()).map(|at| Step { at, mode: None }).collect();
+        tests_ordered(&body, &mut order);
+        order.iter().map(|s| s.at).collect()
+    }
+
+    /// The tests after a call that do not read its value run before it (`nameref`): after the atom, in its row
+    /// program, the call on the rows they pass.
+    #[test]
+    fn a_call_runs_after_the_tests_that_do_not_read_it() {
+        let v = |x: &'static str| T::Var(x);
+        let order = ordered(|b| {
+            b.rule().head("h", &[v("n"), v("x")]).atom("r", &[v("n")]).cmp(v("x"), CmpOp::Eq, T::Call("abs", vec![v("n")])).cmp(v("n"), CmpOp::Lt, T::Int(5)).not("k", &[v("n")]).finish().unwrap();
+        });
+        assert_eq!(order, [0, 2, 3, 1]);
+    }
+
+    /// What reads a call's value stays after it, by rank among itself (`rf_own_fn`): a membership of the value before
+    /// a test that calls a function of it.
+    #[test]
+    fn what_reads_a_calls_value_is_ranked_after_it() {
+        let v = |x: &'static str| T::Var(x);
+        let order = ordered(|b| {
+            b.rule().head("h", &[v("n"), v("x")]).atom("r", &[v("n")]).cmp(v("x"), CmpOp::Eq, T::Call("abs", vec![v("n")])).cmp(T::Call("abs", vec![v("x")]), CmpOp::Lt, T::Int(9)).atom("m", &[v("x")]).finish().unwrap();
+        });
+        assert_eq!(order, [0, 1, 3, 2]);
+    }
+}
