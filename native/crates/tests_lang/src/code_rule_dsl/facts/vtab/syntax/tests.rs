@@ -648,6 +648,12 @@ fn visit_index_outside_python_is_the_tape_order() {
 /// definition's body).
 #[test]
 fn visit_index_keys_stay_outside_the_edited_granule() {
+    // The keys' runs are the ids' slots (`tree::keys_by_run`): under tape ids (0724 §1, the default since
+    // bdc81b0547) an edit renumbers every later node, and the file is the grain (0677, 0727); the scheme is the
+    // process's, as `definition_ids_follow_granules_in_every_language`'s.
+    if !definition_ids() {
+        return;
+    }
     let source = |extra: &str| format!("def f(a):\n    b = a{extra}\n    return b\n\n@dec\ndef g(x):\n    return x + 1\n");
     let keys = |src: String| -> std::collections::BTreeMap<String, i64> {
         let rows = core_rows(vec![document(1, "m.py", "python", &src)]);
@@ -2002,10 +2008,11 @@ fn a_text_read_left_as_rows_says_why_its_node_is_not_known() {
 fn a_node_test_and_an_alias_are_read_in_place() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     let test = ".decl c(e: node)\nc(e) :- text(e, _), e < 100.\n";
+    // A kept engine read prints by its typed name (`place_type::printed_name`: `text` as `place_text`).
     for (rules, read, has, lacks) in [
         (format!("{test}out(\"x\") :- kind(n, \"call\"), c(n)."), 1, vec!["@rr_node_text_any(", "< 100"], vec!["c(n)", "text(n"]),
         ("out(t) :- kind(a, \"call\"), n = a, text(n, t).".to_owned(), 1, vec!["@rr_node_text_any("], vec!["text(n", "text(a"]),
-        (format!("{test}out(\"x\") :- kind(n, \"call\"), !c(n)."), 0, vec!["c(e) :- text(e, _)", "!c(n)"], vec!["@rr_node_"]),
+        (format!("{test}out(\"x\") :- kind(n, \"call\"), !c(n)."), 0, vec!["c(e) :- place_text(e, _)", "!c(n)"], vec!["@rr_node_"]),
         (format!("{test}out(\"x\") :- name(n, \"y\"), c(n)."), 0, vec!["text(n, _)", "n < 100"], vec!["c(n)", "@rr_node_"]),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
@@ -2439,7 +2446,10 @@ fn units_on_granules_are_the_climb() {
             }
         }
     }
-    assert!(checked > 1000, "too few nodes checked on the table: {checked}");
+    // A granule table is made under ids per definition alone (tape ids have none to compare with the climb).
+    if definition_ids() {
+        assert!(checked > 1000, "too few nodes checked on the table: {checked}");
+    }
 }
 
 /// Decision 0353 step 2: the granule table answers every node's and token's id, equal to `DefIds::low`'s, in formats

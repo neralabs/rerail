@@ -664,8 +664,20 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
     tests
 }
 
-/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source` and its lines.
-const LINE_SPANS: [(&str, usize); 2] = [("source", 1), ("src_line", 2)];
+/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source` and its lines, by
+/// the engine's names and by the typed ones a rule writes (decision 0724 §4: `document_source`, `document_line`,
+/// `document_line_by_number`), which the lowering reads as the engine's after this pass (`lower::core`).
+const LINE_SPANS: [(&str, usize); 5] = [("source", 1), ("src_line", 2), ("document_source", 1), ("document_line", 1), ("document_line_by_number", 2)];
+
+/// The typed readers of a place's text (decision 0724 §4: `line_text`, `match_text`, `token_text`, `place_text`),
+/// each the engine's `text` to the lowering (`lower::core::ALIASES`): this pass reads them as `text`, so a line's text
+/// a rule binds is read in place as the engine's name of it is.
+const TEXT_ALIASES: [&str; 4] = ["line_text", "match_text", "token_text", "place_text"];
+
+/// Relation `name`, as the engine's per-node read where it is a typed reader of one (`TEXT_ALIASES`).
+fn read_name(name: &str) -> &str {
+    if TEXT_ALIASES.contains(&name) { "text" } else { name }
+}
 
 /// The columns of `v`'s relations that hold nodes alone (and, with `more`, those base columns too): a base relation's, `core.rerail`'s declared `node`
 /// (`facts::core::core_node_columns`) and a matcher's (`matchers`: its root and captures); and a file-local derived
@@ -688,8 +700,10 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
     // A line's span (`src_line`'s): no node, but the reads answer it in place (`LongTexts::text_any` its text, the
     // others none), so `text(sp, t)` of a line a rule binds reads that line, and no line's text is made for it
     // (`text_demand`: a `text` row of a line made every line's text, D411's docstring lines all of a file's).
-    if !derived.contains("src_line") && v.declares("src_line") {
-        cols.insert("src_line".to_owned(), BTreeSet::from([2]));
+    for (rel, c) in [("src_line", 2), ("document_line", 1), ("document_line_by_number", 2)] {
+        if !derived.contains(rel) && v.declares(rel) {
+            cols.insert(rel.to_owned(), BTreeSet::from([c]));
+        }
     }
     for rel in matchers.iter().filter(|r| !derived.contains(r.as_str())) {
         if let Some(d) = v.decl_of(rel) {
@@ -868,11 +882,12 @@ impl RulePass for NodeReads {
         // and whether its node is bound.
         let of = |l: &LitRef<'_>| match l.view() {
             Lit::Atom(a) if !a.neg() => {
-                let name = v.rel_name(a.rel());
-                let rel = self.tests.get(name).map(|t| t.0).or_else(|| self.of.iter().find(|(rel, _)| name == *rel).map(|&(rel, _)| rel))?;
+                let written = v.rel_name(a.rel());
+                let name = read_name(written);
+                let rel = self.tests.get(written).map(|t| t.0).or_else(|| self.of.iter().find(|(rel, _)| name == *rel).map(|&(rel, _)| rel))?;
                 let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
                 let a = args(a);
-                let arity = if self.tests.contains_key(name) { 1 } else { 2 };
+                let arity = if self.tests.contains_key(written) { 1 } else { 2 };
                 let bound = if rel == "text" { &spans_bound } else { &bound };
                 Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))
             }
