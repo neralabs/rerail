@@ -282,3 +282,13 @@ An input's frame found each row's owner, its granule (an atom owner's content ke
 place in a map of (granule, owner), twice a row (`picked_ids`, about 165 of the jobs' samples): it now does each once
 a run of one owner's rows, a granule once an owner (12 samples). The inputs' frames: 0.261 s without the call (0.400
 s before), 0.445 s with it (0.598 s before); the same 5 findings. Tests: `rerail-tests-corpus` (281 passed), `rerail-tests-rr` (298).
+
+**A warm edit with the call.** PostHog's 291 files, get-handler-writes, a cold run and then one file edited
+(`posthog/api/user.py`, a function appended that reads `request.user.email`), in one store: the edit took 109.1 G
+instructions with the call, 91.7 G without (+19%; cold, 788.7 G against 779.9 G), the same 5 findings each time. Of
+its +1.0 s of span CPU: the cone of requests derived its recursive stratum again whole (66 relations, `pt_alook`,
+`pt_found` and the rest: the cone's kept strata, decision 0077 §4, skip a stratum only when all it reads is as it
+was; 98 of 119 strata skipped, 21 derived again), +0.68 s; the requests' side on the main thread, +0.46 s (the
+calls asked again of all 163 files, about 0.15 s of it); the cone's relations' delta found from their input frames
+(their changed documents' old rows read, the other owners' rows hashed), +0.34 s. The rest of the cross part did
+less, −0.47 s: without the call the solve is in it, maintained from deltas (87 of 255 strata run, 57 from deltas).
