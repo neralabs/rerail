@@ -25,6 +25,10 @@ rerail-tape-format = { path = "../native/crates/tape_format", features = ["test-
 rerail-blocks = { path = "../native/crates/blocks" }
 # JSON's format 16 tapes, whose 16z pieces the library's encoder makes on the device (decision 0726, S6).
 rerail-json-aot = { path = "../native/crates/json_aot", features = ["test-hooks"] }
+# The lean JSON parser (simdjson's stage 1 and the kernel's walk, in Rust) to format 16 and 16z: the CPU path the
+# device's chain is timed against (`json_tier2_timings`); its walk's event words (`rerail_simdjson::EV_*`).
+rerail-json-lean = { path = "../native/crates/json_lean" }
+rerail-simdjson = { path = "../native/crates/simdjson" }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.
 lz4-sys = "=1.11.1"
 

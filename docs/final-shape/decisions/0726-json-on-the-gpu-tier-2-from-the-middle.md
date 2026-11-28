@@ -323,6 +323,26 @@ On the M3 Max (`json_tier2_timings`, the same 2 MB file, 512 groups, a load aver
 One CPU thread, the same steps: tier 1 0.41 ms, the token pass 4.4 ms, tier 2's serial walk 77 ms, its finish
 0.17 ms, `z_of` 2.7 ms: 85 ms.
 
+That CPU figure is a low bar: its 77 ms is mostly a new writer made each round (`json_writer`), not the walk. The fair
+CPU paths keep their writer from round to round and give its tape back (`recycle`), as `three_parsers_phase_by_phase`
+does. `json_tier2_timings` now times them beside the device, on the same machine in the same run. This Mac (the M3
+Max's connection was lost, so the run fell back here, under the edit loop's load, a load average of 53):
+
+| one CPU thread, writer kept | to 16 | to 16z |
+|---|---|---|
+| the lean parser (simdjson's stage 1 and the kernel's walk, in Rust), its events to format 16's writer | 14.1 ms | 40.3 ms |
+| Bitlex's tiers (`rerail_json_aot::parse`) | 8.2 ms | 11.8 ms |
+
+| the device, the same run | chunks of 16 | 64 | 256 |
+|---|---|---|---|
+| bytes to 16z, GPU time | 8.3 ms | 11.6 ms | 20.9 ms |
+| wall, with the test's buffers | 389 ms | 358 ms | 400 ms |
+
+So against the fair CPU path the device is 1.4 times one thread at best (8.3 against 11.8 ms), not 10 times, and
+its wall time is 30 times the CPU's: the buffers sized by the length alone (about 1 GB for 2 MB) are made and
+mapped each run. The work to close it: buffers sized by what tier 1 finds, kept from file to file as the CPU's
+writer is, and tier 2's walk (5.5 to 19 ms, most of the GPU time) made cheaper.
+
 ## Tests
 
 `rerail-json-aot`'s `tier2_entries_are_the_serial_walks`: 410 files (the stage-1 cases and `trees()`: lists of

@@ -177,7 +177,7 @@ fn json_tier2_timings() {
     let buf = rerail_json_aot::padded(&f);
     let best = |run: &mut dyn FnMut()| {
         let mut b = std::time::Duration::MAX;
-        for _ in 0..3 {
+        for _ in 0..5 {
             let t = std::time::Instant::now();
             run();
             b = b.min(t.elapsed());
@@ -206,6 +206,53 @@ fn json_tier2_timings() {
     let tz = best(&mut || want_z = rerail_tape_format::f16::z_of(&want, &rerail_tape_format::f16::lz4_greedy).unwrap());
     eprintln!("{}: {n} bytes, {} records, a tape of {} bytes, 16z {} bytes", crate::device::backend(), lx.count, want.len(), want_z.len());
     eprintln!("CPU, one thread: tier 1 {t1:?}, the token pass {tt:?}, tier 2 serial {t2:?}, its finish {tf:?}, z_of {tz:?}");
+    // The fair CPU paths, each its writer kept from round to round and its tape given back (`recycle`), as
+    // `three_parsers_phase_by_phase` runs them: the lean parser (stage 1 and the walk) giving its events to format
+    // 16's writer, and Bitlex's whole CPU path (tier 1, tier 2), each to 16 and to 16z.
+    #[cfg(target_arch = "aarch64")]
+    {
+        use rerail_tape_format::f16::{Lang, Writer};
+        use rerail_tape_format::tape::{CodeTable, Entry};
+        let kinds = rerail_json_lean::Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
+        let mut lp = rerail_json_lean::Parser::new();
+        let codes = lp.events(&f, &kinds, &mut |_| {}).expect("the lean parser parses it");
+        let entry = |&(kind, field, in_value): &(u16, u16, bool)| Entry { kind, field, flags: 0, alias: None, classes: if in_value { vec![13] } else { vec![] } };
+        let theirs = Lang::new(CodeTable::new(codes.iter().map(entry).collect()), rerail_json_aot::WIDTHS, 1).expect("the lean parser's language");
+        let numbers: Vec<u32> = codes.iter().map(|c| theirs.number(&entry(c)).expect("numbered")).collect();
+        let nodes = n / 2 + 16;
+        let mut w = Writer::empty();
+        let mut sizes = (0usize, 0usize);
+        let mut lean = |z: bool| {
+            w.begin(&theirs, &f, rerail_tape_format::newlines::Terminators::Newlines, 0, z, true, nodes);
+            lp.events(&f, &kinds, &mut |words| {
+                for e in words.as_chunks::<3>().0 {
+                    let number = numbers[(e[0] >> 8) as usize];
+                    match e[0] & 0xff {
+                        rerail_simdjson::EV_OPEN => _ = w.open(number, u64::from(e[1])),
+                        rerail_simdjson::EV_LEAF => _ = w.leaf(number, u64::from(e[1]), u64::from(e[2])),
+                        _ => w.close(u64::from(e[1])),
+                    }
+                }
+                w.commit();
+            })
+            .expect("parses");
+            let t = w.finish().expect("finishes");
+            if z { sizes.1 = t.tape.as_bytes().len() } else { sizes.0 = t.tape.as_bytes().len() }
+            w.recycle(std::hint::black_box(t).tape);
+        };
+        let l16 = best(&mut || lean(false));
+        let l16z = best(&mut || lean(true));
+        let mut w = Writer::empty();
+        let mut bitlex = |z: bool| {
+            w.begin(&lang, &f, rerail_tape_format::newlines::Terminators::Newlines, 0, z, true, nodes);
+            rerail_json_aot::parse(&buf, n, &mut w).expect("parses");
+            let t = w.finish().expect("finishes");
+            w.recycle(std::hint::black_box(t).tape);
+        };
+        let b16 = best(&mut || bitlex(false));
+        let b16z = best(&mut || bitlex(true));
+        eprintln!("CPU, one thread, writer kept: the lean parser to 16 {l16:?} ({} bytes), to 16z {l16z:?} ({} bytes); Bitlex's tiers to 16 {b16:?}, to 16z {b16z:?}", sizes.0, sizes.1);
+    }
     for size in [16usize, 64, 256] {
         let (mut lexing, mut chain, mut z, mut wall) = (f64::MAX, f64::MAX, f64::MAX, std::time::Duration::MAX);
         let mut launches = (0, 0);

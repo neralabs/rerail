@@ -4316,6 +4316,8 @@ dependencies = [
  "rerail-clif",
  "rerail-device",
  "rerail-json-aot",
+ "rerail-json-lean",
+ "rerail-simdjson",
  "rerail-tape-format",
  "rerail-ukl",
  "rerail-ukl-rust",
