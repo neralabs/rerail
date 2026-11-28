@@ -1,0 +1,1 @@
+Saved scan settings, damaged or holding a setting or value this version does not know, no longer stop Rerail in their checkout: what does not read runs as its default, `rerail settings` saves over damaged text and keeps what it does not know, and `daemon.log` names the row. A damaged scan request is left out of its session's scans.

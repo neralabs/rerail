@@ -3,7 +3,7 @@
  * left costs that row's list, never the page that holds it: the text is parsed once a row (`storedList`), a text that is
  * no JSON array of the list's items reads as none, and the reader names the row once in its log (`nameOnce`). A list
  * whose items each stand alone reads without the items that are not of its type (`storedItems`), so such an item costs
- * itself, never the items beside it.
+ * itself, never the items beside it. A column that stores one JSON value reads through `storedValue` the same way.
  */
 
 /** The JSON type of a stored list's items, as SQLite's `json_each` names it in its `type` column. */
@@ -23,15 +23,23 @@ export function isStoredItem(value: unknown, item: StoredItem): boolean {
 /** What a list of each `StoredItem` type holds, in the words a log line or a failure uses. */
 export const ITEMS: Record<StoredItem, string> = { text: "strings", object: "objects" };
 
-/** The JSON array `text` holds, or why it holds none. */
-export function storedArray(text: string): unknown[] | string {
-  let value: unknown;
+/**
+ * The JSON value `text` holds, or why it holds none, for a column whose stored JSON is one value rather than a list (a
+ * checkout's scan settings): the value comes wrapped, since a JSON string is a string too.
+ */
+export function storedValue(text: string): { value: unknown } | string {
   try {
-    value = JSON.parse(text);
+    return { value: JSON.parse(text) };
   } catch (error) {
     return (error as SyntaxError).message; // JSON.parse throws nothing else
   }
-  return Array.isArray(value) ? value : "it parses to another JSON value";
+}
+
+/** The JSON array `text` holds, or why it holds none. */
+export function storedArray(text: string): unknown[] | string {
+  const stored = storedValue(text);
+  if (typeof stored === "string") return stored;
+  return Array.isArray(stored.value) ? stored.value : "it parses to another JSON value";
 }
 
 /** The JSON array of `item`s `text` holds, or why it holds none. */

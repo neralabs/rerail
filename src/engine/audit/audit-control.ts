@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, getTableColumns, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, getTableName, inArray, isNull, like, sql } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod/v4";
 import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
+import { isStoredItem, nameOnce, storedList, storedValue } from "../storage/stored-list.js";
 import { apartFromLockWaits } from "../storage/write-lock-wait.js";
 import { runGitWithoutBlocking } from "../git.js";
 import { processState } from "../process-liveness.js";
@@ -116,13 +117,114 @@ function recordedRepository(key: SQLiteColumn | ReturnType<typeof sql.placeholde
   return sql<string | null>`(SELECT ${checkouts.repositoryKey} FROM ${checkouts} WHERE ${checkouts.checkoutPath} = ${key})`;
 }
 /**
+ * An `audit_settings` row with its settings as the text the database holds, which `storedSettings` reads, so a row
+ * whose text does not parse fails no read of its checkout's settings.
+ */
+const SETTINGS_COLUMNS = { ...getTableColumns(auditSettings), settings: sql<string>`${auditSettings.settings}` };
+type SettingsRow = Omit<typeof auditSettings.$inferSelect, "settings"> & { readonly settings: string };
+/**
  * The audit settings rows saved under either of two keys, `stored` and `earlier`, as a prepared statement, each with
  * the repository of the checkout recorded under its own key (`recorded`) and under `stored` (`own`).
  */
 function settingsUnderEither(database: RerailDatabase) {
   return database.select({
-    ...getTableColumns(auditSettings), recorded: recordedRepository(auditSettings.workspaceRoot), own: recordedRepository(sql.placeholder("stored")),
+    ...SETTINGS_COLUMNS, recorded: recordedRepository(auditSettings.workspaceRoot), own: recordedRepository(sql.placeholder("stored")),
   }).from(auditSettings).where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
+}
+/**
+ * What a row's stored settings give this version: the settings it reads, each stored field it does not read (a key it
+ * does not know, or a value it does not take, as a newer build can write), which a save keeps as stored, and, when it
+ * reads them in part, why, in words that follow "the row".
+ */
+interface StoredSettings { readonly settings: AuditSettings; readonly unread: Readonly<Record<string, unknown>>; readonly why?: string }
+/** A parse's `issues` in words, each after the path it names. */
+function issueWords(issues: readonly z.core.$ZodIssue[]): string {
+  return issues.map(issue => [...issue.path.map(String), issue.message].join(": ")).join("; ");
+}
+/**
+ * Why a row's settings read in part, in words that follow "the row": the `keys` of the fields it holds that this version
+ * does not read, with why (`words`), and each setting it leaves out (`left`), which runs with its default.
+ */
+function readInPartWhy(keys: readonly string[], words: string, left: readonly string[]): string {
+  const holds = keys.length === 0 ? [] : [`holds ${keys.join(", ")} (${words}), which this version does not read: a setting among them runs `
+    + "with its default, and a `rerail settings` there keeps each as stored"];
+  const leaves = left.length === 0 ? [] : [`leaves out ${left.join(", ")}: a setting left out runs with its default`];
+  return [...holds, ...leaves].join("; it ");
+}
+/**
+ * The settings `text`, a row's stored settings, holds, or why it holds none, in words that follow "the row": text that
+ * holds no JSON object holds none. Of an object, each field this version takes reads as stored, and each setting whose
+ * stored value it does not take, or that the object leaves out, reads as its default.
+ */
+function storedSettings(text: string): StoredSettings | string {
+  const stored = storedValue(text);
+  if (typeof stored === "string") return `is not JSON (${stored})`;
+  const parsed = auditSettingsSchema.safeParse(stored.value);
+  if (parsed.success) return { settings: parsed.data, unread: {} };
+  if (!isStoredItem(stored.value, "object")) return `holds no settings this version reads (${issueWords(parsed.error.issues)})`;
+  const value = stored.value as Record<string, unknown>; // an object: `isStoredItem` tested it
+  // One issue lists every key this version does not know; any other names its setting's key in its path, a key the row
+  // holds unless it leaves that setting out.
+  const held = (issue: z.core.$ZodIssue): boolean => issue.code === "unrecognized_keys" || Object.hasOwn(value, String(issue.path[0]));
+  const unread = parsed.error.issues.filter(held);
+  const keys = new Set(unread.flatMap(issue => issue.code === "unrecognized_keys" ? issue.keys : [String(issue.path[0])]));
+  const left = parsed.error.issues.filter(issue => !held(issue)).map(issue => String(issue.path[0]));
+  const fields = Object.entries(value);
+  return {
+    settings: auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...Object.fromEntries(fields.filter(([key]) => !keys.has(key))) }),
+    unread: Object.fromEntries(fields.filter(([key]) => keys.has(key))),
+    why: readInPartWhy([...keys], issueWords(unread), left),
+  };
+}
+/**
+ * The line that names a checkout whose saved settings do not read (`storedSettings`), so its sessions run with the
+ * defaults, once for each row, on the reader's error output: `daemon.log` in the daemon.
+ */
+function saySettingsUnread(file: string, row: SettingsRow, why: string): void {
+  // The table and column names the schema gives, so the line names the place a person mends.
+  const [table, column] = [getTableName(auditSettings), auditSettings.settings.name];
+  nameOnce(process.stderr, { file, place: `${table} ${row.workspaceRoot}` }, `rerail: ${file}: the scan settings saved for ${row.workspaceRoot} `
+    + `read as the defaults: the ${column} of its ${table} row ${why}. A \`rerail settings --session <id> --mode <mode>\` there saves new ones over it.\n`);
+}
+/** The line that names a checkout whose saved settings this version reads in part (`storedSettings`), as `saySettingsUnread` does. */
+function saySettingsReadInPart(file: string, row: SettingsRow, why: string): void {
+  const [table, column] = [getTableName(auditSettings), auditSettings.settings.name];
+  nameOnce(process.stderr, { file, place: `${table} ${row.workspaceRoot}` }, `rerail: ${file}: the scan settings saved for ${row.workspaceRoot} read in part: `
+    + `the ${column} of its ${table} row ${why}.\n`);
+}
+/**
+ * An `audit_requests` row with its paths and audit ids as the text the database holds, which `storedRequest` reads, so
+ * one request whose text does not parse fails no read of its session's scans.
+ */
+const REQUEST_COLUMNS = {
+  ...getTableColumns(auditRequests), paths: sql<string>`${auditRequests.paths}`, auditIds: sql<string>`${auditRequests.auditIds}`,
+};
+type RequestRow = Omit<typeof auditRequests.$inferSelect, "paths" | "auditIds"> & { readonly paths: string; readonly auditIds: string };
+/** Where a request's stored text does not read, and why. */
+interface UnreadList { readonly column: string; readonly why: string }
+/** The request `row` holds, or the column whose text holds no JSON array of strings and why. */
+function storedRequest(row: RequestRow): AuditRequest | UnreadList {
+  const paths = storedList(row.paths, "text");
+  if (typeof paths === "string") return { column: auditRequests.paths.name, why: paths };
+  const auditIds = storedList(row.auditIds, "text");
+  if (typeof auditIds === "string") return { column: auditRequests.auditIds.name, why: auditIds };
+  return auditRequestSchema.parse({ ...row, paths, auditIds });
+}
+/** A request's status as its checkout's repository audit records it: one still queued or running was interrupted. */
+function settledStatus(status: AuditRequest["status"]): "completed" | "failed" | "interrupted" {
+  return status === "queued" || status === "running" ? "interrupted" : status;
+}
+/** What a request whose stored text does not read costs a reader of the session's scans. */
+const LEFT_OUT = "is left out of the session's scans";
+/**
+ * The line that names a request whose stored text does not read (`storedRequest`) and what that cost it (`outcome`),
+ * once for each request and outcome.
+ */
+function sayRequestUnread(file: string, row: RequestRow, { column, why }: UnreadList, outcome: string): void {
+  // The table name the schema gives, so the line names the place a person mends.
+  const table = getTableName(auditRequests);
+  nameOnce(process.stderr, { file, place: `${table} ${row.id} ${outcome}` }, `rerail: ${file}: scan request ${row.id} of session ${row.sessionId} ${outcome}: `
+    + `the ${column} of its ${table} row is not a JSON array of strings (${why}), which only a damaged file or a hand edit leaves.\n`);
 }
 /** A session's folder as it spelt it, and the repository Rerail recorded the session in; a caller's folder has none. */
 interface SpeltFolder { readonly cwd: string; readonly repositoryId?: string | null }
@@ -146,10 +248,6 @@ function requireSession(database: RerailDatabase, sessionId: string): SpeltFolde
   const row = database.select({ cwd: sessions.cwd, endedAt: sessions.endedAt, repositoryId: sessions.repositoryId }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
   if (row === undefined) throw new Error(`Unknown Rerail session: ${sessionId}`);
   return row;
-}
-function parseSettings(value: unknown): AuditSettings { return auditSettingsSchema.parse(value); }
-function request(row: typeof auditRequests.$inferSelect): AuditRequest {
-  return auditRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
 function processIsLive(processId: number): boolean {
   return processId === process.pid || processState(processId) !== "gone";
@@ -292,12 +390,24 @@ export class SqliteAuditControlStore {
    * ({@link #savedHere}), so the read needs no session row.
    */
   getWorkspaceSettings(workspaceRoot: string, repositoryId: string | null = null): AuditSettings | undefined {
-    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId });
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId })?.settings;
   }
 
-  #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
-    const row = this.#settingsRow(workspaceRoot, spelt);
-    return row === undefined ? undefined : parseSettings(row.settings);
+  /**
+   * The settings saved for the folder, as {@link #settingsRow} finds them on `database` (`storedSettings`). A row whose
+   * text holds no JSON object reads as none, so the checkout runs with the defaults and `rerail settings` can save over
+   * it; it, or a row this version reads in part, is named once.
+   */
+  #settings(workspaceRoot: string, spelt: SpeltFolder, database = this.#database): StoredSettings | undefined {
+    const row = this.#settingsRow(workspaceRoot, spelt, database);
+    if (row === undefined) return undefined;
+    const settings = storedSettings(row.settings);
+    if (typeof settings === "string") {
+      saySettingsUnread(this.path, row, settings);
+      return undefined;
+    }
+    if (settings.why !== undefined) saySettingsReadInPart(this.path, row, settings.why);
+    return settings;
   }
 
   /**
@@ -307,9 +417,9 @@ export class SqliteAuditControlStore {
    * one statement, prepared once for this store's own connection while a save on another connection prepares its own
    * ({@link #underEither}), so a folder with no row under either costs no more than a read of the canonical key alone.
    */
-  #settingsRow(workspaceRoot: string, spelt: SpeltFolder, database = this.#database): typeof auditSettings.$inferSelect | undefined {
+  #settingsRow(workspaceRoot: string, spelt: SpeltFolder, database = this.#database): SettingsRow | undefined {
     const earlier = this.#earlierKey(workspaceRoot, spelt.cwd);
-    if (earlier === workspaceRoot) return database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    if (earlier === workspaceRoot) return database.select(SETTINGS_COLUMNS).from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
     const rows = this.#underEither(database).all({ stored: workspaceRoot, earlier });
     return rows.find(row => row.workspaceRoot === workspaceRoot) ?? rows.find(row => this.#savedHere(row, spelt));
   }
@@ -376,7 +486,7 @@ export class SqliteAuditControlStore {
     return controls(
       this.path,
       session,
-      this.#settings(workspaceRoot, session),
+      this.#settings(workspaceRoot, session)?.settings,
       repositoryAudit === undefined ? undefined : repositoryAuditSchema.parse(repositoryAudit),
       owner,
     );
@@ -415,17 +525,20 @@ export class SqliteAuditControlStore {
     return database === undefined ? this.#transactionApart(() => save(this.#database)) : save(database);
   }
   /**
-   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
-   * The saved settings are read as the folder spelt `spelt` finds them, so a session's own spelling starts from what
-   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. The default strategy, `message`, is left out of the
-   * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
-   * that does not opt into an experimental strategy.
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key,
+   * both on `database`. The saved settings are read as the folder spelt `spelt` finds them, so a session's own spelling starts from what
+   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. Saved settings whose text holds no JSON object count
+   * as none ({@link #settings}), so the patch over the defaults replaces them. Each stored field this version does not
+   * read and the patch does not set is saved as stored, so the build that wrote it finds it again. The default strategy,
+   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
+   * strictly still reads every row that does not opt into an experimental strategy or hold such a field.
    */
   #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder, database: RerailDatabase): AuditSettings {
-    const previous = this.#settingsRow(workspaceRoot, spelt, database);
-    const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
+    const { settings: before, unread } = this.#settings(workspaceRoot, spelt, database) ?? { settings: DEFAULT_AUDIT_SETTINGS, unread: {} };
+    const settings = auditSettingsSchema.parse({ ...before, ...patch });
     const { steerStrategy, ...saved } = settings;
-    const row = steerStrategy === "message" ? saved : settings;
+    const kept = Object.fromEntries(Object.entries(unread).filter(([key]) => !Object.hasOwn(patch, key)));
+    const row = { ...(steerStrategy === "message" ? saved : settings), ...kept };
     database.insert(auditSettings).values({ workspaceRoot, settings: row, updatedAt: Date.now() })
       .onConflictDoUpdate({ target: auditSettings.workspaceRoot, set: { settings: row, updatedAt: Date.now() } }).run();
     return settings;
@@ -702,21 +815,57 @@ export class SqliteAuditControlStore {
     return this.#database.select({ id: auditRequests.id }).from(auditRequests)
       .where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).limit(1).get() !== undefined;
   }
+  /** The session's scan requests, oldest first, without those whose stored text does not read (`#readRequest`). */
   listAuditRequests(sessionId: string): AuditRequest[] {
     requireSession(this.#database, sessionId);
     this.#owner(sessionId);
-    return this.#database.select().from(auditRequests).where(eq(auditRequests.sessionId, sessionId)).orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).all().map(request);
+    return this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(eq(auditRequests.sessionId, sessionId))
+      .orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).all().flatMap(row => this.#readRequest(row) ?? []);
+  }
+  /** The request `id` names, as `#readRequest` reads it with `outcome`; undefined where there is none. */
+  #request(id: string, outcome: string): AuditRequest | undefined {
+    const row = this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(eq(auditRequests.id, id)).get();
+    return row === undefined ? undefined : this.#readRequest(row, outcome);
+  }
+  /**
+   * The request `row` holds; undefined, its row named once with what that costs it (`outcome`), when its stored paths or
+   * audit ids do not read.
+   */
+  #readRequest(row: RequestRow, outcome = LEFT_OUT): AuditRequest | undefined {
+    const request = storedRequest(row);
+    if (!("why" in request)) return request;
+    sayRequestUnread(this.path, row, request, outcome);
+    return undefined;
   }
   /** Atomically claims one queued request for the owning live runtime. */
   claim(sessionId: string, claim: PolicyOwnerClaim): AuditRequest | undefined {
     return this.#transactionApart(() => {
       const owner = this.#owner(sessionId);
       if (owner?.active !== true || owner.token !== claim.token || owner.processId !== process.pid) return undefined;
-      const queued = this.#database.select().from(auditRequests).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued"))).orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).limit(1).get();
-      if (queued === undefined) return undefined;
-      const claimed = this.#database.update(auditRequests).set({ status: "running", startedAt: Date.now() }).where(and(eq(auditRequests.id, queued.id), eq(auditRequests.status, "queued"))).returning().get();
-      return claimed === undefined ? undefined : request(claimed);
+      return this.#claimOldest(sessionId);
     });
+  }
+  /**
+   * Claims the session's oldest queued request. One whose stored text does not read (`storedRequest`) cannot run, so it
+   * fails, named once, with the column that does not read, rather than stand first in the queue for good, and the next
+   * is claimed. The queue is read once, so the claim ends after its last request whatever its writes do.
+   */
+  #claimOldest(sessionId: string): AuditRequest | undefined {
+    const queue = this.#database.select(REQUEST_COLUMNS).from(auditRequests).where(and(eq(auditRequests.sessionId, sessionId), eq(auditRequests.status, "queued")))
+      .orderBy(asc(auditRequests.createdAt), asc(auditRequests.id)).all();
+    for (const queued of queue) {
+      const request = storedRequest(queued);
+      if ("why" in request) {
+        sayRequestUnread(this.path, queued, request, "failed in place of running");
+        this.#database.update(auditRequests).set({ status: "failed", finishedAt: Date.now(), error: `The request's stored ${request.column} is not a JSON array of strings` })
+          .where(eq(auditRequests.id, queued.id)).run();
+        continue;
+      }
+      const claimed = this.#database.update(auditRequests).set({ status: "running", startedAt: Date.now() })
+        .where(and(eq(auditRequests.id, queued.id), eq(auditRequests.status, "queued"))).returning(REQUEST_COLUMNS).get();
+      return claimed === undefined ? undefined : this.#readRequest(claimed);
+    }
+    return undefined;
   }
   finish(id: string, status: "completed" | "failed" | "interrupted", auditIds: readonly string[], error: string | null = null): void {
     const finishedAt = Date.now();
@@ -727,28 +876,21 @@ export class SqliteAuditControlStore {
       this.#database.update(auditRequests).set({ auditIds: [...auditIds] })
         .where(and(eq(auditRequests.id, id), eq(auditRequests.status, "interrupted"))).run();
     }
-    const request = this.#database.select().from(auditRequests).where(eq(auditRequests.id, id)).get();
+    this.#recordRepositoryAudit(id);
+  }
+  /**
+   * Records the request `id` names as its checkout's repository audit, by the last audit it produced, once it has
+   * started and finished; a request that does not read (`#readRequest`) records none.
+   */
+  #recordRepositoryAudit(id: string): void {
+    const request = this.#request(id, "ended, but is not recorded as its checkout's repository audit");
     const auditId = request?.auditIds.at(-1);
-    if (request === undefined || auditId === undefined || request.startedAt === null || request.finishedAt === null) return;
-    this.#database.insert(repositoryAudits).values({
-      workspaceRoot: request.workspaceRoot,
-      sessionId: request.sessionId,
-      auditId: auditId,
-      status: request.status === "queued" || request.status === "running" ? "interrupted" : request.status,
-      startedAt: request.startedAt,
-      finishedAt: request.finishedAt,
-      error: request.error,
-    }).onConflictDoUpdate({
-      target: repositoryAudits.workspaceRoot,
-      set: {
-        sessionId: request.sessionId,
-        auditId: auditId,
-        status: request.status === "queued" || request.status === "running" ? "interrupted" : request.status,
-        startedAt: request.startedAt,
-        finishedAt: request.finishedAt,
-        error: request.error,
-      },
-    }).run();
+    if (request === undefined || auditId === undefined) return;
+    const { sessionId, startedAt, finishedAt, error } = request;
+    if (startedAt === null || finishedAt === null) return;
+    const set = { sessionId, auditId, status: settledStatus(request.status), startedAt, finishedAt, error };
+    this.#database.insert(repositoryAudits).values({ workspaceRoot: request.workspaceRoot, ...set })
+      .onConflictDoUpdate({ target: repositoryAudits.workspaceRoot, set }).run();
   }
   close(): void {
     this.#records?.close();

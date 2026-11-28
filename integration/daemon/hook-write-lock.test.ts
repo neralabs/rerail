@@ -380,7 +380,83 @@ describe("the Claude Code hook while another process holds the database's write 
     expect(waitingAtHook, report).toBe(true);
     expect(held.stderr, report).toBe("");
   }, 60_000);
+
+  // Settings a newer build saved: a mode and a key this version does not read. Each save waits for the lock as above,
+  // merges over the row as the lock leaves it, and keeps the key.
+  it("saves rerail settings and the API's scope over scan settings read in part while the lock is held 2 s, once it is released, keeping the key this version does not read", async () => {
+    const saver = await inPartSettings("scan-in-part");
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    let saves;
+    let waiting;
+    try {
+      saves = followed(scanSettingsCli(saver, ["--mode", "log"]), scanSettingsApi("PATCH", saver, { scope: "repository" }));
+      await delay(2_000);
+      waiting = saves.waiting();
+    } finally {
+      await lock.release();
+    }
+    const [cli, api] = await saves.answers;
+    const report = `rerail settings: exit ${String(cli.code)} after ${String(cli.ms)} ms, ${cli.stdout}${cli.stderr}; PATCH: ${String(api.status)} ${api.body}`;
+    expect(waiting, report).toBe(true);
+    expect(cli.code, report).toBe(0);
+    expect(api.status, report).toBe(200);
+    expect(JSON.parse(storedScanSettings()), report).toEqual({ scope: "repository", mode: "log", later: true });
+    expect(await savedScanSettings(saver), report).toEqual({ scope: "repository", mode: "log", steerStrategy: "message" });
+    storeScanSettings(SETTINGS_AT_START);
+  }, 60_000);
+
+  it("refuses a scan settings save over settings read in part with 503 database-busy once the lock stays held past SQLite's 5 s, and leaves them as stored", async () => {
+    const saver = await inPartSettings("scan-in-part-busy");
+    const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+    let answers;
+    try {
+      answers = await followed(scanSettingsCli(saver, ["--mode", "log"]), scanSettingsApi("PATCH", saver, { scope: "repository" })).answers;
+    } finally {
+      await lock.release();
+    }
+    const [cli, api] = answers;
+    const report = `rerail settings: exit ${String(cli.code)} after ${String(cli.ms)} ms, ${cli.stdout}${cli.stderr}; PATCH: ${String(api.status)} ${api.body}`;
+    expect(api.status, report).toBe(503);
+    expect(JSON.parse(api.body), report).toMatchObject({ error: "database-busy" });
+    expect(cli.code, report).toBe(1);
+    expect(cli.stderr, report).toContain("rerail: database-busy: the change was not made");
+    expect(storedScanSettings(), report).toBe(IN_PART_SETTINGS);
+    storeScanSettings(SETTINGS_AT_START);
+  }, 60_000);
 });
+
+/** Scan settings as a newer build can save them: a mode this version does not take, and a key it does not know. */
+const IN_PART_SETTINGS = "{\"scope\":\"touched-files\",\"mode\":\"later\",\"later\":true}";
+/** The checkout's scan settings as the other cases leave them. */
+const SETTINGS_AT_START = "{\"scope\":\"ai-output\",\"mode\":\"steer\"}";
+
+/** Sessions started in the checkout (`scanSettingsSessions`), its scan settings saved and then stored as `IN_PART_SETTINGS`: the saver. */
+async function inPartSettings(name: string): Promise<string> {
+  const { saver } = await scanSettingsSessions(name);
+  expect((await scanSettingsApi("PATCH", saver, { scope: "ai-output", mode: "steer" })).status).toBe(200);
+  storeScanSettings(IN_PART_SETTINGS);
+  return saver;
+}
+
+/** Stores `text` as the checkout's scan settings, the one `audit_settings` row, as a newer build or a hand edit leaves it. */
+function storeScanSettings(text: string): void {
+  const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
+  try {
+    database.prepare("UPDATE audit_settings SET settings_json = ?").run(text);
+  } finally {
+    database.close();
+  }
+}
+
+/** The checkout's scan settings as the database stores them. */
+function storedScanSettings(): string {
+  const database = new Database(join(process.env.RERAIL_HOME!, "rerail.sqlite"), { readonly: true });
+  try {
+    return database.prepare("SELECT settings_json FROM audit_settings").pluck().get() as string;
+  } finally {
+    database.close();
+  }
+}
 
 /**
  * Two sessions started in the checkout: `saver`, whose checkout's scan settings a case saves, and another whose
