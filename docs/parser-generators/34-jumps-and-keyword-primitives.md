@@ -748,7 +748,7 @@ a rule only goes into earlier rules' code,
 so such calls nest no deeper than there are rules.
 What would make it pay is `ctx` outside the allocation,
 in a register of its own for the whole run (Cranelift's pinned register, x21).
-`tempo_stream` would save the host's x21 and restore it,
+`rerail_stream` would save the host's x21 and restore it,
 and calls would no longer pass `ctx` at all.
 Both are built now: see the next section.
 
@@ -763,7 +763,7 @@ what a call looks like, and how much goes through the stack.
   It sits in Cranelift's pinned register (x21) for the whole run.
   Each function reads it once, into a value the allocator keeps
   in one callee-saved register, as rustc keeps the lean parser's `self`.
-  No call passes it. `tempo_stream` saves the host's x21 and restores it.
+  No call passes it. `rerail_stream` saves the host's x21 and restores it.
 - **Rules share code from any place on.**
   The word merge now treats words of two rules as alike when they behave the same.
   A word goes to the first place of its kind, which is in the earliest rule that has it.

@@ -97,7 +97,7 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 tape_syntax_error(d) :- syntax_error(d).
-violation("data-layer-plan-composition-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-plan-composition-architecture", "source-syntax", "NATIVE-SYNTAX", p, l) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 plan_doc(d) :- in_scope(d), !out_scope(d), !tape_syntax_error(d).
 plan_word_runtime(s) :- plan_imported(_, s), (contains("cache", s) ; contains("connection", s) ; contains("executor", s) ; contains("plan_flush", s) ; contains("runtime_services", s) ; contains("transaction", s)).
 plan_import_dotted(y) :- plan_doc(d), node(d, n, "import_from_statement", _, _), field(n, "module_name", y), node(_, y, "dotted_name", _, _).
@@ -114,7 +114,7 @@ plan_import_later(n, i) :- plan_import_name(n, i, _), plan_import_name(n, j, _),
 plan_runtime_import(n) :- plan_imported(n, s), plan_word_runtime(s).
 plan_runtime_import(n) :- node(_, n, "import_from_statement", _, _), plan_imported(n, s), (suffix(".lazy_result", s) ; suffix(".lazy_seq", s)).
 plan_runtime_import(n) :- plan_import_name(n, i, s), !plan_import_later(n, i), (suffix(".lazy_result", s) ; suffix(".lazy_seq", s)).
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-001", p, l) :- plan_runtime_import(n), node(d, n, _, _, _), doc(d, p, _), line(n, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-001", p, l) :- plan_runtime_import(n), node(d, n, _, _, _), doc(d, p, _), node_line_number(n, l).
 plan_ann(a, t) :- plan_doc(d), node(d, a, "assignment", _, _), field(a, "type", t).
 plan_ann_word(s) :- plan_ann_token(_, s), (contains("Connection", s) ; contains("Cursor", s) ; contains("Executor", s) ; contains("LazyResult", s) ; contains("PlanFlushContext", s) ; contains("Transaction", s)).
 plan_within(x, t) :- plan_ann(_, t), node(d, t, _, ts, te), node(d, x, _, xs, xe), xs >= ts, xe <= te.
@@ -127,7 +127,7 @@ plan_ann_token(a, s) :- plan_ann_string(a, x), node(_, x, "string", _, _), value
 rr_agg2(i, v, x) :- child(x, c, i), str(c, v).
 plan_ann_token(a, s) :- plan_ann_string(a, x), node(_, x, "concatenated_string", _, _), value_type_of(x, "bytes"), s = join v by (i) sep "" : { rr_agg2(i, v, x) }.
 plan_ann_token(a, s) :- plan_ann(a, t), plan_within(x, t), node(_, x, "format_specifier", _, _), fstring_piece(x, _, "literal", s).
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-002", p, l) :- plan_ann(a, _), plan_ann_token(a, s), plan_ann_word(s), node(d, a, _, _, _), doc(d, p, _), line(a, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-002", p, l) :- plan_ann(a, _), plan_ann_token(a, s), plan_ann_word(s), node(d, a, _, _, _), doc(d, p, _), node_line_number(a, l).
 plan_toplevel_class(c) :- plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder", child(m, c, _), node(_, m, "module", _, _).
 plan_toplevel_class(c) :- plan_doc(d), node(d, c, "class_definition", _, _), field(c, "name", y), text(y, t), @nfkc(t) = "SemanticPlanBuilder", child(dd, c, _), node(_, dd, "decorated_definition", _, _), child(m, dd, _), node(_, m, "module", _, _).
 plan_method(d, f, c, x, s, e) :- plan_toplevel_class(c), field(c, "body", b), child(b, f, _), node(d, f, "function_definition", s, e), !op(f, "async"), field(f, "name", y), text(y, t), x = @nfkc(t).
@@ -148,9 +148,9 @@ plan_mutable_ann(v) :- plan_ret(_, v), node(_, v, "generic_type", _, _), child(v
 plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", t), node(_, t, "type", _, _), child(t, v, 0).
 plan_returns(f, v) :- plan_method(_, f, _, _, _, _), field(f, "return_type", v), !node(_, v, "type", _, _).
 plan_ret(f, m) :- plan_returns(f, v), plan_unparen(v, m).
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-004", p, l) :- plan_method(d, f, _, x, _, _), !prefix("_", x), plan_ret(f, v), plan_mutable_ann(v), doc(d, p, _), line(f, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-004", p, l) :- plan_method(d, f, _, x, _, _), !prefix("_", x), plan_ret(f, v), plan_mutable_ann(v), doc(d, p, _), node_line_number(f, l).
 plan_call(d, c, f) :- plan_method(d, f, _, _, s, e), node(d, c, "call", cs, ce), cs >= s, ce <= e.
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-003", p, l) :- plan_call(d, c, _), field(c, "function", fn), plan_unparen(fn, a), node(_, a, "attribute", _, _), field(a, "attribute", y), text(y, t), x = @nfkc(t), plan_terminal(x), doc(d, p, _), line(c, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-003", p, l) :- plan_call(d, c, _), field(c, "function", fn), plan_unparen(fn, a), node(_, a, "attribute", _, _), field(a, "attribute", y), text(y, t), x = @nfkc(t), plan_terminal(x), doc(d, p, _), node_line_number(c, l).
 plan_later_fragment(f) :- plan_method(_, f, c, "add_fragment", s, _), plan_method(_, g, c, "add_fragment", t, _), g != f, t < s.
 plan_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
 plan_not_name(n) :- node(_, dn, "dotted_name", _, _), child(dn, m, j), node(_, m, "identifier", _, _), child(dn, n, i), j < i.
@@ -181,8 +181,8 @@ plan_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, _), node(_,
 plan_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, n, _), node(_, n, "identifier", _, _).
 plan_not_name(n) :- node(_, ap, "as_pattern", _, _), child(cp, ap, _), node(_, cp, "case_pattern", _, _), child(ap, n, _), node(_, n, "identifier", _, _).
 plan_fragment_has(f, x) :- plan_method(d, f, _, "add_fragment", s, e), node(d, n, "identifier", ns, ne), ns >= s, ne <= e, text(n, t), x = @nfkc(t), (x = "RefRemap" ; x = "rewrite_exact_plan_refs_payload"), !plan_not_name(n).
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "RefRemap"), doc(d, p, _), line(f, l).
-violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "rewrite_exact_plan_refs_payload"), doc(d, p, _), line(f, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "RefRemap"), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-plan-composition-architecture", "plan-composition", "SPC-005", p, l) :- plan_method(d, f, _, "add_fragment", _, _), !plan_later_fragment(f), !plan_fragment_has(f, "rewrite_exact_plan_refs_payload"), doc(d, p, _), node_line_number(f, l).
 observations_on(e) :- option_value("entryPoint", e), observations_entry(e).
 observations_bad(k) :- observations_list(k), ptr = @concat("/", k), option_json("parameters", ptr, _).
 observations_bad(k) :- observations_list(k), pre = @concat(@concat("/", k), "/"), option_json("parameters", ptr, _), prefix(pre, ptr), re = @concat(pre, "[0-9]+"), !match(re, ptr).

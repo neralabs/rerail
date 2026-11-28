@@ -36,23 +36,25 @@ skip_dir("data_layer_testing"). skip_dir("browser_build"). skip_dir(".pytest_cac
 // A suppression line: the script's NOQA_SEC_PATTERN found anywhere on it (re.search, hence the .* on
 // both sides). Then every SEC\d+ on the line counts, inside the noqa comment or not (re.findall), so
 // `x = "SEC1"  # noqa: SEC2` counts two. Lines split as str.splitlines() does, as src_line does for Python.
-.decl hit(m: span, c: symbol)
-hit(m, c) :- prod(d), src_line(d, _, sp),
+.decl hit(m: node, c: symbol)
+hit(m, c) :- prod(d), document_line(d, sp),
     match(".*#\\s*noqa:\\s*(?:\\w+,\\s*)*SEC\\d+.*", sp),
     match_all("(?<m>SEC\\d+)", sp), text(m, c).
 
 // One finding per SEC code per line; its code is the SEC code, as in the plugin's StructuredViolation.
-.violation SEC(at: span, c: symbol) code {c} "{c} suppression annotation"
+.violation SEC(at: node, c: symbol) code {c} "{c} suppression annotation"
 .severity SEC warning
 .mode log SEC                    // reported, never blocking: only the ratchet blocks
 SEC(m, c) :- hit(m, c).
 
 // The metric: every SEC code on a suppression line, counted with multiplicity (two SEC1 on one line are two
 // spans, so two). One key, as the script's counts dict has.
-// Cross-file: the corpus's count (decision 0652).
+// Counted in each file, and the counts summed over the corpus: no span crosses into the cross part (decision 0727).
+.decl hits_in(d: number, n: number)
+hits_in(d, n) :- doc(d, _, _), n = count : { hit(m, _), docof(m, d) }.
 .decl annotations(k: symbol, n: number) cross_file
 .output annotations
-annotations("noqa_sec_annotations", n) :- n = count : { hit(_, _) }.
+annotations("noqa_sec_annotations", n) :- n = sum k : { hits_in(_, k) }.
 
 // The baseline: {"counts": {…}, "_metadata": {"signature": "…", …}}.
 .decl base_count(k: symbol, n: number)
@@ -69,7 +71,7 @@ ratchet_sig("lint_noqa_sec_ratchet", "UNSIGNED") :- file(".ratchet-baselines/lin
 // check_ratchet's outcomes, in its order. A missing baseline passes (require_baseline is False): the ceiling
 // is then the current count. An unreadable baseline, or one unsigned or wrongly signed, fails before any
 // comparison: a gate. Unsigned fails because --check requires a signature unless --skip-signature-check.
-.violation invalid_baseline(at: loc, why: symbol) "Baseline .ratchet-baselines/lint_noqa_sec_ratchet.json: {why}"
+.violation invalid_baseline(at: node, why: symbol) "Baseline .ratchet-baselines/lint_noqa_sec_ratchet.json: {why}"
 invalid_baseline(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), "unreadable") :-
     input_error(".ratchet-baselines/lint_noqa_sec_ratchet.json", k, _), k != "missing".
 invalid_baseline(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), s) :-
@@ -84,7 +86,7 @@ base(k, n) :- !file(".ratchet-baselines/lint_noqa_sec_ratchet.json"), annotation
 // The ratchet. The script prints and exits 1 with no finding code; over_budget is this port's name for it.
 // It counts annotations, not finding keys: two SEC1 on one line are two annotations but one SEC1 key, which
 // is why this is a rule over the metric and not a `.budget` over SEC.
-.violation over_budget(at: loc, k: symbol, n: number, max: number) "{k}: {n} exceeds the baseline's {max}"
+.violation over_budget(at: node, k: symbol, n: number, max: number) "{k}: {n} exceeds the baseline's {max}"
 over_budget(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), k, n, m) :- annotations(k, n),
     base(k, m), n > m.
 over_budget(@place(".ratchet-baselines/lint_noqa_sec_ratchet.json", 1), k, n, 0) :- annotations(k, n), n > 0,

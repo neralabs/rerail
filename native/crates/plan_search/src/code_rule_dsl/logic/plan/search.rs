@@ -595,10 +595,9 @@ impl Stats {
     }
 
     /// The lookup costs `source` declares for relation `rel`'s columns, those not one (`Source::lookup_cost`), and
-    /// its scan's (`Source::scan_cost`), under the column `SCAN`.
-    pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) {
+    /// its scan's, `scan` (the caller's: `Source::scan_cost`, or a kept measure's), under the column `SCAN`.
+    pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, scan: f64) {
         let mut costs: Vec<(String, f64)> = self.lookup.decoded(rel).unwrap_or_default();
-        let scan = source.scan_cost();
         if scan != 1.0 {
             costs.retain(|(c, _)| c != SCAN);
             costs.push((SCAN.to_owned(), scan));
@@ -969,7 +968,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: Default::default(),
-            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -1138,7 +1137,7 @@ const REPLAN: f64 = 4.0;
 /// ...and by more than this many rows of work: below it, running the kept order costs less than a search (about
 /// 1.6 ms for 12 joins, some 10^4 to 10^5 rows of native joins). A plan made where a text test matched nothing
 /// prices at a few rows, and any later chunk is 4 times that.
-const REPLAN_ROWS: f64 = 10_000.0;
+pub const REPLAN_ROWS: f64 = 10_000.0;
 
 /// What a join-order search costs, in rows of join work (O-live-replan item 1): a fixed part and one row a candidate.
 /// Measured on the P3 bench (debug): a search costs about 0.3 ms plus 0.7 µs a candidate priced, and a join about
@@ -2093,9 +2092,7 @@ pub fn prepared_held() -> Arc<prepared::ByVersion> {
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = with_plans(|p| p.cloned())?;
     // A run that kept no plan changes none: the store's are not read for it.
-    if plans.kept.load().iter().next().is_none() {
-        return None;
-    }
+    plans.kept.load().iter().next()?;
     plans.settle();
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
@@ -3142,6 +3139,75 @@ impl Model {
         driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
 
+    /// Whether `order` reads, past its first step, a relation or a document whole for each row it is given: a positive
+    /// atom none of whose variables a step before it binds (a cross product), or an input none of whose indexes
+    /// (`Stats::indexes`, the tape views' `vtab_indexes`) starts with a bound column, as `docof(n, d)` read from its
+    /// document (every node of it). Under 0090 §4's floor a maintain mode's line is led by its delta and taken as the
+    /// program planned it (`Stats::lead_free` off): cheap whatever its order where the delta binds the rest, but not
+    /// here. On corpus0's move, `bv(f, x, "inst", s) :- pann(f, x, t), …, uinst(t, c), anc(s, c), docof(f, d9),
+    /// docof(s, e9), rr_cx_reach(d9, e9)` led by `rr_cx_reach`'s 156 changed rows read all of `pann` for each (9.96 M
+    /// rows of work a line, two such lines 20 M of the move's 42 M); led by `pann`'s 37, it walked each reached
+    /// document's nodes for `docof(s, e9)` before `uinst` and `anc` bound `s` (1.32 M a line, eight such 8.3 M).
+    /// With `given`, the variables a lead outside `order` binds (a negated driver's, `Body::with_bound`), every step
+    /// of `order` is past the lead.
+    pub fn reads_whole_past_lead(&self, b: &Body<'_>, given: Option<&VarSet>, order: &[Step]) -> bool {
+        let (mut bound, rest) = match given {
+            Some(g) => (g.clone(), order),
+            None => {
+                let Some(lead) = order.first() else { return false };
+                (b.vars(lead.at).clone(), &order[1..])
+            }
+        };
+        for s in rest {
+            if let Lit::Atom(a) = b.view(s.at)
+                && !a.neg()
+            {
+                let vars = b.vars(s.at);
+                if !vars.is_empty() && !vars.iter().any(|v| bound.contains(v)) {
+                    return true;
+                }
+                let (rel, args) = (b.rel(a), b.args(s.at));
+                let given = |c: usize| b.constant(args[c]).is_some() || matches!(args[c], TermRef::Var(x) if bound.contains(x));
+                if let Some(ixs) = self.stats.indexes.get(rel)
+                    && !ixs.is_empty()
+                    && !ixs.iter().any(|ix| ix.first().is_some_and(|c0| (0..args.len()).any(|c| given(c) && c0.as_str() == self.col(rel, c))))
+                {
+                    return true;
+                }
+            }
+            bound.extend(b.vars(s.at));
+        }
+        false
+    }
+
+    /// A maintain mode's line led by `first`'s delta under 0090 §4's floor (`Stats::lead_free` off), and `led` the
+    /// order the program planned or kept for it: cheap whatever its order where the delta binds the rest, so taken as
+    /// it is. Priced now with the run's sizes over `REPLAN_ROWS` (what a search could save), or reading a relation
+    /// whole a delta row (`reads_whole_past_lead`), it is planned free to start as past the floor, and the cheaper of
+    /// the two taken: the plan, priced now, and whether it is the free one (its key then `reused_key`'s with
+    /// `lead_free` on). Led by `pann`'s 37 changed rows on corpus0's move, eight `bv` lines walked each reached
+    /// document's nodes (`docof(s, e9)` from its document, a tape view read by node alone) before `uinst` and `anc`
+    /// bound `s`: 1.32 M rows of work a line, 8.3 M of the move's 17.4 M. A line a negated driver leads is planned
+    /// so too, its body with the driver's variables bound (`given`, `first` none): led by `!method`'s 18 changed rows,
+    /// `pv(a, k, v)` was read whole for each (177,625 rows of work a line) before `cfn` and `posarg` bound `a`.
+    pub fn under_floor_line(&mut self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, given: Option<&VarSet>, led: Plan) -> (Plan, bool) {
+        let price = if self.reads_whole_past_lead(b, given, &led.0) { f64::INFINITY } else { self.plan_inner(pf, b, first, Some(&led.0), false).map_or(led.1, |p| p.0.1) };
+        let led = if price.is_finite() { (led.0, price, led.2) } else { led };
+        if price <= REPLAN_ROWS {
+            return (led, false);
+        }
+        self.stats.lead_free = true;
+        let free = self.plan_rule_reused(pf, b, first);
+        self.stats.lead_free = false;
+        match free {
+            Ok((p, _)) if p.1 < price => {
+                super::super::profile::decision("a maintain mode's line under the floor, planned free to start (decision 0094 §8)", || format!("{}: {price:.0} led by its delta, {:.0} free", b.show_head(), p.1));
+                (p, true)
+            }
+            _ => (led, false),
+        }
+    }
+
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
     /// the next run's planning budget (decision 0122).
     pub fn ran(key: PlanKey, work: f64) {
@@ -3316,14 +3382,14 @@ impl Model {
         if !joins::noted(&key) && !joins::pricing() {
             return got;
         }
-        let mut candidates = vec![joins::Candidate { order: got.0.0.clone(), est: got.0.1, steps: Vec::new() }];
-        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { order, est, steps: Vec::new() }));
+        let mut candidates = vec![joins::Candidate { crosses: b.crosses(&got.0.0), order: got.0.0.clone(), est: got.0.1, steps: Vec::new() }];
+        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { crosses: b.crosses(&order), order, est, steps: Vec::new() }));
         {
             for o in joins::proposals(&key) {
                 if let Ok(((order, est, _), _)) = self.plan_inner(pf, b, first, Some(&o), false)
                     && self.valid_live_driver(&order, b, first)
                 {
-                    candidates.push(joins::Candidate { order, est, steps: Vec::new() });
+                    candidates.push(joins::Candidate { crosses: b.crosses(&order), order, est, steps: Vec::new() });
                 }
             }
         }
@@ -4290,10 +4356,15 @@ impl Model {
                     // Where both columns' keys are kept (decision 0488), the bindings that hit are the share of the
                     // domain's keys this column holds too, whichever has more: two columns of disjoint values
                     // (a node's ids against another kind's) hit nothing, which distinct counts cannot tell.
+                    // The bindings are the domain's values as its constant filters leave them (`from`), not every key
+                    // of its column: of those, at most the keys both columns hold hit. Against the whole column, a
+                    // probe of each node's nearest function by `$g`, a function (`kind($g, function_definition)`),
+                    // hit the 2,000 functions among 300,000 nodes' keys (0.7%), where every one hits: `rf_in` read
+                    // every node of every function's body, 12.7 M rows for 1.2 M.
                     let kept = at.and_then(|(d, c2)| {
                         let (mine, theirs) = (self.stats.keys.at(rel, c)?, self.keys_or_source(b.rel(b.atom(d)?), c2)?);
-                        let of = theirs.distinct();
-                        (of >= 1.0).then(|| Some((mine.shared(theirs)? / of).clamp(0.5 / of, 1.0))).flatten()
+                        let of = theirs.distinct().min(from);
+                        (of >= 1.0).then(|| Some((mine.shared(theirs)?.min(of) / of).clamp(0.5 / of, 1.0))).flatten()
                     });
                     if let Some(share) = kept {
                         hit = hit.min(share);
@@ -5209,7 +5280,7 @@ impl Model {
                     },
                 };
                 bound.extend(b.vars(s.at));
-                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned() });
+                out.push(super::super::profile::StepPlan { literal: String::new(), access: access.to_owned(), source: source.to_owned(), rows: r, all: r, passed: Vec::new(), basis: by.to_owned(), vars: Vec::new() });
             }
             Some(out)
         };
@@ -5352,9 +5423,9 @@ impl Model {
                         _ => r *= self.pass_at(b, s.at, &|v| bound.contains(v)),
                     }
                     bound.extend(b.vars(s.at));
-                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
+                    steps.push(super::super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new(), vars: Vec::new() });
                 }
-                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
+                return super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), ..Default::default() };
             }
             // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
             // 0229): what the device's breadth-first stages make (decision 0277).
@@ -5441,9 +5512,15 @@ impl Model {
                 };
                 r_all = walked.unwrap_or(if before > 0.0 { r_all * r / before } else { r_all });
                 bound.extend(b.vars(s.at));
-                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis });
+                let vars = b.vars(s.at).iter().map(|v| format!("${}", b.var(v))).collect();
+                steps.push(super::super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis, vars });
             }
-            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
+            let mut head_vars = VarSet::new();
+            for t in b.head().args() {
+                body::term_vars(t, &mut head_vars);
+            }
+            let head_vars = head_vars.iter().map(|v| format!("${}", b.var(v))).collect();
+            super::super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone(), head: b.show_head(), head_vars }
         });
         Ok(((order, work, rows), explained))
     }
@@ -5702,14 +5779,15 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
 pub fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
-    let lists: &[&[&str]] = match rel {
+    // A line's, a match's or a token's read is indexed as its node counterpart is (decision 0724 step 3).
+    let lists: &[&[&str]] = match crate::code_rule_dsl::facts::core::counterpart(rel) {
         "node" => &[&["n"], &["kind", "n"]],
         "child" => &[&["c"], &["p", "idx"]],
         "field" => &[&["p", "f"], &["c"]],
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &[&["n"], &["s", "n"]],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &[&["n"], &["v", "n"]],
-        "value_type_of" => &[&["n"], &["t", "n"]],
+        "value_type_of" | "static_value_type_of" => &[&["n"], &["t", "n"]],
         "value_type" => &[&["v"], &["t", "v"]],
         "fstring_piece" => &[&["n"], &["v", "n"]],
         "fstring_template" => &[&["n"], &["v", "n"]],
@@ -6082,7 +6160,7 @@ pub fn column_sources(vs: &body::Versions, scc: &super::super::front::Comp, rule
 pub fn recursive<'v>(b: &Body<'v>, scc: &super::super::front::Comp) -> Vec<(usize, &'v str)> {
     (0..b.len())
         .filter_map(|i| b.plain_atom(i).filter(|a| !a.neg()).map(|a| (i, b.rel(a))))
-        .filter(|(_, rel)| scc.contains(*rel))
+        .filter(|(_, rel)| scc.contains(rel))
         .collect()
 }
 

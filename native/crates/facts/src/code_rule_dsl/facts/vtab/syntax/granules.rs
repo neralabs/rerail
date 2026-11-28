@@ -120,7 +120,8 @@ pub fn is_extra(low: u32) -> bool {
     (EXTRA_FIRST..SPAN_FIRST).contains(&(low >> INDEX_BITS))
 }
 
-/// The line (from 1; 0 the whole source) of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them.
+/// The line of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them: 0 the whole source (`source`),
+/// `l` line `l` (`src_line`).
 pub fn line_of(low: u32) -> Option<u32> {
     let first = EXTRA_FIRST + ExtraSpan::Line.first();
     (low >> INDEX_BITS == first).then_some(low % INDEX)
@@ -336,6 +337,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], mut reference: O
             }
             let mut table = Table::new(fr, p, &cut, nodes, &all);
             table.whole = fold == Fold::All;
+            table.fold = fold;
             Some(table)
         });
         if let Some(table) = table {
@@ -406,9 +408,7 @@ fn cut<'f>(fr: &'f Frame, p: &Projected, dialect: &Dialect, fold: Fold) -> Cut<'
                 is(o, OWNER) && (start[o] != 0 || claimed[o] != 0)
             };
             let in_container = q == 0 || (is(q, BODY) && up[q] != super::NONE && owner(q));
-            if is(l, DEF) && claimed[l] == 0 {
-                start[l] = 1;
-            } else if in_container && fold == Fold::None {
+            if (is(l, DEF) && claimed[l] == 0) || (in_container && fold == Fold::None) {
                 start[l] = 1;
             }
             // A wrapper claims its first definition child, which then starts no granule of its own: wherever it is,
@@ -752,6 +752,8 @@ pub struct Table {
     /// Every granule folded into the root (`Fold::All`): no definition starts one, so a node's definition unit is
     /// climbed on the tree (`units`).
     whole: bool,
+    /// How far its granules were folded: `keys` cuts them again so.
+    fold: Fold,
 }
 
 /// The table's columns (`Table::cells`), each of `u32`s or of items of `u32`s:
@@ -803,14 +805,14 @@ unsafe impl rerail_blocks::Pod for Kid {}
 
 /// `v`'s `u32`s.
 fn words<T: rerail_blocks::Pod>(v: &[T]) -> &[u32] {
-    const { assert!(size_of::<T>() % 4 == 0 && align_of::<T>() == 4) };
+    const { assert!(size_of::<T>().is_multiple_of(4) && align_of::<T>() == 4) };
     // SAFETY: `T` is plain data of whole `u32`s, aligned as one.
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), std::mem::size_of_val(v) / 4) }
 }
 
 /// `w` as `T`s (`words`' inverse).
 fn items<T: rerail_blocks::Pod>(w: &[u32]) -> &[T] {
-    const { assert!(size_of::<T>() % 4 == 0 && align_of::<T>() == 4) };
+    const { assert!(size_of::<T>().is_multiple_of(4) && align_of::<T>() == 4) };
     // SAFETY: `T` is plain data of whole `u32`s, aligned as one: every pattern of them is a `T`.
     unsafe { std::slice::from_raw_parts(w.as_ptr().cast(), w.len() * 4 / size_of::<T>()) }
 }
@@ -971,7 +973,7 @@ impl Table {
             cols[COLS] as usize
         })
         .expect("a batch's block holds its projection");
-        Table { cells, cols, preorder_keys, whole: false }
+        Table { cells, cols, preorder_keys, whole: false, fold: Fold::None }
     }
 
     /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
@@ -1039,6 +1041,19 @@ impl Table {
     pub fn start_up(&self, g: usize) -> (u32, Option<usize>) {
         (self.starts()[g], (self.parents()[g] != u32::MAX).then_some(self.parents()[g] as usize))
     }
+    /// Each granule's key (`a.py/class_definition:C/function_definition:m#0` less its document's path; the root's is
+    /// empty), in the order of its starts: the document cut again as `p`'s numbering cut it (node paths' bases,
+    /// decision 0722).
+    pub fn keys(&self, p: &Projected, dialect: &Dialect) -> Vec<String> {
+        frame::op(|fr| {
+            let keys = cut(fr, p, dialect, self.fold).keys;
+            (0..keys.len()).map(|i| std::str::from_utf8(keys.get(i)).expect("a granule's key is text").to_owned()).collect()
+        })
+    }
+    /// The granules: their count (`start_up`'s `g`).
+    pub fn granules(&self) -> usize {
+        self.starts().len()
+    }
     /// Whether every granule is folded into the root (`Fold::All`): no definition starts one.
     pub fn whole(&self) -> bool {
         self.whole
@@ -1053,6 +1068,7 @@ impl Table {
     /// `number_of`, its slot's entry found by its bucket (`buckets`, the entry's slot buckets), else first looked for
     /// at `hint` (`Numbering::number_of_by_buckets`): probes in key order.
     pub fn number_of_near(&self, r: &Ranks, buckets: &[u32], by_place: &[u32], low: u32, hint: &mut u32) -> Option<(Item, u32)> {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::NODE);
         // SAFETY: as `low_of`.
         let (item, k) = unsafe { r.numbering().number_of_packed(low, buckets, by_place, hint) }?;
         Some((if item == 0 { Item::Node } else { Item::Token }, k))
@@ -1087,7 +1103,7 @@ impl Table {
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
         4 * (self.starts().len() * 3 + self.nodes().len() * 2 + self.at().len() + self.slots().len() + 3 * self.by_slot().len() + self.first_kid().len() + self.runs().len() + 2 * self.run_at().len() + 4 * self.starts().len() + self.col(JUMPS).len() + self.col(JUMPS + 1).len())
-            + std::mem::size_of::<Kid>() * self.kids().len()
+            + std::mem::size_of_val(self.kids())
     }
 
     /// The most nodes and tokens of one granule.

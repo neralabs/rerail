@@ -8,7 +8,7 @@
 // E743(n): a finding at node n, from clause `ambiguous-function-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation E743(at: node, name: loc) "Rename function `{name}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
+.violation E743(at: node, name: match) "Rename function `{name}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
     suppress noqa "E743"
 E743(n, NAME) :- kind(n, "identifier"), match("(?<NAME>[lIO])", n), child(p1, n, _),
     kind(p1, "function_definition"), e743_tok_follows_1(n).

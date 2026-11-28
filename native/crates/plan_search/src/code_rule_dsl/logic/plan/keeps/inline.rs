@@ -181,7 +181,16 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
             }
             let names: BTreeMap<Slot, AtomId> = to.iter().map(|(s, name)| (*s, b.atom(name))).collect();
             let reader_vars: Vec<AtomId> = (0..reader.var_count() as u32).map(|s| b.atom(v.text(reader.var(Slot(s))))).collect();
-            let eq_terms: Vec<(T<'_>, T<'_>)> = eqs.iter().map(|&(h, r)| (term(v, h, &|s| names[&s]), term(v, r, &|s| reader_vars[s.0 as usize]))).collect();
+            // A head's value made by a call (`path_module(d, @replace_all(p, …))`) is read into the reader's variable:
+            // `$q = @replace_all(…)`, the variable on the left, the form an equality binds by (`Body::cmp_binds`).
+            // Written the other way, `@replace_all(…) = $q` binds nothing, and the rule was left unplaced.
+            let eq_terms: Vec<(T<'_>, T<'_>)> = eqs
+                .iter()
+                .map(|&(h, r)| {
+                    let (h, r) = (term(v, h, &|s| names[&s]), term(v, r, &|s| reader_vars[s.0 as usize]));
+                    if matches!(r, T::VarAtom(_)) && matches!(h, T::Call(..)) { (r, h) } else { (h, r) }
+                })
+                .collect();
             let mut rn = Renamed { to: &names };
             let mut keep = Until { at, k: 0 };
             let mut rb = b.rewrite(v, reader, &mut keep);

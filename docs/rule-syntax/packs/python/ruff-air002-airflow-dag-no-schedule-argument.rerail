@@ -16,5 +16,5 @@
 .violation AIR002(at: node) code "AIR002"
     "Pass an explicit `schedule=` to this Dag (`schedule=None` if it should only run when triggered); relying on the default changes behaviour between Airflow 2 and 3."
     suppress ruff "AIR002"
-AIR002(c) :- air_call(c, q), air_dag(q), !call_kwarg(c, "schedule", _), !call_kwarg(c, "schedule_interval", _),
+AIR002(c) :- air_dag(c), !call_kwarg(c, "schedule", _), !call_kwarg(c, "schedule_interval", _),
     !call_kwarg(c, "timetable", _).

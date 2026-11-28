@@ -309,8 +309,8 @@ impl Rewrite for Subst {
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
             TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
-                Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
-                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
+                Some(TermRef::Int(n)) => Some(T::Int(rerail_blocks::located::Located::key_wide(n))),
+                Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(rerail_blocks::located::Located::key_wide(*n))),
                 _ => None,
             },
             _ => None,
@@ -418,7 +418,7 @@ impl Rewrite for Dyn<'_> {
 /// Outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
 /// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME) || super::callable::routed(f.v, rel)
 }
 
 /// An attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
@@ -1151,7 +1151,7 @@ const FILTER_RULES: usize = 2;
 
 /// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
-    matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
+    matches!(crate::code_rule_dsl::facts::core::counterpart(rel), "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
 
 /// A literal an inlined filter writes: a literal placed, or `l = r`, the reader's term `l` (of `reader`) and the
@@ -1198,7 +1198,7 @@ impl ProgramPass for InlineFilters {
                 Some(TermRef::Wild) | None => false,
                 Some(_) => true,
             };
-            match rel_of(a) {
+            match crate::code_rule_dsl::facts::core::counterpart(rel_of(a)) {
                 "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" => on(0),
                 "node" => on(1),
                 "field" => on(2),
@@ -1892,7 +1892,7 @@ impl RulePass for MergeKeyed {
 }
 
 fn keyed_rel(v: &Version, a: AtomRef<'_>) -> Option<usize> {
-    KEYS.iter().find(|(rel, n, _)| *rel == v.rel_name(a.rel()) && *n == a.arity()).map(|&(_, _, k)| k)
+    KEYS.iter().find(|(rel, n, _)| *rel == crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) && *n == a.arity()).map(|&(_, _, k)| k)
 }
 
 /// Term `t` of rule `r` to write, each variable as `to` maps it.
@@ -2147,6 +2147,11 @@ impl ProgramPass for FunctionKeys {
                     let Some((_, _, kind)) = native_call(fname) else { continue };
                     // A concatenation's inverse binds from a column it already has (`concat_inverses`).
                     if fname.starts_with("git_") || fname == "str_between" || args.clone().any(|a| !matches!(a, TermRef::Var(_) | TermRef::Str(_) | TermRef::Int(_))) {
+                        continue;
+                    }
+                    // A key of a node id (`@path_node(p)`'s, decision 0722): a key relation holds no node (decision
+                    // 0677), and the node is its file's alone, read where the path is decoded.
+                    if fname == crate::code_rule_dsl::typing::file_local::MAKES_A_NODE {
                         continue;
                     }
                     let mut vars = BTreeSet::new();
@@ -2855,13 +2860,34 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>]
 /// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
 /// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
 /// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
+/// A read of a relation of no location that only tests values the located reads bind (`er_tr_helper(a)`, a set of names,
+/// after `er_cattr(c, a, _)`) makes no rows of its own: the rule is still its file's. Without it, a stage's existence
+/// read of `er_tr(_, k)` (decision 0709) dropped `er_tr`'s def, and its rules moved to the cross-file part over every
+/// file's nodes (0677).
 /// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
 fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    fn vars(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
+        match t {
+            TermRef::Var(s) => drop(out.insert(s)),
+            TermRef::Call(_, xs) => xs.for_each(|x| vars(x, out)),
+            _ => {}
+        }
+    }
     rules.iter().all(|r| {
         let rel = v.rel_name(r.head().rel());
-        r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
+        let atoms: Vec<AtomRef<'_>> = r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).collect();
+        let located = |a: &AtomRef<'_>| {
             let name = v.rel_name(a.rel());
             name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
+        };
+        let mut bound: BTreeSet<Slot> = BTreeSet::new();
+        for a in atoms.iter().filter(|a| located(a)) {
+            a.args().for_each(|t| vars(t, &mut bound));
+        }
+        atoms.iter().filter(|a| !located(a)).all(|a| {
+            let mut own = BTreeSet::new();
+            a.args().for_each(|t| vars(t, &mut own));
+            own.is_subset(&bound)
         })
     })
 }

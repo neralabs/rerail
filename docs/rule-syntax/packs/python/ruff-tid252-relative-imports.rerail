@@ -18,7 +18,7 @@
     "Replace the relative module `$M` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical."
     suppress ruff "TID252"
 TID252(i) :- kind(i, "import_from_statement"), field(i, "module_name", r), kind(r, "relative_import"), child(r, p, 0),
-    kind(p, "import_prefix"), text(p, dots), relative_allowed(k), strlen(dots) > k.
+    kind(p, "import_prefix"), relative_allowed(k), @text_len(p) > k.
 // relative_allowed(k): how many dots are allowed: 1 by default ("parents"), 0 with "all".
 .decl relative_allowed(k: number)
 relative_allowed(0) :- option("flake8-tidy-imports.ban-relative-imports", "all").

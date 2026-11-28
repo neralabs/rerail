@@ -10,7 +10,7 @@
 // ANN205(n): a finding at node n, from clause `missing-return-type-static-method`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ANN205(at: node, n_mv: loc) "Add a return type annotation to static method `{n_mv}`, such as `-> int`, naming the type it returns."
+.violation ANN205(at: node, n_mv: node) "Add a return type annotation to static method `{n_mv}`, such as `-> int`, naming the type it returns."
     suppress noqa "ANN205"
 ANN205(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, field(p1, "name", n),
     kind(p1, "function_definition"), ann205_unannotated_method(p1), !ann205_overload_impl(p1, N),
@@ -64,7 +64,7 @@ ann205_def_like(n) :-
 
 // overload_of_name(n): the JSON util `overload-of-name`, used where the JSON says `matches: "overload-of-name"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann205_overload_of_name(n: node, n_mv: loc)
+.decl ann205_overload_of_name(n: node, n_mv: node)
 ann205_overload_of_name(n, N) :- kind(n, "decorated_definition"), child(n, c1, _),
     kind(c1, "decorator"), child(c1, c2, _), ann205_overload_ref(c2), child(n, c3, _),
     kind(c3, "function_definition"), field(c3, "name", c4), node(_, c4, _, _, _), N = c4.
@@ -76,7 +76,7 @@ ann205_has_def(n) :- within(c1, n), ann205_def_like(c1).
 
 // ends_with_overload(n): the JSON util `ends-with-overload`, used where the JSON says `matches: "ends-with-overload"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann205_ends_with_overload(n: node, n_mv: loc)
+.decl ann205_ends_with_overload(n: node, n_mv: node)
 ann205_ends_with_overload(n, N) :- ann205_overload_of_name(n, N).
 ann205_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1, _),
     ann205_has_def(c1), count : { precedes(c1, s2), ann205_has_def(s2) } = 0,
@@ -84,7 +84,7 @@ ann205_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1,
 
 // after_overload(n): the JSON util `after-overload`, used where the JSON says `matches: "after-overload"`
 //   N: metavariable this relation binds for the calling rule
-.decl ann205_after_overload(n: node, n_mv: loc)
+.decl ann205_after_overload(n: node, n_mv: node)
 ann205_after_overload(n, N) :- precedes_stop(s1, n, ann205_stop_8), ann205_ends_with_overload(s1, N).
 ann205_after_overload(n, N) :- count : { precedes(s2, n), ann205_has_def(s2) } = 0, child(p3, n, _),
     !kind(p3, "function_definition"), !kind(p3, "class_definition"),
@@ -92,7 +92,7 @@ ann205_after_overload(n, N) :- count : { precedes(s2, n), ann205_has_def(s2) } =
 
 // overload_impl(n): the JSON util `overload-impl`, used where the JSON says `matches: "overload-impl"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann205_overload_impl(n: node, n_mv: loc)
+.decl ann205_overload_impl(n: node, n_mv: node)
 ann205_overload_impl(n, N) :- ann205_demand_overload_impl(n, N), kind(n, "function_definition"),
     count : { child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _), ann205_overload_ref(c3) } = 0,
     ann205_after_overload(n, N).
@@ -104,7 +104,7 @@ ann205_unannotated_method(n) :- kind(n, "function_definition"),
     within_stop(n, p2, ann205_stop_9), kind(p2, "class_definition").
 
 // demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
-.decl ann205_demand_overload_impl(n: node, n_mv: loc)
+.decl ann205_demand_overload_impl(n: node, n_mv: node)
 ann205_demand_overload_impl(p1, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, field(p1, "name", n),
     kind(p1, "function_definition"), ann205_unannotated_method(p1), child(p5, p1, _),
     kind(p5, "decorated_definition"), child(p5, c6, _), kind(c6, "decorator"),

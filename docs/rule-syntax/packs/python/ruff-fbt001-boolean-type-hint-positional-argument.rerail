@@ -21,7 +21,7 @@ FBT001(nm) :- trap_param(f, nm, a, _), bool_hint(a), docof(f, d), !bool_rebound(
 
 // bool_hint(t): annotation t (a `type` wrapper or a part of one) admits a bool, as Ruff's match_annotation_to_complex_bool.
 .decl hint_part(t: node)
-hint_part(a) :- trap_param(_, _, a, _).
+hint_part(a) :- trap_param(_, _, a, _), kind(a, _).   // a set annotation: `kind` places it in its file (0677)
 hint_part(x) :- hint_bare(t, m), kind(m, "binary_operator"), op(m, "|"), (field(m, "left", x) ; field(m, "right", x)).
 hint_part(x) :- hint_arg(t, _, _, x).
 .decl hint_bare(t: node, m: node)

@@ -15,6 +15,6 @@
 //       y()
 #include "python/flow-return.rerail"
 
-.violation RET508(at: span, w: symbol) code "RET508" "Unnecessary `{w}` after `break` statement"
+.violation RET508(at: node, w: symbol) code "RET508" "Unnecessary `{w}` after `break` statement"
     suppress ruff "RET508"
 RET508(kw, w) :- else_after_jump(kw, w, "break").

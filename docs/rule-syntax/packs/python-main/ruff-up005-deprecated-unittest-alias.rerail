@@ -9,7 +9,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes T0, T1, T2, T3, T4, T5, T6, T7, T8, TARGET from other metavariables' text; its literals end each rule.
-.violation UP005(at: node, alias: loc, target: symbol) "Replace `self.{alias}` with `self.{target}`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `{alias}`."
+.violation UP005(at: node, alias: node, target: symbol) "Replace `self.{alias}` with `self.{target}`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `{alias}`."
     suppress noqa "UP005"
 UP005(n, ALIAS, TARGET) :- kind(n, "attribute"), up005_callee_position(n),
     field(n, "object", c2), up005_self_name(c2), field(n, "attribute", c3),

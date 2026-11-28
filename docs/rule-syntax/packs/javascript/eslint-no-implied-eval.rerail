@@ -46,4 +46,4 @@ code_string(a) :- kind(a, "string").
 code_string(a) :- kind(a, "template_string").
 code_string(a) :- kind(a, "binary_expression"), op(a, "+"), (field(a, "left", s) ; field(a, "right", s)),
     deparen(s, l), code_string(l).
-code_string(a) :- static_value(a, v), value_type(v, "string").
+code_string(a) :- static_value_type_of(a, "string").

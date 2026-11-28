@@ -52,11 +52,11 @@ glsp_binding(d, x, "typealias", n) :- kind(n, "type_alias_statement"), field(n, 
     docof(n, d).
 // glsp_top(d, x, k, l): x's last top-level binding is of kind k, at line l.
 .decl glsp_top(d: number, x: symbol, k: symbol, l: number)
-glsp_top(d, x, k, l) :- glsp_binding(d, x, k, n), count : { glsp_binding(d, x, _, n2), n2 > n } = 0, line(n, l).
+glsp_top(d, x, k, l) :- glsp_binding(d, x, k, n), count : { glsp_binding(d, x, _, n2), n2 > n } = 0, node_line_number(n, l).
 
 // glsp_class(d, cx, l): the top-level classes named cx; l is the first one's line.
 .decl glsp_class(d: number, cx: symbol, l: number)
-glsp_class(d, cx, l) :- glsp_binding(d, cx, "class", _), l = min k : { glsp_binding(d, cx, "class", c), line(c, k) }.
+glsp_class(d, cx, l) :- glsp_binding(d, cx, "class", _), l = min k : { glsp_binding(d, cx, "class", c), node_line_number(c, k) }.
 // glsp_method(d, cx, m, f): f is the last def named m directly in a top-level class named cx.
 .decl glsp_direct(d: number, cx: symbol, m: symbol, f: node)
 glsp_direct(d, cx, m, f) :- kind(f, "function_definition"), def_name(f, m), nearest(f, c, glsp_scope),
@@ -72,7 +72,7 @@ glsp_mentions(f, x) :- glsp_method(_, _, _, f), def_walk(n, f), attr_of(n, _, x)
 glsp_class_assigns(d, cx, x) :- assign_target(a, t), !assign_ann(a, _), kind(t, "identifier"), text(t, x),
     nearest(a, c, glsp_scope), glsp_binding(d, cx, "class", c).
 
-.violation GLSP(at: loc, c: symbol, what: symbol) code {c} "{what}"
+.violation GLSP(at: node, c: symbol, what: symbol) code {c} "{what}"
 
 // ---- versioned_lazy_mixin.py ----------------------------------------------------------------------------------
 .decl glsp_banned_lazy(x: symbol)

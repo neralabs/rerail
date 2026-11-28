@@ -136,6 +136,23 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // A node's string literal's content (the syntax table's `LongTexts::str_any`): `str`'s answer (decisions 0174,
     // 0353 step 3).
     ("rr_node_str", &[Number], Text),
+    // A node's structural digest's 64 hex digits (the syntax table's `LongTexts::digest_hex`), read in its document's
+    // hashes: `@tree_digest_hex(n)`, for a key or a signature over the digest's text; `@tree_digest(n)` is its 64-bit
+    // value, a number.
+    ("tree_digest_hex", &[Number], Text),
+    // The length in characters of a node's, token's or span's text (the syntax table's `LongTexts::text_len`), counted
+    // in its source: `@text_len(n)`, strlen of its text with no text made.
+    ("text_len", &[Number], Number),
+    // How many spaces, tabs and form feeds a node's, token's or span's text starts with (`LongTexts::indent`), counted
+    // in its source: `@indent(n)`.
+    ("indent", &[Number], Number),
+    // Node paths (decision 0722, the syntax table's `Batch::node_path`): a node's name across files, its granule's key
+    // atom in the high 32 bits and its steps below; the node a path names in its document; its granule's own path.
+    ("node_path", &[Number], Number),
+    ("path_node", &[Number], Number),
+    ("path_unit", &[Number], Number),
+    ("path_spelling", &[Number], Text),
+    ("path_file", &[Number], Text),
     // `core.rerail`'s per-node values of a node (the syntax table's `LongTexts::core_read`), each read where a rule binds
     // the node instead of a row a node (decision 0353 step 3): `name`, `comment`, `strprefix`.
     ("rr_node_name", &[Number], Text),
@@ -376,11 +393,10 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         "rr_place" => {
             let (p, l) = (numbers[0], numbers[1]);
-            let place = (0..1i64 << 32).contains(&l).then(|| p.checked_mul(1 << 32).and_then(|x| x.checked_add(l)).and_then(|x| (-2i64).checked_sub(x))).flatten();
-            return Value::Integer(place.unwrap_or(-1));
+            return Value::Integer(rerail_blocks::located::place(p, l).unwrap_or(-1));
         }
-        "rr_place_path" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n / (1 << 32))),
-        "rr_place_line" => return (-2i64).checked_sub(numbers[0]).map_or(Value::Null, |n| Value::Integer(n - n / (1 << 32) * (1 << 32))),
+        "rr_place_path" => return rerail_blocks::located::place_parts(numbers[0]).map_or(Value::Null, |(p, _)| Value::Integer(p)),
+        "rr_place_line" => return rerail_blocks::located::place_parts(numbers[0]).map_or(Value::Null, |(_, l)| Value::Integer(l)),
         "rr_strlen" | "sql_length" => return Value::Integer(t(0).chars().count() as i64),
         "sql_instr" => return Value::Integer(t(0).find(t(1)).map_or(0, |at| t(0)[..at].chars().count() as i64 + 1)),
         "sql_substr" => Some(sql_substr(t(0), numbers[0], Some(numbers[1]))),

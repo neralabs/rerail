@@ -871,32 +871,31 @@ use rerail_blocks::vector::Vector;
         }
     }
 
-    /// Decisions 0603 and 0648's test: a stratum is one program's stacks, whatever its rules and rounds. The closure's
-    /// seed round and its rounds are one program, its phases a dispatch each, several rounds' to a stack, a stack one
-    /// launch. With a stack of one round and a first arena of 16 bytes, its stacks go on (one a round, its walk past
-    /// it) and its arena's pages are mapped as its size scripts reach them (a park each, then its phase's rest), and
-    /// nothing else launches; its rows are the CPU's. Its stacks' rounds doubling (the default), its launches are
-    /// fewer than its rounds.
+    /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
+    /// closure's seed round and its rounds are one program, a chain of dispatches (decision 0674); with a chain of 8
+    /// dispatches and a first arena of 16 bytes, its launches go again (each where its chain's dispatches ended with
+    /// phases left, or where a size script parked past the arena's pages, mapped then), and nothing else launches; its
+    /// rows are the CPU's. On every backend alike.
     #[test]
-    fn a_stratum_is_one_programs_stacks() {
+    fn a_stratum_is_one_launch_and_its_budgets_relaunches() {
+        use crate::code_rule_dsl::transducer::packed::metal_join::PROGRAM_BUDGET;
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        for (rounds, arena) in [(None, None), (Some(1), Some(16))] {
-            let (rs, as_) = (rounds.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
+        for (budget, arena) in [(None, None), (Some(8), Some(16))] {
+            let (bs, as_) = (budget.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
             let mut sizes = Vec::new();
-            sizes.extend(rs.as_deref().map(|b| ("RERAIL_STACK_ROUNDS", b)));
+            sizes.extend(bs.as_deref().map(|b| ("RERAIL_PROGRAM_BUDGET", b)));
             sizes.extend(as_.as_deref().map(|a| ("RERAIL_PROGRAM_ARENA", a)));
             let r = closure(&sizes);
-            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "rounds {rounds:?}: one program's stacks and remaps: {r:?}");
-            assert_eq!(r.reruns, 0, "rounds {rounds:?}: no round runs again: {r:?}");
+            let b = u64::from(budget.unwrap_or(PROGRAM_BUDGET));
+            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "budget {b}: one launch, and its relaunches: {r:?}");
+            assert_eq!(r.reruns, 0, "budget {b}: no round runs again: {r:?}");
             assert!(r.rounds > 4, "the closure takes rounds: {r:?}");
-            match rounds {
-                // A round a stack: a stack each round's end, its seed round's the first's.
-                Some(1) => assert!(r.relaunches + 2 >= r.rounds && r.relaunches <= r.rounds + 1, "a round a stack: {r:?}"),
-                // Doubling from two: its stacks the rounds' logarithm.
-                _ => assert!(r.relaunches < r.rounds / 2, "rounds doubling a stack: {r:?}"),
-            }
+            // A launch that leaves phases ran its chain's dispatches, so its relaunches are its phases run over a chain's
+            // dispatches: none of them a phase's or a round's.
+            assert!(r.launch_items >= b, "budget {b}: a launch's budget is its chain's dispatches: {r:?}");
+            assert!(u64::from(r.relaunches) <= r.taken / r.launch_items + 1, "budget {b}: its relaunches its budget's: {r:?}");
             if arena.is_none() {
                 // Its first arena is what a round's tables can reach where mapping commits nothing (the CPU backend):
                 // its claims map no more pages. On Metal a mapped page is real memory: its first arena is its claims'
@@ -924,6 +923,61 @@ use rerail_blocks::vector::Vector;
         assert_eq!(r.programs, 1, "one program: {r:?}");
         assert_eq!(r.reruns, 0, "no round runs again: {r:?}");
         assert!(r.room_remaps >= 2, "its rooms grown as its rounds reach them: {r:?}");
+        assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "one launch, its relaunches and its remaps: {r:?}");
+    }
+
+    /// A view's rows are its documents' as they are made (decision 0494), so the rows it holds when a stratum is placed
+    /// bound nothing the stratum reaches through it: `reach` takes no bound from it, and a flat input's its rows. (The
+    /// data layer's SBC beside cpl, 2026-11-28: a head bound at its view's 10,482 rows placed 10,485, two programs.)
+    #[test]
+    fn a_views_rows_bound_no_reach() {
+        use super::super::InRel;
+        let flat = InRel::from_flat(Vector::from(&[1i64, 2, 3, 4, 5, 6][..]), 3, vec![b'i'; 2]);
+        assert_eq!(super::input_rows(&flat), Some(3), "a flat input's rows");
+        let view = InRel::viewed(flat.source(vec!["a".into(), "b".into()]), Vector::from(&[0usize, 1][..]), vec![b'i'; 2]);
+        assert_eq!(view.len(), 3, "the view holds its source's rows now");
+        assert_eq!(super::input_rows(&view), None, "a view's rows now are no bound");
+    }
+
+    /// Decision 0603 where a stage's guess is far under its rows: `h(x, y) :- a(x), b(x, y)`, 101 rows of `a`, one of
+    /// them the key of all 70,000 of `b`, no estimate and no growth filed (the device's run alone). Its reach (7 M
+    /// rows) is past the head's most, and the stage guesses twice its input: the head's bound is its most, its first
+    /// room the guess, and the room grows as its rows reach it, in the one program; the head is not placed again by a
+    /// batch of its own (the data layer's `ast_walk(f, n) :- kind(f, ..), within(n, f)` of 2026-11-27: a bound of the
+    /// guess stopped the program, 2 programs). Its rows every `b` row's.
+    #[test]
+    fn a_heads_rows_past_its_guessed_room_stay_one_program() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        const N: i64 = 70_000;
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        // A series of `n` values from 1 (this SQLite has no `generate_series`).
+        let series = |n: i64| format!("WITH RECURSIVE s(v) AS (SELECT 1 UNION ALL SELECT v + 1 FROM s WHERE v < {n})");
+        db.execute_batch(&format!(
+            "CREATE TEMP TABLE a (c0); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE h0 (c0, c1);
+             {} INSERT INTO a SELECT 1000 + v FROM s; INSERT INTO a VALUES (7);
+             {} INSERT INTO b SELECT 7, v FROM s;",
+            series(100),
+            series(N)
+        ))
+        .unwrap();
+        let a = format!("t:x:{}:{}:i", hex("temp.a"), hex("c0"));
+        let b = format!("t:x:{}:{}:ii", hex("temp.b"), hex("c0, c1"));
+        let rule = format!("pos {a} v0\npos {b} v0 v1\nhead v0 v1");
+        let spec = ["name dev_room".to_owned(), "device".into(), "rel h0 ii empty".into(), format!("seed 0 {}", hex(&rule))];
+        super::super::open(&db, &spec.join("\n")).unwrap();
+        super::super::run(&db, "dev_room", 0).unwrap();
+        let r = super::take_report().expect("a device report");
+        super::super::close(&db, "dev_room").unwrap();
+        let rows: i64 = db.query_row("SELECT count(DISTINCT c1) FROM temp.h0", [], |r| r.get(0)).unwrap();
+        assert!(r.refused.is_none(), "{r:?}");
+        assert_eq!(rows, N, "every b row's: {r:?}");
+        assert_eq!(r.programs, 1, "one program, its head placed in it: {r:?}");
         assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "one launch, its relaunches and its remaps: {r:?}");
     }
 
@@ -2067,14 +2121,16 @@ use rerail_blocks::vector::Vector;
         if !mj::available() {
             return;
         }
-        // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
-        // are not read in place (decision 0353 step 4d).
+        // Tapes held in vectors of their own, not where the device reads them (a parse's, which is placed, held apart
+        // by its bytes): the batch's views are not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
             let path = format!("r{at}.py");
             let source = Arc::new(crate::code_rule_dsl::tape::Text::from(*source));
-            let image = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let parsed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+            let image = crate::code_rule_dsl::tape::TapeImage::from_bytes(&parsed.to_bytes().unwrap(), &grammar).unwrap();
+            assert!(!image.placed(), "a tape held apart");
             let lines = Arc::new(crate::code_rule_dsl::lines::LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
             let facts = Arc::new(core::from_image(source, &grammar, image, lines).unwrap());
             Document { key: (5 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
@@ -2504,7 +2560,7 @@ use rerail_blocks::vector::Vector;
     }
 
     /// A node's text read where its source lies (`mj::OPND_NODE`: the long-text nodes' node view in place, its
-    /// document by key, its numbered node, its span of the source; `reads::Doc::text_of`) is the host's
+    /// document by key, its numbered node, its span of the source; `join_program::reads::node_span`) is the host's
     /// (`@rr_node_text_any`, `LongTexts::text_any_ref`) for every node of the batch, nothing made; and a node of no
     /// document of the batch's has none.
     #[test]
@@ -2514,7 +2570,7 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, LONG_TEXT_NODES, device_chunk::ViewsInPlace, sources};
         use crate::code_rule_dsl::model::FileInput;
         use rerail_clif::view_reads::{NO_DOC, ViewDir};
-        use rerail_ukl_rust::join_program::reads::Doc;
+        use rerail_ukl_rust::join_program::reads;
         use std::sync::Arc;
         // Bound to the CPU, as a run is: the directory at the host's addresses, the join program's there
         // (`ViewsInPlace::read_on_host`), whatever the process's device.
@@ -2542,7 +2598,7 @@ use rerail_blocks::vector::Vector;
                 if m == NO_DOC {
                     return None;
                 }
-                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                let (p, n, _) = reads::node_span(d, m, id as u32)?;
                 Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
             }
         };
@@ -2575,7 +2631,7 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, LONG_TEXT_NODES, Matchers, Projection, device_chunk::ViewsInPlace};
         use crate::code_rule_dsl::model::FileInput;
         use rerail_clif::view_reads::{NO_DOC, ViewDir};
-        use rerail_ukl_rust::join_program::reads::Doc;
+        use rerail_ukl_rust::join_program::reads;
         use std::collections::HashMap;
         use std::sync::Arc;
         let _host = rerail_accel::gpu::shared::on_host();
@@ -2609,7 +2665,7 @@ use rerail_blocks::vector::Vector;
                 if m == NO_DOC {
                     return None;
                 }
-                let (p, n) = Doc::of(d, m).text_of(id as u32)?;
+                let (p, n, _) = reads::node_span(d, m, id as u32)?;
                 Some(std::str::from_utf8(std::slice::from_raw_parts(p, n as usize)).unwrap().to_owned())
             }
         };
@@ -2626,7 +2682,7 @@ use rerail_blocks::vector::Vector;
                     other => panic!("node {id:#x}: the host's order {other:?}"),
                 };
                 // SAFETY: as `read`.
-                let order = unsafe { Doc::of(d, ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC)).order_of_id(id as u32) };
+                let order = unsafe { reads::node_order(d, ViewDir::doc_of_key(d, (id as u64 >> 32) as u32, NO_DOC), id as u32) };
                 assert_eq!(order, Some(host as u64), "node {id:#x}: its order read in place");
                 seen[k] += 1;
             }
@@ -2665,19 +2721,39 @@ use rerail_blocks::vector::Vector;
     /// ancestor's subtree, the nodes in the set. The rows are the CPU's, and nothing of the axis is uploaded; read by
     /// neither column alone (whole), its rows are uploaded as before. `inside` and `nearest` are walked the same way
     /// (their set tested at the ancestor, `nearest`'s climb its first member and its subtree less what lies below a
-    /// nearer one), and each by both columns: the node's climb, each ancestor checked against the bound one.
+    /// nearer one), and each by both columns: the node's climb, each ancestor checked against the bound one. On the
+    /// process's device where it has one, and the join program's Rust on the host (`on_host`) wherever it runs.
     #[test]
     fn a_has_axis_on_the_device_is_walked_on_the_tape() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            walked_on_the_tape(false);
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        walked_on_the_tape(false);
+    }
+
+    /// Containment (`within`, every node's ancestors) is `has` of every node: probed by its node, its ancestor or
+    /// both, read off the tape as a `has` axis is, with no solve of the batch and no index of its rows; its rows
+    /// the host's lookups. Read whole, it is the batch's solve, read in its block.
+    #[test]
+    fn containment_by_its_columns_is_walked_as_a_has_axis() {
+        if crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            walked_on_the_tape(true);
+        }
+        let _host = rerail_accel::gpu::shared::on_host();
+        walked_on_the_tape(true);
+    }
+
+    /// A `has` axis's (or with `within`, containment's) rows by its node, its ancestor, both and none, on the CPU and
+    /// the device, against the host's lookups.
+    fn walked_on_the_tape(within: bool) {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
-        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Within};
+        use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::model::FileInput;
         use std::sync::Arc;
-        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
-            return;
-        }
         crate::test_languages();
         let texts = ["import os\nx = f(1, y=[2, g(3)])\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "", "@d\ndef g():\n    try:\n        h(1)\n    except E as e:\n        raise\n"];
         let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
@@ -2695,9 +2771,11 @@ use rerail_blocks::vector::Vector;
         kinds.sort_unstable();
         kinds.dedup();
         let kinds: Vec<i64> = kinds.into_iter().step_by(2).collect();
-        for axis in [Axis::Has, Axis::Inside, Axis::Nearest] {
-        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu));
-        assert!(has.has_walk().is_some(), "{axis:?}: the batch's views are read in place");
+        let modes = if within { vec![Mode::Tree] } else { vec![Mode::Axis(Axis::Has), Mode::Axis(Axis::Inside), Mode::Axis(Axis::Nearest)] };
+        for mode in modes {
+        let axis = Arc::new(match mode { Mode::Axis(a) => Within::axis(Arc::clone(&batch), a, &kinds, Binding::Cpu), m => Within::new(Arc::clone(&batch), m) });
+        let has: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::clone(&axis) as _;
+        assert!(has.has_walk().is_some(), "{mode:?}: the batch's views are read in place");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
         // The host's rows, from its lookups: by the node (column 0) and by the ancestor (column 1).
         let expect = |col: usize| -> Vec<(i64, i64)> {
@@ -2725,12 +2803,13 @@ use rerail_blocks::vector::Vector;
         let q2 = format!("t:x:{}:{}:ii", hex("temp.q2"), hex("c0, c1"));
         let h = format!("r:{}", hex("has_t"));
         // h0(n, a) :- q(n), has(n, a): by the node. h0(n, a) :- q(a), has(n, a): by the ancestor.
-        // h0(n, a) :- has(n, a): whole, not read in place: refused, on the CPU (`None`; nothing is uploaded).
+        // h0(n, a) :- has(n, a): whole, not read in place: a has axis refused, on the CPU (`None`; nothing is
+        // uploaded); containment, `inside` and `nearest` the batch's solve, read in its block.
         // h0(n, a) :- q2(n, a), has(n, a): by both.
         for (col, rule) in [(Some(0), format!("pos {q} v0\npos {h} v0 v1\nhead v0 v1")), (Some(1), format!("pos {q} v1\npos {h} v0 v1\nhead v0 v1")), (Some(2), format!("pos {q2} v0 v1\npos {h} v0 v1\nhead v0 v1")), (None, format!("pos {h} v0 v1\nhead v0 v1"))] {
             let want = expect(col.unwrap_or(0).min(1));
-            assert_eq!(want, expect(1 - col.unwrap_or(0).min(1)), "{axis:?}: the host's lookups by either column give the same pairs");
-            assert!(want.len() > 20, "{axis:?} by column {col:?}: {} rows", want.len());
+            assert_eq!(want, expect(1 - col.unwrap_or(0).min(1)), "{mode:?}: the host's lookups by either column give the same pairs");
+            assert!(want.len() > 20, "{mode:?} by column {col:?}: {} rows", want.len());
             let mut got = Vec::new();
             for device in [false, true] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -2746,19 +2825,23 @@ use rerail_blocks::vector::Vector;
                 super::super::close(&db, "has_test").unwrap();
                 if device {
                     let r = report.as_ref().expect("a device run");
-                    // Read whole, `has` is refused (no solve makes it whole); `inside` and `nearest` are read as the
-                    // batch's solve made them (decision 0277).
-                    assert_eq!(r.refused.is_none(), col.is_some() || axis != Axis::Has, "{axis:?} by column {col:?}: refused only has, whole: {r:?}");
+                    // Read whole, `has` is refused (no solve makes it whole); containment, `inside` and `nearest`
+                    // are read as the batch's solve made them (decision 0277).
+                    assert_eq!(r.refused.is_none(), col.is_some() || mode != Mode::Axis(Axis::Has), "{mode:?} by column {col:?}: refused only has, whole: {r:?}");
                     if col.is_some() {
-                        assert_eq!(r.sorts, 0, "{axis:?} by column {col:?}: no index of the axis: {r:?}");
+                        assert_eq!(r.sorts, 0, "{mode:?} by column {col:?}: no index of the axis: {r:?}");
                     }
+                }
+                // Walked, containment needs no solve of the batch (`resident`, before its rows in a block).
+                if within && col.is_some() {
+                    assert!(!axis.is_solved(), "by column {col:?}: containment walked on the tape, not solved");
                 }
                 let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
                 rows.sort_unstable();
                 got.push(rows);
             }
-            assert_eq!(got[0], want, "{axis:?} by column {col:?}: the CPU's rows are the host's lookups");
-            assert_eq!(got[1], want, "{axis:?} by column {col:?}: the device's rows are the CPU's");
+            assert_eq!(got[0], want, "{mode:?} by column {col:?}: the CPU's rows are the host's lookups");
+            assert_eq!(got[1], want, "{mode:?} by column {col:?}: the device's rows are the CPU's (on the host: {})", rerail_accel::gpu::shared::is_on_host());
         }
         }
     }
@@ -3089,10 +3172,15 @@ use rerail_blocks::vector::Vector;
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
-        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0); CREATE TEMP TABLE u (c0);").unwrap();
         for &id in &ids {
             db.execute("INSERT INTO q VALUES (?1)", [id]).unwrap();
         }
+        // u(t): some nodes' texts, as symbols, for a negated atom keyed by the text (`la_base_name`'s shape).
+        for t in ["os", "x", "a", "self", "1"] {
+            db.execute("INSERT INTO u VALUES (?1)", [t]).unwrap();
+        }
+        let u = format!("t:x:{}:{}:s", hex("temp.u"), hex("c0"));
         // The run's binding of the long-text nodes, which a node read finds on the connection (`bound_source`).
         let modules = crate::code_rule_dsl::facts::vtab::Modules::default();
         modules.bind(&db, LONG_TEXT_NODES, Arc::clone(&nodes)).unwrap();
@@ -3104,7 +3192,8 @@ use rerail_blocks::vector::Vector;
             // The lines' texts among the any-length read's, none among the long-text twin's.
             let lines = want.iter().filter(|(_, id)| line_ids.contains(id)).count();
             assert_eq!(lines, if f == "rr_node_text" { 0 } else { line_ids.len() }, "{f}: the lines' texts");
-            let rule = format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0");
+            // h0(t, n) :- q(n), t = f(n).    h0(t, n) :- q(n), t = f(n), !u(t).   (read by a negated atom too)
+            for (negated, rule) in [(false, format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0")), (true, format!("pos {q} v0\nfunc {f} v1 v0\nneg {u} v1\nhead v1 v0"))] {
             let mut got = Vec::new();
             for device in [false, true] {
                 db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
@@ -3127,9 +3216,16 @@ use rerail_blocks::vector::Vector;
                 rows.sort_unstable();
                 got.push((rows, counts));
             }
-            assert_eq!(got[0].0, want, "{f}: the CPU's rows are the host's reads");
-            assert_eq!(got[1].0, got[0].0, "{f}: the device's rows are the CPU's");
-            assert_eq!(got[1].1, got[0].1, "{f}: the device's counts per step are the CPU's");
+            if negated {
+                let kept: Vec<(String, i64)> = want.iter().filter(|(t, _)| !["os", "x", "a", "self", "1"].contains(&t.as_str())).cloned().collect();
+                assert!(f == "rr_node_text" || kept.len() < want.len(), "{f}: some texts are u's atoms");
+                assert_eq!(got[0].0, kept, "{f}: the CPU's rows are the host's reads, u's texts left out");
+            } else {
+                assert_eq!(got[0].0, want, "{f}: the CPU's rows are the host's reads");
+            }
+            assert_eq!(got[1].0, got[0].0, "{f} (negated: {negated}): the device's rows are the CPU's");
+            assert_eq!(got[1].1, got[0].1, "{f} (negated: {negated}): the device's counts per step are the CPU's");
+            }
         }
     }
 
@@ -3609,13 +3705,13 @@ use rerail_blocks::vector::Vector;
             }
             let [wall, gpu, encode, wait] = m.map(median);
             eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
-            eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
+            eprintln!("MEASURE {name:<20} rounds {}, relaunches {}, remaps {}", rounds.0, rounds.1, rounds.2);
         }
     }
 
     /// The same strata on the engine's CPU joins (scalar Rust) and on the device's join program, warm: wall and the
     /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) the
-    /// program is `rerail_ukl_rust::join_program`, its SIMD Rust: the only code the CPU device runs.
+    /// program is `rerail_ukl_rust::join_program::join_run`, its SIMD Rust: the only code the CPU device runs.
     #[test]
     #[ignore]
     fn joins_timed_on_the_cpu_and_the_device() {

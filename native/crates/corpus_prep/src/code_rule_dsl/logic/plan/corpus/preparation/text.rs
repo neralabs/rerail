@@ -47,6 +47,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
     }
+    p.rules(&mut HeadReads);
     p.rules(&mut ImpliedSets { added: 0 });
     let mut relations = TextRelations::default();
     p.rules(&mut relations);
@@ -182,8 +183,10 @@ impl RulePass for Absorb {
         let v = cx.v();
         // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`). Fresh names
         // are counted per rule: a rule's do not depend on the others'.
+        // A guest language's kind or field (`braceFormat:identifier`, decision 0431) is none of the matcher's
+        // language: its literal stays a join.
         let str_of = |t: Option<&TermRef<'_>>| match t {
-            Some(TermRef::Str(s)) => Some(v.text(*s).strip_prefix("python:").unwrap_or(v.text(*s)).to_owned()),
+            Some(TermRef::Str(s)) => Some(v.text(*s).strip_prefix("python:").unwrap_or(v.text(*s)).to_owned()).filter(|k| !k.contains(':')),
             _ => None,
         };
         let var_of = |t: Option<&TermRef<'_>>| t.and_then(|t| t.var());
@@ -395,9 +398,11 @@ impl RulePass for MatcherRelations {
         let before = inputs.len();
         for (k, (text, names)) in self.texts.iter().enumerate() {
             let rel = relation(k, names.len());
-            // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
+            // A name of the rule's `transform` or only a regex's named group binds text (a symbol); every other name (a
+            // metavariable), and the root, a node.
             let made = transformed(text);
-            let types = std::iter::once("node").chain(names.iter().map(|n| if made.contains(n) { "sym" } else { "node" }));
+            let text_of = |n: &String| made.contains(n) || crate::code_rule_dsl::typing::file_local::regex_group_only(text, n);
+            let types = std::iter::once("node").chain(names.iter().map(|n| if text_of(n) { "sym" } else { "node" }));
             let cols: Vec<(&str, &str)> = columns(&rel).iter().copied().zip(types).collect();
             b.fields().declare(&rel, &cols);
             if !inputs.contains(&rel) {
@@ -411,7 +416,7 @@ impl RulePass for MatcherRelations {
         let read = self.docof || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == "docof"));
         if !self.out.is_empty() && !derived && !inputs.iter().any(|r| r == "docof") && read {
             if v.decl_of("docof").is_none() {
-                b.fields().declare("docof", &[("n", "loc"), ("d", "number")]);
+                b.fields().declare("docof", &[("n", "place"), ("d", "number")]);
             }
             inputs.push("docof".to_owned());
         }
@@ -448,7 +453,7 @@ impl RulePass for NodeSubjects {
             let types: Option<Vec<&str>> = v.decl_of(v.rel_name(a.rel())).map(|d| d.cols().map(|(_, t)| v.text(t)).collect());
             for (c, t) in a.args().enumerate() {
                 if let (TermRef::Var(s), Some(ty)) = (t, types.as_ref().and_then(|ts| ts.get(c)))
-                    && (*ty == "node" || *ty == "loc") {
+                    && (*ty == "node" || *ty == "place") {
                         nodes.insert(s);
                     }
             }
@@ -479,6 +484,61 @@ impl RulePass for NodeSubjects {
         }
         for (s, t) in added {
             w = w.atom("text", &[T::Var(name(v, r, s)), T::Var(t)]);
+        }
+        w.finish()?;
+        Ok(Step::Written)
+    }
+}
+
+// ---- a node read in a head is read in the body ----
+
+/// A node read (`syntax::NODE_READS`) in a rule's head, `len(n, @text_len(n)) :- …`, is read in its body: the head's
+/// argument that calls it becomes a fresh variable, bound by `v = <the argument>` in the body, where every other node
+/// read stands (`NodeReads` writes them so). In the head, the run read it in no batch where the rule was located
+/// (decision 0665: its located form's cross part reads it again, its binding of the long-text nodes holding no batch),
+/// and it made no row.
+struct HeadReads;
+
+/// Whether term `t` calls a node read.
+fn reads_a_node(v: &Version, t: TermRef<'_>) -> bool {
+    match t {
+        TermRef::Call(f, mut args) => crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) || args.any(|a| reads_a_node(v, a)),
+        _ => false,
+    }
+}
+
+/// The head's arguments that call a node read, each the variable named next in `names`.
+struct Hoisted<'a> {
+    v: &'a Version,
+    names: &'a [crate::code_rule_dsl::logic::program_image::AtomId],
+    next: usize,
+}
+
+impl Rewrite for Hoisted<'_> {
+    fn term(&mut self, site: crate::code_rule_dsl::logic::program_image::build::Site<'_>, t: TermRef<'_>) -> Option<T<'static>> {
+        use crate::code_rule_dsl::logic::program_image::build::Site;
+        // Asked of each argument before its own arguments: the whole argument is the one hoisted.
+        (matches!(site, Site::Head(_)) && reads_a_node(self.v, t)).then(|| {
+            self.next += 1;
+            T::VarAtom(self.names[self.next - 1])
+        })
+    }
+}
+
+impl RulePass for HeadReads {
+    const NAME: &'static str = "a node read in a head is read in the body";
+    fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
+        let v = cx.v();
+        let read: Vec<TermRef<'_>> = r.head().args().filter(|&t| reads_a_node(v, t)).collect();
+        if read.is_empty() {
+            return Ok(Step::Keep);
+        }
+        let mut held: HashSet<String> = r.vars().map(|a| v.text(a).to_owned()).collect();
+        let mut count = 0;
+        let names: Vec<_> = read.iter().map(|_| fresh(&mut held, &mut count, "rr_head_read")).map(|n| out.builder().atom(&n)).collect();
+        let mut w = out.rewriting(&mut Hoisted { v, names: &names, next: 0 });
+        for (&t, &n) in read.iter().zip(&names) {
+            w = w.cmp(T::VarAtom(n), CmpOp::Eq, t_of(r, t));
         }
         w.finish()?;
         Ok(Step::Written)
@@ -610,7 +670,7 @@ const LINE_SPANS: [(&str, usize); 2] = [("source", 1), ("src_line", 2)];
 /// The columns of `v`'s relations that hold nodes alone (and, with `more`, those base columns too): a base relation's, `core.rerail`'s declared `node`
 /// (`facts::core::core_node_columns`) and a matcher's (`matchers`: its root and captures); and a file-local derived
 /// relation's (`local`, the split's), each column every rule of it fills with a variable its body binds in such a
-/// column: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
+/// column, or with the empty value: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
 /// cross-file relation's: a node it binds is read in the cross part, where an edit's old document is not the batch's,
 /// so the read of a node a maintained rule retracts would read the edited file's (`NodeReads`).
 fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>, more: &[(&str, usize)]) -> HashMap<String, BTreeSet<usize>> {
@@ -624,6 +684,12 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
         if !derived.contains(rel.as_str()) && v.declares(rel) {
             cols.insert(rel.clone(), c.iter().copied().collect());
         }
+    }
+    // A line's span (`src_line`'s): no node, but the reads answer it in place (`LongTexts::text_any` its text, the
+    // others none), so `text(sp, t)` of a line a rule binds reads that line, and no line's text is made for it
+    // (`text_demand`: a `text` row of a line made every line's text, D411's docstring lines all of a file's).
+    if !derived.contains("src_line") && v.declares("src_line") {
+        cols.insert("src_line".to_owned(), BTreeSet::from([2]));
     }
     for rel in matchers.iter().filter(|r| !derived.contains(r.as_str())) {
         if let Some(d) = v.decl_of(rel) {
@@ -640,7 +706,10 @@ fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<Strin
             let head = v.rel_name(r.head().rel());
             let Some(now) = cols.get(head) else { continue };
             let bound = node_bound(v, r, &cols);
-            let keep: BTreeSet<usize> = now.iter().copied().filter(|&c| matches!(r.head().args().nth(c), Some(TermRef::Var(x)) if bound.contains(&x))).collect();
+            // The empty value (`unset`, -1, decision 0649) is no node, and neither its rows nor its read have its text:
+            // `text` is a node's row, and the read finds no document for it. A column a rule fills with it still
+            // holds nodes alone where it holds one (FAST002's `fast_param(f, p, x, -1, d)` for an unannotated parameter).
+            let keep: BTreeSet<usize> = now.iter().copied().filter(|&c| matches!(r.head().args().nth(c), Some(TermRef::Var(x)) if bound.contains(&x)) || matches!(r.head().args().nth(c), Some(TermRef::Int(-1)))).collect();
             if keep.len() != now.len() {
                 cols.insert(head.to_owned(), keep);
                 changed = true;

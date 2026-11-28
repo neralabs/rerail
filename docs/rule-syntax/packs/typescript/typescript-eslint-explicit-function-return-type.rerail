@@ -14,7 +14,7 @@
 // Constructors and setters need none. The finding sits on the function's head: a method's start, an arrow's `=>`.
 // allowExpressions, allowConciseArrowFunctionExpressionsStartingWithVoid, allowFunctionsWithoutTypeParameters,
 // allowIIFEs and allowedNames widen what is left alone.
-.violation explicit_function_return_type(at: loc) code "@typescript-eslint/explicit-function-return-type"
+.violation explicit_function_return_type(at: place) code "@typescript-eslint/explicit-function-return-type"
     "Missing return type on function."
     suppress eslint "@typescript-eslint/explicit-function-return-type"
     suppress oxlint "explicit-function-return-type"

@@ -43,6 +43,30 @@ b(c, f) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute").
         assert_eq!(body("b").body().count(), 3, "a field the head reads stays a join");
     }
 
+    /// A guest language's kind (`braceFormat:identifier`, a tape value's node, decision 0431) is none of a Python
+    /// matcher's: its root and parent edges stay joins. Taken as one, the matcher did not lower ("Kind
+    /// `braceFormat:identifier` is invalid"), and FAST003's program, with its helpers keyed by a capture's text
+    /// (decision 0677), failed whole. A Python root beside it still becomes a matcher.
+    #[test]
+    fn a_guest_languages_kind_is_no_python_matcher() {
+        let src = r#"
+.decl g(c: node)
+.decl p(c: node)
+.output g, p
+g(c) :- guest_of(c, _), kind(c, "braceFormat:identifier"), !field(_, "braceFormat:attribute", c).
+p(c) :- guest_of(c, _), kind(c, "identifier"), !field(_, "attribute", c).
+"#;
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::text::tree_parts_as_matchers;
+        use crate::code_rule_dsl::logic::program_image::Lit;
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let (v, made) = tree_parts_as_matchers(prog, false).unwrap();
+        assert_eq!(made, 1, "the Python rule alone");
+        for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == "g") {
+            assert!(r.body().all(|l| !matches!(l.view(), Lit::Ast { .. })), "no matcher of a guest's kind: {}", v.show_rule(r));
+        }
+        assert!(v.rules().filter(|r| v.rel_name(r.head().rel()) == "p").any(|r| r.body().any(|l| matches!(l.view(), Lit::Ast { .. }))), "the Python kind is one");
+    }
+
     /// A matcher whose every read joins its node with a column only another matcher's roots fill is bound only at
     /// those roots (decision 0459); one read anywhere else, under a negation or with no such join, everywhere.
     #[test]
@@ -192,4 +216,30 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
             .collect();
         hits.sort();
         assert_eq!(hits.iter().map(|h| h.0.as_str()).collect::<Vec<_>>(), ["x.py", "y.py"], "{report:#}");
+    }
+
+    /// A matcher's regex named group binds its text, a metavariable the node it matched (`front`'s `ast`, decision
+    /// 0677): the matcher's relation declares the group's column a symbol and the metavariable's a node, so the
+    /// group's text may be read across files and the node is refused there (in `seen`; an output may keep its node).
+    /// W's internal_dead_code's `raw_dynamic_import(e)`, the module's `(?P<ENTRY>…)` text, was refused as a node.
+    #[test]
+    fn a_regex_groups_capture_is_text_and_a_metavariables_a_node() {
+        let prepared = |rule: &str| {
+            let src = format!(
+                "\n.decl dynamic(e: symbol)\n{rule}\n.decl seen(e: symbol) cross_file\nseen(e) :- dynamic(e).\n.decl any_seen(e: symbol) cross_file\nany_seen(e) :- seen(e).\n.output any_seen\n"
+            );
+            crate::code_rule_dsl::logic::plan::corpus::preparation::text::matcher_relations(crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap()).unwrap()
+        };
+        let capture_type = |image: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, rel: &str| {
+            let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(image.clone());
+            let f = placed.fields().unwrap();
+            f.columns(rel).unwrap().last().unwrap().1.to_owned()
+        };
+        let (group, matchers) = prepared(r#"dynamic(e) :- ast(d, x, {"language": "python", "rule": {"all": [{"kind": "module"}, {"regex": "(?P<ENTRY>import_module[(][^)]*[)])"}]}}, ENTRY: e)."#);
+        assert_eq!(capture_type(&group, &matchers[0].0), "sym", "a regex group's capture is its text");
+        crate::code_rule_dsl::typing::file_local::programs_of(group).unwrap();
+        let (meta, matchers) = prepared(r#"dynamic(e) :- ast(d, x, {"language": "python", "rule": {"pattern": "import_module($ENTRY)"}}, ENTRY: e)."#);
+        assert_eq!(capture_type(&meta, &matchers[0].0), "node", "a metavariable's capture is a node");
+        let refused = crate::code_rule_dsl::typing::file_local::programs_of(meta).err().expect("a metavariable's node, refused across files");
+        assert!(refused.contains("0677"), "{refused}");
     }

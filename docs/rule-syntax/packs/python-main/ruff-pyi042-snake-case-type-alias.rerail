@@ -10,7 +10,7 @@
 // PYI042(n): a finding at node n, from clause `snake-case-type-alias`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI042(at: node, name: loc) "Rename type alias `{name}` to CamelCase, e.g. `MyAlias`, and update every reference; leave it if the lowercase name mirrors a runtime name that other code imports."
+.violation PYI042(at: node, name: node) "Rename type alias `{name}` to CamelCase, e.g. `MyAlias`, and update every reference; leave it if the lowercase name mirrors a runtime name that other code imports."
     suppress noqa "PYI042"
 PYI042(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, match("_?[a-z0-9].*", n),
     (pyi042_assignment_target(n) ; pyi042_statement_name(n)).

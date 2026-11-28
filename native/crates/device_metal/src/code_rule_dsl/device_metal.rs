@@ -66,6 +66,26 @@ fn refused(error: Error) -> Refused {
     }
 }
 
+/// `run` of a stratum's joins, again where the system stopped its submissions (`Error::BackendPreempted`: macOS's GPU
+/// watchdog, the display waiting while other work held the GPU), at most `PREEMPTED_RUNS` times in all, each from
+/// nothing: the stopped run's rows (`fresh`) dropped, as the CPU's run after a failure drops them. Past them, a
+/// failure; any other failure is the caller's. The CPU never runs a stratum the system stopped on the device.
+fn preempted_again<T>(fresh: &mut [Fresh], mut run: impl FnMut(&mut [Fresh]) -> Result<T, String>) -> Result<T, String> {
+    let stopped_why = format!("{:?}", Error::BackendPreempted);
+    let mut stopped = 0;
+    loop {
+        match run(fresh) {
+            Err(why) if why == stopped_why && stopped + 1 < rerail_accel::gpu::PREEMPTED_RUNS => {
+                stopped += 1;
+                crate::code_rule_dsl::prof::count("device strata stopped by the system, run again", 1);
+                fresh.iter_mut().for_each(|f| *f = Fresh::default());
+            }
+            Err(why) if why == stopped_why => return Err(format!("stopped by the system each of its {} runs", rerail_accel::gpu::PREEMPTED_RUNS)),
+            r => return r,
+        }
+    }
+}
+
 /// The device's own plans of `rules`, each with its rule and head relation.
 fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a joins::Plan, &'a JoinRule, usize)>, String> {
     rules
@@ -109,7 +129,8 @@ impl SolverDevice for Metal {
     }
 
     fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
-        joins::run(&plans(rules)?, store, names, fresh)
+        let plans = plans(rules)?;
+        preempted_again(fresh, |fresh| joins::run(&plans, store, names, fresh))
     }
 
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner) -> Result<Option<u64>, String> {
@@ -117,7 +138,13 @@ impl SolverDevice for Metal {
     }
 
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
-        joins::resume(ticket, &plans(rules)?, store, names, fresh)
+        let plans = plans(rules)?;
+        // Its submission's again where the system stopped it: the same joins run anew.
+        let mut ticket = Some(ticket);
+        preempted_again(fresh, |fresh| match ticket.take() {
+            Some(t) => joins::resume(t, &plans, store, names, fresh),
+            None => joins::run(&plans, store, names, fresh),
+        })
     }
 
     fn build_indexes(&self, plans: &[&JoinPlan]) -> Result<usize, String> {
@@ -138,7 +165,8 @@ impl SolverDevice for Metal {
         names: &Interner,
         fresh: &mut [Fresh],
     ) -> Result<(rerail_blocks::vector::Vector<u64>, bool), String> {
-        joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
+        let (seeds, deltas) = (plans(seeds)?, plans(deltas)?);
+        preempted_again(fresh, |fresh| joins::fixpoint(&seeds, &deltas, heads, store, names, fresh))
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
@@ -275,5 +303,38 @@ pub mod matcher {
             #[cfg(any(test, feature = "test-hooks"))]
             programs::reset_metrics();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stratum the system stops runs again, at most `PREEMPTED_RUNS` times in all; another failure is
+    /// not run again.
+    #[test]
+    fn a_stratum_the_system_stops_runs_again_from_nothing() {
+        let stopped = format!("{:?}", Error::BackendPreempted);
+        let mut fresh = vec![Fresh::default(); 2];
+        let mut runs = 0;
+        let got = preempted_again(&mut fresh, |f| {
+            runs += 1;
+            assert_eq!(f.len(), 2, "each run is given the stratum's relations' rows");
+            if runs < 3 { Err(stopped.clone()) } else { Ok(runs) }
+        });
+        assert_eq!(got, Ok(3));
+        let mut runs = 0;
+        let got = preempted_again(&mut fresh, |_| -> Result<(), String> {
+            runs += 1;
+            Err(stopped.clone())
+        });
+        assert!(got.is_err_and(|e| e.contains("stopped by the system")));
+        assert_eq!(runs, rerail_accel::gpu::PREEMPTED_RUNS);
+        let mut runs = 0;
+        let got = preempted_again(&mut fresh, |_| -> Result<(), String> {
+            runs += 1;
+            Err(format!("{:?}", Error::BackendFailure))
+        });
+        assert_eq!((got, runs), (Err(format!("{:?}", Error::BackendFailure)), 1));
     }
 }

@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -11,7 +11,9 @@ import {
   type CodeRuleAuditor, type RuleSteerDelivery,
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { KeptRuntimes } from "../../../src/runtime/memory/kept-runtimes.js";
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
+import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
@@ -28,6 +30,40 @@ vi.mock("../../../src/engine/no-follow.js", async importOriginal => {
     openNoFollow: async (path: string, ...flags: number[]) => {
       await heldOpens.paths.get(path)?.shift()?.();
       return await actual.openNoFollow(path, ...flags);
+    },
+  };
+});
+
+/** The folder looks a test holds (`holdLook`), by path: each runs before the look's stat and after it answers. */
+const heldLooks = vi.hoisted(() => new Map<string, { before: () => Promise<void>; after: () => void }>());
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    stat: async (...args: Parameters<typeof actual.stat>) => {
+      const held = heldLooks.get(String(args[0]));
+      await held?.before();
+      try {
+        return await actual.stat(...args);
+      } finally {
+        held?.after();
+      }
+    },
+  };
+});
+
+/** Each wait for a write lock begun, with its signal, and whether a quiet session's open for a scan began it. */
+const lockWaits = vi.hoisted(() => [] as Array<{ signal: AbortSignal | undefined; resume: boolean }>);
+/** While `held` is set, a wait for the write lock begins only once it settles: one that has not seen the lock given back. */
+const lockWaitGate = vi.hoisted(() => ({ held: undefined as Promise<void> | undefined }));
+vi.mock("../../../src/engine/storage/write-lock-wait.js", async importOriginal => {
+  const actual = await importOriginal<{ waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => Promise<boolean> }>();
+  return {
+    ...actual,
+    waitForWriteLock: (path: string, signal?: AbortSignal, since?: number) => {
+      lockWaits.push({ signal, resume: new Error().stack?.includes("retryResume") === true });
+      const held = lockWaitGate.held;
+      return held === undefined ? actual.waitForWriteLock(path, signal, since) : held.then(() => actual.waitForWriteLock(path, signal, since));
     },
   };
 });
@@ -60,6 +96,17 @@ function holdWalkResume() {
   return { entered: entered.promise, release: () => released.resolve(), restore: () => spy.mockRestore() };
 }
 
+/** Resolves once a control store records the end of the scan request `id`: the test waits for that, not a clock. */
+function requestFinished(id: string): Promise<void> {
+  const finish = SqliteAuditControlStore.prototype.finish;
+  return new Promise(resolve => {
+    vi.spyOn(SqliteAuditControlStore.prototype, "finish").mockImplementation(function (this: SqliteAuditControlStore, ...args) {
+      finish.apply(this, args);
+      if (args[0] === id) resolve();
+    });
+  });
+}
+
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
@@ -73,10 +120,11 @@ afterEach(async () => {
 });
 
 /**
- * An engine service over two started checkouts, `first` (a Git repository adding `rules`) and `second`, whose
- * runtimes stay `idleRuntimeMs` unused.
+ * An engine service over two started checkouts, `first` (a Git repository adding `rules`) and `second`, whose daemon
+ * needs the room a runtime no session uses takes whenever `needsRoom` says so, and whose time is `clock.now`.
  */
-async function twoCheckouts(idleRuntimeMs: number, rules?: TestRepositoryRules) {
+async function twoCheckouts(needsRoom: (() => boolean) | undefined, rules?: TestRepositoryRules) {
+  const clock = { now: 1_000_000 };
   const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
   roots.push(root);
   const databasePath = join(root, "rerail.sqlite");
@@ -94,7 +142,8 @@ async function twoCheckouts(idleRuntimeMs: number, rules?: TestRepositoryRules) 
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
-    idleRuntimeMs,
+    now: () => clock.now,
+    ...(needsRoom === undefined ? {} : { needsRoom }),
     createAuditor: () => ({
       openWorkspace: async () => undefined,
       acceptsPath: () => true,
@@ -107,53 +156,260 @@ async function twoCheckouts(idleRuntimeMs: number, rules?: TestRepositoryRules) 
   const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
   const start = (sessionId: string, cwd: string) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) });
   const end = (sessionId: string, cwd: string) => send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, cwd) });
-  return { service, databasePath, first, second, start, end, send, session };
+  return { service, databasePath, first, second, start, end, send, session, clock };
 }
 
-describe("the engine service's runtimes", () => {
-  it("closes a checkout's runtime when its last session ends, so a daemon serving many worktrees does not keep them all", async () => {
-    const { service, first, second, start, end, send, session } = await twoCheckouts(0);
+const MINUTE = 60_000;
 
-    await start("a", first);
-    await start("b", second);
-    await start("c", second);
-    expect(service.openRuntimes()).toBe(2);
-    await end("a", first);
-    expect(service.openRuntimes()).toBe(1);
-    await end("b", second);
-    expect(service.openRuntimes()).toBe(1);
-    await end("c", second);
-    expect(service.openRuntimes()).toBe(0);
-    // The checkout's next session gets a runtime of its own, as its first did.
-    await start("d", first);
-    await send({ kind: "user-prompt", eventId: "d:prompt", sessionId: "d", session: session("d", first), text: "hi" });
-    expect(service.openRuntimes()).toBe(1);
+describe("the engine service's runtimes", () => {
+  // A /clear in Claude Code ends a session and starts the next in the same checkout a moment later. While the daemon
+  // needed the room, the runtime closed as the first session left, and the next one compiled the rules and walked the
+  // checkout again: in a daemon limited to 640 MB its SessionStart took 580 to 610 ms where it took 220 to 250 ms with
+  // the runtime kept.
+  it("keeps the runtime a session left though the daemon needs the room, so the next session in the checkout finds it", async () => {
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      const { service, first, start, end } = await twoCheckouts(() => true);
+      await start("a", first);
+      await end("a", first);
+      expect(service.openRuntimes()).toBe(1);
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(1);
+      await start("b", first);
+      expect(service.openRuntimes()).toBe(1);
+      expect(disposed).not.toHaveBeenCalled();
+    } finally {
+      disposed.mockRestore();
+    }
   });
 
   // A runtime holds its checkout's compiled rules, 12 s of CPU to compile for the five packs a TypeScript repository
-  // adds: a session started soon after the last one ended reuses it, and the runtime closes once it was unused a while.
-  it("keeps a checkout's runtime until no session has used it for the idle time, so a session that comes back soon reuses it", async () => {
-    // Only the idle timer is faked: the runtime's own timers are intervals, and the HTTP client's are the socket's.
+  // adds. It closed 15 minutes after its last session ended, room or not, and a session that came back later compiled
+  // them all again while its first tool calls waited.
+  it("keeps a checkout's runtime after its last session ended while the daemon has room, however long, so a session that comes back reuses it", async () => {
+    // The idle clocks of a runtime would be timeouts; the runtime's own timers are intervals, and the HTTP client's are the socket's.
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
     try {
-      const { service, first, start, end } = await twoCheckouts(60_000);
-
+      const { service, first, start, end, clock } = await twoCheckouts(() => false);
       await start("a", first);
       await end("a", first);
-      vi.advanceTimersByTime(59_999);
+      vi.advanceTimersByTime(2 * 60 * MINUTE);
+      clock.now += 2 * 60 * MINUTE;
+      await service.closeIdleSessions();
       expect(service.openRuntimes()).toBe(1);
       await start("b", first);
-      vi.advanceTimersByTime(5 * 60_000);
       expect(service.openRuntimes()).toBe(1);
-      // The idle time counts from the last session's end.
-      await end("b", first);
-      vi.advanceTimersByTime(59_999);
-      expect(service.openRuntimes()).toBe(1);
-      vi.advanceTimersByTime(1);
-      expect(service.openRuntimes()).toBe(0);
+      expect(disposed).not.toHaveBeenCalled();
     } finally {
+      disposed.mockRestore();
       vi.useRealTimers();
     }
+  });
+
+  // A daemon that kept runtimes while it had room and then ran short closed every kept one as the next runtime opened,
+  // on that session's path, one full collection each, and freed the compiled rules it was about to compile again: its
+  // SessionStart took 700 to 770 ms where it took 350 to 380 ms with the runtimes closed one by one, 15 minutes after
+  // each one's last session, off any session's path.
+  it("opens a runtime in another checkout with no close on its path while the daemon needs the room", async () => {
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      const { service, first, second, start, end } = await twoCheckouts(() => true);
+      await start("a", first);
+      await end("a", first);
+      await start("b", second);
+      expect(service.openRuntimes()).toBe(2);
+      expect(disposed).not.toHaveBeenCalled();
+    } finally {
+      disposed.mockRestore();
+    }
+  });
+
+  // Short of room, every runtime no session uses was freed 15 minutes after its last session left, the one left last
+  // too: a daemon serving many worktrees freed each one's records. It still is, and none sooner, so a /clear or a
+  // session back within 15 minutes finds its rules compiled as it did.
+  it("frees each kept runtime at the first sweep 15 minutes after its last session left while the daemon needs the room, the one left last too", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => true);
+    await start("a", first);
+    await start("b", second);
+    await end("a", first);
+    clock.now += 5 * MINUTE;
+    await end("b", second);
+    clock.now += 10 * MINUTE - 1;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(2);
+    clock.now += 1;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    clock.now += 5 * MINUTE;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+  });
+
+  // Each runtime no session used closed on its own 15-minute timer, whatever else the daemon was doing. Closed at the end
+  // of the minute's sweep instead, after every quiet session's idle close had settled, one idle close that hung (a read
+  // of a share that stops answering) or ran long (a large checkout's audit) held every other checkout's kept runtime past
+  // its time while the daemon was short of room.
+  it("frees a kept runtime 15 minutes after its last session left while another session's idle close hangs", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => true);
+    await start("a", first);
+    await start("b", second);
+    await end("b", second);
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const closeIdle = RerailRuntime.prototype.closeIdleSession;
+    const hang = vi.spyOn(RerailRuntime.prototype, "closeIdleSession").mockImplementation(async function (this: RerailRuntime, ...args) {
+      entered.resolve();
+      await released.promise;
+      return await closeIdle.apply(this, args);
+    });
+    try {
+      clock.now += 31 * MINUTE;
+      const sweeping = service.closeIdleSessions();
+      await entered.promise;
+      const openWhileHung = service.openRuntimes();
+      released.resolve();
+      await sweeping;
+      expect({ openWhileHung, openAfter: service.openRuntimes() }).toEqual({ openWhileHung: 1, openAfter: 1 });
+    } finally {
+      released.resolve();
+      hang.mockRestore();
+    }
+  });
+
+  // A runtime's 15 minutes were a timer's, on the monotonic clock: a wall clock set forward by an hour meanwhile closed
+  // nothing sooner. Read from the wall clock, the age jumped with it, and the runtime of a person back within 15 minutes
+  // was gone.
+  it("counts a kept runtime's 15 minutes on the monotonic clock, which the wall clock's jumps do not move", async () => {
+    // The wall clock as the service reads it from its start, set forward by `jump` milliseconds.
+    const wallNow = Date.now.bind(Date);
+    const wall = { jump: 0 };
+    const wallClock = vi.spyOn(Date, "now").mockImplementation(() => wallNow() + wall.jump);
+    const monotonicNow = performance.now.bind(performance);
+    const monotonic = vi.spyOn(performance, "now");
+    try {
+      const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
+      roots.push(root);
+      const databasePath = join(root, "rerail.sqlite");
+      const checkout = join(root, "first");
+      await mkdir(checkout);
+      startTestRepository(checkout, databasePath);
+      const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-clock-${process.pid}-${wallNow()}` : join(root, "engine.sock");
+      const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, needsRoom: () => true, createAuditor: quietAuditor });
+      services.push(service);
+      const session = { host: "claude-code" as const, sessionId: "a", cwd: checkout };
+      await ingestEngineEvent({ socketPath }, { kind: "session-start", eventId: "a:start", session });
+      await ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "a:end", sessionId: "a", session });
+      wall.jump = 60 * MINUTE;
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(1);
+      const at = monotonicNow();
+      monotonic.mockImplementation(() => at + 15 * MINUTE);
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
+    } finally {
+      monotonic.mockRestore();
+      wallClock.mockRestore();
+    }
+  });
+
+  // The heap watch restarts the daemon at its ceiling, which makes every hook wait through a start; what the daemon keeps
+  // for its checkouts' next sessions goes first.
+  it("closes every runtime no session uses when asked, the one left last too, and none a session uses", async () => {
+    const { service, first, second, start, end } = await twoCheckouts(() => false);
+    await start("a", first);
+    await start("b", second);
+    await end("b", second);
+    await service.closeUnusedRuntimes();
+    expect(service.openRuntimes()).toBe(1);
+    await end("a", first);
+    await service.closeUnusedRuntimes();
+    expect(service.openRuntimes()).toBe(0);
+  });
+
+  // A look for a removed folder still under way as the service closed closed the runtime the close had closed already.
+  it("closes no runtime a second time when a look for its removed checkout answers after the service closed", async () => {
+    const { service, first, start, end, clock } = await twoCheckouts(() => false);
+    await start("a", first);
+    await end("a", first);
+    const looking = Promise.withResolvers<void>();
+    const answer = Promise.withResolvers<void>();
+    const answered = Promise.withResolvers<void>();
+    heldLooks.set(first, { before: async () => {
+      looking.resolve();
+      await answer.promise;
+    }, after: () => answered.resolve() });
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      clock.now += 15 * MINUTE;
+      const sweeping = service.closeIdleSessions();
+      await looking.promise;
+      services.splice(services.indexOf(service), 1);
+      await service.close();
+      await removeFolder(first);
+      answer.resolve();
+      await answered.promise;
+      await sweeping;
+      expect(disposed).toHaveBeenCalledTimes(1);
+    } finally {
+      heldLooks.clear();
+      disposed.mockRestore();
+    }
+  });
+
+  // Every other case answers for the daemon's memory; the daemon itself reads it (`memoryRoom`), and a daemon whose own
+  // reading was lost would keep every runtime whatever its size.
+  it("reads the daemon's own memory when no room check is given, and closes the kept runtimes it has no room for", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(undefined);
+    await start("a", first);
+    await start("b", second);
+    await end("a", first);
+    await end("b", second);
+    clock.now += 15 * MINUTE;
+    // The daemon's resident size past a quarter of the machine's memory.
+    const resident = vi.spyOn(process.memoryUsage, "rss").mockReturnValue(Number.MAX_SAFE_INTEGER);
+    try {
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
+    } finally {
+      resident.mockRestore();
+    }
+  });
+
+  // Worktrees come and go: a runtime kept for a removed checkout would hold its walk until the daemon needed the room. It
+  // goes at the time every runtime no session used went, and not sooner: a folder gone for a moment may come back.
+  it("closes the runtime no session uses of a checkout whose folder was removed once it has been kept 15 minutes, though the daemon has room", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => false);
+    await start("a", first);
+    await start("b", second);
+    await end("b", second);
+    await removeFolder(second);
+    clock.now += 15 * MINUTE - 1;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(2);
+    clock.now += 1;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    await end("a", first);
+    expect(service.openRuntimes()).toBe(1);
+  });
+
+  // A checkout moved and moved back, or on a share that dropped for a moment, read as removed at one sweep: its runtime
+  // closed though every runtime no session used had stayed 15 minutes, and a session back there compiled its rules again.
+  it("keeps the runtime of a checkout whose folder was gone for a moment and came back, past 15 minutes while the daemon has room", async () => {
+    const { service, second, start, end, clock } = await twoCheckouts(() => false);
+    await start("b", second);
+    await end("b", second);
+    const start0 = clock.now;
+    await rename(second, `${second}-moved`);
+    for (const minute of [5, 6]) {
+      clock.now = start0 + minute * MINUTE;
+      await service.closeIdleSessions();
+    }
+    await rename(`${second}-moved`, second);
+    clock.now = start0 + 15 * MINUTE;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
   });
 
   // A compiled rule's program is native memory V8 does not count, 512 MB for the Node pack's builtins rule, and a daemon
@@ -166,7 +422,7 @@ describe("the engine service's runtimes", () => {
       clauses: [{ id: "test:freed:check", violation: { anchor: "witness.span", code: "NO_PRINT", message: "No print" },
         forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } } }],
     });
-    const { service, databasePath, first, start, end } = await twoCheckouts(0, { library: [{ kind: "code", rule }] });
+    const { service, databasePath, first, start, end } = await twoCheckouts(() => true, { library: [{ kind: "code", rule }] });
 
     await start("a", first);
     // The checkout as the registry recorded it: a temporary folder's physical path differs on macOS (/private/var).
@@ -184,13 +440,14 @@ describe("the engine service's runtimes", () => {
     })();
 
     await end("a", first);
+    await service.closeUnusedRuntimes();
     expect(service.openRuntimes()).toBe(0);
     // Nothing in this test collects: the service does, once the runtime closed.
     await vi.waitFor(() => expect(compiled.deref()).toBeUndefined(), { timeout: 5_000 });
   });
 
   it("lets go of the engine's file-system watch though a runtime fails to close", async () => {
-    const { service, first, start } = await twoCheckouts(60_000);
+    const { service, first, start } = await twoCheckouts(() => false);
     await start("a", first);
     const dispose = vi.spyOn(RerailRuntime.prototype, "dispose").mockRejectedValueOnce(new Error("the disk went away"));
     const close = vi.spyOn(RepositoryWorktreeWalks.prototype, "close");
@@ -220,15 +477,25 @@ function quietAuditor(): CodeRuleAuditor {
 
 /**
  * An evaluator that checks nothing and records every batch of edits it is given (`batches`) and the paths a walk asked
- * it about (`looked`); its scans (`scans`) complete with no finding once `auditing` settles, each recorded in the audit
- * store as a real scan is. Every evaluator after the first opens once `reopening` settles, as one compiling its rules
- * does, and `reopened` settles as the second begins to. The first evaluator to close does so once `closing` settles, and
- * fails to with `closeFails`; `closeBegun` settles as it begins to.
+ * it about (`looked`); `lookedAt(path)` settles once a walk has asked about `path` since `looked` was last cleared, at
+ * once if one already has. Its scans (`scans`) complete with no finding once `auditing` settles, each recorded in the
+ * audit store as a real scan is; `scanBegun` settles as the first begins. Every evaluator after the first opens once
+ * `reopening` settles, as one compiling its rules does, and `reopened` settles as the second begins to. The first
+ * evaluator to close does so once `closing` settles, and fails to with `closeFails`; `closeBegun` settles as it begins to.
  */
 function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promise<void>; closeFails?: boolean; auditing?: Promise<void> } = {}) {
   const batches: CodeRuleEditBatch[] = [];
   const scans: string[] = [];
   const looked = new Set<string>();
+  // The test's waits for a walk's look, by path: each settles at that look, so no clock decides whether the walk came.
+  const lookWaits = new Map<string, PromiseWithResolvers<void>>();
+  const lookedAt = (path: string): Promise<void> => {
+    if (looked.has(path)) return Promise.resolve();
+    const wait = lookWaits.get(path) ?? Promise.withResolvers<void>();
+    lookWaits.set(path, wait);
+    return wait.promise;
+  };
+  const scanBegun = Promise.withResolvers<void>();
   const reopened = Promise.withResolvers<void>();
   const closeBegun = Promise.withResolvers<void>();
   let opened = 0;
@@ -242,6 +509,8 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
     },
     acceptsPath: (path) => {
       looked.add(path);
+      lookWaits.get(path)?.resolve();
+      lookWaits.delete(path);
       return true;
     },
     auditGeneratedEdits: async (_sessionId, batch) => {
@@ -250,6 +519,7 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
     },
     audit: async (sessionId, input) => {
       scans.push(input.scope);
+      scanBegun.resolve();
       await options.auditing;
       const auditId = audits.start({
         sessionId, workspaceRoot, scope: input.scope, mode: input.mode, revision: 0, catalogRevision: "test", ruleRevisions: [], paths: [],
@@ -265,7 +535,7 @@ function recordingAuditor(options: { reopening?: Promise<void>; closing?: Promis
       if (options.closeFails === true) throw new Error("close failed");
     },
   });
-  return { create, batches, scans, looked, reopened: reopened.promise, closeBegun: closeBegun.promise };
+  return { create, batches, scans, looked, lookedAt, scanBegun: scanBegun.promise, reopened: reopened.promise, closeBegun: closeBegun.promise };
 }
 
 /** Each audited edit of `path`: the text it left, and the text it was measured from, or why there was none. */
@@ -300,19 +570,29 @@ describe("the engine service's idle close", () => {
     }
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-${process.pid}-${Date.now()}` : join(root, "engine.sock");
     const clock = { now: 1_000_000 };
-    const service = await startEngineService({
+    // The daemon has no room for a runtime no session uses, so the closed session's runtime goes with it.
+    const needsRoom = options.needsRoom ?? (() => true);
+    const engine = await startEngineService({
       socketPath,
       storageRoot: join(root, "state"),
       databasePath,
       embedder: testEmbedder,
       idleSessionMs: 60_000,
-      // The runtime closes when its last session does, so the closed session's runtime goes with it.
-      idleRuntimeMs: 0,
       now: () => clock.now,
       createAuditor: quietAuditor,
       ...options,
+      needsRoom,
     });
-    services.push(service);
+    services.push(engine);
+    // A sweep of a daemon that needs the room closes what no session uses, the runtime a suspended session left last too,
+    // as the heap watch's relief does: the minute's sweep alone keeps the one left last for its checkout's next session.
+    const service: EngineService = {
+      ...engine,
+      closeIdleSessions: async () => {
+        await engine.closeIdleSessions();
+        if (needsRoom()) await engine.closeUnusedRuntimes();
+      },
+    };
     const session = (sessionId: string, cwd = first) => ({ host, sessionId, cwd });
     const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
     return {
@@ -324,7 +604,7 @@ describe("the engine service's idle close", () => {
       nextService: async (now: () => number) => {
         const next = await startEngineService({
           socketPath: process.platform === "win32" ? `${socketPath}-next` : join(root, "next.sock"),
-          storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0, now,
+          storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, needsRoom: () => true, now,
           createAuditor: quietAuditor,
         });
         services.push(next);
@@ -453,12 +733,12 @@ describe("the engine service's idle close", () => {
   // stand. A close that went on then would cut the scan off: "Session closed during scan".
   it("keeps a quiet session open when it takes a scan while the idle close reads its walks, and runs the scan", async () => {
     const auditing = Promise.withResolvers<void>();
-    const { create, scans, looked } = recordingAuditor({ auditing: auditing.promise });
+    const { create, scans, lookedAt } = recordingAuditor({ auditing: auditing.promise });
     const { first, clock, service, start, ended, databasePath } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the idle close reads where the walks stand.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     const reading = holdWalkResume();
     const controls = new SqliteAuditControlStore(databasePath);
     try {
@@ -512,11 +792,11 @@ describe("the engine service's idle close", () => {
   // Before, each write of the open waited for another process's write lock up to 5 s on the daemon's thread, then the
   // failed open's scans waited 5 s more to fail: health, the dashboard and every hook waited 10 s with them.
   it.each([
-    ["closed", 0],
-    ["still open", 60_000],
-  ])("opens a quiet session for a scan only once another process's write lock is free, its runtime %s, without waiting for it", async (_, idleRuntimeMs) => {
+    ["closed", true],
+    ["still open", false],
+  ])("opens a quiet session for a scan only once another process's write lock is free, its runtime %s, without waiting for it", async (_, short) => {
     const { create, scans } = recordingAuditor();
-    const { clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, idleRuntimeMs });
+    const { clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, needsRoom: () => short });
     await start("a");
     clock.now += 60_000;
     await service.closeIdleSessions();
@@ -536,6 +816,324 @@ describe("the engine service's idle close", () => {
         expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
       }, { timeout: 10_000, interval: 50 });
       expect(scans).toEqual(["repository"]);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the open was tried again on a 250 ms timer, each try opening a writer, for as long as the lock was held. The
+  // open meets the lock before it reads the session's record, which would first wait for this process's waiting writes.
+  it("opens a quiet session for a scan when another process gives back the write lock, with no timer trying it again", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const sessions = new SqliteSessionStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
+      const finished = requestFinished(request.id);
+      writer.exec("BEGIN IMMEDIATE");
+      // Another session's record waits for the lock in this process.
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
+      vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+      const resumed = process.hrtime.bigint();
+      await service.resumeSession("a");
+      expect(Number(process.hrtime.bigint() - resumed) / 1e6).toBeLessThan(1_000);
+      expect(vi.getTimerCount()).toBe(0);
+      vi.useRealTimers();
+      writer.exec("ROLLBACK");
+      await finished;
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      sessions.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // In a runtime still open the service does not try the lock first: the runtime's open meets it before reading the
+  // session's record, which would first wait, on the daemon's thread, for this process's writes waiting for the lock.
+  it("tries a quiet session's open for a scan in a runtime still open without waiting for the held lock", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath } = await idleService({ createAuditor: create, needsRoom: () => false });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const sessions = new SqliteSessionStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
+      const finished = requestFinished(request.id);
+      writer.exec("BEGIN IMMEDIATE");
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
+      const resumed = process.hrtime.bigint();
+      await service.resumeSession("a");
+      expect(Number(process.hrtime.bigint() - resumed) / 1e6).toBeLessThan(1_000);
+      writer.exec("ROLLBACK");
+      await finished;
+      expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      vi.restoreAllMocks();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      sessions.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the open read the session's record only once it had made this process's waiting record writes, waiting on the
+  // daemon's thread until the oldest was 5 s old, then met the lock again where it records the checkout, which waited
+  // 5 s more and failed the open. It waits for neither now: the checkout's record, the session's row and its claim wait
+  // in this process's record writer, behind the other session's row, until the lock is given back.
+  it("opens a session at once while another process holds the write lock, behind another session's waiting records", async () => {
+    const { start, turnEnd, live, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    // The first session's walk and checks, which run on after its start, end before the lock is taken: a write of theirs
+    // would wait for it on the same thread.
+    await turnEnd("a", "turn");
+    const sessions = new SqliteSessionStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      // Another session's record waits for the lock in this process.
+      sessions.openSession({ sessionId: "other", host: "claude-code", cwd: databasePath }, 1_000);
+      const asked = performance.now();
+      await start("b");
+      // This thread holds the lock's holder too: any wait for the lock here would last the 5 s busy timeout.
+      expect(performance.now() - asked).toBeLessThan(5_000);
+      writer.exec("ROLLBACK");
+      // Once the lock is given back the session's record and claim are made, when the writer's lock wait finds it free,
+      // which another connection learns only from the database.
+      await vi.waitFor(() => expect(live("b")).toBe(true), { timeout: 10_000, interval: 20 });
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      sessions.close();
+    }
+  }, 30_000);
+
+  // Before, the open read the claim the suspension kept only from the database, which did not have it yet, and asked
+  // for a second one behind it: the first was made once the lock was free and the second refused, so the runtime held a
+  // claim the database lacked, never ran the session's scans, and refused every later open of the session.
+  it("keeps the claim of a session suspended and opened again while the claim waits for the write lock, and runs its scans", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, prompt, turnEnd, live, databasePath } = await idleService({ createAuditor: create, needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const scanned = async (): Promise<void> => {
+      const request = await controls.requestAudit("b", { scope: "repository" });
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("b").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+    };
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      // The lock is free, and the record writer's wait has not seen it: the session's claim still waits.
+      writer.exec("ROLLBACK");
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      await prompt("b", "back");
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(live("b")).toBe(true), { timeout: 10_000, interval: 20 });
+      await scanned();
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      await prompt("b", "again");
+      await scanned();
+      expect(scans).toEqual(["repository", "repository"]);
+    } finally {
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the suspension kept the claim its session asked for while another process held the write lock, and the
+  // claim, refused once the lock was given back, stayed on it: the daemon's stop interrupted the owner's scans.
+  it("leaves the owner's scans queued as it ends a session suspended while its claim waited, once that claim was refused", async () => {
+    const { clock, service, start, turnEnd, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.exec("COMMIT");
+      // The lock is free, and the record writer's wait has not seen it: the session is suspended while its claim waits.
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      const queued = await controls.requestAudit("b", { scope: "repository" });
+      services.splice(services.indexOf(service), 1);
+      await service.close();
+      expect(controls.listAuditRequests("b").find(request => request.id === queued.id)?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the runtime made again for a session suspended while its claim waited took that claim, and only the runtime
+  // that asked for it was told once it was refused: the session's end interrupted the owner's scans.
+  it("leaves the owner's scans queued as a session opened again in a new runtime ends, once the claim it took was refused", async () => {
+    const { clock, service, start, prompt, turnEnd, send, session, databasePath } = await idleService();
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    // Another runtime's store over the database, whose use of this process's record writer keeps the claim waiting as
+    // `b`'s runtime closes.
+    const records = new SqliteSessionStore(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.exec("COMMIT");
+      clock.now += 60_000;
+      await service.closeIdleSessions();
+      // `b`'s runtime closed with `a` and `b` suspended: `b`'s next event makes it again, and it takes the waiting claim.
+      expect(service.openRuntimes()).toBe(0);
+      await prompt("b", "back");
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      const queued = await controls.requestAudit("b", { scope: "repository" });
+      await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b") });
+      expect(controls.listAuditRequests("b").find(request => request.id === queued.id)?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      records.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the end interrupted the session's checkout audit and its scans on the audit controls' own connection, which
+  // waited on the daemon's thread for the lock up to 5 s, every other session's hooks waiting too, then failed: the end
+  // answered the lock's error, and the session's record stayed open, owned by a runtime that had let it go.
+  it("ends a session at once while another process holds the write lock, and its record and owner once the lock is given back", async () => {
+    const { start, turnEnd, send, session, ended, live, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await start("b");
+    // The sessions' walks and checks, which run on after their starts, end before the lock is taken: a write of theirs
+    // would wait for it on the same thread.
+    await turnEnd("a", "turn");
+    await turnEnd("b", "turn");
+    const writer = new Database(databasePath);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      const asked = performance.now();
+      await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      // This thread holds the lock's holder too: any wait for the lock here would last the 5 s busy timeout, then fail.
+      expect(performance.now() - asked).toBeLessThan(5_000);
+      expect(ended("a")).toBeNull();
+      writer.exec("ROLLBACK");
+      // The end's writes wait in this process's record writer until its lock wait finds the lock given back, which
+      // another connection learns only from the database.
+      await vi.waitFor(() => {
+        expect(ended("a")).not.toBeNull();
+        expect(live("a")).toBe(false);
+      }, { timeout: 10_000, interval: 20 });
+      expect(live("b")).toBe(true);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+    }
+  }, 30_000);
+
+  // Before, a session that ended while its claim still waited for the lock interrupted its scans on the audit controls'
+  // own connection, at once once the lock was free: ahead of the claim, which was then refused, so the end interrupted
+  // the scans of the runtime that owns the session.
+  it("leaves the owner's scans queued as a session ends while its claim waits for the write lock, once that claim is refused", async () => {
+    const { start, turnEnd, send, session, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    await turnEnd("a", "turn");
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    const lockWait = Promise.withResolvers<void>();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaitGate.held = lockWait.promise;
+      await start("b");
+      claimFirst(writer, "b");
+      writer.prepare("INSERT INTO audit_requests (id, session_id, workspace_root, scope, mode, paths_json, status, created_at, audit_ids_json) VALUES ('owner-scan', 'b', ?, 'repository', 'log', '[]', 'queued', 0, '[]')")
+        .run(dirname(databasePath));
+      writer.exec("COMMIT");
+      // The lock is free, and the record writer's wait has not seen it: `b`'s claim still waits as its end comes.
+      await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b") });
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      await vi.waitFor(() => expect(stderr.mock.calls.map(([text]) => String(text)))
+        .toContain("rerail: the claim on session b was not made, so this process does not own it\n"), { timeout: 10_000, interval: 20 });
+      expect(controls.listAuditRequests("b").find(request => request.id === "owner-scan")?.status).toBe("queued");
+    } finally {
+      stderr.mockRestore();
+      lockWaitGate.held = undefined;
+      lockWait.resolve();
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+      controls.close();
+    }
+  }, 30_000);
+
+  // Before, the wait went on, a worker thread with its own connection watching the database's log, until the lock was
+  // given back, though nothing was left for it to open. An event of the session cannot open it while the lock is held.
+  it("stops a quiet session's wait for the write lock its open for a scan met once the session's end comes", async () => {
+    const { clock, service, start, send, session, databasePath } = await idleService({ needsRoom: () => false });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    const writer = new Database(databasePath);
+    try {
+      await controls.requestAudit("a", { scope: "repository" });
+      writer.exec("BEGIN IMMEDIATE");
+      lockWaits.length = 0;
+      await service.resumeSession("a");
+      const [wait] = lockWaits.filter(begun => begun.resume);
+      expect(wait?.signal?.aborted).toBe(false);
+      // Its runtime cannot record the end while the lock is held; the service ends the suspended session's record anyway.
+      await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") }).catch(() => undefined);
+      expect(wait!.signal!.aborted).toBe(true);
     } finally {
       if (writer.inTransaction) writer.exec("ROLLBACK");
       writer.close();
@@ -617,8 +1215,8 @@ describe("the engine service's idle close", () => {
   // the folder stayed gone. Opening the session again to run the scan made the folder anew with Rerail's records.
   it("ends a quiet session whose checkout was removed, rather than open it again for a scan, and fails the scan", async () => {
     const { create, scans } = recordingAuditor();
-    // Its runtime outlives the session a while, as in a daemon, so it is still there when the scan is asked for.
-    const { first, clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, idleRuntimeMs: 1_000 });
+    // Its runtime outlives the session, as in a daemon with room, so it is still there when the scan is asked for.
+    const { first, clock, service, start, databasePath, ended } = await idleService({ createAuditor: create, needsRoom: () => false });
     await start("a");
     clock.now += 60_000;
     const quietAt = clock.now;
@@ -636,8 +1234,14 @@ describe("the engine service's idle close", () => {
       });
       expect(ended("a")).toBe(quietAt);
       expect(scans).toEqual([]);
-      // The runtime the scan's ask kept still closes once unused.
-      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0), { timeout: 5_000, interval: 50 });
+      // The runtime the scan's ask kept is unused, and the minute's sweep closes it once it has been kept 15 minutes, as
+      // every runtime no session used was, and its look finds the checkout gone.
+      expect(service.openRuntimes()).toBe(1);
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(1);
+      clock.now += 15 * MINUTE;
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(0);
     } finally {
       controls.close();
     }
@@ -675,12 +1279,12 @@ describe("the engine service's idle close", () => {
   // close had finished.
   it("runs a scan asked for a quiet session while its close runs", async () => {
     const closing = Promise.withResolvers<void>();
-    const { create, scans, looked, closeBegun } = recordingAuditor({ closing: closing.promise });
+    const { create, scans, lookedAt, closeBegun } = recordingAuditor({ closing: closing.promise });
     const { first, clock, service, start, databasePath } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the sweep's close waits for it.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     const sweeping = service.closeIdleSessions();
     await closeBegun;
@@ -691,6 +1295,40 @@ describe("the engine service's idle close", () => {
       const resuming = service.resumeSession("a");
       closing.resolve();
       await Promise.all([sweeping, resuming]);
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
+  // The close's release kept the session's runtime as one no session uses, and the open for the scan then used it
+  // without taking it out: once the daemon needed the room, the next room check closed it under the reopened session.
+  it("closes no runtime a scan opened its session in again during the session's close, once the daemon needs the room", async () => {
+    const closing = Promise.withResolvers<void>();
+    const room = { short: false };
+    const { create, lookedAt, closeBegun, scans } = recordingAuditor({ closing: closing.promise });
+    const { first, second, clock, service, start, databasePath } = await idleService({ createAuditor: create, needsRoom: () => room.short });
+    await writeFile(join(first, "app.py"), "x = 1\n");
+    await start("a");
+    await lookedAt("app.py");
+    clock.now += 60_000;
+    const sweeping = service.closeIdleSessions();
+    await closeBegun;
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = (await controls.requestAudit("a", { scope: "repository" }));
+      const resuming = service.resumeSession("a");
+      closing.resolve();
+      await Promise.all([sweeping, resuming]);
+      room.short = true;
+      await service.closeUnusedRuntimes();
+      expect(service.openRuntimes()).toBe(1);
+      // A runtime opening in another checkout closes nothing.
+      await start("b", second);
+      expect(service.openRuntimes()).toBe(2);
       await vi.waitFor(() => {
         expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
       }, { timeout: 10_000, interval: 50 });
@@ -777,7 +1415,7 @@ describe("the engine service's idle close", () => {
 
   // The end opens the suspended session again to close it. An open that failed lost the end: the record stayed open and
   // owned, read as live until the daemon stopped, and the runtime made for the end stayed open as long.
-  it("ends a quiet session's record when its end comes and it cannot be opened again, and closes the runtime made for it", async () => {
+  it("ends a quiet session's record when its end comes and it cannot be opened again, and the runtime made for it goes when the daemon needs the room", async () => {
     let made = 0;
     const { clock, service, session, send, start, ended, live } = await idleService({
       createAuditor: () => {
@@ -794,18 +1432,96 @@ describe("the engine service's idle close", () => {
     expect(made).toBe(2);
     expect(ended("a")).not.toBeNull();
     expect(live("a")).toBe(false);
+    // The runtime made for the end is kept as any runtime no session uses is, until the daemon needs the room.
+    expect(service.openRuntimes()).toBe(1);
+    await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
+  });
+
+  // A quiet session's end opens it again in its checkout's runtime to close it, and notes no use of the runtime. The
+  // end's hold on the runtime ended as its work began, so the runtime read as kept while the end still ran in it, and a
+  // relief closed it under the end.
+  it("writes a quiet session's end and closes nothing under it while the daemon is short of room", async () => {
+    const hold = { on: false, entered: Promise.withResolvers<void>(), released: Promise.withResolvers<void>() };
+    const { clock, service, session, send, start, ended, live } = await idleService({
+      beforeSessionPublish: async () => {
+        if (!hold.on) return;
+        hold.on = false;
+        hold.entered.resolve();
+        await hold.released.promise;
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      hold.on = true;
+      const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      await hold.entered.promise;
+      // The heap watch's relief while the end opens the session: it closes every runtime no session uses.
+      const relief = service.closeUnusedRuntimes();
+      expect(disposed).not.toHaveBeenCalled();
+      hold.released.resolve();
+      await Promise.all([ending, relief]);
+      expect(disposed).not.toHaveBeenCalled();
+      expect(ended("a")).not.toBeNull();
+      expect(live("a")).toBe(false);
+      // Once the end's work has ended, its runtime is kept as any runtime no session uses.
+      expect(service.openRuntimes()).toBe(1);
+      await service.closeUnusedRuntimes();
+      expect(service.openRuntimes()).toBe(0);
+    } finally {
+      disposed.mockRestore();
+    }
+  });
+
+  // The end of a quiet session whose runtime was kept, as the daemon had room at the idle close, comes once the daemon is
+  // short of room. The end notes no use of the runtime: only its claim keeps the heap watch's relief from closing the
+  // runtime under it, and without it the end was lost ("The database connection is not open").
+  it("writes the end of a quiet session whose runtime was kept, and closes nothing under it once the daemon is short of room", async () => {
+    const hold = { on: false, entered: Promise.withResolvers<void>(), released: Promise.withResolvers<void>() };
+    const room = { short: false };
+    const { clock, service, session, send, start, ended } = await idleService({
+      needsRoom: () => room.short,
+      beforeSessionPublish: async () => {
+        if (!hold.on) return;
+        hold.on = false;
+        hold.entered.resolve();
+        await hold.released.promise;
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    room.short = true;
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      hold.on = true;
+      const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      await hold.entered.promise;
+      const relief = service.closeUnusedRuntimes();
+      const disposedDuringEnd = disposed.mock.calls.length;
+      hold.released.resolve();
+      await Promise.all([ending, relief]);
+      expect({ disposedDuringEnd, ended: ended("a") !== null }).toEqual({ disposedDuringEnd: 0, ended: true });
+    } finally {
+      hold.released.resolve();
+      disposed.mockRestore();
+    }
   });
 
   // A suspension whose close failed was kept by nobody: its next event could not open it, its owner still active, and
   // its record stayed open and owned after the daemon stopped.
   it("keeps a quiet session suspended when its close fails, so its next event opens it again", async () => {
-    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { create, lookedAt } = recordingAuditor({ closeFails: true });
     const { first, clock, service, start, prompt, ended, live } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
     // The evaluator is open, so the sweep's close waits for it, and fails.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(ended("a")).toBeNull();
@@ -815,11 +1531,11 @@ describe("the engine service's idle close", () => {
   });
 
   it("ends a quiet session whose close failed when the service stops", async () => {
-    const { create, looked } = recordingAuditor({ closeFails: true });
+    const { create, lookedAt } = recordingAuditor({ closeFails: true });
     const { first, clock, service, start, ended, live } = await idleService({ createAuditor: create });
     await writeFile(join(first, "app.py"), "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(ended("a")).toBeNull();
@@ -829,22 +1545,22 @@ describe("the engine service's idle close", () => {
     expect(live("a")).toBe(false);
   });
 
-  // The service's stop ended its quiet sessions one after another and stopped at the first that failed (a database
-  // busy past its wait): each one after it stayed open and owned, with nothing left to end it.
+  // The service's stop ended its quiet sessions one after another and stopped at the first that failed (a write of its
+  // end that failed as it was made): each one after it stayed open and owned, with nothing left to end it.
   it("ends every other quiet session's record when the service stops and ending one fails", async () => {
     const { second, clock, service, start, ended } = await idleService();
     await start("a");
     await start("b", second);
     clock.now += 60_000;
     await service.closeIdleSessions();
-    const interrupt = vi.spyOn(SqliteAuditControlStore.prototype, "interrupt").mockImplementationOnce(() => {
+    const ending = vi.spyOn(SqliteAuditControlStore.prototype, "endOwnership").mockImplementationOnce(() => {
       throw new Error("database is locked");
     });
     services.splice(services.indexOf(service), 1);
     try {
       await service.close();
     } finally {
-      interrupt.mockRestore();
+      ending.mockRestore();
     }
     // Which of the two ends first depends on which close finished first.
     expect([ended("a"), ended("b")].filter(at => at !== null)).toHaveLength(1);
@@ -872,7 +1588,7 @@ describe("the engine service's idle close", () => {
   // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded
   // it in Log; after the idle close the reopened session's first walk took it as its baseline and recorded nothing.
   it("records another writer's change to a file the session edited, made while the session was quiet, as its open walk did", async () => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create });
     const [changed, removed, untouched] = [join(first, "app.py"), join(first, "gone.py"), join(first, "other.py")];
     await writeFile(changed, "x = 1\n");
@@ -880,7 +1596,7 @@ describe("the engine service's idle close", () => {
     await writeFile(untouched, "z = 1\n");
     await start("a");
     // The evaluator is open once the session's first walk has asked about the files, so the edits below are checked.
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     // The agent edits two files with its own tools, and its turn ends.
     await writes("a", "t1", "Write", changed, "x = 2\n");
     await writes("a", "t2", "Write", removed, "y = 2\n");
@@ -910,13 +1626,13 @@ describe("the engine service's idle close", () => {
   // that text and only the lines the write changed were the agent's. The reopened session had lost the text, so every
   // line of the file read as the agent's (`previousReadError`), and a rule judging the agent's lines judged them all.
   it("measures a shell write to a file the session edited before it went quiet from the text the session left there", async () => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     // A repository whose Git does not hold the session's text of the file, as with any edit not yet committed.
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -936,12 +1652,12 @@ describe("the engine service's idle close", () => {
   // wait has run out.
   it("measures it so too when the write lands while the reopened session's rules compile", async () => {
     const reopening = Promise.withResolvers<void>();
-    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { create, batches, lookedAt, reopened } = recordingAuditor({ reopening: reopening.promise });
     const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { host: "omp" });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -958,12 +1674,12 @@ describe("the engine service's idle close", () => {
   // before the reopened session had read the file's text back, so a command that ran first left nothing to measure from.
   // In Claude Code the call also waits for the reopened session's rules, which open after the read back; OMP's does not.
   it.each(["claude-code", "omp"] as const)("answers the event that opens a quiet session again once the text of the files its agent edited is read back, in %s", async (host) => {
-    const { create, batches, looked } = recordingAuditor();
+    const { create, batches, lookedAt } = recordingAuditor();
     const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { host });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await lookedAt("app.py");
     await writes("a", "t1", "Write", app, "x = 2\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -987,7 +1703,7 @@ describe("the engine service's idle close", () => {
   // command runs while the rules compile again, as in OMP (above).
   it("takes the agent's removal of a file it made, in its first command after the quiet, as its own, as the open session did", async () => {
     const reopening = Promise.withResolvers<void>();
-    const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
+    const { create, batches, looked, lookedAt, reopened } = recordingAuditor({ reopening: reopening.promise });
     const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true, host: "omp" });
     const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Rerail Test", "-c", "user.email=test@example.invalid", ...args], { cwd: first });
     git("commit", "--quiet", "--allow-empty", "-m", "start");
@@ -996,7 +1712,7 @@ describe("the engine service's idle close", () => {
     const [other, made] = [join(first, "other.py"), join(first, "made.py")];
     await writeFile(other, "z = 1\n");
     await start("a");
-    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await lookedAt("other.py");
     await writes("a", "t1", "Write", made, "x = 1\n");
     await turnEnd("a", "turn1");
     clock.now += 60_000;
@@ -1009,7 +1725,7 @@ describe("the engine service's idle close", () => {
     // The rules have compiled once the reopened session's first walk looks at the files, which finds the removal.
     looked.clear();
     reopening.resolve();
-    await vi.waitFor(() => expect(looked.has("other.py")).toBe(true));
+    await lookedAt("other.py");
     await turnEnd("a", "turn2");
     // Checked as the session's own edit, in the session's mode, not recorded in Log as another writer's.
     const removals = batches.filter(batch => batch.edits.some(edit => edit.path === "made.py" && edit.deleted === true));
@@ -1036,10 +1752,11 @@ describe("the engine service's idle close", () => {
   it("lets a quiet session's checkout audit finish before it suspends the session", async () => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const auditing = Promise.withResolvers<void>();
-    const { create, scans } = recordingAuditor({ auditing: auditing.promise });
+    const { create, scans, scanBegun } = recordingAuditor({ auditing: auditing.promise });
     const { clock, service, start } = await idleService({ createAuditor: create });
     await start("a");
-    await vi.waitFor(() => expect(scans).toEqual(["repository"]));
+    await scanBegun;
+    expect(scans).toEqual(["repository"]);
     clock.now += 60_000;
     const sweeping = service.closeIdleSessions();
     await Promise.race([sweeping, delay(2_000)]);
@@ -1271,7 +1988,7 @@ describe("the engine service's idle close", () => {
     const root = dirname(databasePath);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-again-${process.pid}-${Date.now()}` : join(root, "engine-again.sock");
     const again = await startEngineService({
-      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0,
+      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, needsRoom: () => true,
       createAuditor: quietAuditor,
     });
     services.push(again);
@@ -1296,7 +2013,7 @@ describe("the engine service's idle close", () => {
     const root = dirname(databasePath);
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-again-${process.pid}-${Date.now()}` : join(root, "engine-again.sock");
     const again = await startEngineService({
-      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, idleRuntimeMs: 0,
+      socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: 60_000, needsRoom: () => true,
       createAuditor: quietAuditor,
     });
     services.push(again);
@@ -1340,14 +2057,24 @@ describe("the engine service's idle close", () => {
 
   it("looks for quiet sessions every minute on its own", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const left = vi.spyOn(KeptRuntimes.prototype, "left");
     try {
-      const { clock, service, start, ended } = await idleService();
+      const { second, clock, service, start, ended } = await idleService();
       await start("a");
+      await start("b", second);
+      left.mockClear();
       clock.now += 60_000;
       vi.advanceTimersByTime(60_000);
-      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
+      // Both quiet sessions suspended: the runtimes they left are kept, under 15 minutes though the daemon needs the room.
+      await vi.waitFor(() => expect(left).toHaveBeenCalledTimes(2));
+      expect(service.openRuntimes()).toBe(2);
       expect(ended("a")).toBeNull();
+      // 15 minutes on, the minute's sweep closes them.
+      clock.now += 15 * 60_000;
+      vi.advanceTimersByTime(60_000);
+      await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
     } finally {
+      left.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -1404,6 +2131,15 @@ function ownerTokenOf(databasePath: string, sessionId: string): string {
   } finally {
     database.close();
   }
+}
+
+/**
+ * Another runtime's claim on `sessionId`, written through `writer`, which holds the write lock: a claim of this process
+ * waiting for that lock is refused once it is made.
+ */
+function claimFirst(writer: Database.Database, sessionId: string): void {
+  writer.prepare("INSERT INTO policy_session_owners (session_id, delivery, active, process_id, token, updated_at) VALUES (?, 'background', 1, ?, 'another runtime', 0)")
+    .run(sessionId, process.pid);
 }
 
 /** Makes the owner row of `sessionId` name process `pid`, through a connection of its own. */

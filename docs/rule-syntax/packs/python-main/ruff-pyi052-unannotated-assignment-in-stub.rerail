@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI052(at: node, name: loc) "Add a type annotation to `{name}` (`{name}: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value."
+.violation PYI052(at: node, name: node) "Add a type annotation to `{name}` (`{name}: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value."
     suppress noqa "PYI052"
 PYI052_raw(n, NAME) :- (pyi052_leaf(n) ; pyi052_container(n)), pyi052_value_of(n, NAME).
 
@@ -127,20 +127,20 @@ pyi052_special(n) :- kind(n, "identifier"),
 
 // plain_assign(n): the JSON util `plain-assign`, used where the JSON says `matches: "plain-assign"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl pyi052_plain_assign(n: node, name: loc)
+.decl pyi052_plain_assign(n: node, name: node)
 pyi052_plain_assign(n, NAME) :- kind(n, "assignment"), !pyi052_alt_11(n), child(p4, n, _),
     kind(p4, "expression_statement"), field(n, "left", c5), pyi052_target_name(c5, NAME).
 
 // value_of(n): the JSON util `value-of`, used where the JSON says `matches: "value-of"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl pyi052_value_of(n: node, name: loc)
+.decl pyi052_value_of(n: node, name: node)
 pyi052_value_of(n, NAME) :- field(p1, "right", n), pyi052_plain_assign(p1, NAME).
 pyi052_value_of(n, NAME) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
     pyi052_value_of(p2, NAME).
 
 // target_name(n): the JSON util `target-name`, used where the JSON says `matches: "target-name"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl pyi052_target_name(n: node, name: loc)
+.decl pyi052_target_name(n: node, name: node)
 pyi052_target_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !pyi052_special(n).
 pyi052_target_name(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pyi052_target_name(c1, NAME).
@@ -224,5 +224,5 @@ pyi052_alt_11(n) :- inside(n, p2, "function_definition").
 pyi052_alt_11(n) :- within_stop(n, p3, "class_definition"), pyi052_enum_class(p3).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI052_raw(at: node, name: loc)
+.decl PYI052_raw(at: node, name: node)
 PYI052(v0, v1) :- PYI052_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -274,8 +274,10 @@ fn binary_operators_equal_reference_on_every_executor() {
     let wants: Vec<_> = cases
         .iter()
         .flat_map(|&(name, f)| {
-            let two: Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
-            let one: Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>> = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
+            // A program's wanted outputs of a source's bytes.
+            type Want = Box<dyn Fn(&[u8]) -> Vec<Vector<u64>>>;
+            let two: Want = Box::new(move |bytes| vec![zip(&quote(bytes), &backslash(bytes), f)]);
+            let one: Want = Box::new(move |bytes| vec![zip(&quote(bytes), &quote(bytes), f)]);
             [(format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %1\n  block 0 output %2\n"), two), (format!("{QUOTE_AND_BACKSLASH}  block 0 %2 = {name} %0, %0\n  block 0 output %2\n"), one)]
         })
         .collect();

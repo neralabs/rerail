@@ -10,10 +10,12 @@ import type { AuditReader } from "../engine/audit/audit-store.js";
 import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { ApiCaller, RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 import type { MergeAssistService } from "../runtime/merge-assist/service.js";
+import type { ChangeFeed } from "./change-feed.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
 import { experimentEnabled, experimentOffMessage, experimentVariable, type ExperimentalFeature } from "../engine/experimental-features.js";
 
@@ -30,6 +32,13 @@ export interface RerailApiStores {
   preferences(): SqlitePresentationPreferenceStore;
   /** Writable handle on the one database: repositories, checkouts, rule configuration and the library. */
   database(): RerailDatabase;
+  /**
+   * Makes `write` on the database in one immediate transaction once its write lock is free, behind this process's
+   * waiting record writes (`RecordWriter.writeWhenFree`): tried at once, then at the pauses of SQLite's busy handler,
+   * the thread answering other requests and every session's hooks between tries. False, nothing made, once another
+   * process held the lock through those pauses, SQLite's 5 s, after which a statement waiting for the lock failed too.
+   */
+  writeWhenFree(write: (database: RerailDatabase) => void): Promise<boolean>;
   /** The rules and packs that ship with Rerail. */
   ruleCatalog(): RuleCatalog;
   /** Passive checkout lookup (never records), with each workspace's git location cached. */
@@ -38,8 +47,18 @@ export interface RerailApiStores {
   dataVersion(): string;
   /** {@link dataVersion} once the database exists; undefined before, without creating it. */
   historyVersion(): string | undefined;
-  /** Count a write made through these stores, for {@link dataVersion}. */
+  /** Count a write made through these stores, for {@link dataVersion}; it is a `data` notice of {@link changes} too. */
   markChanged(): void;
+  /**
+   * Puts every commit made so far on the disk (`syncHistoryLog`), off the caller's thread: the store's commits do not
+   * wait for the disk, and a change an operation made must be there before its caller hears it succeeded.
+   */
+  syncToDisk(): Promise<void>;
+  /**
+   * When what the stores answer may have changed, for the dashboard's change stream; stores without one serve no
+   * stream, and the dashboard then reads every 5 s, as it did before the stream.
+   */
+  changes?(): ChangeFeed;
   /**
    * Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities; with
    * `spelling`, the folder as a Windows host spelt it, also what Rerail 0.1.4 saved under it.
@@ -50,6 +69,8 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
+  /** The rule packs published on npm that fit this Rerail; undefined when this process does not read npm. */
+  publishedRulePacks(): PublishedRulePackReader | undefined;
   /**
    * Starts opening again a session this daemon suspended while it was quiet, so a scan just queued for it runs now;
    * nothing for any other session. Returns at once and never throws: a failure goes to the daemon's log, and the scan
@@ -114,6 +135,17 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * What `write` returns, made once the database's write lock is free (`RerailApiStores.writeWhenFree`), so a change
+ * waits for another process's lock off the thread that answers every session's hooks. A lock held past SQLite's 5 s
+ * answers `503 database-busy`: nothing was made, and the same change asked again once the holder ends is made.
+ */
+export async function writtenWhenFree<T>(stores: RerailApiStores, write: (database: RerailDatabase) => T): Promise<T> {
+  const answer: { made?: { readonly value: T } } = {};
+  if (await stores.writeWhenFree(database => { answer.made = { value: write(database) }; }) && answer.made !== undefined) return answer.made.value;
+  throw new ApiError(503, "database-busy", "the change was not made: another process held the Rerail database's write lock for 5 s, as rerail scrub or rerail reset does while it runs; try it again once that has finished");
+}
+
 /** Whether `operation` runs in this process: it belongs to no experimental feature, or to one that is on. */
 export function operationAvailable(operation: Operation, env: NodeJS.ProcessEnv = process.env): boolean {
   return operation.experiment === undefined || experimentEnabled(operation.experiment, env);
@@ -124,14 +156,37 @@ export function experimentalSummary(feature: ExperimentalFeature, description: s
   return `Experimental: answers 404 experimental-off unless the daemon runs with ${experimentVariable(feature)}=1. ${description}`;
 }
 
-/** Run one operation for one caller; a write that returns counts toward the stores' change token. */
+/**
+ * The handler's answer, given once a write it made is on the disk (`syncToDisk`). A sync that fails comes after the
+ * write committed, so the caller hears `503 not-on-disk`, that the change was made and not confirmed on the disk, and
+ * never that it failed: a caller told so could make a change such as an alias or an audit request twice.
+ */
+async function answerOnDisk(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
+  const result = await operation.handler(stores, input as never, caller);
+  if (operation.method === "GET") return result;
+  try {
+    await stores.syncToDisk();
+  } catch (error) {
+    const cause = error instanceof Error ? error.message : String(error);
+    throw new ApiError(503, "not-on-disk", `the change was made, but Rerail could not confirm it is on the disk: a power cut may still undo it, and trying it again may make it twice (${cause})`);
+  }
+  return result;
+}
+
+/**
+ * Run one operation for one caller; a write that returns counts toward the stores' change token, and is answered only
+ * once the log holding it is on the disk: a rule or setting change a person made must not roll back after a power cut
+ * once its caller heard it succeeded. A history write that waits in the record writer while another process holds the
+ * lock (`openRecordWriter`) commits after the answer, and the background sync takes it to the disk
+ * (`startHistorySync`). The sync runs off the daemon's thread, so no hook waits for it.
+ */
 export async function invokeOperation(operation: Operation, stores: RerailApiStores, input: Record<string, unknown>, caller: ApiCaller): Promise<unknown> {
   // Refused before anything runs, and before a write could count toward the change token.
   if (operation.experiment !== undefined && !operationAvailable(operation)) {
     throw new ApiError(404, "experimental-off", experimentOffMessage(operation.experiment, "start the Rerail daemon with"));
   }
   try {
-    return await operation.handler(stores, input as never, caller);
+    return await answerOnDisk(operation, stores, input, caller);
   } catch (error) {
     if (error instanceof InvalidCursorError) throw new ApiError(400, "invalid-cursor", error.message);
     throw error;

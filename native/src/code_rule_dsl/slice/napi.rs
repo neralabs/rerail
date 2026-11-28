@@ -3,7 +3,6 @@
 //! and coverage as JSON.
 
 use super::{Rules, Run, apply, audit};
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::facts::observe::roots::{buffered_root, git_root};
 use crate::code_rule_dsl::findings::contract::Coverage;
 use crate::code_rule_dsl::transducer::packed::ExecutionBackend;
@@ -43,9 +42,16 @@ fn failed(error: impl std::fmt::Debug) -> Error {
 
 #[napi]
 impl CodeRuleSlice {
-    /// Opens the store at `store_path` and lowers `policies` for `backend` ("cpu" or "metal").
+    /// Opens the store at `store_path` and lowers `policies` for `backend` ("cpu" or "metal"). Its caller is the Node
+    /// environment: the policies compile under the environment's object (`in_environment`).
     #[napi(constructor)]
-    pub fn new(store_path: String, policies: Vec<SlicePolicy>, capabilities_json: String, backend: String) -> Result<Self> {
+    pub fn new(env: napi::Env, store_path: String, policies: Vec<SlicePolicy>, capabilities_json: String, backend: String) -> Result<Self> {
+        let _in = crate::code_rule_dsl::in_environment(&env)?;
+        Self::open(store_path, policies, capabilities_json, backend)
+    }
+
+    /// `new`, under the object already on this thread.
+    pub(crate) fn open(store_path: String, policies: Vec<SlicePolicy>, capabilities_json: String, backend: String) -> Result<Self> {
         let backend = match backend.as_str() {
             // Interpreted first, the compiled binding swapped in once built (list step 16).
             "cpu" => ExecutionBackend::CpuBackground,
@@ -55,7 +61,7 @@ impl CodeRuleSlice {
         };
         let compiled = policies
             .into_iter()
-            .map(|policy| Ok((policy.name, CodeRuleDslRuntime::compile(policy.source, policy.format, capabilities_json.clone())?)))
+            .map(|policy| Ok((policy.name, crate::code_rule_dsl::compile_here(&policy.source, &policy.format, &capabilities_json)?)))
             .collect::<Result<Vec<_>>>()?;
         let store = ContentStore::open(Path::new(&store_path)).map_err(failed)?;
         let rules = Rules::lower(&compiled, backend).map_err(failed)?;

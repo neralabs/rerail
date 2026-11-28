@@ -31,8 +31,10 @@ sim_nops(t, n) :- bool_top(t, o), n = count : { bool_operand(t, o, _) }.
 // sim_truth(e, b): python/ruff's truth_of, parentheses off, with None as false.
 .decl sim_truth(e: node, b: symbol)
 sim_truth(e, b) :- unparen(e, m), truth_of(m, t), (t = "none", b = "false" ; t != "none", b = t).
-.decl zero_number(t: symbol)  // the text of a zero int or float literal: 0, 0x0, 0_0, 0.0, .0, 0e5, 0j (SIM113)
-zero_number(t) :- (kind(n, "integer") ; kind(n, "float")), text(n, t),
+// zero_number(n): int or float literal n is zero: 0, 0x0, 0_0, 0.0, .0, 0e5, 0j (SIM113). Keyed by the literal, in its
+// own file: keyed by its text, it was a table of every file's numbers, joined by text in the cross-file part (0677).
+.decl zero_number(n: node)
+zero_number(n) :- (kind(n, "integer") ; kind(n, "float")), text(n, t),
     (match("0[xXoObB][0_]+", t) ; match("[0_.]*([eE][-+]?[0-9_]+)?[jJ]?", t), contains("0", t)).
 
 .decl sim_bool_test(e: node)

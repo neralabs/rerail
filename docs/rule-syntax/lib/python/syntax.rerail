@@ -1,0 +1,76 @@
+// python/syntax: Python syntax helpers that read the tree alone, no name's binding: parentheses, a call's arguments,
+// a body's statements, docstrings, string forms. python/scopes includes it, so every Python rule has them, and so has
+// the phase py_names, which includes python/scopes and not python/ast or python/calls (they include python/names,
+// which reads the phase).
+
+// unparen(e, m): m is e with any parentheses taken off: `((x))` gives x. Every other node gives itself. A comment
+// inside the parentheses is a child of them too, so the expression is the one child that is not a comment:
+//   assert (
+//       # why
+//       a and b
+//   )                    unparen(<( … )>, <a and b>)
+.decl unparen(e: node, m: node)
+.pragma "magic-transform" "unparen"
+unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
+unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
+
+// call_arg(c, i, keyword, v): an argument of call c. Positional: i is its index and keyword is "".
+// Keyword `k=v`: i is -1 and keyword is "k". Splats (`*xs`, `**kw`) have no row.
+// e.g. `open(p, mode="w")` gives (c, 0, "", <p>) and (c, -1, "mode", <"w">).
+.decl call_arg(c: node, i: number, keyword: symbol, v: node)
+call_arg(c, i, "", a) :- posarg(c, i, a).
+call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, ka, _),
+    kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", v).
+// posarg(c, i, a): a is the argument at index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
+// The index counts all argument children but comments, so it matches param's index only while no keyword or splat
+// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rerail's pos_arg is CPython's call.args.
+.decl posarg(c: node, i: number, a: node)
+posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
+    !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),
+    i = count : { arg_child_at(al, j), j < k }.
+// arg_child_at(l, k): child k of argument list l is not a comment (posarg counts these).
+.decl arg_child_at(l: node, k: number)
+arg_child_at(l, k) :- kind(l, "argument_list"), child(l, b, k), !kind(b, "comment").
+
+// body_stmt(b, s, i): statement s is the i-th of body b (a block or the module), comments not counted.
+// body_len(b, k): how many there are. e.g. a def whose body is a docstring and `...` has body_len 2.
+.decl body_node(b: node)
+body_node(b) :- kind(b, "block").
+body_node(b) :- kind(b, "module").
+.decl body_stmt(b: node, s: node, i: number)
+body_stmt(b, s, i) :- body_node(b), child(b, s, _), !kind(s, "comment"),
+    i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }.
+.decl body_len(b: node, k: number)
+body_len(b, k) :- body_node(b), k = count : { child(b, s, _), !kind(s, "comment") }.
+// docstring(o, s): s is the docstring of module, class or def o: its first statement is a lone str literal
+// (doc_stmt). Ruff's is_docstring_stmt: parentheses off, adjacent literals joined; not bytes or an f-string.
+//   def f():
+//       ("Doc.")          docstring(<f>, <"Doc.">)
+//   def g():
+//       f"Doc."           no docstring
+.decl body_of(o: node, b: node)
+body_of(o, b) :- (kind(o, "function_definition") ; kind(o, "class_definition")), field(o, "body", b).
+body_of(m, m) :- kind(m, "module").
+.decl docstring(o: node, s: node)
+docstring(o, s) :- body_of(o, b), body_stmt(b, st, 0), doc_stmt(st, s).
+// doc_stmt(s, e): statement s is a lone str literal e, unparenthesised: Ruff's is_docstring_stmt.
+.decl doc_stmt(s: node, e: node)
+doc_stmt(s, e) :- kind(s, "expression_statement"), child(s, e0, 0), !child(s, _, 1), unparen(e0, e), plain_str_node(e).
+
+// fstring(n): n is an `ast.JoinedStr`: an f-string, or adjacent literals one of which is.
+.decl fstring(n: node)
+fstring(n) :- kind(n, "string"), child(n, s0, 0), kind(s0, "string_start"), text(s0, t),
+    match("[rRbBuU]*[fF][rR]?[\"'].*", t).
+fstring(c) :- kind(c, "concatenated_string"), child(c, s, _), fstring(s).
+// string_form(n, f): "str", "fstr", "bytes" or "tstr" (a template string, PEP 750), from the prefix.
+.decl string_form(n: node, f: symbol)
+string_form(n, "fstr") :- fstring(n).
+string_form(n, "bytes") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[bB][rR]?[\"'].*", t).
+string_form(n, "tstr") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rR]?[tT][rR]?[\"'].*", t).
+string_form(n, "str") :- kind(n, "string"), child(n, s0, 0), text(s0, t), match("[rRuU]*[\"'].*", t).
+// A string Constant's syntactic type does not require a scalar decoded value.
+// Python strings can contain lone surrogates, which Rust String cannot represent.
+.decl plain_str_node(e: node)
+plain_str_node(e) :- string_form(e, "str"), !fstring(e).
+plain_str_node(e) :- kind(e, "concatenated_string"),
+    count : { child(e, s0, _), !kind(s0, "comment"), !string_form(s0, "str") } = 0.

@@ -10,7 +10,7 @@
 // PYI024(n): a finding at node n, from clause `collections-named-tuple`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI024(at: loc, nt: node) "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
+.violation PYI024(at: place, nt: node) "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed."
     suppress noqa "PYI024"
 PYI024(NT, n) :- pyi024_nt_ref(n), node(_, n, _, _, _), NT = n.
 PYI024(NT, n) :- kind(n, "dotted_name"), inside(n, p1, "case_pattern"),
@@ -29,7 +29,7 @@ pyi024_nt_ref(n) :- kind(n, "attribute"), sym_of(n, "collections.namedtuple").
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   NT: metavariable this relation binds for the calling rule
-.decl pyi024_in_string(n: node, nt: loc)
+.decl pyi024_in_string(n: node, nt: node)
 pyi024_in_string(n, NT) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), pyi024_alt_4(c2, NT).
 
@@ -51,6 +51,6 @@ pyi024_alt_2(n) :- pyi024_aug_target(n).
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   NT: metavariable this relation binds for the calling rule
-.decl pyi024_alt_4(n: node, nt: loc)
+.decl pyi024_alt_4(n: node, nt: node)
 pyi024_alt_4(n, NT) :- pyi024_nt_ref(n), NT = n.
 pyi024_alt_4(n, NT) :- pyi024_in_string(n, NT).

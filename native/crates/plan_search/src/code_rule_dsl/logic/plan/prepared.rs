@@ -179,7 +179,7 @@ fn model_of(placed: &super::body::Placed, v: &Version, f: super::fields::Fields<
     let mut input_indexes: Vec<(String, Vec<Vec<String>>)> = Vec::new();
     for (rel, facts) in &layouts.0 {
         let name = v.rel_name(*rel);
-        let node_col = |c: usize| v.decl_of(name).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "loc"));
+        let node_col = |c: usize| v.decl_of(name).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| matches!(v.text(t), "node" | "place"));
         let facts: Vec<LayoutFact> = facts.iter().map(|(f, _)| f.clone()).collect();
         let Some(rows) = rows_of(&facts, &node_col) else { continue };
         stats.card.insert(name, rows);

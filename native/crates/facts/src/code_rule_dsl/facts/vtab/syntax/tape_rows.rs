@@ -15,7 +15,7 @@
 //! `doc`'s rows are a batch's documents themselves, one each, of what the documents are given.
 
 use super::cells::Cells;
-use super::made::ViewCounts;
+use super::made::{ColKind, ViewCounts};
 use super::ranks::Item;
 use super::tokens::TokRel;
 use super::{Batch, Projected, Shape};
@@ -37,17 +37,17 @@ pub struct Derived {
     named: OnceLock<Cells<[u32; 2]>>,
     /// Each node's place in `visit_index`'s order, by local id.
     visits: OnceLock<Cells<u32>>,
-    /// Each node's `tree_digest` atom, by local id.
-    digests: OnceLock<Cells<u32>>,
+    /// Each node's `tree_digest` hash, its 32 bytes, by local id.
+    digests: OnceLock<Cells<[u8; 32]>>,
     /// `doc`'s row of a file: its path's and module's atoms (`DocRow::doc`'s), for its entry (`ViewDoc::doc_path`).
     doc: OnceLock<[u32; 2]>,
 }
 
 impl Derived {
-    /// The columns made so far, as the view entry's runs take them: `[gaps before, gaps after, visits, digests]`, and
-    /// `named`.
-    pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 4], Option<&Cells<[u32; 2]>>) {
-        ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get(), self.digests.get()], self.named.get())
+    /// The columns made so far, as the view entry's runs take them: `[gaps before, gaps after, visits]`, `named`
+    /// and the digests.
+    pub(super) fn made(&self) -> ([Option<&Cells<u32>>; 3], Option<&Cells<[u32; 2]>>, Option<&Cells<[u8; 32]>>) {
+        ([self.gaps[0].get(), self.gaps[1].get(), self.visits.get()], self.named.get(), self.digests.get())
     }
     /// `doc`'s atoms, where its program reads `doc` (`derive`).
     pub(super) fn doc(&self) -> Option<[u32; 2]> {
@@ -131,6 +131,11 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     fn row(&self, at: &At, d: &Self::Doc, item: u32, k: u32, out: &mut [i64]);
     /// The tape nodes under tape node `x` that may have a row whose `parent()` column is `x`, in order.
     fn under(&self, _at: &At, _x: u32, _each: &mut dyn FnMut(u32)) {}
+    /// What column `column` holds where the batch alone bounds it (`Batch::bounds_of`, `Source::col_bounds`): none
+    /// said.
+    fn col_kind(&self, _column: usize) -> Option<ColKind> {
+        None
+    }
     /// Whether a lookup on `column` finds its items (`find`).
     fn keyed(&self, column: usize) -> bool {
         column == self.own() || Some(column) == self.parent()
@@ -138,7 +143,7 @@ pub(super) trait TapeRows: Send + Sync + 'static {
     /// The items (each with its document) a lookup of `value` on a `keyed` column may find, with a row or not: by the
     /// row's own id, its tape node; by a parent's, the nodes under it.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
-        let Some(doc) = batch.doc(value >> 32, &mut 0) else { return };
+        let Some(doc) = batch.doc(rerail_blocks::located::Located::key_wide(value), &mut 0) else { return };
         let at = At { batch, doc };
         let p = at.p();
         let Some(local) = p.local_of((value & 0xffff_ffff) as u32) else { return };
@@ -190,8 +195,9 @@ pub(super) struct RowsView<R: TapeRows> {
     batch: Arc<Batch>,
     rows: R,
     per: Box<[OnceLock<Per<R::Doc>>]>,
-    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`).
-    home: OnceLock<Option<Arc<crate::code_rule_dsl::facts::rows::IndexHome>>>,
+    /// Its index's home where the device reads it in place (`device_view`), as a view's (`Viewed::home`): room for an
+    /// index at every entry of its directory, found again by every later binding.
+    home: OnceLock<Option<crate::code_rule_dsl::facts::rows::Part>>,
 }
 
 impl<R: TapeRows> RowsView<R> {
@@ -258,11 +264,10 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !entries_hold(view, &self.batch) {
             return None;
         }
-        let mut in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
+        let in_place = in_place.read_of(view, Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>)?;
         let rows = self.len();
-        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::IndexHome::new(rows, rerail_blocks::relation::ADDED_INDEXES)).clone()?;
-        in_place.grows = Some(Arc::clone(&home));
-        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home: home.part() })
+        let home = self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()).clone()?;
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView { view, rows, in_place, home })
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -288,6 +293,10 @@ impl<R: TapeRows> Source for RowsView<R> {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.rows.statistics(&self.batch)
     }
+    /// By what the column holds (`TapeRows::col_kind`), from the batch's documents: no row made.
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.rows.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
     fn failure(&self) -> Option<String> {
         self.batch.docs.failure()
     }
@@ -298,6 +307,7 @@ impl<R: TapeRows> Source for RowsView<R> {
         out[column]
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let (doc, k) = self.locate(row);
         let mut all = [0; COLUMNS];
         self.read(doc, k, &mut all);
@@ -359,6 +369,9 @@ impl<R: TapeRows> Source for RowsView<R> {
     }
     /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
     fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize) = &mut |r| { let _caller = _kind.paused(); outer(r) };
         if !self.rows.keyed(column) {
             return false;
         }
@@ -471,7 +484,7 @@ pub(super) fn derive(batch: &Batch, doc: usize) {
             }
         }
         if wants(DIGEST) {
-            TreeDigest::atoms(&at);
+            TreeDigest::hashes(&at);
         }
     }
     if wants(NAMED) {
@@ -519,11 +532,6 @@ pub(super) fn strings(batch: &Batch, wants: &dyn Fn(&str) -> bool, each: &mut dy
             g.walk(p, &mut |_, a, b| each(if a < b { &source[a as usize..b as usize] } else { "" }));
         }
     }
-    if batch.shape == Shape::Core && wants(DIGEST) {
-        for d in 0..batch.docs.len() {
-            TreeDigest::hexes(&At { batch, doc: d }, &mut |_, h| each(h));
-        }
-    }
 }
 
 /// Atoms made into a projection's block: `texts` interned, in order.
@@ -557,7 +565,7 @@ impl Gap {
     /// Each row's gap, `(tape node, from, to)` in bytes of the source, in the tape's order of their parents.
     fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
         let f = p.f();
-        if f.len() > 0 && p.local_of_node(0) != NONE {
+        if !f.is_empty() && p.local_of_node(0) != NONE {
             match self.0 {
                 Side::Before => each(0, 0, f.start(0)),
                 Side::After => each(0, f.end(0), p.facts.source.len() as u32),
@@ -795,6 +803,10 @@ impl TapeRows for DocRow {
         out[1] = d[0];
         out[2] = d[1];
     }
+    /// Its document's key; its path's and module's atoms.
+    fn col_kind(&self, column: usize) -> Option<ColKind> {
+        Some(if column == 0 { ColKind::Key } else { ColKind::Atom })
+    }
     fn keyed(&self, column: usize) -> bool {
         column < 3
     }
@@ -886,37 +898,34 @@ impl TapeRows for VisitIndex {
 }
 
 /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of each node's subtree (`core_rr::digests`), of the
-/// nodes of a document with a grammar that parsed (a withheld one numbers none). A row a node (`Item::Node`); a hash
-/// is of the whole subtree, which the tape holds no digest of: each node's is kept as its atom, 4 bytes a node,
-/// interned on the document's first read (`// copy: derived`). Made as rows it was 6.8 MB of each chunk's block of
-/// sources at the M3's 300-file peak (ab200).
+/// nodes of a document with a grammar that parsed (a withheld one numbers none). A row a node (`Item::Node`); `h` is
+/// the hash's 64-bit value (`core_rr::digest_value`), a number, no text. A hash is of the whole subtree, which the
+/// tape holds no digest of: each node's 32 bytes are a derived column of the projection's block, 32 bytes a node,
+/// made on the document's first read, and read in place by the row and by `@tree_digest_hex` (the 64 hex digits, a
+/// text made only where a rule asks a node's). They were the nodes' atoms, interned on the first read: every node's
+/// 64 digits, 9,484 of the 15,048 hex atoms of the Python pack over 10 files, for PYI062's few Literal members. Made
+/// as rows it was 6.8 MB of each chunk's block of sources at the M3's 300-file peak (ab200).
 pub(super) struct TreeDigest;
 
 impl TreeDigest {
-    /// Each node of the projection of `at` (by local id, in order) with its digest's symbol; none for a document
-    /// with no grammar, or withheld.
-    fn hexes(at: &At, each: &mut dyn FnMut(u32, &str)) {
-        let Some(dialect) = at.batch.dialects.get(at.batch.docs.tag(at.doc)) else { return };
-        if at.batch.docs.withheld(at.doc) {
-            return;
-        }
-        let p = at.p();
-        let (hash, _) = super::core_rr::digests(p.f(), dialect, true, false);
-        let mut text = [0u8; 64];
-        for (local, id, _) in p.node_ids() {
-            each(local, super::core_rr::hex_into(&hash[id as usize], &mut text));
-        }
-    }
-
-    /// Each node's digest's atom, by local id: made on the document's first read of a row.
-    fn atoms<'a>(at: &'a At) -> &'a Cells<u32> {
+    /// Each node's hash, by local id: made on the document's first read; zero for a document with no grammar, or
+    /// withheld.
+    pub(super) fn hashes<'a>(at: &'a At) -> &'a Cells<[u8; 32]> {
         let p = at.p();
         p.derived.digests.get_or_init(|| {
-            // Every node's 64 digits in one buffer, each a slice of it.
-            let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
-            Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
-            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
-            interned(at, &texts, "a document's digests")
+            let len = p.len() as usize;
+            let dialect = at.batch.dialects.get(at.batch.docs.tag(at.doc)).filter(|_| !at.batch.docs.withheld(at.doc));
+            // copy: derived (the subtrees' hashes: the tape holds the nodes, not their digests)
+            Cells::build(p.block(), len.max(1), |out: &mut [[u8; 32]]| {
+                if let Some(dialect) = dialect {
+                    let (hash, _) = super::core_rr::digests(p.f(), dialect, true, false);
+                    for (local, id, _) in p.node_ids() {
+                        out[local as usize] = hash[id as usize];
+                    }
+                }
+                len.max(1)
+            })
+            .expect("a projection's block holds a view's digests")
         })
     }
 }
@@ -944,7 +953,7 @@ impl TapeRows for TreeDigest {
     fn doc(&self, _: &At) {}
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
-        out[1] = i64::from(Self::atoms(at)[k as usize]);
+        out[1] = super::core_rr::digest_value(&Self::hashes(at)[k as usize]);
     }
 }
 

@@ -120,7 +120,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "source" | "src_line" | "line_count" | "syntax_error" | "doc_grammar" | "tape_of" => (&[], &[0]),
         // A program's document underneath is its file's shard's.
         "rr_program" => (&[], &[1]),
-        "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"
+        "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "static_value_type_of" | "rr_value_lit" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"
         | "tree_digest" | "def_digest" | "spread" | "str_part_start" | "structural_before" | "structural_after" => (&[0], &[]),
         "first_token" | "last_token" | "token_before" | "token_after" | "end_point" => (&[0, 1], &[]),
@@ -349,7 +349,7 @@ impl Source for Family {
         if (location || document) && values.iter().all(|&v| v >= 0) {
             let mut rows = rerail_blocks::vector![];
             for &v in values {
-                let encoded = if location { v >> 32 } else { v };
+                let encoded = if location { rerail_blocks::located::Located::key_wide(v) } else { v };
                 if let Ok(key) = u32::try_from(encoded)
                     && let Some((p, base)) = self.get(key) {
                         rows.extend(
@@ -392,7 +392,7 @@ impl Source for Family {
             && lo.is_some_and(|(v, _)| v >= 0)
             && hi.is_none_or(|(v, _)| v >= 0)
         {
-            let key = |v: i64| if location { v >> 32 } else { v };
+            let key = |v: i64| if location { rerail_blocks::located::Located::key_wide(v) } else { v };
             let lower = key(lo.unwrap().0);
             if lower > i64::from(u32::MAX) {
                 return Some(rerail_blocks::vector![]);

@@ -172,7 +172,7 @@ ruf012_special_name(n) :- kind(n, "identifier"),
 
 // copy_ref(n): the JSON util `copy-ref`, used where the JSON says `matches: "copy-ref"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_copy_ref(n: node, b: loc)
+.decl ruf012_copy_ref(n: node, b: node)
 // B: not bound by this rule, so empty (unset) here, as in ast-grep.
 ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), (kind(n, "identifier") ; kind(n, "attribute")),
     sym_of(n, q1), ruf012_set_33(q1), unset(B).
@@ -185,20 +185,20 @@ ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), kind(n, "parenthesized_expre
 
 // copy_module_class(n, …): the JSON util `copy-module-class`, called with `matches` and arguments P
 //   B: metavariable of the calling rule, passed in (bound by the caller)
-.decl ruf012_copy_module_class(n: node, p: node, b: loc)
+.decl ruf012_copy_module_class(n: node, p: node, b: node)
 ruf012_copy_module_class(n, P, B) :- ruf012_demand_copy_module_class(n), node(_, n, _, _, _), P = n,
     inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
     kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3, ruf012_copy_class(c2, B).
 
 // copy_class(n): the JSON util `copy-class`, used where the JSON says `matches: "copy-class"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_copy_class(n: node, b: loc)
+.decl ruf012_copy_class(n: node, b: node)
 ruf012_copy_class(n, B) :- ruf012_demand_copy_class(n), kind(n, "class_definition"),
     field(n, "superclasses", c1), child(c1, c2, _), ruf012_copy_ref(c2, B).
 
 // ctypes_ref(n): the JSON util `ctypes-ref`, used where the JSON says `matches: "ctypes-ref"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_ctypes_ref(n: node, b: loc)
+.decl ruf012_ctypes_ref(n: node, b: node)
 // B: not bound by this rule, so empty (unset) here, as in ast-grep.
 ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n),
     (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), ruf012_set_35(q1),
@@ -212,7 +212,7 @@ ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n), kind(n, "parenthesized_e
 
 // ctypes_module_class(n, …): the JSON util `ctypes-module-class`, called with `matches` and arguments P
 //   B: metavariable of the calling rule, passed in (bound by the caller)
-.decl ruf012_ctypes_module_class(n: node, p: node, b: loc)
+.decl ruf012_ctypes_module_class(n: node, p: node, b: node)
 ruf012_ctypes_module_class(n, P, B) :- ruf012_demand_ctypes_module_class(n), node(_, n, _, _, _), P = n,
     inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
     kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3,
@@ -220,7 +220,7 @@ ruf012_ctypes_module_class(n, P, B) :- ruf012_demand_ctypes_module_class(n), nod
 
 // ctypes_class(n): the JSON util `ctypes-class`, used where the JSON says `matches: "ctypes-class"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_ctypes_class(n: node, b: loc)
+.decl ruf012_ctypes_class(n: node, b: node)
 ruf012_ctypes_class(n, B) :- ruf012_demand_ctypes_class(n), kind(n, "class_definition"),
     field(n, "superclasses", c1), child(c1, c2, _), ruf012_ctypes_ref(c2, B).
 
@@ -247,7 +247,7 @@ ruf012_assigned_mutable(n) :- kind(n, "assignment"), field(n, "right", c2),
 
 // ctypes_return(n): the JSON util `ctypes-return`, used where the JSON says `matches: "ctypes-return"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_ctypes_return(n: node, b: loc)
+.decl ruf012_ctypes_return(n: node, b: node)
 ruf012_ctypes_return(n, B) :- kind(n, "expression_statement"), child(n, c1, _),
     kind(c1, "assignment"), count : { child(c1, c2, _), kind(c2, "type") } = 0,
     field(c1, "left", c3), kind(c3, "identifier"), glob("_fields_", c3),
@@ -256,7 +256,7 @@ ruf012_ctypes_return(n, B) :- kind(n, "expression_statement"), child(n, c1, _),
 
 // after_ctypes_return(n): the JSON util `after-ctypes-return`, used where the JSON says `matches: "after-ctypes-return"`
 //   B: metavariable this relation binds for the calling rule
-.decl ruf012_after_ctypes_return(n: node, b: loc)
+.decl ruf012_after_ctypes_return(n: node, b: node)
 ruf012_after_ctypes_return(n, B) :- kind(n, "expression_statement"),
     (ruf012_ctypes_return(n, B) ; precedes(s1, n), ruf012_ctypes_return(s1, B)).
 

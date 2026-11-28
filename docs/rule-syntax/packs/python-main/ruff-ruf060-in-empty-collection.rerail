@@ -94,7 +94,7 @@ ruf060_in_compare(n) :- ruf060_single_compare(n), child(n, c1, _), ruf060_empty(
 
 // in_in_string(n): the JSON util `in-in-string`, used where the JSON says `matches: "in-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf060_in_in_string(n: node, c: loc)
+.decl ruf060_in_in_string(n: node, c: node)
 ruf060_in_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf060_alt_11(c2, C).
 
@@ -105,7 +105,7 @@ ruf060_not_in_compare(n) :- ruf060_single_compare(n), child(n, c1, _), ruf060_em
 
 // not_in_in_string(n): the JSON util `not-in-in-string`, used where the JSON says `matches: "not-in-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl ruf060_not_in_in_string(n: node, c: loc)
+.decl ruf060_not_in_in_string(n: node, c: node)
 ruf060_not_in_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf060_alt_13(c2, C).
 
@@ -117,7 +117,7 @@ ruf060_single_compare(n) :- kind(n, "comparison_operator"),
 // RUF060(n, detail): findings from clauses `membership-in-empty`, `membership-not-in-empty`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF060(at: loc, c: node, detail: symbol) "{detail} and simplify, or fill the collection if items were meant."
+.violation RUF060(at: node, c: node, detail: symbol) "{detail} and simplify, or fill the collection if items were meant."
     suppress noqa "RUF060"
 RUF060(C, n, "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False`") :- ruf060_in_compare(n),
     node(_, n, _, _, _), C = n.
@@ -481,12 +481,12 @@ ruf060_stop_10(n) :- node(_, n, _, _, _), !ruf060_trivia(n).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf060_alt_11(n: node, c: loc)
+.decl ruf060_alt_11(n: node, c: node)
 ruf060_alt_11(n, C) :- ruf060_in_compare(n), C = n.
 ruf060_alt_11(n, C) :- ruf060_in_in_string(n, C).
 
 // alt_13(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl ruf060_alt_13(n: node, c: loc)
+.decl ruf060_alt_13(n: node, c: node)
 ruf060_alt_13(n, C) :- ruf060_not_in_compare(n), C = n.
 ruf060_alt_13(n, C) :- ruf060_not_in_in_string(n, C).

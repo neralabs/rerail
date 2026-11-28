@@ -40,12 +40,12 @@ same_literals(n) :- binop(n, _, l, r), literal_type(l, t), literal_type(r, t).
 .decl harmless(n: node)
 harmless(n) :- (typeof_binary(n) ; same_literals(n)).
 
-.violation eqeqeq(at: span, want: symbol, saw: symbol) code "eqeqeq" "Expected '{want}' and instead saw '{saw}'."
+.violation eqeqeq(at: token, want: symbol, saw: symbol) code "eqeqeq" "Expected '{want}' and instead saw '{saw}'."
     suppress eslint "eqeqeq"
     suppress oxlint "eqeqeq"
     suppress biome "lint/suspicious/noDoubleEquals"
     fix autofix "Use '{want}' instead of '{saw}'."
     fix suggest "Use '{want}' instead of '{saw}'."
-eqeqeq(t, w, o) :- check(n, w), op_token(n, t), text(t, o).
+eqeqeq(t, w, o) :- check(n, w), op_token(n, t), token_text(t, o).
 autofix(t, w, _) :- op_token(n, t), check(n, w), harmless(n) => replace(t, `$w`).
 suggest(t, w, _) :- op_token(n, t), check(n, w), !harmless(n) => replace(t, `$w`).

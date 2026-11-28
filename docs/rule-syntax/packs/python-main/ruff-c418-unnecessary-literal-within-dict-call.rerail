@@ -10,7 +10,7 @@
 // C418(n): a finding at node n, from clause `unnecessary-literal-within-dict-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C418(at: loc, call: node) "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary."
+.violation C418(at: node, call: node) "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary."
     suppress noqa "C418"
 C418(CALL, n) :- c418_target(n), node(_, n, _, _, _), CALL = n.
 C418(CALL, n) :- c418_in_annotation(n, CALL).
@@ -39,12 +39,12 @@ c418_target(n) :- kind(n, "call"), field(n, "function", c1), c418_callee_dict(c1
 
 // in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
 //   CALL: metavariable this relation binds for the calling rule
-.decl c418_in_annotation(n: node, call: loc)
+.decl c418_in_annotation(n: node, call: node)
 c418_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), c418_alt_1(c2, CALL).
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   CALL: metavariable this relation binds for the calling rule
-.decl c418_alt_1(n: node, call: loc)
+.decl c418_alt_1(n: node, call: node)
 c418_alt_1(n, CALL) :- c418_target(n), CALL = n.
 c418_alt_1(n, CALL) :- c418_in_annotation(n, CALL).

@@ -37,6 +37,6 @@ vexpr_ref(g, x) :- vexpr_root(g, _), has(g, r, tref_kind), ref(r, x, "value"), !
 vexpr_script_ref(g, x) :- vexpr_ref(g, x), docof(g, d), vexpr_script_decl(d, x).
 .decl vexpr_bind(g: node, x: symbol, l: number, c: number)
 vexpr_bind(g, x, l, c) :- vexpr_root(g, "vue-for-alias"), has(g, id, tvar_kind), decl_site(_, x, id, "pattern", "value"),
-    line(id, l), col(id, c).
+    node_line_number(id, l), node_start_column(id, c).
 vexpr_bind(g, x, l, c) :- vexpr_root(g, "vue-params"), child(g, s, 0), kind(s, "expression_statement"), child(s, f, 0),
-    kind(f, "arrow_function"), decl_site(f, x, id, "param", "value"), line(id, l), col(id, c).
+    kind(f, "arrow_function"), decl_site(f, x, id, "param", "value"), node_line_number(id, l), node_start_column(id, c).

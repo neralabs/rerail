@@ -5,7 +5,8 @@
 //!
 //! - `tape`: the content key of a parsed text (`@parse`, `parse_of`, `tape_of`), stored as tapes always were (a
 //!   symbol: an atom over atoms).
-//! - `digest`: a 32-byte content hash, stored as its 64 hex digits (what `@sha256` and `@tree_digest` give).
+//! - `digest`: a 32-byte content hash, stored as its 64 hex digits (what `@sha256` and `@tree_digest_hex` give;
+//!   `@tree_digest` is a digest's 64-bit value, a number).
 //! - `blob`: an opaque payload a native step makes (a compiled plan, a matcher, a device model), stored as the
 //!   content key of its bytes in the store's objects, as a tape is.
 //!
@@ -26,7 +27,7 @@ use crate::code_rule_dsl::logic::front::Error;
 const CONTENT: [&str; 3] = ["tape", "digest", "blob"];
 
 /// The types a content-keyed value is not, besides the other content types.
-const OTHER: [&str; 8] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "span"];
+const OTHER: [&str; 11] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "line", "match", "token", "place"];
 
 /// The relations of `core.rerail` with a tape column, and their columns' types.
 const BUILT_IN: &[(&str, &[&str])] = &[

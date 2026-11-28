@@ -7,7 +7,7 @@ use crate::code_rule_dsl::logic::program_image::Builder;
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::plan::body;
-use crate::code_rule_dsl::logic::program_image::{Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{Cell, Lit as L, LitRef, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 mod factorize;
@@ -57,15 +57,35 @@ impl Locate {
 /// until every row handed on is located. The chunks then hand on only located rows, and the per-file memo holds for the
 /// rest of the program. The relations located; the `Err` names the moved relations where a round blocks one the moves
 /// cannot place, which none is.
-pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+///
+/// A move makes cross-file rules of the moved relations' file-local ones: each is pushed as every cross-file rule is
+/// (`PushLocalJoins`, its helpers added to `pushed`'s), so its file-local joins stay in the chunks and the cross part
+/// reads no base relation and no node (decisions 0677, 0727): a combined run's `violation`, moved for a policy's
+/// `@place` rule, keeps every other finding's location lookups per file.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>, pushed: &mut PushLocalJoins) -> Result<Vec<String>, Vec<String>> {
     let mut moved: Vec<String> = Vec::new();
     let mut located: Vec<String> = Vec::new();
+    // Whether a move since the last push left cross-file rules unpushed. The moves come first, every round of them,
+    // and one push after (a push a round made the data layer's preparation a push per moved relation: minutes); the
+    // push's helpers are file-local, located in turn (a round more), and pushed again only where that moved more.
+    let mut unpushed = false;
     loop {
         let mut locate = Locate::default();
         p.program(&mut locate);
         located.extend(locate.located);
         if locate.blocked.is_empty() {
-            return Ok(located);
+            if !unpushed {
+                return Ok(located);
+            }
+            unpushed = false;
+            let mut again = PushLocalJoins { leave: pushed.made.clone(), ..PushLocalJoins::default() };
+            p.program(&mut again);
+            for m in again.made {
+                if !pushed.made.contains(&m) {
+                    pushed.made.push(m);
+                }
+            }
+            continue;
         }
         let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
         if fresh.is_empty() {
@@ -74,6 +94,7 @@ pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::P
         }
         moved.extend(fresh.iter().cloned());
         p.program(&mut MoveCrossFile(fresh));
+        unpushed = true;
     }
 }
 
@@ -101,14 +122,14 @@ enum Doc {
     Var(Slot),
     /// One it leaves unnamed: body literal `.0`'s column `.1`, which then names it.
     Unnamed(usize, usize),
-    /// Through a node it binds: by `docof` (`true`) or `node`.
-    Through(Slot, bool),
+    /// Through a node it binds, by `docof`.
+    Through(Slot),
     /// Through a file's path it binds or writes out (decision 0665): body literal `.0`'s column `.1`, by
     /// `doc(d, p, …)` of `.2` columns.
     ByPath(usize, usize, usize),
     /// Through a node it leaves unnamed (decision 0680): body literal `.0`'s node column `.1`, `_`, named and read by
-    /// `docof` (`.2`) or `node`.
-    Wild(usize, usize, bool),
+    /// `docof`.
+    Wild(usize, usize),
     /// Through a relation of values it reads (decision 0680): body literal `.0`, read from that relation's located
     /// twin at the document.
     Twin(usize),
@@ -134,7 +155,8 @@ impl ProgramPass for Locate {
         let split = cx.get::<FileLocal>()?;
         let (file_local, constants) = split.found();
         let locations = &split.locations;
-        let super::on_version::Crossing { exports, .. } = super::on_version::crossing(v, f, &file_local);
+        let views = split.views();
+        let super::on_version::Crossing { exports, projected, .. } = super::on_version::crossing(v, f, &file_local, &views);
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
         let head = |r: &RuleRef<'_>| v.rel_name(r.head().rel());
         let local: BTreeSet<&str> = rules.iter().map(head).filter(|h| file_local.contains(*h) || constants.contains(*h)).collect();
@@ -145,16 +167,28 @@ impl ProgramPass for Locate {
             .filter(|r| local.contains(r) && locations.get(*r).is_none_or(|v| v.is_empty()))
             .map(str::to_owned)
             .collect();
-        let docof = f.is_input("docof");
+        // A covered view of values a cross-file rule reads whose rows over every file are the union of each chunk's
+        // (`FileLocal::relayed_views`, decisions 0680, 0708) is relayed by its located twin where each of its rules
+        // finds its document: the family is derived once, in the chunks, and the cross part reads values with their
+        // document. Where a rule finds none, its rows name no document, and the cross part derives its own
+        // (`crossing`'s `projected`): such a view is left, not blocked.
+        let view_targets: BTreeSet<String> = split.relayed_views.iter().filter(|q| local.contains(q.as_str()) && !targets.contains(*q)).cloned().collect();
+        let targets: BTreeSet<String> = targets.into_iter().chain(view_targets.iter().cloned()).collect();
+        // A node places its row by `docof`, a base relation of every program that answers every id (a node, a line, a
+        // comment no node is, a match), made an input where the program does not read it (`needs_docof`). `node`
+        // holds nodes alone: a comment's row placed through it was dropped.
+        let docof_read = f.is_input("docof");
         // `doc`'s width, where it is an input: a path key's row names its document through it (decision 0665).
         let doc_width = f.columns("doc").filter(|_| f.is_input("doc")).map(|c| c.len());
+        // The columns a row's document is found through, by `doc(d, p, …)`: `doc`'s path, and the path keys that hold a
+        // path as it is (`FileLocal::paths`). A name built from a path (`cat(p, "::", q)`) is a key the split places by,
+        // but `doc` holds no such name: a row relayed by one was found in no document, and dropped.
         let path_keys = |rel: &str| -> rerail_blocks::vector::Vector<usize> {
             match super::path_key_column(rel) {
                 Some(c) if !f.derives(rel) => rerail_blocks::vector![c],
-                _ => split.path_keys.get(rel).cloned().unwrap_or_default(),
+                _ => split.paths.get(rel).cloned().unwrap_or_default(),
             }
         };
-        let node_declared = f.declared("node");
         let node_typed = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
         let doc_type = f.column_type("node", 0).unwrap_or("int");
         // How many rules of a file-local head read each relation (not their own): a target read so is blocked.
@@ -168,17 +202,32 @@ impl ProgramPass for Locate {
         let mut items: Vec<Item<'_>> = rules.iter().map(|&r| Item::Keep(r)).collect();
         let mut ats: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
-        // The relayed targets, by name: the cross-file part's reads of each are made reads of its `at`.
-        let mut relayed: HashMap<String, usize> = HashMap::new();
+        // The relayed targets, by name, with their `at`'s name: the cross-file part's reads of each are made reads of it.
+        // `rewired`: a relay an earlier round made is read by a cross-file rule a later round's move made (0290).
+        let mut relayed: HashMap<String, String> = HashMap::new();
+        let mut rewired = false;
+        // A request (`WORLD`'s, a language's or the engine's) is asked by the cross-file part's fixpoint, a load's in its cone of requests
+        // (decision 0065 §2a), which reads no base relation: located, its rule would read `doc` there. It is left, and
+        // moved there with its readers, as a relation whose rows name no document is. C's `c_pp_tu_req(tu, spec)` over
+        // a configuration of stated tables alone (each a run constant), which was refused so before decision 0677's
+        // `extensible` tables stated empty made the configuration of a program stating few of them the same.
+        let requests: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::WORLD.iter().map(|&(_, q)| q).chain(f.answers().iter().map(|&(q, _)| v.rel_name(q))).collect();
         let outputs: BTreeSet<&str> = f.outputs().collect();
-        // The derived relations' location columns that hold documents, not nodes (decision 0680): each rule fills the
-        // column from a document column of a positive read, an input's (`document_column`) or another such. The
-        // greatest such set.
+        // Each relation's rules, by its name.
+        let mut by_head: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
+        for &r in &rules {
+            by_head.entry(head(&r)).or_default().push(r);
+        }
+        // The derived relations' columns that hold their row's document, not a node (decisions 0680, 0708): each rule
+        // fills the column from a document column of a positive read, an input's (`document_column`) or another such;
+        // a relation with stated facts has rows of no document. The greatest such set, so a recursive relation's
+        // (`pyl_rest(d, l, j, r)`) is one. An existence read (`exists_N(d)` of `doc(d, f, _), npm_ignored(f)`) and
+        // node's `pkg_bin_file(d)` name a row's document as `doc(d, …)` does.
         let mut doc_cols: BTreeSet<(&str, usize)> = rules
             .iter()
             .flat_map(|r| {
                 let rel = head(r);
-                locations.get(rel).into_iter().flatten().copied().filter(move |&c| f.derives(rel) && f.column_type(rel, c).is_some_and(|t| t != "node")).map(move |c| (rel, c))
+                (0..r.head().args().count()).filter(move |&c| f.derives(rel) && !f.has_facts(rel) && f.column_type(rel, c).is_none_or(|t| t != "node")).map(move |c| (rel, c))
             })
             .collect();
         loop {
@@ -192,7 +241,7 @@ impl ProgramPass for Locate {
                     _ => false,
                 })
             };
-            let bad: Vec<(&str, usize)> = doc_cols.iter().copied().filter(|&(rel, c)| !rules.iter().filter(|r| head(r) == rel).all(|r| fills(r, c, &doc_cols))).collect();
+            let bad: Vec<(&str, usize)> = doc_cols.iter().copied().filter(|&(rel, c)| !by_head.get(rel).into_iter().flatten().all(|r| fills(r, c, &doc_cols))).collect();
             if bad.is_empty() {
                 break;
             }
@@ -209,9 +258,13 @@ impl ProgramPass for Locate {
                     _ => None,
                 })
             };
-            // A relation's document column: an input's by its name, or a derived relation's location column that holds
-            // documents (`doc_cols`: `pyl_rest(d, l, j, r)`, decision 0680).
-            let document = |rel: &str| super::document_column(rel).or_else(|| locations.get(rel).and_then(|cs| cs.iter().copied().find(|&c| doc_cols.contains(&(rel, c)))));
+            // A relation's document column: an input's by its name, or a derived relation's that holds documents
+            // (`doc_cols`), a location column first (`pyl_rest(d, l, j, r)`, decision 0680; `exists_N(d)`, 0708).
+            let document = |rel: &str| {
+                super::document_column(rel)
+                    .or_else(|| locations.get(rel).and_then(|cs| cs.iter().copied().find(|&c| doc_cols.contains(&(rel, c)))))
+                    .or_else(|| doc_cols.range((rel, 0)..=(rel, usize::MAX)).next().map(|&(_, c)| c))
+            };
             let named = positive().find_map(|(_, a)| match document(v.rel_name(a.rel())).and_then(|c| a.args().nth(c)) {
                 Some(TermRef::Var(s)) => Some(s),
                 _ => None,
@@ -222,13 +275,12 @@ impl ProgramPass for Locate {
             if let Some((i, c)) = positive().find_map(|(i, a)| document(v.rel_name(a.rel())).filter(|&c| matches!(a.args().nth(c), Some(TermRef::Wild))).map(|c| (i, c))) {
                 return Some(Doc::Unnamed(i, c));
             }
-            let nodes = docof || node_declared;
             // A node that places its read's row: a node column of an input, or of a derived relation located by the
             // split. A node a relation of values holds, one with no location column (`spot(s)`, a place of any path),
             // is no document of its row: its row's is its located form's (`Doc::Twin`, decision 0680).
             let places = |rel: &str, c: usize| node_typed(rel, c) && (!f.derives(rel) || locations.get(rel).is_some_and(|cs| !cs.is_empty()));
-            if nodes && let Some(n) = positive().find_map(|(_, a)| a.args().enumerate().find_map(|(c, t)| t.var().filter(|_| places(v.rel_name(a.rel()), c)))) {
-                return Some(Doc::Through(n, docof));
+            if let Some(n) = positive().find_map(|(_, a)| a.args().enumerate().find_map(|(c, t)| t.var().filter(|_| places(v.rel_name(a.rel()), c)))) {
+                return Some(Doc::Through(n));
             }
             if let Some(w) = doc_width
                 && let Some((i, c)) = positive().find_map(|(i, a)| path_keys(v.rel_name(a.rel())).into_iter().find(|&c| matches!(a.args().nth(c), Some(TermRef::Var(_) | TermRef::Str(_)))).map(|c| (i, c)))
@@ -236,17 +288,13 @@ impl ProgramPass for Locate {
                 return Some(Doc::ByPath(i, c, w));
             }
             // A node left unnamed: each row of its relation is its node's document's (decision 0680).
-            if nodes && let Some((i, c)) = positive().find_map(|(i, a)| a.args().enumerate().find(|(c, t)| matches!(t, TermRef::Wild) && node_typed(v.rel_name(a.rel()), *c)).map(|(c, _)| (i, c))) {
-                return Some(Doc::Wild(i, c, docof));
+            if let Some((i, c)) = positive().find_map(|(i, a)| a.args().enumerate().find(|(c, t)| matches!(t, TermRef::Wild) && node_typed(v.rel_name(a.rel()), *c)).map(|(c, _)| (i, c))) {
+                return Some(Doc::Wild(i, c));
             }
             positive().find_map(|(i, a)| twin_ok.contains(v.rel_name(a.rel())).then_some(Doc::Twin(i)))
         };
         // The relations of values a located rule may read its document through (decision 0680): file-local, derived,
         // with no location column (each row one document's), each rule of which finds its document. The greatest such.
-        let mut by_head: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
-        for &r in &rules {
-            by_head.entry(head(&r)).or_default().push(r);
-        }
         let mut twin_ok: BTreeSet<String> = by_head
             .keys()
             .copied()
@@ -282,12 +330,37 @@ impl ProgramPass for Locate {
         };
         let mut at_of: HashMap<String, usize> = HashMap::new();
         let mut wanted: Vec<String> = Vec::new();
-        for rel in &targets {
+        // An output read by file-local rules is looked at again once the other targets are (`again`): a reader the
+        // round places through its twin (`resolved(k, q) :- answer(k, q)`, made `resolved_at`'s) no longer reads it,
+        // so it is located itself, its node-holding body left in the chunks. Blocked only if a reader still reads it.
+        let mut queue: std::collections::VecDeque<(String, bool)> = targets.iter().map(|r| (r.clone(), false)).collect();
+        while let Some((rel, again)) = queue.pop_front() {
+            let rel = &rel;
+            let left = view_targets.contains(rel);
+            if requests.contains(rel.as_str()) {
+                if !left {
+                    self.blocked.push(rel.clone());
+                }
+                continue;
+            }
             let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_LOCAL_READ);
             // Read locally but keyed by a path: each row's document is its path's (decision 0665).
-            let key = split.path_keys.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
-            // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again.
-            let key = key.filter(|_| !rules.iter().any(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc")));
+            let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
+            // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: a cross-file rule that
+            // reads the target now (a reader a later round's move took to the cross-file part, `MoveCrossFile`) reads it.
+            // Looked for where it is read (`key`) alone, its name made once.
+            let earlier = key.and_then(|_| {
+                let at = format!("{rel}_at");
+                rules.iter().find(|r| head(r).starts_with(&at) && {
+                    let read = reads(r);
+                    read.contains(rel.as_str()) && read.contains("doc")
+                })
+            });
+            if let (Some(_), Some(r)) = (key, earlier) {
+                relayed.insert(rel.clone(), head(r).to_owned());
+                rewired = true;
+                continue;
+            }
             if let (Some(col), Some(doc_width), Some(cols)) = (key, doc_width, f.columns(rel)) {
                 let mut at = format!("{rel}_at");
                 while names.contains(&at) {
@@ -297,22 +370,54 @@ impl ProgramPass for Locate {
                 at_cols.extend(cols.iter().map(|(n, t)| ((*n).to_owned(), (*t).to_owned())));
                 names.insert(at.clone());
                 let k = ats.len();
+                relayed.insert(rel.clone(), at.clone());
                 ats.push((at, at_cols));
-                relayed.insert(rel.clone(), k);
                 at_of.insert(rel.clone(), k);
                 items.push(Item::Relay { rel: rel.clone(), at: k, width: cols.len(), col, doc_width });
                 self.located.push(rel.clone());
                 continue;
             }
+            if read_locally && !again && outputs.contains(rel.as_str()) {
+                queue.push_back((rel.clone(), true));
+                continue;
+            }
             let Some(cols) = f.columns(rel).filter(|_| !f.lattice(rel) && !(read_locally && outputs.contains(rel.as_str()))) else {
-                self.blocked.push(rel.clone());
+                if !left {
+                    self.blocked.push(rel.clone());
+                }
                 continue;
             };
             let of_rel: Vec<RuleRef<'_>> = items.iter().filter_map(|i| if let Item::Keep(r) = i { Some(*r) } else { None }).filter(|r| head(r) == rel).collect();
             let Some(made) = of_rel.iter().map(|&rule| find_doc(rule, &twin_ok).map(|doc| (rule, doc))).collect::<Option<Vec<(RuleRef<'_>, Doc)>>>() else {
-                self.blocked.push(rel.clone());
+                if !left {
+                    self.blocked.push(rel.clone());
+                }
                 continue;
             };
+            // A covered view is relayed only where the twins it is placed through read no covered view but one of them or
+            // a relayed one: each twin's rules are new readers of what they read, and a covered view's cover would not
+            // hold them (`pt_callee_t` through `pt_callee`'s twin, a reader of `pt_wsmod`). Left to the cross part's own
+            // copy.
+            if left {
+                let mut chain: BTreeSet<String> = BTreeSet::from([rel.clone()]);
+                let mut work: Vec<String> = made.iter().filter_map(|&(rule, doc)| twin_read(rule, doc)).collect();
+                while let Some(q) = work.pop() {
+                    if chain.insert(q.clone()) {
+                        for &rule in by_head.get(q.as_str()).into_iter().flatten() {
+                            work.extend(find_doc(rule, &twin_ok).and_then(|doc| twin_read(rule, doc)));
+                        }
+                    }
+                }
+                let foreign = chain.iter().filter(|q| *q != rel).flat_map(|q| by_head.get(q.as_str()).into_iter().flatten()).any(|r| {
+                    r.body().filter_map(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => Some(v.rel_name(a.rel())),
+                        _ => None,
+                    }).any(|x| views.contains(x) && !chain.contains(x) && !view_targets.contains(x))
+                });
+                if foreign {
+                    continue;
+                }
+            }
             let k = alloc(rel, &mut names, &mut ats, &cols);
             at_of.insert(rel.clone(), k);
             wanted.extend(made.iter().filter_map(|&(rule, doc)| twin_read(rule, doc)));
@@ -320,7 +425,7 @@ impl ProgramPass for Locate {
                 // Read by file-local rules too, its rows of values (decision 0680): kept, its located twin made beside
                 // it, and the cross-file part's readers read the twin, as a relay's.
                 items.extend(made.into_iter().map(|(rule, doc)| Item::Made { rule, at: k, doc }));
-                relayed.insert(rel.clone(), k);
+                relayed.insert(rel.clone(), ats[k].0.clone());
                 self.located.push(rel.clone());
                 continue;
             }
@@ -353,11 +458,18 @@ impl ProgramPass for Locate {
             self.located.push(q);
         }
         // A twin's own rules stay (decision 0680), read or not: the split reads its family's rows by them.
-        if self.located.is_empty() {
+        if self.located.is_empty() && !rewired {
             return Ok(());
         }
         let input = w.input().clone();
+        let needs_docof = !docof_read && items.iter().any(|i| matches!(i, Item::Made { doc: Doc::Through(..) | Doc::Wild(..), .. }));
         let b = w.derive()?;
+        if needs_docof {
+            if !f.declared("docof") {
+                b.fields().declare("docof", &[("n", "node"), ("d", "int")]);
+            }
+            b.fields().add_input("docof");
+        }
         for (at, cols) in &ats {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
             b.fields().declare(at, &cols);
@@ -373,8 +485,11 @@ impl ProgramPass for Locate {
         const N: &str = "__located_n";
         for item in items {
             match item {
-                Item::Keep(r) if !local.contains(head(&r)) && r.body().filter_map(|l| l.atom()).any(|a| relayed.contains_key(v.rel_name(a.rel()))) => {
-                    // A cross-file rule reading a relayed target reads its located form.
+                Item::Keep(r) if (!local.contains(head(&r)) || (projected.contains(head(&r)) && !view_targets.contains(head(&r)))) && r.body().filter_map(|l| l.atom()).any(|a| relayed.contains_key(v.rel_name(a.rel()))) => {
+                    // A cross-file rule reading a relayed target reads its located form. So does a covered view the cross
+                    // part derives its own of (decision 0708, `crossing`'s `projected`), and a chunk's located form holds
+                    // the target's rows, each with its document. A view only the chunks derive, or one relayed itself
+                    // (`view_targets`), reads the target in its own chunk.
                     let args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
                     let mut rb = b.rule().source(r.id()).head(head(&r), &args);
                     for l in r.body() {
@@ -382,7 +497,7 @@ impl ProgramPass for Locate {
                             L::Atom(a) if relayed.contains_key(v.rel_name(a.rel())) => {
                                 let mut args = vec![T::Wild];
                                 args.extend(a.args().map(|t| t_of(&input, r, t)));
-                                rb.atom_with(ats[relayed[v.rel_name(a.rel())]].0.as_str(), &args, a.neg(), a.gated())
+                                rb.atom_with(relayed[v.rel_name(a.rel())].as_str(), &args, a.neg(), a.gated())
                             }
                             _ => rb.lit(&input, r, l),
                         };
@@ -414,7 +529,7 @@ impl ProgramPass for Locate {
                                 let args: Vec<T<'_>> = a.args().enumerate().map(|(k, t)| if k == c { T::Var(D) } else { t_of(&input, rule, t) }).collect();
                                 rb.atom_with(a.rel(), &args, a.neg(), a.gated())
                             }
-                            (Doc::Wild(j, c, _), L::Atom(a)) if j == i => {
+                            (Doc::Wild(j, c), L::Atom(a)) if j == i => {
                                 let args: Vec<T<'_>> = a.args().enumerate().map(|(k, t)| if k == c { T::Var(N) } else { t_of(&input, rule, t) }).collect();
                                 rb.atom_with(a.rel(), &args, a.neg(), a.gated())
                             }
@@ -432,12 +547,11 @@ impl ProgramPass for Locate {
                         args.extend((2..width).map(|_| T::Wild));
                         rb = rb.atom("doc", &args);
                     }
-                    if let Doc::Wild(_, _, docof) = doc {
-                        rb = if docof { rb.atom("docof", &[T::Var(N), T::Var(D)]) } else { rb.atom("node", &[T::Var(D), T::Var(N), T::Wild, T::Wild, T::Wild]) };
+                    if let Doc::Wild(..) = doc {
+                        rb = rb.atom("docof", &[T::Var(N), T::Var(D)]);
                     }
-                    if let Doc::Through(n, docof) = doc {
-                        let n = T::VarAtom(rule.var(n));
-                        rb = if docof { rb.atom("docof", &[n, T::Var(D)]) } else { rb.atom("node", &[T::Var(D), n, T::Wild, T::Wild, T::Wild]) };
+                    if let Doc::Through(n) = doc {
+                        rb = rb.atom("docof", &[T::VarAtom(rule.var(n)), T::Var(D)]);
                     }
                     rb.finish()?;
                 }
@@ -449,6 +563,54 @@ impl ProgramPass for Locate {
                     b.rule().head(rel.as_str(), &vars).atom(ats[at].0.as_str(), &args).finish()?;
                 }
             }
+        }
+        // A cross-file rank's native reads (`native_rank`: its asked rows and its counted rows) are the cross part's
+        // reads too (decision 0680): one of a relayed target reads its located form, through a projection of the
+        // cross part's own (`<target>_of_at`), as a cross-file rule's atom reads it. Left naming the target, the rank
+        // kept it an export without a location column, and the run's memo was off: p297's `rr_rankq29` on the
+        // 300-file bench, a relation of the format strings' values (`brace_arg(v, k, "")`, `v` a symbol).
+        let ranks = b.about_rows("native_rank");
+        let mut projected: HashMap<String, String> = HashMap::new();
+        let mut out = crate::code_rule_dsl::logic::program_image::Rows::new();
+        let mut changed = false;
+        for row in ranks.as_ref().iter() {
+            let mut row = row.to_vec();
+            let rank_local = match row.get(1) {
+                Some(Cell::Str(a)) => local.contains(b.text(*a)),
+                _ => true,
+            };
+            for c in [2, 3].into_iter().filter(|_| !rank_local) {
+                let Some(Cell::Str(a)) = row.get(c) else { continue };
+                let read = b.text(*a).to_owned();
+                let Some(at) = relayed.get(&read).cloned() else { continue };
+                let through = match projected.get(&read) {
+                    Some(p) => p.clone(),
+                    None => {
+                        let mut p = format!("{read}_of_at");
+                        while names.contains(&p) {
+                            p.push('_');
+                        }
+                        names.insert(p.clone());
+                        let cols = f.columns(&read).ok_or_else(|| format!("{read}: a relayed target's columns"))?;
+                        b.fields().declare(&p, &cols);
+                        let vars: Vec<String> = (0..cols.len()).map(|i| format!("__c{i}")).collect();
+                        let vars: Vec<T<'_>> = vars.iter().map(|c| T::Var(c.as_str())).collect();
+                        let mut args = vec![T::Wild];
+                        args.extend(vars.iter().cloned());
+                        b.rule().head(p.as_str(), &vars).atom(at.as_str(), &args).finish()?;
+                        // It stays in the cross part, as a target read back from its located form does (decision 0665).
+                        b.fields().add_qualifiers(&[(p.as_str(), super::READ_LOCATED)]);
+                        projected.insert(read.clone(), p.clone());
+                        p
+                    }
+                };
+                row[c] = Cell::Str(b.atom(&through));
+                changed = true;
+            }
+            out.push(&row);
+        }
+        if changed {
+            b.fields().set_about_rows("native_rank", out);
         }
         Ok(())
     }

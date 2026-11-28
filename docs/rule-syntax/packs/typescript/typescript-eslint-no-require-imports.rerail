@@ -14,7 +14,7 @@
 //   import a from "a";   function f(require) { require("x"); }              fine
 // Options: allow, a list of regexes: a specifier (a string, or a template without `${}`) that one of them finds
 // is allowed. allowAsImport (default false): `import x = require("m")` is allowed.
-.violation no_require_imports(at: loc) code "@typescript-eslint/no-require-imports" "A `require()` style import is forbidden."
+.violation no_require_imports(at: place) code "@typescript-eslint/no-require-imports" "A `require()` style import is forbidden."
     suppress eslint "@typescript-eslint/no-require-imports"
     suppress oxlint "no-require-imports"
     suppress biome "lint/style/noCommonJs"

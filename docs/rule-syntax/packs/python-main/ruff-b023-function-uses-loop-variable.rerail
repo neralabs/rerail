@@ -8,7 +8,7 @@
 // B023(n): a finding at node n, from clause `function-uses-loop-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation B023(at: node, n_mv: loc) "Bind `{n_mv}` as a default argument, such as `{n_mv}={n_mv}`, so the function keeps this iteration's value."
+.violation B023(at: node, n_mv: node) "Bind `{n_mv}` as a default argument, such as `{n_mv}={n_mv}`, so the function keeps this iteration's value."
     suppress noqa "B023"
 B023(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, b023_load_name(n),
     (b023_function_body(n, N) ; within(n, p1), b023_function_body(p1, N)).
@@ -78,7 +78,7 @@ b023_load_name(n) :- kind(n, "identifier"), !b023_alt_8(n).
 
 // param_n(n): the JSON util `param-n`, used where the JSON says `matches: "param-n"`
 //   N: metavariable this relation binds for the calling rule
-.decl b023_param_n(n: node, n_mv: loc)
+.decl b023_param_n(n: node, n_mv: node)
 b023_param_n(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
 b023_param_n(n, N) :- (kind(n, "list_splat_pattern") ; kind(n, "dictionary_splat_pattern")),
     child(n, c1, _), kind(c1, "identifier"), node(_, c1, _, _, _), N = c1.
@@ -91,20 +91,20 @@ b023_param_n(n, N) :-
 
 // loop_assigns_n(n): the JSON util `loop-assigns-n`, used where the JSON says `matches: "loop-assigns-n"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl b023_loop_assigns_n(n: node, n_mv: loc)
+.decl b023_loop_assigns_n(n: node, n_mv: node)
 b023_loop_assigns_n(n, N) :- b023_demand_loop_assigns_n(n, N), b023_loop(n),
     within_stop(c1, n, b023_stop_9), kind(c1, "identifier"), text(c1, t_n1), text(N, t_n1),
     b023_target_slot(c1), @doc(c1) = @doc(N).
 
 // unbound_in_function(n): the JSON util `unbound-in-function`, used where the JSON says `matches: "unbound-in-function"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl b023_unbound_in_function(n: node, n_mv: loc)
+.decl b023_unbound_in_function(n: node, n_mv: node)
 b023_unbound_in_function(n, N) :- b023_demand_unbound_in_function(n, N), b023_function(n),
     !b023_alt_10(n, N), within_stop(n, p4, b023_function), b023_loop_assigns_n(p4, N).
 
 // function_body(n): the JSON util `function-body`, used where the JSON says `matches: "function-body"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl b023_function_body(n: node, n_mv: loc)
+.decl b023_function_body(n: node, n_mv: node)
 b023_function_body(n, N) :- b023_demand_function_body(n, N), kind(n, "block"), child(p1, n, _),
     kind(p1, "function_definition"), b023_unbound_in_function(p1, N).
 b023_function_body(n, N) :- b023_demand_function_body(n, N), b023_tok_follows_9(n), child(p9, n, _),
@@ -198,25 +198,25 @@ b023_tok_follows_9(n) :- structural_before(n, g4),
     match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)\\s*)$", g4).
 
 // demand_function_body: the rows of function_body its callers ask for (the metavariable columns they pass in)
-.decl b023_demand_function_body(n: node, n_mv: loc)
+.decl b023_demand_function_body(n: node, n_mv: node)
 b023_demand_function_body(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, b023_load_name(n).
 b023_demand_function_body(p1, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, b023_load_name(n),
     within(n, p1).
 
 // demand_unbound_in_function: the rows of unbound_in_function its callers ask for (the metavariable columns they pass in)
-.decl b023_demand_unbound_in_function(n: node, n_mv: loc)
+.decl b023_demand_unbound_in_function(n: node, n_mv: node)
 b023_demand_unbound_in_function(p1, N) :- b023_demand_function_body(n, N), kind(n, "block"),
     child(p1, n, _), kind(p1, "function_definition").
 b023_demand_unbound_in_function(p9, N) :- b023_demand_function_body(n, N), b023_tok_follows_9(n),
     child(p9, n, _), kind(p9, "lambda").
 
 // demand_alt_10: the rows of alt_10 its callers ask for (the metavariable columns they pass in)
-.decl b023_demand_alt_10(n: node, n_mv: loc)
+.decl b023_demand_alt_10(n: node, n_mv: node)
 b023_demand_alt_10(n, N) :- b023_demand_unbound_in_function(n, N), b023_function(n),
     within_stop(n, p4, b023_function).
 
 // demand_loop_assigns_n: the rows of loop_assigns_n its callers ask for (the metavariable columns they pass in)
-.decl b023_demand_loop_assigns_n(n: node, n_mv: loc)
+.decl b023_demand_loop_assigns_n(n: node, n_mv: node)
 b023_demand_loop_assigns_n(p4, N) :- b023_demand_unbound_in_function(n, N), b023_function(n),
     within_stop(n, p4, b023_function).
 
@@ -256,7 +256,7 @@ b023_alt_8(n) :- child(p1, n, _), kind(p1, "delete_statement").
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl b023_alt_10(n: node, n_mv: loc)
+.decl b023_alt_10(n: node, n_mv: node)
 b023_alt_10(n, N) :- b023_demand_alt_10(n, N), child(n, c1, _),
     (kind(c1, "parameters") ; kind(c1, "lambda_parameters")), child(c1, c2, _),
     b023_param_n(c2, N).

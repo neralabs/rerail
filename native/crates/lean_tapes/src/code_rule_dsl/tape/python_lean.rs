@@ -8,16 +8,20 @@
 //! (any syntax error, the text's end included, which tree-sitter recovers from; a construct it does
 //! not read) goes to tree-sitter-python (decision 0163, amended).
 
-use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{FileImage, Grammar, TapeImage, TemplateError, TreeParser, Source};
 
 /// `source`'s tape from the lean parser: `Err` where it refuses the file; `Ok(Err)` where the tape
 /// cannot be made.
-pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
+pub fn encode<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     encode_from(grammar, source, "module", budget)
 }
 
 /// [`encode`] from the node kind `start` (decision 0466).
-pub fn encode_from(grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
+pub fn encode_from<'s>(grammar: &Grammar, source: impl Into<Source<'s>>, start: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_python_lean::Refusal> {
+    let source: Source<'s> = source.into();
+    let source = &source;
     rerail_python_lean::tape_from_into(source.as_bytes(), start, &mut super::formats::lean_named(grammar, source, budget, rerail_python_lean::names))
 }
 
@@ -29,12 +33,12 @@ impl TreeParser for Lean {
         rerail_python_lean::STARTS
     }
 
-    fn parse_from(&self, grammar: &Grammar, source: &str, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+    fn parse_from(&self, grammar: &Grammar, source: &Source<'_>, start: &str, budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "lean Python parse of a fragment".into());
         encode_from(grammar, source, start, budget).ok()
     }
 
-    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
+    fn parse(&self, grammar: &Grammar, source: &Source<'_>, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
         if !matches!(crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(grammar.lang)).parse_input(source), std::borrow::Cow::Borrowed(_))
         {
             return None;

@@ -87,24 +87,23 @@ pv2_top(s) :- modnode(_, m), child(m, t, _), (s = t ; kind(t, "decorated_definit
 .decl pv2_import(i: node, m: symbol)
 pv2_import(i, m) :- kind(i, "import_statement"), field(i, "name", a), dotted(a, m).
 pv2_import(i, m) :- kind(i, "import_from_statement"), field(i, "module_name", n), kind(n, "dotted_name"), text(n, m).
-// pv2_under(m, p): m is p or a submodule of p.
-.decl pv2_under(m: symbol, p: symbol)
-pv2_under(m, p) :- pv2_import(_, m), (pv2_io_module(p) ; pv2_core_forbidden(p)), (m = p ; prefix(cat(p, "."), m)).
-// pv2_io_like(m): an I/O module. Its import is PV2-001 only, whatever else it is.
-.decl pv2_io_like(m: symbol)
-pv2_io_like(m) :- pv2_under(m, p), pv2_io_module(p).
+// m is under p: p or a submodule of p, `(m = p ; prefix(cat(p, "."), m))`, tested in each rule: never a table of
+// every file's imported modules (decision 0677).
+// pv2_io_like(i, m): import i's module m is an I/O module. Its import is PV2-001 only, whatever else it is.
+.decl pv2_io_like(i: node, m: symbol)
+pv2_io_like(i, m) :- pv2_import(i, m), pv2_io_module(p), (m = p ; prefix(cat(p, "."), m)).
 // pv2_core(n): n is in l2065_plan_core, the bottom of the optimizer's import DAG.
 .decl pv2_core(n: node)
 pv2_core(n) :- docof(n, d), path_part(d, "l2065_plan_core").
 
 .violation PV2_001(at: node, m: symbol) code "PV2-001" "Import of I/O module '{m}' is forbidden in the v2 optimizer packages."
-PV2_001(i, m) :- pv2_in(i, _), pv2_import(i, m), pv2_under(m, p), pv2_io_module(p).
+PV2_001(i, m) :- pv2_in(i, _), pv2_import(i, m), pv2_io_module(p), (m = p ; prefix(cat(p, "."), m)).
 .violation PV2_002(at: node, m: symbol) code "PV2-002" "l2065_plan_core may not import '{m}'."
-PV2_002(i, m) :- pv2_in(i, _), pv2_core(i), pv2_import(i, m), pv2_under(m, p), pv2_core_forbidden(p),
-    !pv2_io_like(m).
+PV2_002(i, m) :- pv2_in(i, _), pv2_core(i), pv2_import(i, m), pv2_core_forbidden(p), (m = p ; prefix(cat(p, "."), m)),
+    !pv2_io_like(i, m).
 .violation PV2_003(at: node, m: symbol) code "PV2-003" "Only adapter.py may import legacy layer '{m}'."
-PV2_003(i, m) :- pv2_in(i, x), x != "adapter.py", !pv2_core(i), pv2_import(i, m), pv2_under(m, p),
-    pv2_legacy_module(p), !pv2_io_like(m).
+PV2_003(i, m) :- pv2_in(i, x), x != "adapter.py", !pv2_core(i), pv2_import(i, m),
+    pv2_legacy_module(p), (pv2_io_module(p) ; pv2_core_forbidden(p)), (m = p ; prefix(cat(p, "."), m)), !pv2_io_like(i, m).
 
 // ---- PV2-010 … 012: one scope authority --------------------------------------------------------------------------
 .violation PV2_010(at: node, a: symbol) code "PV2-010" "Direct access to PlanScope internal '{a}' outside scope.py."
@@ -169,8 +168,8 @@ pv2_in_init(a) :- assign_target(a, _), pv2_def(f, w), within(a, w), def_name(f, 
 
 // PV2-044: source.count("\n") + 1 lines, so a final newline counts as a line. Python reads the file with universal
 // newlines, so \r\n and a lone \r each end a line too.
-.violation PV2_044(at: loc, k: number) code "PV2-044" "File has {k} lines (cap 600); split it."
-PV2_044(@place(p, 1), k) :- pv2_file(d, _), doc(d, p, _), source(d, sp), text(sp, s), k = @count_matches("\r\n|\r|\n", s) + 1,
+.violation PV2_044(at: node, k: number) code "PV2-044" "File has {k} lines (cap 600); split it."
+PV2_044(@place(p, 1), k) :- pv2_file(d, _), doc(d, p, _), document_source(d, sp), line_text(sp, s), k = @count_matches("\r\n|\r|\n", s) + 1,
     k > 600.
 
 // The pass pipeline, in passes.py: its top-level `class XPass` definitions (Protocols aside) and their fields.
@@ -221,7 +220,7 @@ pv2_names_verifier(w) :- pv2_def(_, w), within(n, w), ast_name(n, "PlanVerifier"
 .decl pv2_verifier(d: number)
 pv2_verifier(d) :- doc(d, p, _), suffix("impl/common/l2065_plan_core/verifier.py", p), pv2_file(d, _).
 .decl pv2_doc_text(s: symbol)
-pv2_doc_text(s) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), source(d, sp), text(sp, s).
+pv2_doc_text(s) :- doc(d, "docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", _), document_source(d, sp), line_text(sp, s).
 // pv2_registered(c, code): call OptimizerInvariant(code="…") in the verifier.
 .decl pv2_registered(c: node, code: symbol)
 pv2_registered(c, v) :- pv2_verifier(d), docof(c, d), kind(c, "call"), field(c, "function", f), text(f, "OptimizerInvariant"),
@@ -230,13 +229,13 @@ pv2_registered(c, v) :- pv2_verifier(d), docof(c, d), kind(c, "call"), field(c, 
 .decl pv2_doc_code(v: symbol)
 pv2_doc_code(v) :- pv2_doc_text(s), match_all("`(?<v>(scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", s).
 
-.violation PV2_050(at: loc, v: symbol) code "PV2-050" "Invariant code '{v}' is registered but missing from the design doc."
+.violation PV2_050(at: node, v: symbol) code "PV2-050" "Invariant code '{v}' is registered but missing from the design doc."
 PV2_050(c, v) :- pv2_registered(c, v), pv2_doc_text(_), !pv2_doc_code(v).
-.violation PV2_050_DOC(at: loc) code "PV2-050" "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
+.violation PV2_050_DOC(at: node) code "PV2-050" "Missing invariants design doc docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md. Add the doc listing every OPTIMIZER_INVARIANTS code with its description and repair hint."
 PV2_050_DOC(@place("docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1)) :- pv2_verifier(_), !pv2_doc_text(_).
-.violation PV2_051(at: loc, v: symbol) code "PV2-051" "The design doc lists invariant code '{v}', which is not registered."
+.violation PV2_051(at: node, v: symbol) code "PV2-051" "The design doc lists invariant code '{v}', which is not registered."
 PV2_051(@place("docs/design/PLAN_OPTIMIZER_V2_INVARIANTS.md", 1), v) :- pv2_verifier(_), pv2_doc_code(v),
     !pv2_registered(_, v).
 .violation PV2_052(at: node, v: symbol) code "PV2-052" "Invariant code '{v}' is never cited as '({v})' in a verifier error message."
-PV2_052(c, v) :- pv2_registered(c, v), pv2_doc_text(_), docof(c, d), source(d, sp), text(sp, s),
+PV2_052(c, v) :- pv2_registered(c, v), pv2_doc_text(_), docof(c, d), document_source(d, sp), line_text(sp, s),
     !contains(cat("(", v, ")"), s).

@@ -11,7 +11,7 @@
 //   -------
 #include "python/docstrings-sections.rerail"
 
-.violation D406(at: span, k: symbol) code "D406"
+.violation D406(at: place, k: symbol) code "D406"
     "Remove the colon or trailing whitespace after the section name `{k}` so the line holds only the name."
     suppress ruff "D406"
 D406(at, v) :- doc_style(s, "numpy"), doc_section(s, i, v, _, _, suf), suf != "", doc_at(s, i, at).

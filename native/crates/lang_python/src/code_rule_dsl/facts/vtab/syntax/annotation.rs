@@ -75,14 +75,15 @@ struct Nested {
 pub(super) struct Annotations {
     string_annotation: bool,
     hosts: Vector<i64>,
-    /// The nested string annotations of each string annotation (by its node), for its guest.
+    /// The nested string annotations of each string annotation, for its guest: by the annotation's located value
+    /// (`Projected::located`), the place its guest is asked at (`TapePlace::at`), not its node's id in the batch.
     nested: HashMap<i64, Vec<Nested>>,
     /// Each annotation guest of the batch: the node it stands at, and its string nodes by range in its text.
     guests: Vec<(i64, ByRange)>,
 }
 
-/// String nodes by their range in a text.
-type ByRange = rustc_hash::FxHashMap<(u32, u32), i64>;
+/// String nodes by their range in a text: each its id in the batch, and its located value.
+type ByRange = rustc_hash::FxHashMap<(u32, u32), (i64, i64)>;
 
 impl Annotations {
     pub(super) fn new(reads: &BTreeSet<String>) -> Self {
@@ -98,7 +99,7 @@ impl Annotations {
         let by_range: ByRange = p
             .node_ids()
             .filter(|&(_, id, _)| HOSTS.contains(&dialect.name(f, id)))
-            .map(|(_, id, n)| ((f.start(id), f.end(id)), n))
+            .map(|(local, id, n)| ((f.start(id), f.end(id)), (n, p.global(local))))
             .collect();
         if let Some(g) = d.guest.as_deref() {
             if g.grammar == GRAMMAR {
@@ -134,11 +135,11 @@ impl Annotations {
             }
         }
         for (k, a) in found.iter().enumerate().filter(|(_, a)| a.outer.is_none()) {
-            if let Some(&s) = by_range.get(&(a.start as u32, a.end as u32)) {
+            if let Some(&(s, at)) = by_range.get(&(a.start as u32, a.end as u32)) {
                 self.hosts.push(s);
                 let inner = std::mem::take(&mut nested[k]);
                 if !inner.is_empty() {
-                    self.nested.insert(s, inner);
+                    self.nested.insert(at, inner);
                 }
             }
         }
@@ -160,10 +161,10 @@ impl Annotations {
                 let Some(nested) = self.nested.get(at).cloned() else { return true };
                 for n in nested {
                     // The guest's text is the string's value, its positions the value's (decision 0466).
-                    if let Some(&s) = by_range.get(&(n.start as u32, n.end as u32)) {
+                    if let Some(&(s, at)) = by_range.get(&(n.start as u32, n.end as u32)) {
                         self.hosts.push(s);
                         if !n.inner.is_empty() {
-                            self.nested.insert(s, n.inner);
+                            self.nested.insert(at, n.inner);
                         }
                     }
                 }

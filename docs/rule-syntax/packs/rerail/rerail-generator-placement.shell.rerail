@@ -12,8 +12,8 @@
 //   echo "$row" >> "$OUT_DIR/table.txt"                                GENERATOR_BESIDE_OUTPUT
 //   echo done > /dev/null; # cp a b                                    not reported
 
-.violation GENERATOR_BESIDE_OUTPUT(at: span) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
-GENERATOR_BESIDE_OUTPUT(w) :- source(_, sp), match_group("(?s)\\A#![^\\n]*\\b(?:ba|z|da|k)?sh\\b.*?(?P<W>(?m:^)[ \\t]*(?:[^#\\n]*?(?:&&|\\|\\||;|\\bthen\\b|\\bdo\\b)[ \\t]*)?(?:cp|mv|rsync)[ \\t]+[^\\n]+|(?m:^)[^#\\n]*?\\btee[ \\t]+(?:-a[ \\t]+)?[^\\s/-][^\\n]*|(?m:^)[^#\\n]*?>>?[ \\t]*\\\"?\\$\\{?[A-Za-z_]\\w*\\}?\\\"?/[^\\s;&|)]*[A-Za-z_.])", sp, _, "W", w).
+.violation GENERATOR_BESIDE_OUTPUT(at: place) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+GENERATOR_BESIDE_OUTPUT(w) :- document_source(_, sp), line_regex_group("(?s)\\A#![^\\n]*\\b(?:ba|z|da|k)?sh\\b.*?(?P<W>(?m:^)[ \\t]*(?:[^#\\n]*?(?:&&|\\|\\||;|\\bthen\\b|\\bdo\\b)[ \\t]*)?(?:cp|mv|rsync)[ \\t]+[^\\n]+|(?m:^)[^#\\n]*?\\btee[ \\t]+(?:-a[ \\t]+)?[^\\s/-][^\\n]*|(?m:^)[^#\\n]*?>>?[ \\t]*\\\"?\\$\\{?[A-Za-z_]\\w*\\}?\\\"?/[^\\s;&|)]*[A-Za-z_.])", sp, _, "W", w).
 
 .test the_first_write_is_reported exactly
     .fixture "native/src/tools/regen.sh" ```

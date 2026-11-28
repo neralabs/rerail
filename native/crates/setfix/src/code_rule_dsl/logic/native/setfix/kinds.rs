@@ -9,7 +9,7 @@
 //! The rows a batch holds are the walk's slots, bindings, not rows of a block (decision 0353).
 
 use super::{JoinRule, Key, Src, Step};
-use crate::code_rule_dsl::facts::vtab::Source;
+use crate::code_rule_dsl::facts::vtab::{ProbeCursor, Source};
 
 /// The rows a step's batch holds before it is read.
 pub(super) const BATCH: usize = 256;
@@ -27,6 +27,8 @@ pub(super) struct OwnRead<'a> {
     equal: Vec<(usize, usize)>,
     pub neg: bool,
     src: &'a dyn Source,
+    /// The source's cursor, kept from batch to batch (its hints, node memo and plan of the reads).
+    cursor: std::cell::RefCell<ProbeCursor>,
 }
 
 /// What a row's read says: it goes on (its slots bound), it does not, or it is probed as the step probes one row.
@@ -47,7 +49,7 @@ impl OwnRead<'_> {
         vals.clear();
         vals.resize(n * k, 0);
         let mut found = vec![0u8; n];
-        let read = self.src.read_own_batch(self.col, &nodes, &self.reads, vals, &mut found);
+        let read = self.src.read_own_batch(self.col, &nodes, &self.reads, vals, &mut found, &mut self.cursor.borrow_mut());
         debug_assert!(read, "a node read's source reads batches (checked when it was chosen)");
         answers.clear();
         answers.extend((0..n).map(|r| {
@@ -91,7 +93,7 @@ pub(super) fn own_read(j: &JoinRule, i: usize) -> Option<OwnRead<'_>> {
     let src: &dyn Source = v.src.as_ref();
     // The node's key: a slot's, on the source's own column (asked with no values).
     let Some((lead, slot, col)) = keys.iter().enumerate().find_map(|(at, &(c, k))| match k {
-        Key::Slot(s) => v.cols.get(c).filter(|&&c| src.read_own_batch(c, &[], &[], &mut [], &mut [])).map(|&c| (at, s, c)),
+        Key::Slot(s) => v.cols.get(c).filter(|&&c| src.read_own_batch(c, &[], &[], &mut [], &mut [], &mut ProbeCursor::default())).map(|&c| (at, s, c)),
         Key::Const(_) => None,
     }) else {
         if trace() { eprintln!("RERAIL_KIND_TRACE no own key {:?}: keys {:?} cols {:?} binds {}", rel.name.get(), keys.iter().map(|&(c, k)| (v.cols.get(c).copied(), matches!(k, Key::Slot(_)))).collect::<Vec<_>>(), v.cols, binds.len()); }
@@ -105,7 +107,7 @@ pub(super) fn own_read(j: &JoinRule, i: usize) -> Option<OwnRead<'_>> {
     let binds = binds.iter().map(|&(c, s)| place(c).map(|p| (p, s))).collect::<Option<Vec<_>>>()?;
     let equal = tests.iter().map(|&(a, b)| Some((place(a)?, place(b)?))).collect::<Option<Vec<_>>>()?;
     if trace() { eprintln!("RERAIL_KIND_TRACE chosen {:?} reads {} binds {} neg {neg}", rel.name.get(), reads.len(), binds.len()); }
-    Some(OwnRead { slot, col, reads, checks, binds, equal, neg: *neg, src })
+    Some(OwnRead { slot, col, reads, checks, binds, equal, neg: *neg, src, cursor: Default::default() })
 }
 
 /// E5's keyed probes (decision 0706): a step probing a relation, or a view's source, by bound slots, its batch of
@@ -222,18 +224,25 @@ pub(super) enum Batched<'a> {
 }
 
 /// Per step of `j`, its node read or keyed probe and an empty batch, where the walk reads batches: `on` (an unlimited
-/// walk: a cut would leave rows waiting), not `RERAIL_KIND_BATCH=off`, and not the steps of `not` (the step a screen
-/// reads, the step a delta restricts). `RERAIL_KEYED_BATCH=off` probes each row as it comes.
-pub(super) fn batches(j: &JoinRule, on: bool, not: [Option<usize>; 2]) -> Vec<Option<(Batched<'_>, Vec<i64>)>> {
+/// walk: a cut would leave rows waiting), not `RERAIL_KIND_BATCH=off`, and not the step a delta restricts (`only`:
+/// its rows are the step's row ids, which a batch does not read). The step a screen reads (`screened`) batches a node
+/// read or a pair test, its batch screened before it is read (`run_batch`); a keyed probe there is the walker's.
+/// `RERAIL_KEYED_BATCH=off` probes each row as it comes.
+pub(super) fn batches(j: &JoinRule, on: bool, screened: Option<usize>, only: Option<usize>) -> Vec<Option<(Batched<'_>, Vec<i64>)>> {
     if !on || !enabled() {
         if trace() { eprintln!("RERAIL_KIND_TRACE walk off: on {on} enabled {}", enabled()); }
         return Vec::new();
     }
+    // A batch's rows wait past the steps that made them. A text the walk holds for a slot (`TEXT_OUT`, its scratch)
+    // lives only while the step that made it runs: a row held after one named a text gone, and `@cat("m", x)` of a
+    // function's name gave `m.`. A step after one is not batched.
+    let texts_before = |i: usize| j.probes.iter().take(i).any(|&p| p & super::TEXT_OUT != 0);
     (0..j.steps.len())
         .map(|i| {
-            if i == 0 || not.contains(&Some(i)) {
+            if i == 0 || only == Some(i) || texts_before(i) {
                 return None;
             }
+            let keyed = |j: &JoinRule, i: usize| (screened != Some(i)).then(|| keyed(j, i)).flatten();
             let b = own_read(j, i)
                 .map(Batched::Own)
                 .or_else(|| keyed_enabled().then(|| held(j, i).map(Batched::Held).or_else(|| keyed(j, i).map(Batched::Keyed))).flatten())?;
@@ -255,7 +264,7 @@ pub(super) fn span_enabled() -> bool {
 }
 
 /// Whether keyed probes are batched (`RERAIL_KEYED_BATCH`, not `off`).
-fn keyed_enabled() -> bool {
+pub(super) fn keyed_enabled() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
     match KEYED_FORCE.load(std::sync::atomic::Ordering::Relaxed) {
         1 => return false,
@@ -267,7 +276,7 @@ fn keyed_enabled() -> bool {
 }
 
 /// `RERAIL_KIND_BATCH=off` tests each row as it comes; `=walk` batches the walker's only, `=closure` the closures'
-/// only (measurement aids).
+/// only (measurement aids). A setting of the run (decision 0442), read once a run.
 fn mode() -> &'static str {
     #[cfg(any(test, feature = "test-hooks"))]
     match FORCE.load(std::sync::atomic::Ordering::Relaxed) {
@@ -275,8 +284,12 @@ fn mode() -> &'static str {
         2 => return "",
         _ => {}
     }
-    static MODE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| std::env::var("RERAIL_KIND_BATCH").unwrap_or_default());
-    MODE.as_str()
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_KIND_BATCH").as_deref() {
+        Ok("off") => "off",
+        Ok("walk") => "walk",
+        Ok("closure") => "closure",
+        _ => "",
+    })
 }
 fn enabled() -> bool {
     !matches!(mode(), "off" | "closure")
@@ -314,7 +327,7 @@ pub(super) fn count_for_tests(n: usize) {
 #[inline(always)]
 pub(super) fn count_for_tests(_: usize) {}
 
-/// Tests: the node texts the process's walks read as their term's atom (`Source::node_text_atom`).
+/// Tests: the node texts the process's walks read as their atom (`Source::node_atom`).
 #[cfg(any(test, feature = "test-hooks"))]
 static TERMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 #[cfg(any(test, feature = "test-hooks"))]
@@ -370,3 +383,8 @@ fn count_keyed_for_tests(n: usize) {
 }
 #[cfg(not(any(test, feature = "test-hooks")))]
 fn count_keyed_for_tests(_: usize) {}
+
+/// A fused row program's pair tests asked in a batch (`rowcode::ViewTest::pair`), counted with the walk's.
+pub(super) fn count_pairs_for_tests(n: usize) {
+    count_keyed_for_tests(n);
+}

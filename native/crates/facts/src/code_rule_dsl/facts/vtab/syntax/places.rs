@@ -68,7 +68,7 @@ struct OnDevice {
     dir: rerail_blocks::ledger::Tracked<rerail_device::device::Buffer>,
     tail: rerail_device::device::Buffer,
     _spans: crate::code_rule_dsl::facts::rows::InBlock,
-    home: Arc<crate::code_rule_dsl::facts::rows::IndexHome>,
+    home: crate::code_rule_dsl::facts::rows::Part,
 }
 
 /// A placed relation as the host reads it: its `PlacedDir` at host addresses (the view's directory's, the spans'
@@ -77,7 +77,7 @@ struct OnDevice {
 struct OnHost {
     dir: Box<PlacedDir>,
     _spans: crate::code_rule_dsl::facts::rows::InBlock,
-    home: Arc<crate::code_rule_dsl::facts::rows::IndexHome>,
+    home: crate::code_rule_dsl::facts::rows::Part,
 }
 
 /// A placed relation whose view's rows are another directory's (`values::Layered`: a chunk's and its values'
@@ -96,7 +96,7 @@ impl Over {
             Over::Host(on) => v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64,
             Over::Device(on) => {
                 v.dir = on.dir.device_address()?;
-                v.buffers.push(on.dir.clone());
+                v.buffers.push((*on.dir).clone());
                 v.buffers.push(on.tail.clone());
             }
         }
@@ -104,12 +104,21 @@ impl Over {
         Some(())
     }
     /// Its relation of no columns, which its indexes go in, where it keeps it.
-    pub(super) fn home(&self) -> Arc<crate::code_rule_dsl::facts::rows::IndexHome> {
+    pub(super) fn home(&self) -> crate::code_rule_dsl::facts::rows::Part {
         match self {
-            Over::Host(on) => Arc::clone(&on.home),
-            Over::Device(on) => Arc::clone(&on.home),
+            Over::Host(on) => on.home.clone(),
+            Over::Device(on) => on.home.clone(),
         }
     }
+}
+
+/// A placed relation's relation of no columns, of `rows` rows, which its probes' indexes go in: room for as many
+/// as a relation takes (`ADDED_INDEXES`, its address space; pages taken as each is written), as a view's home has,
+/// so every probe's index is built there and found again (with room for one, each probe by another key built its
+/// index in a home of its own, never found again).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn home(rows: usize) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+    crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, rows, rerail_blocks::relation::ADDED_INDEXES).ok()
 }
 
 impl Places {
@@ -183,7 +192,7 @@ impl Places {
         unsafe { dir.contents().cast::<PlacedDir>().write_unaligned(placed) };
         let at = dir.contents().cast::<u8>();
         let dir = rerail_blocks::ledger::Tracked::new(dir, at, std::mem::size_of::<PlacedDir>());
-        let home = crate::code_rule_dsl::facts::rows::IndexHome::new(rows + self.spans.len(), 1)?;
+        let home = home(rows + self.spans.len())?;
         Some(OnDevice { dir, tail, _spans: spans, home })
     }
 
@@ -194,7 +203,7 @@ impl Places {
         let spans = self.spans.in_block()?;
         let tail = spans.facts.block.base_ptr() as u64;
         let dir = Box::new(PlacedDir { dir: view_dir, tail, at: spans.at as u64, rows: rows as u32, pad: 0 });
-        let home = crate::code_rule_dsl::facts::rows::IndexHome::new(rows + self.spans.len(), 1)?;
+        let home = home(rows + self.spans.len())?;
         Some(OnHost { dir, _spans: spans, home })
     }
 }
@@ -218,9 +227,8 @@ impl Source for Places {
             let on = self.host.get_or_init(|| self.on_host(v.dir, self.first())).as_ref()?;
             v.dir = std::ptr::from_ref::<PlacedDir>(&on.dir) as u64;
             v.kind |= VIEW_PLACED;
-            v.grows = Some(Arc::clone(&on.home));
             d.rows = self.len();
-            d.home = on.home.part();
+            d.home = on.home.clone();
             return Some(d);
         }
         let on = self.device.get_or_init(|| self.on_device(v.dir, self.first())).as_ref()?;
@@ -228,9 +236,8 @@ impl Source for Places {
         v.kind |= VIEW_PLACED;
         v.buffers.push((*on.dir).clone());
         v.buffers.push(on.tail.clone());
-        v.grows = Some(Arc::clone(&on.home));
         d.rows = self.len();
-        d.home = on.home.part();
+        d.home = on.home.clone();
         Some(d)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -245,11 +252,15 @@ impl Source for Places {
     fn estimated_len(&self) -> usize {
         self.view.estimated_len() + self.spans.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        Some(self.view.known_len()? + self.spans.known_len()?)
+    }
     fn value(&self, row: usize, column: usize) -> i64 {
         let first = self.first();
         if row < first { self.view.value(row, column) } else { self.spans.value(row - first, column) }
     }
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         let first = self.first();
         if row < first { self.view.row_at(row, columns, out) } else { self.spans.row_at(row - first, columns, out) }
     }
@@ -298,7 +309,7 @@ impl Source for Places {
         let mut all = columns.to_vec();
         all.push(column);
         let k = columns.len();
-        let docs: BTreeSet<u32> = spans.iter().map(|&s| (s >> 32) as u32).collect();
+        let docs: BTreeSet<u32> = spans.iter().map(|&s| rerail_blocks::located::Located(s).key()).collect();
         if let Some(rows) = self.spans.rows_of_documents(&docs) {
             let mut row = vec![0; all.len()];
             for r in rows {
@@ -341,6 +352,9 @@ impl Source for Places {
     fn keys_documents(&self, column: usize) -> bool {
         self.view.keys_documents(column)
     }
+    fn keys_nodes(&self, column: usize) -> bool {
+        self.view.keys_nodes(column)
+    }
     fn lookup_cost(&self, column: usize) -> f64 {
         self.view.lookup_cost(column).max(self.spans.lookup_cost(column))
     }
@@ -368,6 +382,9 @@ impl Source for Places {
     /// filtered, and read): a place relation's probe reads no row of the view a point read each. By a row's id, the
     /// side that holds it alone (`is_span`). Only the view may refuse, before any row is given; the spans always answer.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let outer = each;
+        let each: &mut dyn FnMut(usize, &[i64]) = &mut |r, v| { let _caller = _kind.paused(); outer(r, v) };
         let width = columns.len();
         if width > 8 {
             return false;
@@ -400,8 +417,8 @@ impl Source for Places {
     }
     /// By a row's id (decision 0706 E1): a node's or a position's place is the view's batch read; a span's is probed
     /// as one row (`found` 2).
-    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8]) -> bool {
-        if column != 0 || !self.view.read_own_batch(column, values, reads, out, found) {
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut super::super::ProbeCursor) -> bool {
+        if column != 0 || !self.view.read_own_batch(column, values, reads, out, found, cursor) {
             return false;
         }
         for (f, &v) in found.iter_mut().zip(values) {
@@ -423,13 +440,31 @@ impl Source for Places {
     /// Counted in an array in a block of the run's (`place_statistics`). Counted as a view's rows by `RelStats`, its counts took 48 bytes a row on the heap (`line`'s and `col`'s 49.5 MB each at the
     /// M3's 300-file peak, ab160).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        place_statistics(self)
+        place_statistics(self, false)
+    }
+    /// `statistics`, or with its spans not made, their sample's added (`place_statistics`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        place_statistics(self, true)
     }
     fn failure(&self) -> Option<String> {
         self.view.failure().or_else(|| self.spans.failure())
     }
     fn failed(&self) -> Option<String> {
         self.view.failed().or_else(|| self.spans.failed())
+    }
+}
+
+/// Each read of a line, a match and a token (`facts::core::TYPED_READS`, decision 0724 step 3) bound where `out` binds
+/// its node counterpart: the same relation, which answers a node's and a span's ids alike, until each type's ids are its
+/// own. A program reads it by its value's type (`lowering_tail::TypedReads`).
+pub fn typed<N: AsRef<str> + From<&'static str>>(out: &mut Vec<(N, Arc<dyn Source>)>) {
+    for (read, _, node) in crate::code_rule_dsl::facts::core::TYPED_READS {
+        if out.iter().any(|(n, _)| n.as_ref() == read) {
+            continue;
+        }
+        if let Some(source) = out.iter().find(|(n, _)| n.as_ref() == node).map(|(_, s)| Arc::clone(s)) {
+            out.push((N::from(read), source));
+        }
     }
 }
 
@@ -461,7 +496,7 @@ impl Pairs {
     }
     /// A row of `id` (the first column: its document is the high half) and `value`.
     fn add(&mut self, id: i64, value: i64) {
-        self.0.push([value, id >> 32]);
+        self.0.push([value, rerail_blocks::located::Located::key_wide(id)]);
     }
     /// `(rows, distinct values, the sum of their postings' squares, that sum within each document)`.
     fn measure(mut self) -> (i64, i64, i64, i64) {
@@ -485,7 +520,9 @@ impl Pairs {
 /// walk of the spans made the whole batch: `col`'s measure did, ab175). Rows add; the second column's values (lines,
 /// columns, documents) are the view's mostly, the spans' among them, so its distinct values are the more of the two's,
 /// and its postings' squares add with their cross term at its most (each value's postings in both, in proportion).
-fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+/// With its spans not made, only an estimate (`estimate`) counts them, on their sample: the exact statistics are
+/// counted where the spans lie (the chunks'), and a walk of them here would make them.
+fn place_statistics(p: &Places, estimate: bool) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     let names = p.columns();
     // `text`'s second column is a text: counted by value, every text of the batch would be interned to measure it.
     if names.len() != 2 || names[1] == "s" {
@@ -493,7 +530,10 @@ fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     }
     let mut view = Pairs::new();
     let unmade = p.spans.as_any().and_then(|a| a.downcast_ref::<super::made::MadeRows>()).is_some_and(|s| !s.is_done());
-    let sampled = if unmade { p.spans.statistics() } else { None };
+    if unmade && !estimate {
+        return None;
+    }
+    let sampled = if unmade { p.spans.estimated_statistics() } else { None };
     p.view.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
     if sampled.is_none() {
         p.spans.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));

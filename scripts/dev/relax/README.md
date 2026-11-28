@@ -359,6 +359,15 @@ in a `Vec`'s drop, or wrote garbage node names, from run to run. Such a local no
 made at the arm's start. The fork's `tests/guard_or_alternative_rvalue_local` (an edition-2024
 crate) segfaults on the earlier Relax.
 
+### 23. std: the NEON items rerail-simd's chunks and the kernels' Rust read
+
+From the CPU SIMD branch (uglykl-CPU-SIMD-parallelization), in `std.patch`: `vclzq_s8`,
+`vtstq_u8`/`_u32`/`_u64`, `vmvnq_u8`/`_s8`/`_s32`, `vnegq_s8`/`_s64`, `vmulq_u8`/`_s8`,
+`vmla_u32`, `vmlaq_u32`, `vmul_u32`, `vmovn_u64`, `vcombine_u64`, `vcreate_u64`,
+`vceqzq_u32`/`_u64`, `vld2q_u32` and `vst2q_u32`, each lane by lane as std's own. That branch had
+first built Relax from its own older patches, which replaced the hub's installed version for
+every worktree; invariant 11 now stops that.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every
@@ -446,6 +455,12 @@ These must hold. A change to the fork, the patches or the commands that breaks o
    into the fork. The engine's code stays what cargo compiles.
 10. **No machine details in the tree.** Model numbers only. No hostnames, usernames, home
     paths or network layout in the patches, this page or commit messages.
+11. **The installed Relax only moves forward.** Every worktree shares one installed Relax. A
+    change of `std.patch` or `rerail.patch` bumps `SERIAL` in `build`, and `build` switches the
+    installed version only to a higher `SERIAL` (it records the installed one in
+    `~/.local/share/rerail-relax/serial`). A branch behind the hub, or two branches that changed
+    the patches apart, build their version (`v/<version>/relax` runs it) and leave the installed
+    one: `build` exits 76 and names it. Merge the patches, bump `SERIAL`, build again.
 
 ## Known limits
 

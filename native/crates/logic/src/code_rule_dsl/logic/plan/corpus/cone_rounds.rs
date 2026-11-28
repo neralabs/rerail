@@ -172,12 +172,14 @@ impl RoundProgram {
         let mut pass = Rounds { per_file, fields: None, gates: Vec::new(), heads: BTreeSet::new(), refused: false, inputs: Vec::new(), requests: Vec::new(), produced: Vec::new(), fs: Vec::new() };
         let mut p = Pipeline::new("round program", load.clone());
         p.rules(&mut pass);
-        let (rv, _) = p.finish().ok()?;
+        let trace = |why: &str| if std::env::var_os("RERAIL_MODE_TRACE").is_some() { eprintln!("RERAIL_MODE_TRACE *: no round program: {why}") };
+        let (rv, _) = p.finish().inspect_err(|e| trace(&format!("the pass failed: {e}"))).ok()?;
         if pass.refused {
+            trace("refused: an answer's relation is derived by rules too");
             return None;
         }
         let placed = Placed::whole(rv);
-        let sccs = placed.components().ok()?;
+        let sccs = placed.components().inspect_err(|e| trace(&format!("no components: {e}"))).ok()?;
         let mut domains = domains.clone();
         for (answer, input) in &pass.fs {
             if let Some(d) = domains.get(answer).cloned() {

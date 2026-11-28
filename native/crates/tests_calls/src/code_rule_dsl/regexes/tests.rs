@@ -25,7 +25,7 @@ fn every_holder_of_a_pattern_holds_one_regex_until_none_does() {
         shared(&held),
         shared(&regex("^regexes-other$"))
     ));
-    assert!(!TABLE.read().contains_key("^regexes-other$"));
+    assert!(!table().read().contains_key("^regexes-other$"));
     assert!(Regex::new("(").is_err() && Regex::new("(").is_err());
     let copy = held.clone();
     let gone = Arc::downgrade(shared(&held));
@@ -33,7 +33,29 @@ fn every_holder_of_a_pattern_holds_one_regex_until_none_does() {
     assert!(gone.upgrade().is_some());
     drop(copy);
     assert!(gone.upgrade().is_none());
-    assert!(!TABLE.read().contains_key("^regexes-held$"));
+    assert!(!table().read().contains_key("^regexes-held$"));
+}
+
+#[test]
+fn each_shared_object_holds_its_own_regexes_and_a_handle_returns_to_its_own() {
+    use crate::code_rule_dsl::logic::profile;
+    let (one, other) = (profile::Shared::new(), profile::Shared::new());
+    let made = |object: &Arc<profile::Shared>| {
+        let _in = profile::within(Arc::clone(object));
+        regex("^regexes-objects$")
+    };
+    let (held, apart) = (made(&one), made(&other));
+    assert!(!Arc::ptr_eq(shared(&held), shared(&apart)), "two callers never hold one regex");
+    assert!(Arc::ptr_eq(shared(&held), shared(&made(&one))), "one caller's holders hold one");
+    let holds = |object: &Arc<profile::Shared>| object.get::<Tables>().read().contains_key("^regexes-objects$");
+    assert!(holds(&one) && holds(&other));
+    assert!(!table().read().contains_key("^regexes-objects$"), "the tests' object compiled none");
+    // Dropped while the other caller's run is on the thread, the handle leaves its own table alone.
+    {
+        let _in = profile::within(Arc::clone(&other));
+        drop(held);
+    }
+    assert!(!holds(&one) && holds(&other));
 }
 
 #[test]
@@ -93,7 +115,8 @@ fn a_compilation_drops_the_regexes_only_its_validation_took() {
     let _compiled = compile_document_with(document, &capabilities)
         .unwrap_or_else(|error| panic!("{}", error.reason));
     // Validation and the define check compiled the utility no query reaches; no clause holds it.
-    let table = TABLE.read();
+    let tables = table();
+    let table = tables.read();
     assert!(table.contains_key("^regexes-reached$"));
     assert!(!table.contains_key("^regexes-unreached$"));
 }

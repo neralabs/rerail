@@ -41,6 +41,13 @@ impl Adapter for Vue {
     const STRIPS_BOM: bool = <Ecma as Adapter>::STRIPS_BOM;
     /// The component's own `<!-- -->` comments; its scripts' are read with the Ecma family.
     const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    // Node paths' tables (decision 0722): the slots generated into `vue_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("vue_paths.rs"),
+        lists: &["document", "element"],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Ecma;

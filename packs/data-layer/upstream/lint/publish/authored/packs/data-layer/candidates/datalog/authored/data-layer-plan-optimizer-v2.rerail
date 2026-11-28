@@ -133,20 +133,20 @@ optimizer_flit_hi(h, i, st) :- optimizer_flit(h, i, _, k), optimizer_fslot(h, k,
 optimizer_flit_hi(h, i, e) :- optimizer_flit(h, i, _, k), !optimizer_fslot(h, k, _), node(_, h, _, _, e).
 .decl optimizer_fcand(h: node, i: number, st: number, l: number)
 optimizer_fcand(h, i, st, l) :- optimizer_flit_lo(h, i, lo), optimizer_flit_hi(h, i, hi), optimizer_fcontent(h, c, st),
-    st >= lo, st < hi, line(c, l).
+    st >= lo, st < hi, node_line_number(c, l).
 optimizer_fcand(h, i, st, l) :- optimizer_flit(h, i, _, k), j = i + 1, fstring_piece(h, j, "debug", _),
-    optimizer_fslot(h, k, s), node(_, s, _, st, _), line(s, l).
+    optimizer_fslot(h, k, s), node(_, s, _, st, _), node_line_number(s, l).
 .decl optimizer_fline(h: node, i: number, l: number)
 optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, _), optimizer_fstr(h), m = min st : { optimizer_fcand(h, i, st, _) },
     optimizer_fcand(h, i, m, l).
-optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), line(h, l).
+optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, 0), node(_, h, "format_specifier", _, _), node_line_number(h, l).
 optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "format_specifier", _, _), j = k - 1,
-    optimizer_fslot(h, j, s), end_line(s, l).
+    optimizer_fslot(h, j, s), node_end_line_number(s, l).
 // optimizer_fpiece(h, i, v, l): JoinedStr h's Constant piece i, value v, at line l. A literal has text in a
 // string_content or a debug field, so every piece has a candidate; the last rule only keeps a piece if not.
 .decl optimizer_fpiece(h: node, i: number, v: symbol, l: number)
 optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), optimizer_fline(h, i, l).
-optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), line(h, l).
+optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), node_line_number(h, l).
 
 // mirrors python/ast.rerail ast_name (nameref less not_name): identifier n is an ast.Name. Unlike ast.rerail, a walrus
 // target (`(x := …)`, field "name" of named_expression) is a Name, as in CPython.
@@ -216,7 +216,7 @@ ofc_base(d, "passes.py") :- ofc_file(d, p), (p = "passes.py" ; suffix("/passes.p
 .decl ofc_core(d: number)
 ofc_core(d) :- ofc_file(d, p), match("(?:.*/)?l2065_plan_core/.*", p).
 .decl ofc_at(n: node, d: number, p: symbol, l: number)
-ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), line(n, l).
+ofc_at(n, d, p, l) :- node(d, n, _, _, _), ofc_file(d, p), node_line_number(n, l).
 
 // optimizer_imports: an Import's aliases, or a level-0 ImportFrom's module, each CPython's alias name: the
 // dotted_name's identifiers joined by "." (`import os . path` is "os.path").
@@ -344,10 +344,10 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-060", p,
 // with CR LF, then each lone CR, made LF, so one more than its `\r\n`, `\r` and `\n` terminators: its lines
 // (src_line, a Python file's, the empty line after a final terminator included).
 .decl ofc_lf(d: number, k: number)
-ofc_lf(d, k) :- option_value("entryPoint", "scan_file"), ofc_file(d, _), source(d, sp), text(sp, s),
+ofc_lf(d, k) :- option_value("entryPoint", "scan_file"), ofc_file(d, _), document_source(d, sp), line_text(sp, s),
     k = @count_matches("\n", s) + 1.
 .decl ofc_src_lines(d: number, k: number)
-ofc_src_lines(d, k) :- !option_value("entryPoint", "scan_file"), ofc_file(d, _), k = count : { src_line(d, _, _) }.
+ofc_src_lines(d, k) :- !option_value("entryPoint", "scan_file"), ofc_file(d, _), k = count : { document_line(d, Rr_line2) }.
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-044", p, 1) :- ofc_lf(d, k), k > 600, ofc_file(d, p).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-044", p, 1) :- ofc_src_lines(d, k), k > 600,
     ofc_file(d, p).
@@ -436,15 +436,15 @@ oir_code(v) :- oir_registered(_, v).
 
 // doc_codes: W's regex over the doc's content, each match's CODE group (match_group: find_iter's matches).
 .decl oir_doc_code(c: symbol)
-oir_doc_code(c) :- oir_doc(d), source(d, sp),
-    match_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), text(g, c).
+oir_doc_code(c) :- oir_doc(d), document_source(d, sp),
+    line_regex_group("`(?P<CODE>(?:scope|schema|effects|cardinality|rewrite)\\.[a-z_0-9]+)`", sp, _, "CODE", g), match_text(g, c).
 
 // verifier.py cites `(<code>)` somewhere in its source (W's instr over source_text).
 .decl oir_cited(v: symbol)
-oir_cited(v) :- oir_code(v), oir_verifier(d), source(d, sp), text(sp, s), contains(cat("(", cat(v, ")")), s).
+oir_cited(v) :- oir_code(v), oir_verifier(d), document_source(d, sp), line_text(sp, s), contains(cat("(", cat(v, ")")), s).
 
 .decl oir_at(n: node, p: symbol, l: number)
-oir_at(n, p, l) :- node(d, n, _, _, _), oir_verifier(d), doc(d, p, _), line(n, l).
+oir_at(n, p, l) :- node(d, n, _, _, _), oir_verifier(d), doc(d, p, _), node_line_number(n, l).
 
 // oir_mode("gated"): the default case; oir_mode("ungated"): find_violations.
 .decl oir_mode(m: symbol)

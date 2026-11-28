@@ -66,7 +66,7 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
         if super::kinds::trace() && let Step::Atom { src, neg, keys, binds, tests: t, .. } = &j.steps[i] {
             let name = match src { Src::In(r, x) => j.src_in(r, x).0.name.get().cloned().unwrap_or_default(), Src::Delta(_) => "delta".into(), Src::Full(_) => "full".into(), Src::FullMulti(..) => "multi".into() };
             if std::env::var_os("RERAIL_STEP_FORMS").is_some() {
-                let form = match super::kinds::batches(j, true, [None, None]).get(i) { Some(Some((super::kinds::Batched::Own(_), _))) => "own", Some(Some((super::kinds::Batched::Keyed(_), _))) => "keyed", Some(Some((super::kinds::Batched::Held(_), _))) => "pairs", _ => "walk" };
+                let form = match super::kinds::batches(j, true, None, None).get(i) { Some(Some((super::kinds::Batched::Own(_), _))) => "own", Some(Some((super::kinds::Batched::Keyed(_), _))) => "keyed", Some(Some((super::kinds::Batched::Held(_), _))) => "pairs", _ => "walk" };
                 eprintln!("RERAIL_STEP_FORM\t{name}\tkeys {:?} binds {:?} neg {neg} first {}\t{form}\t{tests}\t{out}", keys.iter().map(|&(c, k)| (c, matches!(k, Key::Slot(_)))).collect::<Vec<_>>(), binds.iter().map(|b| b.0).collect::<Vec<_>>(), i == 0);
             }
             if name == "kind" {
@@ -84,7 +84,7 @@ pub(super) fn observe(j: &JoinRule, counts: &[(u64, u64)]) {
         // A keyed probe of a held input (E5): the index it reads on its key's columns, whatever its form (the order a
         // probe makes, an index in the input's block, a kept chain): its probes, the rows its input held, and this
         // plan as a reader. The search prices the probe by it (`orders_available`); a membership test's is E2's.
-        if let (Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. }) = &j.steps[i]
+        if let Step::Atom { src: Src::In(rel, ix), keys, .. } | Step::Scalar { src: Src::In(rel, ix), keys, .. } = &j.steps[i]
             && !keys.is_empty()
             && needs(j, i).is_none()
             && order_prices()
@@ -204,7 +204,7 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "index builds ahead (decision 0706)".into());
     use rayon::prelude::*;
-    let made_values: Vec<Option<usize>> = values.par_iter().map(|(s, c, k)| match k { None => s.build_value_index(*c), Some((n, k)) => s.build_value_bits(*n, *c, *k) }).collect();
+    let made_values: Vec<Option<usize>> = rerail_context::on_cores(|| values.par_iter().map(|(s, c, k)| match k { None => s.build_value_index(*c), Some((n, k)) => s.build_value_bits(*n, *c, *k) }).collect());
     if crate::code_rule_dsl::prof::on() {
         for ((_, _, k), m) in values.iter().zip(&made_values) {
             if k.is_some() {
@@ -217,13 +217,12 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
             eprintln!("RERAIL_INDEX_TRACE built value {c} {k:?} at {:p} gen {}: {m:?}", Arc::as_ptr(s), s.value_bits_gen());
         }
     }
-    let made: Vec<Option<(usize, u64)>> = jobs
+    let made: Vec<Option<(usize, u64)>> = rerail_context::on_cores(|| jobs
         .par_iter()
         .map(|(rel, kind)| {
             let ib = rel.in_block()?;
             match kind {
                 Kind::NodeBits(c) => {
-                    // A rows index (`node_rows`) holds the bits too (`own_node_bits` reads it there).
                     use rerail_blocks::relation::{NODE_BITS, NODE_ROWS};
                     let r = ib.relation();
                     let had = r.find_node_index(NODE_ROWS, *c, ib.rows).or_else(|| r.find_node_index(NODE_BITS, *c, ib.rows)).is_some();
@@ -236,7 +235,7 @@ pub(super) fn prefetch(reads: &BTreeSet<String>, held: impl Fn(&str) -> Option<A
                 _ => None,
             }
         })
-        .collect();
+        .collect());
     let rels: BTreeSet<*const InRel> = jobs.iter().zip(&made).filter(|(_, m)| m.is_some()).map(|((r, _), _)| Arc::as_ptr(r)).collect();
     for ((rel, _), _) in jobs.iter().zip(&made).filter(|(_, m)| m.is_some()) {
         rel.ahead.fetch_add(1, std::sync::atomic::Ordering::Release);
@@ -331,13 +330,22 @@ pub(super) fn build_orders(jobs: &[(&InRel, &super::Csr)]) -> usize {
     }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "orders built ahead (decision 0706 E5)".into());
     use rayon::prelude::*;
-    jobs.par_iter().for_each(|(rel, ix)| {
+    rerail_context::on_cores(|| jobs.par_iter().for_each(|(rel, ix)| {
+        // A one-column key's probe reads its rows by value where they are (`Csr::by_value`): that index is its order,
+        // and the runs are not made for it.
+        if ix.by_value_kind() && super::cands::by_value_on()
+            && let Some(ib) = rel.in_block()
+            && ib.own_node_rows(ix.cols[0] as u16).is_some()
+        {
+            rel.ahead.fetch_add(1, std::sync::atomic::Ordering::Release);
+            return;
+        }
         AHEAD.with(|a| a.set(true));
         let _ = ix.runs(rel);
         AHEAD.with(|a| a.set(false));
-    });
+    }));
     #[cfg(any(test, feature = "test-hooks"))]
-    AHEAD_MADE.fetch_add(jobs.len(), std::sync::atomic::Ordering::Relaxed);
+    AHEAD_MADE.with(|a| a.set(a.get() + jobs.len()));
     let b = crate::code_rule_dsl::logic::run::local::<Built>();
     b.0.lock().unwrap()[4] += jobs.len() as u64;
     jobs.len()
@@ -354,21 +362,24 @@ pub(super) fn count_order_made() -> bool {
     let reader = !AHEAD.with(std::cell::Cell::get);
     if reader {
         #[cfg(any(test, feature = "test-hooks"))]
-        READERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        READERS.with(|r| r.set(r.get() + 1));
     }
     reader
 }
+// Counted on the thread that made the order (a reader's) or asked for the build (`build_orders`): a test's own,
+// not those of tests running beside it.
 #[cfg(any(test, feature = "test-hooks"))]
-static READERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-#[cfg(any(test, feature = "test-hooks"))]
-static AHEAD_MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-/// Tests: the orders the process built ahead of their readers.
+thread_local! {
+    static READERS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static AHEAD_MADE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+/// Tests: the orders this thread built ahead of their readers.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn orders_built_ahead_for_tests() -> usize {
-    AHEAD_MADE.load(std::sync::atomic::Ordering::Relaxed)
+    AHEAD_MADE.with(std::cell::Cell::get)
 }
-/// Tests: the orders the process's readers made in their walks.
+/// Tests: the orders this thread's readers made in their walks.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn orders_made_by_readers_for_tests() -> usize {
-    READERS.load(std::sync::atomic::Ordering::Relaxed)
+    READERS.with(std::cell::Cell::get)
 }

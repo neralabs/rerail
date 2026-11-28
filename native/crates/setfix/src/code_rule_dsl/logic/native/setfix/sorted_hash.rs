@@ -52,6 +52,43 @@ impl SortedHash {
         &self.ids[s..e]
     }
 
+    /// `candidates` of a word's hashes at once (`hs[r]` for each `r` set in `live`): each one's candidates' place
+    /// and count in `out[r]`. Its places guessed and loaded for every hash first, so their loads overlap; then each
+    /// galloped to its first equal hash from there.
+    #[inline]
+    pub(super) fn candidates_word(&self, hs: &[u64; 64], live: u64, out: &mut [(u32, u32); 64]) {
+        let n = self.hashes.len();
+        if n == 0 {
+            out.fill((0, 0));
+            return;
+        }
+        let mut near = [0u64; 64];
+        let mut m = live;
+        while m != 0 {
+            let r = m.trailing_zeros() as usize;
+            m &= m - 1;
+            let guess = ((u128::from(hs[r]) * n as u128) >> 64) as usize;
+            near[r] = self.hashes[guess];
+            out[r].0 = guess as u32;
+        }
+        let mut m = live;
+        while m != 0 {
+            let r = m.trailing_zeros() as usize;
+            m &= m - 1;
+            let h = hs[r];
+            let guess = out[r].0 as usize;
+            let s = if near[r] == h && (guess == 0 || self.hashes[guess - 1] < h) { guess } else { super::runs::gallop(&self.hashes, guess, |&x| x < h) };
+            let e = s + self.hashes[s..].iter().take_while(|&&x| x == h).count();
+            out[r] = (s as u32, (e - s) as u32);
+        }
+    }
+
+    /// The ids of candidates `(at, len)` (`candidates_word`'s).
+    #[inline]
+    pub(super) fn ids(&self, (at, len): (u32, u32)) -> &[u32] {
+        &self.ids[at as usize..(at + len) as usize]
+    }
+
     /// Its bytes.
     pub(super) fn bytes(&self) -> usize {
         self.hashes.len() * 12

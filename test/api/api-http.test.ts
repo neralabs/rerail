@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
+import { repositoryRuleCounts } from "../../src/api/repository-operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import {
   addAttachment,
@@ -30,6 +31,7 @@ import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot
 import { installPack, uninstallPack } from "../support/installed-packs.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+import { ruleCountsOf } from "../../ui/repo-rules.js";
 import { withExperiments } from "../support/environment/experiments.js";
 
 withExperiments("CONVERSATION_RULES");
@@ -268,7 +270,7 @@ describe("Rerail API over HTTP", () => {
 
     const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
     expect(gaps).toEqual({
-      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
+      droppedEvents: 9, lostEvents: 0, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
       // Each place with why, in the order the session met them, for the person to act on.
       discoveryGapPlaces: [
         { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },
@@ -521,6 +523,26 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ total: number }>("/api/violations?since=0")).total).toBe(2);
   });
 
+  it("counts a repository's rules for the tray as the dashboard counts its rules read", async () => {
+    addRepository(WEB, { configuredAt: 5, started: true });
+    addAttachment(database, { repositoryKey: WEB, folder: "", sourceKind: "pack", sourceId: "complexity" }, 111);
+    addAttachment(database, { repositoryKey: WEB, folder: "web", sourceKind: "pack", sourceId: "complexity" }, 112);
+    const path = `/api/repository/rules?repository=${encodeURIComponent(WEB)}`;
+    const dashboard = async () => ruleCountsOf((await getJson<{ rules: Parameters<typeof ruleCountsOf>[0] }>(path)).rules);
+    const { rules } = await getJson<{ rules: Array<{ rule: { id: string } }> }>(path);
+    const [first, second] = [...new Set(rules.map(rule => rule.rule.id))];
+
+    expect(repositoryRuleCounts(stores, WEB)).toEqual(await dashboard());
+    // Off at one of the two folders that add it: the rule no longer runs everywhere, so it is not counted on.
+    const off = (id: string, folder: string) =>
+      putJson("/api/repository/settings", { repository: WEB, owner: "repository", folder, targets: [{ kind: "rule", id }], on: false });
+    expect((await off(first!, "web")).status).toBe(200);
+    expect((await off(second!, "")).status).toBe(200);
+    const counts = repositoryRuleCounts(stores, WEB);
+    expect(counts).toEqual(await dashboard());
+    expect(counts.on).toBe(counts.total - 2);
+  });
+
   it("answers an unchanged rules read with 304 and mints a new tag after a settings write", async () => {
     addRepository(WEB, { configuredAt: 5, started: true });
     const path = `/api/repository/rules?repository=${encodeURIComponent(WEB)}`;
@@ -675,7 +697,7 @@ describe("Rerail API over HTTP", () => {
     expect((await app.request("/api/repositories", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
   });
 
-  it("documents conditional responses and the agent refusal", async () => {
+  it("documents conditional responses, the agent refusal and a write not confirmed on the disk", async () => {
     const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
 
     expect(document.paths["/api/repository/rules"]?.get?.operationId).toBe("repository_rules_get");
@@ -684,6 +706,9 @@ describe("Rerail API over HTTP", () => {
     }
     expect(document.paths["/api/repository/settings"]?.put?.responses["304"]).toBeUndefined();
     expect(document.paths["/api/repository/settings"]?.put?.responses["403"]).toBeDefined();
+    expect(document.paths["/api/repository/settings"]?.put?.responses["503"]).toMatchObject({
+      description: expect.stringContaining("not-on-disk: the write was made but could not be confirmed on the disk"),
+    });
     for (const removed of ["/api/rules", "/api/rules/{id}", "/api/rule-context"]) expect(document.paths[removed]).toBeUndefined();
   });
 

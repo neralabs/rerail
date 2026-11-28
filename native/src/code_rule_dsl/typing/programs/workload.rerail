@@ -84,8 +84,6 @@ defines_class(s, x, @dot(m, x)) :- kind(c, "class_definition"), field(c, "name",
 defines_fn(s, x, f, @dot(m, x)) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope), kind(s, "module"), docof(f, d), doc(d, _, m).
 .decl class_q(q: symbol)
 class_q(q) :- defines_class(_, _, q).
-.decl fn_q(q: symbol, f: node)
-fn_q(q, f) :- defines_fn(_, _, f, q).
 .decl bound_in(s: node, x: symbol)
 bound_in(s, x) :- assigns(s, x, _).
 bound_in(s, x) :- defines_class(s, x, _).
@@ -95,28 +93,57 @@ bound_in(f, x) :- kind(f, "function_definition"), field(f, "parameters", ps), ch
 .decl lookup(n: node, x: symbol, s: node)
 lookup(n, x, s) :- kind(n, "identifier"), text(n, x), nearest(n, s, scope), bound_in(s, x).
 lookup(n, x, m) :- kind(n, "identifier"), text(n, x), nearest(n, s, scope), !bound_in(s, x), docof(n, d), modnode(d, m), bound_in(m, x).
-.decl class_ref(n: node, q: symbol)
-class_ref(f, q) :- lookup(f, x, s), defines_class(s, x, q).
-class_ref(f, q) :- resolves(f, q), class_q(q).
-// Cross-file: a resolved name's function, in whichever file defines it (decision 0652).
-.decl fn_ref(n: node, f: node) cross_file
-fn_ref(n, f) :- lookup(n, x, s), defines_fn(s, x, f, _).
-fn_ref(n, f) :- resolves(n, q), fn_q(q, f).
-// Cross-file: a call no file defines takes its declared return (`!fn_q(q, _)`, below), and a call's type
-// is its function's, in any file (decision 0652).
-.decl type_of(n: node, t: symbol) cross_file
-.decl returns(f: node, t: symbol)
-type_of(n, t) :- kind(n, k), lit_type(k, t).
-type_of(n, t) :- lookup(n, x, s), assigns(s, x, r), type_of(r, t).
-type_of(n, t) :- kind(n, "parenthesized_expression"), child(n, c, 0), type_of(c, t).
-type_of(c, q) :- kind(c, "call"), field(c, "function", f), class_ref(f, q).
-type_of(c, t) :- kind(c, "call"), field(c, "function", f), fn_ref(f, fn), returns(fn, t).
-returns(f, t) :- kind(r, "return_statement"), nearest(r, f, scope), kind(f, "function_definition"), child(r, e, 0), type_of(e, t).
+// W4's cross-file part relates functions' symbols and types alone (decision 0677). Each file gives each typed node
+// a type it decides itself (`lt`) or a dependency on what a call of a function gives (`dep`), and each module-level
+// function's return the same (`fret`, `fdep`). The cross part solves the returns by the function's symbol (`ret`), and
+// type_of places them on each file's own nodes.
+// fn_at(d, q): document d defines module-level function q.
+.decl fn_at(d: number, q: symbol)
+fn_at(d, q) :- defines_fn(_, _, f, q), docof(f, d).
+// lt(n, t): node n has type t, as its own file decides: a literal, or a call of a class its scope names.
+.decl lt(n: node, t: symbol)
+lt(n, t) :- kind(n, k), lit_type(k, t).
+lt(n, t) :- lookup(n, x, s), assigns(s, x, r), lt(r, t).
+lt(n, t) :- kind(n, "parenthesized_expression"), child(n, c, 0), lt(c, t).
+lt(c, q) :- kind(c, "call"), field(c, "function", f), lookup(f, x, s), defines_class(s, x, q).
+// dep(n, e, q): node n has the type a call of q gives: the function of document e its own scope names, or (e = -1)
+// what a name resolved through an import names, in whichever file defines it.
+.decl dep(n: node, e: number, q: symbol)
+dep(c, e, q) :- kind(c, "call"), field(c, "function", f), lookup(f, x, s), defines_fn(s, x, g, q), docof(g, e).
+dep(c, -1, q) :- kind(c, "call"), field(c, "function", f), resolves(f, q).
+dep(n, e, q) :- lookup(n, x, s), assigns(s, x, r), dep(r, e, q).
+dep(n, e, q) :- kind(n, "parenthesized_expression"), child(n, c, 0), dep(c, e, q).
+// fret(d, q, t), fdep(d, q, e, p): module-level function q of document d returns type t, or what a call of p gives
+// (e as dep's).
+.decl fret(d: number, q: symbol, t: symbol)
+fret(d, q, t) :- defines_fn(_, _, f, q), docof(f, d), kind(r, "return_statement"), nearest(r, f, scope), child(r, x, 0),
+    lt(x, t).
+.decl fdep(d: number, q: symbol, e: number, p: symbol)
+fdep(d, q, e, p) :- defines_fn(_, _, f, q), docof(f, d), kind(r, "return_statement"), nearest(r, f, scope), child(r, x, 0),
+    dep(x, e, p).
+// returns(d, q, t): module-level function q of document d returns type t. Cross-file: to the fixed point over every
+// file's dependencies (decision 0652).
+.decl returns(d: number, q: symbol, t: symbol) cross_file
+returns(d, q, t) :- fret(d, q, t).
+returns(d, q, t) :- fdep(d, q, e, p), gives(e, p, t).
+// gives(e, p, t): a call of p, as dep names it, has type t: document e's function p returns it; or, by name, p is a
+// class of the run, or a function p of any file returns t, or no file defines p and its declared return is t.
 // Declared signatures (`typing::declare`, rerail.types/v1) and dependency summaries (`typing::deps`): the corpus
 // runner adds a `declared_ret(q, t)` fact per member name of each declared return. They fill gaps only: a call to a
 // name the corpus defines keeps the corpus's types.
 .decl declared_ret(q: symbol, t: symbol)
-type_of(c, t) :- kind(c, "call"), field(c, "function", f), resolves(f, q), !fn_q(q, _), declared_ret(q, t).
+.decl gives(e: number, p: symbol, t: symbol)
+gives(e, p, t) :- returns(e, p, t).
+gives(-1, p, p) :- class_q(p).
+gives(-1, p, t) :- fn_at(e, p), returns(e, p, t).
+gives(-1, p, t) :- declared_ret(p, t), !functions(p).
+// functions(q): the corpus's functions by symbol. It and returns are what the typing summaries and the declarations'
+// conflicts read after the run (`corpus::typing`).
+.decl functions(q: symbol)
+functions(q) :- fn_at(_, q).
+.decl type_of(n: node, t: symbol)
+type_of(n, t) :- lt(n, t).
+type_of(n, t) :- dep(n, e, p), gives(e, p, t).
 .output type_of
 
 // W4b: a declared flat lattice. `top` is its top; the join of two different constants is `top`.

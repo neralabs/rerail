@@ -61,7 +61,7 @@ describe("the model's health", () => {
   it("is not ok when nothing can verify the files", () => {
     const root = modelDirectory(FILES);
     const status = modelStatus(root, () => {
-      throw new Error("Unsupported platform or missing native addon");
+      throw new Error("Rerail's engine for Linux on x64 is not installed");
     });
     expect(status).toMatchObject({ ok: false, problem: "unverified", file: null });
   });

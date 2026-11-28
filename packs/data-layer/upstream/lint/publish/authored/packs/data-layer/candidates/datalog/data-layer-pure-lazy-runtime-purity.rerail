@@ -599,8 +599,8 @@ prs_hasanc(d, f, x, s, e) :- prs_iss(d, f, x, s, e, _), prs_ev(d, f, y, ys, ye),
 prs_incast(d, s, e) :- prs_iss(d, _, _, s, e, _), prs_cast2(c), prs_arg(d, c, _, 0, ts, te), ts <= s, te >= e.
 prs_vis(d, x, code) :- prs_iss(d, f, x, s, e, code), prs_purecol(f), !prs_hasanc(d, f, x, s, e), !prs_incast(d, s, e).
 prs_vis(d, x, code) :- prs_iss(d, f, x, s, e, code), prs_shallow(code), !prs_hasanc(d, f, x, s, e), !prs_incast(d, s, e).
-violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", code, p, l) :- prs_vis(d, x, code), prs_doc(d, p, _), line(x, l).
-violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-006", p, l) :- prs_active(d, f), prs_purecol(f), prs_contract(d, f), prs_doc(d, p, _), line(f, l).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", code, p, l) :- prs_vis(d, x, code), prs_doc(d, p, _), node_line_number(x, l).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-006", p, l) :- prs_active(d, f), prs_purecol(f), prs_contract(d, f), prs_doc(d, p, _), node_line_number(f, l).
 prs_ent(m, loc, ms, nm) :- prs_impfrom(d, n, ms), child(mo, n, _), prs_n(d, mo, "module", _, _), prs_impx(d, n, loc, nm, _), prs_doc(d, _, m).
 prs_en(d, m, loc) :- prs_impfrom(d, n, _), child(mo, n, _), prs_n(d, mo, "module", _, _), prs_impx(d, n, loc, _, _), prs_doc(d, _, m).
 prs_en(d, m, nm) :- prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), prs_doc(d, _, m).
@@ -609,4 +609,4 @@ prs_allname(d, v) :- prs_mb(d, a, "__all__"), prs_asgv(a, _, _, rs, re), prs_str
 prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p), !prefix("_", nm), !prs_hasall(d).
 prs_exp(m, nm) :- prs_en(d, m, nm), prs_doc(d, p, _), glob("data_layer/*.py", p), !prefix("_", nm), prs_allname(d, nm).
 prs_exp(tm, tn) :- prs_exp(m, nm), prs_ent(m, nm, tm, tn).
-violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-007", p, l) :- !prs_scansource(0), prs_exp(m, nm), prs_doc(d, p, m), prs_pathok(d), prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), suffix("_lazy", nm), !prefix("_", nm), !prs_explicit(f), line(f, l).
+violation("data-layer-pure-lazy-runtime-purity", "pure-runtime-state", "PLP-007", p, l) :- !prs_scansource(0), prs_exp(m, nm), prs_doc(d, p, m), prs_pathok(d), prs_flag(d, f), !prs_lp(f, _), prs_decl(d, f, _, nm, _, _), suffix("_lazy", nm), !prefix("_", nm), !prs_explicit(f), node_line_number(f, l).

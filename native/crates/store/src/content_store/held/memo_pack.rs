@@ -252,9 +252,9 @@ impl ContentStore {
         let files = segments.files();
         let done = self.immediate_transaction_once(|t| {
             let mut numbers = Vec::with_capacity(files.len());
-            for _ in &files {
+            for file in &files {
                 let seg = next_segment(t)?;
-                t.execute_cached("INSERT INTO memo_packs(pack) VALUES (?1)", [seg])?;
+                t.execute_cached("INSERT INTO memo_packs(pack, bytes) VALUES (?1, ?2)", [seg, super::super::segments::file_bytes(file) as i64])?;
                 numbers.push(seg);
             }
             // The parts whose entry took what is kept over it.

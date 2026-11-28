@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation ANN201(at: node, fn: loc) "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
+.violation ANN201(at: node, fn: node) "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
     suppress noqa "ANN201"
 ANN201(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, !prefix("_", n),
     field(p1, "name", n), kind(p1, "function_definition"),
@@ -54,7 +54,7 @@ ann201_holds_definition(n) :- within_stop(c1, n, ann201_stop_1), ann201_definiti
 
 // last_definition_is_overload(n): the JSON util `last-definition-is-overload`, used where the JSON says `matches: "last-definition-is-overload"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann201_last_definition_is_overload(n: node, fn: loc)
+.decl ann201_last_definition_is_overload(n: node, fn: node)
 ann201_last_definition_is_overload(n, FN) :- ann201_overload_decorated(n), child(n, c1, _),
     kind(c1, "function_definition"), child(c1, c2, _), kind(c2, "identifier"),
     node(_, c2, _, _, _), FN = c2.
@@ -64,7 +64,7 @@ ann201_last_definition_is_overload(n, FN) :- !ann201_alt_2(n), child(n, c4, _), 
 
 // previous_overload(n): the JSON util `previous-overload`, used where the JSON says `matches: "previous-overload"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann201_previous_overload(n: node, fn: loc)
+.decl ann201_previous_overload(n: node, fn: node)
 ann201_previous_overload(n, FN) :- precedes_stop(s1, n, ann201_stop_3),
     ann201_last_definition_is_overload(s1, FN).
 ann201_previous_overload(n, FN) :- count : { precedes(s2, n), ann201_holds_definition(s2) } = 0,
@@ -73,7 +73,7 @@ ann201_previous_overload(n, FN) :- count : { precedes(s2, n), ann201_holds_defin
 
 // overload_implementation(n): the JSON util `overload-implementation`, used where the JSON says `matches: "overload-implementation"`
 //   FN: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_overload_implementation(n: node, fn: loc)
+.decl ann201_overload_implementation(n: node, fn: node)
 ann201_overload_implementation(n, FN) :- ann201_demand_overload_implementation(n, FN),
     count : { child(p1, n, _), ann201_overload_decorated(p1) } = 0, ann201_previous_overload(n, FN).
 
@@ -98,7 +98,7 @@ ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, 
 
 // accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann201_accessor_expr(n: node, fn: loc)
+.decl ann201_accessor_expr(n: node, fn: node)
 ann201_accessor_expr(n, FN) :- kind(n, "attribute"), field(n, "object", c1),
     ann201_accessor_object(c1, FN), ann201_tok_has_1(n).
 ann201_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c10, _),
@@ -127,7 +127,7 @@ ann201_declares_all(n) :- within_stop(c1, n, ann201_stop_11), ann201_all_assignm
 
 // export_string(n): the JSON util `export-string`, used where the JSON says `matches: "export-string"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_export_string(n: node, defname: loc)
+.decl ann201_export_string(n: node, defname: node)
 ann201_export_string(n, DEFNAME) :- ann201_demand_export_string(n, DEFNAME), kind(n, "string"),
     child(n, c1, _), kind(c1, "string_content"), node(_, c1, _, _, _), EXPORT = c1,
     text(EXPORT, t2), text(DEFNAME, t2),
@@ -135,7 +135,7 @@ ann201_export_string(n, DEFNAME) :- ann201_demand_export_string(n, DEFNAME), kin
 
 // all_elements(n): the JSON util `all-elements`, used where the JSON says `matches: "all-elements"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_all_elements(n: node, defname: loc)
+.decl ann201_all_elements(n: node, defname: node)
 ann201_all_elements(n, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME),
     (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list")), child(n, c1, _),
     ann201_export_entry(c1, DEFNAME).
@@ -155,7 +155,7 @@ ann201_all_elements(n, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME), kind(
 
 // all_arg(n): the JSON util `all-arg`, used where the JSON says `matches: "all-arg"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_all_arg(n: node, defname: loc)
+.decl ann201_all_arg(n: node, defname: node)
 ann201_all_arg(n, DEFNAME) :- ann201_demand_all_arg(n, DEFNAME),
     (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple")), child(n, c1, _),
     ann201_export_entry(c1, DEFNAME).
@@ -170,7 +170,7 @@ ann201_list_or_tuple(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // all_value(n): the JSON util `all-value`, used where the JSON says `matches: "all-value"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_all_value(n: node, defname: loc)
+.decl ann201_all_value(n: node, defname: node)
 ann201_all_value(n, DEFNAME) :- ann201_demand_all_value(n, DEFNAME), ann201_all_elements(n, DEFNAME).
 ann201_all_value(n, DEFNAME) :- ann201_demand_all_value(n, DEFNAME), kind(n, "binary_operator"),
     ann201_all_binop(n, DEFNAME).
@@ -181,7 +181,7 @@ ann201_all_value(n, DEFNAME) :- ann201_demand_all_value(n, DEFNAME), kind(n, "as
 
 // all_binop(n): the JSON util `all-binop`, used where the JSON says `matches: "all-binop"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_all_binop(n: node, defname: loc)
+.decl ann201_all_binop(n: node, defname: node)
 ann201_all_binop(n, DEFNAME) :- ann201_demand_all_binop(n, DEFNAME), field(n, "right", c1),
     ann201_all_elements(c1, DEFNAME).
 ann201_all_binop(n, DEFNAME) :- ann201_demand_all_binop(n, DEFNAME), field(n, "left", c2),
@@ -189,7 +189,7 @@ ann201_all_binop(n, DEFNAME) :- ann201_demand_all_binop(n, DEFNAME), field(n, "l
 
 // all_left(n): the JSON util `all-left`, used where the JSON says `matches: "all-left"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_all_left(n: node, defname: loc)
+.decl ann201_all_left(n: node, defname: node)
 ann201_all_left(n, DEFNAME) :- ann201_demand_all_left(n, DEFNAME), ann201_all_elements(n, DEFNAME).
 ann201_all_left(n, DEFNAME) :- ann201_demand_all_left(n, DEFNAME), kind(n, "binary_operator"),
     ann201_all_binop(n, DEFNAME).
@@ -215,14 +215,14 @@ ann201_public_class(n) :- !ann201_alt_15(n),
 
 // accessor_object(n): the JSON util `accessor-object`, used where the JSON says `matches: "accessor-object"`
 //   FN: metavariable this relation binds for the calling rule
-.decl ann201_accessor_object(n: node, fn: loc)
+.decl ann201_accessor_object(n: node, fn: node)
 ann201_accessor_object(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
 ann201_accessor_object(n, FN) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ann201_accessor_object(c1, FN).
 
 // export_entry(n): the JSON util `export-entry`, used where the JSON says `matches: "export-entry"`
 //   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
-.decl ann201_export_entry(n: node, defname: loc)
+.decl ann201_export_entry(n: node, defname: node)
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME), ann201_export_string(n, DEFNAME).
 ann201_export_entry(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c1, _), ann201_export_entry(c1, DEFNAME).
@@ -240,7 +240,7 @@ ann201_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:setter)(?:\\W.*)?|(?:.*\\W)?(?:deleter)(?:\\W.*)?)$", g4).
 
 // demand_all_value: the rows of all_value its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_all_value(n: node, defname: loc)
+.decl ann201_demand_all_value(n: node, defname: node)
 ann201_demand_all_value(c1, DEFNAME) :- ann201_demand_all_value(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c1, _).
 ann201_demand_all_value(c2, DEFNAME) :- ann201_demand_all_value(n, DEFNAME), kind(n, "assignment"),
@@ -250,12 +250,12 @@ ann201_demand_all_value(c5, DEFNAME) :- child(n, c2, _), kind(c2, "identifier"),
     ann201_all_assignment(c4), field(c4, "right", c5).
 
 // demand_overload_implementation: the rows of overload_implementation its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_overload_implementation(n: node, fn: loc)
+.decl ann201_demand_overload_implementation(n: node, fn: node)
 ann201_demand_overload_implementation(p1, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n,
     field(p1, "name", n), kind(p1, "function_definition").
 
 // demand_all_binop: the rows of all_binop its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_all_binop(n: node, defname: loc)
+.decl ann201_demand_all_binop(n: node, defname: node)
 ann201_demand_all_binop(n, DEFNAME) :- ann201_demand_all_value(n, DEFNAME),
     kind(n, "binary_operator").
 ann201_demand_all_binop(n, DEFNAME) :- ann201_demand_all_left(n, DEFNAME),
@@ -264,11 +264,11 @@ ann201_demand_all_binop(c1, DEFNAME) :- ann201_demand_all_left(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c1, _), kind(c1, "binary_operator").
 
 // demand_all_left: the rows of all_left its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_all_left(n: node, defname: loc)
+.decl ann201_demand_all_left(n: node, defname: node)
 ann201_demand_all_left(c2, DEFNAME) :- ann201_demand_all_binop(n, DEFNAME), field(n, "left", c2).
 
 // demand_all_elements: the rows of all_elements its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_all_elements(n: node, defname: loc)
+.decl ann201_demand_all_elements(n: node, defname: node)
 ann201_demand_all_elements(c2, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c2, _).
 ann201_demand_all_elements(c3, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME),
@@ -279,7 +279,7 @@ ann201_demand_all_elements(c1, DEFNAME) :- ann201_demand_all_binop(n, DEFNAME),
 ann201_demand_all_elements(n, DEFNAME) :- ann201_demand_all_left(n, DEFNAME).
 
 // demand_all_arg: the rows of all_arg its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_all_arg(n: node, defname: loc)
+.decl ann201_demand_all_arg(n: node, defname: node)
 ann201_demand_all_arg(c7, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME), kind(n, "call"),
     field(n, "function", c4),
     ( ann201_list_or_tuple(c4)
@@ -291,7 +291,7 @@ ann201_demand_all_arg(c2, DEFNAME) :- ann201_demand_all_arg(n, DEFNAME),
     kind(n, "parenthesized_expression"), child(n, c2, _).
 
 // demand_export_entry: the rows of export_entry its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_export_entry(n: node, defname: loc)
+.decl ann201_demand_export_entry(n: node, defname: node)
 ann201_demand_export_entry(c1, DEFNAME) :- ann201_demand_all_elements(n, DEFNAME),
     (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list")), child(n, c1, _).
 ann201_demand_export_entry(c1, DEFNAME) :- ann201_demand_all_arg(n, DEFNAME),
@@ -300,7 +300,7 @@ ann201_demand_export_entry(c1, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME
     kind(n, "parenthesized_expression"), child(n, c1, _).
 
 // demand_export_string: the rows of export_string its callers ask for (the metavariable columns they pass in)
-.decl ann201_demand_export_string(n: node, defname: loc)
+.decl ann201_demand_export_string(n: node, defname: node)
 ann201_demand_export_string(n, DEFNAME) :- ann201_demand_export_entry(n, DEFNAME).
 
 // stop_11: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes

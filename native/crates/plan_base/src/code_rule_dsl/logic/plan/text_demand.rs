@@ -91,7 +91,10 @@ fn is_var(t: Option<&TermRef<'_>>, s: Slot) -> bool {
 
 /// core.rerail's span columns whose text a rule may read (relation, column): a document's source, a line, and the
 /// token relations' tokens.
-const SPAN_COLUMNS: [(&str, usize); 6] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1)];
+/// A regex capture's match (`rx_span`'s `m`, bit 8) is a span too: its text row is made with it, at its length (`Extra::document`'s
+/// scan of a pattern), so a rule reading it (UP009's `match("…coding[:=](?<xs>…)", sp), text(xs, x)`) reads
+/// no node's text. Read as a node's, it made `text` a row a node for every node of every file.
+const SPAN_COLUMNS: [(&str, usize); 7] = [("source", 1), ("src_line", 2), ("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1), ("rx_span", 4)];
 
 /// The spans whose text a rule reads (a document's source, a line), and whether a token's. Plan-time provenance, not
 /// a per-file scan: only copying a span (including variable equality) carries its origin. Regex captures have their
@@ -101,7 +104,7 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
     let mut requested = 0;
     for rule in v.rules() {
         let vars = span_vars(v, &columns, rule);
-        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()) == "text") {
+        for atom in rule.body().filter_map(|l| l.atom()).filter(|a| crate::code_rule_dsl::facts::core::counterpart(v.rel_name(a.rel())) == "text") {
             if let Some(TermRef::Var(value)) = atom.args().next() {
                 requested |= vars.get(&value).copied().unwrap_or(0);
             }
@@ -111,10 +114,10 @@ pub fn span_text_demand(v: &Version) -> (BTreeSet<SpanIn>, bool) {
 }
 
 /// Each relation column that holds a span, by the spans it holds: bit 1 the source, 2 a line, 4 a token (the second
-/// column of the four token relations), carried by the rules that copy them (including variable equality), to a
+/// column of the four token relations), 8 a regex capture's match, carried by the rules that copy them (including variable equality), to a
 /// fixpoint.
 fn span_columns(v: &Version) -> HashMap<(&str, usize), u8> {
-    let mut columns: HashMap<(&str, usize), u8> = SPAN_COLUMNS.iter().zip([1, 2, 4, 4, 4, 4]).map(|(&c, bit)| (c, bit)).collect();
+    let mut columns: HashMap<(&str, usize), u8> = SPAN_COLUMNS.iter().zip([1, 2, 4, 4, 4, 4, 8]).map(|(&c, bit)| (c, bit)).collect();
     loop {
         let mut changed = false;
         for rule in v.rules() {
@@ -297,7 +300,7 @@ pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_i
     // The nodes whose text a rule reads (`read`): a row of the tag, then one a name of each set.
     if let Some(n) = &d.read {
         out.push(vec![s("read")]);
-        for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values)] {
+        for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values), ("relation", &n.relations)] {
             out.extend(names.iter().map(|x| vec![s("read"), s(set), s(x)]));
         }
     }
@@ -333,6 +336,7 @@ pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manage
                     "parent" => &mut n.parents,
                     "parent field" => &mut n.parent_fields,
                     "value" => &mut n.values,
+                    "relation" => &mut n.relations,
                     _ => return None,
                 };
                 names.insert(text(x)?);
@@ -615,6 +619,15 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
     let (mut kinds, mut any, mut negated_any) = (BTreeSet::new(), Vec::new(), 0);
     let mut read = Some(TextNodes::default());
     let mut wide: Option<String> = None;
+    // The per-node relation (`TEXT_NODE_RELATIONS`) a positive atom binds `s` in at its node column, if one does and
+    // the program does not derive it.
+    let held_by = |r: RuleRef<'_>, s: Slot| -> Option<&'static str> {
+        r.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).find_map(|a| {
+            let rel = v.rel_name(a.rel());
+            let known = crate::code_rule_dsl::facts::vtab::syntax::TEXT_NODE_RELATIONS.iter().find(|&&k| k == rel)?;
+            (!rules.iter().any(|d| head_of(*d) == rel) && matches!(a.args().next(), Some(TermRef::Var(x)) if x == s)).then_some(*known)
+        })
+    };
     for (ri, &rule) in rules.iter().enumerate() {
         let head = head_of(rule);
         for (i, l) in rule.body().enumerate() {
@@ -642,6 +655,10 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
                             if let Some(TermRef::Str(c)) = text.args().nth(1) {
                                 nodes.values.insert(v.text(c).to_owned());
                             }
+                        }
+                        // A node a per-node relation holds (`comment(c, _)`): only its nodes, known by their kind.
+                        _ if let Some(rel) = held_by(rule, s) => {
+                            nodes.relations.insert(rel.to_owned());
                         }
                         // A child of a node of known kinds: only such children.
                         _ if let Some((kinds, fields)) = parents_of(rule, s) => {
@@ -746,8 +763,9 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     if setting("phase").is_empty() {
         return Err("not a phase".into());
     }
-    let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect();
-    let is_node = |t: &str| t == "node" || t == "loc";
+    // An export's name is its item's first word: an asked phase writes its key after it (`asked_at by_path 1`).
+    let exports: Vec<String> = setting("export").iter().flat_map(|x| x.split(',').filter_map(|e| e.trim().trim_end_matches('.').split_whitespace().next().map(str::to_owned)).collect::<Vec<_>>()).collect();
+    let is_node = |t: &str| t == "node" || t == "place";
     let ast = crate::code_rule_dsl::facts::core::ast_matches::PREFIX;
     let types = |rel: &str| -> Option<Vec<&str>> { v.decl_of(rel).map(|d| d.cols().map(|(_, t)| v.text(t)).collect()) };
     for e in &exports {
@@ -763,13 +781,13 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || types(rel).and_then(|ts| ts.get(c).copied()).is_some_and(is_node);
     // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
     // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "static_value_type_of", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel {
         "child" => Some(1),
         "field" => Some(2),
         _ => None,
     };
-    let tree = |rel: &str| LOCAL.contains(&rel) || down(rel).is_some();
+    let tree = |rel: &str| LOCAL.contains(&crate::code_rule_dsl::facts::core::counterpart(rel)) || down(rel).is_some();
     // A matcher's root kind, where it reaches only below its root.
     let roots: HashMap<&str, Option<String>> = matchers
         .iter()

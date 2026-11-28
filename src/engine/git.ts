@@ -782,6 +782,11 @@ export class ProcessGit {
     this.#livesOn = true;
   }
 
+  /** Whether this process lives on past each call ({@link livesOn}): the daemon. */
+  get living(): boolean {
+    return this.#livesOn;
+  }
+
   /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
   path(): string {
     this.#kept ??= this.#keep(keptBy(this.#decide(), this.#disks.now));
@@ -886,6 +891,11 @@ export function gitLivesOn(): void {
   processGit.livesOn();
 }
 
+/** Whether this process's Git works as one that lives on ({@link gitLivesOn}): the daemon's, whose error output is `daemon.log`. */
+export function gitLivesOnHere(): boolean {
+  return processGit.living;
+}
+
 /**
  * Has this process's Git run as the daemon's, which serves the checkout in `folder` and lives on: looked for from that
  * folder ({@link searchGitFrom}), and working as a process that lives on does ({@link gitLivesOn}). The daemon calls it
@@ -959,6 +969,8 @@ export function gitBash(exists: (path: string) => boolean = existsSync): string 
 export interface GitResult {
   /** Null when Git could not be started or was killed. */
   status: number | null;
+  /** The signal that ended Git, when one did and the start says which. */
+  signal?: NodeJS.Signals;
   stdout: string;
   /**
    * The bytes Git wrote to stdout, where the call asked to keep them (`keepBytes`, {@link runGitWithoutBlockingBytes}):
@@ -1198,7 +1210,9 @@ function startGitBytes(cwd: string, args: readonly string[], options: RunGitOpti
 function runGitWith(executable: string, args: readonly string[], options: RunGitOptions): Omit<GitResult, "stdout"> & { stdout: Buffer } {
   const { env, ...limits } = options;
   const result = runGitSyncBytes(executable, args, gitEnvironment(executable, env), { timeout: DEFAULT_TIMEOUT_MS, ...limits });
-  return { status: result.status, stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
+  // `spawnSync` gives "" for a signal Node has no name for (`GitRunResult`): no name to say.
+  const signal = result.signal === null || result.signal === "" ? undefined : result.signal;
+  return { status: result.status, ...(signal === undefined ? {} : { signal }), stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
 /** What {@link runGitAsync} takes: {@link RunGitOptions}, {@link GitReadOptions}, and the text written to Git's stdin. */
@@ -1265,7 +1279,7 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
       const why = signal?.aborted === true ? "the read was stopped" : `it ran past its time limit of ${timeout} ms`;
       settle({ status: null, ...output, error: new Error(`Git was ended: ${why}`) });
     } else if (failure !== undefined || child.exitCode === null) {
-      settle({ status: null, ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
+      settle({ status: null, ...(child.signalCode === null ? {} : { signal: child.signalCode }), ...output, error: failure ?? new Error(`Git was ended by ${child.signalCode ?? "a signal"}`) });
     } else settle({ status: child.exitCode, ...output });
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
@@ -1331,6 +1345,50 @@ export class GitReads {
   async stop(): Promise<void> {
     this.#stopping.abort();
     await Promise.allSettled([...this.#running]);
+  }
+}
+
+/** A read that the callers asking for one thing meanwhile share, and the signal of the caller that started it. */
+export interface SharedRead<T> {
+  readonly answer: Promise<T>;
+  readonly signal: AbortSignal | undefined;
+}
+
+/**
+ * `read`, shared through `reads` by the callers that ask for `key` while it runs. It runs under the signal of the caller
+ * that started it, and a caller under that signal waits for all of it, each Git it started included. A caller under
+ * another signal is answered undefined once its own signal is aborted, with no wait for the read; where the starter's
+ * signal stopped the read while its own is live, it reads again under its own. So no caller's stop cuts another's read.
+ */
+export async function sharedRead<K, T>(reads: Map<K, SharedRead<T>>, key: K, options: GitReadOptions, read: () => Promise<T>): Promise<T | undefined> {
+  const shared = reads.get(key) ?? startShared(reads, key, options.signal, read);
+  if (shared.signal === options.signal) return await shared.answer;
+  const answer = await untilAborted(shared.answer, options.signal);
+  return stoppedByStarter(shared.signal, options.signal) ? await sharedRead(reads, key, options, read) : answer;
+}
+
+/** Whether the starter's signal is aborted, which may have cut its read short, while the caller's is live. */
+function stoppedByStarter(starter: AbortSignal | undefined, caller: AbortSignal | undefined): boolean {
+  return starter?.aborted === true && caller?.aborted !== true;
+}
+
+function startShared<K, T>(reads: Map<K, SharedRead<T>>, key: K, signal: AbortSignal | undefined, read: () => Promise<T>): SharedRead<T> {
+  const shared = { answer: read().finally(() => reads.delete(key)), signal };
+  reads.set(key, shared);
+  return shared;
+}
+
+/** `answer`, or undefined as soon as `signal` is aborted: the abort stops no read, it only stops the wait. */
+async function untilAborted<T>(answer: Promise<T>, signal: AbortSignal | undefined): Promise<T | undefined> {
+  if (signal === undefined) return await answer;
+  const { promise: aborted, resolve: stop } = Promise.withResolvers<undefined>();
+  const onAbort = (): void => stop(undefined);
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) stop(undefined);
+  try {
+    return await Promise.race([answer, aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
   }
 }
 
@@ -1600,11 +1658,21 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
 }
 
 /**
+ * The global config files Git reads, as named: `GIT_CONFIG_GLOBAL` when set, else `.gitconfig` in Git's home
+ * ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in `XDG_CONFIG_HOME` or that
+ * home's `.config`. A relative `GIT_CONFIG_GLOBAL` stays relative: each Git opens it from its own folder.
+ */
+export function gitGlobalConfigFiles(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string[] {
+  const global = env.GIT_CONFIG_GLOBAL;
+  if (global !== undefined && global !== "") return [global];
+  return [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")];
+}
+
+/**
  * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
- * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `.gitconfig`
- * in Git's home ({@link gitHome}, from `env` on `platform`, this process's by default) and `git/config` in
- * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
- * `include.path` pulls in are left out. Undefined when Git does not name them, as for {@link gitExcludeFiles}.
+ * `config` and its worktree's `config.worktree`, and the global files ({@link gitGlobalConfigFiles}, from `env` on
+ * `platform`). The system file, which only an administrator writes, and files `include.path` pulls in are left out.
+ * Undefined when Git does not name them, as for {@link gitExcludeFiles}.
  */
 export async function gitConfigFiles(
   cwd: string,
@@ -1614,11 +1682,7 @@ export async function gitConfigFiles(
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
   if (local === undefined) return undefined;
   if (local === "") return [];
-  const global = env.GIT_CONFIG_GLOBAL;
-  const globals = global === undefined || global === ""
-    ? [join(gitHome(env, platform), ".gitconfig"), join(dirname(defaultExcludesFile(env, platform)), "config")]
-    : [global];
-  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
+  return [...local.split("\n"), ...gitGlobalConfigFiles(env, platform)].map(path => resolve(cwd, path));
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
@@ -1778,7 +1842,7 @@ export async function gitCrlfPaths(
 // The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
 export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
-/** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
+/** The most bytes of a listing `gitModifiedOrUntrackedPaths`, `gitFirstSightListing` and `unmergedEntries` read: past it, the first lists none and the others cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -1787,10 +1851,20 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
  */
 export type ChangedPathsListing = { readonly ended: "printed"; readonly paths: string[] } | { readonly ended: "failed" | "timed-out" };
 
+/** The paths a `-z` listing printed, split at Git's NULs; a listing that printed none of its own ends as it ended. */
+function listedPaths(read: GitRead): ChangedPathsListing {
+  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+}
+
 /** Lists the files `gitModifiedOrUntrackedPaths` answers, and says how the listing ended. */
 export async function gitModifiedOrUntrackedListing(cwd: string, options: GitReadOptions = {}): Promise<ChangedPathsListing> {
-  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
-  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+  return listedPaths(await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES));
+}
+
+/** What `gitModifiedOrUntrackedPaths` answers of a listing that ended as `listing` did. */
+function modifiedOrUntracked(listing: ChangedPathsListing): string[] | undefined {
+  if (listing.ended === "timed-out") return undefined;
+  return listing.ended === "printed" ? listing.paths : [];
 }
 
 /**
@@ -1800,9 +1874,96 @@ export async function gitModifiedOrUntrackedListing(cwd: string, options: GitRea
  * none is not its answer.
  */
 export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
+  return modifiedOrUntracked(await gitModifiedOrUntrackedListing(cwd, options));
+}
+
+/**
+ * What a first sight's listings say of a checkout's files against the commit `head` (`gitFirstSightListing`), each file
+ * by the name Git printed.
+ */
+export interface HeadListing {
+  /**
+   * The files whose text may differ from what `head` holds, named by three listings: those `ls-files --modified
+   * --others` printed, which compares each file with the index; those whose index entry differs from `head`'s tree
+   * (`diff-index --cached`); and those whose index entry is marked assume-unchanged or skip-worktree, or is unmerged
+   * (`indexEntries`), which the first takes as the index holds them whatever they hold.
+   */
+  readonly notAtHead: ReadonlySet<string>;
+  /**
+   * The files that hold what `head` holds: each index entry `ls-files -v` printed with neither mark that `notAtHead`
+   * does not name. Only Git's own names are here. A file Git ignores and does not track is not, though `--others` left
+   * it out, nor is a file a walk finds under a name other than the index's: another case where Git ignores case
+   * (`core.ignorecase`), another Unicode normal form where Git composes the names a Mac hands it
+   * (`core.precomposeunicode`).
+   */
+  readonly atHead: ReadonlySet<string>;
+}
+
+/** What a walk lists of a checkout for a session that sees it for the first time (`gitFirstSightListing`). */
+export interface FirstSightListing {
+  /** The files `gitModifiedOrUntrackedPaths` answers. */
+  readonly changed: string[] | undefined;
+  /**
+   * What the listings say of each file against the commit `head` (`HeadListing`). Undefined when any listing failed,
+   * ran past its time limit or passed `MAX_LISTED_PATH_BYTES`, without `head`, and unless `HEAD`'s newest move is
+   * known to be no commit (`headNewestMove`): a commit may hold what a command wrote, and a reflog Git could not read
+   * does not say. `ls-files -v` prints the whole index under that bound (64 MiB, about a million paths), so the checkout
+   * of a larger index goes to Git's reading.
+   */
+  readonly byHead: HeadListing | undefined;
+}
+
+/** The index's entries by one `ls-files -v`: `plain` those Git printed as `H` (tracked, with neither mark), `marked` the rest. */
+type IndexEntries = { readonly ended: "printed"; readonly plain: string[]; readonly marked: string[] } | { readonly ended: "failed" | "timed-out" };
+
+/**
+ * The entries of the checkout at `cwd`'s index, each printed as `<tag> <path>`: `H` tracked with neither mark, `h`
+ * assume-unchanged, `S` skip-worktree, `s` both, `M` or `m` unmerged. Git prints no count or list of the marked entries
+ * alone, so this is the whole index.
+ */
+async function indexEntries(cwd: string, options: GitReadOptions): Promise<IndexEntries> {
+  const listing = listedPaths(await readGit(cwd, ["ls-files", "-z", "-v"], options.signal, MAX_LISTED_PATH_BYTES));
+  if (listing.ended !== "printed") return listing;
+  const plain: string[] = [];
+  const marked: string[] = [];
+  for (const entry of listing.paths) (entry.startsWith("H ") ? plain : marked).push(entry.slice(2));
+  return { ended: "printed", plain, marked };
+}
+
+/**
+ * `HeadListing` of the checkout at `cwd` against the commit `head`, given what `ls-files --modified --others` printed
+ * (`changed`): undefined once `diff-index --cached` or `ls-files -v` did not print.
+ */
+async function headListing(cwd: string, head: string, changed: readonly string[], options: GitReadOptions): Promise<HeadListing | undefined> {
+  const staged = listedPaths(await readGit(cwd, ["diff-index", "-z", "--cached", "--name-only", head, "--"], options.signal, MAX_LISTED_PATH_BYTES));
+  if (staged.ended !== "printed") return undefined;
+  const entries = await indexEntries(cwd, options);
+  if (entries.ended !== "printed") return undefined;
+  const notAtHead = new Set([...changed, ...staged.paths, ...entries.marked]);
+  return { notAtHead, atHead: new Set(entries.plain.filter(path => !notAtHead.has(path))) };
+}
+
+/**
+ * How `HEAD` in `cwd` last moved, by its reflog's newest entry: `commit` for any form of `git commit` (`COMMIT_SUBJECT`),
+ * `other` for any other move, and for none (a worktree Git added detached has none until `HEAD` moves); undefined
+ * where Git could not read the reflog.
+ */
+async function headNewestMove(cwd: string, options: GitReadOptions): Promise<"commit" | "other" | undefined> {
+  const newest = await gitOutput(cwd, ["reflog", "show", "-n", "1", "--format=%gs", "HEAD"], options.signal);
+  if (newest === undefined) return undefined;
+  return COMMIT_SUBJECT.test(newest) ? "commit" : "other";
+}
+
+/**
+ * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and what the listings say of each
+ * against the commit `head` (`FirstSightListing`): one Git process, and three more once the first printed and `head`
+ * is known.
+ */
+export async function gitFirstSightListing(cwd: string, head: string | undefined, options: GitReadOptions = {}): Promise<FirstSightListing> {
   const listing = await gitModifiedOrUntrackedListing(cwd, options);
-  if (listing.ended === "timed-out") return undefined;
-  return listing.ended === "printed" ? listing.paths : [];
+  const changed = modifiedOrUntracked(listing);
+  if (listing.ended !== "printed" || head === undefined || await headNewestMove(cwd, options) !== "other") return { changed, byHead: undefined };
+  return { changed, byHead: await headListing(cwd, head, listing.paths, options) };
 }
 
 /**

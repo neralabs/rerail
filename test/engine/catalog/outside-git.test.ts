@@ -12,6 +12,7 @@ import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/sto
 import { startStateReader } from "../../../src/runtime/index.js";
 import { linkFolder } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 vi.mock("../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
@@ -45,7 +46,7 @@ async function plainRoot(): Promise<string> {
 }
 
 function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd, stdio: "ignore" });
+  runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", ...args], { cwd });
 }
 
 /** Git's own answer for `folder`, in this process's environment: its top level, or undefined outside a work tree. */

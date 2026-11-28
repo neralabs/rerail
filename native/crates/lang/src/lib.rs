@@ -44,6 +44,7 @@ pub mod code_rule_dsl {
     }
     pub mod module_path;
     pub mod node_path;
+    pub mod path_tables;
     pub use rerail_prof::code_rule_dsl::phase_clock;
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod semver;

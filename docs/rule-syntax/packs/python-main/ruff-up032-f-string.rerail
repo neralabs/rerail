@@ -32,7 +32,7 @@ up032_template(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up032
 // multiline(n): the JSON util `multiline`, used where the JSON says `matches: "multiline"`
 .decl up032_multiline(n: node)
 up032_multiline(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up032_multiline(c1).
-up032_multiline(n) :- !kind(n, "parenthesized_expression"), line(n, l2), end_line(n, l3),
+up032_multiline(n) :- !kind(n, "parenthesized_expression"), node_line_number(n, l2), node_end_line_number(n, l3),
     k4 = l3 - l2, k4 >= 1.
 
 // real_arg(n): the JSON util `real-arg`, used where the JSON says `matches: "real-arg"`
@@ -113,7 +113,7 @@ UP032(n) :- up032_alt_13(n),
 // UP032_f_string_annotation(n): a finding at node n, from clause `f-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP032_f_string_annotation(at: loc, call: node) code "UP032" "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
+.violation UP032_f_string_annotation(at: node, call: node) code "UP032" "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress noqa "UP032"
 UP032_f_string_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, up032_alt_16(c2).

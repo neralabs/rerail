@@ -109,6 +109,12 @@ pub fn backend() -> &'static str {
     }
 }
 
+/// Whether the process's device is Metal's (Apple's GPUs), where a join program's kernels are compiled call-free
+/// (decision 0641: on the M3, an indirect dispatch of a pipeline that makes calls hung the GPU).
+pub fn is_metal() -> bool {
+    cfg!(target_os = "macos") && matches!(crate::shared::get().map(|s| &s.device), Some(Device::Native(_)))
+}
+
 /// A buffer as the CPU's: its own, or another backend's host memory by its address (a pooled lease, a block's
 /// slab), which the host device's work reads in place (decision 0353: no copy).
 fn on_cpu(b: &Buffer) -> cpu::CpuBuffer {
@@ -131,12 +137,6 @@ pub fn on_device(device: &Device, b: &Buffer) -> Buffer {
         (Device::Cpu(_), Buffer::Cpu(_)) | (Device::Native(_), _) | (Device::OpenCl(_), _) => b.clone(),
         (Device::Cpu(_), b) => Buffer::Cpu(on_cpu(b)),
     }
-}
-
-/// Whether the process's device is Metal's (Apple's GPUs), where a join program's kernels are compiled call-free
-/// (decision 0641: on the M3, an indirect dispatch of a pipeline that makes calls hung the GPU).
-pub fn is_metal() -> bool {
-    cfg!(target_os = "macos") && matches!(crate::shared::get().map(|s| &s.device), Some(Device::Native(_)))
 }
 
 fn other() -> ! {
@@ -509,6 +509,16 @@ impl ComputeQueue {
             QueueKind::Native(q) => q.encoders(),
             QueueKind::Cpu(q) => q.flushes(),
             _ => self.launches.get(),
+        }
+    }
+
+    /// A barrier between the launches before and after it (decision 0674's chain): their writes, buffers reached by
+    /// address too, seen by those after. In-order queues need none.
+    pub fn memory_barrier(&self) {
+        match &self.kind {
+            QueueKind::Native(q) => q.memory_barrier(),
+            QueueKind::Cpu(q) => q.memory_barrier(),
+            QueueKind::OpenCl(q) => q.memory_barrier(),
         }
     }
 
@@ -988,6 +998,22 @@ impl Reserved {
             ReservedKind::Fixed(_) => false,
             ReservedKind::Wrapped(..) => !cfg!(target_os = "macos"),
             _ => true,
+        }
+    }
+
+    /// The host's addresses of every byte it can map, however far `map` grows it: its pages' range (a wrap's address
+    /// is its pages'), or its buffer's where it does not grow; null, no bytes, where the host cannot address it
+    /// (Metal's private storage of a sparse buffer, a discrete card's allocation). What a ledger finds it by while it
+    /// lives (`rerail_blocks::ledger::Tracked`).
+    pub fn span(&self) -> (*mut u8, usize) {
+        match &self.kind {
+            ReservedKind::Host(p, _) | ReservedKind::Wrapped(_, _, p) => (p.ptr, p.len),
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(..) => (std::ptr::null_mut(), 0),
+            ReservedKind::Fixed(n) => {
+                let at = self.buffer.contents().cast::<u8>();
+                (at, if at.is_null() { 0 } else { *n })
+            }
         }
     }
 

@@ -36,7 +36,7 @@ d106_public_class(n) :- d106_demand_public_class(n), kind(n, "class_definition")
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation D106(at: node, name: loc) "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
+.violation D106(at: node, name: node) "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
     suppress noqa "D106"
 D106_raw(n, NAME) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _, _), NAME = n,
     field(p1, "name", n), kind(p1, "class_definition"),
@@ -47,7 +47,7 @@ D106_raw(n, NAME) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _,
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation D106_undocumented_public_nested_class_in_package(at: node, name: loc) code "D106" "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
+.violation D106_undocumented_public_nested_class_in_package(at: node, name: node) code "D106" "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
     suppress noqa "D106"
 D106_undocumented_public_nested_class_in_package_raw(n, NAME) :- kind(n, "identifier"),
     match("[^_].*", n), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
@@ -109,9 +109,9 @@ d106_alt_6(n) :- d106_demand_alt_6(n),
 d106_stop_10_within(x, y) :- within_stop(x, y, d106_stop_10).
 
 // main's file condition {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
-.decl D106_raw(at: node, name: loc)
+.decl D106_raw(at: node, name: node)
 D106(v0, v1) :- D106_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl D106_undocumented_public_nested_class_in_package_raw(at: node, name: loc)
+.decl D106_undocumented_public_nested_class_in_package_raw(at: node, name: node)
 D106_undocumented_public_nested_class_in_package(v0, v1) :- D106_undocumented_public_nested_class_in_package_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

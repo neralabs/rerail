@@ -3515,7 +3515,7 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 
 ## O-metal-fact-rows. Metal tests facts the host found
 
-**Status:** open (2026-11-09, RER-131; deferred by the user). On Metal, a clause's facts are found on the host before
+**Status:** open (2026-11-09, decision 0161; deferred by the user). On Metal, a clause's facts are found on the host before
 any pass (`fact_rows` in `transducer/packed/compile/matcher.rs`'s `metal`: `Fact::found` per tape, the `tokens` facts'
 regexes over each token text included), and the device only tests the rows it is handed (`Pass::Fact`, the pattern
 kernel's `FACT` case). That is host evaluation on the Metal path, which is not allowed: what Metal's kernels answer,
@@ -3527,7 +3527,7 @@ gone from `metal`, and the entry removed from `REMAINING`; S7's keys equal on al
 
 ## O-metal-root-programs. After Metal labels a batch, the wave runs the root programs on the host
 
-**Status:** open (2026-11-09, RER-131; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
+**Status:** open (2026-11-09, decision 0161; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
 as views of its tapes, and `demand(batch)` then runs each clause's root program on the host for its results
 (captures, spans), which a label keeps only as bits. The root walks Metal does run (`root_records_*`, `RootsFound`)
 cover a program that is a micro walk of at most 32 frames; any other, a walk that overflowed, or records past the
@@ -3969,7 +3969,7 @@ seed's own start and the engine's.
 
 **Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
 sibling: `(list ((identifier) @item)+)` on `items = [a, b, c]` gives three
-matches of one item each. The tape stores no implied token (RER-131), so the
+matches of one item each. The tape stores no implied token (decision 0161), so the
 transducer's run goes on over `a b c` and gives one match of three items.
 `repetition_across_an_implied_token_is_one_run_on_the_tape` pins both results.
 
@@ -5571,3 +5571,15 @@ tape's writers) instead of returning rows for a pass over them. A pass over the 
 a call to any other function. The assertion now says that: every callee in tier 2's IR
 (`fnK = colocated u0:N`) is one of the tape's four. The runs below it run again, and tier 1 and
 tier 2 equal the interpreters on every file.
+
+## O-class-scope-names. The statistics price a class's names as an average scope's (2026-11-26, decision 0137)
+
+Open. `names.rerail`'s `cls_early` and `cls_late` listed, for each (class, name) a definition or binding gives, every
+name read in the class (`wstart($n, $s)` by `$s`), and tested each one's text: 3.3 M and 2.4 M rows for 58 and 13 k on
+`all`. Their directives (`.shape defn after wstart`, `.shape asg after wstart`, `.shape bound_in after wstart`) take
+each class's names once and look their definitions up by (class, name): 1.13 s to 0.50 s and 0.61 s to 0.31 s of CPU.
+The cause is a fanout by a value a constant filter selects (`kind($s, class_definition)`): a class holds about 140
+names its lookups start at, where an average scope holds a few, and `wstart`'s fanout by `$s` is the average.
+Heavy values (0209) or the constant's own fanout would price it; then the directives are reported as no longer
+needed and come out. The same shape priced `tp_ref` (`within($n, $o)` by `$o`, 1.2 M rows for 20 k), where a
+directive made it worse: the names by their text read 1.7 M.

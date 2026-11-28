@@ -76,14 +76,14 @@ pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<rerail_device::device::Buffer>,
+    /// The binary's own memory its reads reach (the codes' directory, decision 0697): resident with `buffers`, held
+    /// by nothing, as it outlives every launch (`Pass::use_read_fixed`).
+    pub fixed: Vec<rerail_device::device::Buffer>,
     pub caches: Vec<ZCache>,
     pub failed: u32,
     /// Its batch's tape format (`ViewsInPlace::format`; 0: several), which the stages reading it are compiled for.
     pub format: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
-    /// The view's home where its source keeps it (`rows::IndexHome`), made again with more room when a probe's index has
-    /// none in it: `None` for a home no source keeps.
-    pub grows: Option<Arc<super::rows::IndexHome>>,
 }
 
 /// A `node` view's rows by kind (`Source::kind_table`): the table's offset in its directory's block, and that
@@ -231,8 +231,29 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
 /// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join. `name`, `comment`, `strprefix`, `op_at`
 /// and T's `text`, `intval` and `op` are core.rerail's and T's per-node values, read where a rule binds the node
-/// (decision 0353 step 3).
-pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
+/// (decision 0353 step 3). Node paths are decision 0722's.
+pub const NODE_READS: [&str; 20] = [
+    "rr_node_text",
+    "rr_node_text_any",
+    "rr_node_value",
+    "rr_node_str",
+    "rr_node_name",
+    "rr_node_comment",
+    "rr_node_strprefix",
+    "rr_node_op_at",
+    "rr_node_intval",
+    "rr_node_op_t",
+    "rr_node_t_text",
+    "rr_node_order",
+    "tree_digest_hex",
+    "text_len",
+    "indent",
+    "node_path",
+    "path_node",
+    "path_unit",
+    "path_spelling",
+    "path_file",
+];
 
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
@@ -314,6 +335,14 @@ pub trait Source: Send + Sync {
     /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
     /// (`NodeRead::Text`).
     fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<NodeRead<'_>> { self.node_read(name, n, more).map(NodeRead::Value) }
+    /// Decision 0706 E1: node `n`'s text as `name` reads it, as its value, read where the text lies, no text made: the value `held` gives
+    /// it (the atom it has, or a value the reader gave it), else, with `make`, its atom made (as the `text` view's reads
+    /// make it). `None` where the source has no such read, or the text has no value and none is made (a reader then
+    /// reads it by `node_read`), or where the source's atoms are neither `table`'s nor of its database (`table`: the
+    /// run's symbols' atom table, `Interner::atoms`, its address and its database, `AtomTable::database`: a batch made
+    /// over another store's atoms names another table's symbols, which the run cannot read; the reader then reads the
+    /// text. One database's tables number their atoms alike).
+    fn node_atom(&self, _name: &str, _n: i64, _make: bool, _held: &dyn Fn(&str) -> Option<i64>, _table: (*const (), Option<&std::path::Path>)) -> Option<i64> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -352,6 +381,7 @@ pub trait Source: Send + Sync {
     /// Row `row`'s values of `columns`, into `out`: one value at a time by default; a source that finds a row's
     /// place first (a view of a batch's documents) finds it once.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
         for (o, &c) in out.iter_mut().zip(columns) {
             *o = self.value(row, c);
         }
@@ -381,16 +411,17 @@ pub trait Source: Send + Sync {
     fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
         false
     }
-    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
-    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
-    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
-    /// checked, never trusted: any value gives the same rows.
     /// Decision 0706 E1: for each of `values` of `column` (a row's own id: a node's, at most one row each), its row's
     /// values of the columns `reads` into `out` (`reads.len()` a value), and in `found` whether it has a row (1), has
     /// none (0), or the source cannot say in a batch (2: the caller probes it as one row). The batch's ids found first,
-    /// then their columns read. `false` where the source has no such read of `column` (nothing written); asked with no
-    /// values, whether it has one.
-    fn read_own_batch(&self, _column: usize, _values: &[i64], _reads: &[usize], _out: &mut [i64], _found: &mut [u8]) -> bool { false }
+    /// then their columns read. The one read of rows by their own id: a batched walk's step (`kinds::OwnRead`), a
+    /// fused row program's tests of the nodes it bound (`rowcode::Test::view`), a step whose walk can't batch. The
+    /// cursor is the caller's, kept from batch to batch (the source's hints, node memo and plan of the reads).
+    /// `false` where the source has no such read of `column` (nothing written); asked with no values, whether it has
+    /// one.
+    fn read_own_batch(&self, _column: usize, _values: &[i64], _reads: &[usize], _out: &mut [i64], _found: &mut [u8], _cursor: &mut ProbeCursor) -> bool {
+        false
+    }
     /// Decision 0706 E4: the source's value index of `column` (its rows by value, in its block) built now, ahead of
     /// its readers, where it keeps one: the rows read to build it. `None` where it keeps none, or had it built.
     fn build_value_index(&self, _column: usize) -> Option<usize> { None }
@@ -404,12 +435,10 @@ pub trait Source: Send + Sync {
     fn value_bits(&self, _node: usize, _column: usize, _value: i64) -> Option<ValueBits> { None }
     /// Whether the source has built bits since it was made: 0 where it never has (no `value_bits` to ask).
     fn value_bits_gen(&self) -> u32 { 0 }
-    /// Decision 0706 E1: node read `name` of node `n` (`rr_node_text_any`) as its text's atom, read without its text
-    /// where the source keeps the text's term (a leaf's, decision 0656: interned at the term's first read). `None`
-    /// where it does not: the text is read (`node_read_ref`). `table` is the run's atom table, its address and its
-    /// database (`AtomTable::database`): an atom is the source's only where its atoms are that table or of that
-    /// database, else `None` too (a source made in another store numbers its atoms apart).
-    fn node_text_atom(&self, _name: &str, _n: i64, _table: (*const (), Option<&std::path::Path>)) -> Option<i64> { None }
+    /// `lookup_read` from a probe cursor (`hint`, the step's, zeroed at its start): where the last probe of the step
+    /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
+    /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
+    /// checked, never trusted: any value gives the same rows.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }
@@ -417,17 +446,6 @@ pub trait Source: Send + Sync {
     /// as `lookup_read_at` would find it, without a row or its values handed on: `None` where the source has no such
     /// test (the caller reads the matches instead).
     fn test_at(&self, _column: usize, _value: i64, _columns: &[usize], _want: &[i64], _cursor: &mut ProbeCursor) -> Option<bool> {
-        None
-    }
-    /// The column whose every value has at most one row, which `read_one_at` reads that row by (a view of a node's
-    /// own facts: its id's column), or `None`.
-    fn row_column(&self) -> Option<usize> {
-        None
-    }
-    /// The one row with `value` in `row_column`'s `column`: its values in `columns` written to `out`, `Some(false)`
-    /// where there is no such row, `None` where the source has no such read (the caller probes instead). A step
-    /// reading a node's kind by its id reads it so, with no candidates found or rows handed on.
-    fn read_one_at(&self, _column: usize, _value: i64, _columns: &[usize], _out: &mut [i64], _cursor: &mut ProbeCursor) -> Option<bool> {
         None
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
@@ -454,10 +472,17 @@ pub trait Source: Send + Sync {
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
-        self.for_rows(&[column], &mut |r, row| each(r, if row[0] >= 1 << 32 { row[0] >> 32 } else { row[0] }));
+        self.for_rows(&[column], &mut |r, row| each(r, rerail_blocks::located::document_of(row[0])));
     }
     fn estimated_len(&self) -> usize {
         self.len()
+    }
+    /// `estimated_len` where it makes no row; `None` where only a make would tell (a batch's relation that no count
+    /// gives, before its rows or sample are made: its `estimated_len` makes the sample, decision 0494). A chunk that
+    /// reuses a kept measure scales it by this, else by its documents: asking `estimated_len` there made every chunk's
+    /// sample, a matcher wave of its own before the wave that makes the rest (the `all` run: 25 more waves, 6.9 s).
+    fn known_len(&self) -> Option<usize> {
+        Some(self.estimated_len())
     }
     /// Whether it may hold a row: `false` only where it holds none. A test for an empty input (a rule over one is
     /// not run) asks this, not `len`, so a source whose rows are made when read (a batch's, decision 0494) answers
@@ -617,15 +642,23 @@ pub trait Source: Send + Sync {
     /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
-    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
-    /// reading every row: a source whose rows are made on lookup.
     /// Column `column`'s least and greatest value over its rows, where it holds them and can say so without making
     /// rows (a stored table's cells); `[MAX, MIN]` with no rows. None: not known (an axis made per node).
     fn col_bounds(&self, _column: usize) -> Option<[i64; 2]> {
         None
     }
+    /// The relation's statistics (`syntax::statistics`'s rows) where the source knows them exactly without reading
+    /// every row: a source whose rows are made on lookup (`within`'s, from the tree), or one counted where it lies. A
+    /// run counts and keeps them as the relation's: an estimate is `estimated_statistics`'.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
+    }
+    /// The planner's statistics: `statistics`, or before them an estimate made with no row of the whole made (a
+    /// sample of its documents, `made::MadeRows::sampled`). Only a plan reads them: the chunks' counts and the kept
+    /// statistics read `statistics`, and took a sample's for a count (a text test's passing strings went unioned by
+    /// no chunk, and the cross part's scan of one made every document: 27 s of `all`'s CPU, 2026-11-24).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.statistics()
     }
     /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
     /// (its rows do not change): `None` when the caller counts them.
@@ -684,6 +717,12 @@ pub trait Source: Send + Sync {
     /// documents its rows are of, as a node id's high bits do.
     fn keys_documents(&self, _column: usize) -> bool {
         false
+    }
+    /// Whether `column` may hold node ids, whose high bits name their document (an admitted value's rows are found by
+    /// them, `values::Layered`). A source that knows its columns' kinds says which hold none (`node`'s kind, `field`'s
+    /// name, `text`'s atom).
+    fn keys_nodes(&self, _column: usize) -> bool {
+        true
     }
     /// Whether every row is of the source's own documents: each node id it holds, and each document key, one of
     /// theirs (a view of a batch's tapes), never a host's that a place names. An admitted value's part of such a
@@ -2034,8 +2073,8 @@ impl Relation {
             identity: OnceLock::new(),
             grows: true,
             bounds: OnceLock::new(),
-            // A column of atoms in every run (`with_atoms`): the runs' relations' own.
-            atoms: (0..k).map(|c| !runs.is_empty() && runs.iter().all(|(r, _)| r.atoms[c])).collect(),
+            // A column of atoms where every run's relation writes atoms there.
+            atoms: (0..k).map(|c| !runs.is_empty() && runs.iter().all(|(r, _)| r.atoms.get(c).copied().unwrap_or(false))).collect(),
         }
     }
 
@@ -2172,7 +2211,7 @@ impl Relation {
     /// the span's prints, then the rows whose print is the value's).
     fn equal(&self, column: usize, value: i64) -> Range<usize> {
         let ix = self.index(column);
-        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
         s..e
     }
     /// The rows with values in `lo..=hi`, in value order.
@@ -2222,21 +2261,6 @@ fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
 }
 impl Source for Relation {
     fn revision(&self)->Option<u64> {Some(0)}
-    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
-        let k = self.columns.len();
-        let b = self.bounds.get_or_init(|| {
-            let mut b = vec![[i64::MAX, i64::MIN]; k];
-            for row in 0..self.rows {
-                for (c, x) in b.iter_mut().enumerate() {
-                    let v = self.value(row, c);
-                    x[0] = x[0].min(v);
-                    x[1] = x[1].max(v);
-                }
-            }
-            b
-        });
-        b.get(column).copied()
-    }
     fn columns(&self) -> Vec<String> {
         self.columns.iter().map(|c| (*c).to_owned()).collect()
     }

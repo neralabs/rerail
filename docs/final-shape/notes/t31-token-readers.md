@@ -1,4 +1,4 @@
-# T31: rules that read tokens a tape no longer stores (RER-131)
+# T31: rules that read tokens a tape no longer stores (decision 0161)
 
 ## Intro
 

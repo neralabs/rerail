@@ -533,14 +533,19 @@ fn a_syntax_sources_column_bounds_hold_its_rows() {
     let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
     let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
     let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name", "rr_report_location"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
-    let core = shaped(&store, docs, &projection).unwrap();
+    // The views its projection reads: one it does not read is made without what its rows read (the `op` view's
+    // names, `ViewDoc::names`).
+    let read = |sources: Vec<(&'static str, Arc<dyn Source>)>| -> Vec<(&'static str, Arc<dyn Source>)> {
+        sources.into_iter().filter(|(name, _)| projection.reads.as_ref().is_none_or(|r| r.contains(*name))).collect()
+    };
+    let core = read(shaped(&store, docs, &projection).unwrap());
     check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s", "rr_report_location.n", "rr_report_location.line", "rr_report_location.column", "rr_report_location.end_line", "rr_report_location.end_column"]);
     // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
     // (decision 0431 §4), a key the batch does not hold.
     let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
     let whole = Placement::Copied { delta: 0, within: [0, src.len() as u32] };
     tree.guest = Some(Arc::new(Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }));
-    let alone = shaped(&store, vec![tree], &projection).unwrap();
+    let alone = read(shaped(&store, vec![tree], &projection).unwrap());
     let node = &alone.iter().find(|(n, _)| *n == "node").unwrap().1;
     assert!((0..node.len()).any(|r| node.value(r, 0) == 7), "the tree's nodes are its file's");
     check(&alone, [7, i64::from(HIDDEN_KEYS) + 5], &["node.d", "node.n", "child.p", "child.c"]);
@@ -825,7 +830,7 @@ fn core_rows(docs: Vec<Document>) -> HashMap<String, BTreeSet<String>> {
 }
 
 /// `core.rerail`'s base relations over a Python file (decision 0046): comments are nodes and children, `text` is every
-/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, RER-131), literals decode, and
+/// node's, `op` every token the tape stores (one the grammar implies is in no tape and no relation, decision 0161), literals decode, and
 /// the source-text, token and place relations agree.
 #[test]
 fn core_rr_relations_hold_what_core_rr_says() {
@@ -1359,12 +1364,12 @@ fn long_container_text_is_materialized_only_for_the_consumers_that_demand_it() {
     let doc = document(0, "a.py", "python", &source);
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
     for (body, source_needed, line_needed) in [
-        ("out(t) :- source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
-        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\nout(t) :- copied(s), alias = s, text(alias, t).", true, false),
-        (".decl copied(sp: span)\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", false, true),
-        (".decl copied(sp: span)\ncopied(s) :- source(_, s).\ncopied(s) :- src_line(_, _, s).\nout(t) :- copied(s), text(s, t).", true, true),
-        ("out(\"missing\") :- source(_, sp), !text(sp, _).", true, false),
-        ("out(t) :- source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
+        ("out(t) :- document_source(_, sp), kind(n, \"identifier\"), text(n, t).", false, false),
+        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\nout(t) :- copied(s), alias = s, place_text(alias, t).", true, false),
+        (".decl copied(sp: place)\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", false, true),
+        (".decl copied(sp: place)\ncopied(s) :- document_source(_, s).\ncopied(s) :- document_line(_, s).\nout(t) :- copied(s), place_text(s, t).", true, true),
+        ("out(\"missing\") :- document_source(_, sp), !line_text(sp, _).", true, false),
+        ("out(t) :- document_source(_, sp), match_all(\"(?<hit>items)\", sp), text(hit, t).", false, false),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
         let projection = crate::code_rule_dsl::logic::plan::text_demand::projection_of(&program, ["source", "src_line", "text", "rx_span"].into_iter().map(str::to_owned).collect());
@@ -1828,12 +1833,14 @@ fn text_of_a_bound_node_is_read_in_place() {
         (".decl t_call(n: node)\nt_call(n) :- kind(n, \"call\").\nout(t) :- t_call(n), text(n, t).", 1),
         (".decl t_name(x: symbol)\nt_name(x) :- kind(n, \"identifier\"), text(n, x).\n.decl t_used(n: node)\nt_used(n) :- kind(n, \"call\"), field(n, \"function\", f), text(f, x), t_name(x).\nout(t) :- t_used(n), text(n, t).", 2),
         ("out(\"x\") :- text(n, \"x\"), kind(n, \"identifier\").", 1),
+        // A column a rule fills with the empty value (FAST002's `fast_param` of an unannotated parameter).
+        (".decl t_ann(p: node, a: loc)\nt_ann(p, a) :- kind(p, \"typed_parameter\"), field(p, \"type\", a).\nt_ann(p, a) :- kind(p, \"identifier\"), unset(a).\nout(t) :- t_ann(_, a), text(a, t).", 1),
         ("out(t) :- text(n, t).", 0),
         // A document's source and its lines are read off the source too (row 7); a match's span is not.
-        ("out(t) :- src_line(_, _, s), text(s, t).", 1),
-        ("out(t) :- source(_, s), text(s, t).", 1),
-        (".decl t_line(s: span)\nt_line(s) :- src_line(_, l, s), l > 1.\nout(t) :- t_line(s), text(s, t).", 1),
-        ("out(t) :- src_line(_, _, s), match_all(\"x+\", s, m), text(m, t).", 0),
+        ("out(t) :- document_line(_, s), place_text(s, t).", 1),
+        ("out(t) :- document_source(_, s), place_text(s, t).", 1),
+        (".decl t_line(s: place)\nt_line(s) :- document_line(_, s), line_number(s, l), l > 1.\nout(t) :- t_line(s), place_text(s, t).", 1),
+        ("out(t) :- document_line(_, s), line_regex_match(\"x+\", s, m), place_text(m, t).", 0),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
         let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
@@ -2041,7 +2048,11 @@ fn text_only_for_the_nodes_read() {
         (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- kind(p, \"list_splat_pattern\"), child(p, n, 0).\n.decl pm(n: node)\npm(n) :- pn(n).\nout(t) :- pm(n), text(n, t).".to_owned(),
             Some(TextNodes { fields: BTreeSet::from(["name".to_owned()]), parents: BTreeSet::from(["list_splat_pattern".to_owned()]), ..TextNodes::default() })),
         // A span's text (a document's source): no node's.
-        ("out(t) :- source(_, sp), text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
+        ("out(t) :- document_source(_, sp), place_text(sp, t), contains(\"x\", t).".to_owned(), Some(TextNodes::default())),
+        // A comment's node (ERA001's `era_line`): the comment nodes, by kind.
+        ("out(t) :- comment(c, _), text(c, t).".to_owned(), Some(TextNodes { relations: BTreeSet::from(["comment".to_owned()]), ..TextNodes::default() })),
+        // A regex capture's text (UP009's `coding`): the capture's match, no node's.
+        ("out(x) :- document_line(_, sp), match(\"#.*coding[:=](?<xs>[-\\\\w.]+)[\\\\s\\\\S]*\", sp), match_text(xs, x).".to_owned(), Some(TextNodes::default())),
         // One of its rules narrowing nothing: every node.
         (".decl pn(n: node)\npn(n) :- field(_, \"name\", n).\npn(n) :- child(_, n, 0).\nout(t) :- pn(n), text(n, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
@@ -2056,7 +2067,7 @@ fn text_only_for_the_nodes_read() {
 
 /// `TextNodes` read as a dialect's codes (`NodesOf`, what the node walk tests) is `TextNodes::reads`, by names, over
 /// every node of documents in several languages, for sets of kinds, fields, parents' kinds and fields, ERROR among
-/// the kinds, and constants.
+/// the kinds, constants, and the comment nodes (`relations`).
 #[test]
 fn nodes_read_as_codes_are_the_nodes_read_by_name() {
     use crate::code_rule_dsl::lines::LineTable;
@@ -2067,13 +2078,14 @@ fn nodes_read_as_codes_are_the_nodes_read_by_name() {
         TextNodes { fields: set(&["name", "function", "alias"]), ..TextNodes::default() },
         TextNodes { parents: set(&["binary_operator", "binary_expression", "list_splat_pattern"]), parent_fields: set(&["module_name", "body"]), ..TextNodes::default() },
         TextNodes { kinds: set(&["string"]), fields: set(&["value"]), parents: set(&["call"]), values: set(&["self", "x"]), ..TextNodes::default() },
+        TextNodes { relations: set(&["comment"]), ..TextNodes::default() },
         TextNodes::default(),
     ];
     let cases: &[(&str, &str)] = &[
-        ("python", "import os as o\ndef f(self, *a, b=2):\n    return o.g(a | b, self.x) + (1 +\n"),
+        ("python", "# c\nimport os as o  # o\ndef f(self, *a, b=2):\n    return o.g(a | b, self.x) + (1 +\n"),
         ("python", "class C(B):\n    @d(x)\n    def m(self): return [y for y in self.x if y]\n"),
         ("typescript", "import { a } from 'b';\nfunction g(n: number) { return a(n) + 1; }\n"),
-        ("rust", "fn main() { let x = S { a: 1 }; println!(\"{x}\"); }\n"),
+        ("rust", "// c\nfn main() { /* b */ let x = S { a: 1 }; println!(\"{x}\"); }\n"),
     ];
     for &(label, source) in cases {
         let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
@@ -2671,6 +2683,40 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
     }
 }
 
+/// A solved axis probed by `a` gives exactly the rows whose outer node is `a`, ascending, for every node: what its
+/// scan holds (`by_outer`, made once from the solve, where a probe walked `a`'s subtree and searched each run).
+#[test]
+fn a_solved_axis_by_its_outer_node_is_the_scans_rows_of_it() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-by-outer")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = batch.nodes().total();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.f().kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}: solved by a scan's read");
+        let len = source.len();
+        let mut by_outer: std::collections::BTreeMap<i64, Vec<usize>> = std::collections::BTreeMap::new();
+        for row in 0..len {
+            by_outer.entry(source.value(row, 1)).or_default().push(row);
+        }
+        assert!(by_outer.values().any(|rows| rows.len() > 1), "{name}: some member holds several nodes");
+        for r in 0..nodes {
+            let a = batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+            let got: Vec<usize> = source.lookup(1, &[a]).unwrap().into_iter().collect();
+            assert_eq!(got, by_outer.get(&a).cloned().unwrap_or_default(), "{name}: node row {r}");
+        }
+    }
+}
+
 /// A measurement (the reads, after t50): ns per call of `text`'s probe by node over a chunk's documents, bare (its
 /// batch's relation) and layered with a value admitted (a chunk with a parsed string's parts), against `node`'s.
 #[test]
@@ -2961,9 +3007,43 @@ fn host_id_reads(h: &rerail_clif::ids::Numbering, x: u32) -> [u32; 12] {
     }
 }
 
+/// A walk of a numbering's items from a tape node (`Numbering::nodes_at`) gives the selects of their ranks on: for
+/// every tape node of every case and past them, every item, its first few steps; and from number `r`
+/// (`nodes_from`), every number after it in order to the last, then `NONE`.
+#[test]
+fn a_numberings_walk_is_the_selects_of_its_ranks() {
+    let mut tried = 0;
+    for (at, p, n) in id_read_cases() {
+        let r = p.ranks();
+        let h = r.numbering();
+        for item in 0..rerail_clif::ids::ITEMS {
+            // SAFETY: the projection's live descriptor.
+            unsafe {
+                for x in 0..n + 70 {
+                    let mut w = h.nodes_at(item, x);
+                    let first = h.rank(item, x);
+                    for step in 0..3 {
+                        assert_eq!(w.next(), h.select(item, first + step), "{at}: item {item}, tape node {x}, step {step}");
+                        tried += 1;
+                    }
+                }
+                let count = (0..).take_while(|&l| h.select(item, l) != rerail_clif::ids::NONE).count() as u32;
+                for from in [0, count / 2, count.saturating_sub(1), count] {
+                    let mut w = h.nodes_from(item, from);
+                    for l in from..count {
+                        assert_eq!(w.next(), h.select(item, l), "{at}: item {item}, number {l}, walked from {from}");
+                    }
+                    assert_eq!(w.next(), rerail_clif::ids::NONE, "{at}: item {item}, past the last, walked from {from}");
+                }
+            }
+        }
+    }
+    assert!(tried > 1000, "{tried}");
+}
+
 /// Decision 0536: the numbering's reads written directly in Rust (`Numbering::is`, …) answer what its reads in CLIF
 /// answer, by the JIT: for every tape node, the kernels' probes (`the_kernels_id_reads_are_the_hosts`) and every
-/// item's bit, rank and select, and lows and order keys that are no item's. In both formats (16 and 16z), whole and narrowed.
+/// item's bit, rank and select, and lows and order keys that are no item's. In every format, whole and narrowed.
 #[test]
 fn the_jits_id_reads_are_the_hosts() {
     if !definition_ids() {
@@ -3010,7 +3090,7 @@ fn the_jits_id_reads_are_the_hosts() {
 /// Decision 0353 step 2: the numbering's reads as UKL (`<ukl/reads/ids.h>`, written once in CLIF), run on the device
 /// over a projection's descriptor where it lies in its block, answer what the host's reads (written directly) answer: for
 /// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
-/// and back. In both formats (16 and 16z), whole and narrowed, a document of more nodes than a granule's slot holds. The
+/// and back. In every format, whole and narrowed, a document of more nodes than a granule's slot holds. The
 /// kernel is UKL, on the process's device (decision 0440 step C).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
@@ -3103,7 +3183,7 @@ fn the_rust_reads_place_an_embedders_spans_as_its_segments_do() {
     // SAFETY: the run points at `words`, which outlive every read of the entry below.
     unsafe { rerail_clif::ids::Run::set(&raw mut entry.segments, words.as_ptr(), words.len()) };
     let view = rerail_clif::view::TapeView::default();
-    let doc = Doc::new(&entry, Tape::new(&[], &view, std::ptr::null()), &[], &[]);
+    let doc = Doc::new(&entry, Tape::new(&[], &view, std::ptr::null()), &[], &[], (rerail_tape_format::codes_dir::kinds(entry.tag as u8), rerail_tape_format::codes_dir::fields(entry.tag as u8)));
     for s in 0..=36u32 {
         for e in s..=36u32 {
             let want = map.file_ranges(s as usize..e as usize).primary();
@@ -3116,7 +3196,7 @@ fn the_rust_reads_place_an_embedders_spans_as_its_segments_do() {
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
 /// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
-/// each node's line, by its lines where they lie (step 4d). In both formats (16 and 16z), whole and narrowed.
+/// each node's line, by its lines where they lie (step 4d). In every format, whole and narrowed.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
@@ -3127,14 +3207,15 @@ fn the_view_reads_are_the_hosts_rows() {
     use rerail_gpu::device::ComputeQueue;
     use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
     const WIDE: usize = 16;
-    /// The probe's parameters: the entry's offset in its block, the tape's and the lines' device addresses, the
-    /// projection's nodes and fields.
+    /// The probe's parameters: the entry's offset in its block, the tape's, the lines' and the codes' directory's
+    /// device addresses, the projection's nodes and fields.
     #[repr(C)]
     #[derive(Clone, Copy)]
     struct ViewP {
         d: u64,
         tt: u64,
         ll: u64,
+        cd: u64,
         n: u32,
         nf: u32,
     }
@@ -3142,8 +3223,8 @@ fn the_view_reads_are_the_hosts_rows() {
     const KERNEL: &str = r#"
 // The tape and the lines are reached by their device addresses (a word each in the parameters, the buffers made
 // resident): no binding.
-typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint32_t n; uint32_t nf; } ViewP;
-UKL_REFLECT_STRUCT(ViewP, d, tt, ll, n, nf)
+typedef struct ViewP { uint64_t d; uint64_t tt; uint64_t ll; uint64_t cd; uint32_t n; uint32_t nf; } ViewP;
+UKL_REFLECT_STRUCT(ViewP, d, tt, ll, cd, n, nf)
 DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, ViewP, p, , ROBUFFER, uint32_t, tv, "[32]",
                RWBUFFER, int64_t, out, "[n * 16]", GID0, uint32_t, g, )
 {
@@ -3155,21 +3236,25 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     uint32_t n = p.n, nf = p.nf;
     UKL_GLOBAL const uint8_t* tt = (UKL_GLOBAL const uint8_t*)p.tt;
     UKL_GLOBAL const uint8_t* ll = (UKL_GLOBAL const uint8_t*)p.ll;
+    UKL_GLOBAL const uint8_t* cd = (UKL_GLOBAL const uint8_t*)p.cd;
     uint32_t v[32];
     for (uint32_t q = 0u; q < 32u; q++) v[q] = tv[q];
     int64_t r = 0;
     // The lines by their buffer's base and their offset in it (none: a buffer of their own).
-    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, l, k);
-    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, 0u, l, k - 5u) : 0;
-    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, 0u, l, k - 8u) : 0;
-    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, 0u, l, k - 11u);
-    else r = (int64_t)clif_view_line(b, d, tt, v, ll, 0u, l, k - 14u);
+    if (k < 5u) r = (int64_t)clif_view_node(b, d, tt, v, ll, 0u, cd, l, k);
+    else if (k < 8u) r = l + 1u < n ? (int64_t)clif_view_child(b, d, tt, v, ll, 0u, cd, l, k - 5u) : 0;
+    else if (k < 11u) r = l < nf ? (int64_t)clif_view_field(b, d, tt, v, ll, 0u, cd, l, k - 8u) : 0;
+    else if (k < 14u) r = (int64_t)clif_view_core(b, d, tt, v, ll, 0u, cd, l, k - 11u);
+    else r = (int64_t)clif_view_line(b, d, tt, v, ll, 0u, cd, l, k - 14u);
     out[l * 16u + k] = r;
 }
 "#;
     let jit = rerail_clif::jit::Reads::new();
-    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
-    let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, the codes' directory, a
+    // local, a column.
+    let read_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    // The codes' directory, the binary's (decision 0697).
+    let cd = rerail_tape_format::codes_dir::bytes().as_ptr();
     let (node, child, field, core_node, line) = (read_of("view_node"), read_of("view_child"), read_of("view_field"), read_of("view_core"), read_of("view_line"));
     let view_op = read_of("view_op");
     // The atoms the entries' names are interned in (`ViewDoc::names`, the `op` view's), as a batch reading `op` has.
@@ -3181,6 +3266,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let program = rerail_gpu::kernels::program("view_probe.uglykl", Box::leak(source.into_boxed_str())).unwrap_or_else(|e| panic!("the view reads compile: {e}"));
         (shared, program.function("view_probe").unwrap())
     });
+    // The codes' directory where it lies in the binary, wrapped in place once and held as long as the device (decision
+    // 0697, `Shared::wrap_static`): a wrap released after a shape's probe left its pages unreadable to the next
+    // shape's reads on Metal.
+    let cb = probe.as_ref().map(|(shared, _)| shared.wrap_static(rerail_tape_format::codes_dir::bytes()).unwrap());
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
@@ -3243,11 +3332,11 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let ll = words.as_ptr();
                 let jitted: Vector<i64> = (0..n)
                     .flat_map(|l| {
-                        let mut row: Vector<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
-                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| core_node(e, t, v, ll, l, c)));
-                        row.extend((0..2).map(|c| line(e, t, v, ll, l, c)));
+                        let mut row: Vector<i64> = (0..5).map(|c| node(e, t, v, ll, cd, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, cd, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, cd, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, v, ll, cd, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, v, ll, cd, l, c)));
                         row
                     })
                     .collect();
@@ -3263,7 +3352,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     let zc = cache.as_ref().map_or(std::ptr::null(), |c| c.at().cast_const());
                     // SAFETY: the reader's view, the tape's bytes, the entry in its block, which the projection holds.
                     let rv = unsafe { &*v };
-                    let doc = Doc::new(unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, Tape::new(tape, rv, zc), &words, source.as_bytes());
+                    let entry = unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() };
+                    let doc = Doc::new(entry, Tape::new(tape, rv, zc), &words, source.as_bytes(), (rerail_tape_format::codes_dir::kinds(entry.tag as u8), rerail_tape_format::codes_dir::fields(entry.tag as u8)));
                     let rust: Vec<i64> = (0..n)
                         .flat_map(|l| {
                             let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();
@@ -3276,23 +3366,24 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         .collect();
                     assert_eq!(rust, want, "{at}: the Rust reads' rows");
                     // A parent's first child, a child's next, a node by its id's low bits: the JIT's.
-                    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, its argument.
-                    let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
+                    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, the codes'
+                    // directory, its argument.
+                    let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
                     let (first, next, number) = (probe_of("view_child_first"), probe_of("view_child_next"), probe_of("view_number"));
                     // SAFETY: `view_text_span`'s signature, as the probes' but an i64.
-                    let text_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_text_span")) };
+                    let text_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_text_span")) };
                     for l in 0..n {
                         // A node's text read where its source lies (decision 0287 §2): the JIT's range and the Rust
                         // read's text, the projection's.
                         let x = p.ranks().select(Item::Node, l).unwrap();
-                        assert_eq!(text_span(e, t, v, ll, l) as u64, doc.text_span(l), "{at}: node {l}'s text span, the JIT's");
+                        assert_eq!(text_span(e, t, v, ll, cd, l) as u64, doc.text_span(l), "{at}: node {l}'s text span, the JIT's");
                         assert_eq!(doc.text(l), Some(p.f().text(x)), "{at}: node {l}'s text");
-                        assert_eq!(doc.child_first(l), first(e, t, v, ll, l), "{at}: node {l}'s first child");
+                        assert_eq!(doc.child_first(l), first(e, t, v, ll, cd, l), "{at}: node {l}'s first child");
                         if l + 1 < n {
-                            assert_eq!(doc.child_next(l), next(e, t, v, ll, l), "{at}: child row {l}'s next");
+                            assert_eq!(doc.child_next(l), next(e, t, v, ll, cd, l), "{at}: child row {l}'s next");
                         }
                         let low = (p.global(l) & 0xffff_ffff) as u32;
-                        assert_eq!(doc.number(low), number(e, t, v, ll, low), "{at}: node {l} by its id");
+                        assert_eq!(doc.number(low), number(e, t, v, ll, cd, low), "{at}: node {l} by its id");
                         assert_eq!(doc.number(low), l, "{at}: node {l} by its id");
                         // The views no CLIF reads: the host's rows.
                         assert_eq!(doc.size(l), p.size(l as usize), "{at}: node {l}'s size");
@@ -3302,7 +3393,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // A line's text read where its source lies (decision 0353 row 7): the JIT's range and terminator
                     // length, the Rust read's, and its text `LineTable::text_of`'s (the whole source at 0); a guest's
                     // lines are its host's, read on the host.
-                    let line_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_line_span")) };
+                    let line_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_line_span")) };
                     // SAFETY: `lines_terminator_length`'s signature: the source's base, the terminator's last byte.
                     let terminator: extern "C" fn(*const u8, u32) -> u32 = unsafe { std::mem::transmute(jit.function("lines_terminator_length")) };
                     // SAFETY: `view_line_terminated`'s signature, as the probes'.
@@ -3315,8 +3406,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     assert_eq!(doc.line_span(p.global(0) as u32), rerail_clif::view_reads::NO_SPAN, "{at}: a node is no line");
                     for l in 0..=lines.count() as u32 + 1 {
                         let low = line_low(l);
-                        assert_eq!(line_span(e, t, v, ll, low) as u64, doc.line_span(low), "{at}: line {l}'s span, the JIT's");
-                        assert_eq!(terminated(e, t, v, ll, low) != 0, doc.line_terminated(low), "{at}: line {l} terminated, the JIT's");
+                        assert_eq!(line_span(e, t, v, ll, cd, low) as u64, doc.line_span(low), "{at}: line {l}'s span, the JIT's");
+                        assert_eq!(terminated(e, t, v, ll, cd, low) != 0, doc.line_terminated(low), "{at}: line {l} terminated, the JIT's");
                         if doc.line_span(low) == rerail_clif::view_reads::NO_SPAN {
                             assert!(doc.entry.own_text == 0 || l > lines.count() as u32, "{at}: line {l} read");
                             continue;
@@ -3344,10 +3435,10 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let node = p.global(p.f().parent(x).map_or(0, |q| p.local_of_node(q)));
                         let name = i64::from(atoms.intern(dialect.name(p.f(), x)).unwrap());
                         assert_eq!([doc.op(i, 0), doc.op(i, 1)], [node, name], "{at}: op row {i}");
-                        assert_eq!([view_op(e, t, v, ll, i, 0), view_op(e, t, v, ll, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
+                        assert_eq!([view_op(e, t, v, ll, cd, i, 0), view_op(e, t, v, ll, cd, i, 1)], [node, name], "{at}: op row {i}, the JIT's");
                     }
                 }
-                if let Some((shared, probe)) = probe {
+                if let (Some((shared, probe)), Some(cb)) = (probe, cb.as_ref()) {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();
@@ -3357,6 +3448,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
+                    let cd_at = cb.device_address().unwrap();
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
                     // generation, which turns all the time and may find no room (a failure counted: the device
                     // refuses the batch), and one with room.
@@ -3376,11 +3468,12 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     let mut q = ComputeQueue::new(&shared.queue);
                     launch(&q, probe)
                         .buffer("b", &block.device_buffer(&shared.device).unwrap())
-                        .value("p", &ViewP { d, tt: tt_at, ll: lb_at, n, nf })
+                        .value("p", &ViewP { d, tt: tt_at, ll: lb_at, cd: cd_at, n, nf })
                         .buffer("tv", &tv)
                         .buffer("out", &out)
                         .uses(&tt)
                         .uses(&lb)
+                        .uses(cb)
                         .uses(&cache)
                         .run(&[(u64::from(n) * 16).div_ceil(64)], &[64])
                         .unwrap_or_else(|e| panic!("{e}"));
@@ -3572,9 +3665,13 @@ fn places_are_measured_before_their_spans_are_made() {
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
+    // Before any is measured: a measure of one reads its rows, which makes the batch's rows of every relation.
+    for name in ["line", "col"] {
+        assert!(of(name).statistics().is_none(), "{name}: a sample is an estimate, not the relation's statistics");
+    }
     for name in ["line", "col"] {
         let s = of(name);
-        let got = s.statistics().expect("the view's counted, the spans' sampled");
+        let got = s.estimated_statistics().expect("the view's counted, the spans' sampled");
         let want = measured(&*s);
         assert_eq!(got[0].1, want[0].1, "{name}: the documents are alike, so the sample's rows scale to the batch's");
     }
@@ -3634,7 +3731,8 @@ fn a_relation_with_no_counts_is_measured_on_a_sample_of_its_documents() {
     let sources = made_sources(&batch);
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _, _)| *n == name).unwrap().2);
     let (pkg, text) = (of("pkg"), of("name"));
-    let got = [pkg.statistics().expect("sampled"), text.statistics().expect("sampled")];
+    assert!(pkg.statistics().is_none() && text.statistics().is_none(), "a sample is an estimate: the relation's statistics are counted");
+    let got = [pkg.estimated_statistics().expect("sampled"), text.estimated_statistics().expect("sampled")];
     let estimates = [pkg.estimated_len(), text.estimated_len()];
     assert_eq!(batch.groups(), 1, "one group of the sample's documents");
     assert_eq!(batch.documents_with_rows(), 64, "one document in 16 made");
@@ -4206,6 +4304,30 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
 
+/// One answer's values are admitted together (decision 0431 §8): one batch of them, whose sources hold every value's
+/// rows. Admitted one at a time, each paid a batch's fixed work: on corpus0 × B-now, 13,483 values made 40 GB of the
+/// run's peak.
+#[test]
+fn an_answer_s_values_are_admitted_as_one_batch() {
+    let store = ContentStore::open(&temp("admitted-together")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
+    let (_, mut grower) = Grower::start(&store, vec![file(1)], &[], &Matchers::default(), &tests, binding, &projection, &HashMap::new()).unwrap();
+    let admitted = grower.admit(&store, vec![file(3), file(4)], &[], &tests, binding, &projection).unwrap();
+    let batch = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the values' batch");
+    assert_eq!(batch.docs.keys().collect::<Vec<u32>>(), [3, 4], "one batch of both values");
+    let mut keys = BTreeSet::new();
+    for (_, s) in admitted.iter().filter(|(_, s)| !s.made_on_lookup()) {
+        let width = s.columns().len();
+        for r in 0..s.len() {
+            keys.extend((0..width).map(|c| s.value(r, c)).filter(|&v| v >= 1 << 32).map(|v| v >> 32));
+        }
+    }
+    assert!(keys.contains(&3) && keys.contains(&4), "both values' rows: {keys:?}");
+}
+
 /// Decision 0707: a chunk with a value admitted (decision 0431 §8: `values::Layered`, its base the chunk's batch and
 /// its parts the value's) is read where it lies by the host's join programs: `within` is the axis solved on the host
 /// into one relation in its block, the batch's rows then the value's, and `docof`, a placed relation (the `Loc` view's
@@ -4262,31 +4384,6 @@ fn a_chunks_axis_and_places_with_a_value_admitted_are_read_where_they_lie_on_the
     let read = &view.in_place;
     assert!(read.kind & places::VIEW_PLACED != 0, "docof: its spans past the view's rows");
     assert_eq!(view.rows, docof.len(), "docof: every row, the value's too");
-    assert!(read.grows.is_some(), "docof: a home its source keeps, for its indexes");
-}
-
-/// One answer's values are admitted together (decision 0431 §8): one batch of them, whose sources hold every value's
-/// rows. Admitted one at a time, each paid a batch's fixed work: on corpus0 × B-now, 13,483 values made 40 GB of the
-/// run's peak.
-#[test]
-fn an_answer_s_values_are_admitted_as_one_batch() {
-    let store = ContentStore::open(&temp("admitted-together")).unwrap();
-    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
-    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
-    let projection = Projection::core();
-    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
-    let (_, mut grower) = Grower::start(&store, vec![file(1)], &[], &Matchers::default(), &tests, binding, &projection, &HashMap::new()).unwrap();
-    let admitted = grower.admit(&store, vec![file(3), file(4)], &[], &tests, binding, &projection).unwrap();
-    let batch = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the values' batch");
-    assert_eq!(batch.docs.keys().collect::<Vec<u32>>(), [3, 4], "one batch of both values");
-    let mut keys = BTreeSet::new();
-    for (_, s) in admitted.iter().filter(|(_, s)| !s.made_on_lookup()) {
-        let width = s.columns().len();
-        for r in 0..s.len() {
-            keys.extend((0..width).map(|c| s.value(r, c)).filter(|&v| v >= 1 << 32).map(|v| v >> 32));
-        }
-    }
-    assert!(keys.contains(&3) && keys.contains(&4), "both values' rows: {keys:?}");
 }
 
 /// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
@@ -4330,6 +4427,50 @@ fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
     }
 }
 
+/// The codes' directory stays readable to the host while the device's wrap of it in place is held (decision 0697,
+/// `Shared::wrap_static`): in the binary's read-only text, Metal's wrap left its pages unreadable, and the JIT's view
+/// reads faulted on its first word. Its every page read, through a load the compiler keeps.
+#[test]
+fn the_codes_directory_is_readable_while_the_device_holds_it() {
+    let bytes = rerail_tape_format::codes_dir::bytes();
+    let before: Vec<u32> = (0..bytes.len()).step_by(4096).map(|i| bytes[i] as u32).collect();
+    let Some(shared) = rerail_gpu::shared::get() else { return };
+    let held = shared.wrap_static(bytes).unwrap_or_else(|e| panic!("the device's wrap of the codes' directory: {e}"));
+    let after: Vec<u32> = (0..bytes.len()).step_by(4096).map(|i| {
+        // SAFETY: inside the directory.
+        u32::from(unsafe { std::ptr::read_volatile(bytes.as_ptr().add(i)) })
+    }).collect();
+    assert_eq!(after, before, "the directory's pages, read by the host with the device's wrap held");
+    drop(held);
+}
+
+/// The codes' directory the binary holds (decision 0697) is each language's codes' kind atom and field atom as its
+/// dialect reads them: a kind its name's canonical code's (`Dialect::kind_of_atom`), ERROR its dialect's 0, a field
+/// `tag << 16 | field`. Every shipped table with a dialect, every code.
+#[test]
+fn the_codes_directory_is_the_dialects_atoms() {
+    use rerail_tape_format::{CODE_ERROR, codes_dir};
+    let mut tags = 0;
+    for tag in 0..=u8::MAX {
+        let Some(lang) = rerail_tape_format::f16::lang(tag) else {
+            assert!(codes_dir::kinds(tag).is_empty() && codes_dir::fields(tag).is_empty(), "tag {tag}: no table, no codes");
+            continue;
+        };
+        let Ok(dialect) = Dialect::new(tag) else { continue };
+        let table = lang.table();
+        let (kinds, fields) = (codes_dir::kinds(tag), codes_dir::fields(tag));
+        assert_eq!((kinds.len(), fields.len()), (table.len(), table.len()), "tag {tag}: a kind and a field a code");
+        for c in 0..table.len() as u32 {
+            let e = table.entry(c);
+            let kind = core::kind_atom(tag, if e.flags & CODE_ERROR != 0 { u16::MAX } else { e.kind });
+            assert_eq!(kinds[c as usize], dialect.kind_of_atom(kind), "tag {tag}: code {c}'s kind (kind {}, flags {})", e.kind, e.flags);
+            assert_eq!(fields[c as usize], field_atom(tag, e.field), "tag {tag}: code {c}'s field");
+        }
+        tags += 1;
+    }
+    assert!(tags >= 20, "the shipped languages' tables: {tags}");
+}
+
 /// Decision 0353, step 3 on the CPU (step 1): a batch's views' directory is made with or without a device, and
 /// self-relative. Read from its offset in the batch's block, at the host's bases of its homes, each document's row
 /// names that document's entry, its tape's bytes and its lines' words where they lie. The device's address of it is
@@ -4359,10 +4500,12 @@ fn the_views_directory_is_the_hosts_too() {
         assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.index().as_ptr() as u64, "document {}'s line index, in its tape or its own", p.key());
         assert_eq!(homes[row.homes[2] as usize].host + row.source, p.facts.source.as_bytes().as_ptr() as u64, "document {}'s source, where it lies", p.key());
     }
-    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), and the
-    // 16z cache's where it has one. The device reads the directory where it reads every tape and lines; a source
-    // it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
-    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 1, "three homes a row, and the cache's");
+    // The homes its rows name (fixed: a row's tape in `3i`, its lines in `3i + 1`, its source in `3i + 2`), the
+    // 16z cache's where it has one, and the codes' directory's. The device reads the directory where it reads every
+    // tape and lines; a source it does not read keeps a node's text on the host alone (`ViewsInPlace::sources`).
+    assert_eq!(dir.nhomes as usize, 3 * rows.len() + 2, "three homes a row, the cache's and the codes'");
+    // The codes' directory's home: the binary's (decision 0697).
+    assert_eq!(homes[dir.codes as usize].host, rerail_tape_format::codes_dir::bytes().as_ptr() as u64, "the codes' home is the binary's directory");
     let sources_on_device = rows.iter().zip(batch.docs.iter()).filter(|(_, p)| p.len() > 0).all(|(r, _)| homes[r.homes[2] as usize].gpu != 0);
     assert_eq!(views.sources, views.dir.is_some() && sources_on_device, "a node's text on the device only where it reads every source");
     let named = rows.iter().flat_map(|r| [r.homes[0], r.homes[1]]).map(|h| h as usize).chain((dir.cache != 0).then(|| dir.cache as usize - 1));
@@ -4478,25 +4621,27 @@ fn the_directorys_searches_are_the_jits() {
     assert!(tried > 100);
 }
 
-/// The join program's reads of the views, written directly in Rust (`rerail_ukl_rust::join_program::reads`, decisions
-/// 0534, 0536), answer what their CLIF answers by the JIT, over a batch's directory where it lies, in each format a
-/// tape is made in (16z's read through the directory's shared cache, by both): every column of every row of every
-/// view of each document, and each walk (`view_child_first`, `child_next`, `up`, `end`, `number`) from every node.
-/// The documents include a docstring alone (no rows in some views), a broken one and a TypeScript one; the last
-/// document's rows are not bounded by a next one's, so a small one comes last and is not read.
+/// Decision 0704: the join program's reads of the views, the views' one Rust reader (`view_reads::Doc`) over a
+/// document found from its directory's row where it lies (`rerail_ukl_rust::join_program::reads`: its tape, lines,
+/// source, 16z cache and codes at their homes), answer what their CLIF answers by the JIT, in each format a tape is made
+/// in (16z's read through the directory's shared cache, by both): every column of every row of every view of each
+/// document, and each walk (`view_child_first`, `child_next`, `up`, `end`, `number`) from every node. The documents
+/// include a docstring alone (no rows in some views), a broken one and a TypeScript one; the last document's rows are
+/// not bounded by a next one's, so a small one comes last and is not read.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn the_join_programs_view_reads_are_the_jits() {
     use crate::code_rule_dsl::tape::formats::{Format, as_run};
-    use rerail_clif::view::TapeView;
+    use rerail_clif::view::{F16Z_FORMAT, TapeView};
     use rerail_clif::view_reads::{VIEWS, ViewDir};
-    use rerail_ukl_rust::join_program::reads::Doc;
-    type Row = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> u64;
-    type Walk = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32;
+    use rerail_ukl_rust::join_program::reads::{at, block, col, doc, home, row};
+    type Row = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32, u32) -> u64;
+    type Walk = extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, *const u8, u32) -> u32;
     let jit = rerail_clif::jit::Reads::new();
-    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, then its arguments.
+    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, the codes' directory, then
+    // its arguments.
     let rows: Vec<Row> = VIEWS.iter().map(|name| unsafe { std::mem::transmute::<*const u8, Row>(jit.function(name)) }).collect();
-    let walks: [Walk; 5] = ["view_child_first", "view_up", "view_end", "view_number", "view_loc_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
+    let walks: [Walk; 6] = ["view_child_first", "view_child_next", "view_up", "view_end", "view_number", "view_loc_number"].map(|name| unsafe { std::mem::transmute::<*const u8, Walk>(jit.function(name)) });
     let python = |k: u32| format!("import os\n@dec\ndef f{k}(a, b=2):\n    '''doc'''\n    return [x for x in a if g(x, {k})]\n\nclass C(B):\n    def m(self):\n        return self.x\n");
     let mut tried = 0usize;
     for format in Format::ALL {
@@ -4509,34 +4654,43 @@ fn the_join_programs_view_reads_are_the_jits() {
             docs.push(document(40, "last.py", "python", "x = 1\n"));
             let batch = Batch::new(&store, docs, &Projection::core(), &[], &[], false, None, &HashMap::new()).unwrap();
             let views = device_chunk::views_in_place(&batch).expect("a directory");
-            let d = batch.block().ptr::<u8>(views.at).cast_const().cast::<ViewDir>();
+            let d = batch.block().ptr::<ViewDir>(views.at).cast_const();
             // SAFETY: the directory in the batch's block, which the batch holds; its documents' tapes and lines.
             let dir = unsafe { &*d };
             let firsts = unsafe { dir.rows() };
             for m in 0..dir.ndocs - 1 {
-                let doc = unsafe { Doc::of(d, m) };
-                let (e, t, v, l) = (std::ptr::from_ref(doc.e).cast::<u8>(), doc.tape.t.base(), &raw const doc.tape.v, doc.lines.0.base());
-                let at = format!("{} document {m}", format.name());
+                // SAFETY: the directory's document `m`, its homes' bytes where they lie.
+                let (doc, e, t, mut v, l, c) = unsafe {
+                    let w = row(d, m);
+                    (doc(d, m), block(d).add(w.entry as usize), home(d, w.homes[0], w.tape), w.view, home(d, w.homes[1], w.lines), home(d, dir.codes, 0))
+                };
+                // The JIT's 16z reads find the directory's cache by its offset from the tape, at its host address.
+                if dir.cache != 0 && v.format == F16Z_FORMAT {
+                    // SAFETY: the directory's cache home.
+                    let rel = (unsafe { home(d, dir.cache - 1, 0) } as i64).wrapping_sub(t as i64);
+                    (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
+                }
+                let v = &raw const v;
+                let place = format!("{} document {m}", format.name());
                 for k in 0..VIEWS.len() {
                     let n = firsts[m as usize + 1].rows[k] - firsts[m as usize].rows[k];
                     let cols = [5, 3, 3, 3, 2, 2, 2, 2, 2, 4, 2, 2, 2, 3][k];
                     for r in 0..n {
-                        for c in 0..cols {
-                            // SAFETY: a row of the document's, of the view's.
-                            let rust = unsafe { doc.view(k as u32, r, c) };
-                            assert_eq!(rust, rows[k](e, t, v, l, r, c), "{at}: {} row {r} column {c}", VIEWS[k]);
+                        let found = at(doc.clone(), k as u32, r);
+                        for col in 0..cols {
+                            assert_eq!(found.col(col), rows[k](e, t, v, l, c, r, col), "{place}: {} row {r} column {col}", VIEWS[k]);
                             tried += 1;
                         }
                     }
-                    // Its rows walked in order (an index's key pass), from each first row the walk may start at:
-                    // each found as `Doc::at` finds it.
+                    // Its rows read in order through one document's reads (an index's key pass: each row's node the
+                    // walk's next, `Numbering::nodes_at`), from each first row the walk may start at: each as a
+                    // document's reads made for it alone find it.
                     for from in [0, n / 3, n.saturating_sub(1)].into_iter().filter(|&f| f < n) {
-                        // SAFETY: the document's rows of the view, from `from` on.
-                        let mut w = unsafe { doc.rows_from(k as u32, from) };
+                        let walked = doc.clone();
                         for r in from..n {
-                            let walked = unsafe { w.next() };
                             for c in 0..cols {
-                                assert_eq!(unsafe { walked.col(c) }, unsafe { doc.view(k as u32, r, c) }, "{at}: {} row {r} column {c}, walked from {from}", VIEWS[k]);
+                                assert_eq!(col(&walked, k as u32, r, c), at(doc.clone(), k as u32, r).col(c), "{place}: {} row {r} column {c}, walked from {from}", VIEWS[k]);
+                                tried += 1;
                             }
                         }
                     }
@@ -4545,25 +4699,25 @@ fn the_join_programs_view_reads_are_the_jits() {
                 // and ids of none.
                 let locs = firsts[m as usize + 1].rows[8] - firsts[m as usize].rows[8];
                 for r in 0..locs {
-                    // SAFETY: a row of the document's `docof`.
-                    let low = unsafe { doc.view(8, r, 0) } as u32;
+                    // `docof`'s id column (0): the position's id (`Doc::loc_id`).
+                    let low = doc.loc_id(r) as u32;
                     for q in [low, low ^ 1, u32::MAX - 1, 0x7fff_0000] {
-                        assert_eq!(unsafe { doc.loc_number(q) }, walks[4](e, t, v, l, q), "{at}: loc_number {q:#x}");
+                        assert_eq!(doc.loc_number(q), walks[5](e, t, v, l, c, q), "{place}: loc_number {q:#x}");
                     }
-                    assert_eq!(unsafe { doc.loc_number(low) }, r, "{at}: loc_number of docof row {r}'s id {low:#x}");
+                    assert_eq!(doc.loc_number(low), r, "{place}: loc_number of docof row {r}'s id {low:#x}");
                     tried += 1;
                 }
-                let nodes = doc.e.nodes;
+                let nodes = doc.entry.nodes;
                 for x in 0..nodes {
-                    // SAFETY: a node of the document's (a `child` row for each but the last).
-                    unsafe {
-                        assert_eq!(doc.child_first(x), walks[0](e, t, v, l, x), "{at}: child_first {x}");
-                        assert_eq!(doc.up(x), walks[1](e, t, v, l, x), "{at}: up {x}");
-                        assert_eq!(doc.end(x), walks[2](e, t, v, l, x), "{at}: end {x}");
-                        let low = doc.node_id(x) as u32;
-                        for q in [low, low ^ 1, low.wrapping_add(nodes), u32::MAX - 1] {
-                            assert_eq!(doc.number(q), walks[3](e, t, v, l, q), "{at}: number {q:#x}");
-                        }
+                    assert_eq!(doc.child_first(x), walks[0](e, t, v, l, c, x), "{place}: child_first {x}");
+                    if x + 1 < nodes {
+                        assert_eq!(doc.child_next(x), walks[1](e, t, v, l, c, x), "{place}: child_next {x}");
+                    }
+                    assert_eq!(doc.up(x), walks[2](e, t, v, l, c, x), "{place}: up {x}");
+                    assert_eq!(doc.end(x), walks[3](e, t, v, l, c, x), "{place}: end {x}");
+                    let low = doc.node_id(x) as u32;
+                    for q in [low, low ^ 1, low.wrapping_add(nodes), u32::MAX - 1] {
+                        assert_eq!(doc.number(q), walks[4](e, t, v, l, c, q), "{place}: number {q:#x}");
                     }
                     tried += 1;
                 }
@@ -4571,6 +4725,158 @@ fn the_join_programs_view_reads_are_the_jits() {
         });
     }
     assert!(tried > 1000, "{tried} reads");
+}
+
+/// Plan "Chunk node numbers", step 1: a growth's ids. Each document takes whole pages of 32-bit ids when it is first
+/// made in the growth, in its role's region (files from 0, code guests from 2^30, hidden documents from 1.5 × 2^30)
+/// and in making order, and its later spans one run more; every id's document and local id come back from its page,
+/// on the host and by the JIT (`dir_doc_of_id`, `dir_local_of_id`), through each directory that holds it: the
+/// chunk's first batch, the batch a round grew it into (its documents in key order, so a document's place moves),
+/// and the layered directory with a tape value admitted (`views_over`). A row is the document's number less the
+/// directory's first, the same in each: one load from the page. An id handed out in the first round is the same id
+/// in the second. The directory's searches by row and by key (`dir_doc_of_row`, `dir_doc_of_key`) are the JIT's
+/// too on the grown and the layered directories, where a document's row is not its place in their order.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    use rerail_clif::view_reads::{NO_DOC, PAGE, PAGE_BITS, ROLE_PAGES, VIEWS, ViewDir};
+    let store = ContentStore::open(&temp("chunk-ids")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32, p: &str| document(k, p, "python", &format!("def f(x):\n    return g(x, {k})\n\nclass C:\n    pass\n"));
+    let (guest, hidden) = (GUEST_KEYS + 2, HIDDEN_KEYS + 5);
+    let (_, mut grower) = Grower::start(&store, vec![file(3, "a.py"), file(9, "b.py"), file(guest, "g.py")], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let first = Arc::clone(grower.batch().expect("a batch"));
+    let jit = rerail_clif::jit::Reads::new();
+    type OfId = extern "C" fn(*const u8, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor (a directory), then the id.
+    let (doc_of, local_of): (OfId, OfId) = unsafe { (std::mem::transmute::<*const u8, OfId>(jit.function("dir_doc_of_id")), std::mem::transmute::<*const u8, OfId>(jit.function("dir_local_of_id"))) };
+    type ByRow = extern "C" fn(*const u8, u32, u32, u32) -> u32;
+    type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
+    // SAFETY: each read's signature: the descriptor, then its arguments.
+    let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute::<*const u8, ByRow>(jit.function("dir_doc_of_row")), std::mem::transmute::<*const u8, ByKey>(jit.function("dir_doc_of_key"))) };
+    // The searches of directory `d` (its first rows counted), the host's and the JIT's, over every row of the
+    // node and child views and every key: the row found holds the view's row, and is the key's.
+    let searched = |d: *const ViewDir, keys: &[(u32, u32)], at: &str| {
+        // SAFETY: the directory in its batch's block, which the test holds, its first rows counted.
+        let (n, span, ends) = unsafe { ((*d).ndocs, (*d).span, (*d).ends) };
+        for k in 0..2u32.min(VIEWS.len() as u32) {
+            for r in 0..ends[k as usize] {
+                for memo in [0, span / 2, span.saturating_sub(1), span, NO_DOC] {
+                    // SAFETY: as above.
+                    let host = unsafe { ViewDir::doc_of_row(d, k, r, memo) };
+                    assert_eq!(by_row(d.cast(), k, r, memo), host, "{at}: view {k}, row {r}, memo {memo}");
+                    // SAFETY: as above; the row found one of its documents'.
+                    let (place, from) = unsafe { (ViewDir::at_of(d, host), ViewDir::first_of(d, k as usize, ViewDir::at_of(d, host))) };
+                    // SAFETY: as above.
+                    let to = unsafe { ViewDir::first_of(d, k as usize, place + 1) };
+                    assert!(place < n && from <= r && r < to, "{at}: view {k}, row {r}: row {host}, place {place}, rows {from}..{to}");
+                }
+            }
+        }
+        for &(key, row) in keys {
+            for memo in [0, row, span, NO_DOC] {
+                // SAFETY: as above.
+                let host = unsafe { ViewDir::doc_of_key(d, key, memo) };
+                assert_eq!((by_key(d.cast(), key, memo), host), (row, row), "{at}: key {key}, memo {memo}");
+            }
+        }
+    };
+    // Every id of `ids` (first id, first local id, how many) comes back as document `row` through directory `d`.
+    let mut tried = 0usize;
+    let mut check = |d: *const ViewDir, row: u32, (id, local, n): (u32, u32, u32), at: &str| {
+        for k in 0..n {
+            // SAFETY: the directory in its batch's block, which the test holds; each id handed out.
+            let (doc, loc) = unsafe { (ViewDir::doc_of_id(d, id + k), ViewDir::local_of_id(d, id + k)) };
+            assert_eq!((doc, loc), (row, local + k), "{at}: id {:#x}", id + k);
+            assert_eq!((doc_of(d.cast(), id + k), local_of(d.cast(), id + k)), (doc, loc), "{at}: id {:#x} by the JIT", id + k);
+            tried += 1;
+        }
+    };
+    let ids_of = |docs: &made::Docs, i: usize| {
+        let p = docs.get(i).expect("a document");
+        p.locs() + p.f().lines.count() as u32 + 1
+    };
+    let docs = &first.docs;
+    let row = |docs: &made::Docs, key: u32| docs.position(key).expect("a document of the key");
+    // Made in reverse key order: the guest, then b.py, then a.py.
+    let (a, b, g) = (row(docs, 3), row(docs, 9), row(docs, guest));
+    for i in [g, b, a] {
+        docs.get(i);
+    }
+    let base = |docs: &made::Docs, i: usize| docs.base(i).expect("room in its region");
+    let pages = |n: u32| n.div_ceil(PAGE) * PAGE;
+    assert_eq!(base(docs, b), 0, "b.py, made first of the files, takes the files' first page");
+    assert_eq!(base(docs, a), pages(ids_of(docs, b)), "a.py's pages follow b.py's");
+    assert_eq!(base(docs, g), ROLE_PAGES[1] << PAGE_BITS, "the guest takes the guests' first page");
+    // Later spans: one run more, past the pages taken since, its local ids past the document's first.
+    let later = docs.later_ids(a, 5000).expect("room");
+    assert_eq!(later, (pages(ids_of(docs, b)) + pages(ids_of(docs, a)), ids_of(docs, a)), "a.py's later spans");
+    assert_eq!(docs.later_ids(a, 7), Some(later), "taken once");
+    let held: Vec<(u32, [(u32, u32, u32); 2])> = [a, b, g]
+        .into_iter()
+        .map(|i| (docs.key(i), [(base(docs, i), 0, ids_of(docs, i)), if i == a { (later.0, later.1, 5000) } else { (0, 0, 0) }]))
+        .collect();
+    // A document's row in any directory of the growth: its number less the directory's first.
+    // SAFETY: each directory in the chunk's block, which the test holds.
+    let row_in = |d: *const ViewDir, docs: &made::Docs, key: u32| docs.number(row(docs, key)) - unsafe { (*d).first };
+    for &(key, runs) in &held {
+        assert_eq!(docs.row(row(docs, key)), row_in(docs.dir(), docs, key), "key {key}: its row is its number");
+        for run in runs {
+            check(docs.dir(), row_in(docs.dir(), docs, key), run, "the first batch");
+        }
+    }
+    // A round grows the batch: c.py's row comes between a.py's and b.py's, and every id stays.
+    grower.grow(&store, vec![file(5, "c.py")], &[], &tests, Binding::Cpu, &projection).unwrap();
+    let second = Arc::clone(grower.batch().expect("a batch"));
+    assert!(Arc::ptr_eq(second.docs.ids(), first.docs.ids()), "one growth, one numbering");
+    let c = row(&second.docs, 5);
+    second.docs.get(c);
+    assert_eq!(base(&second.docs, c), pages(ids_of(docs, b)) + pages(ids_of(docs, a)) + pages(5000), "c.py's pages follow the later spans'");
+    let sd = second.docs.dir();
+    assert_eq!(c, 1, "c.py is second by key");
+    assert_ne!(second.docs.row(c), c as u32, "c.py's row is its number, not its place");
+    for &(key, runs) in &held {
+        let i = row(&second.docs, key);
+        assert_eq!(base(&second.docs, i), runs[0].0, "key {key}: its ids in the second round");
+        assert_eq!(row_in(sd, &second.docs, key), row_in(docs.dir(), docs, key), "key {key}: its row in the second round");
+        for run in runs {
+            check(sd, row_in(sd, &second.docs, key), run, "the grown batch");
+        }
+    }
+    check(sd, row_in(sd, &second.docs, 5), (base(&second.docs, c), 0, ids_of(&second.docs, c)), "the grown batch, c.py");
+    // Its first rows counted, its rows' reads written (the views' directory, device or not).
+    device_chunk::views_in_place(&second).expect("the grown batch's directory");
+    let keys_of = |d: *const ViewDir, docs: &[&made::Docs]| -> Vec<(u32, u32)> {
+        let mut keys: Vec<(u32, u32)> = docs.iter().flat_map(|docs| docs.keys().map(|k| (k, row_in(d, docs, k))).collect::<Vec<_>>()).collect();
+        keys.extend([(0, NO_DOC), (4, NO_DOC), (u32::MAX - 1, NO_DOC)]);
+        keys
+    };
+    searched(sd, &keys_of(sd, &[&second.docs]), "the grown batch");
+    // A tape value admitted: a hidden document, numbered in the chunk's growth.
+    let admitted = grower.admit(&store, vec![file(hidden, "v.py")], &[], &tests, Binding::Cpu, &projection).unwrap();
+    let value = admitted.iter().find_map(|(_, s)| s.python_batch()).expect("the value's batch");
+    assert!(Arc::ptr_eq(value.docs.ids(), first.docs.ids()), "the value is numbered in the chunk's growth");
+    value.docs.get(0);
+    let v = base(&value.docs, 0);
+    assert_eq!(v, ROLE_PAGES[2] << PAGE_BITS, "the value takes the hidden documents' first page");
+    check(value.docs.dir(), 0, (v, 0, ids_of(&value.docs, 0)), "the value's batch: its row 0, its number its first");
+    // SAFETY: the value's directory, in the chunk's block: none of its rows is a chunk's file.
+    assert_eq!(unsafe { ViewDir::doc_of_id(value.docs.dir(), base(&second.docs, c)) }, NO_DOC, "c.py is no row of the value's batch");
+    let layered = device_chunk::views_over(&second, std::slice::from_ref(&value)).expect("a layered directory");
+    let ld = second.block().ptr::<ViewDir>(layered.at).cast_const();
+    // SAFETY: the layered directory, in the chunk's block.
+    assert_eq!(unsafe { ((*ld).first, (*ld).span) }, (0, 5), "the layered directory's rows: the growth's five numbers");
+    check(ld, row_in(ld, &value.docs, hidden), (v, 0, ids_of(&value.docs, 0)), "the layered directory, the value");
+    for &(key, runs) in &held {
+        assert_eq!(row_in(ld, &second.docs, key), row_in(sd, &second.docs, key), "key {key}: its row in the layered directory");
+        for run in runs {
+            check(ld, row_in(ld, &second.docs, key), run, "the layered directory");
+        }
+    }
+    searched(ld, &keys_of(ld, &[&second.docs, &value.docs]), "the layered directory");
+    assert!(tried > 5000, "{tried} ids");
 }
 
 /// Decision 0353, step 3 on the CPU (step 2): the directory's searches in the kernels (`clif_dir_doc_of_row`,
@@ -4770,8 +5076,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
         if !batch.docs.withheld(d) {
             let (hash, _) = super::core_rr::digests(f, dialect, true, false);
             for (_, id, n) in p.node_ids() {
-                let h = store.intern_atoms(&[super::core_rr::hex(&hash[id as usize]).as_str()]).unwrap()[0];
-                want.entry(DIGEST).or_default().insert(vec![n, i64::from(h)]);
+                want.entry(DIGEST).or_default().insert(vec![n, super::core_rr::digest_value(&hash[id as usize])]);
             }
             let (mut order, mut keys) = (Vec::new(), vec![u32::MAX; p.len() as usize]);
             super::tree::visit_order(p, dialect, true, &mut |l, i| {
@@ -4927,4 +5232,133 @@ fn read_text(v: Option<rusqlite::types::Value>) -> Option<String> {
         rusqlite::types::Value::Integer(i) => Some(i.to_string()),
         other => panic!("a node read of neither text nor number: {other:?}"),
     }
+}
+
+/// What one test `kind(n, #k)` of a bound node costs through the node view's read as found (`lookup_read_at`, a
+/// membership step's `tests_keys`), against its parts read directly: the node found by its id (`Batch::node`), and
+/// then its tape node and kind read. The planner fixture's corpus, every node's id, in row order and shuffled. A
+/// measurement (t57 E6).
+#[test]
+#[ignore]
+fn what_a_kind_test_of_a_bound_node_costs() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("kind-test-cost")).unwrap();
+    let (_, node) = sources(&store, documents()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let batch = node.python_batch().expect("a batch's view");
+    let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+    let want: Vec<i64> = (0..node.len()).map(|r| node.value(r, 2)).collect();
+    let k = want[want.len() / 2];
+    let mut shuffled: Vec<usize> = (0..ids.len()).collect();
+    let mut r = 7u64;
+    for i in (1..shuffled.len()).rev() {
+        r = r.wrapping_mul(6364136223846793005).wrapping_add(1);
+        shuffled.swap(i, (r >> 33) as usize % (i + 1));
+    }
+    let reps = 20;
+    for (label, order) in [("row order", (0..ids.len()).collect::<Vec<_>>()), ("shuffled", shuffled)] {
+        let mut hits = 0usize;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            let mut cursor = ProbeCursor::default();
+            for &i in &order {
+                let mut found = false;
+                assert!(node.lookup_read_at(1, ids[i], &[2], &mut cursor, &mut |_, got| found |= got[0] == k));
+                hits += usize::from(found);
+            }
+        }
+        let read = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        let t = std::time::Instant::now();
+        let mut sum = 0u64;
+        for _ in 0..reps {
+            let mut memo = 0u32;
+            for &i in &order {
+                sum += batch.node(ids[i], &mut memo).map_or(0, |(_, l)| u64::from(l));
+            }
+        }
+        let find = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        let t = std::time::Instant::now();
+        for _ in 0..reps {
+            let mut memo = 0u32;
+            for &i in &order {
+                if let Some((doc, local)) = batch.node(ids[i], &mut memo) {
+                    let p = &batch.docs[doc];
+                    sum += u64::from(p.f().kind(p.node(local)));
+                }
+            }
+        }
+        let direct = t.elapsed().as_secs_f64() / (reps * order.len()) as f64;
+        eprintln!(
+            "{} nodes, {label}: the view's read {:.1} ns a test ({} of kind {k}); the node found {:.1} ns; found, tape node and kind read {:.1} ns ({sum})",
+            ids.len(),
+            read * 1e9,
+            hits / reps,
+            find * 1e9,
+            direct * 1e9
+        );
+    }
+}
+
+/// t57 E6: the node view's tests of a chunk of nodes by their own ids, read as one batch (`Source::read_own_batch`,
+/// the fused row program's view tests, decision 0706 E1) answer as its probes do (`lookup_read_at`): every node's id
+/// in row order and shuffled, ids of no node, each kind the documents have and none (a node's row alone), across
+/// chunks that keep one cursor.
+#[test]
+fn a_node_views_tests_of_a_chunk_are_its_probes() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("holds-each")).unwrap();
+    let (_, node) = sources(&store, documents().into_iter().take(4).collect()).unwrap().into_iter().find(|(name, _)| *name == "node").unwrap();
+    let n = node.len();
+    assert!(n > 50, "the documents have nodes");
+    let mut ids: Vec<i64> = (0..n).map(|r| node.value(r, 1)).collect();
+    // Ids of no node: past a document's nodes, in no document, negative.
+    ids.extend([ids[0] + (1 << 20), 77i64 << 32, -1, ids[n / 2] | 0x3_ffff]);
+    let mut r = 11u64;
+    for i in (1..ids.len()).rev() {
+        r = r.wrapping_mul(6364136223846793005).wrapping_add(1);
+        ids.swap(i, (r >> 33) as usize % (i + 1));
+    }
+    let kinds: BTreeSet<i64> = (0..n).map(|r| node.value(r, 2)).collect();
+    let mut tried = 0;
+    for want in kinds.iter().copied().take(6).map(Some).chain([None, Some(-5)]) {
+        let col = if want.is_some() { 2 } else { 1 };
+        let (mut cursor, mut probes) = (ProbeCursor::default(), ProbeCursor::default());
+        for chunk in ids.chunks(97) {
+            let reads: &[usize] = if want.is_some() { &[2] } else { &[] };
+            let (mut vals, mut found) = (vec![9i64; chunk.len() * reads.len()], vec![9u8; chunk.len()]);
+            assert!(node.read_own_batch(1, chunk, reads, &mut vals, &mut found, &mut cursor), "the node view reads its rows in a batch");
+            assert!(found.iter().all(|&f| f < 2), "the node view answers every id");
+            let got: Vec<i64> = (0..chunk.len()).map(|j| i64::from(found[j] == 1 && want.is_none_or(|w| vals[j] == w))).collect();
+            let expect: Vec<i64> = chunk
+                .iter()
+                .map(|&v| {
+                    let mut hit = false;
+                    assert!(node.lookup_read_at(1, v, &[col], &mut probes, &mut |_, g| hit |= want.is_none_or(|w| g[0] == w)), "the node view probes");
+                    i64::from(hit)
+                })
+                .collect();
+            assert_eq!(got, expect, "kind {want:?}");
+            tried += got.iter().filter(|&&v| v == 1).count();
+        }
+    }
+    assert!(tried > n, "{tried}");
+    assert!(!node.read_own_batch(2, &ids[..4], &[], &mut [], &mut [0; 4], &mut ProbeCursor::default()), "by a column not its own: refused");
+}
+
+/// Decision 0431 step 6: a dialect whose embeddings are all the parse's (`programs_are_the_parse`: none reads the
+/// scope) has a file's derived documents as its whole record of programs, so a writer that has only those (the
+/// workspace's publication) records their count with the tape. HTML's scripts and styles are the parse's: the facts'
+/// programs are exactly the parse's derived documents. Python's embedding by call argument reads the scope
+/// (decision 0470), so its derived documents are not all its programs, and its count is left to the engine's record.
+#[test]
+fn a_dialect_whose_embeddings_are_the_parse_s_has_its_derived_documents_as_its_programs() {
+    let grammar = |label: &str| crate::code_rule_dsl::tape::Grammar::embedded(dialect_by_label(label).unwrap()).unwrap();
+    assert!(core::programs_are_the_parse(&grammar("html")), "HTML embeds by its structure alone");
+    assert!(!core::programs_are_the_parse(&grammar("python")), "Python embeds by call argument, which reads the scope");
+    let source = "<html><body><script>let a = 1;</script><style>p { color: red }</style></body></html>\n";
+    let file = FileInput::new("p.html".to_owned(), "html".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+    let (Built::Facts(facts), _) = core::build_with_tape(&file, false).unwrap() else { panic!("p.html did not parse") };
+    let parsed = crate::code_rule_dsl::tape::TapeImage::parse(&grammar("html"), source, &|| false).unwrap().unwrap();
+    let programs = facts.programs.as_ref().expect("the facts know their programs");
+    assert!(!parsed.derived.is_empty(), "the page's script and style are programs");
+    assert_eq!(programs.len(), parsed.derived.len(), "the facts' programs are the parse's derived documents");
 }

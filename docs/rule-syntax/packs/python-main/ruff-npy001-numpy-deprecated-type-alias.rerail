@@ -10,7 +10,7 @@
 // NPY001(n, detail): findings from clauses `numpy-unicode-alias`, `numpy-builtin-alias`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation NPY001(at: loc, name: node, detail: symbol) "Replace `{name}`, {detail} and drop its NumPy import."
+.violation NPY001(at: node, name: node, detail: symbol) "Replace `{name}`, {detail} and drop its NumPy import."
     suppress noqa "NPY001"
 NPY001(NAME, n, "NumPy's removed alias `numpy.unicode`, with the builtin `str`") :- npy001_alias(n),
     node(_, n, _, _, _), NAME = n.
@@ -28,7 +28,7 @@ npy001_alias(n) :- kind(n, "dotted_name"), match("\\w+\\s*\\.\\s*(?:unicode)", n
 
 // in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl npy001_in_string(n: node, name: loc)
+.decl npy001_in_string(n: node, name: node)
 npy001_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), npy001_alt_1(c2, NAME).
 
@@ -43,7 +43,7 @@ npy001_alias_numpy_builtin_alias(n) :- kind(n, "dotted_name"),
 
 // in_string_numpy_builtin_alias(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl npy001_in_string_numpy_builtin_alias(n: node, name: loc)
+.decl npy001_in_string_numpy_builtin_alias(n: node, name: node)
 npy001_in_string_numpy_builtin_alias(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), npy001_alt_3(c2, NAME).
 
@@ -54,12 +54,12 @@ npy001_set_2("numpy.str").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl npy001_alt_1(n: node, name: loc)
+.decl npy001_alt_1(n: node, name: node)
 npy001_alt_1(n, NAME) :- npy001_alias(n), NAME = n.
 npy001_alt_1(n, NAME) :- npy001_in_string(n, NAME).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl npy001_alt_3(n: node, name: loc)
+.decl npy001_alt_3(n: node, name: node)
 npy001_alt_3(n, NAME) :- npy001_alias_numpy_builtin_alias(n), NAME = n.
 npy001_alt_3(n, NAME) :- npy001_in_string_numpy_builtin_alias(n, NAME).

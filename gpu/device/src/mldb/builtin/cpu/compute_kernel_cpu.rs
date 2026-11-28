@@ -716,6 +716,10 @@ impl CpuComputeQueue {
         });
     }
 
+    /// A barrier between two launches' memory (decision 0674's chain): none needed, the queue runs its launches in
+    /// order, each done before the next.
+    pub fn memory_barrier(&self) {}
+
     /// The work so far, handed to the root's thread; its event.
     pub fn flush(&mut self) -> CpuComputeEvent {
         let done = Arc::new(Done::default());

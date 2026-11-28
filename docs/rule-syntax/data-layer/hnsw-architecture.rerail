@@ -117,7 +117,7 @@ HNSW004(f) :- def_name(f, "render"), kind(f, "function_definition"), !op(f, "asy
 HNSW005(c) :- kind(c, "call"), field(c, "function", f), kind(f, "attribute"), field(f, "object", o),
     kind(o, "identifier"), text(o, "SqlFragment"), docof(c, d), hn_algorithm(d).
 
-.violation HNSW006(at: span) "forbidden HNSW module exists"
+.violation HNSW006(at: match) "forbidden HNSW module exists"
 HNSW006(@place(p, 1)) :- hn_deleted(_, p).
 
 // hn_token(n, s): what HNSW007 searches at node n: an import's module or names, a Name, an attribute's name, or a str

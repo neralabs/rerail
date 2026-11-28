@@ -22,6 +22,12 @@ pub fn released<T>(f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// The runs of a piece of device work the system may stop before that is a failure: macOS's GPU watchdog ends a
+/// command buffer that holds the GPU while the display waits ("Impacting Interactivity", decision 0588), the work
+/// not at fault, as several tests at once on a Mac with a display do. The preprocessor's units run again
+/// (`rerail_metal::pp_eval::preempted_again`), and so do the device's strata (`rerail_device_metal`).
+pub const PREEMPTED_RUNS: u32 = 4;
+
 /// What makes the GPU lane's backend: none where this machine has no device or its kernels do not compile.
 pub type MakeBackend = fn() -> Option<Arc<dyn Backend>>;
 

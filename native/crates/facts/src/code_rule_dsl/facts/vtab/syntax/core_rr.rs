@@ -559,7 +559,7 @@ pub(super) struct Skip {
     pub(super) literal: bool,
     /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
     pub(super) str: bool,
-    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    /// The literal values (`value`, `static_value`, `static_value_type_of`, `value_type`, `rr_value_lit`), likewise.
     pub(super) literal_value: bool,
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
@@ -729,10 +729,10 @@ impl CoreRows {
                 }
                 lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
             }
-            if let Some(prefix) = &lit.prefix {
-                if !self.skip.literal_rows {
-                    self.strprefix.push([n, string(prefix) as i64]);
-                }
+            if let Some(prefix) = &lit.prefix
+                && !self.skip.literal_rows
+            {
+                self.strprefix.push([n, string(prefix) as i64]);
             }
             if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);
@@ -807,7 +807,7 @@ impl CoreRows {
         for (local, id) in p.nodes() {
             at.entry((f.start(id), f.end(id), dialect.name(f, id))).or_insert(local);
         }
-        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // A pattern is a tape, its implied tokens left out (decision 0161's `tape::pattern_doc`): it is matched over the
         // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
         let tape = match tape {
             Some(t) => t.clone(),
@@ -854,7 +854,7 @@ impl CoreRows {
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
     pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
-        self.value.iter().filter(move |r| docs.contains(&((r[0] >> 32) as u32))).copied()
+        self.value.iter().filter(move |r| docs.contains(&rerail_blocks::located::Located(r[0]).key())).copied()
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.
@@ -873,6 +873,7 @@ impl CoreRows {
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
         let value: Vector<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let value_type_of: Vector<[i64; 2]> = self.value.iter().map(|&[n, _, t]| [n, t]).collect();
         let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
@@ -883,6 +884,7 @@ impl CoreRows {
             // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
             ("value", make(&["n", "v"], &value, [false, true], atom)),
             ("static_value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value_type_of", make(&["n", "t"], &value_type_of, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
@@ -1017,6 +1019,12 @@ pub fn digests(f: FactsIn<'_>, dialect: &Dialect, trees: bool, units: bool) -> (
 /// A digest's symbol: its 32 bytes in hex.
 pub fn hex(h: &[u8; 32]) -> String {
     hex_into(h, &mut [0; 64]).to_owned()
+}
+
+/// A digest's 64-bit value, `@tree_digest`'s: its first 8 bytes, big-endian, so the number's 16 hex digits are the
+/// first of its 64 (`@tree_digest_hex`).
+pub fn digest_value(h: &[u8; 32]) -> i64 {
+    i64::from_be_bytes(h[..8].try_into().expect("8 bytes"))
 }
 
 /// A digest's symbol written into `out`, no allocation: its 32 bytes in hex.

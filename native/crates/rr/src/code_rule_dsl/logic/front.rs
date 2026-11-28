@@ -161,6 +161,16 @@ pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version)
 /// `finish_checks_on` of a program lowered without the rules of the `library` it reads (`rr::Text::lower_in`): its
 /// value cycles are bounded by what the library's relations guarantee there (`cycles::check_given`).
 pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>) -> Result<(), Error> {
+    finish_checks_in(v, library, None)
+}
+
+/// `finish_checks_on` of a program linked from tailed modules (decision 0639 §6a): the value cycles of the components
+/// that hold a relation of `touched` alone (`cycles::check_within`), its modules' tails having checked the others.
+pub fn finish_checks_within(v: &crate::code_rule_dsl::logic::program_image::Version, touched: &BTreeSet<String>) -> Result<(), Error> {
+    finish_checks_in(v, None, Some(touched))
+}
+
+fn finish_checks_in(v: &crate::code_rule_dsl::logic::program_image::Version, library: Option<&crate::code_rule_dsl::logic::program_image::Version>, within: Option<&BTreeSet<String>>) -> Result<(), Error> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     use crate::code_rule_dsl::logic::program_image::handles::{AggRef, Lit, TermRef};
     for rule in v.rules() {
@@ -224,9 +234,10 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
         return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    match library {
-        Some(library) => cycles::check_given(v, library)?,
-        None => cycles::check(v)?,
+    match (library, within) {
+        (Some(library), _) => cycles::check_given(v, library)?,
+        (None, Some(touched)) => cycles::check_within(v, touched)?,
+        (None, None) => cycles::check(v)?,
     };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(v)?;
@@ -281,8 +292,16 @@ pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image:
 /// readers of a version's strata read (`Placed::components`).
 ///
 /// A section (decision 0628 §4): each component's members sorted by name, found by a search of them.
-#[derive(Clone, PartialEq)]
-pub struct Components(rerail_section::Section<Comps>);
+/// The analysis's (`program_image::analyses`) keep each relation with rules' key of its edges
+/// (`graph::head_edge_key`), what it is maintained by; two are equal by their components alone.
+#[derive(Clone)]
+pub struct Components(rerail_section::Section<Comps>, Option<std::sync::Arc<BTreeMap<String, u64>>>);
+
+impl PartialEq for Components {
+    fn eq(&self, other: &Components) -> bool {
+        self.0 == other.0
+    }
+}
 
 /// `Components`' section: each component's members, sorted by name.
 #[derive(rerail_section::Archive, Default)]
@@ -339,7 +358,7 @@ impl<'a> IntoIterator for &'a Comp {
 
 impl Default for Components {
     fn default() -> Components {
-        Components(rerail_section::Section::of(&Comps::default()))
+        Components(rerail_section::Section::of(&Comps::default()), None)
     }
 }
 
@@ -356,7 +375,15 @@ impl Components {
             c.sort_unstable();
             c.dedup();
         }
-        Components(rerail_section::Section::of(&Comps { comps }))
+        Components(rerail_section::Section::of(&Comps { comps }), None)
+    }
+    /// These, with each relation with rules' key of its edges (`graph::head_edge_key`).
+    pub fn keyed(self, keys: BTreeMap<String, u64>) -> Components {
+        Components(self.0, Some(std::sync::Arc::new(keys)))
+    }
+    /// Each relation with rules' key of its edges, where the analysis made these (`keyed`).
+    pub fn edge_keys(&self) -> Option<&BTreeMap<String, u64>> {
+        self.1.as_deref()
     }
     /// The components named by `comps`, in its order.
     pub fn of_names<'a, C: IntoIterator<Item = &'a str>>(comps: impl IntoIterator<Item = C>) -> Components {
@@ -677,11 +704,12 @@ pub const PRAGMA: &str = "cross-rounds";
 pub fn document_column(relation: &str) -> Option<usize> {
     match relation {
         "node" | "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
-        "source" | "src_line" | "line_count" | "parsed"
+        "source" | "src_line" | "line_count"
         // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "tape_of" | "rr_program" | "doc_grammar" | "host_node" => Some(0),
-        // Decision 0431: a string's parsed nodes, by the string (its file's node).
-        "docof" | "guest_of" | "guest_place" => Some(1),
+        | "tape_of" | "rr_program" | "doc_grammar" => Some(0),
+        "docof" => Some(1),
+        // `parsed`, `host_node`, `guest_of` and `guest_place` hold nodes, not documents (decision 0724: a node's id is
+        // its batch's, not its document's key and low bits): a row of theirs is placed through its node's `docof`.
         // Decision 0597 rule 8: a pass's tape-local relations and their kept rows (`guests::TAPE`, `guests::KEPT`),
         // each row led by its tape value's document.
         _ if relation.ends_with("_rr_kept") || relation.ends_with("_rr_kd") => Some(0),

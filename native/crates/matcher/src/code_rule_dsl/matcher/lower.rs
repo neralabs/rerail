@@ -193,8 +193,10 @@ impl Fact {
             let tape = file.root().get_doc();
             let words = tape.transducer_len().div_ceil(64);
             let place = || {
-                let at = block.try_alloc(8 * words, 8)?;
-                // SAFETY: just allocated, zero, for `words` u64s; written only here.
+                let (at, fresh) = block.try_alloc_fresh(8 * words, 8)?;
+                // SAFETY: just allocated for `words` u64s, written only here: its bits are set one by one, so they are
+                // written clear where the block's memory was used before (a leased slab's).
+                unsafe { block.clear_where_used(at, 8 * words, fresh) };
                 self.write_bits(tape, siblings, unsafe { std::slice::from_raw_parts_mut(block.ptr::<u64>(at), words) });
                 Some(at)
             };

@@ -117,8 +117,8 @@ async_patterns_window(15, 9). async_patterns_window(15, 10). async_patterns_wind
 async_patterns_window(15, 13). async_patterns_window(15, 14). async_patterns_window(15, 15).
 // The source lines within w lines of the call's first line.
 .decl async_patterns_context(c: node, w: number, s: symbol)
-async_patterns_context(c, w, s) :- async_patterns_call(fam, d, c, _), fam != "session-receiver", line(c, l0),
-    async_patterns_window(w, k), l = l0 + k, src_line(d, l, sp), text(sp, s).
+async_patterns_context(c, w, s) :- async_patterns_call(fam, d, c, _), fam != "session-receiver", node_line_number(c, l0),
+    async_patterns_window(w, k), l = l0 + k, document_line(d, sp), line_number(sp, l), line_text(sp, s).
 // The waiver every clause but session-receiver's has: `ASYNC_FALLBACK:` within 5 lines, or both `TODO: Implement`
 // and `native async` within 5 lines.
 .decl async_patterns_waived(c: node)
@@ -132,32 +132,32 @@ async_patterns_wrapped(c) :- async_patterns_context(c, 15, s), contains("_wrap_f
 // ---- to-thread --------------------------------------------------------------------------------------------------
 
 violation("data-layer-async-patterns", "to-thread-impl", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
-    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "to-thread-api", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
     async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c),
-    line(c, l).
+    node_line_number(c, l).
 violation("data-layer-async-patterns", "to-thread-conform", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _),
-    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), node_line_number(c, l).
 
 // ---- executor ---------------------------------------------------------------------------------------------------
 
 violation("data-layer-async-patterns", "executor-impl", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
-    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "executor-api", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
     async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c),
-    !async_patterns_wrapped(c), line(c, l).
+    !async_patterns_wrapped(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "executor-conform", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _),
-    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), !async_patterns_wrapped(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), !async_patterns_wrapped(c), node_line_number(c, l).
 
 // ---- internal-io ------------------------------------------------------------------------------------------------
 
 violation("data-layer-async-patterns", "internal-io-impl", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
-    async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), !async_patterns_waived(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "internal-io-api", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
     async_patterns_plugin(d, p), prefix("api/", p), async_patterns_in_async(c), !async_patterns_waived(c),
-    !async_patterns_in_marked_class(c), line(c, l).
+    !async_patterns_in_marked_class(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "internal-io-conform", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _),
-    async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+    async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), !async_patterns_waived(c), node_line_number(c, l).
 
 // ---- transaction-receiver ---------------------------------------------------------------------------------------
 // The receiver is `self`, a txn-root, a query-root or a query-chain (the facade's utilities), and the call is not
@@ -317,15 +317,15 @@ transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", 
 violation("data-layer-async-patterns", "transaction-receiver-impl", "ASYNC006", p, l) :-
     async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p),
     async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
-    !async_patterns_waived(c), line(c, l).
+    !async_patterns_waived(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "transaction-receiver-api", "ASYNC006", p, l) :-
     async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p),
     async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
-    !async_patterns_waived(c), !async_patterns_in_marked_class(c), line(c, l).
+    !async_patterns_waived(c), !async_patterns_in_marked_class(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "transaction-receiver-conform", "ASYNC006", p, l) :-
     async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p),
     async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c),
-    !async_patterns_waived(c), line(c, l).
+    !async_patterns_waived(c), node_line_number(c, l).
 
 // ---- session-receiver -------------------------------------------------------------------------------------------
 // `.read(…)`/`.write(…)` in an async function on a session-root, or on `self._conn`/`self.conn`/`self.connection`/
@@ -367,13 +367,13 @@ session_receiver_receiver(c) :- async_patterns_call("session-receiver", _, c, o)
 
 violation("data-layer-async-patterns", "session-receiver-impl", "ASYNC007", p, l) :-
     async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p),
-    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+    async_patterns_in_async(c), session_receiver_receiver(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "session-receiver-api", "ASYNC007", p, l) :-
     async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p),
-    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+    async_patterns_in_async(c), session_receiver_receiver(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "session-receiver-conform", "ASYNC007", p, l) :-
     async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p),
-    async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+    async_patterns_in_async(c), session_receiver_receiver(c), node_line_number(c, l).
 
 // ---- decorated-write, decorated-read, polymorphic; the raw analyzer (oracleAnalyzer true) ------------------------
 // The analyzer clauses are each family's matcher without its file path, waiver or class filters, in every checked
@@ -416,25 +416,25 @@ decorated_write_analyzer_decorator(c, dm) :- async_patterns_call(fam, _, c, _), 
     node(_, da, "identifier", _, _), text(da, dm).
 
 violation("data-layer-async-patterns", "to-thread-analyzer", "ASYNC001", p, l) :-
-    async_patterns_call("to-thread", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+    async_patterns_call("to-thread", d, c, _), async_patterns_analyzer(d, p), node_line_number(c, l).
 violation("data-layer-async-patterns", "executor-analyzer", "ASYNC002", p, l) :-
-    async_patterns_call("executor", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+    async_patterns_call("executor", d, c, _), async_patterns_analyzer(d, p), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-write-analyzer", "ASYNC004", p, l) :-
     async_patterns_call("decorated-write", d, c, _), async_patterns_analyzer(d, p),
-    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, "write_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-read-analyzer", "ASYNC004", p, l) :-
     async_patterns_call("decorated-read", d, c, _), async_patterns_analyzer(d, p), decorated_write_analyzer_decorator(c, dm),
-    (dm = "write_async" ; dm = "read_async"), line(c, l).
+    (dm = "write_async" ; dm = "read_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "internal-io-analyzer", "ASYNC005", p, l) :-
-    async_patterns_call("internal-io", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+    async_patterns_call("internal-io", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "polymorphic-analyzer", "ASYNC008", p, l) :-
-    async_patterns_call("polymorphic", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+    async_patterns_call("polymorphic", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "transaction-receiver-analyzer", "ASYNC006", p, l) :-
     async_patterns_call("transaction-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c),
-    !transaction_receiver_decorated(c), transaction_receiver_receiver(c), line(c, l).
+    !transaction_receiver_decorated(c), transaction_receiver_receiver(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "session-receiver-analyzer", "ASYNC007", p, l) :-
     async_patterns_call("session-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c),
-    session_receiver_receiver(c), line(c, l).
+    session_receiver_receiver(c), node_line_number(c, l).
 
 .decl async_patterns_area(p: symbol, area: symbol)
 async_patterns_area(p, "impl") :- async_patterns_plugin(_, p), prefix("impl/", p).
@@ -442,28 +442,28 @@ async_patterns_area(p, "api") :- async_patterns_plugin(_, p), prefix("api/", p).
 async_patterns_area(p, "conform") :- async_patterns_plugin(_, p), prefix("conform/", p).
 violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :-
     async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
-    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, "write_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :-
     async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
-    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, "write_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :-
     async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
-    decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, "write_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :-
     async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
-    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :-
     async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
-    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :-
     async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
-    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+    decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), node_line_number(c, l).
 violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :-
     async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"),
-    async_patterns_in_async(c), line(c, l).
+    async_patterns_in_async(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :-
     async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"),
-    async_patterns_in_async(c), line(c, l).
+    async_patterns_in_async(c), node_line_number(c, l).
 violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :-
     async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"),
-    async_patterns_in_async(c), line(c, l).
+    async_patterns_in_async(c), node_line_number(c, l).

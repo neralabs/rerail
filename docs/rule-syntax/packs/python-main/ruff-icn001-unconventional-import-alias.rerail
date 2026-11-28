@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes E, E0, E1, E10, E11, E12, E13, E14, E2, E3, E4, E5, E6, E7, E8, E9 from other metavariables' text; its literals end each rule.
-.violation ICN001(at: node, mod: loc, e: symbol) "Write `import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
+.violation ICN001(at: node, mod: node, e: symbol) "Write `import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
 ICN001(n, MOD, E) :- icn001_key(n), node(_, n, _, _, _), MOD = n, child(p2, n, _), kind(p2, "import_statement"),
     E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET"),
@@ -56,7 +56,7 @@ icn001_key(n) :- kind(n, "dotted_name"),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes E, E0, E1, E2 from other metavariables' text; its literals end each rule.
-.violation ICN001_from_import(at: node, pkg: loc, mod: loc, e: symbol) code "ICN001" "Write `from {pkg} import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
+.violation ICN001_from_import(at: node, pkg: node, mod: node, e: symbol) code "ICN001" "Write `from {pkg} import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
 ICN001_from_import(n, PKG, MOD, E) :- inside(n, p2, "import_from_statement"),
     field(p2, "module_name", c3), node(_, c3, _, _, _), PKG = c3,
@@ -78,7 +78,7 @@ icn001_member(n) :- kind(n, "dotted_name"),
 // ICN001_non_ascii_spelling(n): a finding at node n, from clause `non-ascii-spelling`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ICN001_non_ascii_spelling(at: node, mod: loc) code "ICN001" "Spell `{mod}` in plain ASCII, import it under its conventional alias (such as `import pandas as pd`) and rename its uses to match."
+.violation ICN001_non_ascii_spelling(at: node, mod: node) code "ICN001" "Spell `{mod}` in plain ASCII, import it under its conventional alias (such as `import pandas as pd`) and rename its uses to match."
     suppress noqa "ICN001"
 ICN001_non_ascii_spelling(n, MOD) :- icn001_spelled(n), node(_, n, _, _, _), MOD = n, child(p1, n, _),
     kind(p1, "import_statement").

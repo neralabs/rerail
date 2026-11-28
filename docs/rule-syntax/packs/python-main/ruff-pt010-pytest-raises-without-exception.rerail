@@ -10,7 +10,7 @@
 // PT010(n): a finding at node n, from clause `raises-without-exception`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT010(at: loc, f: node) "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
+.violation PT010(at: node, f: node) "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
     suppress noqa "PT010"
 PT010(F, n) :- kind(n, "call"), field(n, "function", c1), pt010_raises(c1, F),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -18,7 +18,7 @@ PT010(F, n) :- kind(n, "call"), field(n, "function", c1), pt010_raises(c1, F),
 
 // raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
 //   F: metavariable this relation binds for the calling rule
-.decl pt010_raises(n: node, f: loc)
+.decl pt010_raises(n: node, f: node)
 pt010_raises(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt010_raises(c1, F).
 pt010_raises(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), F = n,
     sym_of(n, "pytest.raises").

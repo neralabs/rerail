@@ -325,11 +325,13 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
 
 /// The kernel `name` of `source` (UKL) on the host as a device (`shared::host_layer`): its Rust where it has it, else
 /// the vector path's interpreter's (`rerail_gpu::kernels::host_program_with`). Made once a process, by the program's
-/// cache.
-pub fn host_function(source: &str, name: &str) -> Result<Arc<Function>, String> {
+/// cache. A kernel that does not compile is fatal (decision 0382), as on a device: the vector path's refusal was an
+/// error its callers answered another way, and a device stratum ran its seeds on the scalar joins with no word.
+pub fn host_function(source: &str, name: &str) -> Arc<Function> {
     let library: [u8; 32] = Sha256::digest(source.as_bytes()).into();
-    let program = rerail_gpu::kernels::host_program_with(&format!("{}.ukl", &hex(&library)[..16]), source, &[])?;
-    Ok(Arc::new(program.library().get_function(&rerail_gpu::shared::host().device, name)?))
+    let made = rerail_gpu::kernels::host_program_with(&format!("{}.ukl", &hex(&library)[..16]), source, &[])
+        .and_then(|program| program.library().get_function(&rerail_gpu::shared::host().device, name));
+    Arc::new(made.unwrap_or_else(|e| panic!("the kernel {name} on the host: {e}")))
 }
 
 /// [`function`] through Metal's tier: this process's pipeline, else an archive's, else the compile.
@@ -891,14 +893,14 @@ fn linked(device: &Device, split: &rerail_ukl::split::Split) -> Result<(Library,
 fn unit(device: &Device, u: &rerail_ukl::split::Unit, links: &[metal::DynamicLibrary], path: &Path) -> Result<metal::DynamicLibrary, String> {
     objc::rc::autoreleasepool(|| {
         let what = format!("unit {}", u.name);
-        if path.is_file() {
-            if let Ok(d) = device.new_dynamic_library_with_url(&url_of(path)) {
-                // Kept before its exits were read: read on a G13 (decision 0672).
-                rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, path, &what)?;
-                // Its use, for the store's pruning (the oldest unused first).
-                let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
-                return Ok(d);
-            }
+        if path.is_file()
+            && let Ok(d) = device.new_dynamic_library_with_url(&url_of(path))
+        {
+            // Kept before its exits were read: read on a G13 (decision 0672).
+            rerail_device::compute_kernel_metal::refuse_exit_codes_in(device, path, &what)?;
+            // Its use, for the store's pruning (the oldest unused first).
+            let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+            return Ok(d);
         }
         let o = metal::CompileOptions::new();
         o.set_library_type(metal::MTLLibraryType::Dynamic);

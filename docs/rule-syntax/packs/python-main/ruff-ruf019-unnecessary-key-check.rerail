@@ -10,7 +10,7 @@
 // RUF019(n): a finding at node n, from clause `unnecessary-key-check`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF019(at: loc, c: node, d: loc, k: loc) "If `{d}` is a dict, use `{d}.get({k})` instead of testing `{k} in {d}` before reading `{d}[{k}]`; leave it if `{d}` is not a mapping."
+.violation RUF019(at: node, c: node, d: node, k: node) "If `{d}` is a dict, use `{d}.get({k})` instead of testing `{k} in {d}` before reading `{d}[{k}]`; leave it if `{d}` is not a mapping."
     suppress noqa "RUF019"
 RUF019(C, n, D, K) :- ruf019_unnecessary_key_check(n, D, K), node(_, n, _, _, _), C = n.
 RUF019(C, n, D, K) :- ruf019_check_in_string(n, C, D, K).
@@ -65,7 +65,7 @@ ruf019_and_op(n) :- kind(n, "boolean_operator"), ruf019_tok_has_5(n).
 
 // key_in_dict(n): the JSON util `key-in-dict`, used where the JSON says `matches: "key-in-dict"`
 //   D, K: metavariables this relation binds for the calling rule
-.decl ruf019_key_in_dict(n: node, d: loc, k: loc)
+.decl ruf019_key_in_dict(n: node, d: node, k: node)
 ruf019_key_in_dict(n, D, K) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
     k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3.
 ruf019_key_in_dict(n, D, K) :- kind(n, "parenthesized_expression"), child(n, c3, _),
@@ -73,14 +73,14 @@ ruf019_key_in_dict(n, D, K) :- kind(n, "parenthesized_expression"), child(n, c3,
 
 // dict_item(n): the JSON util `dict-item`, used where the JSON says `matches: "dict-item"`
 //   E, L: metavariables this relation binds for the calling rule
-.decl ruf019_dict_item(n: node, e: loc, l: loc)
+.decl ruf019_dict_item(n: node, e: node, l: node)
 ruf019_dict_item(n, E, L) :- kind(n, "subscript"), n ~ `$E[$L]`, !ruf019_tok_has_6(n).
 ruf019_dict_item(n, E, L) :- kind(n, "parenthesized_expression"), child(n, c9, _),
     ruf019_dict_item(c9, E, L).
 
 // tuple_key_in_dict_1(n): the JSON util `tuple-key-in-dict-1`, used where the JSON says `matches: "tuple-key-in-dict-1"`
 //   D, K, K1: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_key_in_dict_1(n: node, d: loc, k: loc, k1: loc)
+.decl ruf019_tuple_key_in_dict_1(n: node, d: node, k: node, k1: node)
 ruf019_tuple_key_in_dict_1(n, D, K, K1) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
     k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3, child(n, c3, _),
     ruf019_tuple_1(c3, K1), ruf019_tok_precedes_7(c3).
@@ -89,7 +89,7 @@ ruf019_tuple_key_in_dict_1(n, D, K, K1) :- kind(n, "parenthesized_expression"),
 
 // tuple_dict_item_1(n): the JSON util `tuple-dict-item-1`, used where the JSON says `matches: "tuple-dict-item-1"`
 //   E, L1: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_dict_item_1(n: node, e: loc, l1: loc)
+.decl ruf019_tuple_dict_item_1(n: node, e: node, l1: node)
 ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "subscript"), n ~ `$E[$L1,]`.
 ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "subscript"), n ~ `$E[$L1]`, child(n, c1, _),
     kind(c1, "list_splat").
@@ -98,7 +98,7 @@ ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "parenthesized_expression"), child
 
 // tuple_key_in_dict_2(n): the JSON util `tuple-key-in-dict-2`, used where the JSON says `matches: "tuple-key-in-dict-2"`
 //   D, K, K1, K2: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_key_in_dict_2(n: node, d: loc, k: loc, k1: loc, k2: loc)
+.decl ruf019_tuple_key_in_dict_2(n: node, d: node, k: node, k1: node, k2: node)
 ruf019_tuple_key_in_dict_2(n, D, K, K1, K2) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
     k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3, child(n, c3, _),
     ruf019_tuple_2(c3, K1, K2), ruf019_tok_precedes_7(c3).
@@ -107,14 +107,14 @@ ruf019_tuple_key_in_dict_2(n, D, K, K1, K2) :- kind(n, "parenthesized_expression
 
 // tuple_dict_item_2(n): the JSON util `tuple-dict-item-2`, used where the JSON says `matches: "tuple-dict-item-2"`
 //   E, L1, L2: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_dict_item_2(n: node, e: loc, l1: loc, l2: loc)
+.decl ruf019_tuple_dict_item_2(n: node, e: node, l1: node, l2: node)
 ruf019_tuple_dict_item_2(n, E, L1, L2) :- kind(n, "subscript"), n ~ `$E[$L1, $L2]`.
 ruf019_tuple_dict_item_2(n, E, L1, L2) :- kind(n, "parenthesized_expression"),
     child(n, c1, _), ruf019_tuple_dict_item_2(c1, E, L1, L2).
 
 // tuple_key_in_dict_3(n): the JSON util `tuple-key-in-dict-3`, used where the JSON says `matches: "tuple-key-in-dict-3"`
 //   D, K, K1, K2, K3: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_key_in_dict_3(n: node, d: loc, k: loc, k1: loc, k2: loc, k3: loc)
+.decl ruf019_tuple_key_in_dict_3(n: node, d: node, k: node, k1: node, k2: node, k3: node)
 ruf019_tuple_key_in_dict_3(n, D, K, K1, K2, K3) :- kind(n, "comparison_operator"),
     n ~ `$K in $D`, k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3,
     child(n, c3, _), ruf019_tuple_3(c3, K1, K2, K3), ruf019_tok_precedes_7(c3).
@@ -123,14 +123,14 @@ ruf019_tuple_key_in_dict_3(n, D, K, K1, K2, K3) :- kind(n, "parenthesized_expres
 
 // tuple_dict_item_3(n): the JSON util `tuple-dict-item-3`, used where the JSON says `matches: "tuple-dict-item-3"`
 //   E, L1, L2, L3: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_dict_item_3(n: node, e: loc, l1: loc, l2: loc, l3: loc)
+.decl ruf019_tuple_dict_item_3(n: node, e: node, l1: node, l2: node, l3: node)
 ruf019_tuple_dict_item_3(n, E, L1, L2, L3) :- kind(n, "subscript"), n ~ `$E[$L1, $L2, $L3]`.
 ruf019_tuple_dict_item_3(n, E, L1, L2, L3) :- kind(n, "parenthesized_expression"),
     child(n, c1, _), ruf019_tuple_dict_item_3(c1, E, L1, L2, L3).
 
 // tuple_key_in_dict_4(n): the JSON util `tuple-key-in-dict-4`, used where the JSON says `matches: "tuple-key-in-dict-4"`
 //   D, K, K1, K2, K3, K4: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_key_in_dict_4(n: node, d: loc, k: loc, k1: loc, k2: loc, k3: loc, k4: loc)
+.decl ruf019_tuple_key_in_dict_4(n: node, d: node, k: node, k1: node, k2: node, k3: node, k4: node)
 ruf019_tuple_key_in_dict_4(n, D, K, K1, K2, K3, K4) :- kind(n, "comparison_operator"),
     n ~ `$K in $D`, k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3,
     child(n, c3, _), ruf019_tuple_4(c3, K1, K2, K3, K4), ruf019_tok_precedes_7(c3).
@@ -139,7 +139,7 @@ ruf019_tuple_key_in_dict_4(n, D, K, K1, K2, K3, K4) :- kind(n, "parenthesized_ex
 
 // tuple_dict_item_4(n): the JSON util `tuple-dict-item-4`, used where the JSON says `matches: "tuple-dict-item-4"`
 //   E, L1, L2, L3, L4: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_dict_item_4(n: node, e: loc, l1: loc, l2: loc, l3: loc, l4: loc)
+.decl ruf019_tuple_dict_item_4(n: node, e: node, l1: node, l2: node, l3: node, l4: node)
 ruf019_tuple_dict_item_4(n, E, L1, L2, L3, L4) :- kind(n, "subscript"),
     n ~ `$E[$L1, $L2, $L3, $L4]`.
 ruf019_tuple_dict_item_4(n, E, L1, L2, L3, L4) :- kind(n, "parenthesized_expression"),
@@ -147,14 +147,14 @@ ruf019_tuple_dict_item_4(n, E, L1, L2, L3, L4) :- kind(n, "parenthesized_express
 
 // unnecessary_key_check(n): the JSON util `unnecessary-key-check`, used where the JSON says `matches: "unnecessary-key-check"`
 //   D, K: metavariables this relation binds for the calling rule
-.decl ruf019_unnecessary_key_check(n: node, d: loc, k: loc)
+.decl ruf019_unnecessary_key_check(n: node, d: node, k: node)
 ruf019_unnecessary_key_check(n, D, K) :- ruf019_and_op(n), ruf019_boolean_test(n),
     count : { child(p1, n, _), ruf019_and_op(p1) } = 0, field(n, "left", c2),
     count : { within(c3, c2), ruf019_effect(c3) } = 0, ruf019_alt_11(n, D, K).
 
 // check_in_string(n): the JSON util `check-in-string`, used where the JSON says `matches: "check-in-string"`
 //   C, D, K: metavariables this relation binds for the calling rule
-.decl ruf019_check_in_string(n: node, c: loc, d: loc, k: loc)
+.decl ruf019_check_in_string(n: node, c: node, d: node, k: node)
 ruf019_check_in_string(n, C, D, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), ruf019_alt_12(c2, C, D, K).
 
@@ -171,28 +171,28 @@ ruf019_iterable_init(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // tuple_1(n): the JSON util `tuple-1`, used where the JSON says `matches: "tuple-1"`
 //   K1: metavariable this relation binds for the calling rule
-.decl ruf019_tuple_1(n: node, k1: loc)
+.decl ruf019_tuple_1(n: node, k1: node)
 ruf019_tuple_1(n, K1) :- kind(n, "tuple"), n ~ `($K1,)`.
 ruf019_tuple_1(n, K1) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf019_tuple_1(c1, K1).
 
 // tuple_2(n): the JSON util `tuple-2`, used where the JSON says `matches: "tuple-2"`
 //   K1, K2: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_2(n: node, k1: loc, k2: loc)
+.decl ruf019_tuple_2(n: node, k1: node, k2: node)
 ruf019_tuple_2(n, K1, K2) :- kind(n, "tuple"), n ~ `($K1, $K2)`.
 ruf019_tuple_2(n, K1, K2) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf019_tuple_2(c1, K1, K2).
 
 // tuple_3(n): the JSON util `tuple-3`, used where the JSON says `matches: "tuple-3"`
 //   K1, K2, K3: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_3(n: node, k1: loc, k2: loc, k3: loc)
+.decl ruf019_tuple_3(n: node, k1: node, k2: node, k3: node)
 ruf019_tuple_3(n, K1, K2, K3) :- kind(n, "tuple"), n ~ `($K1, $K2, $K3)`.
 ruf019_tuple_3(n, K1, K2, K3) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf019_tuple_3(c1, K1, K2, K3).
 
 // tuple_4(n): the JSON util `tuple-4`, used where the JSON says `matches: "tuple-4"`
 //   K1, K2, K3, K4: metavariables this relation binds for the calling rule
-.decl ruf019_tuple_4(n: node, k1: loc, k2: loc, k3: loc, k4: loc)
+.decl ruf019_tuple_4(n: node, k1: node, k2: node, k3: node, k4: node)
 ruf019_tuple_4(n, K1, K2, K3, K4) :- kind(n, "tuple"), n ~ `($K1, $K2, $K3, $K4)`.
 ruf019_tuple_4(n, K1, K2, K3, K4) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     ruf019_tuple_4(c1, K1, K2, K3, K4).
@@ -295,7 +295,7 @@ ruf019_alt_5(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   D, K: metavariables this relation binds for the calling rule
-.decl ruf019_alt_11(n: node, d: loc, k: loc)
+.decl ruf019_alt_11(n: node, d: node, k: node)
 ruf019_alt_11(n, D, K) :- field(n, "left", c1), ruf019_key_in_dict(c1, D, K), field(n, "right", c2),
     ruf019_dict_item(c2, E, L), value(K, t3), value(L, t3), value(D, t5), value(E, t5).
 ruf019_alt_11(n, D, K) :- field(n, "left", c7), ruf019_tuple_key_in_dict_1(c7, D, K, K1),
@@ -317,6 +317,6 @@ ruf019_alt_11(n, D, K) :- field(n, "left", c31),
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   C, D, K: metavariables this relation binds for the calling rule
-.decl ruf019_alt_12(n: node, c: loc, d: loc, k: loc)
+.decl ruf019_alt_12(n: node, c: node, d: node, k: node)
 ruf019_alt_12(n, C, D, K) :- ruf019_unnecessary_key_check(n, D, K), node(_, n, _, _, _), C = n, C = n.
 ruf019_alt_12(n, C, D, K) :- ruf019_check_in_string(n, C, D, K).

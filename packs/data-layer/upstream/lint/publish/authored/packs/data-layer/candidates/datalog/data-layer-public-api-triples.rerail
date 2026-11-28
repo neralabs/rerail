@@ -673,4 +673,4 @@ ef_tv("missing_legacy_sync", s) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "sy
 ef_tv("missing_legacy_async", s) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "async", s), ef_slots(sc, o, b, "lazy", l), ef_same_params(s, l), !ef_legacy_async(s).
 ef_tv("missing_lazy_decorator", l) :- ef_plain(sc, o, b, _), ef_slots(sc, o, b, "lazy", l), !ef_lazy_decorated(l).
 ef_tv("direct_wrapper_bypasses_lazy_owner", id) :- ef_dw_cand(sc, o, b, id, p, st), ef_dw_first(sc, o, b, p, st).
-violation("data-layer-public-api-triples", "exported-families", code, p, l) :- ef_tv(code, id), ef_decl(id, d, x, _, _, _, _), doc(d, p, _), line(x, l).
+violation("data-layer-public-api-triples", "exported-families", code, p, l) :- ef_tv(code, id), ef_decl(id, d, x, _, _, _, _), doc(d, p, _), node_line_number(x, l).

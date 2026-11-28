@@ -10,7 +10,7 @@
 // PYI043(n): a finding at node n, from clause `t-suffixed-type-alias`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI043(at: node, name: loc) "Rename private type alias `{name}` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable."
+.violation PYI043(at: node, name: node) "Rename private type alias `{name}` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable."
     suppress noqa "PYI043"
 PYI043(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
     match(".*T[0-9]?", n), !match(".*[^a-z]T[0-9]?", n),

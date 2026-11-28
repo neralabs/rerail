@@ -50,13 +50,26 @@ pub const VALUES: &str = "values:";
 /// a value `@parse` or `@splice` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answered {
-    /// The string at node `at`, parsed as `grammar`.
-    Embed { at: i64, grammar: String },
+    /// The string at node `at`, parsed as `grammar`; `source`, its tape value's source (the text's sha256), where one
+    /// was made: a hit names it (`Parses::name_kept`) without its host's tree. Held in the row's text column, empty for
+    /// none (as an entry made before kept it).
+    Embed { at: i64, grammar: String, source: Option<[u8; 32]> },
     /// `@parse`'s or `@splice`'s request.
     Value(super::guests::Request),
 }
 
 impl Answered {
+    /// Its tape value's grammar and source, where the row names one: an `@parse` value's text's sha256, or an
+    /// embedded string's (`Guests::value_source`).
+    pub fn source(&self) -> Option<(&str, [u8; 32])> {
+        use sha2::Digest as _;
+        match self {
+            Self::Embed { grammar, source, .. } => source.map(|d| (grammar.as_str(), d)),
+            Self::Value(super::guests::Request::Parse { grammar, text, .. }) => Some((grammar.as_str(), sha2::Sha256::digest(text.as_bytes()).into())),
+            Self::Value(super::guests::Request::Splice { .. }) => None,
+        }
+    }
+
     /// The node it was asked at: the files that own its document keep it.
     pub fn at(&self) -> i64 {
         match self {
@@ -66,7 +79,7 @@ impl Answered {
     }
 
     /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
-    /// grammar and a text, a grammar, or the tape spliced in).
+    /// grammar and a text, or the tape spliced in).
     pub fn rows() -> super::super::output::Rows {
         use super::super::output::col;
         super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
@@ -75,8 +88,12 @@ impl Answered {
     /// Its row of `rows`.
     pub fn push(&self, rows: &mut super::super::output::Rows) {
         use super::super::output::Cell;
+        let hex;
         let (kind, a, b) = match self {
-            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Embed { grammar, source, .. } => {
+                hex = source.map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_default();
+                (0, grammar.as_str(), hex.as_str())
+            }
             Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
         };
@@ -88,7 +105,16 @@ impl Answered {
         use super::super::output::Cell;
         (0..rows.len())
             .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
-                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), t) => {
+                    let source = match t {
+                        Cell::Text(h) if h.len() == 64 => {
+                            let mut d = [0u8; 32];
+                            d.iter_mut().enumerate().all(|(i, b)| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).map(|x| *b = x).is_ok()).then_some(d)
+                        }
+                        _ => None,
+                    };
+                    Some(Self::Embed { at, grammar: g.to_owned(), source })
+                }
                 (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
                 (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
                 _ => None,
@@ -244,9 +270,14 @@ impl Strata {
                 hash.update(pattern.as_bytes());
                 hash.update([0]);
             }
-            // A phase's export read as a setting (`file_local::setting_input`, `tsx_names`'s) keys a file's entry by the
-            // rows that file can read of it (`SettingsDigests::identities`), not by all of them.
-            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
+            // A setting (`file_local::setting_input`) keys a file's entry by the rows that file can read of it
+            // (`SettingsDigests::identities`), not by all of them.
+            // A stage's export (decision 0709) keys it by the rows of it the file reads, at its probes (`StageDigests`).
+            let by_rows: Vec<&str> = reached
+                .iter()
+                .map(String::as_str)
+                .filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r) && !crate::code_rule_dsl::logic::plan::phased::is_probed(r))
+                .collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
         }
         out
@@ -271,7 +302,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+    use crate::code_rule_dsl::logic::plan::phased::{Keyed, declared_key};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -281,24 +312,31 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
         path: BTreeSet<usize>,
     }
     let v = &local.v;
-    let base = |rel: &str| -> Option<Reach> {
-        if SETTINGS_BY_FOLDER.contains(&rel) {
-            Some(Reach { folder: [0].into(), ..Reach::default() })
-        } else if setting_by_path(rel).is_some() {
-            Some(Reach { path: [0].into(), ..Reach::default() })
-        } else {
-            None
+    // Each relation's declared key (`phased::declared_key`, what `file_local::setting_input` and its kin read), looked
+    // up once: the fixpoints below read it for every atom of every rule, each round.
+    let keys: std::cell::RefCell<Vec<Option<Option<Keyed>>>> = std::cell::RefCell::new(vec![None; v.rel_end() as usize]);
+    let key = |a: &crate::code_rule_dsl::logic::program_image::AtomRef<'_>| -> Option<Keyed> {
+        keys.borrow_mut()[a.rel().0 as usize].get_or_insert_with(|| declared_key(v.rel_name(a.rel()))).clone()
+    };
+    let base = |k: Option<Keyed>| -> Option<Reach> {
+        match k? {
+            Keyed::ByKey(_) => Some(Reach { folder: [0].into(), ..Reach::default() }),
+            Keyed::ByPath(_) => Some(Reach { path: [0].into(), ..Reach::default() }),
+            // Keyed by nothing (`env`, `py_names__dj_app_defers`): every file's rows.
+            Keyed::Whole => Some(Reach { all: true, ..Reach::default() }),
         }
     };
-    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
-    // at its own path (`package_for(p, dir)`, `tsx_names__target_at(p, s, t)`), or carried in a column of a derived
-    // relation made from them (`named`: `target(d, s, t)` from `tsx_names__target_at` at its own path).
+    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders its own file's rows name: read at its own
+    // path (`package_for(p, dir)`), or carried in a column of a derived relation made from them (`named`).
     let anchors = |rule: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>| {
         let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).collect();
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
         let mut folders: HashSet<_> = atoms
             .iter()
-            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).map(|c| (a, c)))
+            .filter_map(|a| match key(a) {
+                Some(Keyed::ByPath(c)) => c.map(|c| (a, c)),
+                _ => None,
+            })
             .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
             .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
             .collect();
@@ -306,6 +344,24 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             if let Some(cols) = named.get(v.rel_name(a.rel())) {
                 folders.extend(cols.iter().filter_map(|&c| a.args().nth(c).and_then(|t| t.var())));
             }
+        }
+        // A key a row read under one of them names (`resolved(k, q) by_key 1`, `k` the file's own ask): the facts
+        // under `q` are the file's own too.
+        loop {
+            let more: Vec<_> = atoms
+                .iter()
+                .filter_map(|a| match key(a) {
+                    Some(Keyed::ByKey(c)) => c.map(|c| (a, c)),
+                    _ => None,
+                })
+                .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|k| folders.contains(&k)))
+                .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
+                .filter(|x| !folders.contains(x))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            folders.extend(more);
         }
         (own, folders)
     };
@@ -337,7 +393,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             let mut got = reach.get(head).cloned().unwrap_or_default();
             for a in &atoms {
                 let rel = v.rel_name(a.rel());
-                let Some(r) = base(rel).or_else(|| reach.get(rel).cloned()) else { continue };
+                let Some(r) = base(key(a)).or_else(|| reach.get(rel).cloned()) else { continue };
                 got.all |= r.all;
                 got.own |= r.own;
                 for (keys, by_folder) in [(&r.folder, true), (&r.path, false)] {
@@ -385,12 +441,14 @@ pub struct SettingsDigests {
     /// The folder or target column of each relation keyed by a path (`file_local::setting_by_path`), by its index.
     hop: HashMap<usize, usize>,
     by_folder: HashMap<i64, Vec<(usize, Vec<i64>)>>,
+    /// The column of each relation keyed in column 0 that names further keys (`file_local::setting_key_hop`).
+    key_hop: HashMap<usize, usize>,
 }
 
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
+        use crate::code_rule_dsl::typing::file_local::{setting_by_folder, setting_by_path, setting_key_hop};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -405,10 +463,15 @@ impl SettingsDigests {
             for row in &rows {
                 row.iter().for_each(|x| hash.update(x.to_le_bytes()));
             }
-            let keyed = if let Some(c) = setting_by_path(name) {
-                out.hop.insert(k, c);
+            let keyed = if let Some(hop) = setting_by_path(name) {
+                if let Some(c) = hop {
+                    out.hop.insert(k, c);
+                }
                 Some(&mut out.by_path)
-            } else if SETTINGS_BY_FOLDER.contains(name) {
+            } else if setting_by_folder(name) {
+                if let Some(c) = setting_key_hop(name) {
+                    out.key_hop.insert(k, c);
+                }
                 Some(&mut out.by_folder)
             } else {
                 None
@@ -436,7 +499,18 @@ impl SettingsDigests {
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings-of-a-file/v1\0");
         let own = self.by_path.get(&path).map(Vec::as_slice).unwrap_or_default();
-        let folders: BTreeSet<i64> = own.iter().filter_map(|(k, r)| r.get(*self.hop.get(k)?).copied()).collect();
+        // The keys its own rows name, and those the rows under them name in turn (`by_key C`), to their closure.
+        let mut folders: BTreeSet<i64> = own.iter().filter_map(|(k, r)| r.get(*self.hop.get(k)?).copied()).collect();
+        let mut todo: Vec<i64> = folders.iter().copied().collect();
+        while let Some(f) = todo.pop() {
+            for (k, r) in self.by_folder.get(&f).into_iter().flatten() {
+                if let Some(&x) = self.key_hop.get(k).and_then(|c| r.get(*c))
+                    && folders.insert(x)
+                {
+                    todo.push(x);
+                }
+            }
+        }
         for (k, row) in own.iter().chain(folders.iter().flat_map(|f| self.by_folder.get(f).into_iter().flatten())) {
             hash.update((*k as u64).to_le_bytes());
             row.iter().for_each(|x| hash.update(x.to_le_bytes()));
@@ -459,6 +533,224 @@ impl SettingsDigests {
                         hash.update(id);
                         hash.update(if *scope == SettingsScope::All { all } else { own });
                         hash.finalize().into()
+                    }
+                };
+                (rel.clone(), id)
+            })
+            .collect()
+    }
+}
+
+/// A value of a stage's export's row or of a probe's, as one key's bytes: a text by its content, a number by its value.
+fn key_bytes(out: &mut Vec<u8>, text: Option<&str>, int: i64) {
+    match text {
+        Some(t) => {
+            out.push(b's');
+            out.extend_from_slice(&(t.len() as u64).to_le_bytes());
+            out.extend_from_slice(t.as_bytes());
+        }
+        None => {
+            out.push(b'i');
+            out.extend_from_slice(&int.to_le_bytes());
+        }
+    }
+}
+
+/// The stages' exports (decision 0709 §3), each indexed by the columns its probes fix: a file's entry is kept under
+/// the rows of an export at the values its probes (file-local outputs of its own rows) hold, not under every row.
+#[derive(Default)]
+pub struct StageDigests {
+    /// Each probe: its export, and the export's rows by the probe's columns' values, each row's digest.
+    probes: BTreeMap<String, (String, HashMap<Vec<u8>, Vec<[u8; 32]>>)>,
+    /// Each export read whole somewhere, by the digest of every row.
+    whole: BTreeMap<String, [u8; 32]>,
+    /// Each memoised relation's exports reached, in order.
+    reach: BTreeMap<String, Vec<String>>,
+    /// The probes read from an entry's exported rows, not its outputs: a probe of values the split located (decision
+    /// 0680), whose twin the cross part reads back. Their keys are the store's atoms, as the entry's rows hold them.
+    twins: BTreeSet<String>,
+}
+
+impl StageDigests {
+    /// The exports a placed probe keys (`probes`): a declared one among them is keyed here, not by its declaration.
+    pub fn probed(&self) -> BTreeSet<&str> {
+        self.probes.values().map(|(e, _)| e.as_str()).collect()
+    }
+
+    /// Of the phases' rows (`phased`), the probes (`(probe, export, columns)`), the exports read whole, and the
+    /// memoised relations' identities' leaves (`Strata`). A probe the file-local part does not output (`local`) keys
+    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it. A probe among
+    /// `twins` is read from the entry's exported rows, its texts the store's atoms (`atoms`, of texts in order; `None`,
+    /// or too few, and the export is read whole).
+    pub fn of(
+        phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+        probes: &[(String, String, Vec<usize>)],
+        whole: &BTreeSet<String>,
+        strata: &Strata,
+        local: &dyn Fn(&str) -> bool,
+        twins: &BTreeSet<String>,
+        atoms: &dyn Fn(&[&str]) -> Option<Vec<i64>>,
+    ) -> Self {
+        use crate::code_rule_dsl::logic::front::Value;
+        let row_key = |row: &[Value], cols: &[usize]| {
+            let mut k = Vec::new();
+            for &c in cols {
+                match row.get(c) {
+                    Some(Value::Str(t)) => key_bytes(&mut k, Some(t), 0),
+                    Some(Value::Int(i)) => key_bytes(&mut k, None, *i),
+                    Some(other) => key_bytes(&mut k, Some(&format!("{other:?}")), 0),
+                    None => {}
+                }
+            }
+            k
+        };
+        let digest = |row: &[Value]| -> [u8; 32] {
+            let mut h = Sha256::new();
+            h.update(row_key(row, &(0..row.len()).collect::<Vec<_>>()));
+            h.finalize().into()
+        };
+        let mut out = StageDigests::default();
+        // An export its phase declares a key for (decision 0705, a setting) is keyed here only where a placed probe
+        // reads it, which is finer than its declaration; elsewhere its declaration keys it (`SettingsDigests`), never
+        // every row: an asked phase's own read of its rounds' export has no probe, and read whole, each round missed
+        // every file.
+        let declared = |e: &str| crate::code_rule_dsl::typing::file_local::setting_input(e);
+        let mut whole: BTreeSet<String> = whole.iter().filter(|e| !declared(e)).cloned().collect();
+        whole.extend(probes.iter().filter(|(p, e, _)| !local(p) && !declared(e)).map(|(_, e, _)| e.clone()));
+        let probes: Vec<&(String, String, Vec<usize>)> = probes.iter().filter(|(p, _, _)| local(p)).collect();
+        for (rel, (_, leaves)) in &strata.by_rel {
+            let reached: Vec<String> = leaves
+                .iter()
+                .filter(|l| phased.contains_key(l.as_str()) && crate::code_rule_dsl::logic::plan::phased::is_probed(l))
+                .filter(|l| !declared(l) || probes.iter().any(|(_, x, _)| x == *l))
+                .cloned()
+                .collect();
+            for e in &reached {
+                if !probes.iter().any(|(_, x, _)| x == e) {
+                    whole.insert(e.clone());
+                }
+            }
+            if !reached.is_empty() {
+                out.reach.insert(rel.clone(), reached);
+            }
+        }
+        for (probe, export, cols) in probes {
+            let mut by: HashMap<Vec<u8>, Vec<[u8; 32]>> = HashMap::new();
+            let rows = phased.get(export).map(Vec::as_slice).unwrap_or_default();
+            if twins.contains(probe) {
+                // Keyed as the twin's rows hold the values: a text by its atom, a number by itself.
+                let texts: Vec<&str> = rows.iter().flat_map(|row| cols.iter().filter_map(|&c| match row.get(c) {
+                    Some(Value::Str(t)) => Some(t.as_str()),
+                    _ => None,
+                })).collect();
+                // Texts the store cannot name: the export is read whole, never keyed short of its rows.
+                let Some(ids) = atoms(&texts).filter(|ids| ids.len() == texts.len()) else {
+                    whole.insert(export.clone());
+                    continue;
+                };
+                let mut ids = ids.into_iter();
+                for row in rows {
+                    let mut k = Vec::new();
+                    for &c in cols {
+                        match row.get(c) {
+                            Some(Value::Str(_)) => key_bytes(&mut k, None, ids.next().expect("an atom for each text")),
+                            Some(Value::Int(i)) => key_bytes(&mut k, None, *i),
+                            Some(other) => key_bytes(&mut k, Some(&format!("{other:?}")), 0),
+                            None => {}
+                        }
+                    }
+                    by.entry(k).or_default().push(digest(row));
+                }
+                out.twins.insert(probe.clone());
+            } else {
+                for row in rows {
+                    by.entry(row_key(row, cols)).or_default().push(digest(row));
+                }
+            }
+            for rows in by.values_mut() {
+                rows.sort_unstable();
+            }
+            out.probes.insert(probe.clone(), (export.clone(), by));
+        }
+        for export in &whole {
+            let mut rows: Vec<[u8; 32]> = phased.get(export).into_iter().flatten().map(|r| digest(r)).collect();
+            rows.sort_unstable();
+            let mut h = Sha256::new();
+            rows.iter().for_each(|r| h.update(r));
+            out.whole.insert(export.clone(), h.finalize().into());
+        }
+        out
+    }
+
+    /// Whether no memoised relation reads a stage.
+    pub fn is_empty(&self) -> bool {
+        self.reach.is_empty()
+    }
+
+    /// `ids` for `entry`'s file: each relation reaching a stage's export under the export's rows at the entry's
+    /// probes (every row, where the export is read whole).
+    pub fn identities(&self, ids: &BTreeMap<String, [u8; 32]>, entry: &Entry) -> BTreeMap<String, [u8; 32]> {
+        let mut by_export: HashMap<String, [u8; 32]> = HashMap::new();
+        let mut of_export = |export: &str| -> [u8; 32] {
+            *by_export.entry(export.to_owned()).or_insert_with(|| {
+                let mut h = Sha256::new();
+                h.update(b"rerail.stage-rows-of-a-file/v1\0");
+                if let Some(w) = self.whole.get(export) {
+                    h.update(w);
+                }
+                for (probe, (e, by)) in self.probes.iter().filter(|(_, (e, _))| e == export) {
+                    let _ = e;
+                    // Past the location, column 0: the values the probe fixed the export's read at.
+                    let mut keys: Vec<Vec<u8>> = if self.twins.contains(probe) {
+                        let Some((w, rows)) = entry.rows.get(probe) else { continue };
+                        rows.chunks_exact((*w).max(1))
+                            .map(|row| {
+                                let mut k = Vec::new();
+                                row.iter().skip(1).for_each(|&x| key_bytes(&mut k, None, x));
+                                k
+                            })
+                            .collect()
+                    } else {
+                        let Some((_, rows)) = entry.outputs.get(probe) else { continue };
+                        (0..rows.len())
+                            .map(|i| {
+                                let mut k = Vec::new();
+                                for c in 1..rows.width() {
+                                    match rows.cell(i, c) {
+                                        super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
+                                        super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                                    }
+                                }
+                                k
+                            })
+                            .collect()
+                    };
+                    keys.sort_unstable();
+                    keys.dedup();
+                    h.update(probe.as_bytes());
+                    for k in &keys {
+                        h.update(k);
+                        for row in by.get(k).into_iter().flatten() {
+                            h.update(row);
+                        }
+                        h.update([0xff]);
+                    }
+                }
+                h.finalize().into()
+            })
+        };
+        ids.iter()
+            .map(|(rel, id)| {
+                let id = match self.reach.get(rel) {
+                    None => *id,
+                    Some(exports) => {
+                        let mut h = Sha256::new();
+                        h.update(b"rerail.corpus-local-identity-stages/v1\0");
+                        h.update(id);
+                        for e in exports {
+                            h.update(of_export(e));
+                        }
+                        h.finalize().into()
                     }
                 };
                 (rel.clone(), id)
@@ -778,12 +1070,23 @@ const MEMO_CONTENTS: usize = 4;
 /// (`core::kind_atom`, `syntax::field_atom`: `node`'s `kind` 1132, `field`'s `f` 65555), not an atom, and so is a
 /// derived relation's column the domains find holds one. Taken as atoms, a forked process would map those codes as
 /// this process's ids, and the check where an entry is made refused it (`symbol 65555 is no atom of this process's`).
+///
+/// Beside them, its node path columns (decision 0722): an atom in a path's high 32 bits, mapped and written so.
 #[derive(Clone, Default)]
-pub struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>);
+pub struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>, std::sync::Arc<HashMap<String, Vec<bool>>>);
 
 impl Syms {
     pub fn of(domains: &super::super::lower::Domains) -> Syms {
-        Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
+        let of = |want: super::super::lower::Domain| std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| *d == want).collect())).collect());
+        Syms(of(super::super::lower::Domain::Name), of(super::super::lower::Domain::Path))
+    }
+
+    /// The node path columns of an entry's rows under `key`, `width` wide: none in the `own:` rows (`columns`).
+    pub fn paths(&self, key: &str, width: usize) -> Option<Vec<bool>> {
+        if key.starts_with("own:") {
+            return Some(vec![false; width]);
+        }
+        self.1.get(key).cloned()
     }
 
     /// The symbol columns of an entry's rows under `key` (`Entry::rows`), `width` wide: a relation's own; the `own:`
@@ -832,10 +1135,13 @@ pub fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(
         for (key, (w, rows)) in &entry.rows {
             let Some(cols) = syms.columns(key, *w) else { continue };
             let at: Vector<usize> = (0..(*w).min(cols.len())).filter(|&c| cols[c]).collect();
-            if at.is_empty() || *w == 0 {
+            // A node path's atom is its high 32 bits.
+            let paths = syms.paths(key, *w).unwrap_or_default();
+            let path_at: Vector<usize> = (0..(*w).min(paths.len())).filter(|&c| paths[c]).collect();
+            if (at.is_empty() && path_at.is_empty()) || *w == 0 {
                 continue;
             }
-            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c])).find(|&v| v < 0 || v as u64 >= atoms as u64) {
+            if let Some(v) = rows.chunks_exact(*w).flat_map(|row| at.iter().map(move |&c| row[c]).chain(path_at.iter().map(move |&c| row[c] >> 32))).find(|&v| v < 0 || v as u64 >= atoms as u64) {
                 return Some((key.clone(), v));
             }
         }
@@ -1368,7 +1674,7 @@ impl Memo<'_> {
 
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
 pub fn document_of(value: i64) -> i64 {
-    if value >= 1 << 32 { value >> 32 } else { value }
+    rerail_blocks::located::document_of(value)
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

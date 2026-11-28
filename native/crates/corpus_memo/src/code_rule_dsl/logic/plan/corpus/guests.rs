@@ -194,6 +194,16 @@ fn grammar(name: &str) -> Option<(&'static str, Option<core::Fragment>)> {
     crate::code_rule_dsl::language::label(dialect).map(|label| (label, None))
 }
 
+/// A tape value made again from its grammar and text (`Guests::tape_value`, decision 0431): its facts and its place
+/// as a guest, parsed as the run parses it (no store). What a node path rooted at a tape value is read in (decision
+/// 0722 §7).
+pub fn tape_value_again(grammar_name: &str, text: &str) -> Option<(Arc<core::Facts>, Guest)> {
+    let (label, fragment) = grammar(grammar_name)?;
+    let (facts, root, _) = parse("", label, fragment, text.to_owned(), &Parses::new(None)).ok().flatten()?;
+    let none = Placement::At([0, 0]);
+    Some((facts, Guest { host: 0, file: 0, at: 0, grammar: grammar_name.to_owned(), role: "fragment".to_owned(), root, place: none.clone(), in_file: none, made: Made::Tape { places: Vec::new() } }))
+}
+
 /// The tag a grammar's tapes are stored under: a fragment's own, else its dialect's.
 fn tape_tag_of(label: &str, fragment: Option<core::Fragment>) -> Option<i64> {
     fragment.map(|f| i64::from(f.tag)).or_else(|| core::label_tag(label))
@@ -252,7 +262,7 @@ pub fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
 /// position.
 pub(super) fn file_tree_guest(file: u32, grammar: String, len: usize) -> Guest {
     let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(len).unwrap_or(u32::MAX)] };
-    Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
+    Guest { host: file, file, at: rerail_blocks::located::Located::new(file, 0).0, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
 }
 
 /// Whether `d` is a file the run reads for its programs, as parsed and not yet split (`file_and_tree`).
@@ -359,6 +369,9 @@ pub struct Guests {
     values: HashMap<(String, String), i64>,
     /// Each value's files: those whose rules asked for it (O96). `memo` attributes its rows to each.
     files: HashMap<i64, BTreeSet<i64>>,
+    /// Each tape value's source, by its key: its text's sha256, as `parse` stores it. A memo entry keeps it with the
+    /// request (`memo::Answered::Embed`), so a hit names the source without its host's tree.
+    sources: HashMap<u32, [u8; 32]>,
     /// Made, and given no guest (no text to parse, or no grammar), this chunk.
     pub(super) refused: usize,
     /// The documents the chunk's program can see (`guests_seen`): a guest past them is not made.
@@ -538,6 +551,11 @@ impl Guests {
         Ok(got)
     }
 
+    /// Tape value `key`'s source: its text's sha256 (`parse`'s), where it is a string's tape value made in this chunk.
+    pub fn value_source(&self, key: u32) -> Option<[u8; 32]> {
+        self.sources.get(&key).copied()
+    }
+
     /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q325): made and
     /// added to `docs`, or `None` where it was asked before, made before (its askers then grow), or makes no value.
     pub fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
@@ -582,7 +600,7 @@ impl Guests {
     /// of that name (made with the batch, `seed`, else made here), or the string there, made a tape value (decision
     /// 0431): one per grammar and text, its places the strings it was parsed at; a text made already gains a place.
     fn guest(&mut self, by_key: &HashMap<u32, &Document>, at: i64, grammar_name: &str, parses: &Parses<'_>) -> Result<Got, String> {
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         let Some(host) = by_key.get(&host_key).copied() else { return Ok(Got::Not) };
         if let Some(via) = embedding(host, grammar_name) {
             return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
@@ -624,6 +642,10 @@ impl Guests {
         }
         let Some((facts, root, digest)) = parse(&host.path, label, fragment, text.clone(), parses)? else { return Ok(Got::Not) };
         let key = self.key_for(&[b"tape", grammar_name.as_bytes(), identity.as_bytes()], range, &host.path);
+        {
+            use sha2::Digest as _;
+            self.sources.insert(key, sha2::Sha256::digest(text.as_bytes()).into());
+        }
         self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         let none = Placement::At([0, 0]);
@@ -656,7 +678,7 @@ impl Guests {
     /// programs of `via` are built at its first ask, each at the host node over its bytes (`Program::at`), and each is
     /// made once, when asked: no reader of the file's programs sees one it did not ask for.
     fn demanded(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, name: &str) -> Result<Option<Document>, String> {
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         if !self.demanded.contains_key(&(host_key, via)) {
             let programs = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false));
             let ids = self.numbering(host)?;
@@ -776,7 +798,7 @@ impl Guests {
                 at
             }
         };
-        let host_key = (at >> 32) as u32;
+        let host_key = rerail_blocks::located::Located(at).key();
         let tape_verdict = crate::code_rule_dsl::embed::embedder(via).tape_verdict();
         let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, program.parse, &segments, tape_verdict)? else { return Ok(None) };
         let key = self.key_for(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &host.path);
@@ -831,7 +853,7 @@ impl Guests {
     /// `@splice(_, node, with)`: the grammar, text, tape and path of node's document with node's text replaced by
     /// the text of a document whose tape is `with`; `None` when either is not in the chunk.
     fn splice(&mut self, by_key: &HashMap<u32, &Document>, docs: &[Document], node: i64, with: &str) -> Result<Option<(String, String, String, String)>, String> {
-        let Some(d) = by_key.get(&((node >> 32) as u32)).copied() else { return Ok(None) };
+        let Some(d) = by_key.get(&rerail_blocks::located::Located(node).key()).copied() else { return Ok(None) };
         let Some(w) = docs.iter().find(|x| *syntax::tape_hex(&x.digest) == *with) else { return Ok(None) };
         let ids = self.numbering(d)?;
         let Some((_, id, _)) = ids.at((node & 0xffff_ffff) as u32) else { return Ok(None) };
@@ -926,6 +948,20 @@ impl<'a> Parses<'a> {
     /// The parses of a run whose tapes are kept in `store`.
     pub fn new(store: Option<ValueStore<'a>>) -> Self {
         Self { store, ..Self::default() }
+    }
+
+    /// A tape value a memo hit holds (`memo::Answered::source`), its text's digest and grammar: its source named for
+    /// the manifest where the root's last runs' tapes hold it, as `parse` names one it finds. Read from what was
+    /// found before the waves: no write (a warm run makes none). Whether it was.
+    pub fn name_kept(&self, grammar_name: &str, digest: [u8; 32]) -> bool {
+        let Some(s) = &self.store else { return false };
+        let Some(tag) = grammar(grammar_name).and_then(|(label, fragment)| tape_tag_of(label, fragment)) else { return false };
+        let hash = crate::content_store::HashKey::from_sha256_digest(digest);
+        let found = if s.run_tag == Some(tag) { s.by_text.get(&hash) } else { s.others.get(&(hash, tag)) };
+        if let Some((source, _)) = found {
+            s.late.lock().expect("the late sources").push(*source);
+        }
+        found.is_some()
     }
 
     /// The texts this run parsed.

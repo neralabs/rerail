@@ -68,6 +68,12 @@ pub(super) struct Closure {
     /// row however many rests read it, with whichever sign.
     /// Each is asked as the index's probe alone by its one step (`cands::holds`).
     tests: Vec<JoinRule>,
+    /// The walk is inner (`Line::Inner`, the design's S4): no stratum reads it but its ends, so the rows it climbs
+    /// through are this run's scratch, never pushed to its relation (which keeps only its seeds).
+    inner: bool,
+    /// An inner keyed walk's seeds' rows, collected by the seed loop and never written to its relation (the design's
+    /// S4: the start joined in the climb, `folds_seeds`).
+    folded: Option<Vector<i64>>,
 }
 
 /// Whether two row tests ask the same: the same source by the same index, the same keys.
@@ -244,6 +250,7 @@ fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize])
         plan_steps: n,
         ranges: Vec::new(),
         lookups: Vec::new(),
+        one: Vec::new(),
     };
     let drafted = plan.encode();
     plan.probes = super::probes(&drafted.steps, &drafted.out);
@@ -311,6 +318,21 @@ pub fn semi_naive_here(on: bool) {
     SEMI_NAIVE_HERE.set(on);
 }
 
+impl Closure {
+    /// Whether it is the keyed form (decision 0570), run as a worklist of rows, not as a reach over nodes.
+    pub(super) fn is_keyed(&self) -> bool {
+        !self.keyed.is_empty()
+    }
+    /// The walk whose seeds the climb takes itself: an inner keyed walk's (`Form::seeds`).
+    pub(super) fn folds_seeds(&self) -> Option<usize> {
+        (self.inner && self.is_keyed()).then_some(self.w)
+    }
+    /// The seeds' rows the seed loop collected for `folds_seeds`.
+    pub(super) fn take_seeds(&mut self, rows: Vector<i64>) {
+        self.folded = Some(rows);
+    }
+}
+
 /// The component's closure, when it has the shape (see the module's comment). `RERAIL_CLOSURE_FORM=off` turns it off.
 pub(super) fn recognize(c: &Component) -> Option<Closure> {
     if std::env::var("RERAIL_CLOSURE_FORM").is_ok_and(|v| v == "off") || SEMI_NAIVE_HERE.get() {
@@ -326,11 +348,6 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         return None;
     }
     let nrels = store.rels.len();
-    // A lattice relation folds each row it is given, one a key; the closure writes rows by distinct node and pends its
-    // seeds as a plain relation's. A component holding one runs semi-naive.
-    if store.rels.iter().any(|r| r.lat.is_some()) {
-        return None;
-    }
     // The walking relation: the one a probe reads the delta of to make more of (with readers beside it, decision 0561).
     let wi = c.probes.iter().find(|p| matches!(p.body, Body::Join(_)) && p.delta == p.head && p.delta != SEED).map(|p| p.head)?;
     let ks: Vec<usize> = store.rels.iter().map(|r| r.k).collect();
@@ -358,7 +375,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new() });
+        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None });
     }
     // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -392,15 +409,11 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let all: Vec<usize> = (0..k).collect();
     let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests })
+    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
-pub(super) struct Ran {
-    pub(super) nodes: usize,
-    pub(super) rows: usize,
-    pub(super) how: String,
-}
+pub(super) use super::forms::Ran;
 
 /// Where a node's reach comes from: row `local` of piece `piece`'s bit rows, or its component walked as a chain
 /// (`CHAIN`) or searched on the host, past the limits (`HOST`). Plain words, a node's in its block.
@@ -480,7 +493,15 @@ pub(super) struct Prepared {
 /// runs semi-naive from the seeds.
 pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
     if !cl.keyed.is_empty() {
-        return keyed(cl, store, syms);
+        let got = keyed(cl, store, syms);
+        // Not run as the climb: the seeds it took are its relation's after all, for semi-naive to start from.
+        if got.is_none() && let Some(rows) = &cl.folded {
+            let rel = &mut store.rels[cl.w];
+            for row in rows.chunks(rel.k) {
+                rel.push(row);
+            }
+        }
+        return got;
     }
     let h = prof::host("closure", "encode: the reach's edges (the rest, per node)");
     let rel = &store.rels[0];
@@ -553,6 +574,19 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             }
         }
     }
+    // An inner walk's rows (`Closure::inner`): its seeds and every row climbed, each once, in this run's scratch.
+    // Its seeds taken in the climb (`folded`): each new one starts it, beside any rows its relation started with.
+    let mut scratch: Option<(hashbrown::HashTable<u32>, Vector<i64>)> = cl.inner.then(|| {
+        let (mut seen, mut all) = (hashbrown::HashTable::new(), Vector::new());
+        let mut start: Vector<i64> = Vector::new();
+        for row in frontier.chunks(k).chain(cl.folded.iter().flat_map(|f| f.chunks(k))) {
+            if seen_insert(&mut seen, &mut all, k, row) {
+                start.extend_from_slice(row);
+            }
+        }
+        frontier = start;
+        (seen, all)
+    });
     let (mut rows, mut depths) = (0usize, 0usize);
     let mut made: Vector<i64> = Vector::new();
     let all: Vector<usize> = (0..k).collect();
@@ -688,17 +722,45 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             .ok()?;
         }
         frontier.clear();
-        let rel = &mut store.rels[wi];
-        for row in made.chunks(k) {
-            if rel.push(row) {
-                frontier.extend_from_slice(row);
-                rows += 1;
+        if let Some((seen, all)) = &mut scratch {
+            for row in made.chunks(k) {
+                if seen_insert(seen, all, k, row) {
+                    frontier.extend_from_slice(row);
+                    rows += 1;
+                }
+            }
+        } else {
+            let rel = &mut store.rels[wi];
+            for row in made.chunks(k) {
+                if rel.push(row) {
+                    frontier.extend_from_slice(row);
+                    rows += 1;
+                }
             }
         }
+    }
+    if let Some((_, all)) = &scratch {
+        prof::count("closure", "keyed: an inner walk's rows climbed in scratch", (all.len() / k) as u64);
     }
     prof::count("closure", "keyed closures", 1);
     prof::count("closure", "keyed closure depths", depths as u64);
     Some(Prepared { nodes: Vector::new(), index: BlockHash::default(), adj: Lists::new(), at: Vector::new(), pieces: Lists::new(), launches: Vec::new(), levels: false, keyed: Some((rows, depths)) })
+}
+
+/// Whether `row` is new to an inner walk's scratch (`keyed`): `all` holds its rows, `seen` their numbers by hash.
+fn seen_insert(seen: &mut hashbrown::HashTable<u32>, all: &mut Vector<i64>, k: usize, row: &[i64]) -> bool {
+    use std::hash::BuildHasher as _;
+    let hasher = foldhash::fast::FixedState::with_seed(0);
+    let h = hasher.hash_one(row);
+    let at = |i: u32| &all[i as usize * k..(i as usize + 1) * k];
+    if seen.find(h, |&i| at(i) == row).is_some() {
+        return false;
+    }
+    let n = (all.len() / k) as u32;
+    all.extend_from_slice(row);
+    let all = &*all;
+    seen.insert_unique(h, n, |&i| hasher.hash_one(&all[i as usize * k..(i as usize + 1) * k]));
+    true
 }
 
 /// The reach graph's weakly connected components, each a chain, a part of a dense piece, or walked on the host; and

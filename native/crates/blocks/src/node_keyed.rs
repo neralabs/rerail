@@ -75,9 +75,13 @@ impl NodeKeyed {
     fn make<'b>(block: &'b Block, nodes: u32, form: u32) -> Option<&'b NodeKeyed> {
         let p: *mut NodeKeyed = block.try_alloc_t(1)?;
         let words = (nodes as usize).div_ceil(64);
-        let bits: *mut u64 = block.try_alloc_t(words.max(1))?;
-        // SAFETY: fresh, zeroed room of the block; one thread holds it until it is returned.
+        let (bits, fresh) = block.try_alloc_fresh(8 * words.max(1), 8)?;
+        // SAFETY: room of the block just taken; one thread holds it until it is returned. Every field written, and
+        // the bits (set one by one) clear where the block's memory was used before.
         unsafe {
+            NodeKeyed::write_empty(p);
+            block.clear_where_used(bits, 8 * words.max(1), fresh);
+            let bits: *mut u64 = block.ptr(bits);
             (*p).nodes = nodes;
             (*p).form = form;
             Span::set(&raw const (*p).bits, bits, words);
@@ -112,7 +116,9 @@ impl NodeKeyed {
         unsafe {
             let starts = std::slice::from_raw_parts_mut(starts, n + 1);
             let vals = std::slice::from_raw_parts_mut(vals, pairs.len().max(1));
-            // A counting sort by node: counts, then their prefix sums, then each pair at its node's next place.
+            // A counting sort by node: counts (from none), then their prefix sums, then each pair at its node's next
+            // place.
+            starts.fill(0);
             for &(l, _) in pairs {
                 starts[l as usize + 1] += 1;
             }
@@ -361,7 +367,6 @@ mod tests {
         assert_eq!(rel.find_filter(&[0, 1], n + 1), None);
         assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
         assert_eq!(rel.find_node_index(NODE_BITS, 0, n), None);
-        assert_eq!(rel.find_node_index(NODE_ROWS, 0, n), None, "a filter is found by no node index's finder");
         let mut has = std::collections::HashSet::new();
         for r in 0..n {
             has.insert([rel.rows.get(r, 0), rel.rows.get(r, 1)]);

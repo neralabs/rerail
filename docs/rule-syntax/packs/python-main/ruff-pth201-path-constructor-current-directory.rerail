@@ -28,7 +28,7 @@ pth201_single_arg_list(n) :- kind(n, "argument_list"),
 // PTH201(n): findings from clauses `path-current-directory`, `path-current-directory-in-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH201(at: loc, arg: node, f: loc) "Call `{f}()` with no argument instead of `{f}({arg})`; the constructor already defaults to the current directory."
+.violation PTH201(at: node, arg: node, f: node) "Call `{f}()` with no argument instead of `{f}({arg})`; the constructor already defaults to the current directory."
     suppress noqa "PTH201"
 PTH201(ARG, n, F) :- kind(n, "call"), field(n, "function", c1), pth201_callee(c1, F),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -43,13 +43,13 @@ PTH201(ARG, n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth201_callee(n: node, f: loc)
+.decl pth201_callee(n: node, f: node)
 pth201_callee(n, F) :- pth201_ref(n), node(_, n, _, _, _), F = n.
 pth201_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth201_callee(c1, F).
 
 // dot(n): the JSON util `dot`, used where the JSON says `matches: "dot"`
 //   ARG: metavariable this relation binds for the calling rule
-.decl pth201_dot(n: node, arg: loc)
+.decl pth201_dot(n: node, arg: node)
 pth201_dot(n, ARG) :- pth201_dot_str(n), node(_, n, _, _, _), ARG = n.
 pth201_dot(n, ARG) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth201_dot(c1, ARG).
 
@@ -60,7 +60,7 @@ pth201_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   F: metavariable this relation binds for the calling rule
-.decl pth201_alt_11(n: node, f: loc)
+.decl pth201_alt_11(n: node, f: node)
 pth201_alt_11(n, F) :- pth201_ref(n), F = n.
 pth201_alt_11(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth201_ref(c1), F = c1.
 pth201_alt_11(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
@@ -68,14 +68,14 @@ pth201_alt_11(n, F) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // alt_12(n): the JSON `any`: n matches if any one of these rules does
 //   ARG: metavariable this relation binds for the calling rule
-.decl pth201_alt_12(n: node, arg: loc)
+.decl pth201_alt_12(n: node, arg: node)
 pth201_alt_12(n, ARG) :- pth201_dot_str(n), ARG = n.
 pth201_alt_12(n, ARG) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth201_dot_str(c1),
     ARG = c1.
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 //   ARG, F: metavariables this relation binds for the calling rule
-.decl pth201_alt_10(n: node, arg: loc, f: loc)
+.decl pth201_alt_10(n: node, arg: node, f: node)
 pth201_alt_10(n, ARG, F) :- kind(n, "call"), child(n, c1, _), pth201_alt_11(c1, F), child(n, c5, _),
     pth201_single_arg_list(c5), child(c5, c6, _), pth201_alt_12(c6, ARG).
 pth201_alt_10(n, ARG, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),

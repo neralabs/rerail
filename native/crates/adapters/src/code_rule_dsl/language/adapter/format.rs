@@ -50,6 +50,13 @@ impl Adapter for Format {
     const STRIPS_BOM: bool = false;
     /// A format string has no comments.
     const COMMENT_KINDS: &'static [&'static str] = &[];
+    // Node paths' tables (decision 0722): the slots generated into `format_paths.rs` by `rerail-engine node-path-table`,
+    // the kinds whose children are a list of statements, and the language's own labels.
+    const NODE_PATH: rerail_lang::code_rule_dsl::path_tables::PathTables = rerail_lang::code_rule_dsl::path_tables::PathTables {
+        parents: include!("format_paths.rs"),
+        lists: &[],
+        labels: &[],
+    };
     const PREAMBLE_KINDS: &'static [&'static str] = &[];
     const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;

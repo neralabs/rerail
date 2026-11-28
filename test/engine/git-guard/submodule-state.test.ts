@@ -10,6 +10,7 @@ import {
 } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { unopenable } from "../../support/platform/unopenable-file.js";
+import { runProgram } from "../../support/processes/run-program.js";
 
 vi.mock("node:fs", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
@@ -349,7 +350,7 @@ function repositories(root: string): { readonly work: string; readonly linked: s
   const work = join(root, "work");
   const linked = join(root, "linked");
   const git = (...args: string[]): void => {
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { stdio: "ignore" });
+    runProgram("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args]);
   };
   git("init", "--quiet", work);
   writeFileSync(join(work, "notes.txt"), "one\n");

@@ -28,7 +28,8 @@ import {
   type FlattenedJws,
 } from "../../src/activation/customer-profile.js";
 import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
-import { stableJsonText } from "../../src/engine/index.js";
+import { loadNativeBinding, stableJsonText } from "../../src/engine/index.js";
+import { boundWaitedWith, watchLockWaits } from "../support/processes/lock-waits.js";
 import { holdRemovals } from "../support/platform/held-removal.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
@@ -36,11 +37,14 @@ import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-r
 // Spied on so a test can make Windows hold a profile's folder for a moment.
 vi.mock("node:fs/promises", { spy: true });
 const { rm: actualRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+// Spied on so a test can see an activation's take wait on the engine.
+vi.mock("../../src/engine/native/native.js", { spy: true });
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.mocked(rm).mockReset();
+  vi.mocked(loadNativeBinding).mockReset();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
@@ -301,6 +305,7 @@ describe("an activation finding its profile's lock taken", () => {
     const events: string[] = [];
     const otherHolds = Promise.withResolvers<void>();
     const otherMayEnd = Promise.withResolvers<void>();
+    const takes = watchLockWaits();
     const other = setup.profileStore.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => {
       events.push("the other holds the lock");
       otherHolds.resolve();
@@ -308,10 +313,15 @@ describe("an activation finding its profile's lock taken", () => {
       events.push("the other lets go");
     });
     await otherHolds.promise;
-    // This activation finds the lock held; its first wait lets the other end. No real time passes.
-    const store = new CustomerProfileStore(setup.home, { sleep: async () => { otherMayEnd.resolve(); await other; } });
+    const store = new CustomerProfileStore(setup.home);
+    const mine = store.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => { events.push("this one holds the lock"); });
+    // The other lets go only once this activation waits on the engine, so this one meets a held lock.
+    const waited = await boundWaitedWith(takes, mine);
+    otherMayEnd.resolve();
 
-    await store.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => { events.push("this one holds the lock"); });
+    await Promise.all([other, mine]);
+    expect(waited).toBe(5_000);
+    expect(takes.asked).toEqual([5_000, 5_000]);
     expect(events).toEqual(["the other holds the lock", "the other lets go", "this one holds the lock"]);
   });
 });

@@ -186,8 +186,9 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         let cols: Vec<_> = line.split('\t').collect();
         // The profile is the process's, and a test beside this one records its own program's steps into it, helpers
         // of the same names among them (a sibling's `seed rr_agg2($f, $x)` once read as this run's growth). This
-        // program's helper seeds read their own demand: `rr_demand_agg_<helper>($s, $w, $x)`.
-        if !helpers.iter().any(|h| cols[3].starts_with(&format!("seed {h}(")) && cols[3].contains(&format!("rr_demand_agg_{h}($s, $w, $x)"))) {
+        // program's helper seeds read their own demand: `rr_demand_agg_<helper>(…)`, its variables named as the
+        // lowering names them (`$rr_v1, $rr_v3, $rr_v4`).
+        if !helpers.iter().any(|h| cols[3].starts_with(&format!("seed {h}(")) && cols[3].contains(&format!("rr_demand_agg_{h}("))) {
             continue;
         }
         measured += 1;

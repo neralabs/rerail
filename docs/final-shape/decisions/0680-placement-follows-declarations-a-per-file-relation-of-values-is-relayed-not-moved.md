@@ -5,6 +5,9 @@ made per-file the default, the user said: "I had tried to make cross-file facts 
 be file-local. Why do we resolve it as cross-file unnecessarily?" Then, on this design: "go that way". It amends 0290
 (`locate`'s moves), 0652 (§3 and "What is a crossing") and 0676 (`keyed`). It follows 0676's "What this does not do".
 
+Amended at the merge of 0708's line (2026-11-26): a covered view of values (0708) is relayed by its twin only where
+the union of the chunks' rows is every file's rows; otherwise the cross part derives its own copy (0708 §5).
+
 ## Intro
 
 0652 made the declaration the rule: a relation is per-document unless declared `cross_file`, and an undeclared
@@ -61,6 +64,14 @@ values got a move that 0652 §3 refuses. The relation was not wrong, so the refu
    it is computed (decision 0353). The forms carry the `located_form` qualifier (`LOCATED_FORM`), which the split
    reads as a twin of its original (`twin_of`).
 
+   An output is the exception: relayed, it would stay a file-local output with no location column, and the run's
+   memo would be off. So `locate` looks at an output read per-file again after the round's other targets. A reader the
+   round has placed through the output's twin no longer reads the output, so the output is located itself. It is
+   blocked, and moved, only if a reader still reads it. Before this, a reader later in the round than the output it
+   read moved the output to the cross part, with its body: 0705's `answer(k, q)`, read by `resolved(k, q) :-
+   answer(k, q)`, took `sig(f, x, t)`, a node column, across files (amended at the merge of 0705's line,
+   2026-11-26; `a_later_round_derives_only_the_rules_that_read_its_asks`).
+
 0652's check is unchanged: a relation in the cross-file part whose cause is its own is still an error unless it is
 declared. What changes is that a per-file relation of values no longer lands there. A rule that inherited its
 crossing from such a relation now shows its own: `e(x, y) :- s(x), s(y)`, pairs of values of any two files, must be
@@ -80,6 +91,19 @@ Two faults that the new placement exposed on the 300-file bench, each fixed at i
   literal, each negated: `@prefix(v, "__") != 1`. `prefix` is no native function, so the general `!=` arm could not
   make it, and B010's per-file stratum fell to SQL. A test's value is 0 or 1, so `!= 1` is `= 0`, and both string
   test arms now take it.
+- **A cross-file rank read its asked rows unlocated** (`Locate`, 2026-11-25). A rank (`rank_form`) is a native
+  node. Its asked and counted rows are named in `native_rank`'s row, not read by a rule's atom. `Locate` rewrote
+  the cross part's atoms of a relayed target into reads of its located form, but not those names. So p297's
+  `rr_rank29` kept reading `rr_rankq29`, a relation of the format strings' values made in the per-file part. That
+  made it an export without a location column, and the per-file memo was off for the whole run (`per-file memo:
+  off`). A native row's read of a relayed target now reads a projection of its located form,
+  `rr_rankq29_of_at(…) :- rr_rankq29_at(_, …)`, kept in the cross part (`read_located`), as the cross part's own
+  readback is. The memo line names the relations when it is off.
+
+  On the 300-file bench (M1 Max, CPU), the memo is on for every program (299 relations given a document column),
+  and all 661 output relations are identical, row for row, to the parent's, cold and warm. A run after one file's
+  edit, against the parent built alike: 5.4 s wall and 5.5 s user CPU, against 19.9 s and 63.0 s. The parent
+  evaluated all 300 files again; this reads 299 from the memo. One run each.
 
 ## Measured
 
@@ -121,6 +145,12 @@ Tests whose programs met the new placement:
 - `a_stratum_whose_rules_join_nothing_keeps_its_facts`: `e` is declared `cross_file`.
 - `a_text_read_left_as_rows_says_why_its_node_is_not_known`: `d(x) :- kind(_, x)` is per-file now, its reason that
   column 0 is filled with a kind. A new case keeps a cross-file chain's reason (`d` joining two documents).
+
+In `tests_corpus`, `a_cross_file_rank_of_values_keeps_the_memo_on`: p297's `refers` over three files. After one
+file's edit, the other two are read from the memo, and the rows are a fresh run's. Without the fix there are no memo
+hits. (2026-11-27: since 0677's third tail keyed `brace_arg` by the call, the test's relation of values is its own,
+`field_of(v, k)`, ranked in the cross part as `slot`, declared `cross_file`. Its output is a relation of values too,
+`place(v, k, x)`, each file's arguments by text: under 0677 a rule that reads the rank holds no node.)
 
 In `tests_corpus`, `a_string_tests_inequality_runs_natively`: a strict run, in a process of its own, of a
 negated `inline` view of two string tests. Before the fix it stopped on "a stratum the native engine declined".

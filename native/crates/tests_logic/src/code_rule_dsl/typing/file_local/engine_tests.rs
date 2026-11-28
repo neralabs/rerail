@@ -5,7 +5,7 @@ use super::*;
 /// T's programs split into file-local relations and the rest: what the cross-file rest reads.
 #[test]
 fn t_programs_split_into_file_local_and_cross_file() {
-    for name in ["calls.rerail", "calls_rust.rerail", "workload.rerail"] {
+    for name in ["calls_p3.rerail", "calls_rust.rerail", "workload.rerail"] {
         let path = crate::source_tree::native().join("src/code_rule_dsl/typing/programs").join(name);
         let v = crate::code_rule_dsl::logic::rr::parse_version(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
         let local = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap().local.clone();

@@ -11,7 +11,7 @@
 //!                              `follows` at a neighbour): each one's text and byte range
 //! ```
 //!
-//! A named-only tape (RER-131) stores no token its grammar implies, and these relations hold none: a rule that asks
+//! A named-only tape (decision 0161) stores no token its grammar implies, and these relations hold none: a rule that asks
 //! for one is refused when it is compiled.
 //!
 //! ```text

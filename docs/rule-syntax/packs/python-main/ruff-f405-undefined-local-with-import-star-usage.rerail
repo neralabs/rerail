@@ -10,7 +10,7 @@
 // F405(n): a finding at node n, from clause `undefined-local-with-import-star-usage`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F405(at: loc, name: node) "Import `{name}` explicitly from its module; it may only be defined by a star import."
+.violation F405(at: node, name: node) "Import `{name}` explicitly from its module; it may only be defined by a star import."
     suppress noqa "F405"
 F405(NAME, n) :- (kind(n, "identifier") ; kind(n, "string")), node(_, n, _, _, _), NAME = n,
     docof(n, d2), modnode(d2, m3),
@@ -22,7 +22,7 @@ F405(NAME, n) :- f405_star_in_string(n, NAME).
 
 // star_in_string(n): the JSON util `star-in-string`, used where the JSON says `matches: "star-in-string"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl f405_star_in_string(n: node, name: loc)
+.decl f405_star_in_string(n: node, name: node)
 f405_star_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), f405_alt_1(c2, NAME).
 
@@ -51,7 +51,7 @@ f405_all_entry(e, x) :- f405_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), 
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   NAME: metavariable this relation binds for the calling rule
-.decl f405_alt_1(n: node, name: loc)
+.decl f405_alt_1(n: node, name: node)
 f405_alt_1(n, NAME) :- kind(n, "identifier"), docof(n, d2), modnode(d2, m3),
     ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
     ; (kind(n, "string") ; kind(n, "concatenated_string")), f405_all_entry(n, x1), !bound_in(m3, x1)

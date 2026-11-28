@@ -96,10 +96,26 @@ export async function readPublishedManifest(name, version) {
   return await response.json();
 }
 
-/** `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. */
+/**
+ * `version` of `name`, as readPublishedManifest reads it, or null when the registry has none: never published, or
+ * published minutes ago and not served yet. Any other answer throws.
+ */
+export async function readPublishedManifestOrNone(name, version) {
+  const response = await fetch(`${REGISTRY}/${name.replace("/", "%2f")}/${encodeURIComponent(version)}`, { headers: { accept: "application/json" } });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${name}@${version} answers an anonymous request with ${response.status}`);
+  return await response.json();
+}
+
+/**
+ * `name`'s dist-tags, as readPublicDistTags reads them, or none (`{}`) when the package was never published. For a
+ * scoped name it has never had, npm answers 401 here, not the 404 an unscoped name gets (a pack's first publish met it
+ * on 2026-11-24, as the engine packages' had on 2026-11-23: engine/release.mjs), so both mean none. Any other answer
+ * throws: a registry that could not be read is never taken for an absent package.
+ */
 export async function readDistTagsOrNone(name) {
   const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
-  if (response.status === 404) return {};
+  if (response.status === 401 || response.status === 404) return {};
   if (!response.ok) throw new Error(`${name}'s dist-tags answer an anonymous request with ${response.status}`);
   return await response.json();
 }

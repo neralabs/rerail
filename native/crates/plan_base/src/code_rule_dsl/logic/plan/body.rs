@@ -14,6 +14,9 @@ use std::sync::Arc;
 /// The prefix of the demand relations product demand makes (`corpus::product_demand`): a demanded relation's own
 /// demand, which bounds what its rule reads.
 pub const PRODUCT_DEMAND: &str = "rr_product_demand_";
+/// The prefix of the restrictions product demand installs on a relation's producers (`product_demand::upstream`): an
+/// optional guard whose rules are its relation's readers' prefixes, so it holds every key they ask for (decision 0692).
+pub const READER_DEMAND: &str = "rr_reader_demand_";
 /// The prefix of the pair relations a deferred join's reader reads (decision 0488).
 pub const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 
@@ -445,6 +448,26 @@ impl<'v> Body<'v> {
             _ => None,
         }
     }
+    /// Whether `order` reads a join that shares no variable with what is bound before it while a join that shares
+    /// one remains (decision 0038's cross product): the order whose price is the least to be trusted, as a cross
+    /// product's rows are each binding's times every row it reads (`rf_qn`'s `rf_def($f, $x)` read before
+    /// `rr_nearest_rf_dc($f, $s)`: 11 M rows for 89, priced within twice the best).
+    pub fn crosses(&self, order: &[super::base::Step]) -> bool {
+        let mut bound = VarSet::new();
+        for (k, step) in order.iter().enumerate() {
+            let i = step.at;
+            if self.is_join(i)
+                && !bound.is_empty()
+                && self.vars(i).is_disjoint(&bound)
+                && order[k + 1..].iter().any(|r| self.is_join(r.at) && !self.vars(r.at).is_disjoint(&bound))
+            {
+                return true;
+            }
+            bound.extend(self.vars(i));
+        }
+        false
+    }
+
     /// Whether literal `i` joins: a positive atom, or `nearest`.
     pub fn is_join(&self, i: usize) -> bool {
         match self.view(i) {

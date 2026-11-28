@@ -653,6 +653,17 @@ impl MetalComputeQueue {
         self.blit_encoder().copy_from_buffer(src, src_offset, dst, dst_offset, length);
     }
 
+    /// A barrier between two launches' memory (decision 0674's chain): every buffer the launches before wrote,
+    /// those reached by address too, seen by the launches after (`memoryBarrierWithScope:` buffers).
+    pub fn memory_barrier(&self) {
+        let e = self.compute_encoder();
+        let r: &metal::ComputeCommandEncoderRef = &e;
+        // SAFETY: an open compute encoder; MTLBarrierScopeBuffers is 1.
+        unsafe {
+            let () = msg_send![r, memoryBarrierWithScope: 1u64];
+        }
+    }
+
     /// Commits the work so far; its event.
     pub fn flush(&mut self) -> MetalComputeEvent {
         Self::end(&mut self.open.borrow_mut());

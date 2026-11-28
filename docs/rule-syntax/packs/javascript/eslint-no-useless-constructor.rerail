@@ -32,7 +32,7 @@ no_useless_constructor(m) :- ctor(m), fn_block(m, b), derived(m), stmts(b, 1), c
 remove(m) :- keep_semi(m) => replace(m, `;`).
 remove(m) :- ctor(m), !keep_semi(m) => delete(m).
 .decl keep_semi(m: node)
-keep_semi(m) :- ctor(m), token_after(m, t), text(t, "["), member_runs_on(m).
+keep_semi(m) :- ctor(m), node_to_token_after(m, t), token_text(t, "["), member_runs_on(m).
 
 .decl derived(m: node)  // m's class has `extends`
 derived(m) :- child(b, m, _), kind(b, "class_body"), field(c, "body", b), child(c, h, _), kind(h, "class_heritage").

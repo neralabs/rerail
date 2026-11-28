@@ -1,0 +1,1 @@
+On Linux, a suspend that came while Rerail walked a repository's other worktrees no longer holds back the next walk, and so the checks of shell writes there, for as long as the suspend lasted. On every system, setting the system's clock no longer stretches or cuts the pause between a session's walks of those worktrees.

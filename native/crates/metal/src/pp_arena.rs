@@ -33,6 +33,9 @@ struct Inner {
     align: Cell<usize>,
     /// The stores' initial words, by offset, written when the block is leased.
     init: RefCell<Vec<(usize, Vec<u8>)>>,
+    /// The stores whose passes read them zero (offset, bytes): written clear when the block is leased, where its
+    /// memory was used before. A store of initial words is written by them.
+    clear: RefCell<Vec<(usize, usize)>>,
     leased: OnceCell<Leased>,
 }
 
@@ -72,6 +75,13 @@ impl Arena {
 
     /// A store of `count` `T`s (at least one), zero.
     pub fn zeroed<T>(&self, count: usize) -> Result<Buf, Error> {
+        let b = self.store::<T>(count)?;
+        self.0.clear.borrow_mut().push((b.at, b.len));
+        Ok(b)
+    }
+
+    /// A store of `count` `T`s (at least one), as the block's memory holds them.
+    fn store<T>(&self, count: usize) -> Result<Buf, Error> {
         assert!(self.0.leased.get().is_none(), "a store declared after its arena was leased");
         let len = count.max(1).checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
         // The kernels read a store by its 32-bit offset (`Lay`): an arena past 4 GiB is refused, and the caller runs
@@ -84,7 +94,10 @@ impl Arena {
 
     /// A store of `values` (at least one `T`'s room).
     pub fn from_slice<T: Copy>(&self, values: &[T]) -> Result<Buf, Error> {
-        let b = self.zeroed::<T>(values.len())?;
+        let b = self.store::<T>(values.len().max(1))?;
+        if values.is_empty() {
+            self.0.clear.borrow_mut().push((b.at, b.len));
+        }
         // SAFETY: `T` is plain data; its bytes are read once, here.
         let bytes = unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), size_of_val(values)) };
         // copy: not block data (a pass's control words or the layout's test input, written into its store)
@@ -108,8 +121,12 @@ impl Arena {
         let device = lane::device()?;
         let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * align + 4096)
             .map_err(|why| capacity(&format!("{}:{}: {why}", file!(), line!())))?;
-        // Zeroed: a pooled slab may hold an earlier block's bytes.
-        let base = block.try_alloc(bytes, align).ok_or_else(|| capacity(concat!(file!(), ":", line!())))?;
+        // A pooled slab may hold an earlier block's bytes: the stores read zero are written clear there.
+        let (base, fresh) = block.try_alloc_fresh(bytes, align).ok_or_else(|| capacity(concat!(file!(), ":", line!())))?;
+        for (at, len) in self.0.clear.borrow_mut().drain(..) {
+            // SAFETY: the store's range lies inside the block's allocation `base..base + bytes`, the arena's alone.
+            unsafe { block.clear_where_used(base + at, len, fresh) };
+        }
         let buffer = block.device_buffer(device).map_err(|_| Error::BackendFailure)?;
         let host = block.base_ptr();
         for (at, words) in self.0.init.borrow_mut().drain(..) {

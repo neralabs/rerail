@@ -194,7 +194,7 @@ impl<'t> InFile<'t> {
 /// The program bytes guest node `id` (over its span `range`) stands for in its host: from the first of its tokens
 /// that stands for host bytes to the last (`SegmentMap::stands_for`); a node none of whose tokens does, from its first
 /// token to its last; a node with none, its span. Its tokens are its stored leaves and, in the gaps they leave in its
-/// span, the runs of text that are not white space: the implied tokens the tape stores no node for (RER-131: Blade's
+/// span, the runs of text that are not white space: the implied tokens the tape stores no node for (decision 0161: Blade's
 /// `echo`, the `;` Vue's programs start with). A node's span may run past them: a root's holds the white space after
 /// its last statement, which stands for nothing of the node's. Read off the tape from each end until a token stands,
 /// never stored. `None` past the tape's nodes.

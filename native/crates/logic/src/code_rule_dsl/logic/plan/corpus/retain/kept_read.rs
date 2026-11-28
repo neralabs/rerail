@@ -139,7 +139,7 @@ impl Entry {
     /// Its rows as an engine relation, its types the engine's (an atom an integer); `None` when its atoms are not
     /// this process's numbering (`readable`).
     pub(in crate::code_rule_dsl) fn rel(&self, atoms: &Atoms) -> Option<Arc<InRel>> {
-        let types = self.kept.types.iter().map(|&t| if t == b's' { b'i' } else { t }).collect();
+        let types = self.kept.types.iter().map(|&t| if matches!(t, b's' | b'p') { b'i' } else { t }).collect();
         self.rel_as(types, atoms)
     }
     /// `rel`, held under the engine's `types` (its own, of the entry's width): a view of the entry where it lies

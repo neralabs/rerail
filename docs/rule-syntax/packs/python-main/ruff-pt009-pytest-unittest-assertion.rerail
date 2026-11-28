@@ -8,7 +8,7 @@
 // PT009(n): a finding at node n, from clause `unittest-assertion`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT009(at: node, name: loc) "Use a plain `assert` (for example `assert a == b`) instead of `{name}`; leave it if this is not a unittest assertion or the tests run under unittest only."
+.violation PT009(at: node, name: node) "Use a plain `assert` (for example `assert a == b`) instead of `{name}`; leave it if this is not a unittest assertion or the tests run under unittest only."
     suppress noqa "PT009"
 PT009(n, NAME) :- kind(n, "attribute"), field(n, "attribute", c1),
     kind(c1, "identifier"),

@@ -24,8 +24,8 @@ lint_attr(p, x, g, a) :- (kind(a, "attribute_item") ; kind(a, "inner_attribute_i
     kind(t, "attribute"), child(t, p, 0), kind(p, "identifier"), text(p, x), field(t, "arguments", g).
 // In the arguments of a live cfg_attr: `, name(…)`, the name right after a comma, its list right after it.
 lint_attr(p, x, g, a) :- cfg_args(c, a), child(c, p, _), kind(p, "identifier"), text(p, x),
-    token_before(p, k), text(k, ","), next_sibling(p, g), kind(g, "token_tree"), token_after(p, o),
-    first_token(g, o).
+    node_to_token_before(p, k), token_text(k, ","), next_sibling(p, g), kind(g, "token_tree"), node_to_token_after(p, o),
+    node_to_first_token(g, o).
 .decl from_cfg_attr(at: node)
 from_cfg_attr(p) :- lint_attr(p, _, _, _), child(c, p, _), cfg_args(c, _).
 
@@ -34,7 +34,7 @@ from_cfg_attr(p) :- lint_attr(p, _, _, _), child(c, p, _), cfg_args(c, _).
 cfg_args(g, a) :- lint_attr(_, "cfg_attr", g, a), !dead_pred(g).
 .decl dead_pred(g: node)   // (test, …)   (any(), …)   (not(clippy), …)
 .stored dead_pred "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
-dead_pred(g) :- child(g, p, 0), text(p, "test"), token_after(p, k), text(k, ",").
+dead_pred(g) :- child(g, p, 0), text(p, "test"), node_to_token_after(p, k), token_text(k, ",").
 dead_pred(g) :- child(g, p, 0), text(p, "any"), next_sibling(p, q), text(q, s), match("\\(\\s*\\)", s).
 dead_pred(g) :- child(g, p, 0), text(p, "not"), next_sibling(p, q), text(q, s), match("\\(\\s*clippy\\s*\\)", s).
 
@@ -42,5 +42,5 @@ dead_pred(g) :- child(g, p, 0), text(p, "not"), next_sibling(p, q), text(q, s), 
 .decl has_reason(g: node)
 .stored has_reason "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
 has_reason(g) :- lint_attr(_, _, g, _), child(g, s, i), !child(g, _, i + 1),
-    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), token_before(s, e), text(e, "="),
-    token_before(e, r), text(r, "reason"), token_before(r, k), (text(k, ",") ; text(k, "(")).
+    (kind(s, "string_literal") ; kind(s, "raw_string_literal")), node_to_token_before(s, e), token_text(e, "="),
+    token_previous(e, r), token_text(r, "reason"), token_previous(r, k), (token_text(k, ",") ; token_text(k, "(")).

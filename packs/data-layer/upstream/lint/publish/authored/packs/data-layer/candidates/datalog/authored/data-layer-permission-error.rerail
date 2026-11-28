@@ -53,12 +53,12 @@ raise_imported(r) :- raise_builtin(d, r, s), raise_import(d, e), e <= s.
 // The allow marker on the raise's line or the line before.
 .decl raise_allowed(r: node)
 raise_allowed(r) :-
-    raise_builtin(d, r, _), line(r, l), src_line(d, l, sp), text(sp, t),
+    raise_builtin(d, r, _), node_line_number(r, l), document_line(d, sp), line_number(sp, l), line_text(sp, t),
     contains("lint: allow-builtin-permission-error", t).
 raise_allowed(r) :-
-    raise_builtin(d, r, _), line(r, l), k = l - 1, src_line(d, k, sp), text(sp, t),
+    raise_builtin(d, r, _), node_line_number(r, l), k = l - 1, document_line(d, sp), line_number(sp, k), line_text(sp, t),
     contains("lint: allow-builtin-permission-error", t).
 
 violation("data-layer-permission-error", "raise", "builtin_permission_error", p, l) :-
     raise_builtin(d, r, _), in_scope(d), !out_scope(d), !tape_syntax_error(d),
-    !raise_imported(r), !raise_allowed(r), doc(d, p, _), line(r, l).
+    !raise_imported(r), !raise_allowed(r), doc(d, p, _), node_line_number(r, l).

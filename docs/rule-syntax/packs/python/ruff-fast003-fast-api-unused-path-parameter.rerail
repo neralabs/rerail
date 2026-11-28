@@ -16,13 +16,13 @@
 //   fast_route(f, dc), fast_param(f, p, x, ann, dflt), fast_annotated(ann, a, i), fast_dep_param(f, x),
 //   fast_dep_unknown(f); ruff_arg, call_kwarg, plain_str (python/ruff)
 
-.violation FAST003(at: span, K: symbol, FN: symbol) code "FAST003"
+.violation FAST003(at: match, K: symbol, FN: symbol) code "FAST003"
     "Declare `{K}` as a non-positional-only parameter of `{FN}` so FastAPI passes the `{{{K}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{K}}}` from the path."
     suppress ruff "FAST003"
 FAST003(b, k, fn) :- route_path(f, s), path_param(s, b, k), !fast_dep_unknown(f), !takes(f, k),
     field(f, "name", n), text(n, fn).
 // path_param(s, b, k): `{k}` or `{k:conv}` is in path string s, at span b.
-.decl path_param(s: node, b: span, k: symbol)
+.decl path_param(s: node, b: match, k: symbol)
 path_param(s, b, k) :- route_path(_, s),
     match_all("(?<b>\\{(?<K>[a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\\})", s), text(K, k).
 // route_path(f, s): the first argument of f's first route decorator, a plain string.

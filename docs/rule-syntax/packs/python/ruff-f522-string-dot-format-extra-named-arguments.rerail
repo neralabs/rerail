@@ -14,4 +14,4 @@
 .violation F522(at: node) code "F522"
     "Remove the keyword arguments that no named placeholder in this str.format() string uses."
     suppress ruff "F522"
-F522(c) :- format_call(c, v), brace_ok(v), !call_kwsplat(c), call_kw(c, x, _), !brace_keyword(v, x).
+F522(c) :- format_call(c, _), brace_ok(c), !call_kwsplat(c), call_kw(c, x, _), !brace_keyword(c, x).

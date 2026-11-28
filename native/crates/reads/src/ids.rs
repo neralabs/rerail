@@ -162,14 +162,8 @@ fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
     lo
 }
 
-/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
-/// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
-/// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
-///
-/// # Safety
-/// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
-/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`): the bits of its group not yet
-/// walked, `g`'s.
+/// A walk of a numbering's `item` tape nodes in order (`Numbering::nodes_from`, `nodes_at`): the bits of its group
+/// not yet walked, `g`'s.
 #[derive(Clone, Copy)]
 pub struct Nodes<'a> {
     n: &'a Numbering,
@@ -179,6 +173,12 @@ pub struct Nodes<'a> {
 }
 
 impl Nodes<'_> {
+    /// The item it walks.
+    #[inline]
+    pub fn item(&self) -> u32 {
+        self.item
+    }
+
     /// The next numbered tape node, `NONE` past the last.
     ///
     /// # Safety
@@ -199,6 +199,12 @@ impl Nodes<'_> {
     }
 }
 
+/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
+/// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
+/// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
+///
+/// # Safety
+/// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
 impl Numbering {
     /// Run `run`'s items.
     #[inline(always)]
@@ -287,26 +293,6 @@ impl Numbering {
         }
     }
 
-    /// The first `item` at or after tape node `x` (`NONE` past the last): a scan's next select, from the group the
-    /// last one was in.
-    ///
-    /// # Safety
-    /// As every read's.
-    #[inline]
-    pub unsafe fn next_at(&self, item: u32, x: u32) -> u32 {
-        let n = self.groups.len as u32;
-        let (mut g, mut mask) = if x >> 6 < self.first { (0, !0u64) } else { ((x >> 6) - self.first, !0u64 << (x & 63)) };
-        while g < n {
-            // SAFETY: the caller's; `g` is a group.
-            let bits = unsafe { self.group(g) }[item as usize] & mask;
-            if bits != 0 {
-                return (self.first + g) * 64 + bits.trailing_zeros();
-            }
-            (g, mask) = (g + 1, !0);
-        }
-        NONE
-    }
-
     /// `select`, its group searched from `hint` (the last select's group, which a probe's cursor keeps): where number
     /// `r` lies a few groups past it at most, from there with no read of the sample; else from the sample. Any hint
     /// gives the same tape node.
@@ -343,13 +329,23 @@ impl Numbering {
     #[inline]
     pub unsafe fn nodes_from(&self, item: u32, r: u32) -> Nodes<'_> {
         // SAFETY: the caller's.
-        let x = unsafe { self.select(item, r) };
-        if x == NONE {
-            return Nodes { n: self, item, g: self.groups.len as u32, m: 0 };
+        unsafe { self.nodes_at(item, self.select(item, r)) }
+    }
+
+    /// `item`'s numbered tape nodes in order from tape node `x` on (`Nodes`; none for `NONE`): from a numbered node's
+    /// tape node plus one, the numbers after it, with no sample read.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn nodes_at(&self, item: u32, x: u32) -> Nodes<'_> {
+        let end = self.groups.len as u32;
+        if x == NONE || x >> 6 >= self.first + end {
+            return Nodes { n: self, item, g: end, m: 0 };
         }
-        let g = (x >> 6) - self.first;
-        // SAFETY: `x` is a numbered node, so `g` a group.
-        let m = unsafe { self.group(g) }[item as usize] & !((1u64 << (x & 63)) - 1);
+        let (g, keep) = if x >> 6 < self.first { (0, u64::MAX) } else { ((x >> 6) - self.first, u64::MAX << (x & 63)) };
+        // SAFETY: `g` is a group.
+        let m = unsafe { self.group(g) }[item as usize] & keep;
         Nodes { n: self, item, g, m }
     }
 

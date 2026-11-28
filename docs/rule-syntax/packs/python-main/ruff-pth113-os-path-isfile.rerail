@@ -10,7 +10,7 @@
 // PTH113(n): a finding at node n, from clause `os-path-isfile`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH113(at: loc, f: node, s: loc) "Use `Path({s}).is_file()` from pathlib instead of `os.path.isfile({s})`; leave it where the argument is a bytes path or a file descriptor."
+.violation PTH113(at: node, f: node, s: node) "Use `Path({s}).is_file()` from pathlib instead of `os.path.isfile({s})`; leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH113"
 PTH113(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth113_callee(c1, F),
     pth113_arg_path_1(n, a2), S = a2,
@@ -26,7 +26,7 @@ pth113_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 //   F: metavariable this relation binds for the calling rule
-.decl pth113_callee(n: node, f: loc)
+.decl pth113_callee(n: node, f: node)
 pth113_callee(n, F) :- pth113_target(n), node(_, n, _, _, _), F = n.
 pth113_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth113_callee(c1, F).
 

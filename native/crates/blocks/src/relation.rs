@@ -69,8 +69,9 @@ structure! {
         /// key's tag (`mark_tag`) and `MARK_SAME`. Empty in a sorted order.
         pub marks: Span<u32>,
         /// A sorted order's (`ORDER`, `ORDER_ROWS`; decision 0478 step 5b): the leading column's value at every
-        /// `FENCE`th row of the order, each row's tag (an order tagged by its lead's hash), each row's key print (an
-        /// order probed by whole keys). Empty when the order keeps none.
+        /// `FENCE`th row of the order, each row's key print (an order probed by whole keys). Empty when the order keeps
+        /// none. `tags` is always empty: orders sorted by their lead's hash are gone (decision 0187 P1), and the span
+        /// stays so an entry is laid out as kept files written before hold it.
         pub fences: Span<i64>,
         pub tags: Span<u16>,
         pub prints: Span<u8>,
@@ -297,13 +298,15 @@ pub fn node_bits_chunk(block: &Block, n: u32, at: impl Fn(u32) -> i64, ranked: b
     }
     let groups = spans.len();
     let bytes = NodeIndex::bits_bytes(groups, words, ranked);
-    let (b_at, b_kept) = block.try_alloc_chunk_fit(bytes, 8)?;
+    let (b_at, b_kept, b_fresh) = block.try_alloc_chunk_fit_fresh(bytes, 8)?;
     let base = block.ptr::<u8>(b_at);
     let (g_at, w_at) = NodeIndex::places(groups);
     // SAFETY: the chunk was just allocated, `bytes` long and 8-aligned, the caller's alone until it is marked built;
     // its head, groups and words lie apart.
     let (group, w) = unsafe {
-        std::ptr::write_bytes(base, 0, bytes);
+        // Its head and groups written whole below, its ranks by the caller; its words' bits set one by one, so cleared
+        // where the chunk was used before (never zeroed fresh: its pages stay untouched until written).
+        block.clear_where_used(b_at + w_at, 8 * words, b_fresh);
         *base.cast::<NodeHead>() = NodeHead { groups: groups as u32, words: words as u32, values: 0, rows: n };
         let group = std::slice::from_raw_parts_mut(base.add(g_at).cast::<NodeGroup>(), groups);
         let w = std::slice::from_raw_parts_mut(base.add(w_at).cast::<u64>(), words);
@@ -375,13 +378,12 @@ pub enum OrderRows {
     Range(u32, u32),
 }
 
-/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences, tags and prints,
-/// each a chunk of the block written already.
+/// An order given to a relation's directory (`Relation::try_add_order`): its rows, and its fences and prints, each a
+/// chunk of the block written already.
 #[derive(Clone, Copy, Debug)]
 pub struct GivenOrder {
     pub rows: OrderRows,
     pub fences: Given,
-    pub tags: Given,
     pub prints: Given,
 }
 
@@ -487,6 +489,8 @@ impl Relation {
         let p: *mut Relation = block.ptr(at);
         let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
         unsafe {
+            // Every field written: the chunk holds what was there.
+            Relation::write_empty(p);
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
             (*p).base_rows = base.map_or(0, |b| {
@@ -779,6 +783,14 @@ impl Relation {
         &ix.rows.as_slice()[offs[b] as usize..offs[b + 1] as usize]
     }
 
+    /// Index `i`'s buckets, each its rows before liveness and key equality (`group`'s, every one): none for an index
+    /// of no buckets.
+    pub fn buckets(&self, i: usize) -> impl Iterator<Item = &[u32]> + '_ {
+        let ix = self.index_at(i);
+        let (offs, rows) = (ix.offs.as_slice(), ix.rows.as_slice());
+        offs.windows(2).map(move |w| &rows[w[0] as usize..w[1] as usize])
+    }
+
     /// The index whose key is `cols` over its rows `0..rows` (a hashed one: an ordered index holds no buckets), built.
     /// An index of fewer rows (built before the relation grew) is not it.
     pub fn find_index(&self, cols: &[u16], rows: u32) -> Option<usize> {
@@ -897,7 +909,7 @@ impl Relation {
     /// As `try_reserve_index`'s: this relation's descriptor is the caller's to change.
     unsafe fn next_entry(&self, block: &Block) -> Option<usize> {
         if self.indexes.is_empty() {
-            let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+            let (at, _) = block.try_alloc_chunk_fit(ADDED_INDEXES * size_of::<Index>(), 8)?;
             let me = std::ptr::from_ref(self).cast_mut();
             // SAFETY: the caller's.
             unsafe { Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES) };
@@ -908,8 +920,14 @@ impl Relation {
         // An entry given back is taken first (`give_back_index`) when its room is the block's already; one that keeps
         // its room (a block of no free list) is left for an index that fits it (`dead_room`), and taken last.
         let dead = |i: usize, room: bool| ix[i].state == DEAD && (!ix[i].offs.is_empty()) == room;
-        // Its taker marks it live (`state` 0) once its room is had.
-        (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))
+        // Its taker marks it live (`state` 0) once its room is had. A new entry is written empty first: the directory's
+        // chunk holds what was there, and an entry past `nindex` is read by none.
+        let i = (0..n).find(|&i| dead(i, false)).or((n < ix.len()).then_some(n)).or_else(|| (0..n).find(|&i| dead(i, true)))?;
+        if i == n {
+            // SAFETY: the caller's: this relation's descriptor, its directory among it, is ours to change.
+            unsafe { Index::write_empty(std::ptr::from_ref(&ix[i]).cast_mut()) };
+        }
+        Some(i)
     }
 
     /// A dead entry whose room (kept: its block has no free list) holds `buckets` buckets and `n` rows: its number.
@@ -967,7 +985,7 @@ impl Relation {
     /// it after.
     pub unsafe fn try_add_order(&self, block: &Block, cols: &[u16], order: GivenOrder) -> Option<usize> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
-        let GivenOrder { rows, fences, tags, prints } = order;
+        let GivenOrder { rows, fences, prints } = order;
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
             let i = self.next_entry(block)?;
@@ -1010,9 +1028,9 @@ impl Relation {
                 unsafe { Span::set(dst, block.ptr::<T>(g.at), g.len) }
             }
             set(block, &raw mut (*ix).fences, fences);
-            set(block, &raw mut (*ix).tags, tags);
+            clear(&raw mut (*ix).tags);
             set(block, &raw mut (*ix).prints, prints);
-            (*ix).held = [ids.kept as u64, fences.kept as u64, tags.kept as u64, prints.kept as u64];
+            (*ix).held = [ids.kept as u64, fences.kept as u64, 0, prints.kept as u64];
             self.nindex.fetch_max(i as u32 + 1, Release);
             std::sync::atomic::fence(Release);
             std::ptr::write_volatile(&raw mut (*ix).ncols, cols.len() as u32);
@@ -1064,14 +1082,15 @@ impl Relation {
             }
             head.values = values;
             let v1 = values as usize + 1;
-            let Some((r_at, r_kept)) = block.try_alloc_chunk_fit(4 * (v1 + n as usize), 8) else {
+            let Some((r_at, r_kept, r_fresh)) = block.try_alloc_chunk_fit_fresh(4 * (v1 + n as usize), 8) else {
                 block.free_chunk_fit(b_at, b_kept);
                 return None;
             };
             // SAFETY: as the bits' chunk's.
             let (offs, ids) = unsafe {
                 let p = block.ptr::<u32>(r_at);
-                std::ptr::write_bytes(p, 0, v1);
+                // The counts are added to: clear where used; the rows are written each.
+                block.clear_where_used(r_at, 4 * v1, r_fresh);
                 (std::slice::from_raw_parts_mut(p, v1), std::slice::from_raw_parts_mut(p.add(v1), n as usize))
             };
             let (w, rank) = (&*w, &*rank);
@@ -1150,11 +1169,12 @@ impl Relation {
             return None;
         }
         let words = (n as usize * FILTER_BITS).div_ceil(64).next_power_of_two();
-        let (w_at, w_kept) = block.try_alloc_chunk_fit(8 * words, 8)?;
+        let (w_at, w_kept, w_fresh) = block.try_alloc_chunk_fit_fresh(8 * words, 8)?;
         let w = block.ptr::<u64>(w_at);
         // SAFETY: the chunk was just allocated, this index's alone until it is marked built.
         unsafe {
-            std::ptr::write_bytes(w, 0, words);
+            // Its bits are set one by one: clear where the chunk was used before.
+            block.clear_where_used(w_at, 8 * words, w_fresh);
             let mut key = [0i64; MAX_KEY];
             for id in 0..n {
                 for (k, &c) in key.iter_mut().zip(cols) {
@@ -1301,8 +1321,9 @@ impl Relation {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
-            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
-            // allocation is.
+            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`). Its buckets
+            // written clear where the chunk was used before (the builders count into them); its rows and marks are
+            // its builder's to write, every one.
             let (ob, rb) = (4 * (cap + 1), index_rows_bytes(n as usize));
             // In a block of no free list, an index given back keeps its room for one that fits it (`give_back_index`).
             let reused = if block.has_free_list() || self.indexes.is_empty() { None } else { self.dead_room(cap + 1, n as usize) };
@@ -1313,25 +1334,23 @@ impl Relation {
             let (offs_at, rows_at) = if let Some(d) = reused {
                 let d = &self.indexes.as_slice()[d];
                 let (o, r) = (block.offset_of(d.offs.as_ptr()), block.offset_of(d.rows.as_ptr()));
-                // Its buckets zeroed, as a new chunk's are. Its rows and marks not: each builder writes every one it
-                // holds before any reader reads it (`build_index_with`, the device's `ix_place`, `ix_mark`), and a
-                // live relation's room is for its bound's rows, most never written.
-                block.ptr::<u8>(o).write_bytes(0, ob);
+                block.clear_where_used(o, ob, false);
                 (o, r)
             } else if self.flags.load(Acquire) & REWRITTEN != 0 {
-                let o = block.try_alloc_chunk(ob, 8)?;
+                let (o, fresh) = block.try_alloc_chunk_fresh(ob, 8)?;
                 let Some(r) = block.try_alloc_chunk(rb, 8) else {
                     block.free_chunk(o, ob);
                     return None;
                 };
+                block.clear_where_used(o, ob, fresh);
                 (o, r)
             } else {
-                let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
-                // Its rows and marks unzeroed, as a reused room's (above).
+                let (o, _, fresh) = block.try_alloc_chunk_fit_fresh(ob, 8)?;
                 let Some((r, _)) = block.try_alloc_chunk_fit(rb, 8) else {
                     block.free_chunk_fit(o, block.fit_kept(ob));
                     return None;
                 };
+                block.clear_where_used(o, ob, fresh);
                 (o, r)
             };
             let (offs, rows): (*mut u32, *mut u32) = (block.ptr(offs_at), block.ptr(rows_at));
@@ -1371,7 +1390,7 @@ impl Relation {
             }
             let rb = index_rows_bytes(n as usize);
             let rewritten = self.flags.load(Acquire) & REWRITTEN != 0;
-            let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit_zeroed(rb, 8)?.0 };
+            let r = if rewritten { block.try_alloc_chunk(rb, 8)? } else { block.try_alloc_chunk_fit(rb, 8)?.0 };
             if rewritten {
                 block.free_chunk_resident(old, len);
             } else {
@@ -1491,8 +1510,7 @@ impl Relation {
                 continue;
             }
             if ix.ordered == ORDER || ix.ordered == ORDER_ROWS || ix.ordered == FILTER {
-                // A sorted order's chunks, each as it was given (`try_add_order`), and a membership filter's words
-                // (`try_add_filter`, its `fences`).
+                // A sorted order's chunks, each as it was given (`try_add_order`), and a membership filter's.
                 let spans = [(ix.rows.as_ptr().cast::<u8>(), ix.held[0]), (ix.fences.as_ptr().cast(), ix.held[1]), (ix.tags.as_ptr().cast(), ix.held[2]), (ix.prints.as_ptr().cast(), ix.held[3])];
                 for (p, kept) in spans {
                     if kept > 0 {
@@ -1540,6 +1558,20 @@ impl Relation {
         let ix: usize =
             self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4 + i.marks.len() * 4).sum();
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
+    }
+
+    /// The bytes of its indexes in memory now (`mem::resident`: their buckets, rows and marks, an order's fences,
+    /// tags and prints): a profile's measure.
+    pub fn index_resident(&self) -> usize {
+        fn of<T>(s: &crate::refs::Span<T>) -> usize {
+            crate::mem::resident(s.as_ptr() as usize, s.len() * size_of::<T>())
+        }
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        self.indexes.as_slice()[..n]
+            .iter()
+            .filter(|ix| ix.ncols > 0 && ix.state != DEAD)
+            .map(|ix| of(&ix.offs) + of(&ix.rows) + of(&ix.marks) + of(&ix.fences) + of(&ix.tags) + of(&ix.prints))
+            .sum()
     }
 
     /// Bytes this relation's values, order, indexes and bits take (what a reader may touch: a continuation's chain's
@@ -1889,7 +1921,11 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
         // One counting pass: each row's bucket, the buckets' sizes, then the rows placed in order.
         let bucket: &mut [u32] = scratch.take(live);
         let tags: &mut [u32] = scratch.take(live);
-        let bp: *mut u32 = block.alloc_t(cap + 1);
+        // Its buckets, counted into: written clear where the block's memory was used before.
+        let (b_at, fresh) = block.try_alloc_fresh(4 * (cap + 1), 8).unwrap_or_else(|| panic!("block full: an index's {} buckets", cap + 1));
+        // SAFETY: just taken, this build's alone.
+        unsafe { block.clear_where_used(b_at, 4 * (cap + 1), fresh) };
+        let bp: *mut u32 = block.ptr(b_at);
         // The rows, then their marks (decision 0671).
         let rp: *mut u32 = block.alloc_t(2 * live.max(1));
         let offs = unsafe { std::slice::from_raw_parts_mut(bp, cap + 1) };

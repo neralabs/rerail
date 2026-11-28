@@ -259,7 +259,10 @@ impl Writer<'_> {
                 }
             }
             Field::Demand(list) => {
-                for (k, rel) in list.iter().enumerate() {
+                // A set (decision 0145): stored sorted, so a program lowered whole and the same program linked from
+                // its modules, which meet its `magic-transform` pragmas in different orders, state one demand.
+                let set: std::collections::BTreeSet<&String> = list.iter().collect();
+                for (k, rel) in set.into_iter().enumerate() {
                     self.row("demand", vec![n(k), s(rel)]);
                 }
             }
@@ -276,7 +279,7 @@ impl Writer<'_> {
             Field::MagicReport(report) => {
                 if let Some(report) = report {
                     self.row("magic_report", vec![n(report.magic_rules), n(report.extras_kept), n(report.gates)]);
-                    for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation), ("reasons", &report.reasons)] {
+                    for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation), ("reasons", &report.reasons), ("free_readers", &report.free_readers)] {
                         for (k, item) in items.iter().enumerate() {
                             self.row("report_list", vec![s(list), n(k), s(item)]);
                         }
@@ -757,6 +760,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             gates: int(&row[2])? as usize,
             full_for_negation: take("full_for_negation"),
             reasons: take("reasons"),
+            free_readers: take("free_readers"),
         }))
     }
     fn indexed(rows: Option<&Vec<&[C]>>) -> Result<Vec<String>, String> {

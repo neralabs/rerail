@@ -28,7 +28,7 @@ fn render(src: &str, nodes: &[Node]) -> String {
     out
 }
 
-/// Decision 0061's example, on a named-only tape (RER-131): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
+/// Decision 0061's example, on a named-only tape (decision 0161): the tokens the grammar implies (`decl`, `(`, `,`, `:`,
 /// `:-`, `!`, `)`, the clause's `.`) are left out (`docs/parser-generators/32-named-only-rr-tapes.md`). The
 /// declaration's `.` is stored: its modifiers may hold a `.`.
 #[test]
@@ -123,7 +123,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 
 /// Every `.rerail` file in the repository tapes. Its tape has an ERROR exactly when running it fails to parse, every
 /// node's span holds its children's, and the leaves and comments cover every byte but whitespace and the tokens the
-/// grammar implies, once (a named-only tape, RER-131).
+/// grammar implies, once (a named-only tape, decision 0161).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
     let root = crate::source_tree::native().join("../docs/rule-syntax");
@@ -228,6 +228,49 @@ fn a_rule_about_rules_runs_over_rule_files() {
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(found.len(), 2, "{report:#}");
     assert!(found[0].0.ends_with("a.rerail") && found[1].0.ends_with("c.rerail"), "{found:?}");
+}
+
+/// A rule's performance is checked with rules over its file (`packs/rr/rr-strlen-of-a-text.rerail`): a text made only
+/// for `strlen` is `@text_len`'s. A clause whose text another literal or its head reads too is not reported.
+#[test]
+fn a_text_made_only_for_strlen_is_found_in_a_rule_file() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-strlen-of-a-text");
+    std::fs::create_dir_all(&root).unwrap();
+    let rules = [
+        ".decl w1(n: node, k: number)",
+        "w1(n, k) :- line(n), text(n, t), k = strlen(t).",
+        ".decl w2(n: node, k: number)",
+        "w2(n, k) :- line(n), k = @text_len(n).",
+        ".decl w3(n: node, t: symbol, k: number)",
+        "w3(n, t, k) :- line(n), text(n, t), k = strlen(t).",
+        ".decl w4(n: node)",
+        "w4(n) :- line(n), text(n, t), match(\"#.*\", t), strlen(t) > 3.",
+        ".decl w5(n: node)",
+        "w5(n) :- line(n), text(n, t), strlen(t) > 3, strlen(t) < 9.",
+        ".decl w6(a: node, b: node)",
+        "w6(a, b) :- line(a), line(b), text(a, t), text(b, t), strlen(t) > 3.",
+        ".decl w7(n: node, k: number)",
+        "w7(n, k) :- line(n), text(n, t), k = strlen(t) - 1.",
+    ];
+    std::fs::write(root.join("a.rerail"), rules.join("\n") + "\n").unwrap();
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-strlen-of-a-text.rerail");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let mut lines: Vec<i64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1)).collect();
+    lines.sort();
+    assert_eq!(lines, [2, 10, 14], "w1, w5 and w7: {report:#}");
+}
+
+/// No shipped rule makes a text only to measure it: `rr-strlen-of-a-text` over every rule file of the repository.
+#[test]
+fn no_shipped_rule_makes_a_text_only_for_strlen() {
+    let tree = crate::source_tree::native().join("../docs/rule-syntax");
+    let rule = tree.join("packs/rr/rr-strlen-of-a-text.rerail");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("rr-strlen-shipped");
+    let report = crate::code_rule_dsl::tools::run_rr(&rule, &tree, &out, &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&out);
+    let found: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| format!("{}:{}", d["file"].as_str().or(d["path"].as_str()).unwrap_or(""), d["line"].as_i64().or(d["start"]["line"].as_i64()).unwrap_or(-1))).collect();
+    assert!(found.is_empty(), "texts made only for strlen; measure with @text_len: {found:#?}");
 }
 
 /// The text facts of a `.rerail` tape: `name` of identifiers and variables, `str` and `value` of strings, numbers and
@@ -398,6 +441,45 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w0, "\"ev\"") && !any(&w0, "\"ex\""), "{w0:?}");
     assert!(any(&w2, "\"ex\"") && !any(&w2, "\"ev\""), "{w2:?}");
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
+}
+
+/// A policy whose text does not read (an `#include` of no file) runs alone, with its error, and the batch's others
+/// still pack (decision 0168): the batch's texts are read a text at a time when they do not read together. Read
+/// together only, one such policy sent each of the Python pack's 537 policies to a run of its own.
+#[test]
+fn a_policy_whose_text_does_not_read_leaves_the_others_packed() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("batch-pack-bad-text");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("x.py"), "eval(\"1\")\nexec(\"2\")\n").unwrap();
+    let policy = |name: &str, head: &str, callee: &str| {
+        let path = root.with_extension(format!("{name}.rerail"));
+        std::fs::write(
+            &path,
+            format!(
+                ".policy \"t:{name}\" revision 1\n.language python\n{head}\
+                 .violation {name}_call(at: node) code \"{name}\" \"a call of {callee}\"\n\
+                 {name}_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"{callee}\").\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let paths = [
+        policy("ev", "#include \"python/calls.rerail\"\n", "eval"),
+        policy("bad", "#include \"no-such-module.rerail\"\n", "eval"),
+        policy("ex", "#include \"python/calls.rerail\"\n", "exec"),
+    ];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    for p in &paths {
+        let _ = std::fs::remove_file(p);
+    }
+    let runs = batch["runs"].as_array().unwrap();
+    let together: Vec<u64> = runs.iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 0, 2], "{batch:#}");
+    assert!(runs[1]["error"].as_str().is_some_and(|e| e.contains("no-such-module.rerail")), "{batch:#}");
+    let codes: Vec<&str> = batch["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("")).collect();
+    assert_eq!(codes, ["ev", "ex"], "{batch:#}");
 }
 
 /// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`

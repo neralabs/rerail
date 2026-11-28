@@ -26,13 +26,13 @@ up018_nested_fstring(n) :- up018_demand_nested_fstring(n), inside(n, p1, "string
 
 // literal_str(n): the JSON util `literal-str`, used where the JSON says `matches: "literal-str"`
 .decl up018_literal_str(n: node)
-up018_literal_str(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "str").
+up018_literal_str(n) :- up018_plain_string(n), value(n, v1), value_type_of(n, "str").
 up018_literal_str(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     up018_literal_str(c2).
 
 // literal_bytes(n): the JSON util `literal-bytes`, used where the JSON says `matches: "literal-bytes"`
 .decl up018_literal_bytes(n: node)
-up018_literal_bytes(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "bytes").
+up018_literal_bytes(n) :- up018_plain_string(n), value(n, v1), value_type_of(n, "bytes").
 up018_literal_bytes(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     up018_literal_bytes(c2).
 
@@ -54,7 +54,7 @@ up018_literal_bool(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
 // literal_of_case gives the strings each copy had.
 .decl up018_literal_of(n: node, key: symbol)
 up018_literal_of(n, q1) :- up018_literal_of_case(q1), (kind(n, "integer") ; kind(n, "float")),
-    value(n, v1), value_type(v1, q1).
+    value(n, v1), value_type_of(n, q1).
 up018_literal_of(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_expression"),
     child(n, c2, _), up018_literal_of(c2, q1).
 
@@ -113,7 +113,7 @@ up018_literal_call(n) :- up018_unnested_call(n), field(n, "arguments", c1), up01
 // UP018(n, detail): findings from clauses `call-without-argument`, `call-on-literal`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP018(at: loc, c: node, detail: symbol) "Replace this call with the {detail}."
+.violation UP018(at: node, c: node, detail: symbol) "Replace this call with the {detail}."
     suppress noqa "UP018"
 UP018(C, n, "empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex") :- up018_empty_call(n),
     node(_, n, _, _, _), C = n.
@@ -124,13 +124,13 @@ UP018(C, n, "literal it wraps, keeping parentheses where needed, as in `(1).real
 
 // empty_call_in_string(n): the JSON util `empty-call-in-string`, used where the JSON says `matches: "empty-call-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl up018_empty_call_in_string(n: node, c: loc)
+.decl up018_empty_call_in_string(n: node, c: node)
 up018_empty_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up018_alt_6(c2, C).
 
 // literal_call_in_string(n): the JSON util `literal-call-in-string`, used where the JSON says `matches: "literal-call-in-string"`
 //   C: metavariable this relation binds for the calling rule
-.decl up018_literal_call_in_string(n: node, c: loc)
+.decl up018_literal_call_in_string(n: node, c: node)
 up018_literal_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1), up018_alt_7(c2, C).
 
@@ -203,12 +203,12 @@ up018_alt_3(n) :- field(n, "function", c16), up018_callee_of(c16, "complex"),
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl up018_alt_6(n: node, c: loc)
+.decl up018_alt_6(n: node, c: node)
 up018_alt_6(n, C) :- up018_empty_call(n), C = n.
 up018_alt_6(n, C) :- up018_empty_call_in_string(n, C).
 
 // alt_7(n): the JSON `any`: n matches if any one of these rules does
 //   C: metavariable this relation binds for the calling rule
-.decl up018_alt_7(n: node, c: loc)
+.decl up018_alt_7(n: node, c: node)
 up018_alt_7(n, C) :- up018_literal_call(n), C = n.
 up018_alt_7(n, C) :- up018_literal_call_in_string(n, C).

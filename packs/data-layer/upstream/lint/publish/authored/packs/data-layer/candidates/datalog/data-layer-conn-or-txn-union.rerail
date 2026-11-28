@@ -208,6 +208,6 @@ union_self(p) :- child(p, c, _), node(_, c, "identifier", _, _), text(c, "self")
 union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_names(s).
 union_exempt(f) :- field(f, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), union_exempt_methods(s, c), nearest(f, k, union_classes), field(k, "name", kn), node(_, kn, "identifier", _, _), text(kn, c).
 union_function(f, ps) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), !union_exempt(f).
-violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :- union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-conn-or-txn-union", "union", "UNION", p, l) :- union_function(f, ps), union_typed(ps, _, t), union_conn(t), union_txn(t), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).
 separate_both(ps) :- union_typed(ps, _, t), union_conn(t), union_txn(t).
-violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :- union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-conn-or-txn-union", "separate", "SEPARATE_PARAMS", p, l) :- union_function(f, ps), union_typed(ps, _, t1), union_conn(t1), union_typed(ps, _, t2), union_txn(t2), !separate_both(ps), node(d, f, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(f, l).

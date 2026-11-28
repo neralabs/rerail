@@ -605,7 +605,7 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
     let db = connection();
     setup(&db);
     open(&db, &spec).unwrap();
-    assert!(component(&db, "cutc").unwrap().lock().unwrap().closure.is_some(), "the component runs as its closure");
+    assert!(component(&db, "cutc").unwrap().lock().unwrap().form.as_ref().is_some_and(|f| f.name() == "reach" || f.name() == "keyed walk"), "the component runs as its closure");
     let (mut cuts, mut done, mut last) = (0, false, String::new());
     for _ in 0..1_000 {
         set_budgets(&db, "cutc", &[(0, Some(300))]).unwrap();
@@ -623,4 +623,114 @@ fn a_closures_seed_is_cut_at_its_budget_and_goes_on_from_its_rows_left() {
     close(&db, "cutc").unwrap();
     assert!(done && cuts > 1, "to the fixpoint, the seed cut on the way: {cuts} cuts, last {last}");
     assert_eq!(rows(&db), whole, "the fixpoint is the unlimited run's");
+}
+
+/// A profiled walk's step clock takes its own switches' cost off the steps (`StepClock::own`, `switch_ticks`): a step
+/// entered often that does nothing is charged nearly nothing, where it was charged a switch an entry, and a step that
+/// works keeps its time. Measured on the clock itself, one thread, in ticks.
+#[test]
+fn a_step_clocks_switches_are_no_steps_time() {
+    let fresh = |cost: f64| StepClock { ticks: rerail_blocks::vector![0; 4], switches: rerail_blocks::vector![0; 4], at: 3, last: ticks(), t0: 0, cpu0: 0.0, acc: crate::code_rule_dsl::logic::profile::accounted_ticks(), acc0: (0, 0.0), cost, word: None };
+    // Empty steps 0 and 1, entered in turn: their charge is the switches'. They are made by the code the cost is
+    // measured on (`switch_between_empty`): a loop here costs what this module's code costs, and that time is between
+    // the switches, the steps' own. Ticks are the wall's: each round measures the cost just before its switches, and
+    // the round that kept least of its ticks is compared (a round the thread moved or was slowed in keeps more, never
+    // less).
+    let (raw, own, cost) = (0..8)
+        .map(|_| {
+            let cost = measure_switch_ticks();
+            assert!(cost > 0.0 && cost.is_finite(), "{cost}");
+            let mut c = fresh(cost);
+            switch_between_empty(&mut c, 25_000);
+            ((c.ticks[0] + c.ticks[1]) as f64, c.own(0) + c.own(1), cost)
+        })
+        .fold((1.0, f64::INFINITY, 0.0), |best, round| if round.1 / round.0 < best.1 / best.0 { round } else { best });
+    assert!(raw > 0.0 && own <= 0.2 * raw, "empty steps: {own} of {raw} ticks kept (a switch {cost} ticks)");
+    // Step 2 works between its switches: its time is kept.
+    let mut c = fresh(measure_switch_ticks());
+    let mut x = 1u64;
+    for _ in 0..2_000 {
+        c.to(2);
+        for i in 0..2_000u64 {
+            x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(i));
+        }
+        c.to(0);
+    }
+    let (raw, own) = (c.ticks[2] as f64, c.own(2));
+    assert!(own >= 0.9 * raw, "a working step: {own} of {raw} ticks kept ({x})");
+}
+
+/// A scan's chunk asks a derived input's lookup and test once a chunk (`cands::ask_chunk`): the lookup's one row a
+/// key by its value-keyed index, the test's bit in its node-keyed one, each a loop over the chunk's key column.
+/// `r(d, x) :- k(d), m(d, n), d != n, l(n, x), !b(n)`: `l` has one row each even node (`x` its place times 10), so
+/// its key is measured as one row (`Csr::at_most_one`) and read as a lookup; `b` holds the nodes at places divisible
+/// by 3. The rows are the rule's.
+#[test]
+fn a_chunk_asks_a_derived_lookup_and_test_a_chunk_at_a_time() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let node = |d: i64, l: i64| d << 32 | l;
+    let flat = |rows: Vec<Vec<i64>>| {
+        let (n, k) = (rows.len(), rows.first().map_or(1, Vec::len));
+        InRel::from_flat(rows.into_iter().flatten().collect(), n, vec![b'i'; k])
+    };
+    let db = connection();
+    adopt(&db, "ck_k", flat((0..4).map(|d| vec![d]).collect()));
+    adopt(&db, "ck_m", flat((0..4).flat_map(|d| (0..300).map(move |l| vec![d, node(d, l)])).collect()));
+    adopt(&db, "ck_l", flat((0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0).map(move |l| vec![node(d, l), l * 10])).collect()));
+    adopt(&db, "ck_b", flat((0..4).flat_map(|d| (0..300).filter(|l| l % 3 == 0).map(move |l| vec![node(d, l)])).collect()));
+    db.execute_batch("CREATE TABLE r(c0, c1);").unwrap();
+    let rel = |t: &str| format!("r:{}", hex(t));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\npos {} v1 v2\nneg {} v1\nhead v0 v2", rel("ck_k"), rel("ck_m"), rel("ck_l"), rel("ck_b"));
+    open(&db, &format!("name chunk\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    {
+        let comp = component(&db, "chunk").unwrap();
+        let comp = comp.lock().unwrap();
+        let Body::Join(j) = &comp.probes[0].body else { panic!("a join") };
+        assert!(j.plan.one.get(3).copied().unwrap_or(false) && j.lookups.get(3).copied().unwrap_or(false), "`l` by `n`: one row, a lookup");
+        assert!((0..j.steps.len()).filter_map(|i| j.fused_at(i)).any(|f| f.tests.len() == 2 && f.tests.iter().any(|t| !t.reads.is_empty())), "the lookup and the test fused into the scan's chunk");
+        // Built ahead, as the level's build ahead builds them (decision 0706 §5; a reader builds none): `l`'s rows by
+        // its key's value and `b`'s node bits.
+        for (i, bits) in [(3, false), (4, true)] {
+            let Step::Atom { src: Src::In(rel, ix), .. } = &j.steps[i] else { panic!("an input's atom") };
+            let ib = j.src_in(rel, ix).0.in_block().expect("an input in a block");
+            if bits { ib.own_node_bits(0) } else { ib.own_node_rows(0) }.expect("room");
+        }
+    }
+    walks_whole(|| run(&db, "chunk", 0).unwrap());
+    close(&db, "chunk").unwrap();
+    let asks = &run_counts().chunk_asks;
+    assert!(asks[0].load(std::sync::atomic::Ordering::Relaxed) > 0 && asks[1].load(std::sync::atomic::Ordering::Relaxed) > 0, "asked a chunk at a time: {asks:?}");
+    let want: Vec<(i64, i64)> = (0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0 && l % 3 != 0).map(move |l| (d, l * 10))).collect();
+    let mut got = pairs(&db, "SELECT c0, c1 FROM r");
+    got.sort_unstable();
+    assert_eq!(got, want);
+}
+
+/// A chunk asks a derived input by its whole key at once, by hash (`cands::ask_derived_chunk`): `p` by two columns
+/// (`d`, `n`), a lookup of one row each even node; `q` tested by its node and a constant (`!q(n, 7)`), holding the
+/// nodes at places divisible by 3 with 7 and every node with 8. The rows are the rule's.
+#[test]
+fn a_chunk_asks_a_derived_inputs_whole_key_by_its_hash() {
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    let node = |d: i64, l: i64| d << 32 | l;
+    let flat = |rows: Vec<Vec<i64>>| {
+        let (n, k) = (rows.len(), rows.first().map_or(1, Vec::len));
+        InRel::from_flat(rows.into_iter().flatten().collect(), n, vec![b'i'; k])
+    };
+    let db = connection();
+    adopt(&db, "hk_k", flat((0..4).map(|d| vec![d]).collect()));
+    adopt(&db, "hk_m", flat((0..4).flat_map(|d| (0..300).map(move |l| vec![d, node(d, l)])).collect()));
+    adopt(&db, "hk_p", flat((0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0).map(move |l| vec![d, node(d, l), l * 10])).collect()));
+    adopt(&db, "hk_q", flat((0..4).flat_map(|d| (0..300).flat_map(move |l| [vec![node(d, l), 8]].into_iter().chain((l % 3 == 0).then(|| vec![node(d, l), 7])))).collect()));
+    db.execute_batch("CREATE TABLE r(c0, c1);").unwrap();
+    let rel = |t: &str| format!("r:{}", hex(t));
+    let join = format!("pos {} v0\npos {} v0 v1\nne v0 v1\npos {} v0 v1 v2\nneg {} v1 i:7\nhead v0 v2", rel("hk_k"), rel("hk_m"), rel("hk_p"), rel("hk_q"));
+    open(&db, &format!("name hashed\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    walks_whole(|| run(&db, "hashed", 0).unwrap());
+    close(&db, "hashed").unwrap();
+    assert!(run_counts().chunk_asks[2].load(std::sync::atomic::Ordering::Relaxed) > 0, "asked by hash a chunk at a time");
+    let want: Vec<(i64, i64)> = (0..4).flat_map(|d| (0..300).filter(|l| l % 2 == 0 && l % 3 != 0).map(move |l| (d, l * 10))).collect();
+    let mut got = pairs(&db, "SELECT c0, c1 FROM r");
+    got.sort_unstable();
+    assert_eq!(got, want);
 }

@@ -96,6 +96,6 @@ b502_set_2("pyOpenSSL.SSL.TLSv1_1_METHOD").
 
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 //   PROTOCOL: metavariable this relation binds for the calling rule
-.decl b502_alt_1(n: node, protocol: loc)
+.decl b502_alt_1(n: node, protocol: node)
 b502_alt_1(n, PROTOCOL) :- kind(n, "call"), b502_arg_method_1(n, a1), PROTOCOL = a1.
 b502_alt_1(n, PROTOCOL) :- kind(n, "call"), b502_arg_ssl_version_2(n, a2), PROTOCOL = a2.

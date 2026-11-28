@@ -189,4 +189,4 @@ helpers_encl_count(n, k) :- helpers_reason(_, n, _), k = count : { helpers_encl(
 helpers_allowed(n) :- helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, "", f), helpers_encl_count(n, 1), helpers_encl(n, _, f, _, _).
 helpers_allowed(n) :- helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, c, f), c != "", helpers_encl_count(n, 2), helpers_encl(n, _, c, k1, s1), helpers_encl(n, _, f, k2, s2), k1 < k2.
 helpers_allowed(n) :- helpers_reason(d, n, _), helpers_module(d, m), helpers_allow(m, c, f), c != "", helpers_encl_count(n, 2), helpers_encl(n, _, c, k1, s1), helpers_encl(n, _, f, k2, s2), k1 = k2, s1 < s2.
-violation("data-layer-plan-helpers-allowlist", "plan-helper-aliases", r, p, l) :- helpers_reason(d, n, r), !helpers_allowed(n), doc(d, p, _), line(n, l).
+violation("data-layer-plan-helpers-allowlist", "plan-helper-aliases", r, p, l) :- helpers_reason(d, n, r), !helpers_allowed(n), doc(d, p, _), node_line_number(n, l).

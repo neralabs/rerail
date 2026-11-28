@@ -10,7 +10,7 @@
 // RUF051(n): a finding at node n, from clause `if-key-in-dict-del`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF051(at: loc, del: node, d: loc, k: loc) "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
+.violation RUF051(at: node, del: node, d: node, k: node) "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
     suppress noqa "RUF051"
 RUF051(DEL, n, D, K) :- kind(n, "if_statement"),
     count : { child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")) } = 0,
@@ -85,7 +85,7 @@ ruf051_key_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf0
 
 // key_in_dict(n): the JSON util `key-in-dict`, used where the JSON says `matches: "key-in-dict"`
 //   D, K: metavariables this relation binds for the calling rule
-.decl ruf051_key_in_dict(n: node, d: loc, k: loc)
+.decl ruf051_key_in_dict(n: node, d: node, k: node)
 ruf051_key_in_dict(n, D, K) :- kind(n, "comparison_operator"),
     k2 = count : { child(n, c1, _), !ruf051_trivia(c1) }, k2 >= 3, k2 <= 3, child(n, c3, _),
     ruf051_key_expr(c3), node(_, c3, _, _, _), K = c3, precedes_stop(c3, s4, ruf051_stop_1), glob("in", s4),
@@ -96,14 +96,14 @@ ruf051_key_in_dict(n, D, K) :- kind(n, "parenthesized_expression"), child(n, c7,
 
 // del_item(n): the JSON util `del-item`, used where the JSON says `matches: "del-item"`
 //   E, L: metavariables this relation binds for the calling rule
-.decl ruf051_del_item(n: node, e: loc, l: loc)
+.decl ruf051_del_item(n: node, e: node, l: node)
 ruf051_del_item(n, E, L) :- kind(n, "subscript"), n ~ `$E[$L]`, !ruf051_tok_has_4(n).
 ruf051_del_item(n, E, L) :- kind(n, "parenthesized_expression"), child(n, c9, _),
     ruf051_del_item(c9, E, L).
 
 // sole_del(n): the JSON util `sole-del`, used where the JSON says `matches: "sole-del"`
 //   E, L: metavariables this relation binds for the calling rule
-.decl ruf051_sole_del(n: node, e: loc, l: loc)
+.decl ruf051_sole_del(n: node, e: node, l: node)
 ruf051_sole_del(n, E, L) :- kind(n, "delete_statement"), child(n, c1, _),
     ( ruf051_del_item(c1, E, L)
     ; kind(c1, "expression_list"), k1 = count : { child(c1, c2, _), !ruf051_alt_18(c2) }, k1 >= 1, k1 <= 1, child(c1, c3, _), ruf051_del_item(c3, E, L)

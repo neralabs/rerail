@@ -998,7 +998,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
         names.sort_unstable();
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap(), [[names[0]], [names[1]]]);
         // The run's connections close beside it (`close_beside`): once they are closed, nothing holds the store.
-        super::corpus::closes_done();
+        super::corpus::closes_done(&[&store, &out.join("cross.sqlite")]);
         assert_eq!(crate::content_store::holding(&store), (0, 0), "run {i} left store handles or connections open (handles, connections)");
         // The kernel names files by their real path (macOS's /var is /private/var).
         let real = dunce::canonicalize(&out).unwrap().join(store.file_name().unwrap());
@@ -1079,7 +1079,7 @@ fn rules_test_names_paths_and_lines_without_regexes() {
 .input doc, node, text, line
 .decl private_in_impl(p: symbol, s: symbol, l: number)
 private_in_impl(p, s, l) :- doc(d, p, _), glob("impl/**/*.py", p), node(d, n, "identifier", _, _), text(n, s),
-    prefix("_", s), line(n, l).
+    prefix("_", s), node_line_number(n, l).
 .decl async_in_fts(s: symbol)
 async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifier", _, _), text(n, s), suffix("_async", s).
 .output private_in_impl, async_in_fts
@@ -1476,14 +1476,14 @@ fn violations_at_places_are_found_at_their_path_and_line() {
 .decl doc(d: number, path: symbol, module: symbol)
 .decl line(n: node, l: number)
 .input node, doc, line
-.violation LONG(at: loc, what: symbol) code "FILE_LENGTH" "{what}"
+.violation LONG(at: place, what: symbol) code "FILE_LENGTH" "{what}"
     suppress ruff "E501"
 LONG(n, "call") :- node(_, n, "call", _, _).
 LONG(@place(p, 0), "file") :- doc(_, p, _).
 LONG(@place("missing.json", 3), "missing") :- doc(_, _, _).
-.decl spot(d: number, at: loc)
+.decl spot(d: number, at: place)
 spot(d, @place(p, 7)) :- doc(d, p, _).
-.violation PIN(at: span) "pin"
+.violation PIN(at: place) "pin"
 PIN(s) :- spot(_, s).
 "#;
     let out = dir.join("out");
@@ -1588,11 +1588,13 @@ label(n, s) :- fname(n, s).
 label(n, s) :- stmt_call(n, s).
 .decl top_fn(f: node, s: symbol)
 top_fn(f, s) :- fname(f, s), !nearest(f, _, fn).
-// A set of nodes: the functions but inner; and a set of kinds that a rule derives.
+// A set of nodes: the functions but inner; and a set of kinds that a rule derives, from a constant: derived from
+// every file's nodes, it is a table of the run's, and each file's nodes read in it went to the cross-file part
+// (decision 0677, refused).
 .decl fnode(n: node)
 fnode(n) :- fname(n, x), x != "inner".
 .decl fk(k: symbol)
-fk(k) :- node(_, f, k, _, _), field(f, "name", _).
+fk(k) :- fn(k), k != "class_definition".
 .decl skipnode(n: node)
 skipnode(n) :- fname(n, "skip").
 .decl near_d(c: symbol, f: symbol)
@@ -1834,6 +1836,22 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
 }
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
+/// The rows the fused min or max step (the design's S5) made, from the frames file `RERAIL_JOIN_FRAMES` names: its
+/// `rows latest …` lines (`forms::account`).
+fn latest_rows(frames: &std::path::Path) -> u64 {
+    std::fs::read_to_string(frames).unwrap_or_default().lines()
+        .filter_map(|l| l.strip_prefix("rows latest ")).filter_map(|l| l.split(" made ").nth(1)?.split(' ').next()?.parse::<u64>().ok()).sum()
+}
+
+/// Turns the frames file on for this test's process (`RERAIL_JOIN_FRAMES`), before the engine first reads it.
+fn frames_on(name: &str) -> std::path::PathBuf {
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension(format!("{name}.frames"));
+    let _ = std::fs::remove_file(&path);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_JOIN_FRAMES", &path) };
+    path
+}
+
 fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
@@ -1893,6 +1911,196 @@ first(x, s, k) :- def(d, x, s, k, _), s = min t : { def(d, x, t, _, _) }.
     let got = corpus_outputs("aggregate-wildcards", &[("a.py", "def f():\n    pass\nf = 1\n")], program, &["last", "first"]);
     assert_eq!(got[0], [["f", "18", "assign"]]);
     assert_eq!(got[1], [["f", "0", "function"]]);
+}
+
+/// The design's S5: a max joined back at its maximum, bounded or not, is one step on the group (`back_at_extreme`):
+/// the rows at the maximum, ties included, the same as the max and its join back as two steps
+/// (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_joined_back_at_its_maximum_gives_the_rows_there() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl seen(r: number, k: symbol)
+seen(r, k) :- node(d, _, "identifier", r, _), u = max t : { def(d, "f", t, _), t < r }, def(d, "f", u, k).
+.decl latest(k: symbol)
+latest(k) :- node(d, _, "module", _, _), u = max t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.decl earliest(k: symbol)
+earliest(k) :- node(d, _, "module", _, _), u = min t : { def(d, "f", t, _) }, def(d, "f", u, k).
+.output seen, latest, earliest
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-joined-back");
+    let got = corpus_outputs("latest-joined-back", &src, program, &["seen", "latest", "earliest"]);
+    assert!(latest_rows(&frames) > 0, "the max and its join back run as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    assert_eq!(got[1], [["assign"]]);
+    assert_eq!(got[2], [["function"], ["tie"]]);
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let two_steps = corpus_outputs("latest-joined-back-off", &src, program, &["seen", "latest", "earliest"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, two_steps, "the max and its join back as two steps");
+}
+
+/// The design's S5 through the planner: a max relation read only to be joined back at it (`seen_at`, as
+/// `rf_fn_seen_at`) is made in its reader, with the same rows as the relation stored (`RERAIL_SHAPE_LATEST=off`).
+#[test]
+fn a_max_relation_made_in_its_reader_gives_the_stored_relations_rows() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl def(d: number, x: symbol, t: number, k: symbol)
+def(d, "f", s, "function") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "tie") :- node(d, _, "function_definition", s, _).
+def(d, "f", s, "assign") :- node(d, _, "assignment", s, _).
+.decl rd(i: node, d: number, r: number)
+rd(i, d, r) :- node(d, i, "identifier", r, _).
+.decl seen_at(i: node, u: number)
+seen_at(i, u) :- rd(i, d, r), u = max t : { def(d, "f", t, _), t < r }.
+.decl seen(r: number, k: symbol)
+seen(r, k) :- rd(i, d, r), seen_at(i, u), def(d, "f", u, k).
+.output seen
+"#;
+    let src = [("a.py", "def f():\n    pass\nf = 1\nf\n")];
+    let frames = frames_on("latest-in-reader");
+    let got = corpus_outputs("latest-in-reader", &src, program, &["seen"]);
+    assert!(latest_rows(&frames) > 0, "the max made in its reader runs with its join back as one step");
+    assert_eq!(got[0], [["18", "function"], ["18", "tie"], ["24", "assign"], ["4", "function"], ["4", "tie"]], "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_LATEST", "off") };
+    let stored = corpus_outputs("latest-in-reader-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_LATEST") };
+    assert_eq!(got, stored, "the max relation stored");
+}
+
+/// A keyed relation two `dfs_first_memo` searches read as their roots, beside the same edges (the data layer's
+/// `la_roots`, read by `la_line`'s searches over `la_edge`), is a chain of S1's shape, but a native operator reads
+/// it by its name: it stays made where it stands (`chain::of`'s kept). Forked (`pn_roots` read in its place), the
+/// searches found no roots held, and a strict run stopped on a stratum the native engine declined.
+#[test]
+fn a_native_operators_keyed_input_is_not_forked_into_its_readers() {
+    let program = r#"
+.decl e0(a: number, b: number, o: number)
+e0(10, 20, 1). e0(20, 30, 5). e0(10, 40, 0). e0(40, 10, 2). e0(50, 60, 0).
+.decl e(a: number, b: number, o: number)
+e(a, b, o) :- e0(a, b, o), a > 0.
+.decl t(x: number)
+t(x) :- e0(_, x, _), x = 30.
+.decl u(x: number)
+u(x) :- e0(_, x, _), x = 60.
+.decl roots(r: number, k: number)
+.layout roots key(r)
+roots(r, k) :- e0(r, _, _), (r = 40, k = 1 ; r = 10, k = 2 ; r = 50, k = 3).
+.decl hm(r: number, h: number, f: number)
+hm(r, h, f) :- dfs_first_memo(r, h, f, e, t, roots).
+.decl hu(r: number, h: number, f: number)
+hu(r, h, f) :- dfs_first_memo(r, h, f, e, u, roots).
+.output hm, hu
+"#;
+    let (got, native) = run_both("held_operators_keyed_roots", program, &["hm", "hu"]);
+    assert!(native > 0, "the native set engine solved a component");
+    let declined = {
+        use crate::code_rule_dsl::logic::profile;
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held_operators_keyed_roots_native");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+        let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let declined = profile::declined();
+        profile::set(false);
+        let _ = std::fs::remove_dir_all(&dir);
+        ran.unwrap();
+        declined
+    };
+    assert!(!declined.keys().any(|k| k.contains("rr_dfsm") || k.contains("hm") || k.contains("hu")), "{declined:?}");
+    assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
+    assert_eq!(got["hu"], [["50", "60", "0"]]);
+}
+
+/// The design's S1 as one pass a name (the page "S1 Per-Name Pass"): a keyed start (`st`, as `wstart`) read by three
+/// rules beside the same driver atom (`nm(n, x)`, as `nameref`), one negating another's head, gives the rows it gives
+/// stored (`RERAIL_SHAPE_PER_NAME=off`).
+#[test]
+fn a_start_its_readers_read_beside_one_driver_gives_the_rows_it_gives_stored() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, s: node)
+.layout st key(n)
+st(n, s) :- nm(n, _), near(n, s).
+.decl a(n: node, x: number, s: node)
+a(n, x, s) :- nm(n, x), st(n, s).
+.decl b(n: node, x: number, s: node)
+b(n, x, s) :- st(n, s), node(_, s, "module", _, _), nm(n, x), x > 10.
+.decl c(n: node, x: number, s: node)
+c(n, x, s) :- st(n, s), nm(n, x), !b(n, x, s).
+.decl seen(x: number, w: symbol)
+seen(x, "a") :- a(_, x, _).
+seen(x, "b") :- b(_, x, _).
+seen(x, "c") :- c(_, x, _).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
+}
+
+/// S1's pass a name where the start's head column is a call's value (`path_module(d, @replace_all(..))`): unfolded
+/// into its readers, the call binds the reader's variable (`$q = @dot(..)`, the variable on the left, as the planner
+/// binds one), and the rows are those stored. Unfolded as `@dot(..) = $q`, the planner bound nothing, and the rule's
+/// literals stayed unplaced (`pn_path_module`, the data layer's `cached-pure-lazy-allowlist` of 2026-11-27).
+#[test]
+fn a_start_whose_head_is_a_calls_value_unfolds_into_its_readers() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.input node
+.layout node key(n)
+.decl nm(n: node, x: number)
+nm(n, x) :- node(_, n, "identifier", x, _).
+.decl near(n: node, s: node)
+near(n, s) :- node(d, n, "identifier", _, _), node(d, s, "module", _, _).
+.decl st(n: node, q: symbol)
+.layout st key(n)
+st(n, @dot("m", to_string(x))) :- nm(n, x), near(n, _).
+.decl a(n: node, x: number, q: symbol)
+a(n, x, q) :- nm(n, x), st(n, q).
+.decl b(n: node, x: number, q: symbol)
+b(n, x, q) :- st(n, q), nm(n, x), x > 10.
+.decl c(n: node, x: number, q: symbol)
+c(n, x, q) :- st(n, q), nm(n, x), !b(n, x, q).
+.decl seen(q: symbol, w: symbol)
+seen(q, "a") :- a(_, _, q).
+seen(q, "b") :- b(_, _, q).
+seen(q, "c") :- c(_, _, q).
+.output seen
+"#;
+    let src = [("a.py", "f = 1\ng = f\nprint(g, f)\n")];
+    let got = corpus_outputs("per-name-call", &src, program, &["seen"]);
+    assert!(got[0].iter().any(|r| r[1] == "b") && got[0].iter().any(|r| r[1] == "c"), "{got:?}");
+    assert!(got[0].iter().all(|r| r[0].starts_with("m.")), "each a call's value: {got:?}");
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment meanwhile.
+    unsafe { std::env::set_var("RERAIL_SHAPE_PER_NAME", "off") };
+    let stored = corpus_outputs("per-name-call-off", &src, program, &["seen"]);
+    unsafe { std::env::remove_var("RERAIL_SHAPE_PER_NAME") };
+    assert_eq!(got, stored, "the start stored");
 }
 
 /// A variable named `top` is a variable where an atom binds it, not the lattice's top: `child(p, top, _)` joins as
@@ -2275,7 +2483,7 @@ fn finding_place_model() -> (Arc<Version>, Model) {
     let p = parse_version(
         ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
          .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
-         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), line(n, l), col(n, c).\n.output violation\n",
+         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), node_line_number(n, l), node_start_column(n, c).\n.output violation\n",
     )
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
@@ -2329,6 +2537,63 @@ fn a_maintain_mode_line_starts_where_it_is_cheapest() {
     let names: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
     assert_eq!(names[..2], ["finding", "line"], "the finding leads, the moved lines probed by its node: {names:?}, work {work}");
     assert!(work < 10.0 && work < led_work / 100.0, "priced at the delta's share: {work} against {led_work} led by it");
+}
+
+/// Decision 0094 §8 (0364 R4 at scale): under 0090 §4's floor a maintain mode's line is led by its delta, which is
+/// cheap whatever the order where the delta binds the rest. corpus0's `bv` line led by `rr_cx_reach`'s 156 changed
+/// rows bound only documents, and read all of `pann` for each row (`Model::reads_whole_past_lead`). Such a line is planned
+/// free to start, as past the floor: `pann` read once, its documents probing the delta.
+#[test]
+fn a_delta_led_line_that_reads_a_relation_whole_a_row_is_planned_free() {
+    let p = parse_version(".decl pann(f:number,x:number,t:number)\n.decl docof(n:number,d:number)\n.decl reach(d:number,e:number)\n.decl anc(s:number,c:number)\n.decl uinst(t:number,c:number)\n.input pann\n.input docof\n.input anc\n.input uinst\n.decl bv(f:number,x:number,s:number)\nbv(f,x,s) :- pann(f,x,t), docof(f,d), docof(s,e), reach(d,e), anc(s,c), uinst(t,c).\n.output bv\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    // 103 documents of 2,400 nodes; 2,000 annotations; the reach delta 156 rows of 5,000.
+    for (rel, rows, ndv, fan) in [
+        ("pann",2_000.0,vec![2_000.0,500.0,300.0],vec![1.0,4.0,7.0]),
+        ("docof",246_000.0,vec![246_000.0,103.0],vec![1.0,2_400.0]),
+        ("reach",5_000.0,vec![103.0,103.0],vec![50.0,50.0]),
+        ("anc",20_000.0,vec![10_000.0,2_000.0],vec![2.0,10.0]),
+        ("uinst",400.0,vec![300.0,200.0],vec![1.3,2.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c,(ndv,fan)) in ndv.into_iter().zip(fan).enumerate() {
+            model.ndv.insert((rel,c),ndv);
+            model.stats.fan.insert((rel,c),fan);
+        }
+    }
+    model.stats.solve(["reach","bv"].into_iter().map(str::to_owned).collect());
+    model.stats.delta_rows.insert("reach", 156.0);
+    let r = 0usize;
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let b = body::nth(&p, r);
+    let ((led, led_work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let led_names: Vec<String> = led.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(led_names[..2], ["reach", "pann"], "led by the delta, `pann` read whole for each of its rows: {led_names:?}");
+    assert!(model.reads_whole_past_lead(&b, None, &led), "{led_names:?}");
+    model.stats.lead_free = true;
+    let ((free, work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let names: Vec<String> = free.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert!(!model.reads_whole_past_lead(&b, None, &free), "free to start, no relation read whole a row: {names:?}");
+    assert!(work * 5.0 < led_work, "{names:?} at {work} against {led_work} led by the delta");
+    // As the maintain mode takes it under the floor: the delta-led order, priced now, freed and the cheaper taken.
+    model.stats.lead_free = false;
+    let (led_plan, _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
+    let ((_, taken, _), freed) = model.under_floor_line(fields, &b, Some(3), None, led_plan);
+    assert!(freed && taken * 5.0 < led_work, "freed {freed} at {taken} against {led_work}");
+    // Led by `pann`, `docof` read from its document (its one index is by node, as the tape view's) walks the
+    // document's every node for each row: `docof(s, e)` after `reach` binds `e`, where `uinst` and `anc` bind `s`
+    // from `t` first.
+    model.stats.indexes = model.stats.indexes.with([("docof".to_owned(), vec![vec!["n".to_owned()]])]);
+    let order = |ats: [usize; 6]| ats.map(|at| Step { at, mode: None }).to_vec();
+    assert!(model.reads_whole_past_lead(&b, None, &order([0, 1, 3, 2, 4, 5])), "`docof(s, e)` with `e` bound alone");
+    assert!(!model.reads_whole_past_lead(&b, None, &order([0, 5, 4, 2, 1, 3])), "`docof(s, e)` with `s` bound");
+    // Led from outside the order (a negated driver's variables bound, here `s` and `e`): its every step is past it.
+    let five = |ats: [usize; 5]| ats.map(|at| Step { at, mode: None }).to_vec();
+    assert!(model.reads_whole_past_lead(&b, Some(b.vars(2)), &five([0, 1, 3, 4, 5])), "`pann` with none of its variables bound");
+    assert!(!model.reads_whole_past_lead(&b, Some(b.vars(2)), &five([4, 5, 0, 1, 3])), "`anc` by `s`, then `uinst` and `pann` by what it binds");
 }
 
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
@@ -2818,7 +3083,7 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
 /// With `text` and `line` probed by their node, `used` leads and each is read by `c`.
 #[test]
 fn a_step_that_binds_no_column_a_made_relation_is_looked_up_by_is_priced_as_reading_every_row() {
-    let p = parse(".decl used(c: node)\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), line(c, l).\n.output named\n").unwrap();
+    let p = parse(".decl used(c: node)\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), node_line_number(c, l).\n.output named\n").unwrap();
     let lead_of = |probed: bool| -> (Option<String>, f64) {
         let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
         let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
@@ -3480,6 +3745,11 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     assert!(err.contains("no rule of `out` reads `nothing`"), "{err}");
     let err = format!("{:?}", parse_version(".shape retparam bound f\n").unwrap_err());
     assert!(err.contains("follows no rule"), "{err}");
+    // A `nearest` literal is read as the relation preparation makes of it, which the planner joins.
+    let near = ".decl fdef(k:symbol)\nfdef(\"function_definition\").\n.decl s(n:node)\n.decl o(n:node,g:node)\n.output o\no(n, g) :- s(n), nearest(n, g, fdef).\n";
+    assert!(parse_version(&format!("{near}.shape rr_nearest_fdef after s\n")).is_ok(), "the relation a nearest literal is made");
+    let err = format!("{:?}", parse_version(&format!("{near}.shape rr_nearest_scope after s\n")).unwrap_err());
+    assert!(err.contains("no rule of `o` reads `rr_nearest_scope`"), "{err}");
     // No directive, `pv`'s delta driving, and `posarg` unsized: no cross product priced against its default.
     let no_posarg: Vec<(&str, f64, Vector<f64>)> = sizes.iter().filter(|s| s.0 != "posarg").cloned().collect();
     let guarded = order_of(rule, &no_posarg, None, Some(0));
@@ -3584,7 +3854,7 @@ fn a_demanded_rule_is_driven_by_its_demand() {
     let p = parse(
         ".decl x(v: number)\n.decl demand_x(v: number)\n.decl col(n: number, c: number)\n.decl line(n: number, l: number)\n\
          demand_x(1). col(1, 2). line(1, 3).\n\
-         x(v) :- demand_x(v), col(v, c), line(v, l), c < l.\n.output x\n",
+         x(v) :- demand_x(v), node_start_column(v, c), node_line_number(v, l), c < l.\n.output x\n",
     )
     .unwrap();
     let db = Connection::open_in_memory().unwrap();
@@ -4233,6 +4503,67 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
     assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
     assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0488's kept keys measure a probe's hits against the binding's domain as its constant filters leave it, not
+/// against the whole column the keys were kept of. `references.rerail`'s `rf_in` in small: `$g` is a function
+/// (`t($g, 7)`, 2,000 of 300,000 nodes) with a body (`f($g, 3, $b)`), and `up($n, $g)` (each node's nearest
+/// function) holds every function. Against `t`'s column the shared keys are 2,000 of 300,000, and a probe of `up` by
+/// `$g` was priced at 0.7% of its 142 rows a function. Against the 2,000 functions every probe hits.
+///
+/// That fixed, the planner still starts from the functions: the statistics take a function's having a body as a node's
+/// (7.5%), and a body's nodes (`w` by `$b`) as an average node's subtree (20, where a function's holds 142). No
+/// statistic sees either correlation; join shape directives (decision 0137) hold the order where they mislead. A
+/// directive holds back the literal it names only, so both ways to a function's nodes wait for the sites: `up` (the
+/// nearest function) and `w` (a body's nodes). (On the corpus `rf_in` costs the same either way, its rows taken
+/// through cheap tests, so `references.rerail` writes no directive for it; `names.rerail`'s class rules have them.)
+#[test]
+fn kept_keys_price_a_probe_against_the_binding_its_constant_filters_leave() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let decls = ".decl s(n:number)\n.decl up(n:number,g:number)\n.decl t(g:number,k:number)\n.decl f(g:number,k:number,b:number)\n\
+        .decl w(n:number,b:number)\n.decl out(n:number,g:number)\n.output out\n";
+    let derived: HashSet<String> = ["s", "up", "t", "f", "w", "out"].into_iter().map(str::to_owned).collect();
+    let model_of = |p: &Arc<Version>| {
+        let mut model = Model { shapes: super::ShapeSource::of(&body::Placed::whole(p.clone())),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.iter().collect()};
+        let sizes: [(&str, f64, &[f64], &[f64]); 5] = [
+            ("s", 44_000.0, &[44_000.0], &[1.0]),
+            ("up", 284_000.0, &[284_000.0, 2_000.0], &[1.0, 142.0]),
+            ("t", 300_000.0, &[300_000.0, 200.0], &[1.0, 1_500.0]),
+            ("f", 250_000.0, &[200_000.0, 50.0, 250_000.0], &[1.25, 5_000.0, 1.0]),
+            ("w", 2_000_000.0, &[284_000.0, 100_000.0], &[7.0, 20.0]),
+        ];
+        for (rel, rows, ndv, fan) in sizes {
+            model.stats.card.insert(rel, rows);
+            for (c, (&ndv, &fan)) in ndv.iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        model.stats.dfreq.insert(("t", 1), std::sync::Arc::new(HashMap::from([(Constant::Int(7), 2_000), (Constant::Int(9), 298_000)]).into_iter().collect()));
+        model.stats.dfreq.insert(("f", 1), std::sync::Arc::new(HashMap::from([(Constant::Int(3), 15_000), (Constant::Int(4), 235_000)]).into_iter().collect()));
+        model.stats.keys.insert(("up", 1), Keys::of(0..2_000));
+        model.stats.keys.insert(("t", 0), Keys::of(0..300_000));
+        model.stats.keys.insert(("f", 0), Keys::of(0..200_000));
+        model
+    };
+    let plan = |text: &str| {
+        let p = parse_version(&format!("{decls}{text}")).unwrap();
+        let model = model_of(&p);
+        let _plans = KeepPlans::start();
+        let ((order, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        (order.iter().filter_map(|s| rel_at(&p, 0, s.at)).collect::<Vec<_>>(), work, rows)
+    };
+    // The probe alone: each of the 2,000 functions' 142 nodes.
+    let (_, _, rows) = plan("out(n,g) :- t(g,7), up(n,g).\n");
+    assert!(rows > 0.5 * 284_000.0 && rows < 2.0 * 284_000.0, "every function's nodes, not 0.7% of them: {rows}");
+    // `rf_in`: the planner's own order starts from the functions, the directive's from the sites.
+    let rule = "out(n,g) :- s(n), up(n,g), t(g,7), f(g,3,b), w(n,b).\n";
+    let (free, _, _) = plan(rule);
+    assert_eq!(free.first().map(String::as_str), Some("t"), "unshaped, the correlations the statistics miss start it from the functions: {free:?}");
+    let (half, _, _) = plan(&format!("{rule}.shape up after s\n"));
+    assert_eq!(half.first().map(String::as_str), Some("t"), "`up` held back, the bodies' nodes are still read from the functions: {half:?}");
+    let (shaped, work, _) = plan(&format!("{rule}.shape up after s\n.shape w after s\n"));
+    assert_eq!(shaped.first().map(String::as_str), Some("s"), "the sites first, each one's function looked up: {shaped:?}, work={work}");
 }
 
 /// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):

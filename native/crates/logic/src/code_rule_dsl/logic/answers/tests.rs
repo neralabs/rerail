@@ -58,7 +58,7 @@
         let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
         let sccs = Placed::whole(gated.clone()).components().unwrap();
         let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
-        assert!(["got", "want", "few"].iter().all(|r| loading.contains(*r)), "{loading:?}");
+        assert!(["got", "want", "few"].iter().all(|r| loading.contains(r)), "{loading:?}");
         let gates = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::gates(&*gated);
         assert_eq!(gates.len(), 2, "a gate for each aggregate: {:?}", gates.iter().map(|(d, _)| d).collect::<Vec<_>>());
         for (done, g) in &gates {

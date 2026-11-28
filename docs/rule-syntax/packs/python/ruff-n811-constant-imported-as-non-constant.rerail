@@ -14,5 +14,5 @@
 .violation N811(at: node, x: symbol, a: symbol) code "N811"
     "Drop `as {a}` or use an UPPER_CASE alias for the constant `{x}`, and update its uses; keep the alias if `{x}` is really a class."
     suppress ruff "N811"
-N811(i, x, a) :- alias_import(i, x, a), cased_upper(x), !cased_upper(a), !(strlen(x) = 1, camel_name(a)),
-    !naming_ignored(x), !naming_ignored(a).
+N811(i, x, a) :- alias_import(i, x, a), cased_upper(i, x), !cased_upper(i, a),
+    (strlen(x) != 1 ; !camel_name(i, a)), !naming_ignored(i, x), !naming_ignored(i, a).

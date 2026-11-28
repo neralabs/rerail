@@ -139,6 +139,16 @@ Both tests were checked against a planted fault: the cut changed so that an inde
 mark its relation dirty. The new-process test failed at "connect the cycle to the chain", the session test at
 "close a cycle across both". Both pass with the cut as it is.
 
+**Its delta (2026-11-24, decision 0094 §8).** An index made again in a maintained run had no delta, as it keeps no
+rows, so every reader of it derived again: a move of one definition derived 15 readers again on corpus0. Its old
+index is now made again from its reads' old rows (their versions, read in place: nothing is kept), and its rows gone
+and added are read only at the starts that can differ. A reach's are the starts whose seeds changed and those that
+reach, before or after, the source of an edge gone or added: a start that reaches none of them reaches the same
+nodes over the edges that did not change. A relation through a reach's are the starts whose reach changed and those
+reaching a node whose values changed (`plan::reach_was`, `Closed::starts_reaching`, `Closed::changed_since`; tested
+against the closure by its definition in `reach::tests`). Its readers are maintained from that delta, the old index
+given as their old rows. Both tests above pass with every state checked against a fresh run (`RERAIL_TEST_FRESH=every`).
+
 ## Measured
 
 The strict P3 bench (54 files, `RERAIL_SQL_STRICT=1`, debug build, machine load 37–130), 2026-11-11:

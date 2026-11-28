@@ -491,17 +491,17 @@ eager_transitive_exempt(f, i) :- eager_dirty(f, i), node(d, f, _, _, _), doc(d, 
 eager_transitive_exempt(f, i) :- eager_dirty(f, i), node(d, f, _, _, _), doc(d, "l2070_batching/server_ref.py", _), (i = "transitive:*._deleted_state_slot" ; i = "transitive:*._ref_id").
 eager_transitive_exempt(f, "transitive:*._ref_id") :- eager_dirty(f, "transitive:*._ref_id"), node(d, f, _, _, _), doc(d, "l2070_batching/step.py", _), eager_symbol(f, s), prefix("l2070_batching.step.StepRef.", s).
 eager_lazy_core(s) :- eager_symbol(_, s), match("(?:l2055_lazy_result\\.lazy_result\\.LazyFieldRef\\.|l2055_lazy_result\\.lazy_result\\.LazyResult\\.|l2055_lazy_result\\.lazy_seq\\.LazySeq\\.).*", s).
-eager_transitive(d, l, i) :- eager_dirty(f, i), !eager_transitive_exempt(f, i), node(d, f, _, _, _), !eager_test_path(d), line(f, l).
+eager_transitive(d, l, i) :- eager_dirty(f, i), !eager_transitive_exempt(f, i), node(d, f, _, _, _), !eager_test_path(d), node_line_number(f, l).
 eager_phase_pat(f, p) :- eager_raw(f, _, _, p, 1, _), eager_phase(f, _), !prefix("_resolve_legacy_result_", p).
 eager_phase_span(f, p, st, en) :- eager_phase_pat(f, p), st = min s : { eager_raw(f, s, _, p, 1, _) }, en = min e : { eager_raw(f, _, e, p, 1, _) }.
-eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "call", st, en), line(n, l), i = @concat(@concat(ph, ":"), p).
-eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "attribute", st, en), line(n, l), i = @concat(@concat(ph, ":"), p).
-eager_external(d, l, i) :- eager_external_io(f), eager_func(f, nm), node(d, f, _, _, _), line(f, l), i = @concat(@concat("external-io-boundary:", nm), "()").
+eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "call", st, en), node_line_number(n, l), i = @concat(@concat(ph, ":"), p).
+eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "attribute", st, en), node_line_number(n, l), i = @concat(@concat(ph, ":"), p).
+eager_external(d, l, i) :- eager_external_io(f), eager_func(f, nm), node(d, f, _, _, _), node_line_number(f, l), i = @concat(@concat("external-io-boundary:", nm), "()").
 eager_resolved_param(f) :- eager_param(f, "resolved", pos, p), pos >= 1, !node(_, p, "typed_default_parameter", _, _).
-eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_ident(c), eager_callee(c, s), (s = "resolve_lazy_param" ; s = "resolve_lazy_param_str" ; s = "resolve_server_value"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:", s), "()").
-eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, s), (s = "get" ; s = "peek" ; s = "resolve_server_ref"), eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, "resolved"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:resolved.", s), "()").
-eager_preprocess(d, l, "preprocess:*.resolve(resolved)") :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, "resolve"), eager_arg(c, a, _), node(_, a, "identifier", _, _), node_text(a, "resolved"), node(d, c, _, _, _), line(c, l).
-eager_source_line(d, l, t) :- source(d, sp), match_group("(?m)^(?<LINE>[^\\n]*(?:\\.resolve\\(\\)|\\.resolve_async\\(\\)|\\.result\\(\\)|\\bint\\(\\s*lazy|\\bfloat\\(\\s*lazy|\\bbool\\(\\s*lazy)[^\\n]*)$", sp, _, "LINE", g), line(g, l), text(g, t).
+eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_ident(c), eager_callee(c, s), (s = "resolve_lazy_param" ; s = "resolve_lazy_param_str" ; s = "resolve_server_value"), node(d, c, _, _, _), node_line_number(c, l), i = @concat(@concat("preprocess:", s), "()").
+eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, s), (s = "get" ; s = "peek" ; s = "resolve_server_ref"), eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, "resolved"), node(d, c, _, _, _), node_line_number(c, l), i = @concat(@concat("preprocess:resolved.", s), "()").
+eager_preprocess(d, l, "preprocess:*.resolve(resolved)") :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, "resolve"), eager_arg(c, a, _), node(_, a, "identifier", _, _), node_text(a, "resolved"), node(d, c, _, _, _), node_line_number(c, l).
+eager_source_line(d, l, t) :- document_source(d, sp), line_regex_group("(?m)^(?<LINE>[^\\n]*(?:\\.resolve\\(\\)|\\.resolve_async\\(\\)|\\.result\\(\\)|\\bint\\(\\s*lazy|\\bfloat\\(\\s*lazy|\\bbool\\(\\s*lazy)[^\\n]*)$", sp, _, "LINE", g), match_line_number(g, l), match_text(g, t).
 eager_line_issue(d, l, ".resolve()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve\\(\\))(?s:.*)", s).
 eager_line_issue(d, l, ".resolve_async()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve_async\\(\\))(?s:.*)", s).
 eager_line_issue(d, l, ".result()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.result\\(\\))(?s:.*)", s).
@@ -509,11 +509,11 @@ eager_line_issue(d, l, "int(lazy...)") :- eager_source_line(d, l, s), match("(?s
 eager_line_issue(d, l, "float(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bfloat\\(\\s*lazy)(?s:.*)", s).
 eager_line_issue(d, l, "bool(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bbool\\(\\s*lazy)(?s:.*)", s).
 eager_comment_line(d, l) :- eager_line_issue(d, l, _), eager_source_line(d, l, s), match("\\s*#(?s:.*)", s).
-eager_mlstr(d, a, b) :- node(d, s, "string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
-eager_mlstr(d, a, b) :- node(d, s, "concatenated_string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
+eager_mlstr(d, a, b) :- node(d, s, "string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), node_line_number(s, a), node_end_line_number(s, b).
+eager_mlstr(d, a, b) :- node(d, s, "concatenated_string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), node_line_number(s, a), node_end_line_number(s, b).
 eager_in_mlstr(d, l) :- eager_line_issue(d, l, _), eager_mlstr(d, a, b), a <= l, l <= b.
 eager_direct_site(d, l, i) :- eager_line_issue(d, l, i), !eager_comment_line(d, l), !eager_test_path(d), !eager_in_mlstr(d, l).
-eager_cover(d, l, f, k, n) :- eager_direct_site(d, l, _), eager_func(f, _), node(d, f, _, _, _), line(f, a), end_line(f, b), a <= l, l <= b, eager_depth(f, k), node_text(f, t), n = @strlen(t).
+eager_cover(d, l, f, k, n) :- eager_direct_site(d, l, _), eager_func(f, _), node(d, f, _, _, _), node_line_number(f, a), node_end_line_number(f, b), a <= l, l <= b, eager_depth(f, k), node_text(f, t), n = @strlen(t).
 eager_cover_depth(d, l, k) :- eager_cover(d, l, _, _, _), k = max j : { eager_cover(d, l, _, j, _) }.
 eager_cover_len(d, l, n) :- eager_cover_depth(d, l, k), n = min m : { eager_cover(d, l, _, k, m) }.
 eager_line_symbol(d, l, s) :- eager_cover_len(d, l, n), eager_cover_depth(d, l, k), eager_cover(d, l, f, k, n), eager_symbol(f, s).

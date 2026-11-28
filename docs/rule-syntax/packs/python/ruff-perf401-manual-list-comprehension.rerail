@@ -27,6 +27,6 @@ PERF401(c, o) :- perf_for(f, t, _), kind(t, "identifier"), text(t, x), perf_body
     perf_only_binding(o, site), perf_list_site(site),
     scope_node(f, s), !decl(s, x, _), !perf_used_after(f, t).
 // The item is the loop variable, with no test, in a synchronous loop: a plain copy.
-.decl copy_only(f: node, test: loc, a: node, x: symbol)
+.decl copy_only(f: node, test: node, a: node, x: symbol)
 copy_only(f, test, a, x) :- perf_body(f, _, test), unset(test), !op(f, "async"), perf_method_call(_, _, _, a),
     kind(a, "identifier"), text(a, x).

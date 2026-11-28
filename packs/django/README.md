@@ -1,5 +1,7 @@
 # Rerail rule pack: Django
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add django`, then add it to a repository in the dashboard. It needs Rerail 0.2.2 or newer.
+
 The 27 `django-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that the Django docs
 give, or that Django maintainers give again and again in code review, and that no linter checks. A rule was kept when
 at least two independent sources gave the advice, one of them the Django docs or a Django core developer or Fellow;
@@ -73,6 +75,10 @@ every read match was real in that sense. It logs where many matches do not hold 
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
 A rule starts on only when at least 90% of its read matches were real.
 
+Each rule also says what it guards against (its risk, such as data safety or performance), where its code lives
+and how badly a violation can go. The Django pack's page in the dashboard filters its rules by risk and shows each
+rule's risk and severity ([rule dimensions](../../docs/rule-dimensions.md)).
+
 ## Starting values and what a run costs
 
 25 of 27 rules start on, in the mode the table above gives them: 22 steer and 3 log. get-handler-writes (72%) and
@@ -83,7 +89,7 @@ repository or a checkout ([rule scoping](../../docs/rule-scoping.md#management-s
 or changes its mode.
 
 The rules are written in `.rerail`, so they run apart from JSON rules: in the background, once the coding agent's
-writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan`. Each run reads
+writes have settled (no write for 10 seconds, or the end of its turn), and in audits and `rerail scan` (internal testing). Each run reads
 every Python file of the checkout, so an edit costs a whole run. Measured with all 27 rules on, the 2 that start off
 included (get-handler-writes is one of the four call-graph rules), on a 32-core machine, 16 threads:
 
@@ -93,8 +99,8 @@ included (get-handler-writes is one of the four call-graph rules), on a 32-core 
 | netbox | 1,298 | 123 s | 4.7 GB |
 | edx-platform | 4,459 | 251 s | 7.7 GB |
 
-With fewer threads a run takes longer: by default a run gets half the machine's cores, half its memory and 10
-minutes. So on a machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at the
+With fewer threads a run takes longer: by default a run gets half the machine's cores and half its memory, and
+5 minutes after an edit or 10 minutes in a scan. So on a machine with less than about 10 GB of memory a run over a mid-size app like netbox is stopped at the
 memory limit, and below about 16 GB a run over a large one like edx-platform; so is a run past its time limit. A
 stopped run reports each of its rules as not run (`budget-exceeded`, naming the
 setting to raise); other rules' results stand. To raise the limits, set `RERAIL_RR_MEMORY_MB`,
@@ -1124,8 +1130,8 @@ cannot tell a cached path from a querying one, so offloading is often unneeded t
 
 31 open-source Django apps, cloned shallow at these commits. The numbers below were measured with two exclusions the
 engine of the time needed, which it no longer does ([ENGINE-BUGS.md](ENGINE-BUGS.md), bugs 2 and 6): PostHog/posthog
-(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT, 29,885 Python files) was left out, as no run finished; with #878 and
-#882 the whole pack finishes on it in 100 minutes (1,264 findings, not read). In netbox-community/netbox,
+(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT, 29,885 Python files) was left out, as no run finished; with later engine
+fixes the whole pack finishes on it in 100 minutes (1,264 findings, not read). In netbox-community/netbox,
 `netbox/extras/data/un_locode.py` (6.2 MB, one tuple of about 111k string pairs, no Django code) was removed from the
 working tree; main runs the whole pack over netbox with it in 164 s.
 

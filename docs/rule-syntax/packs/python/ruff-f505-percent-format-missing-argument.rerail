@@ -13,5 +13,5 @@
 
 .violation F505(at: node) code "F505" "`%`-format string is missing argument(s) for placeholder(s)"
     suppress ruff "F505"
-F505(b) :- percent_fmt(b, _, r, v), pct_positional(v, 0), kind(r, "dictionary"), !open_dict(r), pct_key(v, x),
+F505(b) :- percent_fmt(b, _, r, _), pct_positional(b, 0), kind(r, "dictionary"), !open_dict(r), pct_key(b, x),
     !dict_str_key(r, x).

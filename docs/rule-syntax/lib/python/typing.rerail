@@ -121,10 +121,8 @@ tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !kind(x, "com
 // pyi_sym(e, q): e names the qualified name q through this file's imports, aliases, attribute chains and
 // definitions, or a builtin: python/names' sym_of without its step through other modules' re-exports.
 //   from compat import Literal; Literal       pyi_sym(<Literal>, "compat.Literal"), whatever compat imports
-// Ruff resolves a name in its own file (resolve_qualified_name), so the PYI rules read this, not sym_of. It keeps a
-// rule's program file-local: sym_of's re-exports (python/imports' resolve_export) read every module of the
-// repository, so a rule reading them is evaluated across files (PYI008 on Ruff's 1,820 fixture files: 41 s, and
-// 4.7 s with pyi_sym).
+// Ruff resolves a name in its own file (resolve_qualified_name), so the PYI rules read this, not sym_of, which follows
+// other modules' re-exports (the phase py_names).
 .decl pyi_sym(e: node, q: symbol)
 pyi_sym(n, q) :- qn(n, q).
 pyi_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
@@ -468,7 +466,7 @@ in_enum(a) :- nearest(a, c, scope), class_ancestor(c, q), split_dot(q, "enum", x
 enum_class("Enum"). enum_class("Flag"). enum_class("IntEnum"). enum_class("IntFlag"). enum_class("StrEnum").
 enum_class("ReprEnum"). enum_class("CheckEnum").
 // first_param(f, p, ann): p is f's first positional parameter (`self`, `cls`), with its annotation or unset.
-.decl first_param(f: node, p: node, ann: loc)
+.decl first_param(f: node, p: node, ann: node)
 first_param(f, p, a) :- kind(f, "function_definition"), i = min j : { sig_param(f, q, n, j, k, b, d), pos_kind(k) },
     sig_param(f, p, _, i, _, a, _).
 // typevar_name(e, x): e is the name x of a type variable: a TypeVar assigned in the file, or a PEP 695 type
@@ -483,7 +481,7 @@ typevar_name(e, x) :- kind(e, "identifier"), text(e, x), within(e, o), kind(o, "
     tparam_named(o, x, "typevar"), count : { within(e, g), within(g, o), kind(g, "function_definition") } = 0.
 // lit_key(m, k): a Literal member compared as Ruff's ComparableExpr does: by kind and value, so "a" and 'a' are
 // one member, and True and 1 are two. Other members compare by tree, so `{1, 3}` and `{1,3}` are one.
-.decl lit_key(m: node, k: symbol)
+.decl lit_key(m: node, k: number)
 lit_key(m, @tree_digest(m)) :- literal_leaf(_, m), !value(m, _).
 // alias_name(n, x): n declares the type alias x: the statement `x: TypeAlias = …` (n is the assignment), or
 // `type x = …` (n is the name).

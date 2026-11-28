@@ -24,8 +24,8 @@
 //     call_arg(c, a, i)        a is call (or `new`) c's i-th argument as written, from 0; comments are not arguments
 //     call_arg_count(c, k)     c has k arguments
 //   tokens
-//     token_text(n, s)         s is n's tokens joined by one space, comments left out: ESLint's equalTokens and
-//                              getTokens comparisons. Asked for the nodes of token_text_ask(n), which includers fill
+//     node_tokens_text(n, s)         s is n's tokens joined by one space, comments left out: ESLint's equalTokens and
+//                              getTokens comparisons. Asked for the nodes of node_tokens_text_ask(n), which includers fill
 //   this
 //     this_frame(r)            r is a region with its own `this`: a non-arrow function's code, a class field's value,
 //                              a static block, the program
@@ -34,8 +34,8 @@
 //   scopes
 //     escope_node(s)           s opens an eslint-scope scope (getScope's answer for the nodes inside it)
 //   text
-//     upper_first(s, t)        t is s with its first letter upper-cased (ASCII), for the s of upper_first_ask(s)
-//     capital(x)               identifier text x starts with an upper-case letter (ESLint's startsWithUpperCase)
+//     upper_first(n, s, t)     t is s with its first letter upper-cased (ASCII), for upper_first_ask(n, s)
+//     capital_id(n)            identifier n's text starts with an upper-case letter (ESLint's startsWithUpperCase)
 //   options
 //     limit(o, d, k)           numeric option k: option o if set, else option "option" (ESLint's bare-number form),
 //                              else default d; the rule states its option and default as a fact limit_rule(o, d)
@@ -113,28 +113,28 @@ call_arg_count(c, k) :- (kind(c, "call_expression") ; kind(c, "new_expression"))
 // arrow_op(f, m): where arrow function f's `=>` is, for a finding: the source line it is on (a finding is keyed by
 // its line). The tape keeps no `=>` (the kind implies it): it is in the source before the body, so its line is the
 // body's less the line breaks after it.
-.decl arrow_op(f: node, m: span)
+.decl arrow_op(f: node, m: line)
 arrow_op(f, m) :- kind(f, "arrow_function"), field(f, "body", b), structural_before(b, g), match("(?s).*=>.*", g),
-    w = @replace_all(g, "(?s)^.*=>", ""), line(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
-    src_line(d, l, m).
+    w = @replace_all(g, "(?s)^.*=>", ""), node_line_number(b, lb), l = lb - (strlen(w) - strlen(@replace_all(w, "\\n", ""))), node(d, f, _, _, _),
+    document_line(d, m), line_number(m, l).
 
 // ---- tokens --------------------------------------------------------------------------------------------------------
-// token_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
-// compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in token_text_ask,
+// node_tokens_text(n, s): `a  /* x */ + b` and `a+b` both give "a + b": comments and spacing drop out, as when ESLint
+// compares two nodes token by token. `[`${0} `]` and `[`${0}`]` differ. Asked only of the nodes in node_tokens_text_ask,
 // which the including library or rule fills: tokens are a walk per node, so only compared nodes take it.
-.decl token_text_ask(n: node) extensible
-.decl token_text(n: node, s: symbol)
+.decl node_tokens_text_ask(n: node) extensible
+.decl node_tokens_text(n: node, s: symbol)
 // The tape keeps no token its grammar implies, so the pieces are the stored leaves and the source between stored
 // children (spacing taken out), in source order: what the tape leaves out is in that source.
-token_text(n, s) :- token_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
+node_tokens_text(n, s) :- node_tokens_text_ask(n), s = join x by (p, q) sep " " : { tt_piece(n, p, q, x) }.
 .decl tt_part(n: node, p: node)  // p is n or a node inside it
-tt_part(n, n) :- token_text_ask(n).
-tt_part(n, p) :- token_text_ask(n), within(p, n).
+tt_part(n, n) :- node_tokens_text_ask(n).
+tt_part(n, p) :- node_tokens_text_ask(n), within(p, n).
 .decl tt_piece(n: node, p: number, q: number, x: symbol)
 // A stored child with no stored children of its own: an anonymous token, a leaf. Comments drop out.
 tt_piece(n, 2 * st, 0, x) :- tt_part(n, p), token(p, _, x, st, _), !tt_inner(p, st).
 // A node asked about that is itself a leaf (`1`, `x`) is its one piece; with none, any two leaves were equal.
-tt_piece(n, 2 * st, 0, x) :- token_text_ask(n), !token(n, _, _, _, _), text(n, x), node(_, n, _, st, _).
+tt_piece(n, 2 * st, 0, x) :- node_tokens_text_ask(n), !token(n, _, _, _, _), text(n, x), node(_, n, _, st, _).
 .decl tt_inner(p: node, st: number)  // p's child at st is a comment, or has stored children (it gives their pieces)
 tt_inner(p, st) :- tt_part(_, p), child(p, c, _), node(_, c, _, st, _), (comment(c, _) ; token(c, _, _, _, _)).
 // The source before each stored named child, and after the last one.
@@ -181,12 +181,13 @@ escope_node(v) :- (kind(f, "field_definition") ; kind(f, "public_field_definitio
 escope_body(b) :- field(s, "body", b), kind(s, k), (function_kind(k) ; k = "class_static_block").
 
 // ---- text ----------------------------------------------------------------------------------------------------------
-// upper_first(s, t): ESLint's upperCaseFirst, for ASCII words: "async method" gives "Async method". Core has
-// @lower and no @upper (proposed in NOTES), so the first letter goes through a table.
-.decl upper_first_ask(s: symbol) extensible
-.decl upper_first(s: symbol, t: symbol)
-upper_first(s, cat(u, substr(s, 1, strlen(s) - 1))) :- upper_first_ask(s), upper_letter(substr(s, 0, 1), u).
-upper_first(s, s) :- upper_first_ask(s), !upper_letter(substr(s, 0, 1), _).
+// upper_first(n, s, t): ESLint's upperCaseFirst, for ASCII words: "async method" gives "Async method". Core has
+// @lower and no @upper (proposed in NOTES), so the first letter goes through a table. The asker names its node n,
+// so each answer is made in the asker's file (decision 0677).
+.decl upper_first_ask(n: node, s: symbol) extensible
+.decl upper_first(n: node, s: symbol, t: symbol)
+upper_first(n, s, cat(u, substr(s, 1, strlen(s) - 1))) :- upper_first_ask(n, s), upper_letter(substr(s, 0, 1), u).
+upper_first(n, s, s) :- upper_first_ask(n, s), !upper_letter(substr(s, 0, 1), _).
 .decl upper_letter(l: symbol, u: symbol)
 upper_letter("a", "A"). upper_letter("b", "B"). upper_letter("c", "C"). upper_letter("d", "D").
 upper_letter("e", "E"). upper_letter("f", "F"). upper_letter("g", "G"). upper_letter("h", "H").
@@ -195,9 +196,10 @@ upper_letter("m", "M"). upper_letter("n", "N"). upper_letter("o", "O"). upper_le
 upper_letter("q", "Q"). upper_letter("r", "R"). upper_letter("s", "S"). upper_letter("t", "T").
 upper_letter("u", "U"). upper_letter("v", "V"). upper_letter("w", "W"). upper_letter("x", "X").
 upper_letter("y", "Y"). upper_letter("z", "Z").
-// capital(x): s[0] !== s[0].toLowerCase(), for identifier texts: Foo, Ärger, _x is not.
-.decl capital(x: symbol)
-capital(x) :- kind(n, "identifier"), text(n, x), c = @slice(x, 0, 1), c != @lower(c).
+// capital_id(n): identifier n's text s has s[0] !== s[0].toLowerCase(): Foo, Ärger, _x is not. A test of the node, in
+// its own file: a table of every file's capitalised texts was joined by text in the cross-file part (decision 0677).
+.decl capital_id(n: node)
+capital_id(n) :- kind(n, "identifier"), text(n, x), c = @slice(x, 0, 1), c != @lower(c).
 
 // ---- options -------------------------------------------------------------------------------------------------------
 // limit(o, d, k): ESLint's `{ max: 3 }`, or the bare number form (rerail's `option`), or the default d.

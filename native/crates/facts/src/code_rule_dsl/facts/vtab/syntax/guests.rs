@@ -175,7 +175,7 @@ impl GuestRows {
     fn host_nodes(&mut self, p: &Projected, docs: &dyn Hosts, host: u32, at: i64, place: &Placement) {
         let Some(host) = docs.host(host) else { return };
         // A node id's low bits are its local id only under preorder ids.
-        let Some(at) = host.local_of((at & 0xffff_ffff) as u32) else { return };
+        let Some(at) = host.local_of(rerail_blocks::located::Located(at).low()) else { return };
         if at >= host.len() {
             return;
         }

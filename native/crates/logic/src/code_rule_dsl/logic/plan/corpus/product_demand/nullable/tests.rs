@@ -8,12 +8,12 @@
             .decl field(p: node, name: symbol, c: node)
             .decl missing(p: node)
             .input field, missing
-            .decl parts(p: node, a: loc)
+            .decl parts(p: node, a: place)
             parts(p, a) :- field(p, "type", a).
             parts(p, a) :- missing(p), unset(a).
-            .decl signature(p: node, a: loc)
+            .decl signature(p: node, a: place)
             signature(p, a) :- parts(p, a).
-            .decl present(a: loc)
+            .decl present(a: place)
             .output present
             present(a) :- signature(_, a), !unset(a).
         "#,
@@ -33,10 +33,10 @@
             .decl field(p: node, name: symbol, c: node)
             .decl other(p: node, c: node)
             .input field, other
-            .decl parts(p: node, a: loc)
+            .decl parts(p: node, a: place)
             parts(p, a) :- field(p, "type", a).
             parts(p, a) :- other(p, a).
-            .decl present(a: loc)
+            .decl present(a: place)
             .output present
             present(a) :- parts(_, a), !unset(a).
         "#,

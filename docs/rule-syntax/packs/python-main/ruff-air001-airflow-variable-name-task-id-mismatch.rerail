@@ -11,7 +11,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes TV from other metavariables' text; its literals end each rule.
-.violation AIR001(at: loc, name: node, tv: symbol) "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
+.violation AIR001(at: node, name: node, tv: symbol) "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
     suppress noqa "AIR001"
 AIR001(NAME, n, TV) :- kind(n, "assignment"), child(p2, n, _),
     kind(p2, "expression_statement"),
@@ -74,7 +74,7 @@ air001_ops_callee(n) :- kind(n, "parenthesized_expression"), child(n, c7, _), ai
 
 // operator_call(n): the JSON util `operator-call`, used where the JSON says `matches: "operator-call"`
 //   TID: metavariable this relation binds for the calling rule
-.decl air001_operator_call(n: node, tid: loc)
+.decl air001_operator_call(n: node, tid: node)
 air001_operator_call(n, TID) :- kind(n, "call"), field(n, "function", c1), air001_ops_callee(c1),
     field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
     kind(c3, "keyword_argument"), air001_tok_has_6(c3), field(c3, "value", c12), air001_str_lit(c12),
@@ -84,7 +84,7 @@ air001_operator_call(n, TID) :- kind(n, "parenthesized_expression"), child(n, c1
 
 // target_name(n): the JSON util `target-name`, used where the JSON says `matches: "target-name"`
 //   NAME: metavariable this relation binds for the calling rule
-.decl air001_target_name(n: node, name: loc)
+.decl air001_target_name(n: node, name: node)
 air001_target_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
 air001_target_name(n, NAME) :- kind(n, "tuple_pattern"), !air001_tok_has_7(n), child(n, c9, _),
     air001_target_name(c9, NAME).

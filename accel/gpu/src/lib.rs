@@ -17,9 +17,8 @@ pub mod join_model;
 #[cfg(target_os = "macos")]
 mod forest {
     use super::{cost_model, join_model};
-    use rerail_accel::cost_model::Comparison;
     use rerail_accel::join_model::StepSample;
-    use rerail_accel::models::{LearnedCost, LearnedJoin, Models};
+    use rerail_accel::models::{Compared, LearnedCost, LearnedJoin, Models};
     use rerail_accel::score::Sample;
     use std::sync::Arc;
 
@@ -30,7 +29,7 @@ mod forest {
         fn cost_from_bytes(&self, bytes: &[u8]) -> Result<Arc<dyn LearnedCost>, String> {
             Ok(Arc::new(cost_model::Learned(cost_model::CostModel::from_bytes(bytes)?)))
         }
-        fn compare_cost(&self, samples: &[Sample], stop: &dyn Fn() -> bool) -> Result<Option<(Comparison, Arc<dyn LearnedCost>)>, String> {
+        fn compare_cost(&self, samples: &[Sample], stop: &dyn Fn() -> bool) -> Result<Option<Compared>, String> {
             let compared = cost_model::compare_unless(samples, &cost_model::CostConfig::default(), stop)?;
             Ok(compared.map(|(comparison, model)| (comparison, Arc::new(cost_model::Learned(model)) as Arc<dyn LearnedCost>)))
         }

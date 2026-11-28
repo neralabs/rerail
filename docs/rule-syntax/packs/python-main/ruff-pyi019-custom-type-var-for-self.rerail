@@ -91,7 +91,7 @@ pyi019_metaclass_base(n) :- pyi019_demand_metaclass_base(n), kind(n, "parenthesi
 
 // declares_d(n): the JSON util `declares-D`, used where the JSON says `matches: "declares-D"`
 //   D: metavariable this relation binds for the calling rule
-.decl pyi019_declares_d(n: node, d: loc)
+.decl pyi019_declares_d(n: node, d: node)
 pyi019_declares_d(n, D) :- child(n, c1, _), kind(c1, "identifier"), node(_, c1, _, _, _), D = c1.
 pyi019_declares_d(n, D) :- child(n, c2, _), kind(c2, "constrained_type"), child(c2, c3, _),
     kind(c3, "type"), count : { precedes(s4, c3), kind(s4, "type") } = 0,
@@ -100,7 +100,7 @@ pyi019_declares_d(n, D) :- kind(n, "type_default"), field(n, "name", c6), pyi019
 
 // own_type_param_n(n): the JSON util `own-type-param-N`, used where the JSON says `matches: "own-type-param-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_own_type_param_n(n: node, n_mv: loc)
+.decl pyi019_own_type_param_n(n: node, n_mv: node)
 pyi019_own_type_param_n(n, N) :- pyi019_demand_own_type_param_n(n, N), inside(n, p1, "parameters"),
     child(p2, p1, _), kind(p2, "function_definition"),
     field(p2, "type_parameters", c3), kind(c3, "type_parameter"), child(c3, c4, _),
@@ -108,7 +108,7 @@ pyi019_own_type_param_n(n, N) :- pyi019_demand_own_type_param_n(n, N), inside(n,
 
 // typevar_assigned_n(n): the JSON util `typevar-assigned-N`, used where the JSON says `matches: "typevar-assigned-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_typevar_assigned_n(n: node, n_mv: loc)
+.decl pyi019_typevar_assigned_n(n: node, n_mv: node)
 pyi019_typevar_assigned_n(n, N) :- pyi019_demand_typevar_assigned_n(n, N),
     within_stop(n, p1, "class_definition"), kind(p1, "class_definition"),
     ( pyi019_scope_typevar_n(p1, N)
@@ -124,7 +124,7 @@ pyi019_first_param(n) :- (kind(n, "typed_parameter") ; kind(n, "typed_default_pa
 
 // typevar_ident(n): the JSON util `typevar-ident`, used where the JSON says `matches: "typevar-ident"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_typevar_ident(n: node, n_mv: loc)
+.decl pyi019_typevar_ident(n: node, n_mv: node)
 pyi019_typevar_ident(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
     ( ref_site(n, b1), (st1 = b1 ; within(b1, st1)), kind(st1, "assignment"), count : { field(st1, "type", c1), kind(c1, "type") } = 0, field(st1, "right", c2), pyi019_typevar_rhs(c2), binding_value(b1, x1), pyi019_typevar_call(x1)
     ; pyi019_own_type_param_n(n, N)
@@ -133,27 +133,27 @@ pyi019_typevar_ident(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
 
 // typevar_ref(n): the JSON util `typevar-ref`, used where the JSON says `matches: "typevar-ref"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_typevar_ref(n: node, n_mv: loc)
+.decl pyi019_typevar_ref(n: node, n_mv: node)
 pyi019_typevar_ref(n, N) :- pyi019_typevar_ident(n, N).
 pyi019_typevar_ref(n, N) :- kind(n, "parenthesized_expression"), child(n, c1, _),
     pyi019_typevar_ref(c1, N).
 
 // typevar_named_n(n): the JSON util `typevar-named-N`, used where the JSON says `matches: "typevar-named-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_typevar_named_n(n: node, n_mv: loc)
+.decl pyi019_typevar_named_n(n: node, n_mv: node)
 pyi019_typevar_named_n(n, N) :- pyi019_demand_typevar_named_n(n, N), pyi019_own_type_param_n(n, N).
 pyi019_typevar_named_n(n, N) :- pyi019_demand_typevar_named_n(n, N), pyi019_typevar_assigned_n(n, N).
 
 // self_annotation(n): the JSON util `self-annotation`, used where the JSON says `matches: "self-annotation"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_self_annotation(n: node, n_mv: loc)
+.decl pyi019_self_annotation(n: node, n_mv: node)
 pyi019_self_annotation(n, N) :- pyi019_typevar_ref(n, N).
 pyi019_self_annotation(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), pyi019_alt_6(r1, N), pyi019_typevar_named_n(n, N).
 
 // cls_annotation(n): the JSON util `cls-annotation`, used where the JSON says `matches: "cls-annotation"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_cls_annotation(n: node, n_mv: loc)
+.decl pyi019_cls_annotation(n: node, n_mv: node)
 pyi019_cls_annotation(n, N) :- kind(n, "generic_type"), child(n, c1, _),
     kind(c1, "identifier"), global_ref(c1, "type"), child(n, c2, _),
     kind(c2, "type_parameter"), !pyi019_tok_has_1(c2), child(c2, c11, _), child(c11, c12, _),
@@ -191,21 +191,21 @@ pyi019_overload_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), chil
 
 // class_method(n): the JSON util `class-method`, used where the JSON says `matches: "class-method"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_class_method(n: node, n_mv: loc)
+.decl pyi019_class_method(n: node, n_mv: node)
 pyi019_class_method(n, N) :- (pyi019_class_fn(n) ; pyi019_implicit_class_method(n)),
     field(n, "parameters", c1), kind(c1, "parameters"), child(c1, c2, _),
     pyi019_first_param(c2), field(c2, "type", c3), child(c3, c4, _), pyi019_cls_annotation(c4, N).
 
 // instance_method(n): the JSON util `instance-method`, used where the JSON says `matches: "instance-method"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_instance_method(n: node, n_mv: loc)
+.decl pyi019_instance_method(n: node, n_mv: node)
 pyi019_instance_method(n, N) :- !pyi019_class_fn(n), !pyi019_implicit_class_method(n),
     field(n, "parameters", c1), kind(c1, "parameters"), child(c1, c2, _),
     pyi019_first_param(c2), field(c2, "type", c3), child(c3, c4, _), pyi019_self_annotation(c4, N).
 
 // binds_n(n): the JSON util `binds-N`, used where the JSON says `matches: "binds-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_binds_n(n: node, n_mv: loc)
+.decl pyi019_binds_n(n: node, n_mv: node)
 pyi019_binds_n(n, N) :- pyi019_demand_binds_n(n, N), kind(n, "expression_statement"),
     has(n, c1, "assignment"), field(c1, "left", c2), kind(c2, "identifier"), node(_, c2, _, _, _), B = c2,
     text(B, t3), text(N, t3), @doc(B) = @doc(N).
@@ -217,13 +217,13 @@ pyi019_binds_n(n, N) :- pyi019_demand_binds_n(n, N), kind(n, "decorated_definiti
 
 // scope_binds_n(n): the JSON util `scope-binds-N`, used where the JSON says `matches: "scope-binds-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_scope_binds_n(n: node, n_mv: loc)
+.decl pyi019_scope_binds_n(n: node, n_mv: node)
 pyi019_scope_binds_n(n, N) :- pyi019_demand_scope_binds_n(n, N), within_stop(c1, n, pyi019_stop_13),
     pyi019_binds_n(c1, N).
 
 // scope_typevar_n(n): the JSON util `scope-typevar-N`, used where the JSON says `matches: "scope-typevar-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_scope_typevar_n(n: node, n_mv: loc)
+.decl pyi019_scope_typevar_n(n: node, n_mv: node)
 pyi019_scope_typevar_n(n, N) :- pyi019_demand_scope_typevar_n(n, N), within_stop(c1, n, pyi019_stop_13),
     kind(c1, "expression_statement"), child(c1, c2, _), kind(c2, "assignment"),
     count : { field(c2, "type", c3), kind(c3, "type") } = 0, field(c2, "left", c4),
@@ -232,7 +232,7 @@ pyi019_scope_typevar_n(n, N) :- pyi019_demand_scope_typevar_n(n, N), within_stop
 
 // later_binds_n(n): the JSON util `later-binds-N`, used where the JSON says `matches: "later-binds-N"`
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_later_binds_n(n: node, n_mv: loc)
+.decl pyi019_later_binds_n(n: node, n_mv: node)
 pyi019_later_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N), pyi019_binds_n(n, N).
 pyi019_later_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N), !kind(n, "function_definition"),
     !kind(n, "class_definition"), !kind(n, "decorated_definition"),
@@ -240,7 +240,7 @@ pyi019_later_binds_n(n, N) :- pyi019_demand_later_binds_n(n, N), !kind(n, "funct
 
 // method(n): the JSON util `method`, used where the JSON says `matches: "method"`
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_method(n: node, n_mv: loc)
+.decl pyi019_method(n: node, n_mv: node)
 pyi019_method(n, N) :- kind(n, "function_definition"), within_stop(n, p1, pyi019_stop_14),
     kind(p1, "class_definition"),
     count : { field(p1, "superclasses", c2), child(c2, c3, _), pyi019_metaclass_base(c3) } = 0,
@@ -249,7 +249,7 @@ pyi019_method(n, N) :- kind(n, "function_definition"), within_stop(n, p1, pyi019
 // PYI019(n): findings from clauses `custom-type-var-for-self`, `custom-type-var-for-self-parenthesized-return`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI019(at: loc, r: node, n_mv: loc) "Replace the custom type variable `{n_mv}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n_mv}` here."
+.violation PYI019(at: match, r: node, n_mv: node) "Replace the custom type variable `{n_mv}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n_mv}` here."
     suppress noqa "PYI019"
 PYI019(R, n, N) :- kind(n, "function_definition"), pyi019_method(n, N),
     match("(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->(?:[^:\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])*?|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[^:]*?)[ \\t]*:(?s:.*)", n),
@@ -305,7 +305,7 @@ pyi019_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:__new__).*|(?:.*\\W)?(?:__init_subclass__).*|(?:.*\\W)?(?:__class_getitem__).*)$", g3).
 
 // demand_typevar_named_n: the rows of typevar_named_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_typevar_named_n(n: node, n_mv: loc)
+.decl pyi019_demand_typevar_named_n(n: node, n_mv: node)
 pyi019_demand_typevar_named_n(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), pyi019_alt_6(r1, N).
 pyi019_demand_typevar_named_n(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
@@ -314,16 +314,16 @@ pyi019_demand_typevar_named_n(n, N) :- (kind(n, "string") ; kind(n, "concatenate
     child(c14, c25, _), kind(c25, "identifier"), N = c25, pyi019_tok_follows_3(c25).
 
 // demand_own_type_param_n: the rows of own_type_param_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_own_type_param_n(n: node, n_mv: loc)
+.decl pyi019_demand_own_type_param_n(n: node, n_mv: node)
 pyi019_demand_own_type_param_n(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
 pyi019_demand_own_type_param_n(n, N) :- pyi019_demand_typevar_named_n(n, N).
 
 // demand_typevar_assigned_n: the rows of typevar_assigned_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_typevar_assigned_n(n: node, n_mv: loc)
+.decl pyi019_demand_typevar_assigned_n(n: node, n_mv: node)
 pyi019_demand_typevar_assigned_n(n, N) :- pyi019_demand_typevar_named_n(n, N).
 
 // demand_scope_typevar_n: the rows of scope_typevar_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_scope_typevar_n(n: node, n_mv: loc)
+.decl pyi019_demand_scope_typevar_n(n: node, n_mv: node)
 pyi019_demand_scope_typevar_n(p1, N) :- pyi019_demand_typevar_assigned_n(n, N),
     within_stop(n, p1, "class_definition"), kind(p1, "class_definition").
 pyi019_demand_scope_typevar_n(p2, N) :- pyi019_demand_typevar_assigned_n(n, N),
@@ -331,32 +331,32 @@ pyi019_demand_scope_typevar_n(p2, N) :- pyi019_demand_typevar_assigned_n(n, N),
     within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "module")).
 
 // demand_stop_1: the rows of stop_1 its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_stop_1(n: node, n_mv: loc)
+.decl pyi019_demand_stop_1(n: node, n_mv: node)
 pyi019_demand_stop_1(m_s1, N) :- pyi019_demand_typevar_assigned_n(n, N),
     within_stop(n, p1, "class_definition"), kind(p1, "class_definition"),
     within(p1, p2), (kind(p2, "function_definition") ; kind(p2, "module")),
     within(p1, m_s1), within(m_s1, p2).
 
 // demand_alt_11: the rows of alt_11 its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_alt_11(n: node, n_mv: loc)
+.decl pyi019_demand_alt_11(n: node, n_mv: node)
 pyi019_demand_alt_11(c1, N) :- pyi019_demand_scope_typevar_n(n, N), within_stop(c1, n, pyi019_stop_13),
     kind(c1, "expression_statement"), child(c1, c2, _), kind(c2, "assignment"),
     field(c2, "left", c4), kind(c4, "identifier"), node(_, c4, _, _, _), L = c4, field(c2, "right", c5),
     pyi019_typevar_rhs(c5), text(L, t6), text(N, t6), @doc(L) = @doc(N).
 
 // demand_scope_binds_n: the rows of scope_binds_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_scope_binds_n(n: node, n_mv: loc)
+.decl pyi019_demand_scope_binds_n(n: node, n_mv: node)
 pyi019_demand_scope_binds_n(n, N) :- pyi019_demand_stop_1(n, N),
     (kind(n, "function_definition") ; kind(n, "module")).
 
 // demand_later_binds_n: the rows of later_binds_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_later_binds_n(n: node, n_mv: loc)
+.decl pyi019_demand_later_binds_n(n: node, n_mv: node)
 pyi019_demand_later_binds_n(s1, N) :- pyi019_demand_alt_11(n, N), precedes(n, s1).
 pyi019_demand_later_binds_n(s3, N) :- pyi019_demand_alt_11(n, N), within_stop(n, p2, pyi019_stop_10),
     precedes(p2, s3).
 
 // demand_binds_n: the rows of binds_n its callers ask for (the metavariable columns they pass in)
-.decl pyi019_demand_binds_n(n: node, n_mv: loc)
+.decl pyi019_demand_binds_n(n: node, n_mv: node)
 pyi019_demand_binds_n(c8, N) :- pyi019_demand_binds_n(n, N), kind(n, "decorated_definition"),
     field(n, "definition", c8).
 pyi019_demand_binds_n(c1, N) :- pyi019_demand_scope_binds_n(n, N), within_stop(c1, n, pyi019_stop_13).
@@ -390,7 +390,7 @@ pyi019_stop_14("function_definition"). pyi019_stop_14("class_definition").
 
 // stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_stop_1(n: node, n_mv: loc)
+.decl pyi019_stop_1(n: node, n_mv: node)
 pyi019_stop_1(n, N) :- pyi019_demand_stop_1(n, N),
     (kind(n, "function_definition") ; kind(n, "module")), pyi019_scope_binds_n(n, N).
 
@@ -401,14 +401,14 @@ pyi019_alt_4(n) :- node(_, n, _, _, _), glob("[(),]", n).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable this relation binds for the calling rule
-.decl pyi019_alt_6(n: node, n_mv: loc)
+.decl pyi019_alt_6(n: node, n_mv: node)
 pyi019_alt_6(n, N) :- child(n, c1, _), kind(c1, "identifier"), N = c1.
 pyi019_alt_6(n, N) :- child(n, c2, _), kind(c2, "parenthesized_expression"), child(c2, c3, _),
     kind(c3, "identifier"), N = c3.
 
 // alt_11(n): the JSON `any`: n matches if any one of these rules does
 //   N: metavariable of the calling rule, passed in (bound by the caller)
-.decl pyi019_alt_11(n: node, n_mv: loc)
+.decl pyi019_alt_11(n: node, n_mv: node)
 pyi019_alt_11(n, N) :- pyi019_demand_alt_11(n, N), precedes(n, s1), pyi019_later_binds_n(s1, N).
 pyi019_alt_11(n, N) :- pyi019_demand_alt_11(n, N), within_stop(n, p2, pyi019_stop_10),
     !kind(p2, "function_definition"), !kind(p2, "class_definition"),

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// `native/`.
 fn native() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..")
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
         .canonical()
         .unwrap()
 }

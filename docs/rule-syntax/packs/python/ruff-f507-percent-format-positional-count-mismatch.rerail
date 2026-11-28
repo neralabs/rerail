@@ -24,6 +24,6 @@ F507(b) :- positional_fmt(b, r, n), !kind(r, "tuple"), known_non_tuple(r), n != 
 F507(b) :- positional_fmt(b, r, 0), !kind(r, "tuple").
 // positional_fmt(b, r, n): b is `s % r` and s's n placeholders are all positional.
 .decl positional_fmt(b: node, r: node, n: number)
-positional_fmt(b, r, n) :- percent_fmt(b, _, r, v), pct_positional(v, n), !pct_key(v, _).
+positional_fmt(b, r, n) :- percent_fmt(b, _, r, _), pct_positional(b, n), !pct_key(b, _).
 .decl starred(t: node)
 starred(t) :- kind(t, "tuple"), child(t, s, _), kind(s, "list_splat").

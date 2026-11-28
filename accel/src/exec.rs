@@ -87,7 +87,35 @@ fn stack_bounds() -> Option<(usize, usize)> {
     (top > size && size > 0).then(|| (top - size, top))
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Linux's: the thread's stack attributes (glibc's and musl's `pthread_getattr_np`), the main thread's included. Without
+/// them a help on Linux had no bound, and nested helps overflowed a 2 MiB thread of rayon's global pool (237 pack
+/// programs' parses, each waiting in a store's settle and running the next).
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn stack_bounds() -> Option<(usize, usize)> {
+    // SAFETY: this thread's own attributes, read into a value we own and destroyed after.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            return None;
+        }
+        let (mut low, mut size) = (std::ptr::null_mut::<libc::c_void>(), 0usize);
+        let got = libc::pthread_attr_getstack(&attr, &mut low, &mut size);
+        libc::pthread_attr_destroy(&mut attr);
+        let low = low as usize;
+        (got == 0 && size > 0).then(|| (low, low + size))
+    }
+}
+
+/// Windows': the thread's stack limits as the system reserved them.
+#[cfg(windows)]
+fn stack_bounds() -> Option<(usize, usize)> {
+    let (mut low, mut high) = (0usize, 0usize);
+    // SAFETY: two out-parameters of this thread's own limits.
+    unsafe { windows_sys::Win32::System::Threading::GetCurrentThreadStackLimits(&mut low, &mut high) };
+    (high > low).then_some((low, high))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android", windows)))]
 fn stack_bounds() -> Option<(usize, usize)> {
     None
 }
@@ -181,8 +209,14 @@ pub fn set_job_scope(enter: JobScopeEnter, exit: JobScopeExit) {
 }
 
 /// Runs `f` in a job scope of its own: the scope set by [`set_job_scope`] is entered before it and exited after it,
-/// also when it panics. Every job of the pool runs in one: [`as_job`]'s and a stream's ([`crate::stream`]).
+/// also when it panics. Every job of the pool runs in one: [`as_job`]'s and a stream's ([`crate::stream`]). It runs
+/// outside the launch budget's evaluation of the job it started in the middle of (`gpu::launch::apart`): its device
+/// work is charged to its own.
 pub fn in_job_scope<R>(f: impl FnOnce() -> R) -> R {
+    crate::gpu::launch::apart(|| job_scoped(f))
+}
+
+fn job_scoped<R>(f: impl FnOnce() -> R) -> R {
     let Some(&(enter, exit)) = JOB_SCOPE.get() else { return f() };
     struct Exit(Option<Box<dyn std::any::Any>>, JobScopeExit);
     impl Drop for Exit {
@@ -410,9 +444,11 @@ pub fn helped() -> f64 {
     HELPED.with(std::cell::Cell::get)
 }
 
-/// Whether this thread is one of the pool's.
+/// Whether this thread is one of the engine's pools' (`rerail_context::on_engine_pool`): only there does a wait run
+/// the pool's other jobs. A thread of a caller's own pool (rayon's global one) runs none of them in an engine's wait:
+/// the jobs it waits for are on the machine's cores (`cores_scope`), and its own pool's are the caller's.
 pub fn on_pool() -> bool {
-    rayon::current_thread_index().is_some()
+    rerail_context::on_engine_pool()
 }
 
 /// Waits until `poll` gives a value, running the pool's other jobs meanwhile when this is one of its threads, so a
@@ -973,7 +1009,7 @@ fn lane_host<R>(lane: Lane, f: impl FnOnce() -> R) -> R {
     // SAFETY: see `Handed`: the caller is blocked for as long as the other thread holds it.
     unsafe impl<T> Send for Handed<T> {}
     let pools = pools();
-    match pools.lanes.get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")).start_handler(|_| rerail_context::engine_thread()).build().ok()) {
+    match pools.lanes.get_or_init(|| rerail_context::engine_pool(rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(|i| format!("rerail-lane-host {i}")), |_| rerail_context::engine_thread()).build().ok()) {
         Some(pool) => {
             let f = Handed(f);
             let run = rerail_context::job_run();
@@ -1016,7 +1052,7 @@ pub fn lane_spawn<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> 
     let claimed = (0..SLOTS).find(|&i| pools.busy[i].compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed).is_ok());
     let pool = claimed.and_then(|i| {
         pools.slots[i]
-            .get_or_init(|| rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")).build().ok())
+            .get_or_init(|| rerail_context::engine_pool(rayon::ThreadPoolBuilder::new().num_threads(threads().div_ceil(2)).thread_name(move |t| format!("rerail-lane-slot {i}.{t}")), |_| ()).build().ok())
             .as_ref()
             .map(|pool| (i, pool))
     });

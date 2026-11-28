@@ -29,7 +29,7 @@ pyi046_protocol_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI046(at: node, name: loc) "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+.violation PYI046(at: node, name: node) "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI046"
 PYI046_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
     bind_name(n, b1), main_form(b1, "definition"), (st2 = b1 ; within(b1, st2)),
@@ -41,7 +41,7 @@ PYI046_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, pre
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rerail form yet.
-.violation PYI046_unused_private_protocol_stub(at: node, name: loc) code "PYI046" "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
+.violation PYI046_unused_private_protocol_stub(at: node, name: node) code "PYI046" "Nothing in this file uses the private protocol `{name}`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does."
     suppress noqa "PYI046"
 PYI046_unused_private_protocol_stub_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     prefix("_", n), bind_name(n, b1), main_form(b1, "definition"),
@@ -50,9 +50,9 @@ PYI046_unused_private_protocol_stub_raw(n, NAME) :- kind(n, "identifier"), node(
     pyi046_protocol_base(c4), site_latest(b1), !site_used(b1).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl PYI046_raw(at: node, name: loc)
+.decl PYI046_raw(at: node, name: node)
 PYI046(v0, v1) :- PYI046_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI046_unused_private_protocol_stub_raw(at: node, name: loc)
+.decl PYI046_unused_private_protocol_stub_raw(at: node, name: node)
 PYI046_unused_private_protocol_stub(v0, v1) :- PYI046_unused_private_protocol_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

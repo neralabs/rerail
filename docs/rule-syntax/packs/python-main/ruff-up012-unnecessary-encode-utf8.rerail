@@ -30,7 +30,7 @@ up012_string_only_escape(n) :- kind(n, "parenthesized_expression"), child(n, c3,
 
 // utf8_name(n): the JSON util `utf8-name`, used where the JSON says `matches: "utf8-name"`
 .decl up012_utf8_name(n: node)
-up012_utf8_name(n) :- up012_plain_text(n), value(n, v1), value_type(v1, "str"),
+up012_utf8_name(n) :- up012_plain_text(n), value(n, v1), value_type_of(n, "str"),
     iglob("{utf-8,utf8,utf_8,u8,utf,cp65001}", v1).
 
 // arg_node(n): the JSON util `arg-node`, used where the JSON says `matches: "arg-node"`
@@ -84,7 +84,7 @@ up012_default_encode(n) :- kind(n, "parenthesized_expression"), child(n, c11, _)
 // UP012(n, detail): findings from clauses `bytes-literal`, `default-encoding-argument`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP012(at: loc, call: node, detail: symbol) "{detail}."
+.violation UP012(at: node, call: node, detail: symbol) "{detail}."
     suppress noqa "UP012"
 UP012(CALL, n, "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes") :- kind(n, "call"),
     node(_, n, _, _, _), CALL = n, up012_bytes_call(n).

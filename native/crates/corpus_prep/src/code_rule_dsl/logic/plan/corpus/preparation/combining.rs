@@ -98,10 +98,10 @@ fn place_of(f: Fields<'_>, locations: &BTreeMap<String, Vector<usize>>, derived:
     if derived {
         let cols = locations.get(rel).cloned().unwrap_or_default();
         let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(c, ty)).collect::<Vector<_>>();
-        (of(&["int", "number"]), of(&["node"]), of(&["loc", "span"]))
+        (of(&["int", "number"]), of(&["node"]), of(&["place"]))
     } else {
         let of = |ty: &[&str]| (0..width).filter(|&c| typed(c, ty)).collect::<rerail_blocks::vector::Vector<_>>();
-        (crate::code_rule_dsl::typing::file_local::document_column(rel).into_iter().collect(), of(&["node"]), of(&["loc", "span"]))
+        (crate::code_rule_dsl::typing::file_local::document_column(rel).into_iter().collect(), of(&["node"]), of(&["place"]))
     }
 }
 

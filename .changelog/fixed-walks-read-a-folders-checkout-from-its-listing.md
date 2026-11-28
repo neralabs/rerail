@@ -1,0 +1,1 @@
+In a checkout of many folders, a walk reads from each folder's listing whether it holds a `.git`. A folder whose listing names none costs the daemon's thread one `lstat`, of its `.gitignore`, where it cost two; only one that holds a `.git`, or that Git ignores, is looked up, so hooks wait less behind the walks.

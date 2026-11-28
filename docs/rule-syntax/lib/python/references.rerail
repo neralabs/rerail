@@ -9,6 +9,12 @@
 //   - Across files: each reference's name linked to the definitions it names, through imports, re-exports,
 //     packages, the bases breadth first, declared parameter and field types.
 //
+// No node crosses into the cross-file part (decision 0677). Each definition has a symbol (`rf_sym`: its file's
+// path, its qualified name, its place among the file's definitions of that name), and the cross-file part relates
+// names and symbols alone: the per-file part hands it each reference by its definition's symbol (`rf_ref_sym`) and
+// each name's definitions by their symbols (`rf_named_sym`). The graph is by symbol (core.rerail's reference_edge,
+// reference_open), and a file's rules place a symbol on its own definition (reference_def).
+//
 // A reference belongs to the outermost function whose body holds it: a nested function's references are its
 // enclosing function's. In a method, `self.m` is the class's `m` (its bases breadth first); a bare name is the
 // class's own member first, then the module's.
@@ -34,49 +40,18 @@
 //   references_field(rename, by)              its constructor fields: field x is also @rx_replace(x, rename, by)'s
 //                                             `__init__` parameter
 #include "python/names.rerail"
-
-.decl references_given(k: number)
-.decl references_include(g: symbol)
-.decl references_exclude(g: symbol)
-.decl references_sibling(i: number, decorator: symbol, name: symbol, rename: symbol, by: symbol)
-.decl references_field(rename: symbol, by: symbol)
+#include "python/references-defs.rerail"
 
 // ==== per file ====================================================================================================
 
 // ---- definitions --------------------------------------------------------------------------------------------------
-// rf_dc: the kinds that make a definition.
-.decl rf_dc(kind: symbol)
-rf_dc("function_definition"). rf_dc("class_definition").
-// rf_def(f, x): f is a definition named x.
-.decl rf_def(f: node, x: symbol)
-rf_def(f, x) :- kind(f, k), rf_dc(k), field(f, "name", n), text(n, x).
-// rf_module(d, m): the module W names document d by: its package module, from the corpus's `__init__.py` files; for a
-// file outside every package, its stem (Ruff's, dots and all), which no relative import resolves from.
-.decl rf_module(d: number, m: symbol)
-rf_module(d, m) :- rf_pydoc(d, p), !unpackaged(d), doc(d, p, m).
-rf_module(d, m) :- rf_pydoc(d, p), unpackaged(d), m = @rx_replace(@rx_replace(p, "^.*/", ""), "[.][^.]*$", ""), m != "".
-// rf_pydoc(d, p): document d, at path p, is one of the graph's Python files: every one, or those the setting's scope
-// holds.
-.decl rf_pydoc(d: number, p: symbol)
-rf_pydoc(d, p) :- doc(d, p, _), @rx_matches(p, "[.]pyi?$") = 1, !references_given(1).
-rf_pydoc(d, p) :- doc(d, p, _), @rx_matches(p, "[.]pyi?$") = 1, references_given(1), references_include(g), glob(g, p),
-    !rf_scope_out(d).
-.decl rf_scope_out(d: number)
-rf_scope_out(d) :- doc(d, p, _), references_exclude(g), glob(g, p).
+// Each definition, its module, qualified name and symbol: python/references-defs.rerail, which W's graph
+// (python/references_w.rerail) reads too.
+//
 // rf_doc_name(d, n): a name of document d's module in the name tables: its module, and its path's.
 .decl rf_doc_name(d: number, n: symbol)
 rf_doc_name(d, m) :- rf_module(d, m).
 rf_doc_name(d, a) :- rf_path_module(d, a).
-// rf_qn(f, q): f's qualified name: the module, then each enclosing class, and `f.<locals>` for each enclosing
-// function. `class C: def m` in pkg.mod is pkg.mod.C.m; a function g in function f is pkg.mod.f.<locals>.g.
-.decl rf_qn(f: node, q: symbol)
-rf_qn(f, q) :- rf_def(f, x), !nearest(f, _, rf_dc), docof(f, d), rf_module(d, m), q = @dot(m, x).
-rf_qn(f, q) :- rf_def(f, x), nearest(f, s, rf_dc), kind(s, "class_definition"), rf_qn(s, p), q = @concat(p, ".", x).
-rf_qn(f, q) :- rf_def(f, x), nearest(f, s, rf_dc), kind(s, "function_definition"), rf_qn(s, p),
-    q = @concat(p, ".<locals>.", x).
-// rf_start(n, s): node n starts at byte s.
-.decl rf_start(n: node, s: number)
-rf_start(n, s) :- node(_, n, _, s, _).
 .decl rf_is_class(f: node)
 rf_is_class(f) :- rf_def(f, _), kind(f, "class_definition").
 .decl rf_is_function(f: node)
@@ -131,6 +106,9 @@ rf_expr(n, n, t) :- rf_site(n), !kind(n, "call"), rf_owner(n, t).
 // ---- a name read: what it is bound to ----------------------------------------------------------------------------
 // rf_bind(i, x, s): name read i, of x, lands on scope s (python/names' lookup).
 .decl rf_bind(i: node, x: symbol, s: node)
+// One binding scope a read: its lookup's (`look`, keyed by its read) or, apart by `!rf_forward`, the module it
+// forwards to (its document's one module). Declared (decision 0361); the run checks it.
+.layout rf_bind key(i)
 rf_bind(i, x, s) :- rf_head(i), look(i, x, s), !rf_forward(i, _, _).
 rf_bind(i, x, m) :- rf_forward(i, x, m).
 // rf_forward(i, x, m): PEP 563. Under `from __future__ import annotations`, and in a stub, a name an annotation
@@ -374,6 +352,15 @@ rf_param_splat(p) :- field(f, "parameters", ps), child(ps, p, i), child(ps, s, j
 rf_is_param_head(o) :- rf_param_site(o, _).
 // Anything else: what o names, and f in it.
 rf_ref(t, "name", q, "", "") :- rf_plain_attr(_, t, o, f), !rf_is_param_head(o), rf_names(o, qo), q = @concat(qo, ".", f).
+// The references as the cross-file part reads them: by their definition's symbol, never its node (decision 0677).
+// rf_ref_sym(d, s, form, a, b, c): rf_ref's row of the definition of symbol s, in document d: its rows name their
+// document, so each file makes its own (decision 0652).
+.decl rf_ref_sym(d: number, s: symbol, form: symbol, a: symbol, b: symbol, c: symbol)
+rf_ref_sym(d, s, form, a, b, c) :- rf_ref(t, form, a, b, c), rf_sym(t, s), docof(t, d).
+// rf_unq_sym(s, c, x, q, m): an "unq" row of rf_ref's with the bare name it falls back to (rf_unq_bare's module
+// m): one relation, so the cross-file part joins no two of a definition's rows by its symbol.
+.decl rf_unq_sym(s: symbol, c: symbol, x: symbol, q: symbol, m: symbol)
+rf_unq_sym(s, c, x, q, m) :- rf_ref(t, "unq", c, x, q), rf_unq_bare(t, c, x, m), rf_sym(t, s).
 
 // ---- what the file binds for other files ---------------------------------------------------------------------------
 // rf_alias(k, q): the name k (with W's markers) stands for q. Keyed by the module's names.
@@ -427,6 +414,14 @@ rf_base(c, i, short, m) :- kind(k, "class_definition"), field(k, "superclasses",
 .decl rf_named_def(q: symbol, f: node)
 rf_named_def(q, f) :- rf_qn(f, q), !rf_shadowed(f).
 rf_named_def(a, f) :- rf_qn(f, q), !rf_shadowed(f), docof(f, d), rf_spelled(d, q, a).
+// The same by the definitions' symbols, as the cross-file part reads them (decision 0677): every definition q names
+// (rf_named_sym), its functions (rf_named_fn), and each class's own qualified name (rf_class_own).
+.decl rf_named_sym(q: symbol, s: symbol)
+rf_named_sym(q, s) :- rf_named_def(q, f), rf_sym(f, s).
+.decl rf_named_fn(q: symbol, s: symbol)
+rf_named_fn(q, s) :- rf_named_def(q, f), rf_is_function(f), rf_sym(f, s).
+.decl rf_class_own(c: symbol, k: symbol)
+rf_class_own(c, k) :- rf_named_def(c, f), rf_is_class(f), rf_qn(f, k).
 // rf_path_module(d, a): the module document d's path gives it, where that is not its module.
 .decl rf_path_module(d: number, a: symbol)
 rf_path_module(d, a) :- rf_pydoc(d, p), rf_module(d, m),
@@ -469,10 +464,10 @@ rf_by_import(m, x, b) :- rf_imported(m, x, b), rf_class_name(b), !rf_nonclass_na
 .decl rf_by_class(m: symbol, x: symbol, b: symbol)
 rf_by_class(m, x, b) :- rf_class_named(m, x, b), rf_class_name(b), !rf_nonclass_name(b).
 .decl rf_global_class(x: symbol, b: symbol)
-rf_global_class(x, b) :- rf_named_class(f, x), rf_qn(f, b), k = count : { rf_named_class(g, x) }, k = 1.
-// rf_named_class(f, x): f is a class of the graph's files, named x.
-.decl rf_named_class(f: node, x: symbol)
-rf_named_class(f, x) :- rf_def(f, x), rf_is_class(f), rf_qn(f, _).
+rf_global_class(x, b) :- rf_named_class(x, b, _), k = count : { rf_named_class(x, _, _) }, k = 1.
+// rf_named_class(x, b, s): a class of the graph's files, named x, qualified name b, symbol s.
+.decl rf_named_class(x: symbol, b: symbol, s: symbol)
+rf_named_class(x, b, s) :- rf_def(f, x), rf_is_class(f), rf_qn(f, b), rf_sym(f, s).
 // The base is named as written (an import may spell it by the file's path); W keys a class by its definition's own
 // name, so rf_base_class holds that one.
 .decl rf_base_spelled(c: symbol, i: number, b: symbol)
@@ -480,7 +475,7 @@ rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), rf_by_import(m, x, b).
 rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), rf_by_class(m, x, b).
 rf_base_spelled(c, i, b) :- rf_base(c, i, x, m), !rf_by_import(m, x, _), !rf_by_class(m, x, _), rf_global_class(x, b).
 .decl rf_base_class(c: symbol, i: number, b: symbol)
-rf_base_class(c, i, q) :- rf_base_spelled(c, i, b), rf_named_def(b, f), rf_is_class(f), rf_qn(f, q).
+rf_base_class(c, i, q) :- rf_base_spelled(c, i, b), rf_class_own(b, q).
 // rf_order(c, b, route): b is in c's breadth-first order of bases, at the least route (the bases' slots, a level at a
 // time): breadth first, a class visited once, is the shortlex least route.
 .lattice rf_shortlex<symbol> { Lub -> @shortlex_min }
@@ -491,7 +486,7 @@ rf_order(c, b, r) :- rf_order(c, x, r0), rf_base_class(x, i, b), r = @concat(r0,
 .decl rf_method_at(c: symbol, f: symbol, route: symbol)
 rf_method_at(c, f, r) :- rf_order(c, b, r), rf_member_fn(b, f).
 .decl rf_member_fn(b: symbol, f: symbol)
-rf_member_fn(b, f) :- rf_named_def(q, d), rf_is_function(d), split_dot(q, b, f), rf_class_name(b).
+rf_member_fn(b, f) :- rf_named_fn(q, _), split_dot(q, b, f), rf_class_name(b).
 // The least route is the shortlex least (a `min` over symbols would order them by their ids, not their text).
 .decl rf_method_first(c: symbol, f: symbol, route: symbol)
 rf_method_first(c, f, r) :- rf_method_at(c, f, r), !rf_method_later(c, f, r).
@@ -499,9 +494,9 @@ rf_method_first(c, f, r) :- rf_method_at(c, f, r), !rf_method_later(c, f, r).
 // A later route: longer than another, or as long and greater.
 rf_method_later(c, f, r) :- rf_method_at(c, f, r), rf_method_at(c, f, s), @strlen(s) < @strlen(r).
 rf_method_later(c, f, r) :- rf_method_at(c, f, r), rf_method_at(c, f, s), @strlen(s) = @strlen(r), s < r.
-// rf_method(c, f, d): c's f, as its order gives it, is definition d.
-.decl rf_method(c: symbol, f: symbol, d: node)
-rf_method(c, f, d) :- rf_method_first(c, f, r), rf_order(c, b, r), rf_named_def(q, d), rf_is_function(d), q = @concat(b, ".", f).
+// rf_method(c, f, d): c's f, as its order gives it, is definition d (its symbol).
+.decl rf_method(c: symbol, f: symbol, d: symbol)
+rf_method(c, f, d) :- rf_method_first(c, f, r), rf_order(c, b, r), rf_named_fn(q, d), q = @concat(b, ".", f).
 // rf_super_method(c, f, d): the same past c itself.
 .decl rf_super_at(c: symbol, f: symbol, route: symbol)
 rf_super_at(c, f, r) :- rf_method_at(c, f, r), r != "".
@@ -510,24 +505,23 @@ rf_super_first(c, f, r) :- rf_super_at(c, f, r), !rf_super_later(c, f, r).
 .decl rf_super_later(c: symbol, f: symbol, route: symbol)
 rf_super_later(c, f, r) :- rf_super_at(c, f, r), rf_super_at(c, f, s), @strlen(s) < @strlen(r).
 rf_super_later(c, f, r) :- rf_super_at(c, f, r), rf_super_at(c, f, s), @strlen(s) = @strlen(r), s < r.
-.decl rf_super_method(c: symbol, f: symbol, d: node)
-rf_super_method(c, f, d) :- rf_super_first(c, f, r), rf_order(c, b, r), rf_named_def(q, d),
-    rf_is_function(d), q = @concat(b, ".", f).
+.decl rf_super_method(c: symbol, f: symbol, d: symbol)
+rf_super_method(c, f, d) :- rf_super_first(c, f, r), rf_order(c, b, r), rf_named_fn(q, d), q = @concat(b, ".", f).
 
 // ---- names to definitions ------------------------------------------------------------------------------------------
 // Every test below that picks one way over another reads the files' own relations, never a link: the recursion
 // through links (an alias's target linked in turn) is positive.
 // rf_want(q, h): a name some reference links, h aliases in. As W's, a chain of aliases ends after 16.
 .decl rf_want(q: symbol, h: number)
-rf_want(q, 0) :- rf_ref(_, "name", q, _, _).
-rf_want(q, 0) :- rf_ref(_, "bare", _, _, q), q != "".
-rf_want(q, 0) :- rf_ref(_, "unq", _, _, q), q != "".
-rf_want(q, 0) :- rf_sibling(_, q).
+rf_want(q, 0) :- rf_ref_sym(_, _, "name", q, _, _).
+rf_want(q, 0) :- rf_ref_sym(_, _, "bare", _, _, q), q != "".
+rf_want(q, 0) :- rf_ref_sym(_, _, "unq", _, _, q), q != "".
+rf_want(q, 0) :- rf_sib_sym(_, q).
 rf_want(t, h + 1) :- rf_link_via(q, t, h), h < 16.
-// rf_link(q, d): name q links to definition d.
-.decl rf_link(q: symbol, d: node)
+// rf_link(q, d): name q links to definition d (its symbol).
+.decl rf_link(q: symbol, d: symbol)
 // What the name itself names.
-rf_link(q, d) :- rf_want(q, _), rf_named_def(q, d).
+rf_link(q, d) :- rf_want(q, _), rf_named_sym(q, d).
 .decl rf_any_named(q: symbol)
 rf_any_named(q) :- rf_named_def(q, _).
 // Else the module's import of the name's last part.
@@ -576,8 +570,6 @@ rf_only_classes(c) :- rf_class_name(c), !rf_nonclass_name(c).
 // The class's order is keyed by its own name (rf_base_class): a name spelling it by its file's path reads that one's.
 rf_link(q, d) :- rf_hit(q, c, f, _), !rf_aliased(c), rf_only_classes(c), @instr(f, ".") = 0, rf_class_own(c, k),
     rf_method(k, f, d).
-.decl rf_class_own(c: symbol, k: symbol)
-rf_class_own(c, k) :- rf_named_def(c, f), rf_is_class(f), rf_qn(f, k).
 .decl rf_class_field(q: symbol, c: symbol, x: symbol, f: symbol)
 rf_class_field(q, k, x, f) :- rf_hit(q, c, r, _), !rf_aliased(c), rf_only_classes(c), split_dot(r, x, f), @instr(x, ".") = 0,
     rf_class_own(c, k).
@@ -591,47 +583,46 @@ rf_link_via(q, t, h) :- rf_renamed(q, t, h).
 rf_link(q, d) :- rf_link_via(q, t, _), rf_link(t, d).
 
 // ---- each reference's definitions ----------------------------------------------------------------------------------
-// rf_target(t, d, via): t's body refers to d.
-.decl rf_target(t: node, d: node, via: symbol)
-rf_target(t, d, "name") :- rf_ref(t, "name", q, _, _), rf_link(q, d).
-rf_target(t, d, "sibling") :- rf_sibling(t, q), rf_link(q, d).
+// rf_target(t, d, via): t's body refers to d, both by their symbols.
+.decl rf_target(t: symbol, d: symbol, via: symbol)
+rf_target(t, d, "name") :- rf_ref_sym(_, t, "name", q, _, _), rf_link(q, d).
+rf_target(t, d, "sibling") :- rf_sib_sym(t, q), rf_link(q, d).
 // bare: the module's declared name, else its import, else what the name resolves to.
 .decl rf_bare_declared(m: symbol, x: symbol)
 rf_bare_declared(m, x) :- rf_declared(m, x, _).
-rf_want(q, 1) :- rf_declared(m, x, q), rf_ref(_, "bare", m, x, _).
-rf_want(q, 1) :- rf_imported(m, x, q), rf_ref(_, "bare", m, x, _), !rf_bare_declared(m, x).
-rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), rf_declared(m, x, q), rf_link(q, d).
-rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_link(q, d).
-rf_target(t, d, "bare") :- rf_ref(t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_link(q, d).
+rf_want(q, 1) :- rf_declared(m, x, q), rf_ref_sym(_, _, "bare", m, x, _).
+rf_want(q, 1) :- rf_imported(m, x, q), rf_ref_sym(_, _, "bare", m, x, _), !rf_bare_declared(m, x).
+rf_target(t, d, "bare") :- rf_ref_sym(_, t, "bare", m, x, _), rf_declared(m, x, q), rf_link(q, d).
+rf_target(t, d, "bare") :- rf_ref_sym(_, t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_link(q, d).
+rf_target(t, d, "bare") :- rf_ref_sym(_, t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_link(q, d).
 // unqualified: the class's own function of that name, else the module's bare name.
 // Cross-file: a class's own function, by qualified name, wherever the class is defined (decision 0652).
 .decl rf_own_fn(c: symbol, x: symbol) cross_file
-rf_own_fn(c, x) :- rf_ref(_, "unq", c, x, _), rf_named_def(q, d), rf_is_function(d), q = @concat(c, ".", x).
-rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, _), rf_own_fn(c, x), rf_named_def(q, d), q = @concat(c, ".", x).
-rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, _), !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), rf_declared(m, x, q),
+rf_own_fn(c, x) :- rf_ref_sym(_, _, "unq", c, x, _), rf_named_fn(q, _), q = @concat(c, ".", x).
+rf_target(t, d, "unqualified") :- rf_ref_sym(_, t, "unq", c, x, _), rf_own_fn(c, x), rf_named_sym(q, d), q = @concat(c, ".", x).
+rf_target(t, d, "unqualified") :- rf_unq_sym(t, c, x, _, m), !rf_own_fn(c, x), rf_declared(m, x, q), rf_link(q, d).
+rf_target(t, d, "unqualified") :- rf_unq_sym(t, c, x, _, m), !rf_own_fn(c, x), !rf_bare_declared(m, x), rf_imported(m, x, q),
     rf_link(q, d).
-rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, _), !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), !rf_bare_declared(m, x),
-    rf_imported(m, x, q), rf_link(q, d).
-rf_target(t, d, "unqualified") :- rf_ref(t, "unq", c, x, q), q != "", !rf_own_fn(c, x), rf_unq_bare(t, c, x, m),
-    !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_link(q, d).
-rf_want(q, 1) :- rf_ref(t, "unq", c, x, _), rf_unq_bare(t, c, x, m), rf_declared(m, x, q).
-rf_want(q, 1) :- rf_ref(t, "unq", c, x, _), rf_unq_bare(t, c, x, m), rf_imported(m, x, q).
+rf_target(t, d, "unqualified") :- rf_unq_sym(t, c, x, q, m), q != "", !rf_own_fn(c, x), !rf_bare_declared(m, x),
+    !rf_bare_imported(m, x), rf_link(q, d).
+rf_want(q, 1) :- rf_unq_sym(_, _, x, _, m), rf_declared(m, x, q).
+rf_want(q, 1) :- rf_unq_sym(_, _, x, _, m), rf_imported(m, x, q).
 // self, super: the class's order.
-rf_target(t, d, "self") :- rf_ref(t, "self", c, f, _), rf_method(c, f, d).
+rf_target(t, d, "self") :- rf_ref_sym(_, t, "self", c, f, _), rf_method(c, f, d).
 // Else a method a subclass's other base supplies (a mixin's): the first subclass by name, its first such base, as
 // W's order of subclasses (by their names' text) and of a class's bases.
 .decl rf_has_method(c: symbol, f: symbol)
 rf_has_method(c, f) :- rf_method(c, f, _).
 .decl rf_compose_at(c: symbol, f: symbol, key: symbol, b: symbol)
-rf_compose_at(c, f, key, b) :- rf_ref(_, "self", c, f, _), !rf_has_method(c, f), rf_base_class(k, _, c), rf_base_class(k, i, b),
+rf_compose_at(c, f, key, b) :- rf_ref_sym(_, _, "self", c, f, _), !rf_has_method(c, f), rf_base_class(k, _, c), rf_base_class(k, i, b),
     b != c, rf_has_method(b, f), key = @concat(k, "\t", @printf("%06d", i)).
 .decl rf_compose(c: symbol, f: symbol, key: symbol)
 // W tries the subclasses by their names' text, then each one's bases in order: the least key by its text.
 rf_compose(c, f, key) :- rf_compose_at(c, f, key, _), !rf_compose_later(c, f, key).
 .decl rf_compose_later(c: symbol, f: symbol, key: symbol)
 rf_compose_later(c, f, key) :- rf_compose_at(c, f, key, _), rf_compose_at(c, f, s, _), s < key.
-rf_target(t, d, "self") :- rf_ref(t, "self", c, f, _), rf_compose(c, f, key), rf_compose_at(c, f, key, b), rf_method(b, f, d).
-rf_target(t, d, "super") :- rf_ref(t, "super", c, f, _), rf_super_method(c, f, d).
+rf_target(t, d, "self") :- rf_ref_sym(_, t, "self", c, f, _), rf_compose(c, f, key), rf_compose_at(c, f, key, b), rf_method(b, f, d).
+rf_target(t, d, "super") :- rf_ref_sym(_, t, "super", c, f, _), rf_super_method(c, f, d).
 // field: the field's declared type in the class's order, then the member in it. With the setting's constructor fields,
 // a base's `__init__` parameter of the field's name comes first, then the parameter of its renamed name, then the
 // field's declaration (W's `reference_field`): a parameter with no annotation skips to the declaration.
@@ -644,7 +635,7 @@ rf_field_cand(c, x, @concat(r, "b"), ty) :- rf_field_want(c, x), references_fiel
     x1 != x, rf_order(c, b, r), !rf_init_named(b, x), rf_init_param(b, x1, ty), ty != "<unannotated>".
 // rf_field_want(c, x): a reference reads field x of class c.
 .decl rf_field_want(c: symbol, x: symbol)
-rf_field_want(c, x) :- rf_ref(_, "field", c, x, _).
+rf_field_want(c, x) :- rf_ref_sym(_, _, "field", c, x, _).
 rf_field_want(c, x) :- rf_class_field(_, c, x, _).
 .decl rf_field_first(c: symbol, x: symbol, key: symbol)
 rf_field_first(c, x, k) :- rf_field_cand(c, x, k, _), !rf_field_later(c, x, k).
@@ -704,6 +695,9 @@ rf_keyword_only(f, p) :- rf_init_arg(f, p, _, _), field(f, "parameters", ps), ch
 .decl rf_sibling(f: node, q: symbol)
 rf_sibling(f, q) :- rf_sib_match(f, i, owner, nm), !rf_sib_earlier(f, i), references_sibling(i, _, _, re, by),
     n2 = @rx_replace(nm, re, by), n2 != "", q = @concat(owner, ".", n2).
+// rf_sib_sym(s, q): the same by method f's symbol s, as the cross-file part reads it (decision 0677).
+.decl rf_sib_sym(s: symbol, q: symbol)
+rf_sib_sym(s, q) :- rf_sibling(f, q), rf_sym(f, s).
 .decl rf_sib_match(f: node, i: number, owner: symbol, nm: symbol)
 rf_sib_match(f, i, owner, nm) :- references_sibling(i, dre, nre, _, _), rf_dec_name(f, dx), @rx_matches(dx, dre) = 1,
     rf_qn(f, qf), split_dot(qf, owner, nm), @rx_matches(nm, nre) = 1.
@@ -739,13 +733,13 @@ rf_dec_callee(u, c) :- rf_dec_fn(u, fn), rf_unparen(fn, c).
 rf_dec_last(c, x) :- kind(c, "identifier"), text(c, x), rf_dec_callee(_, c).
 rf_dec_last(c, x) :- kind(c, "attribute"), field(c, "attribute", a), kind(a, "identifier"), text(a, x),
     rf_dec_callee(_, c).
-rf_target(t, d, "field") :- rf_ref(t, "field", c, x, f), rf_field_type(c, x, ty, m), rf_type_class(m, ty, k), rf_method(k, f, d).
+rf_target(t, d, "field") :- rf_ref_sym(_, t, "field", c, x, f), rf_field_type(c, x, ty, m), rf_type_class(m, ty, k), rf_method(k, f, d).
 // param_type: the type's class, then the member in it.
-rf_target(t, d, "param_type") :- rf_ref(t, "type", m, ty, f), rf_type_class(m, ty, k), rf_method(k, f, d).
+rf_target(t, d, "param_type") :- rf_ref_sym(_, t, "type", m, ty, f), rf_type_class(m, ty, k), rf_method(k, f, d).
 // rf_type_class(m, ty, k): type ty, written in module m, is workspace class k: through the module's import of it,
 // then its class of that name.
 .decl rf_type_want(m: symbol, ty: symbol)
-rf_type_want(m, ty) :- rf_ref(_, "type", m, ty, _).
+rf_type_want(m, ty) :- rf_ref_sym(_, _, "type", m, ty, _).
 rf_type_want(m, ty) :- rf_field_type(_, _, ty, m).
 .decl rf_type_by_import(m: symbol, ty: symbol, k: symbol)
 rf_type_by_import(m, ty, k) :- rf_type_want(m, ty), rf_imported(m, ty, q), rf_fq_class(q, k).
@@ -761,18 +755,16 @@ rf_fq_want(q) :- rf_type_want(m, ty), rf_class_named(m, ty, q).
 rf_fq_want(t) :- rf_fq_want(q), !rf_any_named(q), split_dot(q, m, x), rf_imported(m, x, t).
 .decl rf_fq_class(q: symbol, k: symbol)
 // k is the class's own name, as W keys a class (q may spell it by the file's path).
-rf_fq_class(q, k) :- rf_fq_want(q), rf_only_classes(q), rf_named_def(q, f), rf_is_class(f), rf_qn(f, k).
+rf_fq_class(q, k) :- rf_fq_want(q), rf_only_classes(q), rf_class_own(q, k).
 rf_fq_class(q, k) :- rf_fq_want(q), !rf_any_named(q), split_dot(q, m, x), rf_imported(m, x, t), rf_fq_class(t, k).
 
 // ==== the graph =====================================================================================================
-// reference_edge(src, dst, via) and reference_open(n) are core.rerail's.
-.decl rf_edge(src: node, dst: node, via: symbol)
-rf_edge(t, d, v) :- rf_target(t, d, v), rf_in_graph(t).
-// rf_in_graph(t): definition t is in one of the graph's files.
-.decl rf_in_graph(t: node)
-rf_in_graph(t) :- rf_def(t, _), docof(t, d), rf_pydoc(d, _).
+// reference_def(f, s), reference_edge(src, dst, via) and reference_open(s) are core.rerail's, by symbol. A symbol is
+// a definition of the graph's files: rf_qn names those alone (rf_module).
+.decl rf_edge(src: symbol, dst: symbol, via: symbol)
+rf_edge(t, d, v) :- rf_target(t, d, v).
 reference_edge(t, d, v) :- rf_edge(t, d, v).
-reference_open(t) :- rf_open(t), rf_in_graph(t).
+reference_open(t) :- rf_open(t).
 
 // ---- open definitions ----------------------------------------------------------------------------------------------
 // rf_opaque(q): the module binds q's last part in a way no name follows (W's `opaque`): its last binding is a value
@@ -829,16 +821,16 @@ rf_open_name(q) :- rf_hit(q, p, _, _), !rf_aliased(p), !rf_any_named(p), !rf_opa
 rf_open_name(q) :- rf_link_via(q, t, _), rf_open_name(t).
 // A chain of aliases past W's 16 hops (an import of the module's own name, a cycle of re-exports).
 rf_open_name(q) :- rf_link_via(q, _, 16).
-// rf_open(t): definition t is open: its file has an error, or one of its references names something open.
-.decl rf_open(t: node)
-rf_open(t) :- rf_def(t, _), docof(t, d), rf_file_open(d).
-rf_open(t) :- rf_ref(t, "name", q, _, _), rf_open_name(q).
-rf_open(t) :- rf_sibling(t, q), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "bare", m, x, _), rf_declared(m, x, q), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "unq", c, x, _), !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), rf_declared(m, x, q), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "unq", c, x, _), !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), !rf_bare_declared(m, x),
-    rf_imported(m, x, q), rf_open_name(q).
-rf_open(t) :- rf_ref(t, "unq", c, x, q), q != "", !rf_own_fn(c, x), rf_unq_bare(t, c, x, m), !rf_bare_declared(m, x),
-    !rf_bare_imported(m, x), rf_open_name(q).
+// rf_open(t): definition t (its symbol) is open: its file has an error, or one of its references names something
+// open.
+.decl rf_open(t: symbol)
+rf_open(s) :- rf_sym(t, s), docof(t, d), rf_file_open(d).
+rf_open(t) :- rf_ref_sym(_, t, "name", q, _, _), rf_open_name(q).
+rf_open(t) :- rf_sib_sym(t, q), rf_open_name(q).
+rf_open(t) :- rf_ref_sym(_, t, "bare", m, x, _), rf_declared(m, x, q), rf_open_name(q).
+rf_open(t) :- rf_ref_sym(_, t, "bare", m, x, _), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_open_name(q).
+rf_open(t) :- rf_ref_sym(_, t, "bare", m, x, q), q != "", !rf_bare_declared(m, x), !rf_bare_imported(m, x), rf_open_name(q).
+rf_open(t) :- rf_unq_sym(t, c, x, _, m), !rf_own_fn(c, x), rf_declared(m, x, q), rf_open_name(q).
+rf_open(t) :- rf_unq_sym(t, c, x, _, m), !rf_own_fn(c, x), !rf_bare_declared(m, x), rf_imported(m, x, q), rf_open_name(q).
+rf_open(t) :- rf_unq_sym(t, c, x, q, m), q != "", !rf_own_fn(c, x), !rf_bare_declared(m, x), !rf_bare_imported(m, x),
+    rf_open_name(q).

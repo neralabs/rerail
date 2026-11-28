@@ -25,6 +25,9 @@
 //                                       the module plan (decision 0639 §1, below): module `m` is lowered against the
 //                                       modules `s`, ranks `k`, and is kept under `key`
 //   p0_module_lowered(key, image)       the module of `key` lowered, its image's digest (the engine's answer)
+//   p0_tail_key(m, t), p0_module_tailed(t, image)
+//                                       module `m`'s tail is kept under `t`; the module of tail key `t` tailed, its
+//                                       image's digest (the engine's answer, decision 0639 §6a)
 //
 // One more builtin fact: env("rerail.build", b), the engine's build, which a module's key names.
 //
@@ -53,11 +56,12 @@ p0_doc(d, f) :- doc(d, f, _), !env("rerail.windows_paths", "1").
 p0_doc(d, @replace_all(f, "\\\\", "/")) :- doc(d, f, _), env("rerail.windows_paths", "1").
 // What each document says, made per document (the request cone reads no base relation): its includes, and whether
 // it declares `doc` (T's shape).
-// (Each is located by its node: a loaded document's rows reach the requests by their nodes' document.)
-.decl p0_names(i: node, f: symbol, at: number, name: symbol)
-p0_names(i, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), p0_doc(d, f), node(d, i, _, at, _).
-.decl p0_declares_doc(i: node, f: symbol)
-p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), p0_doc(d, f).
+// (Each is located by its document d: a loaded document's rows reach the requests by it. No node of them: the
+// cross-file part reads them, and no node id crosses, decision 0677.)
+.decl p0_names(d: number, f: symbol, at: number, name: symbol)
+p0_names(d, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), p0_doc(d, f), node(d, i, _, at, _).
+.decl p0_declares_doc(d: number, f: symbol)
+p0_declares_doc(d, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), p0_doc(d, f).
 // By path, across the loaded documents (decision 0652).
 .decl p0_file_t_shape(path: symbol) cross_file
 p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
@@ -97,8 +101,8 @@ load(c, c, "rr") :- p0_resolved(_, _, _, c).
 // The phase programs a module's declarations name: `<phase>__<export>`, where `<phase>` has no `__` and is no
 // typing program's or the engine's own (`typing_`, `rr_`), found in the phase programs' directory, loaded as an
 // include is, so its includes and the phases it names follow.
-.decl p0_decl(i: node, f: symbol, name: symbol)
-p0_decl(i, f, s) :- kind(i, "declaration"), field(i, "name", n), text(n, s), match(".+__.+", s), docof(i, d), p0_doc(d, f).
+.decl p0_decl(d: number, f: symbol, name: symbol)  // located as p0_names
+p0_decl(d, f, s) :- kind(i, "declaration"), field(i, "name", n), text(n, s), match(".+__.+", s), docof(i, d), p0_doc(d, f).
 .decl p0_text_phase(t: symbol, phase: symbol)
 .decl p0_phase_named(from: symbol, phase: symbol) cross_file   // by path, as p0_from (decision 0652)
 p0_phase_named(f, p) :- p0_decl(_, f, s), match("(?<p>[^_]+(?:_[^_]+)*)__.+", s), !prefix("typing_", p), !prefix("rr_", p).
@@ -217,4 +221,23 @@ p0_lower_req(k, r, fs, ks, rs) :- p0_module_key(m, k), p0_module_rank(m, r), p0_
 .decl p0_module_lowered(key: symbol, image: symbol)
 .answer p0_lower_req -> p0_module_lowered
 
-.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered
+// Each module's tail, asked of the engine (decision 0639 §6a): the tail's steps less the downward ones, over its
+// scope's tails and its image, kept under a key of its own. The steps read its scope's rules, not only their
+// interfaces (a context's instances copy them), so the key names its scope's files by their bytes: an edit of a
+// rule's body in its scope tails it again, and lowers nothing again. Its request holds its lowering's, so the engine
+// lowers it first where its lowering is not yet answered, its scope's tail keys, and its scope's keys in link order
+// (by rank, then name), which its tail links them in as a whole library's tail does. It answers in rank order.
+.decl p0_scope_digests(m: symbol, ds: symbol)
+p0_scope_digests(m, ds) :- p0_module_rank(m, _), ds = join d by d sep "," : { p0_scope_file(m, _, d) }.
+.decl p0_tail_key(m: symbol, t: symbol)
+p0_tail_key(m, @sha256(cat("tail|", k, "|", ds))) :- p0_module_key(m, k), p0_scope_digests(m, ds).
+.decl p0_scope_tails(m: symbol, ts: symbol)
+p0_scope_tails(m, ts) :- p0_module_rank(m, _), ts = join t by t sep "," : { p0_scope(m, s), p0_tail_key(s, t) }.
+.decl p0_scope_order(m: symbol, ks: symbol)
+p0_scope_order(m, ks) :- p0_module_rank(m, _), ks = join k by (r, s) sep "," : { p0_scope(m, s), p0_module_rank(s, r), p0_module_key(s, k) }.
+.decl p0_tail_req(tail: symbol, rank: number, key: symbol, files: symbol, scope: symbol, reached: symbol, scope_tails: symbol, linked: symbol)
+p0_tail_req(t, r, k, fs, ks, rs, ts, os) :- p0_tail_key(m, t), p0_module_key(m, k), p0_lower_req(k, r, fs, ks, rs), p0_scope_tails(m, ts), p0_scope_order(m, os).
+.decl p0_module_tailed(tail: symbol, image: symbol)
+.answer p0_tail_req -> p0_module_tailed
+
+.output p0_include, p0_missing, p0_absent, p0_phase, p0_scope, p0_module_rank, p0_module_key, p0_module_lowered, p0_tail_key, p0_module_tailed

@@ -35,7 +35,7 @@ unified_signatures(e, msg) :- one_extra(a, b, e, o), opening(a, b, o, s),
 opening(a, b, n, "These overloads") :- pair(a, b), (one_differs(a, b, n, _) ; one_extra(a, b, _, n) ; identical(a, b), n = a),
     group_size(a, 2).
 opening(a, b, n, cat("This overload and the one on line ", to_string(l))) :- pair(a, b),
-    (one_differs(a, b, n, _) ; one_extra(a, b, _, n) ; identical(a, b), n = a), group_size(a, k), k > 2, line(n, l).
+    (one_differs(a, b, n, _) ; one_extra(a, b, _, n) ; identical(a, b), n = a), group_size(a, k), k > 2, node_line_number(n, l).
 // estree_at(s, at): where ESTree's signature starts: a `declare function` at `declare`, a class method's
 // bodiless function at its parameters (or type parameters).
 .decl estree_at(s: node, at: node)

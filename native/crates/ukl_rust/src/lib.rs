@@ -17,12 +17,11 @@ mod sort_merge_spike;
 
 pub use sources::*;
 
-/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0648) for views of format
-/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipes`): `join_grid`, `join_phase` and
-/// `join_chain`, written by hand (`join_program`), which read the views' format as the compiled reads do, so one Rust
-/// for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
+/// The digests of `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decisions 0603, 0674) for views of format
+/// 0 (several), 16 and 16z, on a device other than Metal (`metal_join::program_pipe`): `join_run`, written by hand
+/// (`join_program`), which reads the views' format as the compiled reads do, so one Rust for each. Not `sources.rs`, which rerail-ukl-vec's tests write: device-metal's test (`join_rust`) holds these to
 /// the source.
-pub const JOIN_PROGRAM: [u64; 3] = [0xa7867b225e25c760, 0x6083995e003bafe2, 0xe3b8493204579ab7];
+pub const JOIN_PROGRAM: [u64; 3] = [0x5f569ee3c08d9207, 0x3c6fb0d562a0ea51, 0x30a287bd0e504f86];
 
 /// A group's launch, as a kernel's Rust reads it: its group's position, its threads' (each dimension's), and the
 /// groups'.
@@ -66,13 +65,14 @@ pub fn digest(text: &str, defines: &[(&str, &str)]) -> u64 {
     h
 }
 
-/// The join program's kernels (decision 0648): on the CPU they run only as their SIMD Rust (`join_program`), never their
-/// UKL's build, until the user says otherwise. Every other kernel runs its Rust where it has it, else its UKL.
-pub const JOIN_KERNELS: [&str; 3] = ["join_grid", "join_phase", "join_chain"];
+/// The join program's kernel (decision 0674: its chain's driver): on the CPU it runs only as its SIMD Rust
+/// (`join_program::join_run`), never its UKL's build, until the user says otherwise. Every other kernel runs its Rust
+/// where it has it, else its UKL.
+pub const JOIN_KERNELS: [&str; 1] = ["join_run"];
 
 /// Whether `text`, specialized by `defines`, is the join program (`JOIN_PROGRAM` defined, its kernels compiled).
 pub fn is_join_program(text: &str, defines: &[(&str, &str)]) -> bool {
-    (defines.iter().any(|(n, _)| *n == "JOIN_PROGRAM") || text.contains("#define JOIN_PROGRAM ")) && text.contains(", join_phase,")
+    (defines.iter().any(|(n, _)| *n == "JOIN_PROGRAM") || text.contains("#define JOIN_PROGRAM ")) && text.contains(", join_run,")
 }
 
 /// The kernels of the program `text` (specialized by `defines`) that run as Rust on this processor: each its name
@@ -88,10 +88,10 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Result<Vec<(&'static str
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
     if JOIN_PROGRAM.contains(&d) {
-        out.extend([("join_grid", join_program::join_grid as Kernel), ("join_phase", join_program::join_phase), ("join_chain", join_program::join_chain)]);
+        out.push(("join_run", join_program::join_run));
     } else if is_join_program(text, defines) {
         return Err(format!(
-            "the join program's Rust (rerail_ukl_rust::join_program) was not written from this source (digest {d:#018x}): \
+            "the join program's Rust (rerail_ukl_rust::join_program::join_run) was not written from this source (digest {d:#018x}): \
              bring join_program to the source and JOIN_PROGRAM to its digests. Its UKL's build is not run in the Rust's place."
         ));
     }
@@ -110,15 +110,15 @@ mod tests {
     }
 
     /// Another text, or the same with another define, has no kernel here: its compiler's build runs.
-    /// A join program that is not the source `join_program` was written from is refused: its UKL's build does not run in
+    /// A join program that is not the source `join_run` was written from is refused: its UKL's build does not run in
     /// the Rust's place.
     #[test]
     fn a_changed_join_program_is_refused() {
-        let text = "#define JOIN_PROGRAM 1\nDEFINE_KERNEL2(join, join_phase, ...)\n";
+        let text = "#define JOIN_PROGRAM 1\nDEFINE_KERNEL2(join, join_run, ...)\n";
         let e = super::kernels(text, &[]).unwrap_err();
-        assert!(e.contains("join_program") && e.contains("not written from this source"), "{e}");
+        assert!(e.contains("join_run") && e.contains("not written from this source"), "{e}");
         // The same source without `JOIN_PROGRAM` compiles none of those kernels.
-        assert!(super::kernels("DEFINE_KERNEL2(join, join_phase, ...)\n", &[]).unwrap().is_empty());
+        assert!(super::kernels("DEFINE_KERNEL2(join, join_run, ...)\n", &[]).unwrap().is_empty());
     }
 
     #[test]

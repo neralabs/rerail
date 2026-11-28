@@ -18,5 +18,5 @@
 .violation extraneous_require(at: node) code "n/no-extraneous-require"
     "package.json does not list this package in its dependencies."
     suppress eslint "n/no-extraneous-require"
-extraneous_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_package(x, m), node_target_file(n, _), docof(n, d),
+extraneous_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_package(n, m), node_target_file(n, _), docof(n, d),
     pkg_file(d, _, _), !pkg_lists(d, m), !allow_module(m), !spec_ts_alias(n).

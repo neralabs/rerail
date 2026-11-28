@@ -148,7 +148,7 @@ pyi034_metaclass(n) :- kind(n, "class_definition"),
 // class_name(n): the JSON util `class-name`, used where the JSON says `matches: "class-name"`
 //   C: metavariable of the calling rule, passed in (bound by the caller)
 //   S: metavariable this relation binds for the calling rule
-.decl pyi034_class_name(n: node, c: loc, s: loc)
+.decl pyi034_class_name(n: node, c: node, s: node)
 // S: not bound by this rule, so empty (unset) here, as in ast-grep.
 pyi034_class_name(n, C, S) :- pyi034_demand_class_name(n, C), kind(n, "identifier"),
     text(n, t_c1), text(C, t_c1), unset(S), @doc(n) = @doc(C).
@@ -168,7 +168,7 @@ pyi034_positional(n) :-
 
 // method(n): the JSON util `method`, used where the JSON says `matches: "method"`
 //   C: metavariable this relation binds for the calling rule
-.decl pyi034_method(n: node, c: loc)
+.decl pyi034_method(n: node, c: node)
 pyi034_method(n, C) :- kind(n, "function_definition"), field(n, "parameters", c1),
     kind(c1, "parameters"), child(c1, c2, _), pyi034_positional(c2), !pyi034_abstract_fn(n),
     !pyi034_overload_fn(n), within_stop(n, p3, "function_definition"),
@@ -241,7 +241,7 @@ pyi034_in_final(n) :- pyi034_demand_in_final(n), pyi034_up_2(n, p1), child(p2, p
 // PYI034(n): a finding at node n, from clause `returns-class-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI034(at: loc, m: node, c: loc) "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of `{c}`. Leave it if the method does not return the receiver."
+.violation PYI034(at: node, m: node, c: node) "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of `{c}`. Leave it if the method does not return the receiver."
     suppress noqa "PYI034"
 PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
     field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
@@ -254,7 +254,7 @@ PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
 // PYI034_iterator_returns_iterator(n): a finding at node n, from clause `iterator-returns-iterator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI034_iterator_returns_iterator(at: loc, m: node, c: loc) code "PYI034" "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `{c}` is itself an iterator. Leave it if another object is returned."
+.violation PYI034_iterator_returns_iterator(at: node, m: node, c: node) code "PYI034" "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `{c}` is itself an iterator. Leave it if another object is returned."
     suppress noqa "PYI034"
 PYI034_iterator_returns_iterator(M, n, C) :- kind(n, "function_definition"),
     pyi034_method(n, C), !match("async\\b.*", n),
@@ -463,7 +463,7 @@ pyi034_tok_has_16(n) :- node_text(n, g13), !child(n, _, _),
     match("(?s)^(?:(?:.*\\W)?(?:__aiter__).*)$", g13).
 
 // demand_class_name: the rows of class_name its callers ask for (the metavariable columns they pass in)
-.decl pyi034_demand_class_name(n: node, c: loc)
+.decl pyi034_demand_class_name(n: node, c: node)
 pyi034_demand_class_name(c6, C) :- pyi034_demand_class_name(n, C),
     kind(n, "parenthesized_expression"), child(n, c6, _).
 pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C),
@@ -599,7 +599,7 @@ pyi034_stop_14(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 //   S: metavariable this relation binds for the calling rule
-.decl pyi034_alt_15(n: node, s: loc)
+.decl pyi034_alt_15(n: node, s: node)
 pyi034_alt_15(n, S) :- kind(n, "identifier"), S = n.
 pyi034_alt_15(n, S) :- kind(n, "parenthesized_expression"), within_stop(c1, n, pyi034_stop_14),
     kind(c1, "identifier"), S = c1.

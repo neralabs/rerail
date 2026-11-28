@@ -1,5 +1,7 @@
 # Rerail rule pack: Python
 
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add python`, then add it to a repository in the dashboard. It needs Rerail 0.2.1 or newer.
+
 **Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
 
 538 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (50 tests). Each is scored against the

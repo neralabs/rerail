@@ -280,39 +280,75 @@ function exportCommit(sha: string, ref: string, out: string, packDataCache: stri
 /** <baseline>/.rerail/shipbar-release.json: the published package whose built parts a release baseline holds. */
 const RELEASE_FILE = ".rerail/shipbar-release.json";
 
+/** Runs `npm pack <spec>` into `out` and unpacks the tarball into `into`, made anew: the package is then <into>/package. */
+function unpackPackage(spec: string, out: string, into: string): void {
+  const packed = run("npm", ["pack", spec, "--silent", "--pack-destination", out]);
+  const tarball = join(out, lastLine(packed.stdout));
+  if (packed.status !== 0 || !existsSync(tarball)) fail(`npm pack ${spec} failed: ${lastLine(packed.stderr)}`);
+  rmSync(into, { recursive: true, force: true });
+  mkdirSync(into, { recursive: true });
+  if (run("tar", ["-xzf", tarball, "-C", into]).status !== 0) fail(`could not extract ${tarball}`);
+  rmSync(tarball, { force: true });
+}
+
+/** Copies the prebuilt engines directly in `from` (rerail_engine.<platform>.node) into `checkout`'s native/; returns their names. */
+function copyEngines(from: string, checkout: string): string[] {
+  const addons = existsSync(from) ? readdirSync(from).filter((file) => /^rerail_engine\..+\.node$/.test(file)) : [];
+  for (const addon of addons) copyFileSync(join(from, addon), join(checkout, "native", addon));
+  return addons;
+}
+
 /**
  * The baseline as users have it: release:<version>. Its source at the tag v<version> (the conformance runner and the
  * packs the product path reads, exported as a git ref is), with the published @neralabs/rerail@<version>'s prebuilt
  * engines for every platform (native/*.node) and its built JavaScript (dist/) put in place of a build: the baseline
- * then needs `npm ci` and nothing built, on any host.
+ * then needs `npm ci` and nothing built, on any host. The engines come from the engine packages the release names as
+ * its optional dependencies, each at an exact version and holding one platform's engine; a release from before those
+ * packages carries every engine in its own tarball, under native/.
  */
 function resolveRelease(version: string, out: string, packDataCache: string | undefined): Checkout {
   const tag = `v${version}`;
+  const checkout = exportCommit(taggedCommit(version, tag), `release:${version}`, out, packDataCache);
+  if (existsSync(join(checkout.dir, RELEASE_FILE))) return checkout;
+  const name = `@neralabs/rerail@${version}`;
+  const unpacked = join(out, "release-package");
+  unpackPackage(name, out, unpacked);
+  const core = join(unpacked, "package");
+  const addons = releasedEngines(core, out, checkout.dir);
+  if (addons.length === 0) fail(`${name} ships no prebuilt engine: none under native/ (rerail_engine.*.node), and none in an optional dependency`);
+  cpSync(join(core, "dist"), join(checkout.dir, "dist"), { recursive: true });
+  writeFileSync(join(checkout.dir, RELEASE_FILE), JSON.stringify({ package: name, tag, addons }, null, 1));
+  rmSync(unpacked, { recursive: true, force: true });
+  console.log(`shipbar: baseline ${name}: ${tag}'s source with the release's ${addons.length} prebuilt engines and dist/`);
+  return checkout;
+}
+
+/** The commit `tag` names, fetched from origin where this clone lacks the tag. */
+function taggedCommit(version: string, tag: string): string {
   let parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
   if (parsed.status !== 0) {
     run("git", ["-C", SELF, "fetch", "--quiet", "origin", "tag", tag, "--no-tags"]);
     parsed = run("git", ["-C", SELF, "rev-parse", "--verify", `${tag}^{commit}`]);
   }
   if (parsed.status !== 0) fail(`release ${version}: no tag ${tag} in ${SELF}, and fetching it from origin failed`);
-  const checkout = exportCommit(parsed.stdout.trim(), `release:${version}`, out, packDataCache);
-  if (existsSync(join(checkout.dir, RELEASE_FILE))) return checkout;
-  const name = `@neralabs/rerail@${version}`;
-  const packed = run("npm", ["pack", name, "--silent", "--pack-destination", out]);
-  const tarball = join(out, lastLine(packed.stdout));
-  if (packed.status !== 0 || !existsSync(tarball)) fail(`npm pack ${name} failed: ${lastLine(packed.stderr)}`);
-  const unpacked = join(out, "release-package");
-  rmSync(unpacked, { recursive: true, force: true });
-  mkdirSync(unpacked, { recursive: true });
-  if (run("tar", ["-xzf", tarball, "-C", unpacked]).status !== 0) fail(`could not extract ${tarball}`);
-  const addons = readdirSync(join(unpacked, "package", "native")).filter((file) => /^rerail_engine\..+\.node$/.test(file));
-  if (addons.length === 0) fail(`${name} ships no prebuilt engine (native/rerail_engine.*.node)`);
-  for (const addon of addons) copyFileSync(join(unpacked, "package", "native", addon), join(checkout.dir, "native", addon));
-  cpSync(join(unpacked, "package", "dist"), join(checkout.dir, "dist"), { recursive: true });
-  writeFileSync(join(checkout.dir, RELEASE_FILE), JSON.stringify({ package: name, tag, addons }, null, 1));
-  rmSync(unpacked, { recursive: true, force: true });
-  rmSync(tarball, { force: true });
-  console.log(`shipbar: baseline ${name}: ${tag}'s source with the package's ${addons.length} prebuilt engines and dist/`);
-  return checkout;
+  return parsed.stdout.trim();
+}
+
+/**
+ * Copies the engines of the release unpacked at `core` into `destination` and returns their file names: those under
+ * its native/, or, for a release that carries none there, those of the engine packages it names as its optional
+ * dependencies, each unpacked through `out`.
+ */
+function releasedEngines(core: string, out: string, destination: string): string[] {
+  const addons = copyEngines(join(core, "native"), destination);
+  if (addons.length > 0) return addons;
+  const enginePackage = join(out, "release-engine-package");
+  for (const [dependency, pinned] of Object.entries(readJson<{ optionalDependencies?: Record<string, string> }>(join(core, "package.json")).optionalDependencies ?? {})) {
+    unpackPackage(`${dependency}@${pinned}`, out, enginePackage);
+    addons.push(...copyEngines(join(enginePackage, "package"), destination));
+  }
+  rmSync(enginePackage, { recursive: true, force: true });
+  return addons;
 }
 
 function shippedRules(checkout: string, pack: string): string[] {

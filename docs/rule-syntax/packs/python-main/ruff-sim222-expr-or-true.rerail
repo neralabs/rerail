@@ -449,17 +449,18 @@ sim222_tok_follows_7(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\{)\\s
 
 // truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
 .decl sim222_truthy_value(n: node, b: symbol)
-sim222_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
-sim222_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+sim222_truthy_value(n, "false") :- value(n, x), value_type_of(n, "NoneType").
+sim222_truthy_value(n, b) :- value(n, x), value_type_of(n, "boolean"), b = x.
 sim222_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")),
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
     (x = "0" ; x = "0.0" ; x = "-0.0").
 sim222_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+    (value_type_of(n, "int") ; value_type_of(n, "float")),
+    x != "0", x != "0.0", x != "-0.0".
 sim222_truthy_value(n, "false") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x = "".
 sim222_truthy_value(n, "true") :- value(n, x),
-    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+    (value_type_of(n, "str") ; value_type_of(n, "bytes")), x != "".
 
 // tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^(if|elif|while)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim222_tok_follows_8(n: node)

@@ -127,7 +127,7 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 tape_syntax_error(d) :- syntax_error(d).
-violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "SqlDeferredRenderable" ; v2 = "SqlPreRenderedFragment"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-grammar-fragment-usage", "forbidden-class", "sqlfragment_usage", p, l) :- node(_, n, "class_definition", _, _), field(n, "name", v1), node(_, v1, "identifier", _, _), text(v1, v2), (v2 = "SqlDeferredRenderable" ; v2 = "SqlPreRenderedFragment"), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), node_line_number(n, l).
 violation("data-layer-grammar-fragment-usage", "syntax-error", "python_parse_error", p, 1) :- node(_, n, "module", _, _), node(d, n, _, _, _), in_scope(d), syntax_error(d), !out_scope(d), doc(d, p, _).
 constructor_sync_def(f) :- node(_, f, "function_definition", _, _), node_text(f, s), match("def\\s(?s:.*)", s).
 constructor_plain_part(n) :- node(_, n, "string", _, _), strprefix(n, x), !contains("f", x).
@@ -163,8 +163,8 @@ constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, i, _
 constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, s, _), node(_, s, "list_splat_pattern", _, _), child(s, i, _), node(_, i, "identifier", _, _).
 constructor_param_shape(q) :- node(_, q, "typed_parameter", _, _), child(q, s, _), node(_, s, "dictionary_splat_pattern", _, _), child(s, i, _), node(_, i, "identifier", _, _).
 constructor_self_param(q) :- child(q, i, _), node(_, i, "identifier", _, _), text(i, "self").
-violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :- node(d, f, "function_definition", _, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"), nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q), !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(f, l).
-violation("data-layer-grammar-fragment-usage", "attribute-fragment", "sqlfragment_usage", p, l) :- node(d, a, "assignment", _, _), field(a, "type", t), constructor_fragment_type(t), !inside(a, _, constructor_fdef_kinds), nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), line(a, l).
+violation("data-layer-grammar-fragment-usage", "constructor-fragment", "sqlfragment_usage", p, l) :- node(d, f, "function_definition", _, _), constructor_sync_def(f), field(f, "name", i), node(_, i, "identifier", _, _), text(i, "__init__"), nearest(f, c, constructor_class_kinds), constructor_grammar_class(c), field(f, "parameters", ps), child(ps, q, _), constructor_param_shape(q), !constructor_self_param(q), field(q, "type", t), constructor_fragment_type(t), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), node_line_number(f, l).
+violation("data-layer-grammar-fragment-usage", "attribute-fragment", "sqlfragment_usage", p, l) :- node(d, a, "assignment", _, _), field(a, "type", t), constructor_fragment_type(t), !inside(a, _, constructor_fdef_kinds), nearest(a, c, constructor_class_kinds), constructor_grammar_class(c), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), node_line_number(a, l).
 captured_in_concat(n) :- node(_, n, "string", _, _), child(c, n, _), node(_, c, "concatenated_string", _, _).
 captured_bs(n) :- constructor_plain_literal(n), !captured_in_concat(n), value_type_of(n, "str").
 captured_bs(n) :- node(_, n, "string", _, _), strprefix(n, x), contains("f", x), !captured_in_concat(n).
@@ -246,5 +246,5 @@ captured_returns_field(r) :- captured_return(_, r, _, _), child(r, x, _), captur
 captured_return_row(d, r, c, x) :- captured_return(d, r, c, _), captured_returns_field(r), inside(r, m, constructor_fdef_kinds), captured_method(c, m, x).
 captured_reach(c, "render") :- captured_return_row(_, _, c, _).
 captured_reach(c, y) :- captured_reach(c, x), captured_edge(c, x, y).
-violation("data-layer-grammar-fragment-usage", "captured-return", "sqlfragment_usage", p, l) :- captured_return_row(d, r, c, x), captured_reach(c, x), doc(d, p, _), line(r, l).
+violation("data-layer-grammar-fragment-usage", "captured-return", "sqlfragment_usage", p, l) :- captured_return_row(d, r, c, x), captured_reach(c, x), doc(d, p, _), node_line_number(r, l).
 rr_demand_agg_rr_agg5(p, s) :- captured_index_list(p), child(p, c, _), node(_, c, _, s, _).

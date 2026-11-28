@@ -535,8 +535,10 @@ impl<T: crate::Pod> Clone for Frozen<T> {
 }
 
 impl<T: crate::Pod> Mutable<T> {
-    /// `n` zeroed `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
-    /// handle goes), or from its front. `None` when it has no room.
+    /// Room for `n` `T`s in `block`, named `name` for what fails: a chunk of its free list (given back when the last
+    /// handle goes), or from its front. `None` when it has no room. Never zeroed: a chunk taken again holds what was
+    /// there, and its holder writes each byte before it reads it (zeroing touched every page of it, so its whole
+    /// length stayed in memory where its holder wrote a part).
     pub fn alloc(block: &Arc<Block>, n: usize, name: &'static str) -> Option<Mutable<T>> {
         Self::alloc_aligned(block, n, align_of::<T>(), name)
     }
@@ -546,7 +548,7 @@ impl<T: crate::Pod> Mutable<T> {
     pub fn alloc_aligned(block: &Arc<Block>, n: usize, align: usize, name: &'static str) -> Option<Mutable<T>> {
         let bytes = (n * size_of::<T>()).max(1);
         let align = align.max(align_of::<T>()).max(8);
-        let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit_zeroed(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
+        let (at, kept) = if block.has_free_list() { block.try_alloc_chunk_fit(bytes, align)? } else { (block.try_alloc(bytes, align)?, 0) };
         let r = Region {
             block: block.clone(),
             at,

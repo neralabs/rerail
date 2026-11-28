@@ -8,7 +8,7 @@
 // E742(n): a finding at node n, from clause `ambiguous-class-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation E742(at: node, name: loc) "Rename class `{name}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
+.violation E742(at: node, name: match) "Rename class `{name}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
     suppress noqa "E742"
 E742(n, NAME) :- kind(n, "identifier"), match("(?<NAME>[lIO])", n), child(p1, n, _),
     kind(p1, "class_definition"), e742_tok_follows_1(n).

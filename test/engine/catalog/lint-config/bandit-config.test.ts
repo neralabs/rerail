@@ -75,8 +75,8 @@ describe("banditReader", () => {
     expect(decisions(root, MD5, ASSERT, NO_SHELL)).toEqual([
       { on: true, explicit: true, because: ".bandit: \"B303\" in tests" },
       // configparser joins the continuation line with a newline, which Bandit keeps: "\nB101" names no test.
-      { on: false, explicit: false, because: ".bandit tests does not list it" },
-      { on: false, explicit: false, because: ".bandit tests does not list it" },
+      { on: false, explicit: false, because: "not in .bandit tests" },
+      { on: false, explicit: false, because: "not in .bandit tests" },
     ]);
     expect(read(root, ASSERT)!.notes).toEqual([".bandit: \"\\nB101\" in tests is not a Bandit test id such as \"B101\", so it names no test."]);
   });
@@ -113,7 +113,7 @@ describe("banditReader", () => {
     expect(decisions(root, ASSERT, MD5, MARSHAL, NO_SHELL)).toEqual([
       { on: true, explicit: true, because: ".bandit: \"B101\" in tests" },
       { on: true, explicit: true, because: "bandit.toml [tool.bandit]: \"B303\" in tests" },
-      { on: false, explicit: false, because: ".bandit and bandit.toml [tool.bandit] tests does not list it" },
+      { on: false, explicit: false, because: "not in .bandit and bandit.toml [tool.bandit] tests" },
       { on: false, explicit: true, because: "bandit.toml [tool.bandit]: \"B606\" in skips" },
     ]);
   });
@@ -138,7 +138,7 @@ describe("banditReader", () => {
     const narrowed = await repository({ ".bandit": "[bandit]\ntests = B001,B303\n" });
     expect(decisions(narrowed, MD5, MARSHAL)).toEqual([
       { on: true, explicit: true, because: ".bandit: \"B303\" in tests" },
-      { on: false, explicit: false, because: ".bandit tests does not list it" },
+      { on: false, explicit: false, because: "not in .bandit tests" },
     ]);
   });
 

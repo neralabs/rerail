@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -66,7 +66,6 @@
   ],
   "files": [
     "dist",
-    "native/*.node",
     "native/rerail-kernels",
     "model",
     "native/src/code_rule_dsl/capabilities.json",
@@ -92,6 +91,7 @@
     "build:docs-site": "node --import tsx scripts/build/docs-site.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
     "engine:pull": "node scripts/build/pull-engine.mjs",
+    "build:tray": "node scripts/build/release-tray.mjs",
     "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js && esbuild src/runtime/start-state-reader.ts --bundle --platform=node --format=esm --external:better-sqlite3 --outfile=dist/runtime/start-state-reader.js && esbuild src/cli/cli.ts --bundle --platform=node --target=node22 --format=esm --external:better-sqlite3 --outfile=dist/cli/cli.js && esbuild src/engine/rr/rr-child.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/engine/rr/rr-child.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --outfile=dist/hosts/omp/default-extension.js",

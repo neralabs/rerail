@@ -29,6 +29,11 @@
       "document": "rules/django-practice-exists-for-existence.rerail",
       "title": "Django practice: an inline queryset counted, loaded or truth-tested only to learn whether it has rows",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -46,6 +51,11 @@
       "document": "rules/django-practice-count-not-len.rerail",
       "title": "Django practice: `len()` of an inline queryset whose rows are thrown away",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -63,6 +73,11 @@
       "document": "rules/django-practice-fk-id-not-relation.rerail",
       "title": "Django practice: `<obj>.<fk>.id` or `.pk` where the row already holds `<fk>_id`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "low"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -80,6 +95,12 @@
       "document": "rules/django-practice-select-related-in-loop.rerail",
       "title": "Django practice: a loop over an inline queryset that reads a relation of every row",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "orm.query-in-loop"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -97,6 +118,12 @@
       "document": "rules/django-practice-bulk-not-loop.rerail",
       "title": "Django practice: one create, save or get query per loop iteration",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "performance",
+        "layer": "data-access",
+        "severity": "medium",
+        "hazard": "orm.query-in-loop"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -114,6 +141,12 @@
       "document": "rules/django-practice-bulk-write-skips-hooks.rerail",
       "title": "Django practice: a queryset bulk write on a model whose save()/delete() override or pre/post_save receiver it skips",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "orm.bulk-write-skips-hooks"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -131,6 +164,12 @@
       "document": "rules/django-practice-read-modify-write.rerail",
       "title": "Django practice: a numeric field read into Python, changed and saved back instead of updated with `F()`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "tx.read-modify-write"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -148,6 +187,11 @@
       "document": "rules/django-practice-get-or-create-needs-unique.rerail",
       "title": "Django practice: `get_or_create()`/`update_or_create()` whose lookup no unique field or constraint covers",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -165,6 +209,11 @@
       "document": "rules/django-practice-atomic-around-caught-db-error.rerail",
       "title": "Django practice: a database error caught inside atomic, around queries with no savepoint of their own",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -182,6 +231,12 @@
       "document": "rules/django-practice-select-for-update-outside-atomic.rerail",
       "title": "Django practice: a `select_for_update()` in a function that a caller chain or a framework runs with no transaction open",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high",
+        "hazard": "tx.lock-outside-transaction"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -199,6 +254,12 @@
       "document": "rules/django-practice-enqueue-on-commit.rerail",
       "title": "Django practice: a task enqueued or a mail sent inside `transaction.atomic`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "jobs",
+        "severity": "critical",
+        "hazard": "tx.side-effect-before-commit"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -216,6 +277,12 @@
       "document": "rules/django-practice-dispatch-in-atomic-request.rerail",
       "title": "Django practice: a task enqueued or a mail sent from a view, or code it calls, while ATOMIC_REQUESTS wraps the request in a transaction",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "jobs",
+        "severity": "critical",
+        "hazard": "tx.side-effect-before-commit"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -233,6 +300,11 @@
       "document": "rules/django-practice-task-arg-model-instance.rerail",
       "title": "Django practice: a model instance passed as an argument to a Celery task",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "jobs",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -250,6 +322,11 @@
       "document": "rules/django-practice-default-called-once.rerail",
       "title": "Django practice: a model field default that calls uuid4, random, now and the like once, at import",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "data-access",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -267,6 +344,11 @@
       "document": "rules/django-practice-model-init-override.rerail",
       "title": "Django practice: a model `__init__` that reads a field or changes the calling signature",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "data-access",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -284,6 +366,11 @@
       "document": "rules/django-practice-save-ignores-update-fields.rerail",
       "title": "Django practice: a model `save()` that sets a field and forwards `**kwargs` without handling `update_fields`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "data-safety",
+        "layer": "data-access",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -301,6 +388,11 @@
       "document": "rules/django-practice-lazy-translation-at-import.rerail",
       "title": "Django practice: non-lazy `gettext` called when the module is imported",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "low"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -318,6 +410,11 @@
       "document": "rules/django-practice-clean-field-returns-value.rerail",
       "title": "Django practice: a form `clean_<field>()` that can end without returning the cleaned value",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -335,6 +432,11 @@
       "document": "rules/django-practice-modelform-clean-calls-super.rerail",
       "title": "Django practice: a `clean()` override on a ModelForm or model formset that never calls the parent's `clean()`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -352,6 +454,11 @@
       "document": "rules/django-practice-function-decorator-on-method.rerail",
       "title": "Django practice: a view decorator put on a method without `method_decorator`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "server",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -369,6 +476,11 @@
       "document": "rules/django-practice-get-handler-writes.rerail",
       "title": "Django practice: a GET/HEAD handler that writes rows, itself or through what it calls",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "medium"
+      },
       "on": false,
       "examples": {
         "caught": {
@@ -386,6 +498,11 @@
       "document": "rules/django-practice-host-header-without-get-host.rerail",
       "title": "Django practice: the Host or X-Forwarded-Host header read directly instead of `request.get_host()`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "security",
+        "layer": "server",
+        "severity": "high"
+      },
       "on": false,
       "examples": {
         "caught": {
@@ -403,6 +520,11 @@
       "document": "rules/django-practice-middleware-ignores-streaming.rerail",
       "title": "Django practice: middleware reading `response.content` without handling streaming responses",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "high"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -420,6 +542,11 @@
       "document": "rules/django-practice-settings-runtime-assignment.rerail",
       "title": "Django practice: a runtime write to `django.conf.settings`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -437,6 +564,11 @@
       "document": "rules/django-practice-settings-module-import.rerail",
       "title": "Django practice: an import of the project's settings module instead of `django.conf.settings`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "medium"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -466,6 +598,12 @@
       "document": "rules/django-practice-async-request-user.rerail",
       "title": "Django practice: `request.user` read inside `async def` instead of `await request.auser()`",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "async.blocking-call-in-async"
+      },
       "on": true,
       "examples": {
         "caught": {
@@ -483,6 +621,12 @@
       "document": "rules/django-practice-sync-orm-reached-from-async.rerail",
       "title": "Django practice: a blocking ORM query in an `async def`, written there or reached through the sync functions it calls",
       "group": "Django practice",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "server",
+        "severity": "high",
+        "hazard": "async.blocking-call-in-async"
+      },
       "on": true,
       "examples": {
         "caught": {

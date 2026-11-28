@@ -11,7 +11,7 @@
 //   # TODO:                        not reported here (TD005)
 #include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
-.violation TD007(at: span, tag: symbol) code "TD007"
+.violation TD007(at: match, tag: symbol) code "TD007"
     "Put a space between the colon after `{tag}` (and its author, if any) and the description."
     suppress ruff "TD007"
 TD007(t, D) :- todo_item(c, D, _), todo_shape(c, "colon-tight"), todo_at(c, t).

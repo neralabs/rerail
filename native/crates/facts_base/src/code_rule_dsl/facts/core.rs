@@ -99,11 +99,12 @@ pub fn tape_queued(cache: &dyn crate::content_store::FactStore, file: &dyn Sourc
 }
 
 pub const NONE: u32 = u32::MAX;
-/// Kind codes per dialect (the tape's `KIND_LIMIT`).
-pub const KIND_STRIDE: u32 = 1024;
-
-/// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
-const ERROR_SYMBOL: u16 = u16::MAX;
+/// Kind codes per dialect, ERROR's symbol and a kind's atom: the shipped tables' (decision 0697), whose codes'
+/// atoms the binary holds. ERROR's atom takes code 0, the grammar's end symbol, which never labels a node (the tape's
+/// own `ERROR_CODE`), so every atom of a dialect stays in its stride: `tag * 1024 + 0xffff` would read as another
+/// dialect's kind.
+pub use rerail_tape_format::codes::{KIND_STRIDE, kind_atom};
+use rerail_tape_format::codes::ERROR_SYMBOL;
 
 /// The codes a test of a document reads, as its table holds them.
 #[derive(Clone, Copy)]
@@ -117,12 +118,6 @@ enum Codes {
     Faults,
 }
 
-/// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
-/// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
-/// `tag * 1024 + 0xffff` would read as another dialect's kind.
-pub fn kind_atom(tag: u8, code: u16) -> u32 {
-    u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
-}
 
 /// The tape tag of a kind atom's dialect.
 pub fn kind_tag(atom: u32) -> u8 {
@@ -248,6 +243,14 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     drop(parse);
     let (built, doc) = facts_of_image(file, &grammar, image.primary, crate::code_rule_dsl::lines::terminators(language), keep)?;
     Ok((with_programs(built, &grammar, image.derived)?, doc))
+}
+
+/// Whether a file of `grammar`'s dialect has no programs but its parse's (`FileImage::embedding`'s derived documents):
+/// no embedding of the dialect reads the scope, so [`with_programs`] adds none. Then a file's derived documents are
+/// its whole record of programs, and their count is recorded with its tape (decision 0431 step 6), whichever path
+/// writes it.
+pub fn programs_are_the_parse(grammar: &crate::code_rule_dsl::tape::Grammar) -> bool {
+    grammar.lang.embeds().iter().all(|&(via, _)| !crate::code_rule_dsl::embed::embedder(via).reads_scope())
 }
 
 /// `built`'s facts with the file's programs (decision 0431 §7, step 6): `derived`, those its parse made over the tape
@@ -563,8 +566,9 @@ fn build_in_wave_as(
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
             let parsed = match fragment {
-                Some(f) => TapeImage::parse_from(&grammar, file.source(), f.start, &|| false),
-                None => TapeImage::parse(&grammar, file.source(), &|| false),
+                // The source's digest, taken as it was read: the tape's writer takes none of its own.
+                Some(f) => TapeImage::parse_from(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, f.start, &|| false),
+                None => TapeImage::parse(&grammar, tape::Source { text: file.source(), sha256: Some(digest) }, &|| false),
             };
             let Some(image) = parsed else {
                 return Ok((Built::Unparsed, None));
@@ -991,7 +995,7 @@ impl<'a> FactsIn<'a> {
         on_tape!(self, |t| t.subtree_end(id as usize) == id as usize + 1)
     }
     /// `id`'s anonymous children in source order: the tokens the tape stores (the grammar's implied
-    /// ones are not, RER-131).
+    /// ones are not, decision 0161).
     pub fn tokens(&self, id: u32) -> Vec<Token> {
         self.children(id)
             .into_iter()
@@ -1034,9 +1038,15 @@ impl<'a> FactsIn<'a> {
     /// language's (decision 0336 §7). The document's index (`index`) answers whether it holds one, and lists the nodes
     /// of a code few nodes have; else a scan of the codes, 64 nodes at a time.
     fn matching(&self, codes: Codes) -> Vector<u32> {
+        let mut out = rerail_blocks::vector::Vector::new();
+        self.each_matching(codes, &mut |x| out.push(x));
+        out
+    }
+    /// `matching`'s nodes, ascending, each given to `each`: none collected.
+    fn each_matching(&self, codes: Codes, each: &mut dyn FnMut(u32)) {
         use rerail_tape_format::tape::CodeSet;
         if self.is_empty() {
-            return rerail_blocks::vector::Vector::new();
+            return;
         }
         let index = self.index();
         on_tape!(self, |t| {
@@ -1060,7 +1070,7 @@ impl<'a> FactsIn<'a> {
                 Codes::Faults => table.faults(),
             };
             if set.is_empty() {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
             // Whether the document holds one, from the smaller side: the set's numbers searched among the codes it
             // holds, or each code it holds tested.
@@ -1070,24 +1080,25 @@ impl<'a> FactsIn<'a> {
                 _ => index.counts().any(|(c, _)| set.contains(c)),
             };
             if !meets {
-                return rerail_blocks::vector::Vector::new();
+                return;
             }
-            // Codes few nodes have: their nodes as the index lists them, no scan.
+            // Codes few nodes have: their nodes as the index lists them, no scan; several codes' lists, each in
+            // preorder, merged.
             if let Some(numbers) = numbers
                 && numbers.iter().all(|&n| index.listed(n).is_some())
             {
-                let mut out: Vector<u32> = numbers.iter().flat_map(|&n| index.listed(n).into_iter().flatten()).collect();
-                out.sort_unstable();
-                return out;
+                let mut lists: Vec<_> = numbers.iter().filter_map(|&n| index.listed(n)).map(Iterator::peekable).collect();
+                while let Some(i) = (0..lists.len()).filter_map(|i| lists[i].peek().map(|&x| (x, i))).min().map(|(_, i)| i) {
+                    each(lists[i].next().expect("the list peeked"));
+                }
+                return;
             }
-            let mut out = rerail_blocks::vector::Vector::new();
             t.match_groups(&set, |base, mut m| {
                 while m != 0 {
-                    out.push((base + m.trailing_zeros() as usize) as u32);
+                    each((base + m.trailing_zeros() as usize) as u32);
                     m &= m - 1;
                 }
             });
-            out
         })
     }
     /// The nodes of kind `kind` (an atom), by id.
@@ -1098,6 +1109,12 @@ impl<'a> FactsIn<'a> {
         // `atom`'s inverse: the codes of the kind with no ERROR flag; for slot 0 (ERROR's atom, which kind 0's shares)
         // also every ERROR code and kind 0's.
         self.matching(Codes::Kind(kind_code(kind)))
+    }
+    /// `of_kind`'s nodes, ascending, each given to `each`: none collected.
+    pub fn each_of_kind(&self, kind: u32, each: &mut dyn FnMut(u32)) {
+        if kind_tag(kind) == self.tag {
+            self.each_matching(Codes::Kind(kind_code(kind)), each);
+        }
     }
     /// Nodes of the abstract class `class` (a supertype's kind atom), by id.
     pub fn of_class(&self, class: u32) -> Vector<u32> {
@@ -1193,13 +1210,27 @@ impl<'a> FactsIn<'a> {
 pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
-    hash.update(b"rerail.core-facts/v2\0");
+    hash.update(b"rerail.core-facts/v4\0");
+    let image = f.tape.as_ref().map(|t| t.image());
+    // The source by its digest: the one its tape's writer took as it read the source (`TapeImage::source_digest`),
+    // else (a tape read from the store, or none) taken here.
+    let source: [u8; 32] = match image.and_then(|i| i.source_digest) {
+        Some(d) => d,
+        None => {
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, f.source.len() as u64);
+            Sha256::digest(f.source.as_bytes()).into()
+        }
+    };
     hash.update((f.source.len() as u64).to_le_bytes());
-    hash.update(f.source.as_bytes());
-    let tape = f.tape.as_ref().and_then(|t| t.image().to_bytes().ok()).unwrap_or_default();
-    hash.update((tape.len() as u64).to_le_bytes());
-    hash.update(&tape);
-    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (f.source.len() + tape.len()) as u64);
+    // The tape by its identity, the store's key (`TapeImage::identity`: the source, its tag, the grammar and its
+    // format); with none, the source alone. Its bytes are not read.
+    match image {
+        Some(i) => hash.update(i.identity(&source)),
+        None => {
+            hash.update(source);
+            hash.update([0xff; 2]);
+        }
+    }
     hash.finalize().into()
 }
 
@@ -1242,8 +1273,60 @@ pub fn input_column_name(rel: &str, name: &str) -> Option<&'static str> {
     input_columns(rel)?.get(i).copied()
 }
 
+/// The types a place read of core.rerail reads (decision 0724 §3): each its own, and nothing converts between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PlaceType {
+    Node,
+    Line,
+    Match,
+    Token,
+}
+
+/// core.rerail's reads of a line, a match and a token, each a base relation of its own (decision 0724 step 3), and the
+/// node read it is the counterpart of: a node's are `text`, `docof`, `line`, `end_line`, `col`, `token_before` and
+/// `token_after`, read over nodes alone. A pass that knows a node read by name knows each of these by its counterpart
+/// (`counterpart`), and reads the one of its value's type (`typed_read`).
+pub const TYPED_READS: [(&str, PlaceType, &str); 15] = [
+    ("line_text", PlaceType::Line, "text"),
+    ("line_document", PlaceType::Line, "docof"),
+    ("line_number", PlaceType::Line, "line"),
+    ("match_text", PlaceType::Match, "text"),
+    ("match_document", PlaceType::Match, "docof"),
+    ("match_line_number", PlaceType::Match, "line"),
+    ("match_end_line_number", PlaceType::Match, "end_line"),
+    ("match_start_column", PlaceType::Match, "col"),
+    ("token_text", PlaceType::Token, "text"),
+    ("token_document", PlaceType::Token, "docof"),
+    ("token_line_number", PlaceType::Token, "line"),
+    ("token_end_line_number", PlaceType::Token, "end_line"),
+    ("token_start_column", PlaceType::Token, "col"),
+    ("token_previous", PlaceType::Token, "token_before"),
+    ("token_next", PlaceType::Token, "token_after"),
+];
+
+/// Typed read `rel`'s type and its node counterpart (`TYPED_READS`).
+pub fn typed(rel: &str) -> Option<(PlaceType, &'static str)> {
+    TYPED_READS.iter().find(|(r, _, _)| *r == rel).map(|&(_, t, n)| (t, n))
+}
+
+/// The node read `rel` is the counterpart of: itself where it is no typed read.
+pub fn counterpart(rel: &str) -> &str {
+    typed(rel).map_or(rel, |(_, n)| n)
+}
+
+/// The read of type `ty` whose node counterpart is `node_read`; `None` where that type has none (a line's column).
+pub fn typed_read(ty: PlaceType, node_read: &str) -> Option<&'static str> {
+    if ty == PlaceType::Node {
+        return ["text", "docof", "line", "end_line", "col", "token_before", "token_after"].into_iter().find(|r| *r == node_read);
+    }
+    TYPED_READS.iter().find(|(_, t, n)| *t == ty && *n == node_read).map(|&(r, _, _)| r)
+}
+
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
 pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
+    if let Some((_, node)) = typed(rel) {
+        return input_columns(node);
+    }
     Some(match rel {
         "node" => &["d", "n", "kind", "start", "end_"],
         "line" => &["n", "l"],
@@ -1253,7 +1336,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "text" | "name" | "str" | "strprefix" | "node_text" | "comment" | "structural_before" | "structural_after" => &["n", "s"],
         // W's values (`facts::vtab::syntax::Extra`).
         "value" | "static_value" | "rr_value_lit" => &["n", "v"],
-        "value_type_of" => &["n", "t"],
+        "value_type_of" | "static_value_type_of" => &["n", "t"],
         "value_type" => &["v", "t"],
         // W's f-string trees (`facts::vtab::syntax::fstring`).
         "fstring_piece" => &["n", "i", "kind", "v"],

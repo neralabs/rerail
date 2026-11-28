@@ -1,6 +1,6 @@
 //! A program lowered to the integers of the base relations (decision 0009; O13).
 //!
-//! Every column gets a domain. Declared types give `int`, `node` and `sym`; the base relations' symbol columns are
+//! Every column gets a domain. Declared types give `int`, `node`, `node_path` (decision 0722) and `sym`; the base relations' symbol columns are
 //! names, except `node.kind` (kind atoms) and `field.f` (field atoms); a derived `sym` column takes the domain of
 //! the variables written into it, to a fixpoint over the rules, and is a name if nothing says otherwise. String
 //! constants then become integers by the domain they meet: name atoms (interned), or kind and field atoms in the
@@ -27,11 +27,21 @@ pub enum Domain {
     Kind,
     Field,
     Name,
+    /// A node path (decision 0722): its granule's key atom in the high 32 bits, its steps below. The store maps the
+    /// atom as a name's (column type `p`), and an output shows it as its text (`path_tables::path_text`).
+    Path,
 }
 
 impl Domain {
     fn symbolic(self) -> bool {
         matches!(self, Domain::Kind | Domain::Field | Domain::Name)
+    }
+    /// Whether a variable of this domain may not also be one of `other`: two symbolic domains, or a path and a
+    /// name, a kind, a field or a node. A path is a number (`.type node_path <: number`): an integer's variable that
+    /// is also a path is a path (`rule_var_domains`), so its column's atom is mapped as one.
+    fn clashes(self, other: Domain) -> bool {
+        let path_with = |o: Domain| o != Domain::Path && o != Domain::Int;
+        self != other && (self.symbolic() && other.symbolic() || self == Domain::Path && path_with(other) || other == Domain::Path && path_with(self))
     }
 }
 
@@ -60,6 +70,11 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "place" => (vec![Some(Name), Some(Int)], Some(Domain::Node)),
         "place_path" => (vec![Some(Domain::Node)], Some(Name)),
         "place_line" => (vec![Some(Domain::Node)], Some(Int)),
+        // Node paths (decision 0722): ahead of the catalogue, whose kinds call them numbers.
+        "node_path" => (vec![Some(Domain::Node)], Some(Domain::Path)),
+        "path_node" => (vec![Some(Domain::Path)], Some(Domain::Node)),
+        "path_unit" => (vec![Some(Domain::Path)], Some(Domain::Path)),
+        "path_spelling" | "path_file" => (vec![Some(Domain::Path)], Some(Domain::Name)),
         f if let Some((_, args, ret)) = crate::code_rule_dsl::logic::strings::functions::signature(f) => {
             let domain = |k: &crate::code_rule_dsl::logic::strings::functions::Kind| {
                 Some(if *k == crate::code_rule_dsl::logic::strings::functions::Kind::Text { Name } else { Int })
@@ -71,6 +86,11 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         f if crate::code_rule_dsl::logic::strings::is_test(f) => (vec![Some(Name); arity], None),
         _ => (vec![None; arity], None),
     }
+}
+
+/// Which of relation `rel`'s columns are node paths (decision 0722): its store type is `p`, its atom the high 32 bits.
+pub fn path_columns(domains: &Domains, rel: &str) -> Vec<bool> {
+    domains.get(rel).map_or_else(Vec::new, |ds| ds.iter().map(|d| *d == Domain::Path).collect())
 }
 
 /// Each relation's column domains.
@@ -111,6 +131,7 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
     // Each relation's declaration, by `RelId`: `None` for a relation not declared.
     let mut decl_of: Vec<Option<u32>> = vec![None; v.rel_end() as usize];
     let mut cols: Vec<Vec<Option<Domain>>> = Vec::with_capacity(decls.len());
+    let input_decl: Vec<bool> = decls.iter().map(|(rel, _)| inputs.contains(rel)).collect();
     for (i, (rel, d)) in decls.iter().enumerate() {
         if let Some(r) = v.rel(rel) {
             decl_of[r.0 as usize] = Some(i as u32);
@@ -122,6 +143,7 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
             .map(|(c, (_, t))| match v.text(t) {
                 "int" | "flat" | "min" | "max" => Ok(Some(Domain::Int)),
                 "node" => Ok(Some(Domain::Node)),
+                "node_path" => Ok(Some(Domain::Path)),
                 "sym" if input => Ok(Some(base_domain(rel, c).unwrap_or(Domain::Name))),
                 "sym" => Ok(None),
                 t => Err(Error::Plan(format!("{rel}: no domain for {t}"))),
@@ -157,8 +179,14 @@ pub fn domains_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Re
             let Some(d) = *d else { continue };
             let ds = &mut cols[d as usize];
             for (c, t) in a.args().enumerate() {
-                if let (TermRef::Var(s), Some(slot @ None)) = (t, ds.get_mut(c))
+                let Some(slot) = ds.get_mut(c) else { continue };
+                // A derived number column a path is written to holds paths (`Domain::clashes`): its atoms are mapped.
+                let open = slot.is_none() || *slot == Some(Domain::Int) && !input_decl[d as usize];
+                if let TermRef::Var(s) = t
+                    && open
                     && let Some(dom) = vars[s.0 as usize]
+                    && *slot != Some(dom)
+                    && (slot.is_none() || dom == Domain::Path)
                 {
                     *slot = Some(dom);
                     gained.push(d);
@@ -190,7 +218,12 @@ pub(in crate::code_rule_dsl) fn rule_var_domains(
     let head = v.show_atom(r, r.head());
     let set = |vars: &mut Vec<Option<Domain>>, s: crate::code_rule_dsl::logic::program_image::Slot, d: Domain| -> Result<bool> {
         match vars[s.0 as usize] {
-            Some(e) if e.symbolic() && d.symbolic() && e != d => Err(Error::Plan(format!("rule for {head}: ${} is a {e:?} and a {d:?}", v.text(r.var(s))))),
+            Some(e) if e.clashes(d) => Err(Error::Plan(format!("rule for {head}: ${} is a {e:?} and a {d:?}", v.text(r.var(s))))),
+            // A number that is also a path is a path (`Domain::clashes`).
+            Some(Domain::Int) if d == Domain::Path => {
+                vars[s.0 as usize] = Some(d);
+                Ok(true)
+            }
             Some(_) => Ok(false),
             None => {
                 vars[s.0 as usize] = Some(d);
@@ -349,6 +382,7 @@ impl Constants<'_> {
             Domain::Kind => kind(self.kinds.kind_id(s), self.tag),
             Domain::Field => field(self.kinds.field_id(s), self.tag),
             Domain::Int | Domain::Node => return Err(Error::Plan(format!("the string \"{s}\" stands where an integer goes"))),
+            Domain::Path => return Err(Error::Plan(format!("the string \"{s}\" stands where a node path goes (`@node_path(n)` makes one)"))),
         })
     }
     /// `sym`'s value as the run holds it.

@@ -43,8 +43,8 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
         assert!(resident::stored(&stored).is_ok(), "a stored image is read in place");
         let bytes = tape.resident_parts(None).unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
-        digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
+        store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
+        digests.push(tape.tape_digest().unwrap());
         tapes.push((tape, bytes, source));
     }
     let documents = admit(&store, &digests, &grammar).unwrap();
@@ -280,8 +280,8 @@ DEFINE_KERNEL2(slab_tests, tape_conformance,
         for ((source, lang), doc) in sources.iter().zip(&docs) {
             let bytes = doc.resident_parts(None).unwrap().0;
             let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-            store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
-            digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
+            store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(format.store_version()), &bytes).unwrap();
+            digests.push(doc.tape_digest().unwrap());
         }
         // Every tape is stored as it is, in a segment (a load is its bytes, read in place; 16z decodes none of its
         // blocks), its presence with it: no row holds its bytes, whatever its format.
