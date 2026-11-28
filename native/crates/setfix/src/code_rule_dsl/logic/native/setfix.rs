@@ -4181,6 +4181,14 @@ fn back_at_extreme(j: &JoinRule, i: usize) -> bool {
         && tests.iter().all(|t| t2.iter().any(|u| u == t))
 }
 
+/// Per probe, per plan step, whether it runs inside an earlier atom's row program (`JoinRule::plan_fused`): its plan's,
+/// not a run's, so read as often as asked.
+pub fn fused_steps(conn: impl Scoped, name: &str) -> Result<Vec<Vec<bool>>> {
+    let comp = component(conn.db(), name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body { Body::Join(j) => j.plan_fused(), Body::Sql(_) | Body::Unplanned => Vec::new() }).collect())
+}
+
 pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
@@ -8644,6 +8652,11 @@ impl JoinRule {
     /// The step made first for plan step `p`.
     pub fn step_of(&self, p: usize) -> Option<usize> {
         self.from.iter().position(|&f| f == p)
+    }
+    /// Per plan step, whether its first step runs inside an earlier atom's row program (`fused_at`, `rowcode`): one
+    /// pass over the atom's rows with it, so it is no step of the join's work of its own (`plan_work`).
+    pub fn plan_fused(&self) -> Vec<bool> {
+        (0..self.plan_steps).map(|p| self.step_of(p).is_some_and(|i| (0..i).any(|k| self.fused_at(k).is_some_and(|f| i <= k + f.steps)))).collect()
     }
 }
 

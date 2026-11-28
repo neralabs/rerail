@@ -191,6 +191,11 @@ impl Fx<'_> {
             .map(|line| line.split(',').filter_map(|x| { let (i, o) = x.split_once(':')?; Some((i.parse().ok()?, o.parse().ok()?)) }).collect())
             .collect())
     }
+    /// Per probe, per plan step, whether it runs inside an earlier atom's row program (`fused_steps`): entered with no
+    /// bindings of its own in the join's work (`units`). T's extension engine fuses none.
+    fn fused(&self, name: &str) -> Result<Vec<Vec<bool>>> {
+        if self.direct { Ok(super::native::component::fused_steps(self.db, name)?) } else { Ok(Vec::new()) }
+    }
     /// Profiled: per probe, its steps' CPU seconds since the last call, and last its head's rows made. T's extension
     /// engine does not time its steps: none.
     fn step_cpu(&self, name: &str) -> Result<Vec<Vector<f64>>> {
@@ -296,8 +301,12 @@ struct Driving {
     ngates: usize,
     explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)>,
     counted: Vec<Vec<(u64, u64)>>,
-    /// Per probe line, the orders it ran in before a replan changed it, each with its own step counts: `counted`
-    /// holds the current order's alone, so a step's counts are never another order's step at the same place.
+    /// Per line, per step of its current order, whether the step runs inside an earlier atom's row program
+    /// (`Fx::fused`): no step of the join's work of its own (`units`).
+    fused: Vec<Vec<bool>>,
+    /// Per probe line, the orders it ran in before a replan changed it, each with its own step counts as the join's work
+    /// counts them (`units`): `counted` holds the current order's alone, so a step's counts are never another order's
+    /// step at the same place.
     earlier: Vec<Vec<(Vec<Step>, Vec<(u64, u64)>)>>,
     timed: Vector<f64>,
     /// Profiled: per probe line, its current order's CPU seconds per step and last its head's rows made, over the
@@ -1776,6 +1785,18 @@ fn delta_sources(mut x: super::profile::RulePlan, order: Order<'_, '_>, at: usiz
         }
     }
     x
+}
+
+/// A line's step counts as the join's work counts them (`plan_work`): a step that runs inside an earlier atom's row program
+/// (`fused`, per step; `None`: none does) is entered with no bindings of its own, so the atom and the steps fused after it
+/// are one step, its rows in counted once. Its rows out stay, passed on to the next step.
+fn units(c: &[(u64, u64)], fused: Option<&Vec<bool>>) -> Vec<(u64, u64)> {
+    c.iter().enumerate().map(|(i, &(a, b))| (if fused.is_some_and(|f| f.get(i).copied().unwrap_or(false)) { 0 } else { a }, b)).collect()
+}
+
+/// `plan_work` of a line's counts as the join's work counts them (`units`).
+fn work_of(c: &[(u64, u64)], fused: Option<&Vec<bool>>) -> u64 {
+    super::profile::plan_work(&units(c, fused))
 }
 
 fn shown(order: Order<'_, '_>) -> Vec<String> {
@@ -3259,6 +3280,9 @@ impl<'a> Run<'a, '_> {
         // probe's order less the delta atom, finding the rows that read a row gone) adds its work to its probe's.
         {
             let probes = super::native::component::step_counts(self.db, &name)?;
+            // A probe's steps fused into an earlier atom's row program are entered with no bindings of their own (`units`).
+            let fused = super::native::component::fused_steps(self.db, &name)?;
+            let probes: Vec<Vec<(i64, i64)>> = probes.into_iter().enumerate().map(|(p, line)| line.into_iter().enumerate().map(|(i, (a, b))| (if fused.get(p).and_then(|f| f.get(i)).copied().unwrap_or(false) { 0 } else { a }, b)).collect()).collect();
             let [removes, adds, rechecks] = super::native::component::maint_step_counts(self.db, &name)?;
             let drivers = super::native::component::driver_step_counts(self.db, &name)?;
             let work_of = |line: &[(i64, i64)]| super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
@@ -4054,6 +4078,7 @@ impl<'a> Run<'a, '_> {
             ngates: gates.len(),
             explained,
             counted,
+            fused: Vec::new(),
             earlier: Vec::new(),
             timed,
             stepped: Vec::new(),
@@ -4108,7 +4133,7 @@ impl<'a> Run<'a, '_> {
         let versions = Arc::clone(&self.versions);
         let pf = versions.whole(self.version);
         let fields = vs.whole(self.version);
-        let Driving { scc: scc_owned, solving, sources, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut expected, mut walled, mut wholes } = *d;
+        let Driving { scc: scc_owned, solving, sources, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut fused, mut earlier, mut timed, mut stepped, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut expected, mut walled, mut wholes } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         // Each line's rule as the planner reads it: the seeds' orders, then the probes' (their rules fixed, their
@@ -4136,7 +4161,7 @@ impl<'a> Run<'a, '_> {
             // at the row of its first atom it is at, and the run returns here (`5`).
             if joins::on() && self.fx().direct && cut_only.as_deref().is_none_or(|s| name.contains(s)) {
                 let budgets: Vec<(usize, Option<u64>)> = (0..nseeds + probes.len()).filter(|&line| line < nseeds || !sql_probe[line - nseeds] && !unplanned[line - nseeds]).map(|line| {
-                    let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                    let work = counted.get(line).map_or(0, |c| work_of(c, fused.get(line))) as f64;
                     let due = match &handoff[line] {
                         Some(h) => Some(h.limit),
                         // A probe with a whole plan (O168) runs one or the other in a wave, under one budget: due at
@@ -4203,7 +4228,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, sources, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, expected, walled, wholes,
+                        explained, counted, fused, earlier, timed, stepped, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, expected, walled, wholes,
                         cpu_own: if profiling { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -4226,6 +4251,8 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
+            // Which of each line's steps run inside an earlier atom's row program: its spec's, as `steps` were counted by it.
+            fused = self.fx().fused(&name)?;
             // A declared key a second row broke where the rows were written (decision 0361 step 6): the run's, as a
             // probe's counts break a fact (`Model::layout_broken`), planned from statistics from then on.
             let mut key_broke = false;
@@ -4315,7 +4342,7 @@ impl<'a> Run<'a, '_> {
                         continue;
                     }
                     let (Some(Some(key)), Some(c)) = (keys.get(line).copied(), counted.get(line)) else { continue };
-                    let work = super::profile::plan_work(c) as f64;
+                    let work = work_of(c, fused.get(line)) as f64;
                     let (r, ai) = (probes[k].0, probes[k].1);
                     // Its prepared order, horribly slow (past `slow_factor` of what it was prepared at) or heavy (the
                     // check below): planned again next round with the run's statistics (`prepared_heavy`).
@@ -4464,7 +4491,7 @@ impl<'a> Run<'a, '_> {
                 if plan_budget() && !forced {
                     if searched.len() <= k { searched.resize(probes.len(), 0); }
                     let line = nseeds + k;
-                    let done = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum());
+                    let done = counted.get(line).map_or(0, |c| work_of(c, fused.get(line))) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum());
                     if (done as f64 + replanned_at.delta_rows(k) as f64) < SEARCH_WORK * f64::from(searched[k] + 1) { continue; }
                 }
                 // The dependency index invalidates only affected plans. An empty delta leaves its plan dirty
@@ -4531,7 +4558,7 @@ impl<'a> Run<'a, '_> {
                 let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
                 // Its CPU by step went with the old order (`native`'s earlier orders are shown without it).
                 if let Some(c) = stepped.get_mut(line) { c.clear(); }
-                if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut probes[k].2, new), ran)); }
+                if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut probes[k].2, new), units(&ran, fused.get(line)))); }
                 else { probes[k].2 = new; }
             }
             // Decision 0206, the handoff: a join cut at its check, then replaced, reads the rows of its first atom its
@@ -4568,7 +4595,7 @@ impl<'a> Run<'a, '_> {
                                     let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
                                     if let Some(c) = stepped.get_mut(line) { c.clear(); }
                                     let slot = if seed { &mut orders[line].1 } else { &mut probes[k].2 };
-                                    if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, new), ran)); }
+                                    if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, new), units(&ran, fused.get(line)))); }
                                     else { *slot = new; }
                                 }
                                 true
@@ -4578,7 +4605,7 @@ impl<'a> Run<'a, '_> {
                     }};
                 }
                 // The line's work: its counts, and a whole plan's work as its cut reported it.
-                let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                let work = counted.get(line).map_or(0, |c| work_of(c, fused.get(line))) as f64 + if whole { c.work as f64 } else { 0.0 };
                 // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
                 // orders run over a sample of the rows left (decision 0274: only a line observed on a run's critical
                 // path, `joins::take_trial`), each cut at `trial_cutoff` times the least work measured
@@ -4974,7 +5001,7 @@ impl<'a> Run<'a, '_> {
                             return Err(Error::Plan(format!("a join of {} has no native step", b.head_text())));
                         }
                         // Decision 0271: the order that goes on keeps a limit, and the two are compared again at it.
-                        let base = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                        let base = counted.get(line).map_or(0, |c| work_of(c, fused.get(line))) as f64;
                         let limit = joins::limit_again(if back { h.per_row } else { ran }, base, c.left as f64, c.work as f64);
                         joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on, limit {limit:.0}", b.head_text(), h.per_row, if back { "the old order" } else { "the replacement" }));
                         handoff[line] = Some(joins::Handoff { old: other, per_row: other_rate, limit });
@@ -4986,10 +5013,12 @@ impl<'a> Run<'a, '_> {
             if cut.is_some() { continue; }
             chunk = (chunk * 2).min(u32::MAX as i64);
         }
+        // Each line's counts as the join's work counts them (`units`): what work is reported and judged by.
+        let worked: Vec<Vec<(u64, u64)>> = counted.iter().enumerate().map(|(k, c)| units(c, fused.get(k))).collect();
         // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation
         // keeps (decision 0099, `keeps::observe`).
         {
-            let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&counted).map(|(&r, c)| (r, c.as_slice())).collect();
+            let ruled: Vec<(u64, &[(u64, u64)])> = order_rules.iter().zip(&worked).map(|(&r, c)| (r, c.as_slice())).collect();
             // Each relation's rows, and per column its distinct values and fanout as the live counts left them.
             let sizes: Vec<keeps::Seen> = rels
                 .iter()
@@ -5010,7 +5039,7 @@ impl<'a> Run<'a, '_> {
         placement::record(&stratum_key(scc), &placed, device.as_ref().map(|d| d.refused.clone()));
         if profiling {
             let (u, s) = crate::code_rule_dsl::prof::thread_usage();
-            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();
+            let work: u64 = worked.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();
             super::profile::report::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
@@ -5034,7 +5063,7 @@ impl<'a> Run<'a, '_> {
                 for (was, c) in earlier.get(k).into_iter().flatten() {
                     super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0, &[]);
                 }
-                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0), stepped.get(k).map_or(&[][..], |v| v.as_slice()));
+                super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), worked.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0), stepped.get(k).map_or(&[][..], |v| v.as_slice()));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
             let _record = super::profile::span(|| "profile record".into());
@@ -5079,8 +5108,8 @@ impl<'a> Run<'a, '_> {
                     let work: u64 = super::profile::plan_work(c);
                     text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(Order::new(o.b, was)).join(" , "));
                 }
-                let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
-                let work: u64 = super::profile::plan_work(counted.get(k).unwrap_or(&empty));
+                let line: Vec<String> = worked.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
+                let work: u64 = super::profile::plan_work(worked.get(k).unwrap_or(&empty));
                 text += &format!("  work={work} {}\n    {}\n", line.join(","), shown(o).join(" , "));
             }
             use std::io::Write;
@@ -5098,7 +5127,7 @@ impl<'a> Run<'a, '_> {
         // under its rule and delta.
         {
             let empty = Vec::new();
-            let work = |line: usize| (super::profile::plan_work(counted.get(line).unwrap_or(&empty)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum())) as f64;
+            let work = |line: usize| (super::profile::plan_work(worked.get(line).unwrap_or(&empty)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum())) as f64;
             if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
                 eprintln!("RERAIL_MODE_TRACE {}: derived, work {:.0}", stratum_key(scc), (0..keys.len()).map(work).sum::<f64>());
             }
