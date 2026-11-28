@@ -5280,6 +5280,13 @@ impl View {
     fn identity(&self) -> bool {
         self.cols.len() == self.src.columns().len() && self.cols.iter().enumerate().all(|(i, &c)| i == c)
     }
+    /// Whether a node's row may be read by its own id (`Source::read_own_batch`), its filters (`eqs`) checked on the row
+    /// read: a whole view, or one its constants filter of a source whose rows are all there while it is read (not made
+    /// on lookup, so none the first scan's `ids` left out appears later: decision 0706 step 2's record).
+    /// `rr_near_child_fdef WHERE f = body`, `rf_in`'s read of a site's function, walked 1,168 sites a step of its own.
+    fn read_by_own(&self) -> bool {
+        self.ids.is_none() || (self.by_constants() && !self.src.made_on_lookup())
+    }
     /// Whether constants chose its rows (a statement's `WHERE c = v`), not a version's or a pick's ids.
     pub fn by_constants(&self) -> bool {
         !self.eqs.is_empty()
@@ -9374,12 +9381,13 @@ fn analysed(mut plan: steps::Plan, fuse: bool, is_dot: impl Fn(i64) -> bool) -> 
     plan.probes = probes(&s.steps, &s.out);
     plan.one = (0..s.steps.len()).map(|i| at_most_one(&s, i).is_some()).collect();
     let s = plan.encode();
-    // A fused test by a derived input's view (t57 E6) reads a whole view's source, of an input with no dead rows.
-    let view = |src: &Src| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vector<usize>)> {
+    // A fused test by a derived input's view (t57 E6) reads a whole view's source, of an input with no dead rows, or a
+    // view its constants filter whose rows the read checks them against (`View::read_by_own`).
+    let view = |src: &Src| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vector<usize>, Vec<(usize, i64)>)> {
         let Src::In(rel, _) = src else { return None };
         let rel = s.bound(rel);
         let v = rel.view.as_ref()?;
-        (v.ids.is_none() && v.eqs.is_empty() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone()))
+        (v.read_by_own() && rel.ndead == 0 && view_tests_on()).then(|| (Arc::clone(&v.src), v.cols.clone(), v.eqs.clone()))
     };
     plan.lookups = lookups(&s, &plan.ranges);
     plan.fused = if fuse { rowcode::fuse(&s.steps, &plan.lookups, &view).into_iter().map(|f| f.map(|f| rerail_section::Bound(Arc::from(f)))).collect() } else { s.steps.iter().map(|_| None).collect() };
@@ -9439,7 +9447,7 @@ fn lookups(s: &Section<steps::Plan>, ranges: &[Option<Ranged>]) -> Vec<bool> {
     s.steps.iter().enumerate().map(|(i, st)| {
         let Step::Atom { src: Src::In(rel, _), keys, binds, neg, .. } = st else { return false };
         on && ranges.get(i).is_none_or(Option::is_none) && match &s.bound(rel).view {
-            Some(v) => v.eqs.is_empty() && v.ids.is_none() && v.cols.len() <= READ
+            Some(v) => v.read_by_own() && v.cols.len() + v.eqs.len() <= READ
                 && keys.iter().any(|&(c, k)| matches!(k, Key::Slot(_)) && reads_own(v, c)),
             None => !binds.is_empty() && !*neg && s.one.get(i).copied().unwrap_or(false),
         }

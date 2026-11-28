@@ -86,7 +86,7 @@ pub(super) fn own_read(j: &JoinRule, i: usize) -> Option<OwnRead<'_>> {
     let v = rel.view.as_ref()?;
     // A filtered view's rows are those found at its first scan (`View::ids`), not its filters checked against the source
     // later (whose values may have grown since: on `all` that read gave other rows, decision 0706 step 2's record).
-    if v.ids.is_some() {
+    if !v.read_by_own() {
         if trace() { eprintln!("RERAIL_KIND_TRACE refused {:?}: eqs {} ids {}", rel.name.get(), v.eqs.len(), v.ids.is_some()); }
         return None;
     }
@@ -103,9 +103,11 @@ pub(super) fn own_read(j: &JoinRule, i: usize) -> Option<OwnRead<'_>> {
     let mut reads: Vec<usize> = Vec::new();
     let mut source = |c: usize| reads.iter().position(|&r| r == c).unwrap_or_else(|| { reads.push(c); reads.len() - 1 });
     let mut place = |c: usize| -> Option<usize> { Some(source(*v.cols.get(c)?)) };
-    let checks = keys.iter().enumerate().filter(|&(at, _)| at != lead).map(|(_, &(c, k))| place(c).map(|p| (p, k))).collect::<Option<Vec<_>>>()?;
+    let mut checks = keys.iter().enumerate().filter(|&(at, _)| at != lead).map(|(_, &(c, k))| place(c).map(|p| (p, k))).collect::<Option<Vec<_>>>()?;
     let binds = binds.iter().map(|&(c, s)| place(c).map(|p| (p, s))).collect::<Option<Vec<_>>>()?;
     let equal = tests.iter().map(|&(a, b)| Some((place(a)?, place(b)?))).collect::<Option<Vec<_>>>()?;
+    // A filtered view's constants, checked on the row read (`View::read_by_own`).
+    checks.extend(v.eqs.iter().map(|&(c, x)| (source(c), Key::Const(x))));
     if trace() { eprintln!("RERAIL_KIND_TRACE chosen {:?} reads {} binds {} neg {neg}", rel.name.get(), reads.len(), binds.len()); }
     Some(OwnRead { slot, col, reads, checks, binds, equal, neg: *neg, src, cursor: Default::default() })
 }
@@ -203,7 +205,7 @@ pub(super) fn held(j: &JoinRule, i: usize) -> Option<Held<'_>> {
     let &[(a, Key::Slot(sa)), (b, Key::Slot(sb))] = keys.as_slice() else { return None };
     let (rel, _) = j.src_in(rel, ix);
     let v = rel.view.as_ref()?;
-    if v.ids.is_some() {
+    if !v.read_by_own() {
         return None;
     }
     let cols = [*v.cols.get(a)?, *v.cols.get(b)?];

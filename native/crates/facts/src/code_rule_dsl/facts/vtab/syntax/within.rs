@@ -1530,6 +1530,29 @@ impl Source for NearestChild {
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         Some(values.iter().filter_map(|&v| self.row_of(v, &mut memo)).collect())
     }
+    /// A batch of nodes by `n`, each one's row (at most one, solved for the batch) read: `rf_in`'s
+    /// `rr_near_child_fdef(n, g, _, body)` of each site read inside `rf_site`'s scan program, not a step of its own.
+    fn read_own_batch(&self, column: usize, values: &[i64], reads: &[usize], out: &mut [i64], found: &mut [u8], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> bool {
+        let _ = cursor;
+        if column != 0 {
+            return false;
+        }
+        let _kind = rerail_prof::work::doing(rerail_prof::work::VIEW);
+        let (k, rows) = (reads.len(), &self.solved().rows);
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        for (i, &v) in values.iter().enumerate() {
+            match self.row_of(v, &mut memo) {
+                Some(row) => {
+                    found[i] = 1;
+                    for (o, &c) in out[i * k..(i + 1) * k].iter_mut().zip(reads) {
+                        *o = rows.get(row as u32, c);
+                    }
+                }
+                None => found[i] = 0,
+            }
+        }
+        true
+    }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.solved().rows.get(row as u32, column)
     }

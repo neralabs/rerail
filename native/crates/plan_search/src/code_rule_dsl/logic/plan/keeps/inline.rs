@@ -302,7 +302,30 @@ fn negated<'v>(v: &'v Version, reader: RuleRef<'_>, read: AtomRef<'_>, defs: &[R
                 }
             }
         }
-        let body: Vec<LitRef<'_>> = def.body().collect();
+        // A def's positive atom the reader holds as it is (each variable the read's term there, each constant the
+        // same): false negated wherever the reader runs, so no alternative. `rf_in(n, h) :- rf_site(n), …,
+        // !rf_in_body(n, g), …` over `rf_in_body(n, g) :- rf_site(n), nearest_in_field(n, g, fdef, "body")` is a
+        // negation of the one literal left, and `rf_in_body` was stored for it, a copy of its 1,072 rows read by
+        // `rf_in`'s other rule.
+        let held = |l: &LitRef<'_>| {
+            let Lit::Atom(a) = l.view() else { return false };
+            let same = |d: TermRef<'_>, r: TermRef<'_>| match (d, r) {
+                (TermRef::Var(s), r) => match (to.get(&s), r) {
+                    (Some(Sub::Read(TermRef::Var(x))), TermRef::Var(y)) => *x == y,
+                    (Some(Sub::Read(TermRef::Int(x))), TermRef::Int(y)) => *x == y,
+                    (Some(Sub::Read(TermRef::Str(x))), TermRef::Str(y)) => *x == y,
+                    _ => false,
+                },
+                (TermRef::Int(x), TermRef::Int(y)) => x == y,
+                (TermRef::Str(x), TermRef::Str(y)) => x == y,
+                _ => false,
+            };
+            !a.neg() && reader.body().any(|r| matches!(r.view(), Lit::Atom(b) if !b.neg() && b.rel() == a.rel() && b.args().count() == a.args().count() && a.args().zip(b.args()).all(|(d, r)| same(d, r))))
+        };
+        let body: Vec<LitRef<'_>> = def.body().filter(|l| !held(l)).collect();
+        if body.is_empty() {
+            return None;
+        }
         let sub = |t: TermRef<'_>, to: &BTreeMap<Slot, Sub<'_>>| subst(v, t, to, &reader_vars);
         match body.as_slice() {
             [l] if matches!(l.view(), Lit::Atom(a) if !a.neg()) => {

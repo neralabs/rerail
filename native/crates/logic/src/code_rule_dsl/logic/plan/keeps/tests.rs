@@ -37,13 +37,18 @@
     }
 
     /// A positive read is one copy per rule; a negated one of a single atom with its own variable is that atom
-    /// negated with `_`; a negated one of literals over the head is their disjunction; a join is refused.
+    /// negated with `_`; a negated one of literals over the head is their disjunction; a join is refused. A def's
+    /// atom the reader holds as it is is false negated there: no alternative, so a negation of it and one atom is that
+    /// atom's (`rf_in`'s `!rf_in_body(n, g)` beside `rf_site(n)`).
     #[test]
     fn reads_unfold_into_their_readers() {
         assert_eq!(unfold("o(x) :- a(x), r(x).", 1, &["r(z) :- b(z, w), a(w)."], 1).unwrap(), ["o($x) :- a($x), b($x, $w_i1_1), a($w_i1_1)"]);
         assert_eq!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- b(z, w)."], 1).unwrap(), ["o($x) :- a($x), !b($x, _)"]);
-        assert_eq!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- a(z), z != 3."], 1).unwrap(), ["o($x) :- a($x), !a($x)", "o($x) :- a($x), $x = 3"]);
+        assert_eq!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- a(z), z != 3."], 1).unwrap(), ["o($x) :- a($x), $x = 3"]);
         assert!(unfold("o(x) :- a(x), !r(x).", 1, &["r(z) :- b(z, w), a(w)."], 1).is_none());
+        assert_eq!(unfold("o(x) :- a(x), b(x, y), !c(x, y).", 2, &["c(n, g) :- a(n), b(g, w)."], 1).unwrap(), ["o($x) :- a($x), b($x, $y), !b($y, _)"]);
+        // Held only as it is: `a(g)` is not the reader's `a(x)`, so the negation of a join is refused.
+        assert!(unfold("o(x) :- a(x), b(x, y), !c(x, y).", 2, &["c(n, g) :- a(g), b(n, w)."], 1).is_none());
         // A head variable named twice equates the read's terms, the reader's own variables as they are, though one of
         // them has the name of the rule's. The copy's `a(t)` is the reader's, written once.
         assert_eq!(unfold("o(n) :- a(t), c(t, n).", 1, &["c(n, n) :- a(n)."], 1).unwrap(), ["o($n) :- a($t), $t = $n"]);

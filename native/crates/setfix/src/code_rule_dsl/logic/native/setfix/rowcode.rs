@@ -104,7 +104,9 @@ pub enum PairKey {
 }
 
 /// A derived input's view, as a fused test reads it: its source and, by the atom's column, the source's.
-pub type ViewOf<'a> = &'a dyn Fn(&Src) -> Option<(Arc<dyn Source>, Vector<usize>)>;
+/// A step's view, where a chunk may read it: its source, its columns' places there, and the constants its rows hold
+/// (source column, value), checked on each row read.
+pub type ViewOf<'a> = &'a dyn Fn(&Src) -> Option<(Arc<dyn Source>, Vector<usize>, Vec<(usize, i64)>)>;
 
 /// A value the same for every row of a chunk: a slot bound before the atom, or a constant, or
 /// its document.
@@ -513,7 +515,7 @@ fn fused_in(binds: &[(usize, usize)], after: &[Step], ask: bool, lookups: &[bool
 fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], Key) -> Val, step: &Step, view: ViewOf<'_>) -> Option<ViewTest> {
     let Step::Atom { src, keys, tests, binds, .. } = step else { return None };
     let (keys, tests, binds): (&[(usize, Key)], &[(usize, usize)], &[(usize, usize)]) = (keys, tests, binds);
-    let (source, cols) = view(src)?;
+    let (source, cols, eqs) = view(src)?;
     if keys.is_empty() {
         return None;
     }
@@ -526,6 +528,7 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     };
     // A pair of the row's values, where the source tests pairs of those columns in batches.
     if let [(_, ka), (_, kb)] = keys
+        && eqs.is_empty()
         && binds.is_empty()
         && tests.is_empty()
         && let (va, vb) = (val(env, *ka), val(env, *kb))
@@ -561,10 +564,18 @@ fn view_test(b: &mut Build, env: &[(usize, Val)], val: impl Fn(&[(usize, Val)], 
     }
     let equal = tests.iter().map(|&(x, y)| Some((place(x)?, place(y)?))).collect::<Option<Vec<_>>>()?;
     let looks = binds.iter().map(|&(c, _)| Some((c, place(c)?))).collect::<Option<Vec<_>>>()?;
+    // A filtered view's constants, checked on the row read as a key is: each a source column read.
+    for &(c, x) in &eqs {
+        let at = reads.iter().position(|&r| r == c).unwrap_or_else(|| {
+            reads.push(c);
+            reads.len() - 1
+        });
+        checks.push((at, Key::Const(x)));
+    }
     // A test of the node against a constant and nothing else (`cands::value_bits_need`'s): its bits, where the
     // source has built them for the constant, answer it.
     let bits = match keys {
-        [_, _] if binds.is_empty() && tests.is_empty() => keys.iter().enumerate().find_map(|(k, &(c, key))| match key {
+        [_, _] if binds.is_empty() && tests.is_empty() && eqs.is_empty() => keys.iter().enumerate().find_map(|(k, &(c, key))| match key {
             Key::Const(v) if k != node => Some((by, *cols.get(c)?, v)),
             _ => None,
         }),
