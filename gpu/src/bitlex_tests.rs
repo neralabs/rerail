@@ -125,3 +125,57 @@ fn json_tier1_as_ukl_is_its_rust() {
     }
     eprintln!("{}: tier 1 as UKL, {chunks_run} chunks in chunks of 1 and 3 blocks: each chunk's ends, counts and verdict its Rust's; {records} records and their types written as lex_typed's", crate::device::backend());
 }
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct T2Args {
+    n: u32,
+    count: u32,
+}
+unsafe impl Pod for T2Args {}
+
+/// Tier 2's token pass as UKL (`json_t2_tokens`) on the device, a thread a record of tier 1's type lists (one buffer,
+/// as `json_t1_from` writes them): each record's token is Rust's `tokens`' (its end, first node's number, nodes, last
+/// node's start, or the byte it is refused at).
+#[test]
+fn json_tokens_as_ukl_are_its_rust() {
+    let Some(shared) = crate::shared::get() else {
+        eprintln!("no device: the token pass as UKL did not run");
+        return;
+    };
+    let mut q = crate::device::ComputeQueue::new(&shared.queue);
+    let p = program("json_tokens.uglykl", rerail_json_aot::TOKENS_UKL).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    let mut more: Vec<Vec<u8>> = vec![
+        b"[1, -0, 0.5, 1e9, -12.75E-3, 01, 1., -, 1e, true, false, null, tru, nul, \"\\ud83d\\ude00\", \"\\ud83d\", \"\\ude00\", \"\\u12\", \"\\x\", \"\"]".to_vec(),
+        b"{\"k\": 3truex}".to_vec(),
+    ];
+    let mut all = files();
+    all.append(&mut more);
+    let (mut records, mut refused) = (0usize, 0usize);
+    for (k, f) in all.iter().enumerate() {
+        let buf = rerail_json_aot::padded(f);
+        let typed = rerail_json_aot::lex_typed(&buf, f.len(), 16);
+        if typed.lexed.refused {
+            continue;
+        }
+        let want = rerail_json_aot::middle::tokens(&buf, &typed.lexed, &typed.types, &rerail_json_aot::middle::in_order);
+        let list: Vec<u32> = typed.types.iter().flatten().copied().collect();
+        let count = typed.lexed.count;
+        let sb = buffer_of(&buf).unwrap();
+        let stb = buffer_of(&typed.lexed.starts).unwrap();
+        let lb = buffer_of(&list).unwrap();
+        let tb = alloc::<u32>(count * 5).unwrap();
+        let args = T2Args { n: list.len() as u32, count: count as u32 };
+        launch(&q, p.function("json_t2_tokens").unwrap()).value("args", &args).buffer("src", &sb).buffer("starts", &stb).buffer("list", &lb).buffer("tokens", &tb).run(&[list.len() as u64], &[1]).unwrap();
+        q.flush().await_().unwrap();
+        let got: Vec<u32> = read(&tb, count * 5);
+        for &r in &list {
+            let r = r as usize;
+            let w = want[r];
+            assert_eq!(&got[r * 5..r * 5 + 5], &[w.end, w.kind, w.nodes, w.last, w.err], "{}: file {k}, record {r}'s token", crate::device::backend());
+            refused += usize::from(w.err != rerail_json_aot::middle::NONE);
+        }
+        records += list.len();
+    }
+    eprintln!("{}: the token pass as UKL, {records} records: each token Rust's ({refused} refused)", crate::device::backend());
+}

@@ -158,6 +158,13 @@ The kernels are printed with it, a thread a chunk: `json_t1_ends` (pass 1, each 
 after the types before it). `json_aot/src/tier1.uglykl` is the printer's, held to it by `json_rust_is_current`
 (`TIER1_UKL`).
 
+The token pass (stage 2, section 4) is printed the same way (`bitlex_lex_rust::ukl::tier2_tokens`): the
+primitive's helpers (`string`, `value_primitive`, the number's check, their tables), each walk helper printed once for
+each `Out` it runs with (here the pass's `Tok`), a `Result<usize, u32>` as a struct (`?` its test hoisted before the
+line), a `match` as tests in turn (C's `switch` would take `break`), and the `known` short cut dropped for an `Out` that
+keeps no answers. Its kernel `json_t2_tokens` reads a token a thread, at each record of tier 1's type lists as
+`json_t1_from` writes them (`json_aot/src/tokens.uglykl`, `TOKENS_UKL`).
+
 ### 7. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
@@ -199,7 +206,9 @@ LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled
 bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
 tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
 group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
-backend, compiled and on the vector path. `rerail-gpu`'s `json_tier1_as_ukl_is_its_rust`: JSON files (a list of 400 objects with escapes and multibyte text, a
+backend, compiled and on the vector path. `rerail-gpu`'s `json_tokens_as_ukl_are_its_rust`: every record of the tier 1 test's files and of a file of the
+token errors (numbers, words, surrogate pairs, bad escapes): each token is Rust's `tokens`' (14,865 records, 11
+refused). `rerail-gpu`'s `json_tier1_as_ukl_is_its_rust`: JSON files (a list of 400 objects with escapes and multibyte text, a
 byte-order mark, 3,000 strings of backslashes, and the refusals: a control byte in a string, bad UTF-8, a string open at
 the end) in chunks of 1 and 3 blocks (1,275 chunks): each chunk's end from each lane's entry, its counts and its
 verdict are the Rust's, and the records and their types written at the places a scan of the counts gives are

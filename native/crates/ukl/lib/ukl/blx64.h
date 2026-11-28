@@ -146,3 +146,15 @@ UKL_INLINE uint64_t ukl_b64_nonzero(UklB64 a)
         m |= (uint64_t)(a.b[i] != 0u) << i;
     return m;
 }
+
+// The 32 bytes at `p`: the bits of the bytes that are `x` (`*a`) and of those that are `y` (`*b`) (`s::marks32`).
+UKL_INLINE void ukl_b32_marks(UKL_GLOBAL const uint8_t* p, uint32_t x, uint32_t y, UKL_PRIVATE uint32_t* a, UKL_PRIVATE uint32_t* b)
+{
+    uint32_t ma = 0u, mb = 0u;
+    for (uint32_t i = 0u; i < 32u; i++) {
+        ma |= (uint32_t)(p[i] == x) << i;
+        mb |= (uint32_t)(p[i] == y) << i;
+    }
+    *a = ma;
+    *b = mb;
+}

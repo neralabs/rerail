@@ -16,7 +16,7 @@ use std::fmt::Write;
 
 /// A value's type, as the printer keeps it.
 #[derive(Clone, Debug, PartialEq)]
-enum Ty {
+pub(crate) enum Ty {
     U64,
     U32,
     Bool,
@@ -28,6 +28,12 @@ enum Ty {
     Lists,
     /// An array of these.
     Arr(Box<Ty>),
+    /// What tier 2's helpers write through (`Out`), its C struct.
+    Out(String),
+    /// A `Result<usize, u32>` (`{p}R`).
+    Res,
+    /// A pair of `u32`s (`marks`').
+    Pair,
 }
 
 impl Ty {
@@ -41,24 +47,29 @@ impl Ty {
             Ty::Ptr(c) => c.clone(),
             Ty::Lists => "UKL_GLOBAL uint32_t*".into(),
             Ty::Arr(t) => t.c(p),
+            Ty::Out(c) => format!("UKL_PRIVATE {c}*"),
+            Ty::Res => format!("{p}R"),
+            Ty::Pair => "uint32_t".into(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-enum Tok {
+pub(crate) enum Tok {
     Id(String),
     Num(String),
     Str,
+    /// A byte string's bytes (`b"…"`).
+    Bytes(Vec<u8>),
     P(&'static str),
 }
 
 const PUNCT: &[&str] = &[
-    "<<=", ">>=", "..", "::", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "|=", "&=", "^=", "*=", "(", ")", "[", "]", "{", "}", ",", ".", ";", ":", "&", "|",
+    "<<=", ">>=", "..=", "..", "::", "=>", "?", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "+=", "-=", "|=", "&=", "^=", "*=", "(", ")", "[", "]", "{", "}", ",", ".", ";", ":", "&", "|",
     "^", "!", "+", "-", "*", "/", "%", "<", ">", "=",
 ];
 
-fn lex(s: &str) -> Result<Vec<Tok>, String> {
+pub(crate) fn lex(s: &str) -> Result<Vec<Tok>, String> {
     let b = s.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -66,6 +77,12 @@ fn lex(s: &str) -> Result<Vec<Tok>, String> {
         let c = b[i];
         if c.is_ascii_whitespace() {
             i += 1;
+            continue;
+        }
+        if c == b'b' && b.get(i + 1) == Some(&b'"') {
+            let j = i + 2 + b[i + 2..].iter().position(|c| *c == b'"').ok_or("an open byte string")?;
+            out.push(Tok::Bytes(b[i + 2..j].to_vec()));
+            i = j + 1;
             continue;
         }
         if c.is_ascii_alphabetic() || c == b'_' {
@@ -99,7 +116,7 @@ fn lex(s: &str) -> Result<Vec<Tok>, String> {
 }
 
 #[derive(Clone, Debug)]
-enum E {
+pub(crate) enum E {
     Num(String),
     Id(String),
     Path(String, String),
@@ -112,11 +129,21 @@ enum E {
     Index(Box<E>, Box<E>),
     Array(Vec<E>),
     If(Box<E>, Box<E>, Box<E>),
+    /// `a..b` or `a..=b` (the last `true`).
+    Range(Box<E>, Box<E>, bool),
+    /// `matches!(x, p | q | a..=b)`: its patterns, each a low and a high.
+    Matches(Box<E>, Vec<(E, E)>),
+    /// `x?`.
+    Try(Box<E>),
+    Tuple(Vec<E>),
+    /// `x[a..b]`, `x[a..]`.
+    Slice(Box<E>, Box<E>, Option<Box<E>>),
+    Bytes(Vec<u8>),
 }
 
-struct Parser {
-    t: Vec<Tok>,
-    i: usize,
+pub(crate) struct Parser {
+    pub(crate) t: Vec<Tok>,
+    pub(crate) i: usize,
 }
 
 fn binding(op: &str) -> Option<u8> {
@@ -158,7 +185,7 @@ impl Parser {
             t => Err(format!("expected a name at {t:?}")),
         }
     }
-    fn expr(&mut self, min: u8) -> Result<E, String> {
+    pub(crate) fn expr(&mut self, min: u8) -> Result<E, String> {
         let mut a = self.unary()?;
         loop {
             if matches!(self.peek(), Some(Tok::Id(k)) if k == "as") {
@@ -227,8 +254,18 @@ impl Parser {
             } else if self.is("[") {
                 self.i += 1;
                 let k = self.expr(0)?;
+                if self.is("..") {
+                    self.i += 1;
+                    let end = if self.is("]") { None } else { Some(Box::new(self.expr(0)?)) };
+                    self.eat("]")?;
+                    a = E::Slice(Box::new(a), Box::new(k), end);
+                    continue;
+                }
                 self.eat("]")?;
                 a = E::Index(Box::new(a), Box::new(k));
+            } else if self.is("?") {
+                self.i += 1;
+                a = E::Try(Box::new(a));
             } else if self.is("(") {
                 let args = self.args()?;
                 a = E::Call(Box::new(a), args);
@@ -243,6 +280,12 @@ impl Parser {
             Some(Tok::Num(n)) => {
                 self.i += 1;
                 Ok(E::Num(n))
+            }
+            Some(Tok::Id(k)) if k == "unsafe" && matches!(self.t.get(self.i + 1), Some(Tok::P("{"))) => {
+                self.i += 2;
+                let e = self.expr(0)?;
+                self.eat("}")?;
+                Ok(e)
             }
             Some(Tok::Id(k)) if k == "if" => {
                 self.i += 1;
@@ -259,6 +302,34 @@ impl Parser {
                 self.eat("}")?;
                 Ok(E::If(Box::new(c), Box::new(a), Box::new(b)))
             }
+            Some(Tok::Id(k)) if k == "matches" && matches!(self.t.get(self.i + 1), Some(Tok::P("!"))) => {
+                self.i += 2;
+                self.eat("(")?;
+                let x = self.expr(0)?;
+                self.eat(",")?;
+                let mut pats = Vec::new();
+                loop {
+                    let lo = self.expr(5)?;
+                    let hi = if self.is("..=") {
+                        self.i += 1;
+                        self.expr(5)?
+                    } else {
+                        lo.clone()
+                    };
+                    pats.push((lo, hi));
+                    if self.is("|") {
+                        self.i += 1;
+                        continue;
+                    }
+                    break;
+                }
+                self.eat(")")?;
+                Ok(E::Matches(Box::new(x), pats))
+            }
+            Some(Tok::Bytes(v)) => {
+                self.i += 1;
+                Ok(E::Bytes(v))
+            }
             Some(Tok::Id(k)) => {
                 self.i += 1;
                 if self.is("::") {
@@ -271,6 +342,22 @@ impl Parser {
             Some(Tok::P("(")) => {
                 self.i += 1;
                 let e = self.expr(0)?;
+                if self.is("..=") || self.is("..") {
+                    let incl = self.is("..=");
+                    self.i += 1;
+                    let b = self.expr(0)?;
+                    self.eat(")")?;
+                    return Ok(E::Range(Box::new(e), Box::new(b), incl));
+                }
+                if self.is(",") {
+                    let mut v = vec![e];
+                    while self.is(",") {
+                        self.i += 1;
+                        v.push(self.expr(0)?);
+                    }
+                    self.eat(")")?;
+                    return Ok(E::Tuple(v));
+                }
                 self.eat(")")?;
                 Ok(e)
             }
@@ -292,7 +379,7 @@ impl Parser {
 }
 
 /// `s` parsed whole as one expression.
-fn parse(s: &str) -> Result<E, String> {
+pub(crate) fn parse(s: &str) -> Result<E, String> {
     let mut p = Parser { t: lex(s)?, i: 0 };
     let e = p.expr(0)?;
     if p.i != p.t.len() {
@@ -302,33 +389,47 @@ fn parse(s: &str) -> Result<E, String> {
 }
 
 /// A function's names, types and constants, as it is printed.
-struct Fx<'a> {
-    p: &'a str,
+pub(crate) struct Fx<'a> {
+    pub(crate) p: &'a str,
     /// The tier's names: functions, tables, constants, with their prefix.
-    names: &'a HashMap<String, String>,
+    pub(crate) names: &'a HashMap<String, String>,
     /// The tier's functions' return types.
-    returns: &'a HashMap<String, Ty>,
+    pub(crate) returns: &'a HashMap<String, Ty>,
     /// The scopes' names and types, innermost last.
-    scopes: Vec<Vec<(String, Ty)>>,
+    pub(crate) scopes: Vec<Vec<(String, Ty)>>,
     /// The function's own constants, their values and types.
-    consts: HashMap<String, (String, Ty)>,
+    pub(crate) consts: HashMap<String, (String, Ty)>,
+    /// The statements a line's expression needs before it (a `?`'s test, an array argument's room).
+    pub(crate) pre: std::cell::RefCell<String>,
+    pub(crate) tmp: std::cell::Cell<u32>,
+    /// Whether the walk's `Out` keeps the token pass's answers (`known`).
+    pub(crate) known: bool,
 }
 
 impl Fx<'_> {
-    fn var(&self, n: &str) -> Option<&Ty> {
+    /// The statements hoisted for the line printed last, taken.
+    pub(crate) fn take_pre(&self) -> String {
+        std::mem::take(&mut *self.pre.borrow_mut())
+    }
+    fn fresh(&self) -> String {
+        let k = self.tmp.get();
+        self.tmp.set(k + 1);
+        format!("t{k}_")
+    }
+    pub(crate) fn var(&self, n: &str) -> Option<&Ty> {
         self.scopes.iter().rev().flat_map(|s| s.iter().rev()).find(|(k, _)| k == n).map(|(_, t)| t)
     }
-    fn in_this_scope(&self, n: &str) -> bool {
+    pub(crate) fn in_this_scope(&self, n: &str) -> bool {
         self.scopes.last().is_some_and(|s| s.iter().any(|(k, _)| k == n))
     }
-    fn declare(&mut self, n: &str, t: Ty) {
+    pub(crate) fn declare(&mut self, n: &str, t: Ty) {
         self.scopes.last_mut().expect("a scope").push((n.into(), t));
     }
-    fn name(&self, n: &str) -> String {
+    pub(crate) fn name(&self, n: &str) -> String {
         self.names.get(n).cloned().unwrap_or_else(|| n.into())
     }
 
-    fn ty(&self, e: &E) -> Ty {
+    pub(crate) fn ty(&self, e: &E) -> Ty {
         match e {
             E::Num(n) => {
                 let d = n.replace('_', "");
@@ -367,14 +468,21 @@ impl Fx<'_> {
             E::Cast(_, t) => cast_ty(t),
             E::Call(f, _) => match &**f {
                 E::Id(n) => self.returns.get(n).cloned().unwrap_or(Ty::U32),
+                E::Path(m, _) if m != "s" => cast_ty(m),
                 E::Path(..) => self.ty(f),
                 _ => Ty::U32,
             },
             E::Method(a, m, _) => match m.as_str() {
                 "count_ones" | "trailing_zeros" => Ty::U32,
-                "is_some" | "is_none" | "starts_with" => Ty::Bool,
+                "is_some" | "is_none" | "starts_with" | "contains" => Ty::Bool,
+                "get_unchecked" => Ty::U32,
                 _ => self.ty(a),
             },
+            E::Range(..) | E::Bytes(_) => Ty::U32,
+            E::Matches(..) => Ty::Bool,
+            E::Try(_) => Ty::U32,
+            E::Tuple(_) => Ty::Pair,
+            E::Slice(..) => Ty::Ptr("UKL_GLOBAL const uint8_t*".into()),
             E::Field(_, _) => Ty::U64,
             E::Index(a, _) => match self.ty(a) {
                 Ty::Arr(t) => *t,
@@ -386,17 +494,33 @@ impl Fx<'_> {
         }
     }
 
-    fn c(&self, e: &E) -> Result<String, String> {
+    pub(crate) fn c(&self, e: &E) -> Result<String, String> {
         Ok(match e {
             E::Num(n) => {
                 let d: String = n.replace('_', "");
                 let digits = ["u64", "usize", "u32", "u8"].iter().fold(d.as_str(), |d, s| d.strip_suffix(s).unwrap_or(d)).to_string();
                 if self.ty(e) == Ty::U64 { format!("{digits}ull") } else { format!("{digits}u") }
             }
+            E::Id(n) if n == "None" => "UKL_NONE".into(),
             E::Id(n) => match self.consts.get(n) {
                 Some((v, _)) => v.clone(),
                 None => self.name(n),
             },
+            E::Call(f, args) if matches!(&**f, E::Id(n) if n == "Ok" || n == "Err" || n == "Some") => {
+                let E::Id(n) = &**f else { unreachable!("a name") };
+                let x = self.c(args.first().ok_or("a value of nothing")?)?;
+                match n.as_str() {
+                    "Some" => x,
+                    "Ok" => format!("{}ok({x})", self.p),
+                    _ => format!("{}err({x})", self.p),
+                }
+            }
+            // `u32::from(x)` and the like: a cast.
+            E::Call(f, args) if matches!(&**f, E::Path(m, n) if m != "s" && n == "from") => {
+                let E::Path(m, _) = &**f else { unreachable!("a path") };
+                let x = args.first().ok_or("`from` of nothing")?;
+                format!("(({})({}))", cast_ty(m).c(self.p), self.c(x)?)
+            }
             E::Path(m, f) => {
                 if m != "s" {
                     return Err(format!("a path the printer does not take: {m}::{f}"));
@@ -413,9 +537,18 @@ impl Fx<'_> {
             // A table's address is the table; a local's is its address.
             E::Un("&", a) => match &**a {
                 E::Id(n) if self.names.contains_key(n) => self.name(n),
+                E::Slice(..) => self.c(a)?,
                 _ => format!("(&{})", self.c(a)?),
             },
             E::Un(op, a) => format!("({op}{})", self.c(a)?),
+            // `x[a..b] == *b"…"`: each byte.
+            E::Bin("==", a, b) if matches!((&**a, &**b), (E::Slice(_, _, Some(_)), E::Un("*", y)) if matches!(&**y, E::Bytes(_))) => {
+                let (E::Slice(x, k, _), E::Un(_, y)) = (&**a, &**b) else { unreachable!("a slice") };
+                let E::Bytes(bytes) = &**y else { unreachable!("bytes") };
+                let (x, k) = (self.c(x)?, self.c(k)?);
+                let v: Vec<String> = bytes.iter().enumerate().map(|(j, b)| format!("{x}[{k} + {j}u] == {b:#04x}u")).collect();
+                format!("({})", v.join(" && "))
+            }
             E::Bin(op, a, b) => format!("({} {op} {})", self.c(a)?, self.c(b)?),
             E::Cast(a, t) => format!("(({})({}))", cast_ty(t).c(self.p), self.c(a)?),
             E::Call(f, args) => {
@@ -424,11 +557,48 @@ impl Fx<'_> {
                     E::Path(m, n) if m == "s" && n == "load" && matches!(args.first(), Some(E::Un("&", _))) => "ukl_b64_load_t".to_string(),
                     _ => self.c(f)?,
                 };
-                let args = args.iter().map(|a| self.c(a)).collect::<Result<Vec<_>, _>>()?;
-                format!("{f}({})", args.join(", "))
+                // An array argument: its room, before the line.
+                let mut v = Vec::new();
+                for a in args {
+                    if let E::Array(xs) = a {
+                        let t = self.fresh();
+                        let xs = xs.iter().map(|x| self.c(x)).collect::<Result<Vec<_>, _>>()?;
+                        let _ = writeln!(self.pre.borrow_mut(), "uint32_t {t}[{}] = {{{}}};", xs.len(), xs.join(", "));
+                        v.push(t);
+                    } else {
+                        v.push(self.c(a)?);
+                    }
+                }
+                format!("{f}({})", v.join(", "))
+            }
+            // `x?`: its result's test before the line, its value in it.
+            E::Try(x) => {
+                let t = self.fresh();
+                let x = self.c(x)?;
+                let _ = writeln!(self.pre.borrow_mut(), "{p}R {t} = {x};\nif (!{t}.ok)\nreturn {t};", p = self.p);
+                format!("{t}.v")
+            }
+            E::Matches(x, pats) => {
+                let x = self.c(x)?;
+                let mut v = Vec::new();
+                for (lo, hi) in pats {
+                    let (l, h) = (self.c(lo)?, self.c(hi)?);
+                    v.push(if l == h { format!("{x} == {l}") } else { format!("({x} >= {l} && {x} <= {h})") });
+                }
+                format!("({})", v.join(" || "))
+            }
+            E::Slice(a, k, None) => format!("({} + {})", self.c(a)?, self.c(k)?),
+            E::Range(..) | E::Tuple(_) | E::Slice(..) | E::Bytes(_) => return Err("a range, tuple, slice or byte string the printer does not take here".into()),
+            E::Method(a, m, args) if matches!(self.ty(a), Ty::Out(_)) => {
+                let Ty::Out(c) = self.ty(a) else { unreachable!("an out") };
+                let mut v = vec![self.c(a)?];
+                for x in args {
+                    v.push(self.c(x)?);
+                }
+                format!("{c}_{m}({})", v.join(", "))
             }
             E::Method(a, m, args) => {
-                let x = self.c(a)?;
+                let x = if matches!(&**a, E::Range(..)) { String::new() } else { self.c(a)? };
                 let arg = |k: usize| args.get(k).ok_or_else(|| format!("`{m}` without its argument")).and_then(|e| self.c(e));
                 let wide = self.ty(a) == Ty::U64;
                 match m.as_str() {
@@ -456,6 +626,17 @@ impl Fx<'_> {
                     "is_some" => format!("({x} != UKL_NONE)"),
                     "is_none" => format!("({x} == UKL_NONE)"),
                     "add" => format!("({x} + {})", arg(0)?),
+                    "get_unchecked" => format!("(&{x}[{}])", arg(0)?),
+                    // `(a..=b).contains(&x)`.
+                    "contains" => {
+                        let E::Range(lo, hi, incl) = &**a else { return Err("`contains` of no range".into()) };
+                        let y = match args.first() {
+                            Some(E::Un("&", y)) => self.c(y)?,
+                            Some(y) => self.c(y)?,
+                            None => return Err("`contains` of nothing".into()),
+                        };
+                        format!("({y} >= {} && {y} {} {})", self.c(lo)?, if *incl { "<=" } else { "<" }, self.c(hi)?)
+                    }
                     // `src.starts_with(&[a, b, c])`: its first bytes.
                     "starts_with" => {
                         let Some(E::Un("&", arr)) = args.first() else { return Err("`starts_with` of no bytes".into()) };
@@ -483,7 +664,7 @@ impl Fx<'_> {
     }
 }
 
-fn cast_ty(t: &str) -> Ty {
+pub(crate) fn cast_ty(t: &str) -> Ty {
     match t {
         "u64" => Ty::U64,
         "bool" => Ty::Bool,
@@ -493,12 +674,23 @@ fn cast_ty(t: &str) -> Ty {
 
 /// A parameter's type, from its Rust type.
 fn param_ty(t: &str) -> Result<Ty, String> {
+    param_ty_of(t, "")
+}
+
+/// A parameter's type, `&mut D` the walk's `Out`, `out` (its C struct).
+fn param_ty_of(t: &str, out: &str) -> Result<Ty, String> {
+    if t == "&mut D" && !out.is_empty() {
+        return Ok(Ty::Out(out.into()));
+    }
     Ok(match t {
         "u64" => Ty::U64,
         "u32" | "usize" => Ty::U32,
         "bool" => Ty::Bool,
         "Carries" => Ty::Carries,
         "&[u8]" => Ty::Ptr("UKL_GLOBAL const uint8_t*".into()),
+        "&[u32]" => Ty::Ptr("UKL_GLOBAL const uint32_t*".into()),
+        "u8" => Ty::U32,
+        _ if t.starts_with("[u32; ") => Ty::Ptr("UKL_PRIVATE const uint32_t*".into()),
         "*mut u32" => Ty::Ptr("UKL_GLOBAL uint32_t*".into()),
         "&mut usize" => Ty::Ptr("UKL_PRIVATE uint32_t*".into()),
         _ if t.starts_with("&mut [usize;") => Ty::Ptr("UKL_PRIVATE uint32_t*".into()),
@@ -514,6 +706,10 @@ enum Frame {
     Value(String),
     /// A struct's fields, each `{target}.field = …`, then the line `after`.
     Fields(String, String),
+    /// A `match`, as tests in turn of its value's variable: whether an arm is printed yet.
+    Match(String, bool),
+    /// An arm of a `match`: its block.
+    Arm,
 }
 
 /// Function `name`'s body (`lines`, after its signature line, to its closing brace), printed.
@@ -521,11 +717,88 @@ enum Frame {
 fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<(), String> {
     let mut frames: Vec<Frame> = vec![Frame::Plain];
     let lanes = fx.name("LANES");
+    // Where the line before was printed, for the statements its expressions hoisted; the braces of a block skipped.
+    let mut mark = 0usize;
+    let mut skip = 0i32;
+    let mut matches = 0u32;
     for raw in lines {
+        let pre = fx.take_pre();
+        if !pre.is_empty() {
+            let line = &out[mark..];
+            if line.starts_with('}') || line.starts_with("while") {
+                return Err(format!("as UKL: a test hoisted before `{}`", line.lines().next().unwrap_or("")));
+            }
+            out.insert_str(mark, &pre);
+        }
+        mark = out.len();
         let l = raw.trim();
-        let why = |e: String| format!("tier 1 as UKL: `{l}`: {e}");
-        if l.is_empty() {
+        let why = |e: String| format!("as UKL: `{l}`: {e}");
+        if skip > 0 {
+            skip += l.matches('{').count() as i32 - l.matches('}').count() as i32;
             continue;
+        }
+        if l.is_empty() || l.starts_with("debug_assert") || l.starts_with("let _ = ") {
+            continue;
+        }
+        // The token pass's answer, where the walk's `Out` keeps none: the walk reads the token itself.
+        if l.starts_with("if let Some(t) = d.known(") && !fx.known {
+            skip = 1;
+            continue;
+        }
+        // A `match`'s arms.
+        if let Some(Frame::Match(v, armed)) = frames.last() {
+            let (v, armed) = (v.clone(), *armed);
+            if l != "}" && !l.starts_with("//") {
+                let (pat, rest) = l.split_once(" => ").ok_or_else(|| why("an arm".into()))?;
+                let (pat, guard) = match pat.split_once(" if ") {
+                    Some((p, g)) => (p, Some(g)),
+                    None => (pat, None),
+                };
+                let mut cond = if pat == "_" {
+                    None
+                } else if let Some(x) = pat.strip_prefix("Some(").and_then(|r| r.strip_suffix(')')) {
+                    if armed {
+                        return Err(why("a `Some` arm after the first".into()));
+                    }
+                    let _ = writeln!(out, "uint32_t {x} = {v};");
+                    fx.declare(x, Ty::U32);
+                    Some(format!("({v} != UKL_NONE)"))
+                } else {
+                    Some(fx.c(&parse(&format!("matches!({v}, {pat})")).map_err(why)?).map_err(why)?)
+                };
+                if let Some(g) = guard {
+                    let g = fx.c(&parse(g).map_err(why)?).map_err(why)?;
+                    cond = Some(match cond {
+                        Some(c) => format!("({c} && {g})"),
+                        None => g,
+                    });
+                }
+                let head = match (&cond, armed) {
+                    (Some(c), false) => format!("if ({c})"),
+                    (Some(c), true) => format!("else if ({c})"),
+                    (None, false) => String::new(),
+                    (None, true) => "else".into(),
+                };
+                if let Some(Frame::Match(_, a)) = frames.last_mut() {
+                    *a = true;
+                }
+                if rest == "{" {
+                    let _ = writeln!(out, "{head} {{");
+                    frames.push(Frame::Arm);
+                    fx.scopes.push(Vec::new());
+                } else if rest == "{}" {
+                    let _ = writeln!(out, "{head} {{}}");
+                } else {
+                    let x = rest.strip_suffix(',').ok_or_else(|| why("an arm's end".into()))?;
+                    let stmt = if x.starts_with("return ") || x.starts_with("continue") || x.starts_with("break") {
+                        statement(fx, x).map_err(why)?
+                    } else {
+                        format!("return {};", fx.c(&parse(x).map_err(why)?).map_err(why)?)
+                    };
+                    let _ = writeln!(out, "{head} {{\n{stmt}\n}}");
+                }
+                continue;
+            }
         }
         if l.starts_with("//") {
             let _ = writeln!(out, "{l}");
@@ -541,6 +814,8 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
                 Frame::Fields(_, after) => {
                     let _ = writeln!(out, "{after}");
                 }
+                // The match's own block.
+                Frame::Match(..) => out.push_str("}\n"),
                 _ => out.push_str("}\n"),
             }
             continue;
@@ -565,6 +840,57 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
         }
         if l == "continue;" || l == "break;" {
             let _ = writeln!(out, "{l}");
+            continue;
+        }
+        if l == "loop {" {
+            out.push_str("while (true) {\n");
+            frames.push(Frame::Plain);
+            fx.scopes.push(Vec::new());
+            continue;
+        }
+        if let Some(x) = l.strip_prefix("match ").and_then(|r| r.strip_suffix(" {")) {
+            let e = parse(x).map_err(why)?;
+            let v = format!("m{matches}_");
+            matches += 1;
+            let _ = writeln!(out, "{{\n{} {v} = {};", fx.ty(&e).c(fx.p), fx.c(&e).map_err(why)?);
+            frames.push(Frame::Match(v, false));
+            fx.scopes.push(Vec::new());
+            continue;
+        }
+        if let Some(x) = l.strip_prefix("return ").and_then(|r| r.strip_suffix(';')) {
+            let _ = writeln!(out, "return {};", fx.c(&parse(x).map_err(why)?).map_err(why)?);
+            continue;
+        }
+        // Two values bound at once: a pair's, or the bytes' marks (`marks`).
+        if let Some((lhs, rhs)) = l.strip_prefix("let ").unwrap_or(l).split_once(" = ").filter(|(lhs, _)| lhs.starts_with('(')) {
+            let names: Vec<&str> = lhs.trim_matches(|c| c == '(' || c == ')').split(", ").map(|n| n.strip_prefix("mut ").unwrap_or(n)).collect();
+            let rhs = rhs.strip_suffix(';').ok_or_else(|| why("a pair without its `;`".into()))?;
+            let e = parse(rhs).map_err(why)?;
+            match e {
+                E::Call(f, args) if matches!(&*f, E::Id(n) if n == "marks") && args.len() == 4 && names.len() == 2 => {
+                    for n in &names {
+                        if l.starts_with("let ") && !fx.in_this_scope(n) {
+                            let _ = writeln!(out, "uint32_t {n};");
+                            fx.declare(n, Ty::U32);
+                        }
+                    }
+                    let a = args.iter().map(|a| fx.c(a)).collect::<Result<Vec<_>, _>>().map_err(why)?;
+                    let _ = writeln!(out, "ukl_b32_marks({} + {}, {}, {}, &{}, &{});", a[0], a[1], a[2], a[3], names[0], names[1]);
+                }
+                E::Tuple(vals) if vals.len() == names.len() => {
+                    let cs = vals.iter().map(|v| fx.c(v)).collect::<Result<Vec<_>, _>>().map_err(why)?;
+                    for ((n, v), c) in names.iter().zip(&vals).zip(&cs) {
+                        if fx.in_this_scope(n) || !l.starts_with("let ") {
+                            let _ = writeln!(out, "{n} = {c};");
+                        } else {
+                            let t = fx.ty(v);
+                            let _ = writeln!(out, "{} {n} = {c};", t.c(fx.p));
+                            fx.declare(n, t);
+                        }
+                    }
+                }
+                _ => return Err(why("a pair the printer does not take".into())),
+            }
             continue;
         }
         // A struct's value: the function's, a lane's end, or the pass's end with its verdict.
@@ -703,26 +1029,9 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
         }
         // A statement: `unsafe { … };` is its call.
         let s = l.strip_prefix("unsafe { ").and_then(|r| r.strip_suffix(" };")).map_or_else(|| l.to_string(), |r| format!("{r};"));
-        if let Some(s) = s.strip_suffix(';') {
-            let toks = lex(s).map_err(why)?;
-            let at = toks.iter().position(|t| matches!(t, Tok::P(p) if ["=", "+=", "-=", "|=", "&=", "^=", "<<=", ">>=", "*="].contains(p)));
-            match at {
-                Some(k) => {
-                    let Tok::P(op) = toks[k] else { unreachable!("an assignment") };
-                    let mut p = Parser { t: toks[..k].to_vec(), i: 0 };
-                    let lhs = p.expr(0).map_err(why)?;
-                    let mut q = Parser { t: toks[k + 1..].to_vec(), i: 0 };
-                    let rhs = q.expr(0).map_err(why)?;
-                    if p.i != p.t.len() || q.i != q.t.len() {
-                        return Err(why("an assignment the printer does not take".into()));
-                    }
-                    let _ = writeln!(out, "{} {op} {};", fx.c(&lhs).map_err(why)?, fx.c(&rhs).map_err(why)?);
-                }
-                None => {
-                    let e = parse(s).map_err(why)?;
-                    let _ = writeln!(out, "{};", fx.c(&e).map_err(why)?);
-                }
-            }
+        if s.ends_with(';') {
+            let st = statement(fx, &s).map_err(why)?;
+            let _ = writeln!(out, "{st}");
             continue;
         }
         // A block's value: its variable's.
@@ -731,18 +1040,74 @@ fn body(fx: &mut Fx<'_>, lines: &[&str], ret: &str, out: &mut String) -> Result<
             let _ = writeln!(out, "{v} = {};", fx.c(&e).map_err(why)?);
             continue;
         }
+        // The function's value.
+        if frames.len() == 1 {
+            let e = parse(l).map_err(why)?;
+            let c = fx.c(&e).map_err(why)?;
+            if ret == "void" {
+                let _ = writeln!(out, "{c};");
+            } else {
+                let _ = writeln!(out, "return {c};");
+            }
+            continue;
+        }
         return Err(why("a line the printer does not take".into()));
     }
+    let pre = fx.take_pre();
+    out.insert_str(mark, &pre);
     if frames.len() != 1 {
-        return Err(format!("tier 1 as UKL: {} blocks left open", frames.len() - 1));
+        return Err(format!("as UKL: {} blocks left open", frames.len() - 1));
     }
     Ok(())
 }
 
+/// One statement (`s`, its `;` with it): an assignment, a `return`, a `continue` or `break`, or a call.
+fn statement(fx: &Fx<'_>, s: &str) -> Result<String, String> {
+    let s = s.strip_suffix(';').unwrap_or(s);
+    if s == "continue" || s == "break" {
+        return Ok(format!("{s};"));
+    }
+    if let Some(x) = s.strip_prefix("return ") {
+        return Ok(format!("return {};", fx.c(&parse(x)?)?));
+    }
+    let toks = lex(s)?;
+    let at = toks.iter().position(|t| matches!(t, Tok::P(p) if ["=", "+=", "-=", "|=", "&=", "^=", "<<=", ">>=", "*="].contains(p)));
+    Ok(match at {
+        Some(k) => {
+            let Tok::P(op) = toks[k] else { unreachable!("an assignment") };
+            let mut p = Parser { t: toks[..k].to_vec(), i: 0 };
+            let lhs = p.expr(0)?;
+            let mut q = Parser { t: toks[k + 1..].to_vec(), i: 0 };
+            let rhs = q.expr(0)?;
+            if p.i != p.t.len() || q.i != q.t.len() {
+                return Err("an assignment the printer does not take".into());
+            }
+            format!("{} {op} {};", fx.c(&lhs)?, fx.c(&rhs)?)
+        }
+        None => format!("{};", fx.c(&parse(s)?)?),
+    })
+}
+
 /// The text of the item that starts at line `at` (its signature) to its closing brace at the line's start.
 fn item<'a, 'b>(lines: &'b [&'a str], at: usize) -> Result<&'b [&'a str], String> {
-    let end = (at + 1..lines.len()).find(|&k| lines[k] == "}").ok_or("an item without its end")?;
-    Ok(&lines[at + 1..end])
+    // Its braces counted, outside comments and strings.
+    let mut depth = 0i32;
+    for (k, l) in lines.iter().enumerate().skip(at) {
+        let code = l.split("//").next().unwrap_or("");
+        let mut in_str = false;
+        for ch in code.chars() {
+            match ch {
+                '"' => in_str = !in_str,
+                '{' if !in_str => depth += 1,
+                '}' if !in_str => depth -= 1,
+                _ => {}
+            }
+        }
+        if depth == 0 && k > at {
+            return Ok(&lines[at + 1..k]);
+        }
+    }
+    Err("an item without its end".into())
 }
 
 /// Tier 1's Rust (`rust`, as `bitlex_lex_rust` writes it) as UKL: its tables, its `Carries`, its passes' functions and
@@ -862,7 +1227,7 @@ pub fn tier1(rust: &str, p: &str) -> Result<String, String> {
         };
         let plist = params.iter().map(|(n, t)| format!("{} {n}", t.c(p))).collect::<Vec<_>>().join(", ");
         let _ = writeln!(out, "UKL_INLINE {cret} {p}{f}({plist})\n{{");
-        let mut fx = Fx { p, names: &names, returns: &returns, scopes: vec![params], consts: HashMap::new() };
+        let mut fx = Fx { p, names: &names, returns: &returns, scopes: vec![params], consts: HashMap::new(), pre: Default::default(), tmp: Default::default(), known: false };
         let mut text = String::new();
         body(&mut fx, item(&lines, at)?, kind, &mut text)?;
         out.push_str(&text);
@@ -927,6 +1292,248 @@ DEFINE_KERNEL2(tier1, {p}from,
 }}
 "#,
         nf = fields.len(),
+    );
+    Ok(out)
+}
+
+/// The line where function `f` starts (`fn f(` or `fn f<`).
+fn find_fn(lines: &[&str], f: &str) -> Result<usize, String> {
+    lines
+        .iter()
+        .position(|l| {
+            let l = l.trim_start_matches("pub ").trim_start_matches("unsafe ");
+            l.starts_with(&format!("fn {f}(")) || l.starts_with(&format!("fn {f}<"))
+        })
+        .ok_or_else(|| format!("as UKL: no `{f}`"))
+}
+
+/// Function `f` of `lines` printed as `{name}` (its walk's `Out` the C struct `out`, where it takes one).
+fn print_fn(lines: &[&str], f: &str, name: &str, out_c: &str, p: &str, names: &HashMap<String, String>, returns: &HashMap<String, Ty>, out: &mut String) -> Result<(), String> {
+    let at = find_fn(lines, f)?;
+    let sig = lines[at];
+    let open = sig.find('(').ok_or("as UKL: a signature")?;
+    let mut d = 0;
+    let close = sig[open..]
+        .char_indices()
+        .find(|&(_, ch)| {
+            d += match ch {
+                '(' | '[' => 1,
+                ')' | ']' => -1,
+                _ => 0,
+            };
+            d == 0
+        })
+        .map(|(k, _)| open + k)
+        .ok_or("as UKL: a signature's end")?;
+    let rett = sig[close..].strip_prefix(") -> ").map(|r| r.trim_end_matches(" {"));
+    let mut params: Vec<(String, Ty)> = Vec::new();
+    let mut depth = 0;
+    let mut cur = String::new();
+    let mut parts = Vec::new();
+    for ch in sig[open + 1..close].chars() {
+        match ch {
+            '[' | '(' | '<' => depth += 1,
+            ']' | ')' | '>' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(ch);
+    }
+    parts.push(cur);
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let part = part.strip_prefix("mut ").unwrap_or(part);
+        let (n, t) = part.split_once(": ").ok_or_else(|| format!("as UKL: a parameter `{part}`"))?;
+        params.push((n.into(), param_ty_of(t, out_c)?));
+    }
+    let (cret, kind) = match rett {
+        None => ("void".to_string(), "void"),
+        Some("Result<usize, u32>") => (format!("{p}R"), "value"),
+        Some("Option<usize>" | "usize" | "u32" | "u8") => ("uint32_t".to_string(), "value"),
+        Some("bool") => ("bool".to_string(), "value"),
+        Some(r) => return Err(format!("as UKL: `{f}`'s return type `{r}`")),
+    };
+    let plist = params.iter().map(|(n, t)| format!("{} {n}", t.c(p))).collect::<Vec<_>>().join(", ");
+    let _ = writeln!(out, "UKL_INLINE {cret} {name}({plist})\n{{");
+    let mut fx = Fx { p, names, returns, scopes: vec![params], consts: HashMap::new(), pre: Default::default(), tmp: Default::default(), known: false };
+    body(&mut fx, item(lines, at)?, kind, out).map_err(|e| format!("`{f}`: {e}"))?;
+    out.push_str("}\n\n");
+    Ok(())
+}
+
+/// The tables of `lines` (`static X: [u8 | u32; N] = [...];`), each `UKL_TABLE`, its name prefixed.
+fn tables(lines: &[&str], p: &str, names: &mut HashMap<String, String>, out: &mut String) -> Result<(), String> {
+    for l in lines {
+        let Some(r) = l.strip_prefix("static ").and_then(|r| r.strip_suffix("];")) else { continue };
+        let (n, r) = r.split_once(": [").ok_or("as UKL: a table")?;
+        let (t, r) = r.split_once("; ").ok_or("as UKL: a table's type")?;
+        let (len, vals) = r.split_once("] = [").ok_or("as UKL: a table's values")?;
+        let (ct, suffix) = match t {
+            "u8" => ("uint8_t", ""),
+            "u32" => ("uint32_t", "u"),
+            _ => return Err(format!("as UKL: a table of `{t}`")),
+        };
+        let vals: Vec<String> = vals.split(", ").map(|v| format!("{}{suffix}", v.replace('_', ""))).collect();
+        names.insert(n.into(), format!("{p}{n}"));
+        let _ = writeln!(out, "UKL_TABLE {ct} {p}{n}[{len}] = {{{}}};", vals.join(", "));
+    }
+    Ok(())
+}
+
+/// Tier 2's token pass (stage 2, decision 0726) as UKL, from tier 2's Rust (`rust`, as `one_loop` writes it): the
+/// primitive's helpers printed for the pass's `Out` (`{p}Tok`, the first node's number, the nodes, the last one's
+/// start) and its kernel `{p}tokens`, a thread a record: the token at each record of `list` (tier 1's type lists, one
+/// buffer), its five words (`end`, `kind`, `nodes`, `last`, `err`) at the record's place in `tokens`.
+pub fn tier2_tokens(rust: &str, p: &str) -> Result<String, String> {
+    let lines: Vec<&str> = rust.lines().collect();
+    let mut names: HashMap<String, String> = HashMap::new();
+    let mut returns: HashMap<String, Ty> = HashMap::new();
+    let mut out = String::new();
+    let _ = writeln!(
+        out,
+        "// Generated by native/crates/compiler/src/bitlex_lex_rust/ukl.rs from tier 2's Rust; do not edit. Tier 2's token pass\n// as UKL, a thread a record (decision 0726).\n\n#pragma once\n#include <ukl/blx64.h>\n#include <ukl/memory.h>\n"
+    );
+    tables(&lines, p, &mut names, &mut out)?;
+    // The primitive: its name and its numbers' count; the tokens' first bytes.
+    let prim = lines
+        .iter()
+        .find_map(|l| l.strip_prefix("unsafe fn ").and_then(|r| r.split_once("<D: Out>(")).map(|(n, _)| n).filter(|n| n.ends_with("_primitive")))
+        .ok_or("as UKL: no primitive")?;
+    let arity: usize = lines[find_fn(&lines, prim)?]
+        .split_once("n: [u32; ")
+        .and_then(|(_, r)| r.split_once(']'))
+        .and_then(|(k, _)| k.parse().ok())
+        .ok_or("as UKL: the primitive's numbers")?;
+    let firsts = lines
+        .iter()
+        .find_map(|l| l.strip_prefix("pub const TOKEN_FIRSTS: &[(u8, u8)] = &[").and_then(|r| r.strip_suffix("];")))
+        .ok_or("as UKL: no TOKEN_FIRSTS")?;
+    let mut tests = Vec::new();
+    for pair in firsts.trim_start_matches('(').trim_end_matches(')').split("), (") {
+        let (a, z) = pair.split_once(", ").ok_or("as UKL: a first byte's range")?;
+        tests.push(if a == z { format!("b == {a}u") } else { format!("(b >= {a}u && b <= {z}u)") });
+    }
+    let _ = write!(
+        out,
+        r#"
+#define {p}NONE 4294967295u
+
+// A `Result<usize, u32>`: its value, or the byte it is refused at.
+typedef struct {p}R {{
+    bool ok;
+    uint32_t v;
+}} {p}R;
+UKL_INLINE {p}R {p}ok(uint32_t v)
+{{
+    {p}R r;
+    r.ok = true;
+    r.v = v;
+    return r;
+}}
+UKL_INLINE {p}R {p}err(uint32_t v)
+{{
+    {p}R r;
+    r.ok = false;
+    r.v = v;
+    return r;
+}}
+
+// The token pass's `Out`: the first node's number, the nodes, the last one's start.
+typedef struct {p}Tok {{
+    uint32_t kind;
+    uint32_t nodes;
+    uint32_t last;
+}} {p}Tok;
+UKL_INLINE void {p}Tok_node(UKL_PRIVATE {p}Tok* d, uint32_t number, uint64_t start)
+{{
+    if (d->nodes == 0u)
+        d->kind = number;
+    d->nodes += 1u;
+    d->last = (uint32_t)start;
+}}
+UKL_INLINE void {p}Tok_open(UKL_PRIVATE {p}Tok* d, uint32_t number, uint64_t start) {{ {p}Tok_node(d, number, start); }}
+UKL_INLINE void {p}Tok_leaf(UKL_PRIVATE {p}Tok* d, uint32_t number, uint64_t start, uint64_t end) {{ {p}Tok_node(d, number, start); }}
+UKL_INLINE void {p}Tok_leaf_in(UKL_PRIVATE {p}Tok* d, uint32_t number, uint32_t child, uint64_t start, uint64_t cs, uint64_t ce, uint64_t end)
+{{
+    {p}Tok_node(d, number, start);
+    {p}Tok_node(d, number, cs);
+}}
+UKL_INLINE void {p}Tok_close(UKL_PRIVATE {p}Tok* d, uint64_t end) {{}}
+
+"#
+    );
+    // The helpers: those of no walk once, the walk's for its `Out`.
+    let plain = ["ends", "check_number", "number_end", "at", "peek"];
+    let walk = ["open", "leaf", "leaf_in", "close", "token", "string", prim];
+    for f in plain {
+        names.insert(f.into(), format!("{p}{f}"));
+    }
+    for f in walk {
+        names.insert(f.into(), format!("{p}{f}_Tok"));
+    }
+    for f in ["number_end", "string", prim] {
+        returns.insert(f.into(), Ty::Res);
+    }
+    returns.insert("ends".into(), Ty::Bool);
+    for f in plain {
+        print_fn(&lines, f, &format!("{p}{f}"), "", p, &names, &returns, &mut out)?;
+    }
+    for f in walk {
+        print_fn(&lines, f, &format!("{p}{f}_Tok"), &format!("{p}Tok"), p, &names, &returns, &mut out)?;
+    }
+    let nums = (0..arity).map(|k| format!("{k}u")).collect::<Vec<_>>().join(", ");
+    let _ = write!(
+        out,
+        r#"typedef struct {p}TArgs {{
+    uint32_t n;
+    uint32_t count;
+}} {p}TArgs;
+UKL_REFLECT_STRUCT({p}TArgs, n, count)
+
+// Stage 2: the token at record `list[j]`, read on its own (`token_at`): its end, its first node's number among the
+// primitive's alternatives, its nodes, the last one's start, or the byte it is refused at (`err`, else `NONE`). A
+// record that starts no token has `kind` `NONE` and `err` `NONE`.
+DEFINE_KERNEL2(tier2, {p}tokens,
+               ARGS,     {p}TArgs, args,   ,
+               ROBUFFER, uint8_t,  src,    "[n + 64]",
+               ROBUFFER, uint32_t, starts, "[count + 3]",
+               ROBUFFER, uint32_t, list,   "[n]",
+               RWBUFFER, uint32_t, tokens, "[count * 5]",
+               GID0,     uint32_t, j,      )
+{{
+    if (j >= args.n)
+        return;
+    uint32_t r = list[j];
+    uint32_t b = src[starts[r]];
+    uint32_t t[5] = {{0u, {p}NONE, 0u, 0u, {p}NONE}};
+    if ({firsts}) {{
+        {p}Tok d;
+        d.kind = 0u;
+        d.nodes = 0u;
+        d.last = 0u;
+        uint32_t i = r;
+        uint32_t nn[{arity}] = {{{nums}}};
+        {p}R x = {p}{prim}_Tok(src, starts, &d, &i, nn);
+        if (x.ok) {{
+            t[0] = x.v;
+            t[1] = d.kind;
+            t[2] = d.nodes;
+            t[3] = d.last;
+        }} else {{
+            t[4] = x.v;
+        }}
+    }}
+    for (uint32_t k = 0u; k < 5u; k++)
+        tokens[r * 5u + k] = t[k];
+}}
+"#,
+        firsts = tests.join(" || "),
     );
     Ok(out)
 }
