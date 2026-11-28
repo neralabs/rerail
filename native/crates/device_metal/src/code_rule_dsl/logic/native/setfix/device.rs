@@ -169,15 +169,6 @@ fn same_nodes(a: &Arc<super::NodeTexts>, b: &Arc<super::NodeTexts>) -> bool {
         }
 }
 
-/// Whether the chunk the binding of the nodes `nodes` reads is numbered (`numbering::of_data`): a held source is a
-/// bound chunk's.
-fn numbered(nodes: &super::NodeTexts) -> bool {
-    match nodes {
-        super::NodeTexts::Held(_) => true,
-        super::NodeTexts::At(at) => at.upgrade().is_some_and(|d| crate::code_rule_dsl::facts::numbering::of_data(&d).is_some()),
-    }
-}
-
 /// The node view the binding of the long-text nodes `nodes` reads nodes' texts through
 /// (`Source::node_texts_in_place`), where it is in place.
 fn node_view(nodes: &super::NodeTexts) -> Option<crate::code_rule_dsl::facts::vtab::ViewInPlace> {
@@ -1502,12 +1493,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
         h.finish()
     };
     let est = stages.iter().map(|s| j.from.get(s.first + s.span.max(1) - 1).and_then(|&p| j.est.get(p)).copied().filter(|e| e.is_finite() && *e >= 0.0)).collect();
-    // A stage that takes a node's document of a numbered chunk (`steps::Plan::docs`) reads the growth's page table
-    // through the batch's node view's directory (decision 0724), bound where the stage reads no view of its own
-    // (`Batch::bind_node_texts`). With no numbering, an id's document is its high bits, as the host's `DocOf`.
-    if nodes.is_none() && stages.iter().any(|s| mj::reads_docs(&s.desc)) && let Some(h) = j.docs.as_ref() {
-        nodes = Some(j.bound(h).clone());
-    }
     Ok(Plan { stages, head, head_slots, head_from, arena, nslots, nsteps: j.steps.len(), key, est, nodes })
 }
 
@@ -2148,24 +2133,6 @@ impl<'p> Run<'p> {
         Ok(())
     }
 
-    /// Gives `batch` the node view stage `desc` reads nodes' texts or documents through (`Batch::bind_node_texts`).
-    fn bind_nodes(&self, desc: &mj::Stage, batch: &mut mj::Batch) -> Result<(), String> {
-        if mj::reads_node_texts(desc) {
-            let nodes = self.plan.nodes.as_deref().expect("a plan reading nodes' texts binds their reads");
-            let view = node_view(nodes).ok_or("a node's text with no node view in place (its batch's directory on no device)")?;
-            batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?;
-        } else if mj::reads_docs(desc) && let Some(nodes) = self.plan.nodes.as_deref() {
-            // A node's document: through the node view's directory where the chunk is numbered; an id's high bits
-            // where it is not, as the host's `DocOf`.
-            match node_view(nodes) {
-                Some(view) => batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?,
-                None if numbered(nodes) => return Err("a node's document of a numbered chunk with no node view in place".into()),
-                None => {}
-            }
-        }
-        Ok(())
-    }
-
     /// Encodes stage `k` into `batch`, queued in its level (`encode_levels`); the component's own relations are
     /// `own`'s.
     fn encode_stage(&mut self, k: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
@@ -2176,7 +2143,6 @@ impl<'p> Run<'p> {
                 Kind::Pass => {}
                 Kind::Map => {
                     let t = self.tables[i].as_ref().expect("the map's table");
-                    self.bind_nodes(&s.desc, batch)?;
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
                 Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Verdict { .. } | Kind::Names | Kind::RowText { .. } | Kind::Witness { .. } => {
@@ -2259,7 +2225,11 @@ impl<'p> Run<'p> {
                     if reads_names(s.desc.mode) {
                         dev_atoms(batch, names)?;
                     }
-                    self.bind_nodes(&s.desc, batch)?;
+                    if mj::reads_node_texts(&s.desc) {
+                        let nodes = self.plan.nodes.as_deref().expect("a plan reading nodes' texts binds their reads");
+                        let view = node_view(nodes).ok_or("a node's text with no node view in place (its batch's directory on no device)")?;
+                        batch.node_texts(view).map_err(|e| format!("{e:?}: the node view"))?;
+                    }
                     let left = self.tables[i].as_ref().expect("the stage's input");
                     if s.desc.mode == mj::ROWTEXT {
                         // Its automaton, and its id in the one rolling cache: a test's (its verdicts) or the

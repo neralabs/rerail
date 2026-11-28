@@ -629,8 +629,7 @@ impl Fused {
     /// `row`'s keys, asked only of rows that passed the tests before it; a lookup's (`Test::reads`, or a node its view
     /// cannot read in a batch, `ViewTest::looks`) writes the values of its input's columns to `out` (by column), which
     /// become its `Word::Look` columns.
-    /// `docs`: the run's documents, a `Word::Doc`'s (`Store::docs`).
-    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, docs: &super::DocOf, mut each: impl FnMut(usize, u64), mut ask: impl FnMut(Ask<'_>) -> bool, mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
+    pub(super) fn run<'s>(&'s self, s: &'s mut Scratch, mut each: impl FnMut(usize, u64), mut ask: impl FnMut(Ask<'_>) -> bool, mut held: impl FnMut(usize, usize, &[Vector<i64>], &[i64], &mut [i64]) -> bool) -> &'s [u64] {
         let n = s.rows;
         if !self.tests.is_empty() {
             // The rows still passing, a bit each: a test is asked only of rows every test before it passed.
@@ -792,7 +791,7 @@ impl Fused {
                     (&b[0], &mut a[k])
                 };
                 dst.clear();
-                dst.extend(src.iter().map(|&x| docs.key(x)));
+                dst.extend(src.iter().map(|&x| rerail_blocks::located::Located::key_wide(x)));
             }
         }
         // On the stack (decision 0687): a fused chunk's columns and outputs are few.

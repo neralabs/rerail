@@ -27,7 +27,7 @@ fn value_of_a_node(f: &str) -> bool {
 /// The function whose value is a node whatever its arguments: `@path_node(p)`, the node a node path names (decision
 /// 0722). A node path may cross (0677 as amended: `@node_path(n)` is one of `NODE_READS`, a value of the node); the node
 /// it decodes to is an id again.
-const MAKES_A_NODE: &str = "path_node";
+pub const MAKES_A_NODE: &str = "path_node";
 
 /// Which columns of each relation hold a node id: its declared `node` and `loc` columns, and each column a rule
 /// fills from a node (a variable bound at such a column, by `nearest` or an `ast` pattern, a function of one but
@@ -280,7 +280,7 @@ pub fn crossings_under(program: &Version, crossings: &mut [NodeCrossing], causes
 
 /// The split's causes read down from `rel` (`crossing_under`'s path): each relation on it with the first line of its
 /// cause, to the first relation cross-file for a reason of its own.
-fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
+pub(super) fn crossing_chain(rel: &str, causes: &BTreeMap<String, String>) -> Vec<String> {
     let mut at = rel.to_owned();
     let mut out = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();

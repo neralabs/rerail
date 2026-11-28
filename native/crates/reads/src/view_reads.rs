@@ -9,7 +9,7 @@
 //! from the same entry and tape: their first definition, the host's rows the reference.
 
 use crate::tape::{NONE, f16, f16z::Z};
-use crate::ids::{Nodes, Numbering};
+use crate::ids::{INDEX_BITS, Nodes, Numbering, SLOT_BITS, SPAN_SLOTS};
 use crate::view::{F16Z_FORMAT, TapeView};
 use crate::views::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
@@ -141,6 +141,9 @@ pub struct Doc<'a> {
     /// The walk of the numbering on from the last node selected (`Numbering::nodes_at`), made by the first row read in
     /// order after it: each next row's node its next set bit, with no select (an index's keys, a copy, a scan).
     walk: std::cell::Cell<Option<Nodes<'a>>>,
+    /// The granule its last node's id was found in (`Numbering::low_of_near`'s hint): the next node's is most often in
+    /// the same one. Checked, not trusted: any value gives the same ids.
+    granule: std::cell::Cell<u32>,
 }
 
 /// What a `Doc` last selected (`Doc::selected`): numbered node `l`, its tape node `x`, and the `field` view's row
@@ -161,7 +164,7 @@ impl<'a> Doc<'a> {
     /// The document's reads, through its directory row's `entry`, with its language's codes' `(kinds, fields)`.
     #[inline]
     pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8], (kinds, fields): (&'a [u32], &'a [u32])) -> Doc<'a> {
-        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE), walk: std::cell::Cell::new(None) }
+        Doc { entry, tape, lines, source, kinds, fields, last: std::cell::Cell::new(Selected::NONE), walk: std::cell::Cell::new(None), granule: std::cell::Cell::new(u32::MAX) }
     }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
@@ -234,6 +237,18 @@ impl<'a> Doc<'a> {
         self.last.set(Selected { l, x, field_row: u32::MAX });
         x
     }
+    /// Numbered node `l`'s id's low 32 bits (`num_low_of`), its granule tried first where the last id's was.
+    ///
+    /// # Safety
+    /// As `tape_node`'s.
+    #[inline]
+    unsafe fn low_of(&self, l: u32) -> u32 {
+        let mut j = self.granule.get();
+        // SAFETY: the caller's.
+        let low = unsafe { self.numbering().low_of_near(0, l, &mut j) };
+        self.granule.set(j);
+        low
+    }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
     pub fn rank(&self, x: u32) -> u32 {
@@ -246,10 +261,19 @@ impl<'a> Doc<'a> {
         // SAFETY: as `tape_node`.
         unsafe { self.numbering().is(item, x) }
     }
-    /// Numbered node `l`'s id in its chunk: its document's base plus its local id `l` (plan "Chunk node numbers").
+    /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
     #[inline]
     pub fn node_id(&self, l: u32) -> i64 {
-        i64::from(self.entry.base + l)
+        let low = match self.entry.preorder {
+            0 => match self.node_table() {
+                // SAFETY: as `tape_node`.
+                [] => unsafe { self.low_of(l) },
+                t => t[l as usize][1],
+            },
+            crate::views::IDS_TAPE => self.tape_node(l),
+            _ => l,
+        };
+        (i64::from(self.entry.key) << 32) | i64::from(low)
     }
     /// Numbered node `l`'s parent's id: its tape parent's, or the root's where that is not numbered (a narrowed
     /// projection's anchor); -1 for the root.
@@ -440,8 +464,14 @@ impl<'a> Doc<'a> {
         if col == 0 {
             return self.node_id(l);
         }
-        // SAFETY: as `tape_node`.
-        let order = unsafe { self.numbering().order_of(l) };
+        // As the CLIF's (`view_order`): its number where ids are local ids, its tape node where they are tape positions
+        // (the tape is in preorder), else the numbering's order key.
+        let order = match self.entry.preorder {
+            1 => l,
+            crate::views::IDS_TAPE => self.tape_node(l),
+            // SAFETY: as `tape_node`.
+            _ => unsafe { self.numbering().order_of(l) },
+        };
         (i64::from(self.entry.key) << 32) | i64::from(order)
     }
     /// The `op` view's row `i`: the document's `i`-th anonymous child of a numbered node (`Item::Op`), its tape node.
@@ -513,11 +543,34 @@ impl<'a> Doc<'a> {
         }
     }
 
-    /// `Loc` position `l`'s id in its chunk: its document's base plus its local id `l`, a node's, a token's or a
-    /// span's alike (plan "Chunk node numbers").
+    /// `Loc` position `l`'s id: a node's or token's by its numbering, a span's in the top slots; `l` itself where
+    /// ids are local ids.
     #[inline]
     pub fn loc_id(&self, l: u32) -> i64 {
-        i64::from(self.entry.base + l)
+        let e = self.entry;
+        let tape = e.preorder == crate::views::IDS_TAPE;
+        let low = if e.preorder != 0 && !tape {
+            l
+        } else if l < e.nodes {
+            if tape {
+                self.tape_node(l)
+            } else {
+                // SAFETY: as `tape_node`.
+                unsafe { self.low_of(l) }
+            }
+        } else {
+            let i = l - e.nodes;
+            if i < e.tokens {
+                // SAFETY: as `tape_node`.
+                unsafe { if tape { self.numbering().select(1, i) } else { self.numbering().low_of(1, i) } }
+            } else {
+                let j = i - e.tokens;
+                let hi = (j >> INDEX_BITS).min(SPAN_SLOTS - 1);
+                let slot = ((1u32 << SLOT_BITS) - 1) - hi;
+                slot << INDEX_BITS | j & ((1 << INDEX_BITS) - 1)
+            }
+        };
+        (i64::from(e.key) << 32) | i64::from(low)
     }
     /// The document's lines (`lines_count`), read off its line index: the one definition of a line and a place
     /// (decision 0612); a guest's are its host's.
@@ -714,22 +767,21 @@ impl<'a> Doc<'a> {
     pub fn end(&self, l: u32) -> u32 {
         self.rank(self.tape.end_of(self.tape_node(l)))
     }
-    /// `view_number(local)`: the numbered node of local id `local` (a node's local id is its number, plan "Chunk node
-    /// numbers"), or `NO_ROW` for a token's, a position's or a span's.
+    /// `view_number(low)`: the numbered node whose id's low 32 bits are `low`, or `NO_ROW`.
     #[inline]
-    pub fn number(&self, local: u32) -> u32 {
-        if local < self.entry.nodes { local } else { NO_ROW }
-    }
-    /// Its nodes' and positions' local ids (`Projected::locs`): its tokens, where its text is its own the whole text
-    /// and each line, then its end points, past its nodes. Its `Extra` spans' local ids follow.
-    pub fn locs(&self) -> u32 {
-        let text = if self.entry.own_text != 0 { 1 + self.loc_count() } else { 0 };
-        self.entry.nodes + self.entry.tokens + text + self.entry.ends
-    }
-    /// The line of `Extra` span `local`: 0 its source's, `l` from 1 its line `l`'s; `None` for another local id.
-    fn line_of_local(&self, local: u32) -> Option<u32> {
-        let l = local.checked_sub(self.locs())?;
-        (l <= self.loc_count()).then_some(l)
+    pub fn number(&self, low: u32) -> u32 {
+        let l = if self.entry.preorder == crate::views::IDS_TAPE {
+            if self.is(0, low) { self.rank(low) } else { NO_ROW }
+        } else if self.entry.preorder != 0 {
+            low
+        } else {
+            // SAFETY: as `tape_node`.
+            match unsafe { self.numbering().number_of(low) } {
+                Some((0, number)) => number,
+                _ => NO_ROW,
+            }
+        };
+        if l < self.entry.nodes { l } else { NO_ROW }
     }
     /// `view_text_span(l)`: numbered node `l`'s bytes' range in its document's own source, `start << 32 | end`.
     #[inline]
@@ -737,14 +789,17 @@ impl<'a> Doc<'a> {
         let x = self.tape_node(l);
         u64::from(self.tape.start(x)) << 32 | u64::from(self.tape.end(x))
     }
-    /// `view_line_span(local)`: the line whose span is local id `local` (`locs + l`: line `l` from 1, `locs` the whole
-    /// source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
+    /// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: line `l`
+    /// from 1, 0 the whole source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
     /// its terminator's last byte, or the source's end on its last line and on line 0; `NO_SPAN` for another id, a
     /// guest's (its lines are its host's) or a line past its last.
     #[inline]
-    pub fn line_span(&self, local: u32) -> u64 {
+    pub fn line_span(&self, low: u32) -> u64 {
+        let l = low & ((1 << INDEX_BITS) - 1);
         let count = self.loc_count();
-        let Some(l) = self.line_of_local(local).filter(|_| self.entry.own_text != 0) else { return NO_SPAN };
+        if low >> INDEX_BITS != crate::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
+            return NO_SPAN;
+        }
         let len = self.entry.source_len;
         if l == 0 {
             return u64::from(len);
@@ -752,21 +807,22 @@ impl<'a> Doc<'a> {
         let stop = if l >= count { len } else { self.loc_start(l) };
         u64::from(self.loc_start(l - 1)) << 32 | u64::from(stop)
     }
-    /// `view_line_terminated(local)`: whether that line ends with a terminator (from 1, before the last).
+    /// `view_line_terminated(low)`: whether that line ends with a terminator (from 1, before the last).
     #[inline]
-    pub fn line_terminated(&self, local: u32) -> bool {
-        self.line_of_local(local).is_some_and(|l| l != 0 && l < self.loc_count())
+    pub fn line_terminated(&self, low: u32) -> bool {
+        let l = low & ((1 << INDEX_BITS) - 1);
+        low >> INDEX_BITS == crate::ids::LINE_SLOT && l != 0 && l < self.loc_count()
     }
-    /// The text of the line whose span is local id `local` (`line_span`), read where the source lies, its
+    /// The text of the line whose span's id has low bits `low` (`line_span`), read where the source lies, its
     /// terminator's length off the source's bytes where it has one (`lines_terminator_length`), as
     /// `LineTable::text_of` gives it.
-    pub fn line_text(&self, local: u32) -> Option<&'a str> {
-        let span = self.line_span(local);
+    pub fn line_text(&self, low: u32) -> Option<&'a str> {
+        let span = self.line_span(low);
         if span == NO_SPAN {
             return None;
         }
         let (start, mut stop) = ((span >> 32) as usize, span as u32 as usize);
-        if self.line_terminated(local) {
+        if self.line_terminated(low) {
             stop -= crate::lines::length_ending_at(self.source, stop - 1);
         }
         std::str::from_utf8(self.source.get(start..stop)?).ok()

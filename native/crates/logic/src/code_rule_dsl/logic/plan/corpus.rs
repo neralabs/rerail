@@ -557,33 +557,51 @@ fn patched(old: &dyn crate::code_rule_dsl::facts::vtab::Source, plus: &dyn crate
 /// document is its rank among those its rows name; the rest (symbols, document keys, numbers) as they are.
 fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: &BTreeMap<String, Vector<usize>>, program: &super::fields::Fields<'_>, docs: impl Iterator<Item = &'a (i64, String)>) -> Result<BTreeMap<String, String>> {
     use sha2::{Digest, Sha256};
-    let mut by_doc: HashMap<i64, Vec<(usize, Vector<i64>)>> = HashMap::new();
-    for (i, rel) in per_file.iter().enumerate() {
-        let Some(at) = locations.get(rel).and_then(|l| l.first().copied()) else { continue };
-        let width = program.arity(rel).unwrap_or(0);
-        exports.visit(rel,width,|row| {
-            by_doc.entry(memo::document_of(row[at])).or_default().push((i,row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
+    // Read where the rows lie, twice (decision 0353: never the rows copied out, a document's rows held to be sorted).
+    // First each document's nodes its rows name, for their ranks: a node is digested as its rank among them, so the
+    // digest stays as the document's nodes renumber.
+    let located: Vec<(usize, &String, usize, usize)> = per_file
+        .iter()
+        .enumerate()
+        .filter_map(|(i, rel)| locations.get(rel).and_then(|l| l.first().copied()).map(|at| (i, rel, at, program.arity(rel).unwrap_or(0))))
+        .collect();
+    let mut nodes: HashMap<i64, BTreeSet<i64>> = HashMap::new();
+    for &(_, rel, at, width) in &located {
+        exports.visit(rel, width, |row| {
+            let d = memo::document_of(row[at]);
+            let mine = nodes.entry(d).or_default();
+            mine.extend(row.iter().copied().filter(|v| rerail_blocks::located::is_located(*v) && rerail_blocks::located::Located::key_wide(*v) == d));
+        });
+    }
+    let rank: HashMap<i64, HashMap<i64, i64>> = nodes.into_iter().map(|(d, n)| (d, n.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect())).collect();
+    // Then each row's hash (its relation's place, its values with nodes ranked), summed per document: a digest of
+    // the document's set of rows whatever order they lie in.
+    let mut sums: HashMap<i64, (u64, [u64; 4])> = HashMap::new();
+    let none = HashMap::new();
+    for &(i, rel, at, width) in &located {
+        exports.visit(rel, width, |row| {
+            let d = memo::document_of(row[at]);
+            let ranks = rank.get(&d).unwrap_or(&none);
+            let mut h = Sha256::new();
+            h.update((i as u64).to_le_bytes());
+            for v in row {
+                h.update(ranks.get(v).copied().unwrap_or(*v).to_le_bytes());
+            }
+            let hash = h.finalize();
+            let (n, sum) = sums.entry(d).or_insert((0, [0; 4]));
+            *n += 1;
+            for (lane, bytes) in sum.iter_mut().zip(hash.chunks_exact(8)) {
+                *lane = lane.wrapping_add(u64::from_le_bytes(bytes.try_into().expect("8 bytes")));
+            }
         });
     }
     let mut out = BTreeMap::new();
     for (d, path) in docs {
-        let mut rows = by_doc.remove(d).unwrap_or_default();
-        let nodes: BTreeSet<i64> = rows.iter().flat_map(|(_, r)| r.iter().copied()).filter(|v| rerail_blocks::located::is_located(*v) && rerail_blocks::located::Located::key_wide(*v) == *d).collect();
-        let rank: HashMap<i64, i64> = nodes.into_iter().enumerate().map(|(k, v)| (v, -1 - k as i64)).collect();
-        for (_, r) in &mut rows {
-            for v in r.iter_mut() {
-                if let Some(k) = rank.get(v) {
-                    *v = *k;
-                }
-            }
-        }
-        rows.sort();
+        let (n, sum) = sums.remove(d).unwrap_or((0, [0; 4]));
         let mut h = Sha256::new();
-        for (i, r) in &rows {
-            h.update((*i as u64).to_le_bytes());
-            for v in r {
-                h.update(v.to_le_bytes());
-            }
+        h.update(n.to_le_bytes());
+        for lane in sum {
+            h.update(lane.to_le_bytes());
         }
         out.insert(path.clone(), rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()));
     }
@@ -2510,7 +2528,8 @@ fn run_observed_within(
     // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
     // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
     // program read prepared is not folded first.
-    let loading_run = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the run loads".into()); world::wanted(&*v, &shape) };
+    // A stage is prepared as the program it is cut from (`phases::STAGE_OF_LOADING`).
+    let loading_run = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the run loads".into()); world::wanted(&*v, &shape) || !v.setting_values(phases::STAGE_OF_LOADING).is_empty() };
     // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
     // (`import_closure`, `components.rerail`).
     let reads_components = shape.read.iter().any(|rel| rel.starts_with("rr_cx_"));
@@ -2915,13 +2934,27 @@ fn run_observed_within(
             // `RERAIL_ASKS` (a measurement aid): each exported relation's asks recorded, reader by reader.
             let version = if preparation::asks::on() {
                 let pre = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
-                preparation::asks::recorded(&version, &pre.file_local).map_err(Error::Plan)?.unwrap_or(version)
+                let got = preparation::asks::recorded(&version, &pre.file_local, &pre.locations).map_err(Error::Plan)?;
+                if !got.unlocated.is_empty() {
+                    eprintln!("RERAIL_ASKS: asked by key, naming no file: {}", got.unlocated.iter().cloned().collect::<Vec<_>>().join(", "));
+                }
+                // How each probe names its file (`asks-located.tsv` beside the profile): a row a probe's tag.
+                if let Some(dir) = crate::code_rule_dsl::logic::profile::directory() {
+                    use std::io::Write as _;
+                    let rows: String = got.located.iter().map(|(tag, how)| format!("{tag}\t{how}\n")).collect();
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-located.tsv")) {
+                        let _ = f.write_all(rows.as_bytes());
+                    }
+                }
+                got.version.unwrap_or(version)
             } else {
                 version
             };
-            let version = match preparation::callable::split(&version).map_err(Error::Plan)? {
+            let mut requests: Vec<(String, Option<String>)> = Vec::new();
+            let version = match preparation::callable::split(&version).map_err(|e| Error::Plan(format!("the program's callables: {e} (a program of {} rules, outputs {})", version.rules().count(), version.outputs().take(4).map(|o| version.text(o).to_owned()).collect::<Vec<_>>().join(", "))))? {
                 Some(split) => {
                     crate::code_rule_dsl::logic::profile::decision("callable relations", || split.callees.iter().map(|c| format!("{} {}", c.callable.rel, c.callable.pattern())).collect::<Vec<_>>().join(", "));
+                    requests = split.callees.iter().map(|c| (c.callable.request.clone(), c.callable.by.as_ref().map(|(h, _)| h.clone()))).collect();
                     split.caller
                 }
                 None => version,
@@ -2931,6 +2964,14 @@ fn run_observed_within(
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
             // No relation is cross-file without a declaration (decision 0652).
             crate::code_rule_dsl::typing::file_local::crossings_checked(&split).map_err(Error::Plan)?;
+            // A callable's requests are the cross part's to make: made in each file, they never reach a call, and the
+            // file's own rows (a router's table of its own module alone) route them.
+            if let Some((req, by)) = requests.iter().find(|(r, _)| split.file_local.contains(r)) {
+                return Err(Error::Plan(match by {
+                    Some(h) => format!("{req} is made in each file: router {h} reads one file's rows there; declare it `cross_file`, as it reads every file's"),
+                    None => format!("{req} is made in each file: its readers' bodies read one file's rows; a call is asked from the cross-file part"),
+                }));
+            }
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), domains, ops, dialect);
             drop(_step);
@@ -3187,17 +3228,13 @@ fn run_observed_within(
     // among their own reads. An entry holds their rows, so a later round's partial hit derives the asks' rules alone.
     // Callable relations (the spike): their callees, from the prepared program's source (the prepared program is the
     // caller alone, as the store keeps it), lowered as the run's program is.
-    let callees: Vec<preparation::callable::Callee> = match preparation::callable::split(source).map_err(Error::Plan)? {
-        None => Vec::new(),
-        Some(s) => s
-            .callees
-            .into_iter()
-            .map(|mut c| -> Result<preparation::callable::Callee> {
-                let (v, _, _) = lower::lower_version(c.program.clone(), dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect()))?;
-                c.program = v;
-                Ok(c)
-            })
-            .collect::<Result<_>>()?,
+    // Every callee's rules are one program (`Split::program`), lowered once.
+    let (callees, callee_program): (Vec<preparation::callable::Callee>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>) = match preparation::callable::split(source).map_err(|e| Error::Plan(format!("the prepared program's callees: {e}")))? {
+        None => (Vec::new(), None),
+        Some(s) => {
+            let (v, _, _) = lower::lower_version(s.program.clone(), dialect, &mut |s| Ok(store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect()))?;
+            (s.callees, Some(v))
+        }
     };
     // What the callees read of a file: held to the cross part's end, each chunk's where its engine made it (`calls::Held`),
     // and in the entries as an asked phase's held relations are (decision 0705), for a file the memo gives.
@@ -3933,7 +3970,8 @@ fn run_observed_within(
     let mut loaded_docs: Vec<(i64, String)> = Vec::new();
     let mut cone_inputs: BTreeMap<String, String> = BTreeMap::new();
     let no_loads = options.get("phase_no_loads").and_then(serde_json::Value::as_bool) == Some(true);
-    let mut loading_rows: Vec<(String, Vec<Vector<i64>>)> = Vec::new();
+    // The cone's relations the rest of the cross-file part reads, each where it lies (decision 0353), and the answers.
+    let mut loading_rows: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
     let mut cone_kept: Option<(usize, usize)> = None;
     let mut cone_rounds = 0;
     let mut language_asked: Vec<(String, String)> = Vec::new();
@@ -5962,15 +6000,7 @@ fn run_observed_within(
             let mut given_rows: BTreeMap<String, Vec<Vector<i64>>> = given.iter().map(|g| (g.clone(), Vec::new())).collect();
             // Every row's value asked, answered (`made.admit`), then all of them admitted at once (`admit_values`).
             let mut admitted: Vec<(u32, Option<u32>, bool)> = Vec::new();
-            // A request's node leaves the chunk here (plan "Chunk node numbers", step 3): the guest it asks for is
-            // placed at it as its document's key and its low bits there (`Numbering::located`), as it is kept.
-            let numbering = grower.numbering();
-            let located = |v: i64| numbering.as_ref().map_or(v, |n| n.located(v));
             for row in rows.iter() {
-                let mut row: Vector<i64> = row.iter().copied().collect();
-                if let Some(at) = row.first_mut() {
-                    *at = located(*at);
-                }
                 // The value asked, the keys of the nodes its rows hold (its own, and its place's or its node's
                 // document's, `Values::add`), and whether it was made here.
                 let entry = match (req, &row[..]) {
@@ -7166,7 +7196,8 @@ fn run_observed_within(
             false => {
                 let at = db.path().ok_or_else(|| Error::Plan("callable relations: the run's store has no path".to_owned()))?;
                 let conn = rusqlite::Connection::open(at).map_err(|e| Error::Plan(format!("callable relations: {e}")))?;
-                Some(calls::Calls::new(&callees, lowered.ops, dialect, conn, &modes)?)
+                let program = callee_program.as_ref().ok_or_else(|| Error::Plan("callable relations: the callees have no program".to_owned()))?;
+                Some(calls::Calls::new(&callees, program, lowered.ops, dialect, conn, &modes)?)
             }
         };
         let modes = modes.to_owned();
@@ -7175,7 +7206,7 @@ fn run_observed_within(
         let decl_types: HashMap<String, Vec<u8>> = run_f.decls_by_name().into_iter().map(|(r, _)| (r.to_owned(), retain::types_of(&run_placed, &lowered.domains, r))).collect();
         let vocabulary_cone = Arc::clone(&vocabulary);
         let arena = in_memory.then(|| store.atoms_handle());
-        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Vec<Vector<i64>>)>, Option<(usize, usize)>, usize)> {
+        let cone = crate::threads::beside("the cone of requests", move || -> Result<(Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Option<(usize, usize)>, usize)> {
             let db2 = connections::Cone::take_db(&cone_slot, &db_path, arena)?;
             let statements = Statements::on_as(&db2, ".cone");
             statements.enter("cone");
@@ -7216,7 +7247,7 @@ fn run_observed_within(
             // O-cone-kept-plans).
             let _whole = cone_kept.is_some().then(super::demand::whole_relations);
             // Requests go to the main thread with a ticket, and their answers come back with it (decision 0114 §3).
-            let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None });
+            let asks = std::cell::RefCell::new(Asks { tx: ask_tx, rx: reply_rx, next: 0, early: BTreeMap::new(), posted: HashMap::new(), recorded: None, unsaid: false });
             // A request answered in place (the rounds, a stratum needed at once): it waits for its own ticket.
             let mut answer = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked| -> Result<Vec<(String, Vec<Vector<i64>>)>> { asks.borrow_mut().ask(rel, rows) };
             // The rounds from the last run's final round, kept in the store.
@@ -7316,15 +7347,16 @@ fn run_observed_within(
                         let round_inputs: BTreeSet<&str> = round.as_ref().map(|r| r.placed.v.inputs().map(|a| r.placed.v.text(a)).collect()).unwrap_or_default();
                         for rel in kept_in.iter().filter(|r| !round_inputs.contains(r.as_str())) {
                             let store = cone_handle.as_ref().expect("rounds run with a store");
-                            // Kept, or a view of an input the rounds hold in place, made from the input (`Done::views`).
-                            let rows = match done.next.read_derived(store, rel)? {
-                                Some(rows) => rows,
-                                None => done.views.iter().find(|(v, _)| v == rel).map(|(_, rows)| rows.clone()).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?,
+                            // Kept, where it lies, or a view of an input the rounds hold in place, made from the
+                            // input (`Done::views`): its rows made once into a relation.
+                            let source = match done.next.derived_source(store, rel) {
+                                Some(source) => source,
+                                None => done.views.iter().find(|(v, _)| v == rel).map(|(_, rows)| rows_source(widths[rel.as_str()], rows)).ok_or_else(|| Error::Plan(format!("{rel}: not kept by the cone's rounds")))?,
                             };
-                            out.push((rel.clone(), rows));
+                            out.push((rel.clone(), source));
                         }
                         // The answers' relations as the rounds ended: the kept answers that still stand among them.
-                        out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).cloned());
+                        out.extend(done.produced.iter().filter(|(r, _)| kept_in.contains(r) || world_answer_rels.contains(r)).map(|(r, rows)| (r.clone(), rows_source(widths[r.as_str()], rows))));
                         crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || {
                             format!("{} rounds from the last run's; {} of {} strata run ({} maintained, {} derived again: {:?}); answered: {:?}; {} file-system requests kept as the journal names no change there; {} rows written back", done.rounds, done.strata.0, done.strata.1, done.maintained, done.derived_again, done.again_why, done.answered, done.still, done.written)
                         });
@@ -7389,7 +7421,7 @@ fn run_observed_within(
             }
             let mut out = Vec::new();
             for rel in &kept_in {
-                out.push((rel.clone(), held_rows(&db2, &got, rel, widths[rel.as_str()])?));
+                out.push((rel.clone(), held_source(&db2, &got, rel)?));
             }
             // The closing round over the fixpoint's answers, kept for the next run's rounds; only when the fixpoint
             // ran its strata (a cone kept whole, K3, asked nothing of this run).
@@ -7430,13 +7462,6 @@ fn run_observed_within(
         let mut payloads = git_content::Reader::default();
         let mut answer_one = |rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vector<i64>>)>> {
             pauses += 1;
-            if let Some(c) = calls.as_mut().filter(|c| c.answers(rel)) {
-                let held = call_held.borrow();
-                if let Some(at) = held.unheld_of(rows) {
-                    return Err(Error::Plan(format!("{rel}: a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))));
-                }
-                return c.answer(rel, rows, &*held);
-            }
             let t_call = std::time::Instant::now();
             let _counted = Finally(|| {
                 let mut t = times.borrow_mut();
@@ -7778,6 +7803,7 @@ fn run_observed_within(
             Ok(out)
         };
         let mut idle = 0.0;
+        let mut held_calls: Vec<(u64, String, crate::code_rule_dsl::logic::native::component::Asked)> = Vec::new();
         while let Some((ticket, rel, rows)) = {
             let t = std::time::Instant::now();
             let got = cone.wait_for("the main thread: the cone's requests", || match ask_rx.try_recv() {
@@ -7794,15 +7820,42 @@ fn run_observed_within(
                     rows.clear();
                 }
             }
-            let reply = answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string());
-            if let Ok(given) = &reply {
-                for (r, rows) in given {
-                    if let Some(kept) = answered.get_mut(r) {
-                        kept.extend(rows.iter().cloned());
+            // Callables' requests are held until the cone waits, then answered together (`Calls::answer_all`): one
+            // entry of each holder for every callable's requests of its files.
+            let replies: Vec<(u64, std::result::Result<Vec<(String, Vec<Vector<i64>>)>, String>)> = if rel == CONE_WAITS {
+                if held_calls.is_empty() {
+                    continue;
+                }
+                let held = std::mem::take(&mut held_calls);
+                let c = calls.as_mut().expect("a callable's request held");
+                let state = call_held.borrow();
+                let unheld = held.iter().find_map(|(_, r, rows)| state.unheld_of(rows).map(|at| (r.clone(), at)));
+                let given = match unheld {
+                    Some((r, at)) => Err(format!("{r}: a call into document {}, a partial memo hit (decision 0225 §2), whose rows are not held for calls", memo::document_of(at))),
+                    None => c.answer_all(&held.iter().map(|(_, r, rows)| (r.as_str(), rows)).collect::<Vec<_>>(), &*state).map_err(|e| e.to_string()),
+                };
+                match given {
+                    Ok(given) => held.iter().map(|(t, _, _)| *t).zip(given.into_iter().map(Ok)).collect(),
+                    Err(e) => held.iter().map(|(t, _, _)| (*t, Err(e.clone()))).collect(),
+                }
+            } else if calls.as_ref().is_some_and(|c| c.answers(&rel)) {
+                held_calls.push((ticket, rel, rows));
+                continue;
+            } else {
+                vec![(ticket, answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string()))]
+            };
+            let mut closed = false;
+            for (ticket, reply) in replies {
+                if let Ok(given) = &reply {
+                    for (r, rows) in given {
+                        if let Some(kept) = answered.get_mut(r) {
+                            kept.extend(rows.iter().cloned());
+                        }
                     }
                 }
+                closed |= reply_tx.send((ticket, reply)).is_err();
             }
-            if reply_tx.send((ticket, reply)).is_err() {
+            if closed {
                 break;
             }
         }
@@ -7870,7 +7923,8 @@ fn run_observed_within(
         // What the main thread answered, for the relations the cone did not hand on whole (its rounds do).
         for (rel, rows) in answered {
             if !loading_rows.iter().any(|(r, _)| *r == rel) {
-                loading_rows.push((rel, rows));
+                let width = load_f.arity(&rel).expect("a relation of the cone");
+                loading_rows.push((rel, rows_source(width, &rows)));
             }
         }
         // Every file seen: the keeper ends here, so the digests read the run's exports (the counted ones).
@@ -9358,11 +9412,8 @@ fn run_observed_within(
     let from_cone: BTreeSet<String> = loading_rows.iter().map(|(rel, _)| rel.clone()).collect();
     // The cone of requests' rows and the answers, as the rest of the cross-file part reads them (decision 0065 §2a).
     if let Some((load, ..)) = &loading {
-        for (rel, rows) in std::mem::take(&mut loading_rows) {
-            let width = load.decl_of(&rel).expect("a relation of the cone").arity();
-            let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
-            let columns = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns);
+        let _ = load;
+        for (rel, source) in std::mem::take(&mut loading_rows) {
             // Loading answers are inputs to maintenance as well as to execution: bound with the cross-file part's
             // inputs, their digests taken with the others' (`input_digests`, else of their rows).
             if let Some((_, held)) = cross_inputs.iter_mut().find(|(r, _)| r == &rel) {
@@ -10031,6 +10082,69 @@ fn run_observed_within(
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         });
+                    }
+                    // Each keyed probe of a located export (`RERAIL_ASKS`), a row of `asks-probes.tsv` beside the profile:
+                    // its keys asked, how many files answer each, a key-to-file index's keys and entries, and samples.
+                    if preparation::asks::on()
+                        && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
+                    {
+                        use std::io::Write as _;
+                        let cell = |r: &output::Rows, i: usize, c: usize| match r.cell(i, c) {
+                            output::Cell::Text(t) => t.to_owned(),
+                            output::Cell::Int(n) => n.to_string(),
+                        };
+                        let mut lines = String::new();
+                        // Every key found, with its files (`asks-keys.tsv`): the values a router is given.
+                        let mut keys_out = String::new();
+                        for (rel, files) in got.outputs.iter().filter(|(r, _)| r.starts_with(preparation::asks::FILES)) {
+                            let tag = &rel[preparation::asks::FILES.len()..];
+                            let parts: Vec<&str> = tag.split("__").collect();
+                            let (export, reader, shape) = (parts.get(1).copied().unwrap_or(""), parts.get(2).copied().unwrap_or(""), parts.last().copied().unwrap_or(""));
+                            let w = files.width();
+                            let mut by_key: BTreeMap<Vec<String>, Vec<String>> = BTreeMap::new();
+                            for i in 0..files.len() {
+                                let k: Vec<String> = (0..w - 1).map(|c| cell(files, i, c)).collect();
+                                by_key.entry(k).or_default().push(cell(files, i, w - 1));
+                            }
+                            for (k, f) in &by_key {
+                                keys_out.push_str(&format!("{export}\t{reader}\t{shape}\t{}\t{}\n", k.join("\u{1f}").replace(['\t', '\n'], " "), f.join("\u{1f}")));
+                            }
+                            let asked = got.outputs.get(&format!("{}{tag}", preparation::asks::KEY)).map_or(0, |r| r.len());
+                            let hist = |lo: usize, hi: usize| by_key.values().filter(|f| f.len() >= lo && f.len() <= hi).count();
+                            let max = by_key.values().map(Vec::len).max().unwrap_or(0);
+                            let plain = shape.trim_end_matches("_neg");
+                            let index_keys = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::KEYS)).map_or(0, |r| r.len());
+                            let index_pairs = got.outputs.get(&format!("{}{export}__{plain}", preparation::asks::PAIRS)).map_or(0, |r| r.len());
+                            let mut samples: Vec<(&Vec<String>, &Vec<String>)> = by_key.iter().filter(|(_, f)| f.len() == 1).take(2).collect();
+                            samples.extend(by_key.iter().filter(|(_, f)| f.len() > 1).max_by_key(|(_, f)| f.len()));
+                            let samples: Vec<String> = samples
+                                .into_iter()
+                                .map(|(k, f)| {
+                                    let shown: Vec<&str> = f.iter().take(3).map(String::as_str).collect();
+                                    let more = if f.len() > 3 { format!(" +{}", f.len() - 3) } else { String::new() };
+                                    format!("({}) -> {}{more}", k.join(", "), shown.join(" "))
+                                })
+                                .collect();
+                            lines.push_str(&format!(
+                                "{export}\t{reader}\t{shape}\t{asked}\t{}\t{}\t{}\t{}\t{}\t{max}\t{index_keys}\t{index_pairs}\t{}\n",
+                                by_key.len(),
+                                hist(1, 1),
+                                hist(2, 4),
+                                hist(5, 31),
+                                hist(32, usize::MAX),
+                                samples.join(" ; ").replace(['\t', '\n'], " ")
+                            ));
+                        }
+                        if !lines.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-probes.tsv"))
+                        {
+                            let _ = f.write_all(lines.as_bytes());
+                        }
+                        if !keys_out.is_empty()
+                            && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("asks-keys.tsv"))
+                        {
+                            let _ = f.write_all(keys_out.as_bytes());
+                        }
                     }
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vector<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     let read_back: Vec<String> = cross_f.outputs().map(str::to_owned).collect();
@@ -10950,6 +11064,25 @@ fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::
 /// The relations a version's program derives, each with its declared width (`collect`'s), read from its fields.
 fn derived_widths_in<'v>(f: &super::fields::Fields<'v>) -> BTreeMap<&'v str, usize> {
     f.v.rules().map(|r| f.v.rel_name(r.head().rel())).map(|rel| (rel, f.width(rel))).collect()
+}
+
+/// A relation of the cone where it lies, for the rest of the cross-file part to bind (decision 0353): what the
+/// engine holds, read in place; only a SQL stratum's relation is in a table, read from it.
+fn held_source(db: &Connection, got: &Outcome, rel: &str) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+    if let Some(held) = crate::code_rule_dsl::logic::native::component::derived(db, rel) {
+        return Ok(held);
+    }
+    if got.kept.contains(rel) {
+        return Err(Error::Plan(format!("{rel} is not held")));
+    }
+    Ok(Arc::new(Rows::of(db, rel, &crate::code_rule_dsl::logic::sql::ident(rel))?))
+}
+
+/// Rows made once into a relation of `width` columns `c0`, `c1`, …: an answer's rows, or a view's the rounds made.
+fn rows_source(width: usize, rows: &[Vector<i64>]) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+    let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
+    let columns = (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+    crate::code_rule_dsl::logic::native::component::columns_source(names, columns)
 }
 
 fn held_rows(db: &Connection, got: &Outcome, rel: &str, width: usize) -> Result<Vec<Vector<i64>>> {
@@ -12276,7 +12409,13 @@ struct Asks {
     /// Each ticket's request, until its answer comes.
     posted: HashMap<u64, (String, crate::code_rule_dsl::logic::native::component::Asked)>,
     recorded: Option<cone_rounds::Answers>,
+    /// Requests posted since the cone last said it waits (`waits`).
+    unsaid: bool,
 }
+
+/// The request channel's mark that the cone waits for an answer (no relation is named ""): the requests the answering
+/// thread holds for it (callables', `calls::Calls::answer_all`) are answered then, together.
+const CONE_WAITS: &str = "";
 
 impl Asks {
     fn post(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<u64> {
@@ -12285,7 +12424,16 @@ impl Asks {
         // A handle on the request's rows where they lie (`Asked`), not the rows.
         self.tx.send((ticket, rel.to_owned(), rows.clone())).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
         self.posted.insert(ticket, (rel.to_owned(), rows.clone()));
+        self.unsaid = true;
         Ok(ticket)
+    }
+
+    /// Says the cone waits (`CONE_WAITS`), once after the requests it posted since it last did.
+    fn waits(&mut self) -> Result<()> {
+        if std::mem::take(&mut self.unsaid) {
+            self.tx.send((u64::MAX, CONE_WAITS.to_owned(), crate::code_rule_dsl::logic::native::component::Asked::rows(Vec::new()))).map_err(|_| Error::Plan("the request channel closed".to_owned()))?;
+        }
+        Ok(())
     }
 
     /// An answer come: recorded, and kept until taken.
@@ -12301,6 +12449,7 @@ impl Asks {
     /// What has come, waiting up to `wait` for the first answer when none has.
     fn poll(&mut self, wait: std::time::Duration) -> Result<()> {
         if self.early.is_empty() && !wait.is_zero() {
+            self.waits()?;
             match self.rx.recv_timeout(wait) {
                 Ok((t, r)) => self.came(t, r)?,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
@@ -12322,6 +12471,7 @@ impl Asks {
     /// A request answered in place: posted, then its own answer waited for (the others come are kept).
     fn ask(&mut self, rel: &str, rows: &crate::code_rule_dsl::logic::native::component::Asked) -> Result<Vec<(String, Vec<Vector<i64>>)>> {
         let ticket = self.post(rel, rows)?;
+        self.waits()?;
         loop {
             if let Some(given) = self.early.remove(&ticket) {
                 return Ok(given);

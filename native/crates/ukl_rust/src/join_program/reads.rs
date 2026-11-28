@@ -34,6 +34,14 @@ pub unsafe fn row<'a>(d: *const ViewDir, m: u32) -> &'a ViewRow {
     &*block(d).add((*d).rows as usize).cast::<ViewRow>().add(m as usize)
 }
 
+/// `len` bytes at `p`, or none where `p` is null: a home the document's row never wrote. A document of no nodes has
+/// a row that names its entry alone (its `doc` row's path and module atoms, `RowReads`' early return in the reads
+/// layer), its tape's, lines' and source's homes unset, and no view reads them.
+#[inline]
+unsafe fn bytes_at<'a>(p: *const u8, len: usize) -> &'a [u8] {
+    if p.is_null() { &[] } else { core::slice::from_raw_parts(p, len) }
+}
+
 /// Directory `d`'s document `m` as the views' reads take it: its entry, its tape at its home's host address (a 16z
 /// tape with the cache its batch's reads share, the directory's home of it), its line index and its source where they
 /// lie, and its language's codes in the directory's codes' home (decision 0697).
@@ -41,12 +49,12 @@ pub unsafe fn row<'a>(d: *const ViewDir, m: u32) -> &'a ViewRow {
 pub unsafe fn doc<'a>(d: *const ViewDir, m: u32) -> Doc<'a> {
     let row = row(d, m);
     let e = &*block(d).add(row.entry as usize).cast::<ViewDoc>();
-    let tape = core::slice::from_raw_parts(home(d, row.homes[0], row.tape), row.bytes as usize);
+    let tape = bytes_at(home(d, row.homes[0], row.tape), row.bytes as usize);
     let lines = home(d, row.homes[1], row.lines);
     // Its line index (decision 0612), its length from its head, and its word's room after it.
-    let len = rerail_reads::lines::len_of(core::slice::from_raw_parts(lines, rerail_reads::lines::HEAD)).unwrap_or(0);
-    let lines = core::slice::from_raw_parts(lines, len + 8);
-    let source = core::slice::from_raw_parts(home(d, row.homes[2], row.source), e.source_len as usize);
+    let len = rerail_reads::lines::len_of(bytes_at(lines, rerail_reads::lines::HEAD)).unwrap_or(0);
+    let lines = bytes_at(lines, len + 8);
+    let source = bytes_at(home(d, row.homes[2], row.source), e.source_len as usize);
     let cache = match (*d).cache {
         0 => core::ptr::null(),
         k => home(d, k - 1, 0),
@@ -81,7 +89,7 @@ pub unsafe fn node_span(d: *const ViewDir, m: u32, low: u32) -> Option<(*const u
     Some((source.add(from as usize), to.saturating_sub(from), false))
 }
 
-/// Node `low`'s (its local id's) preorder key in directory `d`'s document `m` (`@rr_node_order`, `ARITH_NODE_ORDER`; the `order`
+/// Node `low`'s preorder key in directory `d`'s document `m` (`@rr_node_order`, `ARITH_NODE_ORDER`; the `order`
 /// view's column 1, `Doc::order_row`): none for a node the document does not number, as the host's
 /// (`LongTexts::order_any`).
 pub unsafe fn node_order(d: *const ViewDir, m: u32, low: u32) -> Option<u64> {

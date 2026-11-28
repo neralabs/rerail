@@ -2288,6 +2288,8 @@ fn every_switch_lowering_reads_is_classified() {
         // A profile's live heap by allocating stack (`heap-frames.tsv`): a diagnostic; the program is the same.
         "RERAIL_HEAP_FRAMES",
         "RERAIL_SPIKE_PROJECTION",
+        // A measurement aid (decision 0725): the asks of the exported relations, recorded; the program is the same.
+        "RERAIL_ASKS",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
         "RERAIL_TAPE_CACHE",
@@ -4163,16 +4165,16 @@ fn a_host_reading_a_contexts_export_runs_on_every_reading_path() {
 
 /// A relation of names over a guest's code, read by a per-file rule, is staged (decision 0709, 0727), and the stage
 /// asks for the guests itself: it holds the demand (`rr_embed_req`) the lowering derives beside `parsed`, which none of
-/// the staged rules reads. Without it the stage's `parsed` was empty, and so every name.
+/// the staged rules reads. Without it the stage's `parsed` was empty, and so every name. The names are the annotation
+/// context's export (`ann_dotted`): a guest of a context is read by the context's rules alone (decision 0597 step 4),
+/// and a stage is prepared as its program, the context with it (2b93934287).
 #[test]
 fn a_staged_relation_over_a_guests_code_asks_for_the_guest() {
     let program = "\
 .language python
 #include \"python/ast.rerail\"
-.decl quoted_root(r: node)
-quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
 .decl inner(x: symbol)
-inner(x) :- quoted_root(r), within(n, r), kind(n, \"identifier\"), place_text(n, x).
+inner(x) :- ann_dotted(_, x).
 .decl named(n: node, x: symbol)
 named(n, x) :- kind(n, \"string\"), inner(x).
 .output named

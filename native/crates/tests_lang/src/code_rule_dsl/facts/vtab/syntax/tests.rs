@@ -1471,7 +1471,7 @@ fn definition_slots_stay_below_the_span_bit() {
     }
     let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
     let (_, p) = leaf_ids("python", "many.py", &many);
-    assert!((0..p.locs()).all(|l| !extra.contains(&(rerail_blocks::located::Located(p.located(l)).low() >> INDEX_BITS))), "a node or position takes an `Extra` slot");
+    assert!((0..p.locs()).all(|l| !extra.contains(&((p.global(l) as u32) >> INDEX_BITS))), "a node or position takes an `Extra` slot");
 }
 
 /// What core.rerail's span ids come to over real files (the capacities `granules::ExtraSpan` and `granules::POSITIONS`
@@ -1549,7 +1549,7 @@ fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, 
     let p = Projected::new(d.key, Arc::clone(&d.facts), Some(&dialect), Shape::Core, false, None);
     let f_cache = d.facts.own_cache();
     let f = d.facts.read_in(f_cache.as_ref());
-    let leaves = (0..p.len()).map(|l| (f.text(p.node(l)).to_owned(), p.located(l))).collect();
+    let leaves = (0..p.len()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l))).collect();
     (leaves, p)
 }
 
@@ -1611,9 +1611,9 @@ fn definition_ids_follow_granules_in_every_language() {
         }
         // Ids are unique, and each maps back to its node.
         for p in [&pa, &pb] {
-            let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.located(l)).collect();
+            let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.global(l)).collect();
             assert_eq!(ids.len(), p.locs() as usize, "{label}: ids clash");
-            assert!((0..p.locs()).all(|l| p.local_of(rerail_blocks::located::Located(p.located(l)).low()) == Some(l)), "{label}: an id does not map back");
+            assert!((0..p.locs()).all(|l| p.local_of((p.global(l) & 0xffff_ffff) as u32) == Some(l)), "{label}: an id does not map back");
         }
     }
 }
@@ -1628,9 +1628,9 @@ fn definition_ids_fold_and_continue_past_their_fields() {
     let big = format!("def f():\n    return [{}]\n", (0..100_000).map(|i| format!("a{i}.b")).collect::<Vec<_>>().join(", "));
     for source in [many, big] {
         let (_, p) = leaf_ids("python", "big.py", &source);
-        let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.located(l)).collect();
+        let ids: BTreeSet<i64> = (0..p.locs()).map(|l| p.global(l)).collect();
         assert_eq!(ids.len(), p.locs() as usize, "ids clash");
-        assert!((0..p.locs()).all(|l| p.local_of(rerail_blocks::located::Located(p.located(l)).low()) == Some(l)), "an id does not map back");
+        assert!((0..p.locs()).all(|l| p.local_of((p.global(l) & 0xffff_ffff) as u32) == Some(l)), "an id does not map back");
     }
 }
 
@@ -1647,7 +1647,7 @@ fn node_order_keys_follow_preorder_and_keep_other_granules() {
         let (_, p) = leaf_ids("python", "a.py", source);
         let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
         let f = p.f();
-        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l)).is_empty()).map(|l| (f.text(p.node(l)).to_owned(), p.located(l), p.order(l))).collect();
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l)).is_empty()).map(|l| (f.text(p.node(l)).to_owned(), p.global(l), p.order(l))).collect();
         assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
         (ascending, leaves)
     };
@@ -2354,8 +2354,8 @@ fn definition_ids_are_pinned() {
     for (label, path, source) in &files {
         let (_, p) = leaf_ids(label, path, source);
         for l in 0..p.locs() {
-            h.update(p.located(l).to_le_bytes());
-            assert_eq!(p.local_of(rerail_blocks::located::Located(p.located(l)).low()), Some(l), "{path}: id of {l} does not map back");
+            h.update(p.global(l).to_le_bytes());
+            assert_eq!(p.local_of((p.global(l) & 0xffff_ffff) as u32), Some(l), "{path}: id of {l} does not map back");
         }
     }
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
@@ -2565,8 +2565,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 // The projection's reads: each node's and token's id, and back; each node's order key, and back.
                 let tokens = p.ranks().count(Item::Token);
                 for l in 0..p.len() + tokens {
-                    assert_eq!(p.located(l), 1 << 32 | i64::from(low[l as usize]), "{at}: the id of local {l}");
-                    assert_eq!(p.global(l), i64::from(l), "{at}: the chunk id of local {l}: a projection alone is numbered by its local ids");
+                    assert_eq!(p.global(l), 1 << 32 | i64::from(low[l as usize]), "{at}: the id of local {l}");
                     assert_eq!(p.local_of(low[l as usize]), Some(l), "{at}: the local of {:#x}", low[l as usize]);
                 }
                 // The passes' ids (one walk each) are the point reads'.
@@ -4799,17 +4798,10 @@ fn an_ids_document_and_local_id_come_back_in_every_role_and_round() {
     assert_eq!(base(docs, b), 0, "b.py, made first of the files, takes the files' first page");
     assert_eq!(base(docs, a), pages(ids_of(docs, b)), "a.py's pages follow b.py's");
     assert_eq!(base(docs, g), ROLE_PAGES[1] << PAGE_BITS, "the guest takes the guests' first page");
-    // Later spans: in the slack of the base run's last page while they fit, then a page more each time one passes
-    // the pages a document holds, taken as they are made (`Numbered::later`), past the pages taken since.
-    let na = docs.ids().numbered_if(docs.key(a)).expect("a.py numbered");
-    let room = pages(ids_of(docs, a));
-    if room > ids_of(docs, a) {
-        assert_eq!(na.later(ids_of(docs, a)), Some(base(docs, a) + ids_of(docs, a)), "a.py's first later span: its base run's slack");
-    }
-    let first_more = pages(ids_of(docs, b)) + pages(ids_of(docs, a));
-    assert_eq!(na.later(room + 4999), Some(first_more + 4999), "a.py's later spans past its pages: two pages more, in order");
-    assert_eq!(na.later(room), Some(first_more), "taken once");
-    let later = (first_more, room);
+    // Later spans: one run more, past the pages taken since, its local ids past the document's first.
+    let later = docs.later_ids(a, 5000).expect("room");
+    assert_eq!(later, (pages(ids_of(docs, b)) + pages(ids_of(docs, a)), ids_of(docs, a)), "a.py's later spans");
+    assert_eq!(docs.later_ids(a, 7), Some(later), "taken once");
     let held: Vec<(u32, [(u32, u32, u32); 2])> = [a, b, g]
         .into_iter()
         .map(|i| (docs.key(i), [(base(docs, i), 0, ids_of(docs, i)), if i == a { (later.0, later.1, 5000) } else { (0, 0, 0) }]))
@@ -5079,7 +5071,7 @@ fn tape_row_views_hold_the_rows_their_makers_made() {
                 keys[l as usize] = i;
                 order.push(l);
             });
-            super::tree::keys_by_run(&order, |l| rerail_blocks::located::Located(p.located(l)).low() >> rerail_clif::ids::INDEX_BITS, &mut keys);
+            super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, &mut keys);
             for &l in &order {
                 want.entry(VISIT).or_default().insert(vec![p.global(l), i64::from(keys[l as usize])]);
             }

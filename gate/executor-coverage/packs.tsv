@@ -9,8 +9,8 @@
 65	aggregate min bounded by >=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 18, data-layer (engine) 12, data-layer 11, python 7, react 4, typescript 4, django 3, javascript 2, rust 2, node 1, rule-syntax 1
 61	aggregate max bounded by <	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 61	aggregate max bounded by <=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
-37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
+38	builtin to_number/1	not on the device: no computed term	lib 14, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
+38	function @to_number/1	not on the device: no computed term	lib 14, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 33	aggregate join	not on the device: refused: a string join not ordered by one number column has no device form	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, engine 1, next 1
 20	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18, lib 2
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1

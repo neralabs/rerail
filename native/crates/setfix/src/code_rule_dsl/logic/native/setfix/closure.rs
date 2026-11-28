@@ -228,19 +228,14 @@ fn decoded(j: &JoinRule, rest: &[Step]) -> Vec<Made> {
 }
 
 /// A rest as its own join, to the new value `z`.
-fn rest_join(rest: Vec<Made>, z: usize, nslots: usize, bound: &[usize], docs: &Option<rerail_section::Bound<super::NodeTexts>>) -> JoinRule {
-    rest_join_to(rest, vec![Term::Slot(z)], nslots, bound, docs)
-}
-
-/// Join `j`'s binding of the nodes its document reads go through (`steps::Plan::docs`), made again for a rest.
-fn docs_of(j: &JoinRule) -> Option<rerail_section::Bound<super::NodeTexts>> {
-    j.docs.as_ref().map(|h| rerail_section::Bound(j.names().get(h)))
+fn rest_join(rest: Vec<Made>, z: usize, nslots: usize, bound: &[usize]) -> JoinRule {
+    rest_join_to(rest, vec![Term::Slot(z)], nslots, bound)
 }
 
 /// A rest as its own join, to the terms `out`, `bound` the slots its row binds before it (the removed first step's:
 /// a range's ends may be among them, `super::ranges_from`). Its probes and ranges are read off its steps' view, once
 /// encoded, and it is encoded again with them.
-fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize], docs: &Option<rerail_section::Bound<super::NodeTexts>>) -> JoinRule {
+fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize]) -> JoinRule {
     let n = rest.len();
     let mut plan = super::steps::Plan {
         steps: rest,
@@ -256,7 +251,6 @@ fn rest_join_to(rest: Vec<Made>, out: Vec<Term>, nslots: usize, bound: &[usize],
         ranges: Vec::new(),
         lookups: Vec::new(),
         one: Vec::new(),
-        docs: docs.clone(),
     };
     let drafted = plan.encode();
     plan.probes = super::probes(&drafted.steps, &drafted.out);
@@ -358,8 +352,6 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     let wi = c.probes.iter().find(|p| matches!(p.body, Body::Join(_)) && p.delta == p.head && p.delta != SEED).map(|p| p.head)?;
     let ks: Vec<usize> = store.rels.iter().map(|r| r.k).collect();
     drop(store);
-    // The component's joins read one batch: its rests' document reads go through any of their bindings of the nodes.
-    let docs = c.probes.iter().find_map(|p| match &p.body { Body::Join(j) => docs_of(j), _ => None });
     let k = ks[wi];
     let (mut walks, mut readers) = (Vec::new(), Vec::new());
     for p in &c.probes {
@@ -383,7 +375,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of, &docs), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None });
+        return Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), inner: false, folded: None });
     }
     // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -397,7 +389,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         .iter()
         .map(|(w, nslots)| {
             let (left, need) = split(w.j, w.rest, &w.slot_of);
-            Keyed { rest: rest_join(left, w.z, *nslots, &w.slot_of, &docs), slots: w.slot_of.clone(), need }
+            Keyed { rest: rest_join(left, w.z, *nslots, &w.slot_of), slots: w.slot_of.clone(), need }
         })
         .collect();
     let readers = readers
@@ -411,13 +403,13 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
             }).collect::<Option<Vec<_>>>()).flatten();
             // A head the row's columns do not make keeps its rest (its tests too): it is run.
             let (left, need) = if left.is_empty() && direct.is_none() { (decoded(j, rest), Vec::new()) } else { (left, need) };
-            Reader { head, rest: rest_join_to(left, j.out.to_vec(), j.nslots, &slots, &docs), slots, need, direct }
+            Reader { head, rest: rest_join_to(left, j.out.to_vec(), j.nslots, &slots), slots, need, direct }
         })
         .collect();
     let all: Vec<usize> = (0..k).collect();
-    let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all, &docs)).collect();
+    let tests = tests.into_iter().map(|t| rest_join_to(vec![t], vec![Term::Const(1)], k, &all)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of, &docs), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None })
+    Some(Closure { col, rest: rest_join(decoded(w.j, w.rest), w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, inner: c.inner.contains(&wi), folded: None })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.

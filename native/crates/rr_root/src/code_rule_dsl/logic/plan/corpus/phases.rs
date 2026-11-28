@@ -610,18 +610,91 @@ pub fn is_probe(rel: &str) -> bool {
     rel.starts_with(PROBE)
 }
 
+/// A stage's setting: the program it is cut from loads (`stage`), so the stage is prepared as a loading run is.
+pub const STAGE_OF_LOADING: &str = "stage_of_loading";
+
 /// The prefix of a probe's name (`Staged::probes`).
 pub use crate::code_rule_dsl::logic::plan::phased::PROBE;
 
+/// A probe of values alone (no location) whose fixed columns the rest of the body does not tie (decision 0709 §3): one
+/// probe a group of them, each with its own literals. As one, its rows were every group's rows times every other's
+/// (points-to's `pt_type_of_all(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t)`: every position times
+/// every builtin's value, past 6 GB on the data layer). A probe of fewer columns keys the file's entry by more of the
+/// export's rows, so each still holds every row the read takes.
+///
+/// `fixed`: each fixed column's variable (`None`, a constant); `others`, `tests`: each other literal's variables and
+/// each test's. Each part: its fixed columns (its group's variables and every constant), the literals over its
+/// variables or over none, and the tests over them; the whole read, one part, where at most one group is fixed.
+pub fn tied_parts<S: PartialEq + Copy>(fixed: &[Option<S>], others: &[Vec<S>], tests: &[Vec<S>]) -> Vec<(Vec<usize>, Vec<usize>, Vec<usize>)> {
+    // The groups of variables the other literals and the tests tie, each literal's merged into one.
+    let mut groups: Vec<Vec<S>> = Vec::new();
+    for vs in others.iter().chain(tests) {
+        let mut merged = vs.clone();
+        groups.retain(|g| {
+            let touches = g.iter().any(|s| merged.contains(s));
+            if touches {
+                merged.extend(g.iter().copied());
+            }
+            !touches
+        });
+        groups.push(merged);
+    }
+    let group_of = |s: &S| groups.iter().position(|g| g.contains(s));
+    let mut tied: Vec<usize> = fixed.iter().filter_map(|t| t.as_ref().and_then(group_of)).collect();
+    tied.sort_unstable();
+    tied.dedup();
+    if tied.len() < 2 {
+        return vec![((0..fixed.len()).collect(), (0..others.len()).collect(), (0..tests.len()).collect())];
+    }
+    tied.into_iter()
+        .map(|g| {
+            let mine = |vs: &[S]| vs.is_empty() || vs.iter().any(|s| groups[g].contains(s));
+            let f: Vec<usize> = (0..fixed.len()).filter(|&i| fixed[i].is_none_or(|s| groups[g].contains(&s))).collect();
+            let o: Vec<usize> = (0..others.len()).filter(|&i| mine(&others[i])).collect();
+            let ts: Vec<usize> = (0..tests.len()).filter(|&i| mine(&tests[i])).collect();
+            (f, o, ts)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tied_parts_tests {
+    use super::tied_parts;
+
+    /// `pt_type_of_all(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t)`, `pt_tv` and `pt_btype` exports
+    /// read at no location: `pt_btype(v, t)`'s probe fixes `v` alone, one part; a read fixing `n` (bound by
+    /// `pt_vpos_t`) and `v` (by another export's read, untied) is two, each with its own literal.
+    #[test]
+    fn a_values_probe_is_one_part_a_group_its_body_ties() {
+        // Variables: n 0, v 1, t 2, w 3. A read `e(n, "builtin", v)` with others `vpos(n)` and `bt(v, t)`.
+        let (n, v, t) = (0u32, 1u32, 2u32);
+        let parts = tied_parts(&[Some(n), None, Some(v)], &[vec![n], vec![v, t]], &[]);
+        assert_eq!(parts, [(vec![0, 1], vec![0], vec![]), (vec![1, 2], vec![1], vec![])], "two parts, the constant in each");
+        // Tied by a literal over both (`pos_of(n, v)`): one probe, the whole read.
+        let one = tied_parts(&[Some(n), None, Some(v)], &[vec![n], vec![v, t], vec![n, v]], &[]);
+        assert_eq!(one, [(vec![0, 1, 2], vec![0, 1, 2], vec![])]);
+        // Tied by a test (`n < v`) as well.
+        let tested = tied_parts(&[Some(n), Some(v)], &[vec![n], vec![v]], &[vec![n, v]]);
+        assert_eq!(tested, [(vec![0, 1], vec![0, 1], vec![0])]);
+        // A test over one group's variables goes with that group; a literal over none (a flag) with each.
+        let split = tied_parts(&[Some(n), Some(v)], &[vec![n], vec![v], vec![]], &[vec![v]]);
+        assert_eq!(split, [(vec![0], vec![0, 2], vec![]), (vec![1], vec![1, 2], vec![0])]);
+    }
+}
+
 /// `v`'s stage (decision 0709), if it has one: the program it leaves, which reads the staged relations as the stage's
 /// exports (`<stage>__<relation>`, placeless inputs), and the stage held for the run. The stage is `v`'s rules for
-/// the staged relations and every relation below them, a phase exporting the staged ones. A phase's or the constants'
-/// own run, and a stage's, stage nothing; nor does `RERAIL_STAGE=off`.
+/// the staged relations and every relation below them, a phase exporting the staged ones. The constants' own run, a
+/// stage's (a phase named `STAGE…`) and an asked phase's rounds (decision 0705) stage nothing; nor does
+/// `RERAIL_STAGE=off`. A phase run once is staged as any program is: its per-file part derives the views of values its
+/// cross part reads, and that part reads no base relation (decision 0727), so `points_to`'s solve has the same stages
+/// as `calls_p3`'s, the same rules run as a program.
 pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result<Option<(std::sync::Arc<Version>, Staged)>> {
     use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
     use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, Rewrite};
     use crate::code_rule_dsl::logic::plan::phased::STAGE;
-    if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
+    let unstaged_phase = declared(&**v).is_some_and(|d| d.name.starts_with(STAGE) || !d.rounds.is_empty());
+    if options.get(super::constants::OWN).is_some() || unstaged_phase || std::env::var("RERAIL_STAGE").is_ok_and(|s| s == "off") {
         return Ok(None);
     }
     // An earlier phase's export the program reads (decision 0709 §3): probed as a stage's is.
@@ -645,18 +718,29 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     if staging.staged.is_empty() && !phase_read {
         return Ok(None);
     }
-    // The staged relations and every derived relation below them.
+    // The staged relations and every derived relation below them, and the guest requests (decision 0431 §8: a string's
+    // `parsed`, `host_node`, …) whose answers they read: a stage is a phase that asks its own requests (decision 0727),
+    // and its rules read a request's answer as an input, not the request.
     let mut below: BTreeSet<String> = staging.staged.clone();
+    let answering = crate::code_rule_dsl::logic::plan::corpus::guests::answering(v);
     let mut todo: Vec<String> = below.iter().cloned().collect();
-    while let Some(rel) = todo.pop() {
-        for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
-            for a in r.reads() {
-                let x = v.rel_name(a.rel());
-                if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
-                    todo.push(x.to_owned());
+    loop {
+        while let Some(rel) = todo.pop() {
+            for r in v.rules().filter(|r| v.rel_name(r.head().rel()) == rel) {
+                for a in r.reads() {
+                    let x = v.rel_name(a.rel());
+                    if v.rules().any(|q| v.rel_name(q.head().rel()) == x) && below.insert(x.to_owned()) {
+                        todo.push(x.to_owned());
+                    }
                 }
             }
         }
+        let reads_below = |x: &str| v.rules().filter(|r| below.contains(v.rel_name(r.head().rel()))).any(|r| r.reads().any(|a| v.rel_name(a.rel()) == x));
+        todo = answering.iter().filter(|(q, (made, _))| !below.contains(q.as_str()) && made.iter().any(|m| reads_below(m))).map(|(q, _)| q.clone()).collect();
+        if todo.is_empty() {
+            break;
+        }
+        below.extend(todo.iter().cloned());
     }
     // A guest's answer (`parsed`, `sub_tape`: decision 0055) is asked through a demand no staged rule reads
     // (`rr_embed_req`, which the lowering derives beside the read): a stage reading one holds the demands' rules too, and
@@ -677,6 +761,7 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
             }
         }
     }
+    let loads = super::world::wanted(&**v, &super::shape::Shape::of(v));
     // Its name: a digest of its rules.
     let name = {
         use sha2::Digest as _;
@@ -707,8 +792,17 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
         for e in &exports {
             b.fields().add_output(e);
         }
+        // Cut from a phase, the stage is a phase of its own: the program's name, exports and rounds are not its.
+        b.fields().retain_settings(&|k| !matches!(k, "phase" | "export" | "rounds"));
         b.fields().add_setting("phase", &name);
         b.fields().add_setting("export", &exports.join(", "));
+        // A stage runs over the program's documents, prepared as the program is: where the program loads, its joins are
+        // neither factorized nor deferred (`corpus::prepare`'s `loading_run`), and the stage's are not either. Prepared
+        // as a run that loads nothing, a stage's per-file joins (`ghw_model_instance` over `dj_model_at`) were cut into
+        // factors and pair caches the cross part met, and nodes crossed (decision 0727).
+        if loads {
+            b.fields().add_setting(STAGE_OF_LOADING, "true");
+        }
         b.finish().map(|(v, _)| v).map_err(Error::Plan)
     }).transpose()?;
     // The program it leaves: no rule makes a staged relation, and each read of one reads the stage's export.
@@ -782,8 +876,14 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
             let bound_by = |lits: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::program_image::LitRef<'_>>| {
                 let mut bound = Vec::new();
                 for l in lits {
-                    if let Lit::Atom(a) = l.view() {
-                        a.args().for_each(|t| vars_of(t, &mut bound));
+                    match l.view() {
+                        Lit::Atom(a) => a.args().for_each(|t| vars_of(t, &mut bound)),
+                        Lit::Nearest { n, a, .. } => bound.extend([n, a]),
+                        Lit::Ast { document, node, captures, .. } => {
+                            bound.extend([document, node]);
+                            bound.extend(captures.map(|(_, slot)| slot));
+                        }
+                        _ => {}
                     }
                 }
                 bound
@@ -824,8 +924,11 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                 if !probed(e) {
                     continue;
                 }
-                // The body without this read: the file-local atoms, and the other exports' reads.
-                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg())).collect();
+                // The body without this read: the file-local atoms, and the other exports' reads, with the nearest
+                // ancestors and matchers that tie their nodes (`nearest(c, f, dj_region_stop)` between a def and its
+                // call): without them a probe joined two nodes of no relation, and the split put it in the cross part
+                // (decision 0727).
+                let others: Vec<(usize, _)> = r.body().enumerate().filter(|(i, l)| *i != at && matches!(l.view(), Lit::Atom(a) if !a.neg()) || *i != at && matches!(l.view(), Lit::Nearest { .. } | Lit::Ast { .. })).collect();
                 let bound = bound_by(&mut others.iter().map(|(_, l)| l));
                 let tests = tests_over(&bound);
                 let other_names: Vec<String> = others.iter().map(|(_, l)| match l.view() {
@@ -853,40 +956,67 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
                     whole.insert(read_name(e));
                     continue;
                 };
-                let cols: Vec<usize> = fixed.iter().map(|(c, _)| *c).collect();
-                let probe = {
-                    use sha2::Digest as _;
-                    let d: [u8; 32] = sha2::Sha256::new().chain_update(e.as_bytes()).finalize().into();
-                    // One with no location is another relation (`_v`, its values): its columns are not a located probe's.
-                    let valued = if node.is_none() { "_v" } else { "" };
-                    format!("{PROBE}{}_{}{valued}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
-                };
-                if !probes.iter().any(|(p, _, _)| *p == probe) {
-                    let types = v.columns_of(e).unwrap_or_default();
-                    let mut decl: Vec<(String, String)> = node.iter().map(|(_, t)| ("n".to_owned(), t.clone())).collect();
-                    decl.extend(cols.iter().map(|&c| (format!("c{c}"), types[c].1.clone())));
-                    let decl: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-                    b.fields().declare(&probe, &decl);
-                    b.fields().add_output(&probe);
-                    probes.push((probe.clone(), read_name(e), cols.clone()));
-                }
-                let mut head: Vec<_> = node.iter().map(|(n, _)| t_of(r, TermRef::Var(*n))).collect();
-                head.extend(fixed.iter().map(|(_, t)| t_of(r, *t)));
-                let mut rb = b.rule().head(probe.as_str(), &head);
-                for ((_, l), named) in others.iter().zip(&other_names) {
-                    rb = match l.view() {
-                        // Another export's read, under the name the program reads it by (a staged one, its stage's).
-                        Lit::Atom(o) if probed(v.rel_name(o.rel())) => {
-                            let terms: Vec<_> = o.args().map(|t| t_of(r, t)).collect();
-                            rb.atom_with(named.as_str(), &terms, false, o.gated())
+                // A probe of values alone (no location) whose fixed columns the rest of the body does not tie: one probe
+                // a group of them, each with its own literals. As one, its rows were every group's rows times every
+                // other's (points-to's `pt_type_of_all(n, t) :- pt_vpos_t(n), pt_tv(n, "builtin", v), pt_btype(v, t)`:
+                // every position times every builtin's value, past 6 GB on the data layer). A probe of fewer columns
+                // keys the file's entry by more of the export's rows, so each still holds every row the read takes.
+                let vars = |l: &crate::code_rule_dsl::logic::program_image::LitRef<'_>| -> Vec<crate::code_rule_dsl::logic::program_image::Slot> {
+                    match l.view() {
+                        Lit::Cmp { l: x, r: y, .. } => {
+                            let mut vs = Vec::new();
+                            vars_of(x, &mut vs);
+                            vars_of(y, &mut vs);
+                            vs
                         }
-                        _ => rb.lit(v, r, *l),
+                        _ => bound_by(&mut std::iter::once(l)),
+                    }
+                };
+                let parts = if node.is_none() {
+                    let fixed_vars: Vec<_> = fixed.iter().map(|(_, t)| t.var()).collect();
+                    let other_vars: Vec<_> = others.iter().map(|(_, l)| vars(l)).collect();
+                    let test_vars: Vec<_> = tests.iter().map(&vars).collect();
+                    tied_parts(&fixed_vars, &other_vars, &test_vars)
+                } else { vec![((0..fixed.len()).collect(), (0..others.len()).collect(), (0..tests.len()).collect())] };
+                for (fs, os, ts) in parts {
+                    let part_fixed: Vec<(usize, TermRef<'_>)> = fs.iter().map(|&i| fixed[i]).collect();
+                    let part_tests: Vec<_> = ts.iter().map(|&i| tests[i]).collect();
+                    let cols: Vec<usize> = part_fixed.iter().map(|(c, _)| *c).collect();
+                    let probe = {
+                        use sha2::Digest as _;
+                        let d: [u8; 32] = sha2::Sha256::new().chain_update(e.as_bytes()).finalize().into();
+                        // One with no location is another relation (`_v`, its values): its columns are not a located probe's.
+                        let valued = if node.is_none() { "_v" } else { "" };
+                        format!("{PROBE}{}_{}{valued}", d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>(), cols.iter().map(usize::to_string).collect::<Vec<_>>().join("_"))
                     };
+                    if !probes.iter().any(|(p, _, _)| *p == probe) {
+                        let types = v.columns_of(e).unwrap_or_default();
+                        let mut decl: Vec<(String, String)> = node.iter().map(|(_, t)| ("n".to_owned(), t.clone())).collect();
+                        decl.extend(cols.iter().map(|&c| (format!("c{c}"), types[c].1.clone())));
+                        let decl: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                        b.fields().declare(&probe, &decl);
+                        b.fields().add_output(&probe);
+                        probes.push((probe.clone(), read_name(e), cols.clone()));
+                    }
+                    let mut head: Vec<_> = node.iter().map(|(n, _)| t_of(r, TermRef::Var(*n))).collect();
+                    head.extend(part_fixed.iter().map(|(_, t)| t_of(r, *t)));
+                    let mut rb = b.rule().head(probe.as_str(), &head);
+                    for ((_, l), named) in os.iter().map(|&i| (&others[i], &other_names[i])) {
+                        rb = match l.view() {
+                            // Another export's read, under the name the program reads it by (a staged one, its stage's).
+                            Lit::Atom(o) if probed(v.rel_name(o.rel())) => {
+                                let terms: Vec<_> = o.args().map(|t| t_of(r, t)).collect();
+                                rb.atom_with(named.as_str(), &terms, false, o.gated())
+                            }
+                            _ => rb.lit(v, r, *l),
+                        };
+                    }
+                    for l in &part_tests {
+                        rb = rb.lit(v, r, *l);
+                    }
+                    rb.finish().map_err(Error::Plan)?;
+
                 }
-                for l in &tests {
-                    rb = rb.lit(v, r, *l);
-                }
-                rb.finish().map_err(Error::Plan)?;
             }
         }
         b.finish().map_err(Error::Plan)?.0
@@ -956,8 +1086,19 @@ fn existence_reads(v: &std::sync::Arc<Version>) -> Result<Option<std::sync::Arc<
         let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
         v.rules().map(|r| r.head().rel()).filter(|&h| f.native(v.rel_name(h)).is_some()).collect::<BTreeSet<_>>()
     };
-    let reading: Vec<_> =
-        v.rules().filter(|r| !natives.contains(&r.head().rel()) && r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some()))).collect();
+    // A callable's rule (decision 0725) is kept as written too: it runs in the file its request is routed to, and its
+    // read with the placing columns open (`qtouch(_, q, v)`) is of that file's rows, not of any file's. Read through a
+    // relation of names, the callee read no relation of its file, and the call was refused.
+    let callables: BTreeSet<String> = rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::callable::declared(v)
+        .map_err(Error::Plan)?
+        .into_iter()
+        .map(|c| c.rel)
+        .collect();
+    let reading: Vec<_> = v
+        .rules()
+        .filter(|r| !natives.contains(&r.head().rel()) && !callables.contains(v.rel_name(r.head().rel())))
+        .filter(|r| r.body().any(|l| matches!(l.view(), Lit::Atom(a) if open(a).is_some())))
+        .collect();
     if reading.is_empty() {
         return Ok(None);
     }
@@ -1036,13 +1177,14 @@ pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 /// The facts `prog` reads from earlier phases (`<phase>__<export>`), each phase run first in its own space, and the
 /// phases' runs, in the order they ran.
 pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, root: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value) -> Result<(Facts, Vec<PhaseRun>)> {
-    // A phase's own run: its upstream facts were worked out by the run that started it.
-    if let Some(me) = declared(prog)
-        && let Some(f) = crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f)))
-    {
-        return Ok((f, Vec::new()));
+    // A phase's own run: its upstream facts were worked out by the run that started it. Its own stage (decision 0709,
+    // `stage`: a phase run once is staged as a program is) is not one of those: it is cut from the phase's program in
+    // its own run, and run here.
+    let handed = declared(prog).and_then(|me| crate::code_rule_dsl::logic::profile::with_bound(|h: &HandedDown| h.0.last().filter(|(n, _)| *n == me.name).map(|(_, f)| Facts::clone(f))));
+    let (mut facts, mut runs) = (handed.clone().unwrap_or_default(), Vec::new());
+    if handed.is_some() && !wanted_in(prog, shape, options.get("phase_dir").and_then(|v| v.as_str()).map(Path::new))?.keys().any(|n| staged(n).is_some()) {
+        return Ok((facts, runs));
     }
-    let (mut facts, mut runs) = (Facts::new(), Vec::new());
     // The constants' own run (`constants::derive`) reads no phase: its relations are made from no document, and a
     // phase's exports are the run's inputs, never a constant. Run under its options, a phase would be a constants
     // run itself, writing none of its exports.
@@ -1053,6 +1195,9 @@ pub fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::Shape, 
     for (name, reads) in wanted_in(prog, shape, dir.as_deref())? {
         // A stage (decision 0709): a phase cut from the program it runs before, held for the run, not a file.
         let staged = staged(&name);
+        if handed.is_some() && staged.is_none() {
+            continue;
+        }
         // Phase 1 ran before any phase, for the run (`PhaseOne`): its exports are handed on as it left them. A run
         // that did not run it (given its files, or with `RERAIL_SOURCES_PHASE=off`) reads none.
         if name == SOURCES {

@@ -853,9 +853,8 @@ impl CoreRows {
     /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
     /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
     /// document W reads no values of (`Dialect::values`) has these.
-    /// `key_of`: a node's document's key, by its page (plan "Chunk node numbers").
-    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>, key_of: impl Fn(i64) -> Option<u32> + 'a) -> impl Iterator<Item = [i64; 3]> + 'a {
-        self.value.iter().filter(move |r| key_of(r[0]).is_some_and(|k| docs.contains(&k))).copied()
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| docs.contains(&rerail_blocks::located::Located(r[0]).key())).copied()
     }
 
     /// The relations, the strings' indexes made atoms by `atom`.

@@ -65,6 +65,36 @@ fn decided(dir: &Path, topics: &[&str]) -> Vec<String> {
     out
 }
 
+/// `PROGRAM` keyed by name, not by file: `qsame` is asked by two functions' qualified names (`d:f`, their document's
+/// number and name), and its asks are routed by `qhome`, which reads the file off the first (before `:`), as a
+/// language's library reads a name's home off it. No column of `qsame` names a document (what it reads does: a file's
+/// held rows are kept by it).
+const ROUTED: &str = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.input node, field, text
+.decl fname(d: number, f: node, s: symbol)
+fname(d, f, s) :- node(d, f, "function_definition", _, _), field(f, "name", x), text(x, s).
+.decl touches(d: number, g: symbol, v: symbol)
+touches(d, g, v) :- fname(d, f, g), node(d, f, _, fs, fe), node(d, i, "identifier", s, e), fs < s, e <= fe, text(i, v).
+.decl calls_in(d: number, b: symbol, g: symbol)
+calls_in(d, b, g) :- fname(d, f, b), node(d, f, _, fs, fe), node(d, c, "call", s, e), fs < s, e <= fe, field(c, "function", x), text(x, g).
+.decl runs_in(b: symbol, d: number, g: symbol) cross_file
+runs_in(b, d, g) :- calls_in(d, b, g).
+.decl qtouch(d: number, q: symbol, v: symbol)
+qtouch(d, q, v) :- touches(d, f, v), q = cat(to_string(d), ":", f).
+.decl qhome__ask(q: symbol)
+.decl qhome(q: symbol, d: number) cross_file   // every file's path: a router reads them all
+qhome(q, d) :- qhome__ask(q), match("(?<x>[0-9]+):.*", q), d = to_number(x).
+.decl qsame(f: symbol, g: symbol, v: symbol)
+.callable qsame bbf by qhome
+qsame(f, g, v) :- qtouch(d, f, v), qtouch(d, g, v), f != g.
+.decl unsafe_pair(b: symbol, f: symbol, g: symbol, v: symbol)
+unsafe_pair(b, f, g, v) :- runs_in(b, d, f), runs_in(b, d, g), qf = cat(to_string(d), ":", f), qg = cat(to_string(d), ":", g), qsame(qf, qg, v).
+.output unsafe_pair
+"#;
+
 /// The program with `same_globals` made whole, as it was before it was callable.
 fn whole() -> String {
     PROGRAM.replace(".callable same_globals bbbf\n", "")
@@ -79,6 +109,83 @@ fn a_callable_relation_is_answered_in_its_readers_join() {
     let made = findings(&whole(), &corpus("callable-whole", &files));
     assert_eq!(called, made);
     assert_eq!(called, [["run", "f0", "f2", "x"], ["run", "f2", "f0", "x"]]);
+}
+
+/// A callable asked by name is answered in the file its router reads off the key (`by qhome`): the findings are those
+/// of `qsame` made whole, and those of the program keyed by file.
+#[test]
+fn a_call_routed_by_its_key_is_answered_in_the_file_the_key_names() {
+    let files = [("a.py", A), ("b.py", B), ("c.py", C)];
+    let dir = corpus("callable-routed", &files);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    let called = findings(ROUTED, &dir);
+    // The asks reached the calls, each in the file its key names (a router made in each file routes none).
+    let calls = decided(&prof, &["callable relations' calls"]);
+    assert!(calls.iter().any(|l| !l.contains("batches, 0 requests") && l.contains("(0 requests of no file)")), "{calls:?}");
+    let made = findings(&ROUTED.replace(".callable qsame bbf by qhome\n", ""), &corpus("callable-routed-whole", &files));
+    assert_eq!(called, made);
+    assert_eq!(called, [["run", "f0", "f2", "x"], ["run", "f2", "f0", "x"]]);
+}
+
+/// Two callables asked before the caller waits are answered in one call (`Calls::answer_all`): one batch, each
+/// holder entered once for both, and each reader's answers those of its relation made whole.
+#[test]
+fn two_callables_asked_together_are_answered_in_one_call() {
+    let files = [("a.py", A), ("b.py", B), ("c.py", C)];
+    let second = ".decl qtouched(q: symbol, v: symbol)\n.callable qtouched bf by qhome\nqtouched(q, v) :- qtouch(_, q, v).\n\
+        .decl touch_any(b: symbol, f: symbol, v: symbol)\ntouch_any(b, f, v) :- runs_in(b, d, f), qf = cat(to_string(d), \":\", f), qtouched(qf, v).\n.output touch_any\n";
+    let program = format!("{ROUTED}{second}");
+    let dir = corpus("callable-together", &files);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    let called = findings(&program, &dir);
+    let touched = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "touch_any").unwrap();
+    let calls = decided(&prof, &["callable relations' calls"]);
+    assert!(calls.iter().any(|l| l.contains(": 1 batches") && !l.contains("batches, 0 requests")), "{calls:?}");
+    let whole = program.replace(".callable qsame bbf by qhome\n", "").replace(".callable qtouched bf by qhome\n", "");
+    let made_dir = corpus("callable-together-whole", &files);
+    assert_eq!(called, findings(&whole, &made_dir));
+    assert_eq!(touched, crate::code_rule_dsl::logic::plan::output::shown(&made_dir.join("out"), "touch_any").unwrap());
+    assert!(!touched.is_empty());
+}
+
+/// Demand (`.pragma "magic-transform"`) keeps a callable's router: no output reads it, only the request the callable
+/// split writes after demand, so demand roots it as an output, free. Left out, it dropped the router's rules and the
+/// request read an empty router: no call, and `qsame` empty.
+#[test]
+fn a_routed_call_under_demand_keeps_its_router() {
+    let files = [("a.py", A), ("b.py", B), ("c.py", C)];
+    let dir = corpus("callable-routed-demand", &files);
+    let prof = dir.join("prof");
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::set_directory(&prof);
+    let program = format!("{ROUTED}\n.pragma \"magic-transform\" \"qtouch\"\n");
+    let called = findings(&program, &dir);
+    let calls = decided(&prof, &["callable relations' calls"]);
+    assert!(calls.iter().any(|l| !l.contains("batches, 0 requests") && l.contains("(0 requests of no file)")), "{calls:?}");
+    assert_eq!(called, [["run", "f0", "f2", "x"], ["run", "f2", "f0", "x"]]);
+}
+
+/// A router's table of the files is each file's relation, read by the cross part as any export (a language's module
+/// table: `fdoc`, a document's number as text): the split keeps it in the files and exports it.
+#[test]
+fn a_routers_table_of_the_files_is_each_files_relation() {
+    let program = ROUTED.replace(
+        r#"qhome(q, d) :- qhome__ask(q), match("(?<x>[0-9]+):.*", q), d = to_number(x)."#,
+        ".decl fdoc(d: number, x: symbol)\nfdoc(d, to_string(d)) :- node(d, _, \"module\", _, _).\nqhome(q, d) :- qhome__ask(q), match(\"(?<x>[0-9]+):.*\", q), fdoc(d, x).",
+    );
+    assert!(program.contains("fdoc(d, x)"), "{program}");
+    let v = crate::code_rule_dsl::logic::rr::parse_version(&program).unwrap();
+    // The request the callable split writes (`qsame__call`, read through `qhome`) is what the cone is made from.
+    let v = crate::code_rule_dsl::logic::plan::corpus::preparation::callable::split(&v).unwrap().expect("a callable").caller;
+    let pre = crate::code_rule_dsl::typing::file_local::programs_of(v).unwrap();
+    assert!(pre.file_local.contains("fdoc"), "fdoc is cross-file: {:?}", pre.causes.get("fdoc"));
+    // Read by the cone of requests, it is exported: a projection of `node` derived again in the cross part read the
+    // stored input, whose rows no load answers ("the cone of requests reads base relation node").
+    assert!(pre.exports.iter().any(|x| x == "fdoc"), "fdoc is not exported: {:?}", pre.exports);
 }
 
 /// A call names one file, its column 0, and reads that file's relations alone: `go` in b.py calls `f0`, defined in
@@ -186,18 +293,27 @@ fn a_run_names_the_relations_it_could_call() {
 
 /// The asks of a program's exported relations are recorded reader by reader (`RERAIL_ASKS`): `unsafe_pair` reads
 /// `same_globals` with its file and both functions bound (`bbbf`), so its keys and rows used are two relations
-/// named for that shape, and outputs; `runs_in` reads `calls_in` with nothing bound.
+/// named for that shape, and outputs, with the files answering each key (its document column names them); `runs_in`
+/// reads `calls_in` with nothing bound.
 #[test]
 fn the_asks_of_exported_relations_are_recorded_by_shape() {
     use crate::code_rule_dsl::logic::plan::corpus::preparation::asks;
-    let v = crate::code_rule_dsl::logic::rr::parse_version(&whole()).unwrap();
+    // With the run's `doc` (a document's path), which a corpus run's programs read.
+    let program = format!("{}.decl doc(d: number, p: symbol, q: symbol)\n.input doc\n", whole());
+    let v = crate::code_rule_dsl::logic::rr::parse_version(&program).unwrap();
     let pre = crate::code_rule_dsl::typing::file_local::programs_of(v.clone()).unwrap();
-    let out = asks::recorded(&v, &pre.file_local).unwrap().expect("asks recorded");
+    let got = asks::recorded(&v, &pre.file_local, &pre.locations).unwrap();
+    assert!(got.unlocated.is_empty(), "every relation asked by key names its file: {:?}", got.unlocated);
+    assert!(got.located.iter().any(|(tag, how)| tag.ends_with("__same_globals__unsafe_pair__bbbf") && how == "document column 0, key 0"), "its key names its file: {:?}", got.located);
+    let out = got.version.expect("asks recorded");
     let outputs: Vec<String> = out.outputs().map(|o| out.text(o).to_owned()).collect();
     let named = |prefix: &str, tail: &str| outputs.iter().any(|o| o.starts_with(prefix) && o.ends_with(tail));
     assert!(named(asks::KEY, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
     assert!(named(asks::USED, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
     assert!(named(asks::USED, "__calls_in__runs_in__fff"), "{outputs:?}");
     assert!(!named(asks::KEY, "__calls_in__runs_in__fff"), "no keys where none is bound: {outputs:?}");
+    // `same_globals` names its file by its own document column, no relay: its asked keys' files, and its index.
+    assert!(named(asks::FILES, "__same_globals__unsafe_pair__bbbf"), "{outputs:?}");
+    assert!(outputs.iter().any(|o| o == &format!("{}same_globals__bbbf", asks::PAIRS)), "{outputs:?}");
     assert!(outputs.iter().any(|o| o == "unsafe_pair"), "the program's own outputs stay");
 }

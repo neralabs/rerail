@@ -41,5 +41,19 @@ its own file (`call_col(x, k) :- called(c, x), node_start_column(c, k).`), the o
 - The check: 2a7aa9b10a.
 - Per-file rows placed by `docof`, which answers every id, and nested string annotations found in the chunk:
   ad60941a15.
-- Test programs rewritten: base, partial and maintain tests; the Django pack's rules and the remaining tests are
-  listed in the work log as they are rewritten.
+- Test programs rewritten: base, partial and maintain tests.
+- Staging, so a finding is made in its node's file:
+  - A relation of names derived from a request's answer is staged, and a guest of an unnumbered host node makes no
+    row: d0bc0b6999.
+  - A stage asks for the guests its relations read, and a load's answer is staged only through a folded constant:
+    ff561d9661.
+  - A layered read finds an admitted value's rows by the column's kind, and the cross part copies no view that reads
+    a node: 53cf39c914.
+  - A view over a world answer (`dir_entry`) is no view its readers cover: 6bfc3616fa.
+  - A stage is prepared as the program it is cut from, so its joins are neither deferred nor factorized where the
+    program's are not. A node path is a name, so a relation of names may hold one: 2b93934287.
+  - A stage's probe keeps the `nearest` and `ast` literals that tie its nodes: d31c5eaa53.
+- The Django pack's rules: each finding reads relations of names and node paths, and a path and line are the
+  writer's `{w.file}:{w.line}`: get-handler-writes (2b93934287), select-for-update-outside-atomic,
+  sync-orm-reached-from-async and dispatch-in-atomic-request (d31c5eaa53). The test
+  `the_django_pack_is_split_with_no_node_crossing` passes.

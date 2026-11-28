@@ -117,7 +117,7 @@ posthog-291` and `dl-224`.
 
 | | PostHog's 291 files, Django's points_to policies | The data layer's 224 files, `bandit-b113` |
 |---|---|---|
-| Asks (relation, reader, shape) | 425, over 260 relations | 37, over 24 relations |
+| Asks (relation, reader, shape) | 425, over 259 relations | 37, over 24 relations |
 | Exported relations' rows made | 2,848,456 | 149,589 |
 | Rows their readers use | 427,804 to 524,952 (15 to 18%) | 54,326 to 55,498 (36 to 37%) |
 
@@ -143,3 +143,114 @@ used 987 (`ff`); `pt_look_t`, 93,224, used 44,979 to 61,385 (`fbb`); `pt_vopen_l
 `pt_btype_l_0`, 50,764, used 16,601 (`fb`). Over the data layer: `imported`, 16,916 rows, used 10,941 to 11,877
 (`bb`, `fb`, `ff`); `asks_at`, 18,853, used 3,512 (`bb`); `reads_at`, 14,521, used 516 (`bf`).
 
+**Each relation's disposition** (the "Exported relations' asks" page, https://claude.ai/artifact/KujXwtdjeevwMFLKoEmW2t;
+the tables `rerail-shared/callable-asks/asks-*-disposed.tsv`, made by `asks_classify.py` and `asks_dispose.py` there).
+A relation is made whole when any reader needs it whole, so it takes one disposition from all its asks; the largest
+were read rule by rule. Over PostHog's 2,848,456 rows:
+
+| Disposition | Relations | Rows made | Rows used |
+|---|---|---|---|
+| A finding's per-file half (`fl…_violation`, `fl…_rr_diagnostic`, the sync-orm walk's keys) | 12 | 958,678 | 6 to 8 |
+| Read by no reader here (mostly lifted `_l_i` relations of library values) | 77 | 333,513 | 0 |
+| A term's document stored a row a term (`pt_at`, term to path; `pt_chk`, term to checked document) | 2 | 237,734 | 61,048 to 84,242 |
+| Read by key, a term bound (the answering file's) | 61 | 615,754 | 144,016 to 182,362 |
+| Read by key, no term of the answering file bound (`pt_qn_t` by a qualified name) | 28 | 147,240 | 16,919 to 17,937 |
+| A negated test | 11 | 60,525 | 8,807 to 8,817 |
+| A filter on file-part relations left in the cross part by 0677's lift (`pt_vopen_l_0`, `_l_6`: `!pt_tracked(k)`) | 2 | 128,415 | 987 |
+| A projection: the reader drops the location (`pt_lwant(q) :- pt_qn(_, q)`), so its rows are no file's | 7 | 94,373 | 16,407 to 20,784 |
+| A key the rule computes after the read (`res`: `defined(_, q), split_dot(q, c, a)`) | 1 | 4,160 | 1,987 to 2,823 |
+| Scanned whole by a reader | 51 | 133,202 | 126,048 to 127,739 |
+| Scanned under negations of cross-part relations, an anti-join (`pt_vpos_t` for `pt_type_open_all`) | 6 | 133,879 | 51,546 to 79,220 |
+| Scanned, partly used | 1 | 983 | 33 |
+
+Of the keyed and negated reads, 255,565 rows lie in relations under 5% asked (at most 4,047 asked) and 180,007
+in relations 50% or more asked; 360,244 in between (at most 76,812). Not measured: a request's cost at scale (the
+spike's 20 to 28 µs is a 48-request batch's, mostly its fixed cost), the projections' per-file distinct values, and
+the keys sent that find no row.
+
+**Each probe's keys and their files** (the "Probe Routing" page, https://claude.ai/artifact/63DtrhU31j5PvjPGmfTe5U;
+`rerail-shared/callable-asks`: `asks-keys-*`, `probes-*`, `keys-home-*`). For a keyed ask of a located export
+(`R_at(d, ..)`), `RERAIL_ASKS` also makes the files answering each key asked (`rr_kfile__`, with `doc`'s path), the
+relation's every (key, document) pair (`rr_kpair__`) and its keys (`rr_kall__`), and the run writes `asks-probes.tsv`
+(a probe a row: keys, files a key, an index's keys and pairs, samples) and `asks-keys.tsv` (every key found, with its
+files) beside the profile. Over PostHog's 291 files, 162 probes found 353,614 keys (every round's): 97.61% answered
+by exactly one file, the one the key names (its path, or the longest module prefix of a term's or a definition's
+scope); 0.04% by that file and more; 1.92% by files that use a name another file of the run defines; 0.43% name
+no file of the run (an outside module, a guest's term). Over the data layer's 224, 92.80% of 16,830. Of the
+8,452 not at home, 2,138 are answered by several files (71 by 32 or more; at most 96, `structlog`). The 21
+relations they are of make 165,954 rows; an index of their every (key, file) pair is 58,165 keys and 107,580 pairs.
+The import graph, read from the sources, as a router (a key to the importers of its longest imported prefix):
+8,234 of the 8,452, sending to 50,335 files for 18,275 answers; 218 keys missed (re-exports, guests). The
+probes' relations peaked the run at 2.34 GB (1.61 GB without; 54.4 s user CPU).
+
+**Every keyed ask names its file.** The probes above read only the split's relays (`R_at(d, ..)`): 13 keyed asks of
+PostHog's and 3 of the data layer's had none, as their relations reach the cross part with a location column of their
+own: a document (`asks_at`'s, `star_of`'s, the pair caches' `sym_at` and `spelled_at`), or a node (`violation`, the
+`rr_diagnostic_` relations, `pt_def`, `class_def`). `RERAIL_ASKS` now reads that column (a node's document by
+`docof`), makes its index relations in the cross part (`cross_file`), and writes `asks-located.tsv`: how each probe
+names its file (`relay`, `document column C` or `node column C`, with `, key J` where the asked key holds it). On both
+corpora no keyed ask is left without its files (PostHog 193 of 193, the data layer 20 of 20); no relation asked by key
+lacks a location column. Of PostHog's 358,006 keys found, 1.19% hold their document or node themselves and 96.45% are
+at home, 97.64% in all; 1.90% are answered by files elsewhere, 0.42% name no file of the run. The data layer: 21.30%
+and 73.03% of 21,386 (94.33%), 2.67% elsewhere, 2.92% none. The pair caches are asked by their document alone (`fb`, the
+document bound): a whole file's rows. The findings are the same (PostHog's 5); 52.0 s real, 2.32 GB.
+
+
+**A call routed by its key's file (`.callable R PATTERN by H [C]`).** For the 97.6% whose key names its file, the call
+is sent to the file the key names. `H(k, d)` is a router of column C (default: the first bound one): the callable split
+writes `H__ask(k) :- <the reader's body>` and `R__call(d, key..) :- <the reader's body>, H(k, d)`, and the callee
+reads `R__call(_, key..)`, column 0 bound by the router. A router reads every file's table, so it is declared
+`cross_file`; the run refuses a request made in each file (there a router reads one file's rows and routes none).
+Nothing but the split reads a router before the split runs, so the passes that drop what no output reads take it as a
+root: `prune`, the relations no output reads, a part's outputs (decision 0345) and demand's closure (decision 0048),
+which had dropped `pt_tm_file`'s rules and left every call empty. A file-local relation the cone of requests reads is
+exported, not projected again in the cross part from a stored input, whose rows no load answers (the router's table
+of the files). The library's router is `pt_tm_file` (python/points-to-solve): a term's file, by its scope walked up
+with `@pkg_up` to a module of `doc`'s, and a guest's term by the document its string holds (`pt_tm_guest_doc`); it
+routes `pt_vopen_l_8 b`. PostHog's 291 files, get-handler-writes: 2,260 requests to 163 files (3 holders entered), 0
+of no file, 1,193 answer rows; the cross part's `pt_vopen_l_8` is those 1,193 rows, against 79,319 made whole. The
+findings are the same 5, identical. Measured again with `time -l` (instructions retired do not move with the
+Mac's load; CPU did, the same `pt_tm_same` steps over the same rows taking 1.44 times the CPU a row in a run more
+loaded): 799.7 G instructions against 780.4 G, +2.5%; process CPU 53.06 s against 50.77 s. The first figures here
+(CPU 29.4 s against 24.8 s, one run each) were the load's, not the call's. Peak memory 1,220.5 MB against 569.2 MB:
+with the call, points_to's cross part makes a request, so its cone holds the solve that makes the key (the
+66-relation component `pt_acls/pt_ainst/…`), and what the rest reads of the cone is handed on as rows
+(`held_rows`, then columns again for the cross part's bind): 640 MB allocated in 0.3 s at the cone's end and freed
+after; the cone 0.78 s CPU (473 MB allocated), the hand-on 0.54 s (715 MB). The calls themselves are 20 ms. Each file still makes the callee's memo entry
+(`pt_vopen_l_8_at`) whole. Tests: `callable_tests` (a routed call, under demand, and a router's table of the files
+exported).
+
+**Calls in bulk: every callable's requests, one call into each file.** The callees are lowered together, one program
+(`Split::program`: every callable's rules, every request an input, the union of what they read in a file), and the
+runner answers a list of requests at once (`Calls::answer_all`): their new keys grouped by the file holding them, each
+file entered once, every request bound in it (the ones with no key there empty), one run of the program, each
+request given the rows its keys select. The cone thread holds a callable's posted requests, not answering each as it
+comes: when the run is about to wait (`Asks::waits`, a marker posted once after posts, before the run blocks), every
+held request is answered in the one call, and each ticket gets its rows. The run posts its requests, so they
+accumulate, in both its loops: the scoreboard's, and the serial loop of a run whose strata are kept across runs
+(decision 0077 §4), which had waited for each; there a stratum still asking is not taken as evaluated until it has
+resumed, and its posted answers are logged with its stratum's reads (`Run::logs_posted`). A produced relation's
+stratum (decision 0065 §2a) posts, with its own request, the requests of every produced relation whose request is
+made and not yet answered, and waits once for them all (`posted_together`). Two callables, each routed, asked in one
+program (`callable_tests::two_callables_asked_together_are_answered_in_one_call`): 1 batch, 24 requests, 2 files
+entered (2 batches, 4 files entered before), the findings and both readers' rows the whole program's. PostHog's 291
+files, get-handler-writes (one callable): 1 batch, 2,260 requests to 163 files, 3 holders entered, 1,193 answer rows,
+the same 5 findings. Tests: `rerail-tests-rr` (298 passed), `calls::tests`, `answers::tests`, `complete_answer_tests`.
+
+**The cone's relations handed on in place.** The memory the call cost was two copies (decision 0353) of what the
+cone reads and makes, neither on 0353's list nor marked. At the cone's end, each relation the rest of the cross-file
+part reads was copied out as rows (`held_rows`, a heap vector a row) and copied again into columns for the bind; it
+is now handed on as the engine holds it (`held_source`: `component::derived`, the relation itself), or as the rounds
+hold it (`Retained::derived_source`, the kept relation or the frames' block, `InRel::source`); only answers and the
+rounds' views, which are rows when made, are made once into a relation. And the digest of each document's part of
+what the cone reads (`cone_digests`, the cone's reuse) collected every row of those exports per document, copied, to
+sort and hash them: it now reads them where they lie, twice, the document's nodes first (a node is digested as its
+rank among them) and then each row's hash summed per document, an order-free digest of the document's rows (the
+digests differ from the last run's once). PostHog's 291 files, get-handler-writes: peak memory 614.9 MB, against
+1,220.5 MB with the copies and 569.2 MB with no call; 795.3 G instructions against 780.4 G with no call (+1.9%); the
+same 5 findings.
+Calls in bulk had posted a request once per produced relation of it that was ready (`posted_together`): a request
+producing several, each its own stratum (the C preprocessor's `c_pp_tu_req`), was asked again for each (`corpus::tests::
+a_header_edit_asks_again_only_for_the_units_that_read_it`: each unit 7 times); each request is posted once now, and a
+produced relation once asked is not asked again. Tests: `rerail-tests-corpus` (281 passed, with the coverage ledger's
+one more `to_number`, the router's, and `RERAIL_ASKS` classified a measurement aid), `rerail-tests-rr` (298).

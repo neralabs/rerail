@@ -2039,7 +2039,7 @@ fn text_len_is_strlen_of_the_text_of_a_node_or_a_line() {
 .decl node_len(l: symbol, k: number, s: number)
 node_len(l, @text_len(r), strlen(t)) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "assignment"), text(r, t).
 .decl line_len(l: number, k: number, s: number)
-line_len(l, @text_len(sp), strlen(t)) :- src_line(_, l, sp), text(sp, t).
+line_len(l, @text_len(sp), strlen(t)) :- src_line(_, l, sp), line_text(sp, t).
 .decl line_ind(l: number, k: number, w: number)
 line_ind(l, @indent(sp), @text_len(sp)) :- src_line(_, l, sp).
 .output node_len, line_len, line_ind

@@ -67,10 +67,6 @@ pub struct ViewDoc {
     /// children are its numbered tape children, walked as any parent's (`child_first`, `child_next`); 0 where a
     /// numbered node's parent is left out, its `child` parent the root.
     pub parented: u32,
-    /// Its first id in its chunk's numbering (plan "Chunk node numbers"): a node's, token's or span's id is it plus
-    /// the item's local id (`node_id`, `loc_id`). Written when the document takes its pages (`made::Docs::base`).
-    pub base: u32,
-    pub pad: u32,
     /// SPIKE (shared strata work, A): by local id, the numbered node's tape node and its id's low bits (`[u32; 2]`s),
     /// derived once at the entry's making in its block; empty: read by the numbering (`num_select`, `num_low_of`).
     pub node_table: Run,
@@ -79,7 +75,7 @@ pub struct ViewDoc {
     /// numbering's slot entry and then one load, not a search of the granule's children. Empty where `node_table` is.
     pub node_by_id: Run,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 16 + 8 + 16 + 16);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 2 + 16 + 24 + 16 * 7 + 16 + 16 + 16);
 
 /// A language's place in the codes' directory (decision 0697, `rerail_tape_format::codes_dir`, in the binary): by
 /// tape tag, the offsets from the directory's first byte of its codes' kind atoms and field atoms (u32s, by the tape's
@@ -265,17 +261,14 @@ pub const fn role_of_key(key: u32) -> usize {
     }
 }
 
-/// A page of a growth's ids: its document's number in the growth, the local id of its first id, and the document's
-/// key (an id's `docof`, and how it leaves the chunk: `key_of_id`).
+/// A page of a growth's ids: its document's number in the growth and the local id of its first id.
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Page {
     pub number: u32,
     pub local: u32,
-    pub key: u32,
-    pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<Page>() == 16);
+const _: () = assert!(std::mem::size_of::<Page>() == 8);
 
 /// A growth's page table, in its block: the pages taken so far in each role's region (`ROLE_PAGES`, from its
 /// first), then `PAGES` pages (`Page`). A page is written when it is taken (`take_pages`), before any id of it is
@@ -308,33 +301,13 @@ impl IdPages {
         // SAFETY: the caller's.
         unsafe { Self::page_at(this, id >> PAGE_BITS).read() }
     }
-    /// Whether id `id`'s page was taken (below its role's region's top): a value that is no id handed out is not.
-    ///
-    /// # Safety
-    /// `this` is a table of `BYTES` bytes, alive.
-    pub unsafe fn taken(this: *const Self, id: u32) -> bool {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        let p = id >> PAGE_BITS;
-        let role = ROLE_PAGES[1..].iter().position(|&end| p < end).unwrap_or(ROLES - 1);
-        // SAFETY: the caller's: the region's count of pages taken, written through atomics alone.
-        let top = unsafe { AtomicU32::from_ptr(std::ptr::addr_of!((*this).tops[role]).cast_mut()) }.load(Ordering::Acquire);
-        p < ROLE_PAGES[role] + top
-    }
-    /// The key of id `id`'s document.
-    ///
-    /// # Safety
-    /// As `page_of`.
-    pub unsafe fn key_of_id(this: *const Self, id: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { Self::page_at(this, id >> PAGE_BITS).read().key }
-    }
-    /// Takes the pages that hold `ids` ids of the document of number `number` (key `key`), local ids `local..local + ids`, in
+    /// Takes the pages that hold `ids` ids of the document of number `number`, local ids `local..local + ids`, in
     /// role `role`'s region, after the pages taken before (making order): its first id, or `None` where the region
     /// has no room for them. Many threads may take pages at once.
     ///
     /// # Safety
     /// As `page_at`, and `role` below `ROLES`.
-    pub unsafe fn take_pages(this: *const Self, role: usize, number: u32, key: u32, local: u32, ids: u32) -> Option<u32> {
+    pub unsafe fn take_pages(this: *const Self, role: usize, number: u32, local: u32, ids: u32) -> Option<u32> {
         use std::sync::atomic::{AtomicU32, Ordering};
         let n = ids.div_ceil(PAGE);
         let room = ROLE_PAGES[role + 1] - ROLE_PAGES[role];
@@ -344,7 +317,7 @@ impl IdPages {
         let first = ROLE_PAGES[role] + start;
         for k in 0..n {
             // SAFETY: the caller's: page `first + k`, below `PAGES`, taken by this call alone.
-            unsafe { Self::page_at(this, first + k).write(Page { number, local: local + k * PAGE, key, pad: 0 }) };
+            unsafe { Self::page_at(this, first + k).write(Page { number, local: local + k * PAGE }) };
         }
         Some(first << PAGE_BITS)
     }
@@ -563,30 +536,6 @@ impl ViewDir {
         // SAFETY: the caller's.
         unsafe { IdPages::page_of(Self::table_of(this), id).local + (id & (PAGE - 1)) }
     }
-    /// The key of id `id`'s document (its `docof`): its page's.
-    ///
-    /// # Safety
-    /// As `doc_of_id`.
-    pub unsafe fn key_of_id(this: *const Self, id: u32) -> u32 {
-        // SAFETY: the caller's.
-        unsafe { IdPages::key_of_id(Self::table_of(this), id) }
-    }
-    /// The row and local id of value `value`, where it is an id the growth handed out (its page taken) of a document
-    /// with a row here; `None` for any other value (a negative one, one past 32 bits, one of no page taken).
-    ///
-    /// # Safety
-    /// As `table_of`.
-    pub unsafe fn of_value(this: *const Self, value: i64) -> Option<(u32, u32)> {
-        let id = u32::try_from(value).ok()?;
-        // SAFETY: the caller's; the page read only once taken.
-        unsafe {
-            if !IdPages::taken(Self::table_of(this), id) {
-                return None;
-            }
-            let row = Self::doc_of_id(this, id);
-            (row != NO_DOC).then(|| (row, Self::local_of_id(this, id)))
-        }
-    }
 }
 
 /// The first place in `keys` (ascending) whose key is at least `key` (`keys.len()` where none is), in a count of steps
@@ -618,7 +567,6 @@ pub mod at {
     pub const KEY: i32 = offset_of!(ViewDoc, key) as i32;
     pub const TAG: i32 = offset_of!(ViewDoc, tag) as i32;
     pub const PREORDER: i32 = offset_of!(ViewDoc, preorder) as i32;
-    pub const BASE: i32 = offset_of!(ViewDoc, base) as i32;
     pub const NODES: i32 = offset_of!(ViewDoc, nodes) as i32;
     pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
     pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;

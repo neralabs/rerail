@@ -1046,8 +1046,8 @@ impl Table {
     /// decision 0722).
     pub fn keys(&self, p: &Projected, dialect: &Dialect) -> Vec<String> {
         frame::op(|fr| {
-            let k = cut(fr, p, dialect, self.fold).keys;
-            (0..k.len()).map(|i| String::from_utf8_lossy(k.get(i)).into_owned()).collect()
+            let keys = cut(fr, p, dialect, self.fold).keys;
+            (0..keys.len()).map(|i| std::str::from_utf8(keys.get(i)).expect("a granule's key is text").to_owned()).collect()
         })
     }
     /// The granules: their count (`start_up`'s `g`).

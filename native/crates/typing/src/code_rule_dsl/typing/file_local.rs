@@ -189,7 +189,7 @@ mod on_version;
 pub use on_version::{FLAG_COPY, FileLocal, LastFlags, flag_copy};
 pub use on_version::reads_a_node;
 mod node_crossings;
-pub use node_crossings::{NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, regex_group_only};
+pub use node_crossings::{MAKES_A_NODE, NodeColumns, NodeCrossing, crossings_under, node_crossings, nodes_checked, regex_group_only};
 mod passes;
 pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 #[cfg(any(test, feature = "test-hooks"))]
@@ -710,7 +710,10 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
             || declared(rel)
             || lowering_source(v, rel).is_some_and(|s| declared(&s))
     };
-    let mut refused: Vec<String> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, why)).collect();
+    // Each with why it is cross-file, read down the split's causes, as a node crossing is shown (`node_crossings`).
+    let why_cross = |rel: &str| -> String { node_crossings::crossing_chain(rel, &p.causes).iter().map(|l| format!("\n      cross-file because {l}")).collect() };
+    let mut refused: Vec<String> =
+        p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, &format!("{why}{}", why_cross(rel)))).collect();
     for rel in moved_in(&f) {
         // A function of strings (`match_all`) moved for a cross-file reader joins no documents.
         let functional = f.native(rel).is_some_and(|nat| matches!(nat.spec, crate::code_rule_dsl::logic::program_image::ArchivedNativeSpec::MatchAll { .. })) || f.qualified(rel, STRATEGY);

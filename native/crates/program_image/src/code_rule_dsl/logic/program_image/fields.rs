@@ -581,6 +581,9 @@ impl FieldsW<'_, '_> {
     pub fn add_setting(&mut self, key: &str, text: &str) {
         self.0.add_setting(key, text)
     }
+    pub fn retain_settings(&mut self, keep: &dyn Fn(&str) -> bool) {
+        self.0.retain_settings(keep)
+    }
     pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
         self.0.add_nullary(rels)
     }

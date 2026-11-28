@@ -214,7 +214,7 @@ enum Scope<'a> {
 /// for each relation the scope hands on as parts. `constants`: the relations the split holds constants (of facts and
 /// settings alone).
 #[allow(clippy::type_complexity)]
-fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, constants: &BTreeSet<String>) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
+fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, constants: &BTreeSet<String>, located: &BTreeMap<String, Vector<usize>>) -> (Vec<RuleRef<'v>>, BTreeMap<&'v str, Vec<(usize, usize)>>, BTreeMap<&'v str, Vec<RuleRef<'v>>>, Plan) {
     let none = BTreeSet::new();
     let local = match scope {
         Scope::Exports(local) => local,
@@ -309,10 +309,10 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
             // is one (`file_local::placeless_input`: a run's option, a phase's export declared keyed or whole):
             // each file reads its rows. `class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _),
             // py_names__own_at(p, q), py_names__ancestor(q, m, b)` is a lookup in `py_names__ancestor` by the file's
-            // own class symbol q; as parts, its node part `(c, q)` went to the cross part. So is an earlier phase's or
-            // a stage's export (`phased::is_probed`, decision 0709): every file reads the same rows. `node_module`,
-            // staged, was factorized, its part keyed by `star_export(_, s)` of every file, and `module_use` went to the
-            // cross part over the exports' nodes.
+            // own class symbol q; as parts, its node part `(c, q)` went to the cross part. An earlier phase's or a
+            // stage's export read by probes (`phased::is_probed`, decision 0709) is one too: every file reads the same
+            // rows. `node_module`, staged, was factorized, its part keyed by `star_export(_, s)` of every file, and
+            // `module_use` went to the cross part over the exports' nodes.
             let constant = |r: &str| {
                 constants.contains(r)
                     || (f.has_facts(r) && !rules_of.contains_key(r))
@@ -320,7 +320,25 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys, cons
                     || crate::code_rule_dsl::logic::plan::phased::is_probed(r)
             };
             let lookup = parts.iter().any(|p| part_lits(p).iter().all(|l| l.atom().is_none_or(|a| constant(v.rel_name(a.rel())))));
-            if head_holds_node && lookup {
+            // A head placed by its document (`dj_model_at(d, mq) :- doc(d, p, _), py_names__reads_at(p, m),
+            // py_names__dj_model_class(m, mq)`, its `d` a location) is a file's lookup too: as parts, the setting's part
+            // held every file's rows with no place, and every reader of the relation went to the cross part with it.
+            let doc_vars: BTreeSet<String> = lits
+                .iter()
+                .filter_map(|l| match l.view() {
+                    L::Atom(a) if !a.neg() => {
+                        let at = match v.rel_name(a.rel()) {
+                            "doc" => 0,
+                            "docof" => 1,
+                            _ => return None,
+                        };
+                        a.args().nth(at).and_then(|t| t.var()).map(|s| name(v, *rule, s))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let head_located = located.get(rel).is_some_and(|c| !c.is_empty()) || head.iter().any(|h| doc_vars.contains(h));
+            if (head_holds_node || head_located) && lookup {
                 break;
             }
             plan.push((key, parts));
@@ -734,7 +752,7 @@ pub fn factorize_intermediates(v: &std::sync::Arc<Version>, first: bool, names: 
     // Its keys read in the named relations' rules alone (`choose`'s `functional`).
     let keys = relation_keys(v, f, Some(names));
     // The deferred joins leave a lookup in a constant as written (`product_demand::deferred`): none is named here.
-    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys, &BTreeSet::new());
+    let (rules, reads, rules_of, chosen) = choose(v, f, Scope::Intermediates(names), &keys, &BTreeSet::new(), &BTreeMap::new());
     if chosen.is_empty() {
         return Ok(None);
     }
@@ -762,7 +780,7 @@ impl ProgramPass for FactorizeExports {
         let split = cx.get::<FileLocal>()?;
         let keys = relation_keys(v, f, None);
         let (_, constants) = split.found();
-        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys, &constants);
+        let (rules, reads, rules_of, mut chosen) = choose(v, f, Scope::Exports(&split.local), &keys, &constants, &split.locations);
         // Made, checked by the split, and made again without the relations whose parts it does not find file-local.
         loop {
             if chosen.is_empty() {

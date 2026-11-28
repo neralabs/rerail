@@ -188,13 +188,6 @@ pub(in crate::code_rule_dsl) fn reads_node_texts(stage: &Stage) -> bool {
     text || reads_node_orders(stage)
 }
 
-/// Whether stage `stage` takes a node's document (a column's or a parameter's `col_doc`/`par_doc`): read through the
-/// growth's page table, which its own view's directory holds, else the batch's node view's (`Batch::node_texts`).
-pub(in crate::code_rule_dsl) fn reads_docs(stage: &Stage) -> bool {
-    // Every entry: a map's binds set no `ncols` (`nbinds`), and an unused entry is 0.
-    stage.col_doc.iter().chain(&stage.par_doc).any(|&d| d != 0)
-}
-
 /// Whether filter `stage` binds a node's preorder key (`ARITH_NODE_ORDER`), read through its `v_dir`.
 pub(in crate::code_rule_dsl) fn reads_node_orders(stage: &Stage) -> bool {
     stage.mode == FILTER
@@ -588,9 +581,25 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     };
     // SAFETY: the scanned starts, `n + 1` values.
     let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
-    // Alone in its block, with room for an index at every entry of its directory. Each column a chunk's ids, 4 bytes
-    // (plan "Chunk node numbers").
-    let out_rows = Part::of_ids(crate::code_rule_dsl::facts::rows::Life::Run, 2, total);
+    let runs_of = |put: &mut dyn FnMut(u32, u32)| {
+        for (i, r) in order.iter().map(|&o| &rows[o as usize]).enumerate() {
+            let end = order.get(i + 1).map_or(dir.ends[0], |&o| rows[o as usize].rows[0]) as usize;
+            let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
+            if to > from {
+                put(from, r.key);
+            }
+        }
+    };
+    let mut runs = 0;
+    runs_of(&mut |_, _| runs += 1);
+    // Alone in its block, with room for an index at every entry of its directory (`Part::over_key_runs`). Each column
+    // its ids' low bits, under the documents' keys.
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs);
+    let mut k = 0;
+    runs_of(&mut |first, key| {
+        keys.put(k, first, key);
+        k += 1;
+    });
     if total > 0 {
         let needed = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         (params.rows_at, params.rows) = (out_rows.rows_at() as u64, total as u64);
@@ -1920,17 +1929,12 @@ impl Batch {
     /// A text stage (`TEXTOP`, `STRCMP`, `ROWTEXT`) with a node's text among its operands (`OPND_NODE`): the
     /// batch's node view bound as its `v_dir`, its buffers resident. A stage of no such operand is as it was.
     fn bind_node_texts(&mut self, stage: &mut Stage) -> Result<(), Error> {
-        // A stage taking a document with a view of its own reads the page table through that view's directory.
-        let texts = reads_node_texts(stage);
-        // A chunk with no numbering binds no node view: an id's document is its high bits, as the host's `DocOf`.
-        if !texts && !(reads_docs(stage) && stage.v_dir == 0 && self.node_texts.is_some()) {
+        if !reads_node_texts(stage) {
             return Ok(());
         }
         let Some(dir) = self.node_texts.as_ref().and_then(|v| v.view.as_ref()).map(|v| v.dir) else { return Err(Error::BackendCapacity) };
         stage.v_dir = dir;
-        if texts {
-            stage.r_view = 0;
-        }
+        stage.r_view = 0;
         self.open()?;
         if let (Some(pass), Some(nodes)) = (self.pass.as_ref(), self.node_texts.as_ref()) {
             nodes.resident_in(pass);
@@ -3409,7 +3413,6 @@ impl Batch {
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters), queued
     /// in the batch's level.
     pub(in crate::code_rule_dsl) fn map(&mut self, mut stage: Stage, table: &Table, in_slot: usize, totals: &Words) -> Result<(), Error> {
-        self.bind_node_texts(&mut stage)?;
         stage.cap_in = table.room() as u32;
         stage.cap_out = table.room() as u32;
         stage.in_slot = in_slot as u32;

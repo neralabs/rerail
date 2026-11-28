@@ -23,7 +23,7 @@ use cranelift_codegen::ir::{
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 29] = [
+    let fields: [(&str, &str, usize); 27] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -49,8 +49,6 @@ pub fn ukl() -> String {
         ("uint32_t", "doc_path", offset_of!(ViewDoc, doc_path)),
         ("uint32_t", "doc_module", offset_of!(ViewDoc, doc_module)),
         ("uint32_t", "parented", offset_of!(ViewDoc, parented)),
-        ("uint32_t", "base", offset_of!(ViewDoc, base)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
         ("Run", "node_table", offset_of!(ViewDoc, node_table)),
         ("Run", "node_by_id", offset_of!(ViewDoc, node_by_id)),
     ];
@@ -151,11 +149,22 @@ impl B<'_, '_> {
         let v = self.word_at(I32, p, 0);
         self.f.ins().uextend(I64, v)
     }
-    /// Numbered node `l`'s id: the document's base, plus `l` (plan "Chunk node numbers").
+    /// Numbered node `l`'s id: the document's key, then its low bits (`l` itself where ids are local ids).
     fn node_id(&mut self, l: Value) -> Value {
-        let base = self.word_at(I32, self.tape, at::BASE);
-        let id = self.f.ins().iadd(base, l);
-        self.f.ins().uextend(I64, id)
+        let key = self.entry_u32(at::KEY);
+        let high = self.f.ins().ishl_imm(key, 32);
+        let preorder = self.word_at(I32, self.tape, at::PREORDER);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
+        let low = self.either(I32, local, |_| l, |b| {
+            let tape = b.ids_tape();
+            b.either(I32, tape, |b| b.tape_node(l), |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let node = b.c32(0);
+                b.call_at("num_low_of", numbering, &[node, l])
+            })
+        });
+        let low = self.f.ins().uextend(I64, low);
+        self.f.ins().bor(high, low)
     }
     /// Whether the document's ids are tape positions (`IDS_TAPE`).
     fn ids_tape(&mut self) -> Value {
@@ -322,42 +331,52 @@ enum Place {
 
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
-    /// `Loc` position `l`'s id: a node's, a token's or a span's, the document's base plus `l` (`Projected::global`).
+    /// `Loc` position `l`'s id: a node's or token's by its numbering (`num_low_of`), a span's in the top slots
+    /// (`granules::span_low`); `l` itself where ids are local ids (`Projected::global`).
     fn loc_id(&mut self, l: Value) -> Value {
-        self.node_id(l)
+        use crate::ids::{INDEX_BITS, SLOT_BITS, SPAN_SLOTS};
+        let key = self.entry_u32(at::KEY);
+        let high = self.f.ins().ishl_imm(key, 32);
+        let preorder = self.word_at(I32, self.tape, at::PREORDER);
+        let local = self.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
+        let low = self.either(I32, local, |_| l, |b| {
+            let nodes = b.word_at(I32, b.tape, at::NODES);
+            let node = b.f.ins().icmp(IntCC::UnsignedLessThan, l, nodes);
+            b.either(I32, node, |b| {
+                // A node's or token's id where ids are tape positions: its tape node (`num_select`).
+                let tape = b.ids_tape();
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let item = b.c32(0);
+                b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, l]), |b| b.call_at("num_low_of", numbering, &[item, l]))
+            }, |b| {
+                let i = b.f.ins().isub(l, nodes);
+                let tokens = b.word_at(I32, b.tape, at::TOKENS);
+                let token = b.f.ins().icmp(IntCC::UnsignedLessThan, i, tokens);
+                b.either(I32, token, |b| {
+                    let tape = b.ids_tape();
+                    let numbering = b.follow(b.tape, at::NUMBERING);
+                    let item = b.c32(1);
+                    b.either(I32, tape, |b| b.call_at("num_select", numbering, &[item, i]), |b| b.call_at("num_low_of", numbering, &[item, i]))
+                }, |b| {
+                    let j = b.f.ins().isub(i, tokens);
+                    let hi = b.f.ins().ushr_imm(j, i64::from(INDEX_BITS));
+                    let top = b.c32(i64::from(SPAN_SLOTS - 1));
+                    let hi = b.f.ins().umin(hi, top);
+                    let last = b.c32(i64::from((1u32 << SLOT_BITS) - 1));
+                    let slot = b.f.ins().isub(last, hi);
+                    let slot = b.f.ins().ishl_imm(slot, i64::from(INDEX_BITS));
+                    let index = b.f.ins().band_imm(j, i64::from((1u32 << INDEX_BITS) - 1));
+                    b.f.ins().bor(slot, index)
+                })
+            })
+        });
+        let low = self.f.ins().uextend(I64, low);
+        self.f.ins().bor(high, low)
     }
     /// The document's lines (`lines_count`), read off its line index at the view's lines' base: the one definition
     /// of a line and a place (decision 0612); a guest's are its host's.
     fn loc_count(&mut self) -> Value {
         self.call_lines("lines_count", &[])
-    }
-    /// Its nodes' and positions' local ids (`Projected::locs`): its `Extra` spans' follow, its source's at it and its
-    /// lines' after (plan "Chunk node numbers"). Positions: its tokens, where its text is its own the whole text and
-    /// each line, then its end points.
-    fn locs(&mut self) -> Value {
-        let nodes = self.word_at(I32, self.tape, at::NODES);
-        let tokens = self.word_at(I32, self.tape, at::TOKENS);
-        let ends = self.word_at(I32, self.tape, at::ENDS);
-        let own = self.word_at(I32, self.tape, at::OWN_TEXT);
-        let count = self.loc_count();
-        let lines = self.f.ins().iadd_imm(count, 1);
-        let zero = self.c32(0);
-        let has = self.f.ins().icmp_imm(IntCC::NotEqual, own, 0);
-        let text = self.f.ins().select(has, lines, zero);
-        let n = self.f.ins().iadd(nodes, tokens);
-        let n = self.f.ins().iadd(n, text);
-        self.f.ins().iadd(n, ends)
-    }
-    /// The line of `Extra` span `local` (0 its source's, `l` from 1 its line `l`'s): `local - locs`, with whether it is
-    /// one (at or past `locs`, and not past the last line).
-    fn line_of_local(&mut self, local: Value) -> (Value, Value) {
-        let locs = self.locs();
-        let l = self.f.ins().isub(local, locs);
-        let at = self.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, local, locs);
-        let count = self.loc_count();
-        let within = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, l, count);
-        let line = self.f.ins().band(at, within);
-        (l, line)
     }
     /// Line `k`'s first byte (from 0, `lines_start`).
     fn loc_start(&mut self, k: Value) -> Value {
@@ -678,7 +697,6 @@ mod dir_at {
     pub const PAGE_SIZE: i64 = size_of::<super::Page>() as i64;
     pub const PAGE_NUMBER: i32 = offset_of!(super::Page, number) as i32;
     pub const PAGE_LOCAL: i32 = offset_of!(super::Page, local) as i32;
-    pub const PAGE_KEY: i32 = offset_of!(super::Page, key) as i32;
     pub const ROW_SIZE: i64 = size_of::<ViewRow>() as i64;
     pub const ROW_ROWS: i32 = offset_of!(ViewRow, rows) as i32;
     pub const ROW_KEY: i32 = offset_of!(ViewRow, key) as i32;
@@ -907,14 +925,6 @@ pub fn dir_local_of_id(b: &mut B<'_, '_>) -> Value {
     b.f.ins().iadd(first, within)
 }
 
-/// `dir_key_of_id(id)`: the key of id `id`'s document (`ViewDir::key_of_id`): its page's. An id's `docof`, and the
-/// document it leaves the chunk by.
-#[cfg(feature = "ir")]
-pub fn dir_key_of_id(b: &mut B<'_, '_>) -> Value {
-    let id = b.arg(0);
-    let page = b.dir_page(id);
-    b.word_at(I32, page, dir_at::PAGE_KEY)
-}
 
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
@@ -1047,8 +1057,8 @@ pub fn text_span(b: &mut B<'_, '_>) -> Value {
     b.f.ins().bor(high, end)
 }
 
-/// `view_line_span(local)`: the line whose span is local id `local` (`locs + l`: a `src_line` span, from 1; `locs`
-/// the document's `source` span, plan "Chunk node numbers"), as its bytes in its document's own source, `start << 32 | stop`:
+/// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: a `src_line`
+/// span, from 1; 0 the document's `source` span), as its bytes in its document's own source, `start << 32 | stop`:
 /// from its first byte (`lines_start`) to one past its terminator's last (the next line's start), or to the source's
 /// end on its last line and on line 0. Its text ends `lines_terminator_length(stop - 1)` bytes before `stop` where the
 /// line has a terminator (`0 < l < lines_count`), read off the source's bytes (`Doc::line_text`, as
@@ -1056,12 +1066,16 @@ pub fn text_span(b: &mut B<'_, '_>) -> Value {
 /// document whose lines are its host's (a guest's, `own_text` 0).
 #[cfg(feature = "ir")]
 pub fn line_span(b: &mut B<'_, '_>) -> Value {
-    let local = b.arg(0);
-    let (l, line) = b.line_of_local(local);
+    let low = b.arg(0);
+    let slot = b.f.ins().ushr_imm(low, i64::from(crate::ids::INDEX_BITS));
+    let other = b.f.ins().icmp_imm(IntCC::NotEqual, slot, i64::from(crate::ids::LINE_SLOT));
+    let l = b.f.ins().band_imm(low, i64::from((1u32 << crate::ids::INDEX_BITS) - 1));
     let own = b.word_at(I32, b.tape, at::OWN_TEXT);
+    let count = b.loc_count();
+    let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, l, count);
     let guest = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
-    let other = b.f.ins().icmp_imm(IntCC::Equal, line, 0);
-    let refused = b.f.ins().bor(guest, other);
+    let refused = b.f.ins().bor(guest, past);
+    let refused = b.f.ins().bor(refused, other);
     let unread = b.f.ins().iconst(I64, -1);
     b.either(I64, refused, |_| unread, |b| {
         let len = b.word_at(I32, b.tape, at::SOURCE_LEN);
@@ -1080,13 +1094,15 @@ pub fn line_span(b: &mut B<'_, '_>) -> Value {
     })
 }
 
-/// `view_line_terminated(local)`: 1 where the line whose span is local id `local` (`view_line_span`'s) ends with a
+/// `view_line_terminated(low)`: 1 where the line whose span's id has low bits `low` (`view_line_span`'s) ends with a
 /// terminator, so its text ends `lines_terminator_length` bytes before its span's stop: a line from 1 and before the
 /// last (`l < lines_count`). 0 for line 0, the last line, and another id.
 #[cfg(feature = "ir")]
 pub fn line_terminated(b: &mut B<'_, '_>) -> Value {
-    let local = b.arg(0);
-    let (l, line) = b.line_of_local(local);
+    let low = b.arg(0);
+    let slot = b.f.ins().ushr_imm(low, i64::from(crate::ids::INDEX_BITS));
+    let line = b.f.ins().icmp_imm(IntCC::Equal, slot, i64::from(crate::ids::LINE_SLOT));
+    let l = b.f.ins().band_imm(low, i64::from((1u32 << crate::ids::INDEX_BITS) - 1));
     let count = b.loc_count();
     let some = b.f.ins().icmp_imm(IntCC::NotEqual, l, 0);
     let before = b.f.ins().icmp(IntCC::UnsignedLessThan, l, count);
@@ -1095,13 +1111,37 @@ pub fn line_terminated(b: &mut B<'_, '_>) -> Value {
     b.f.ins().uextend(I32, yes)
 }
 
-/// `view_number(local)`: the numbered node of local id `local` (`dir_local_of_id`'s: a chunk's ids are their
-/// documents' bases plus their local ids, and a node's local id is its number, plan "Chunk node numbers"), or
-/// `NO_ROW` for a token's, a position's or a span's.
+/// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
+/// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
+/// a node's, not a token's).
 #[cfg(feature = "ir")]
 pub fn number(b: &mut B<'_, '_>) -> Value {
-    let l = b.arg(0);
+    let low = b.arg(0);
+    let preorder = b.word_at(I32, b.tape, at::PREORDER);
+    let local = b.f.ins().icmp_imm(IntCC::Equal, preorder, 1);
     let n = b.word_at(I32, b.tape, at::NODES);
+    let tape = b.ids_tape();
+    let l = b.either(I32, local, |_| low, |b| b.either(I32, tape, |b| {
+        // A tape position: the node there, if it is numbered (`num_is`), is its rank (`num_rank`).
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let is = b.call_at("num_is", numbering, &[item, low]);
+        let numbered = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let item = b.c32(0);
+        let rank = b.call_at("num_rank", numbering, &[item, low]);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(numbered, rank, no)
+    }, |b| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let found = b.call_at("num_number_of", numbering, &[low]);
+        // A node's: item 0 in the high word.
+        let item = b.f.ins().ushr_imm(found, 32);
+        let node = b.f.ins().icmp_imm(IntCC::Equal, item, 0);
+        let number = b.f.ins().ireduce(I32, found);
+        let no = b.c32(i64::from(NO_ROW));
+        b.f.ins().select(node, number, no)
+    }));
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
@@ -1174,8 +1214,7 @@ pub fn depth(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `view_order(l, col)`: column `col` of `node_order`'s row of numbered node `l`: its id, its order key under the
-/// document's key (`Projected::order`: `num_order_of`, its number itself where ids are local ids;
-/// `rerail_blocks::located::Located`'s form, a key and not a node).
+/// document's key (`Projected::order`: `num_order_of`, its number itself where ids are local ids).
 #[cfg(feature = "ir")]
 pub fn order(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));

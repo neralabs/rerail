@@ -485,9 +485,9 @@ pub struct DocPaths {
 }
 
 impl DocPaths {
-    /// `p`'s paths, the document at `path`; `None` where its ids are not by definition (`RERAIL_NODE_IDS=preorder`).
+    /// `p`'s paths, the document at `path`; `None` where it has no granules (`RERAIL_NODE_IDS=preorder`).
     pub fn new(p: &super::Projected, dialect: &super::Dialect, path: &str) -> Option<DocPaths> {
-        let keys = p.table()?.keys(p, dialect);
+        let keys = p.path_table(dialect)?.keys(p, dialect);
         let by_key = keys.iter().enumerate().map(|(g, k)| (k.clone(), g as u32)).collect();
         Some(DocPaths { path: path.to_owned(), keys, by_key, anchors: Default::default(), steps: Default::default() })
     }
@@ -553,7 +553,7 @@ impl DocPaths {
     /// Node `x`'s path: its base's atom, then its stop bit and steps. `None` for a node no path reaches (an extra, an
     /// anonymous node, one outside the document's granules).
     pub fn encode(&self, p: &super::Projected, dialect: &super::Dialect, atoms: &dyn Atoms, x: u32) -> Option<u64> {
-        let (f, table) = (p.f(), p.table()?);
+        let (f, table) = (p.f(), p.path_table(dialect)?);
         let g = table.granule_of(x)?;
         let (start, _) = table.start_up(g);
         // The chain from the granule's start down to x.
@@ -591,7 +591,7 @@ impl DocPaths {
 
     /// The node a path of base text `text` and low 32 bits `low` names (`decode`, its atom's text read).
     pub fn decode_text(&self, p: &super::Projected, dialect: &super::Dialect, mut text: String, low: u32) -> Option<u32> {
-        let (f, table) = (p.f(), p.table()?);
+        let (f, table) = (p.f(), p.path_table(dialect)?);
         // Its anchors' steps, the outermost first.
         let mut anchored = Vec::new();
         while let Some(t) = text.rfind("\t@") {
@@ -621,7 +621,7 @@ impl DocPaths {
     /// is kind-grouped. `#k` is the 0-based ordinal among siblings spelled the same, written only where there are
     /// several. A name holding `. / # :` or a space is backquoted. `None` where `x` has no path (`encode`'s).
     pub fn spell(&self, p: &super::Projected, dialect: &super::Dialect, x: u32) -> Option<String> {
-        let (f, table) = (p.f(), p.table()?);
+        let (f, table) = (p.f(), p.path_table(dialect)?);
         let tables = dialect.path_tables();
         let quote = |s: &str| if s.is_empty() || s.contains(['.', '/', '#', ':', ' ', '`']) { format!("`{}`", s.replace('`', "``")) } else { s.to_owned() };
         let g = table.granule_of(x)?;
@@ -694,7 +694,7 @@ impl DocPaths {
         if let Some(a) = self.anchors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&(g as u32)) {
             return std::sync::Arc::clone(a);
         }
-        let (f, table) = (p.f(), p.table().expect("paths are made where ids are by definition"));
+        let (f, table) = (p.f(), p.path_table(dialect).expect("a document with paths has its granules"));
         let (start, _) = table.start_up(g);
         let mut anchors = std::collections::BTreeSet::new();
         // The chain below the start to the node being placed, and which of it are anchors.

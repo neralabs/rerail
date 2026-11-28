@@ -17,10 +17,6 @@
 //   possible_open(n)     possible_type is incomplete
 // A rule's `possible: t` is `possible_type(n, t)` or `possible_open(n)`; `not proven: t` is `!proven_type(n, t)`.
 #include "python/points-to-file.rerail"
-// A rule reads the terms of its own nodes alone: of the calls and value positions it asks about, not every node's.
-// The phase's solve asks nearly every node's term (it hands each node fact on by term), so there demand made more
-// rows than it spared, and its pragma is here, where only the readers include it (decision 0145).
-.pragma "magic-transform" "pt_tm"
 
 .decl points_to__call_target_at(p: symbol, t: node_path, f: symbol)
 .decl points_to__call_open_at(p: symbol, t: node_path)

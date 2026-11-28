@@ -33,8 +33,9 @@
 .violation DispatchInAtomicRequest(at: node, what: symbol) "`{what}` runs inside a request while ATOMIC_REQUESTS wraps every view in a transaction (here or in a view that calls this code): a worker can pick the task up (or the mail goes out) before the request commits, so it may read rows that are not committed yet or act on changes that roll back. Run it after commit: `transaction.on_commit(partial(...))`, or Celery's `.delay_on_commit()`."
 // What a dispatch is, and which ones stay, is lib/django's side-effect vocabulary, shared with
 // django-practice-enqueue-on-commit; a call in a transaction its own function opens (dj_in_transaction) is that
-// rule's.
-DispatchInAtomicRequest(c, w) :- dar_on(), dj_side_effect(c, w), owner(c, f), pt_scope_tm(f, fq), dar_live(fq), !dar_after_commit(c),
+// rule's. `dar_live` holds only under `dar_on()` (its seed reads it), so the finding reads no flag over every file:
+// it stays its node's file's (decision 0727), reading `dar_live` by the def's symbol.
+DispatchInAtomicRequest(c, w) :- dj_side_effect(c, w), owner(c, f), pt_scope_tm(f, fq), dar_live(fq), !dar_after_commit(c),
     !dj_task_waits_for_commit(c), !dj_dispatch_in_failing_handler(c), !dj_dispatch_result_used(c),
     !dj_in_transaction(c), docof(c, d), !dj_test_doc(d).
 

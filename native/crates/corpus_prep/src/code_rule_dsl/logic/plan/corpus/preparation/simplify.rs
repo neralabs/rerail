@@ -418,7 +418,7 @@ impl Rewrite for Dyn<'_> {
 /// Outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
 /// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME) || super::callable::routed(f.v, rel)
 }
 
 /// An attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
@@ -2147,6 +2147,11 @@ impl ProgramPass for FunctionKeys {
                     let Some((_, _, kind)) = native_call(fname) else { continue };
                     // A concatenation's inverse binds from a column it already has (`concat_inverses`).
                     if fname.starts_with("git_") || fname == "str_between" || args.clone().any(|a| !matches!(a, TermRef::Var(_) | TermRef::Str(_) | TermRef::Int(_))) {
+                        continue;
+                    }
+                    // A key of a node id (`@path_node(p)`'s, decision 0722): a key relation holds no node (decision
+                    // 0677), and the node is its file's alone, read where the path is decoded.
+                    if fname == crate::code_rule_dsl::typing::file_local::MAKES_A_NODE {
                         continue;
                     }
                     let mut vars = BTreeSet::new();
