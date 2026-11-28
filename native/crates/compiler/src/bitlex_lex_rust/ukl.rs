@@ -2155,6 +2155,8 @@ UKL_INLINE uint32_t ukl_run_cont(uint32_t k) {{ return {p}cont(k); }}
         {p}places_merge_w(a, b, out);
     else if (op == UKL_T2_OP_SHAPE)
         {p}shape_merge(a, b, out);
+    else if (op == UKL_T2_OP_KIDS)
+        {p}kids_merge(a, b, out);
 }}
 UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
 {{
@@ -2170,12 +2172,17 @@ UKL_INLINE void ukl_ph_unit(uint32_t op, UKL_COHERENT uint32_t* out)
         {p}places_unit_w(out);
     else if (op == UKL_T2_OP_SHAPE)
         {p}shape_unit(out);
+    else if (op == UKL_T2_OP_KIDS)
+        {p}kids_unit(out);
 }}
 UKL_INLINE void ukl_t2_p1_run(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const uint32_t* starts, uint32_t n, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p1_run(src, starts, n, a, b, out); }}
 UKL_INLINE void ukl_t2_p2_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* out) {{ {p}p2_run(items, a, b, shift, out); }}
 UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, uint32_t shift, UKL_COHERENT uint32_t* sum, UKL_GLOBAL const uint32_t* keys, UKL_GLOBAL uint32_t* out) {{ {p}p2_write(items, a, b, shift, sum, keys, out); }}
 UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p3_run(items, a, b, out); }}
 UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container, UKL_GLOBAL uint32_t* head_at) {{ {p}p3_write(items, a, b, sum, container, head_at); }}
+UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* frame_of) {{ {p}p8a_write(items, a, b, sum, frame_of); }}
+UKL_INLINE void ukl_t2_p8b_run(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out) {{ {p}p8b_run(items, events, a, b, out); }}
+UKL_INLINE void ukl_t2_p8b_write(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* kids) {{ {p}p8b_write(items, events, a, b, sum, kids); }}
 UKL_INLINE uint32_t ukl_t2_places(void) {{ return {p}STEP_PLACES; }}
 UKL_INLINE uint32_t ukl_t2_depth(void) {{ return {p}DEPTH; }}
 UKL_INLINE uint32_t ukl_t2_walk_refused(void) {{ return {p}STEP_REFUSED; }}
@@ -2229,7 +2236,7 @@ UKL_INLINE void ukl_t2_p1_write(UKL_GLOBAL const uint8_t* src, UKL_GLOBAL const 
 }
 
 /// The phases' block operators the printer prints, in order (each after the ones it calls).
-const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge"];
+const PHASE_FNS: &[&str] = &["bracket_code", "empty_close_at", "p1_unit", "p1_run", "p1_merge", "p1_write", "add1_unit", "add1_merge", "p2_unit", "p2_merge", "p2_run", "p2_write", "starts_level", "last_unit", "last_merge", "p3_run", "p3_write", "step_cont", "walk_depth_at", "known_rets", "places_unit_w", "places_merge_w", "shape_unit", "shape_merge", "p8a_write", "kids_unit", "kids_merge", "p8b_run", "p8b_write"];
 
 /// Tier 2's two programs as UKL kernels, launched a phase at a time in order (decision 0726). `<ukl/middle_run.h>`'s
 /// phases are three kernels, each its phases a constant mask, so it holds their code alone (its compile and its

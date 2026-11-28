@@ -18,7 +18,7 @@
 
 typedef UKL_COHERENT uint32_t* UklPhPool;
 
-#define UKL_PH_H 96u
+#define UKL_PH_H 160u
 // The run's epoch (the host's, new each run, never 0): a node's two arrivals each exchange it into its word.
 #define UKL_PH_EPOCH 0u
 // The arrivals' stride: tree `t`'s node `x` at `meet[t * MS + x]`.
@@ -27,12 +27,12 @@ typedef UKL_COHERENT uint32_t* UklPhPool;
 #define UKL_PH_FAIL 2u
 // Each phase's tickets (at most `UKL_PH_PHASES` phases).
 #define UKL_PH_TICKET 8u
-#define UKL_PH_PHASES 24u
+#define UKL_PH_PHASES 64u
 // Each tree's layout, `UKL_PH_TW` words: its values' offset (`2 * leaves` nodes, `width` words each), its sums'
 // (two records a leaf), its width, its leaves (the host's, or a phase's before the tree's), its op.
-#define UKL_PH_TREE 32u
+#define UKL_PH_TREE 72u
 #define UKL_PH_TW 5u
-#define UKL_PH_TREES 12u
+#define UKL_PH_TREES 16u
 #define UKL_PH_TURNS 100000000u
 // A tree of `n` leaves' nodes at most: its leaves and each level's half the one below, rounded up (under `2n` plus a
 // node a level), the arrivals' stride too.

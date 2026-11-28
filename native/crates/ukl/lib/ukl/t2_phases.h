@@ -20,6 +20,10 @@
 //   P5   each chunk from its place: its shape (`ukl_t2_walk`'s events folded), a leaf of P5's tree (`shape_merge`);
 //        P5W each chunk's sum written, and its walk again writing each event at its number, with its items; item 0
 //        says the events, their items and the nodes (P5's root).
+//   P7   the events' items sorted by frame depth, as P2 (`ukl_t2_sort`), from `eitems` to `eitems2` and back.
+//   P8   over the events' items in frame order: P8a each item's frame, the segmented last-value of the heads (`p3_run`,
+//        `last_merge`, `p8a_write`); P8b each item's frame's children so far and the last one's node (`p8b_run`,
+//        `kids_merge`, `p8b_write`).
 
 #pragma once
 #define UKL_PH_FIELDS UKL_GLOBAL const uint8_t* src; UKL_GLOBAL const uint32_t* starts; UKL_GLOBAL uint32_t* arrays; UKL_GLOBAL const uint32_t* toks; \
@@ -53,6 +57,10 @@
 #define UKL_T2_EITEMS (UKL_PH_H + 20u)
 #define UKL_T2_NODES (UKL_PH_H + 21u)
 #define UKL_T2_O_EITEMS2 (UKL_PH_H + 22u)
+#define UKL_T2_ECHUNKS (UKL_PH_H + 23u)
+#define UKL_T2_O_EKEYS (UKL_PH_H + 24u)
+#define UKL_T2_O_FRAME_OF (UKL_PH_H + 25u)
+#define UKL_T2_O_KIDS (UKL_PH_H + 26u)
 #define UKL_T2_H (UKL_PH_H + 32u)
 
 #define UKL_T2_PH_LAY 0u
@@ -66,7 +74,12 @@
 #define UKL_T2_PH_P4W 14u
 #define UKL_T2_PH_P5 15u
 #define UKL_T2_PH_P5W 16u
-#define UKL_T2_PHASES 17u
+#define UKL_T2_PH_P7 17u
+#define UKL_T2_PH_P8A 25u
+#define UKL_T2_PH_P8AW 26u
+#define UKL_T2_PH_P8B 27u
+#define UKL_T2_PH_P8BW 28u
+#define UKL_T2_PHASES 29u
 
 #define UKL_T2_TP1 0u
 // Digit `d`'s trees: its chunks' counts `UKL_T2_TP2 + 2d`, its keys' after it.
@@ -74,12 +87,16 @@
 #define UKL_T2_TP3 5u
 #define UKL_T2_TP4 6u
 #define UKL_T2_TP5 7u
+#define UKL_T2_TP7 8u
+#define UKL_T2_TP8A 12u
+#define UKL_T2_TP8B 13u
 #define UKL_T2_OP_P1 0u
 #define UKL_T2_OP_ADD1 1u
 #define UKL_T2_OP_KEYS 2u
 #define UKL_T2_OP_LAST 3u
 #define UKL_T2_OP_PLACES 4u
 #define UKL_T2_OP_SHAPE 5u
+#define UKL_T2_OP_KIDS 6u
 // A place map's words (the grammar's places, at most this many), a shape's.
 #define UKL_T2_W_PLACES 32u
 #define UKL_T2_W_SHAPE 10u
@@ -95,6 +112,10 @@ UKL_INLINE void ukl_t2_p2_write(UKL_GLOBAL const uint32_t* items, uint32_t a, ui
 UKL_INLINE void ukl_t2_p3_run(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
 UKL_INLINE void ukl_t2_p3_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* container,
                                 UKL_GLOBAL uint32_t* head_at);
+UKL_INLINE void ukl_t2_p8a_write(UKL_GLOBAL const uint32_t* items, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum, UKL_GLOBAL uint32_t* frame_of);
+UKL_INLINE void ukl_t2_p8b_run(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT uint32_t* out);
+UKL_INLINE void ukl_t2_p8b_write(UKL_GLOBAL const uint32_t* items, UKL_GLOBAL const uint32_t* events, uint32_t a, uint32_t b, UKL_COHERENT const uint32_t* sum,
+                                 UKL_GLOBAL uint32_t* kids);
 UKL_INLINE uint32_t ukl_t2_places(void);
 UKL_INLINE uint32_t ukl_t2_depth(void);
 UKL_INLINE uint32_t ukl_t2_walk_refused(void);
@@ -134,6 +155,14 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     at = ukl_t2_tree(m, UKL_T2_TP3, at, ichunks, 2u, UKL_T2_OP_LAST);
     at = ukl_t2_tree(m, UKL_T2_TP4, at, chunks, UKL_T2_W_PLACES, UKL_T2_OP_PLACES);
     at = ukl_t2_tree(m, UKL_T2_TP5, at, chunks, UKL_T2_W_SHAPE, UKL_T2_OP_SHAPE);
+    // The events' items' trees, at their bound (P5W says their leaves).
+    uint32_t most_ev = 2u * (n + 1u) + 2u, echunks = (2u * most_ev + size - 1u) / size;
+    for (uint32_t d = 0u; d < 2u; d++) {
+        at = ukl_t2_tree(m, UKL_T2_TP7 + 2u * d, at, echunks, UKL_T2_KEYS, UKL_T2_OP_KEYS);
+        at = ukl_t2_tree(m, UKL_T2_TP7 + 2u * d + 1u, at, UKL_T2_KEYS, 1u, UKL_T2_OP_ADD1);
+    }
+    at = ukl_t2_tree(m, UKL_T2_TP8A, at, echunks, 2u, UKL_T2_OP_LAST);
+    at = ukl_t2_tree(m, UKL_T2_TP8B, at, echunks, 3u, UKL_T2_OP_KIDS);
     m[UKL_T2_REFUSED_AT] = UKL_T2_NONE;
     uint32_t aw = 0u;
     m[UKL_T2_O_DEPTH] = aw;
@@ -153,19 +182,46 @@ UKL_INLINE void ukl_t2_lay(UKL_PRIVATE UklPh* r)
     m[UKL_T2_O_SHAPE_AT] = aw;
     aw += UKL_T2_W_SHAPE * chunks;
     // The events at their bound (two a record, and two), their items two an event.
-    uint32_t most_ev = 2u * (n + 1u) + 2u;
     m[UKL_T2_O_EVENTS] = aw;
     aw += 8u * most_ev;
     m[UKL_T2_O_EITEMS] = aw;
     aw += 6u * most_ev;
     m[UKL_T2_O_EITEMS2] = aw;
     aw += 6u * most_ev;
+    m[UKL_T2_O_EKEYS] = aw;
+    aw += 2u * UKL_T2_KEYS;
+    m[UKL_T2_O_FRAME_OF] = aw;
+    aw += 2u * most_ev;
+    m[UKL_T2_O_KIDS] = aw;
+    aw += 6u * most_ev;
     // Past a room, or past the arrivals' stride: what it needs (the pool's words, else the arrays').
-    if (at > m[UKL_T2_ROOM] || UKL_PH_NODES(ichunks) > m[UKL_PH_MS])
+    if (at > m[UKL_T2_ROOM] || UKL_PH_NODES(ichunks) > m[UKL_PH_MS] || UKL_PH_NODES(echunks) > m[UKL_PH_MS])
         m[UKL_T2_NEED] = at;
     else if (aw > m[UKL_T2_AROOM])
         m[UKL_T2_NEED] = aw;
     ukl_fence_device();
+}
+
+// A level sort (P2 of the records' items, P7 of the events'), its trees from `t0` (digit `d`'s counts `t0 + 2d`, its
+// keys' after): digit `d`'s step `k` (C, K, KW, S), item `c`, over `ni` items from `oa` to `ob` (digit 1 back), the
+// keys' starts at `okeys`.
+UKL_INLINE void ukl_t2_sort(UKL_PRIVATE UklPh* r, uint32_t t0, uint32_t d, uint32_t k, uint32_t c, uint32_t ni, uint32_t oa, uint32_t ob, uint32_t okeys)
+{
+    uint32_t size = r->m[UKL_T2_SIZE], tc = t0 + 2u * d, tk = tc + 1u, ia = c * size, ib = ia + size < ni ? ia + size : ni;
+    UKL_GLOBAL uint32_t* from = r->arrays + (d == 0u ? oa : ob);
+    UKL_GLOBAL uint32_t* to = r->arrays + (d == 0u ? ob : oa);
+    UKL_GLOBAL uint32_t* keys = r->arrays + okeys + d * UKL_T2_KEYS;
+    if (k == 0u) {
+        ukl_t2_p2_run(from, ia, ib, 8u * d, ukl_ph_leaf(r, tc, c));
+        ukl_ph_up(r, tc, c);
+    } else if (k == 1u) {
+        ukl_ph_leaf(r, tk, c)[0] = ukl_ph_total(r, tc)[c];
+        ukl_ph_up(r, tk, c);
+    } else if (k == 2u) {
+        keys[c] = ukl_ph_sum(r, tk, c)[0];
+    } else {
+        ukl_t2_p2_write(from, ia, ib, 8u * d, ukl_ph_sum(r, tc, c), keys, to);
+    }
 }
 
 UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
@@ -180,8 +236,12 @@ UKL_INLINE uint32_t ukl_ph_items(UKL_PRIVATE UklPh* r, uint32_t ph)
         return (ph - UKL_T2_PH_P2) % 4u == 1u || (ph - UKL_T2_PH_P2) % 4u == 2u ? UKL_T2_KEYS : r->m[UKL_T2_ICHUNKS];
     if (ph == UKL_T2_PH_P3 || ph == UKL_T2_PH_P3W)
         return r->m[UKL_T2_ICHUNKS];
-    if ((ph == UKL_T2_PH_P5 || ph == UKL_T2_PH_P5W) && ukl_atomic_poll(&r->m[UKL_T2_REFUSED_AT]) != UKL_T2_NONE)
+    if (ph >= UKL_T2_PH_P5 && ukl_atomic_poll(&r->m[UKL_T2_REFUSED_AT]) != UKL_T2_NONE)
         return 0u;
+    if (ph >= UKL_T2_PH_P7 && ph < UKL_T2_PH_P7 + 8u)
+        return (ph - UKL_T2_PH_P7) % 4u == 1u || (ph - UKL_T2_PH_P7) % 4u == 2u ? UKL_T2_KEYS : r->m[UKL_T2_ECHUNKS];
+    if (ph >= UKL_T2_PH_P8A)
+        return r->m[UKL_T2_ECHUNKS];
     return r->m[UKL_T2_CHUNKS];
 }
 
@@ -246,6 +306,12 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
                 m[UKL_T2_NODES] = total[0];
                 m[UKL_T2_EVENTS] = total[1];
                 m[UKL_T2_EITEMS] = total[2];
+                uint32_t ec = (total[2] + size - 1u) / size;
+                m[UKL_T2_ECHUNKS] = ec;
+                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP7 + 3u] = ec;
+                m[UKL_PH_TREE + UKL_PH_TW * (UKL_T2_TP7 + 2u) + 3u] = ec;
+                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8A + 3u] = ec;
+                m[UKL_PH_TREE + UKL_PH_TW * UKL_T2_TP8B + 3u] = ec;
             }
         }
     } else if (ph == UKL_T2_PH_P3 || ph == UKL_T2_PH_P3W) {
@@ -258,23 +324,27 @@ UKL_INLINE void ukl_ph_item(UKL_PRIVATE UklPh* r, uint32_t ph, uint32_t c)
         } else {
             ukl_t2_p3_write(items, ia, ib, ukl_ph_sum(r, UKL_T2_TP3, c), r->arrays + m[UKL_T2_O_CONTAINER], r->arrays + m[UKL_T2_O_HEAD_AT]);
         }
-    } else {
-        // The level sort's digit `d`, its step `k`.
-        uint32_t d = (ph - UKL_T2_PH_P2) / 4u, k = (ph - UKL_T2_PH_P2) % 4u, tc = UKL_T2_TP2 + 2u * d, tk = tc + 1u;
-        uint32_t ni = m[UKL_T2_ITEMS], ia = c * size, ib = ia + size < ni ? ia + size : ni;
-        UKL_GLOBAL uint32_t* from = r->arrays + m[d == 0u ? UKL_T2_O_ITEMS : UKL_T2_O_ITEMS2];
-        UKL_GLOBAL uint32_t* to = r->arrays + m[d == 0u ? UKL_T2_O_ITEMS2 : UKL_T2_O_ITEMS];
-        UKL_GLOBAL uint32_t* keys = r->arrays + m[UKL_T2_O_KEYS] + d * UKL_T2_KEYS;
-        if (k == 0u) {
-            ukl_t2_p2_run(from, ia, ib, 8u * d, ukl_ph_leaf(r, tc, c));
-            ukl_ph_up(r, tc, c);
-        } else if (k == 1u) {
-            ukl_ph_leaf(r, tk, c)[0] = ukl_ph_total(r, tc)[c];
-            ukl_ph_up(r, tk, c);
-        } else if (k == 2u) {
-            keys[c] = ukl_ph_sum(r, tk, c)[0];
+    } else if (ph >= UKL_T2_PH_P8A) {
+        // Over the events' items in frame order (P7's last digit's, in `eitems`).
+        uint32_t ni = m[UKL_T2_EITEMS], ia = c * size, ib = ia + size < ni ? ia + size : ni;
+        UKL_GLOBAL uint32_t* items = r->arrays + m[UKL_T2_O_EITEMS];
+        UKL_GLOBAL uint32_t* events = r->arrays + m[UKL_T2_O_EVENTS];
+        if (ph == UKL_T2_PH_P8A) {
+            ukl_t2_p3_run(items, ia, ib, ukl_ph_leaf(r, UKL_T2_TP8A, c));
+            ukl_ph_up(r, UKL_T2_TP8A, c);
+        } else if (ph == UKL_T2_PH_P8AW) {
+            ukl_t2_p8a_write(items, ia, ib, ukl_ph_sum(r, UKL_T2_TP8A, c), r->arrays + m[UKL_T2_O_FRAME_OF]);
+        } else if (ph == UKL_T2_PH_P8B) {
+            ukl_t2_p8b_run(items, events, ia, ib, ukl_ph_leaf(r, UKL_T2_TP8B, c));
+            ukl_ph_up(r, UKL_T2_TP8B, c);
         } else {
-            ukl_t2_p2_write(from, ia, ib, 8u * d, ukl_ph_sum(r, tc, c), keys, to);
+            ukl_t2_p8b_write(items, events, ia, ib, ukl_ph_sum(r, UKL_T2_TP8B, c), r->arrays + m[UKL_T2_O_KIDS]);
         }
+    } else if (ph >= UKL_T2_PH_P7) {
+        uint32_t k = ph - UKL_T2_PH_P7;
+        ukl_t2_sort(r, UKL_T2_TP7, k / 4u, k % 4u, c, m[UKL_T2_EITEMS], m[UKL_T2_O_EITEMS], m[UKL_T2_O_EITEMS2], m[UKL_T2_O_EKEYS]);
+    } else {
+        uint32_t k = ph - UKL_T2_PH_P2;
+        ukl_t2_sort(r, UKL_T2_TP2, k / 4u, k % 4u, c, m[UKL_T2_ITEMS], m[UKL_T2_O_ITEMS], m[UKL_T2_O_ITEMS2], m[UKL_T2_O_KEYS]);
     }
 }

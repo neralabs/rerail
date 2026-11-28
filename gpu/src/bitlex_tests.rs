@@ -1247,14 +1247,15 @@ struct T2PArgs {
 unsafe impl Pod for T2PArgs {}
 
 /// The runner's header and the program's (`<ukl/phases_run.h>`, `<ukl/t2_phases.h>`).
-const PH_H: usize = 96;
+const PH_H: usize = 160;
 const T2_H: usize = PH_H + 32;
 
 /// Tier 2 as phases on the device (`json_t2_phases`, `<ukl/t2_phases.h>`), P1 from tier 1's records on the device:
 /// the layout laid from the records the device found, each chunk's depth summary a leaf of P1's arrival tree, each
 /// chunk's records' depths and items written from its sum walked down, the items sorted by level (P2, two digits of
 /// keyed counts), each record's container and each head's place (P3), each chunk's place from its map of places
-/// and the chunk refused at its place (P4), each chunk's shape before it, the events and their items (P5). Each
+/// and the chunk refused at its place (P4), each chunk's shape before it, the events and their items (P5), the
+/// events' items in frame order (P7), each one's frame and its frame's children so far (P8). Each
 /// record's depth is the CPU phases' (`Phases::run`), and the items in level order are the CPU's, for the files and the nested
 /// trees, in chunks of 1, 7 and 64 records.
 #[test]
@@ -1288,13 +1289,16 @@ fn json_tier2_phases_are_the_cpus() {
             let ichunks = (2 * (lex.records + 1)).div_ceil(size);
             let ms = 2 * ichunks + 40;
             let tree = |leaves: usize, w: usize| w * (2 * leaves + 40 + 2 * leaves);
-            let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1)) + tree(ichunks, 2) + tree(chunks, 32) + tree(chunks, 10);
             let most_ev = 2 * (lex.records + 1) + 2;
-            let aroom = 15 * (lex.records + 1) + 512 + 11 * chunks + 20 * most_ev;
+            let echunks = (2 * most_ev).div_ceil(size);
+            let ms = ms.max(2 * echunks + 40);
+            let room = T2_H + tree(chunks, 3) + 2 * (tree(ichunks, 256) + tree(256, 1)) + tree(ichunks, 2) + tree(chunks, 32) + tree(chunks, 10);
+            let room = room + 2 * (tree(echunks, 256) + tree(256, 1)) + tree(echunks, 2) + tree(echunks, 3);
+            let aroom = 15 * (lex.records + 1) + 1024 + 11 * chunks + 28 * most_ev;
             let rb = kept.get("phases rets", 1024 * chunks);
             let pb = kept.get("phases pool", 4 * room);
             let ab = kept.get("phases arrays", 4 * aroom);
-            let meet = kept.meet("phases meet", 12 * ms);
+            let meet = kept.meet("phases meet", 16 * ms);
             let epoch = kept.next_epoch();
             {
                 let h = words_of(&pb, T2_H);
@@ -1302,7 +1306,7 @@ fn json_tier2_phases_are_the_cpus() {
                 (h[0], h[1]) = (epoch, ms as u32);
                 (h[PH_H], h[PH_H + 1], h[PH_H + 8]) = (size as u32, room as u32, aroom as u32);
             }
-            for phase in 0..17u32 {
+            for phase in 0..29u32 {
                 launch(&mut q, f)
                     .value("args", &T2PArgs { phase, pad: 0 })
                     .buffer("src", &lex.src)
@@ -1367,14 +1371,19 @@ fn json_tier2_phases_are_the_cpus() {
                 let have = (e[0] as u8, e[1], e[2], e[3], u64::from(e[4]) | (u64::from(e[5]) << 32), u64::from(e[6]) | (u64::from(e[7]) << 32));
                 assert_eq!(have, (w.what, w.f, w.node, w.nodes, w.start, w.last), "{}", at(&format!("event {g}")));
             }
+            // P7, P8: the events' items in frame order, each one's frame and its frame's children so far.
             let oei = m[PH_H + 17] as usize;
-            let mut eitems: Vec<middle::phases::Item> = arr[oei..oei + 3 * nei].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
-            eitems.sort_by_key(|x| x.level);
-            assert!(eitems == ph.eitems, "{}", at("the events' items"));
+            let eitems: Vec<middle::phases::Item> = arr[oei..oei + 3 * nei].chunks_exact(3).map(|w| middle::phases::Item { level: w[0], record: w[1], head: w[2] != 0 }).collect();
+            assert!(eitems == ph.eitems, "{}", at("the events' items in frame order"));
+            let (of, ok) = (m[PH_H + 25] as usize, m[PH_H + 26] as usize);
+            assert!(arr[of..of + nei] == ph.frame_of[..], "{}", at("each event item's frame"));
+            for (x, kd) in ph.kids.iter().enumerate() {
+                assert_eq!(&arr[ok + 3 * x..ok + 3 * x + 3], &[u32::from(kd.reset), kd.count, kd.last], "{}", at(&format!("event item {x}'s frame's children")));
+            }
             events += ne;
             runs += 1;
             records += count;
         }
     }
-    eprintln!("{}: tier 2 as phases, P1-P5 on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events and their items the CPU phases'", crate::device::backend());
+    eprintln!("{}: tier 2 as phases, P1-P8 on the device: {runs} runs ({refusals} refused at a chunk's place), {records} records' depths, items in level order, containers, heads and places, {events} events, their items in frame order, frames and children the CPU phases'", crate::device::backend());
 }

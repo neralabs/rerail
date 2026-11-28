@@ -506,6 +506,102 @@ pub unsafe fn p3_write(items: &[u32], a: usize, b: usize, sum: &[Rec], container
     }
 }
 
+/// P8a's writes, items `a..b` in frame order from the chunk's sum: each item's frame (the head before it in its
+/// level, inclusive: a head its own) at `frame_of[x]`.
+///
+/// # Safety
+/// `frame_of` has room for every item.
+pub unsafe fn p8a_write(items: &[u32], a: usize, b: usize, sum: &[Rec], frame_of: *mut u32) {
+    let mut v = sum[1];
+    for x in a..b {
+        if starts_level(items, x) {
+            v = NONE;
+        }
+        if items[3 * x + 2] != 0 {
+            v = items[3 * x + 1];
+        }
+        unsafe { *frame_of.add(x) = v };
+    }
+}
+
+/// `Kids`' unit in words (reset, count, last child's node).
+///
+/// # Safety
+/// `out` has room for three words.
+pub unsafe fn kids_unit(out: *mut Rec) {
+    unsafe { *out.add(0) = 0 };
+    unsafe { *out.add(1) = 0 };
+    unsafe { *out.add(2) = NONE };
+}
+
+/// `Kids::merge` in words: `b` where it resets, else `a`'s reset, the counts added, `b`'s last where it has one.
+///
+/// # Safety
+/// `a` and `b` hold three words each, `out` has room for three.
+pub unsafe fn kids_merge(a: &[Rec], b: &[Rec], out: *mut Rec) {
+    if b[0] != 0 {
+        unsafe { *out.add(0) = b[0] };
+        unsafe { *out.add(1) = b[1] };
+        unsafe { *out.add(2) = b[2] };
+    } else {
+        unsafe { *out.add(0) = a[0] };
+        unsafe { *out.add(1) = a[1] + b[1] };
+        unsafe { *out.add(2) = if b[2] != NONE { b[2] } else { a[2] } };
+    }
+}
+
+/// P8b, items `a..b` in frame order: the segmented count of children and the last one's node (`events`, 8 words
+/// each, the node its third), a level's first item and each head resetting it.
+///
+/// # Safety
+/// `out` has room for three words.
+pub unsafe fn p8b_run(items: &[u32], events: &[u32], a: usize, b: usize, out: *mut Rec) {
+    let mut reset = 0;
+    let mut count = 0;
+    let mut last = NONE;
+    for x in a..b {
+        let head = items[3 * x + 2] != 0;
+        if starts_level(items, x) || head {
+            reset = 1;
+            count = 0;
+            last = NONE;
+        }
+        if !head {
+            count += 1;
+            last = events[8 * items[3 * x + 1] as usize + 2];
+        }
+    }
+    unsafe { *out.add(0) = reset };
+    unsafe { *out.add(1) = count };
+    unsafe { *out.add(2) = last };
+}
+
+/// P8b's writes, items `a..b` from the chunk's sum: each item's frame's children so far, inclusive (reset, count,
+/// last child's node), at `kids[3x..]`.
+///
+/// # Safety
+/// `kids` has room for every item's three words.
+pub unsafe fn p8b_write(items: &[u32], events: &[u32], a: usize, b: usize, sum: &[Rec], kids: *mut u32) {
+    let mut reset = sum[0];
+    let mut count = sum[1];
+    let mut last = sum[2];
+    for x in a..b {
+        let head = items[3 * x + 2] != 0;
+        if starts_level(items, x) || head {
+            reset = 1;
+            count = 0;
+            last = NONE;
+        }
+        if !head {
+            count += 1;
+            last = events[8 * items[3 * x + 1] as usize + 2];
+        }
+        unsafe { *kids.add(3 * x) = reset };
+        unsafe { *kids.add(3 * x + 1) = count };
+        unsafe { *kids.add(3 * x + 2) = last };
+    }
+}
+
 /// The return place of a level of kind `k` (`STEP_CONT`'s, as the printer's table).
 pub fn step_cont(k: usize) -> u32 {
     step_cont_t(k)
@@ -795,35 +891,47 @@ impl Phases {
         // P7: the events' items by frame depth.
         let eitems = sort_by_level(eitems, size, order);
         let ec = chunks_of(eitems.len(), size);
-        // P8a: each item's frame (the opening event of the level it is in), a segmented last-value of the heads.
-        let one = |x: usize| Last { reset: level_start(&eitems, x), v: if eitems[x].head { eitems[x].record } else { NO } };
-        let p8a: Vec<Last> = each(ec.len(), order, |c| (ec[c].0..ec[c].1).fold(Last::UNIT, |s, x| Last::merge(&s, &one(x))));
-        let p8a_at = prefix(&p8a, Last::UNIT, order, Last::merge);
+        // P8a: each item's frame (the opening event of the level it is in), a segmented last-value of the heads
+        // (`p3_run`, `last_merge`, `p8a_write`).
+        let ew: Vec<u32> = eitems.iter().flat_map(|x| [x.level, x.record, u32::from(x.head)]).collect();
+        let lasts: Vec<[u32; 2]> = each(ec.len(), order, |c| {
+            let mut w = [0u32; 2];
+            // SAFETY: two words; the chunk's items.
+            unsafe { p3_run(&ew, ec[c].0, ec[c].1, w.as_mut_ptr()) };
+            w
+        });
+        let p8a_at = prefix(&lasts, unit2, order, merge2);
         let mut frame_of = vec![NO; eitems.len()];
-        for c in order(ec.len()) {
-            let mut s = p8a_at[c];
-            for (x, f) in frame_of.iter_mut().enumerate().take(ec[c].1).skip(ec[c].0) {
-                s = Last::merge(&s, &one(x));
-                *f = s.v;
-            }
-        }
-        // P8b: each item's frame's children so far and the last one's node.
-        let ev = &ph.events;
-        let kid = |x: usize| {
-            let it = eitems[x];
-            let child = !it.head;
-            Kids { reset: level_start(&eitems, x) || it.head, count: u32::from(child), last: if child { ev[it.record as usize].node } else { NO } }
+        let fp = frame_of.as_mut_ptr();
+        each(ec.len(), order, |c| {
+            // SAFETY: each chunk its own items.
+            unsafe { p8a_write(&ew, ec[c].0, ec[c].1, &p8a_at[c], fp) };
+        });
+        // P8b: each item's frame's children so far and the last one's node (`p8b_run`, `kids_merge`, `p8b_write`).
+        let evw: Vec<u32> = ph.events.iter().flat_map(|e| [u32::from(e.what), e.f, e.node, e.nodes, e.start as u32, (e.start >> 32) as u32, e.last as u32, (e.last >> 32) as u32]).collect();
+        let kmerge = |a: &[u32; 3], b: &[u32; 3]| {
+            let mut w = [0u32; 3];
+            // SAFETY: three words each.
+            unsafe { kids_merge(a, b, w.as_mut_ptr()) };
+            w
         };
-        let p8b: Vec<Kids> = each(ec.len(), order, |c| (ec[c].0..ec[c].1).fold(Kids::UNIT, |s, x| Kids::merge(&s, &kid(x))));
-        let p8b_at = prefix(&p8b, Kids::UNIT, order, Kids::merge);
-        let mut kids = vec![Kids::UNIT; eitems.len()];
-        for c in order(ec.len()) {
-            let mut s = p8b_at[c];
-            for (x, k) in kids.iter_mut().enumerate().take(ec[c].1).skip(ec[c].0) {
-                s = Kids::merge(&s, &kid(x));
-                *k = s;
-            }
-        }
+        let mut kunit = [0u32; 3];
+        // SAFETY: three words.
+        unsafe { kids_unit(kunit.as_mut_ptr()) };
+        let p8b: Vec<[u32; 3]> = each(ec.len(), order, |c| {
+            let mut w = [0u32; 3];
+            // SAFETY: three words; the chunk's items.
+            unsafe { p8b_run(&ew, &evw, ec[c].0, ec[c].1, w.as_mut_ptr()) };
+            w
+        });
+        let p8b_at = prefix(&p8b, kunit, order, kmerge);
+        let mut kw = vec![0u32; 3 * eitems.len()];
+        let kp = kw.as_mut_ptr();
+        each(ec.len(), order, |c| {
+            // SAFETY: each chunk its own items.
+            unsafe { p8b_write(&ew, &evw, ec[c].0, ec[c].1, &p8b_at[c], kp) };
+        });
+        let kids: Vec<Kids> = kw.chunks_exact(3).map(|w| Kids { reset: w[0] != 0, count: w[1], last: w[2] }).collect();
         ph.eitems = eitems;
         ph.frame_of = frame_of;
         ph.kids = kids;
@@ -898,11 +1006,6 @@ impl Phases {
         let s = self.shape_at[c];
         At { entry: Entry { i: a, e: s.e.unwrap_or(0), depth, st: self.place[c] }, ret, nodes: s.nodes, end: None, frames, prev_start: s.last_start.unwrap_or(0) }
     }
-}
-
-/// Whether item `x` starts its level in the level order: a read of its neighbour.
-fn level_start(items: &[Item], x: usize) -> bool {
-    x == 0 || items[x - 1].level != items[x].level
 }
 
 /// `items` stably sorted by level: per 8-bit digit of the level, the chunks' keyed counts (`p2_run`) and their prefix
