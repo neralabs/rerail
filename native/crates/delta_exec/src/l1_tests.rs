@@ -453,3 +453,16 @@ fn a_later_process_starts_where_the_last_run_left_off() {
     assert_eq!(work.rows_read, 2, "{work:?}");
     assert_eq!(oracle_rows(&bench.dir, &disk.inst.outs[0], disk.inst.outs[0].head()).unwrap().len(), 15, "l0's 14 rules and the one added");
 }
+
+/// l0's cold boot run, `RERAIL_BOOT_RUNS` times (default 1), each on a bench and root of its own: what a profiler
+/// samples the boot run by (`cargo test ... -- --ignored --exact l1::tests::the_cold_boot_run_repeated`).
+#[test]
+#[ignore = "a profiler's load, not a check"]
+fn the_cold_boot_run_repeated() {
+    let n: usize = std::env::var("RERAIL_BOOT_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let base = std::env::temp_dir().join(format!("rerail-boot-profile-{}", std::process::id()));
+    for k in 0..n {
+        let mut bench = Bench::new().unwrap();
+        crate::boot::cold_k_form(&mut bench, &base.join(k.to_string())).unwrap();
+    }
+}

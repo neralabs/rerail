@@ -896,7 +896,16 @@ struct UklRuns<'b> {
 
 impl UklRuns<'_> {
     fn kernel(&mut self, p: usize, suffix: &str, lo: u32, hi: u32) -> Result<u64, String> {
-        self.bound.run(self.source, &format!("{}_{}{suffix}", self.entry, self.shape[p].name), lo, hi, &mut self.room)
+        let name = format!("{}_{}{suffix}", self.entry, self.shape[p].name);
+        #[cfg(any(test, feature = "test-hooks"))]
+        if std::env::var_os("RERAIL_KERNEL_TIMES").is_some() {
+            // A profiler's reading: each launch's kernel, items and wall time, to stderr.
+            let t = std::time::Instant::now();
+            let r = self.bound.run(self.source, &name, lo, hi, &mut self.room);
+            eprintln!("kernel {name} {} {}", hi - lo, t.elapsed().as_micros());
+            return r;
+        }
+        self.bound.run(self.source, &name, lo, hi, &mut self.room)
     }
 }
 

@@ -273,3 +273,25 @@ fn the_boot_run_on_the_device_or_mixed_is_the_cpus() {
         assert!(got == want, "seed {seed}: a mixed run's K-form is the CPU's ({cpu} launches on the CPU, {dev} on the device)");
     }
 }
+
+/// l0's cold boot run on the tests' device, `RERAIL_BOOT_RUNS` times (default 1) on one runner: what a profiler
+/// samples the device's boot run by. Prints the runner's making (its kernels compiled and checked) and each run's time.
+#[test]
+#[ignore = "a profiler's load, not a check"]
+fn the_boot_run_on_the_device_repeated() {
+    use rerail_delta_exec::boot::cold_k_form;
+    use rerail_delta_exec::contract::Bench;
+    device();
+    let n: usize = std::env::var("RERAIL_BOOT_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let base = std::env::temp_dir().join(format!("rerail-boot-device-profile-{}", std::process::id()));
+    let t = std::time::Instant::now();
+    let mut ops = Runner::on(Box::new(Gpu::host().expect("the tests' device"))).unwrap_or_else(|e| panic!("{e}"));
+    eprintln!("the device's runner: {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    for k in 0..n {
+        let mut bench = Bench::on(ops);
+        cold_k_form(&mut bench, &base.join(k.to_string())).unwrap_or_else(|e| panic!("{e}"));
+        ops = bench.ops;
+    }
+    eprintln!("{n} boot runs: {:?} each", t.elapsed() / n.max(1) as u32);
+}
