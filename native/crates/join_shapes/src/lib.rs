@@ -16,6 +16,8 @@
 
 use std::fmt::Write as _;
 
+pub mod parts;
+
 /// What a stage reads besides its input bindings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Input {
@@ -27,8 +29,8 @@ pub enum Input {
     Derived { arity: u32, dead: bool, from: bool, indexed: bool },
     /// The component's own relation (recursion): its last round's new rows (`delta`) or all of them.
     Own { delta: bool },
-    /// A view of the tape read in place: its number (1 + `device_chunk::VIEW_*`), `parent` when `child` is probed
-    /// by its parent off the tape.
+    /// A view of the tape read in place: its number (its read's, `device_chunk::read_kind`: 1 + its place in
+    /// `view_reads::VIEWS`), `parent` when `child` is probed by its parent off the tape.
     View { view: u32, parent: bool },
     /// A `has` axis read off the tape: 1 by its node (a climb), 2 by its ancestor (the subtree).
     Axis { walk: u32 },

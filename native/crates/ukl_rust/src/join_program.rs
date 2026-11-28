@@ -3915,9 +3915,79 @@ struct Prog {
     ctl: *mut u32,
     counts: *mut u32,
     a: ProgP,
+    /// Its items' time by kind (`join_run_timed`, the join lab's), none for the kernel's own run.
+    clock: *mut ItemClock,
+}
+
+/// A replay's items by kind (`join_run_timed`, the join lab's profile): each kind's items run and their nanoseconds.
+/// Indexed by the item's kind (`Item::what`'s top byte, `PK_*`), named by `item_kind_name`.
+#[derive(Clone, Debug)]
+pub struct ItemClock {
+    pub nanos: [u64; 64],
+    pub items: [u64; 64],
+}
+
+impl Default for ItemClock {
+    fn default() -> ItemClock {
+        ItemClock { nanos: [0; 64], items: [0; 64] }
+    }
+}
+
+/// An item kind's name (`PK_*`, lower case), `?` for one the program has not.
+pub fn item_kind_name(kind: usize) -> &'static str {
+    match kind as u32 {
+        PK_COPY => "copy",
+        PK_IX_KEY => "ix_key",
+        PK_RADIX_HIST => "radix_hist",
+        PK_RADIX_SCATTER => "radix_scatter",
+        PK_IX_PLACE => "ix_place",
+        PK_IX_OFFS => "ix_offs",
+        PK_IX_MARK => "ix_mark",
+        PK_DEDUP_KEY => "dedup_key",
+        PK_SET_PLACE => "set_place",
+        PK_DEDUP_CLEAR => "dedup_clear",
+        PK_DEDUP_CLAIM => "dedup_claim",
+        PK_MAP => "map",
+        PK_STAGE_COUNT => "stage_count",
+        PK_SCAN_COUNT => "scan_count",
+        PK_WITNESS_COUNT => "witness_count",
+        PK_ROW_TEXT => "row_text",
+        PK_DEDUP_MARK => "dedup_mark",
+        PK_SCAN_SUMS => "scan_sums",
+        PK_SCAN_TILES => "scan_tiles",
+        PK_STAGE_SCATTER => "stage_scatter",
+        PK_SCAN_SCATTER => "scan_scatter",
+        PK_ROW_SCATTER => "row_scatter",
+        PK_DEDUP_SCATTER => "dedup_scatter",
+        PK_LAT_HCLEAR => "lat_hclear",
+        PK_LAT_REHASH => "lat_rehash",
+        PK_LAT_CLEAR => "lat_clear",
+        PK_LAT_CLAIM => "lat_claim",
+        PK_LAT_BEST => "lat_best",
+        PK_LAT_MERGE => "lat_merge",
+        PK_SUM => "sum",
+        PK_GATE => "gate",
+        PK_ROUND => "round",
+        PK_SIZE => "size",
+        _ => "?",
+    }
 }
 
 impl Prog {
+    /// `item`, its time added to its kind's where the run keeps a clock (`join_run_timed`).
+    unsafe fn timed(&self, it: Item) -> bool {
+        if self.clock.is_null() {
+            return self.item(it);
+        }
+        let t = std::time::Instant::now();
+        let whole = self.item(it);
+        let c = &mut *self.clock;
+        let k = (it.what >> 24) as usize & 63;
+        c.nanos[k] += t.elapsed().as_nanos() as u64;
+        c.items[k] += 1;
+        whole
+    }
+
     unsafe fn ctl(&self, i: usize) -> &AtomicU32 {
         at(self.ctl.add(i))
     }
@@ -4338,7 +4408,7 @@ impl Prog {
             let whole = item == NONE || {
                 let mut it = *self.items.add(item as usize);
                 it.group = group;
-                self.item(it)
+                self.timed(it)
             };
             let q = self.finish(p, item, whole, back, d, ph + 1 < JOIN_INLINE);
             let (next, groups) = if q != 0 {
@@ -4408,6 +4478,15 @@ impl Prog {
 /// `argv` holds the kernel's arguments (each the address of its bytes: a buffer's address, the `ProgP`'s bytes), its
 /// buffers as the host made them.
 pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
+    join_run_timed(argv, l, core::ptr::null_mut());
+}
+
+/// `join_run`, each item's time added to its kind's in `clock` (the join lab's profile; none: `join_run`).
+///
+/// # Safety
+///
+/// As `join_run`'s; `clock` is null or an `ItemClock` of the caller's, which only this group's run writes.
+pub unsafe fn join_run_timed(argv: *const *const u8, l: &Launch, clock: *mut ItemClock) {
     let threads = l.block[0] * l.block[1] * l.block[2];
     assert!(threads == TG, "join_run: a group of {TG} threads, not {threads}");
     let buf = |i: usize| (*argv.add(i) as *const *mut u8).read_unaligned();
@@ -4423,6 +4502,7 @@ pub unsafe fn join_run(argv: *const *const u8, l: &Launch) {
         ctl: buf(7) as *mut u32,
         counts: buf(8) as *mut u32,
         a,
+        clock,
     };
     // Its groups run one after another on one thread (the CPU device's), each as the kernel's group.
     prog.group(l.group[0]);

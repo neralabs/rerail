@@ -7,7 +7,10 @@ description = "The join lab (2026-11-27): a launch of the join program the engin
 
 [features]
 # The tests' variant of the blocks it maps (one compile of each workspace crate: `check_dev_features`).
-test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-tape-format/test-hooks", "rerail-context/test-hooks", "rerail-device-metal?/test-hooks", "rerail-accel-gpu?/test-hooks"]
+# The `metal` engine (`src/metal.rs`): the program's kernel on the device, as the engine's launch chains it. Built on
+# a Mac with Metal (a farm host), as it links the engine's device code.
+metal = ["dep:rerail-device-metal", "dep:rerail-accel-gpu", "dep:rerail-device"]
 
 [dependencies]
 # The join program's Rust, run as the CPU device runs it.
@@ -22,6 +25,15 @@ rerail-tape-format = { path = "../tape_format" }
 # The views' directories a replay checks (`Loaded::views`).
 rerail-reads = { path = "../reads" }
 rustc-hash = "=2.1.3"
+# The shapes' parts and their classes (`parts`), which `list` and the page name.
+rerail-join-shapes = { path = "../join_shapes" }
+# The run the binary holds, on a machine of its own (decision 0442): what the engine's parts it calls read their
+# shared values from (the `metal` engine's pipelines).
+rerail-context = { path = "../context" }
+# The `metal` engine's: the program's kernel (`metal_join::join_program_pipe`), its pass, the device's wraps.
+rerail-device-metal = { path = "../device_metal", optional = true }
+rerail-accel-gpu = { path = "../../../accel/gpu", optional = true }
+rerail-device = { path = "../../../gpu/device", optional = true }
 
 [[bin]]
 name = "join-lab"

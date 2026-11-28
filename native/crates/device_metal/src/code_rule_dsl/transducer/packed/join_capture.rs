@@ -9,7 +9,7 @@
 //! - `blocks/<digest>.blk`: each anonymous block the launch reaches, its bytes up to its used length with its header
 //!   frozen (`Block::map_file` maps it back), written once however many launches reach it. A block mapped from a file
 //!   (the tape store's, the atoms') is not copied: the capture names its path.
-//! - `w/<id>/wave.txt`: the launch: its program's format and arguments, its chain's count offsets, the nine buffers
+//! - `w/<id>/wave.txt`: the launch: its program's format, the device that ran it (`cpu`, `metal`), its arguments, its chain's count offsets, the nine buffers
 //!   `join_run` binds, and each region it reaches (`region <name> <role> <base> <device base> <len> <kind> <source>`),
 //!   its labels.
 //! - `w/<id>/<name>.zst`: a region of the program's own (its descriptors, items, phases, control words, counts, the
@@ -501,6 +501,10 @@ fn write_before(cfg: &Config, id: u64, labels: &[Label], reach: &Reached<'_>) ->
     let mut w = std::io::BufWriter::new(std::fs::File::create(dir.join("wave.txt"))?);
     writeln!(w, "capture {id}")?;
     writeln!(w, "format {}", reach.format)?;
+    // The device that ran it: its own working memory is laid out for it (the lab holds another engine's to its
+    // outputs only).
+    let device = rerail_accel_gpu::gpu::join::device().map_or("cpu", |d| if d.is_cpu() { "cpu" } else { "metal" });
+    writeln!(w, "device {device}")?;
     writeln!(w, "args {}", reach.args.map(|a| a.to_string()).join(" "))?;
     writeln!(w, "offsets {}", reach.offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(" "))?;
     writeln!(w, "binds {}", reach.binds.map(|(r, _)| r).join(" "))?;

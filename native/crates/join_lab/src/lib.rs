@@ -7,8 +7,12 @@
 //! (`join_run`), each dispatch's groups as the phase before it set them, as the CPU device runs it; `Loaded::compare`
 //! holds what it left to what the engine's launch left.
 
+pub mod catalogue;
 pub mod counters;
+#[cfg(feature = "metal")]
+pub mod metal;
 pub mod page;
+pub mod sample;
 
 use rerail_blocks::block::{Block, PAGE};
 use std::io::{self, Read as _};
@@ -50,6 +54,9 @@ pub struct Wave {
     /// The capture's directory (its `blocks/`).
     pub root: PathBuf,
     pub format: u32,
+    /// The engine of the device that ran it (`device`: the CPU device's is the program): its working memory laid out
+    /// for that one. None in a capture that does not name it.
+    pub device: Option<Engine>,
     /// The program's `ProgP`: its phases, its chain's dispatches, the phases its walk takes, 0.
     pub args: [u32; 4],
     /// Each dispatch's groups' three words, as byte offsets into its control words.
@@ -84,13 +91,14 @@ impl Wave {
     pub fn read(dir: &Path) -> io::Result<Wave> {
         let text = read_named(&dir.join("wave.txt")).and_then(|b| String::from_utf8(b).map_err(|e| bad(format!("wave.txt: {e}"))))?;
         let root = dir.parent().and_then(Path::parent).ok_or_else(|| bad(format!("{}: not in a capture's w/", dir.display())))?.to_path_buf();
-        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false, codes: Vec::new(), atoms: Vec::new() };
+        let mut w = Wave { dir: dir.to_path_buf(), root, format: 0, device: None, args: [0; 4], offsets: Vec::new(), binds: Vec::new(), labels: Vec::new(), regions: Vec::new(), after: Vec::new(), unresolved: 0, unbound: 0, done: false, codes: Vec::new(), atoms: Vec::new() };
         let num = |s: &str| s.parse::<u64>().map_err(|e| bad(format!("{}: {s}: {e}", dir.display())));
         for line in text.lines() {
             let (key, rest) = line.split_once(' ').unwrap_or((line, ""));
             match key {
                 "capture" => {}
                 "format" => w.format = num(rest)? as u32,
+                "device" => w.device = Some(Engine::named(match rest.trim() { "cpu" => "program", d => d }).map_err(bad)?),
                 "args" => {
                     for (i, a) in rest.split(' ').enumerate().take(4) {
                         w.args[i] = num(a)? as u32;
@@ -156,6 +164,12 @@ impl Wave {
 
     /// Its regions placed in this process, their addresses bound again where they lie now.
     pub fn load(&self) -> io::Result<Loaded> {
+        self.load_on(Engine::Program)
+    }
+
+    /// `load`, for engine `e`: its addresses those its kernels reach the regions by (the device's for `metal`, its
+    /// wraps', a view's home's host word the host's).
+    pub fn load_on(&self, e: Engine) -> io::Result<Loaded> {
         if !self.done {
             return Err(bad(format!("{}: its capture did not finish (no after-images): the engine's launch never completed", self.dir.display())));
         }
@@ -193,18 +207,50 @@ impl Wave {
             };
             mems.push(mem);
         }
+        // Where the engine's kernels reach each region: the host's address (the program's Rust), or its wrap's.
+        #[cfg(feature = "metal")]
+        let wraps = match e {
+            Engine::Metal => Some(metal::Wraps::of(&mems).map_err(bad)?),
+            Engine::Program | Engine::Class => None,
+        };
+        #[cfg(not(feature = "metal"))]
+        if e == Engine::Metal {
+            return Err(bad("the metal engine: this lab was built without its `metal` feature".into()));
+        }
+        let dev = |i: usize| -> u64 {
+            #[cfg(feature = "metal")]
+            if let Some(w) = &wraps {
+                return w.dev[i];
+            }
+            mems[i].base() as u64
+        };
         let mut bound = 0;
+        // The words a relocation binds, by place: a view's home whose device word none binds is the CPU device's
+        // (none: its kernels read the host's word), given the device's address of what its host word names.
+        let placed: std::collections::HashSet<(usize, usize)> = relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8 bytes")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8 bytes")) as usize)).collect();
         for q in relocs.chunks_exact(32) {
             let v = |i: usize| u64::from_le_bytes(q[8 * i..8 * i + 8].try_into().expect("8 bytes"));
             // The target's host bit (a view's home's host word): on the program's Rust, the host's address is the
             // device's.
             let (i, o, t, off) = (v(0) as usize, v(1) as usize, (v(2) & !(HOST | RELATIVE)) as usize, v(3) as usize);
-            let to = mems.get(t).ok_or_else(|| bad(format!("a relocation into region {t} of {}", mems.len())))?.base() + off;
+            let host = mems.get(t).ok_or_else(|| bad(format!("a relocation into region {t} of {}", mems.len())))?.base() + off;
             let m = mems.get(i).ok_or_else(|| bad(format!("a relocation in region {i}")))?;
-            // A relative word (an atoms directory's span): the target's address less the word's own.
-            let value = if v(2) & RELATIVE != 0 { (to as u64).wrapping_sub((m.base() + o) as u64) } else { to as u64 };
+            let to = dev(t) + off as u64;
+            // A relative word (an atoms directory's span): the target's address less the word's own, both as the
+            // kernels reach them.
+            let value = if v(2) & HOST != 0 {
+                host as u64
+            } else if v(2) & RELATIVE != 0 {
+                to.wrapping_sub(dev(i) + o as u64)
+            } else {
+                to
+            };
             m.write(o, &value.to_ne_bytes());
             bound += 1;
+            if v(2) & HOST != 0 && e == Engine::Metal && !placed.contains(&(i, o + 8)) {
+                m.write(o + 8, &to.to_ne_bytes());
+                bound += 1;
+            }
         }
         let cd = rerail_tape_format::codes_dir::bytes();
         for (region, at, digest) in &self.codes {
@@ -212,16 +258,33 @@ impl Wave {
                 return Err(bad(format!("the codes' directory is not the engine's (its digest {:016x}, the capture's {digest:016x}): a lab of another build", capture_digest(cd))));
             }
             let i = self.regions.iter().position(|r| r.name == *region).ok_or_else(|| bad(format!("codes: no region {region}")))?;
+            // Its home's host word, and its device word: the device's wrap of it (`Layer::codes`), none on the host.
+            #[allow(unused_mut)]
+            let mut gpu = 0u64;
+            #[cfg(feature = "metal")]
+            if let Some(w) = &wraps {
+                gpu = w.codes_address().map_err(bad)?;
+            }
             mems[i].write(*at, &(cd.as_ptr() as u64).to_ne_bytes());
-            mems[i].write(*at + 8, &0u64.to_ne_bytes());
+            mems[i].write(*at + 8, &gpu.to_ne_bytes());
             bound += 1;
         }
-        let mut binds = [0u64; 9];
+        let (mut binds, mut bind_regions) = ([0u64; 9], [0usize; 9]);
         for (k, role) in self.binds.iter().enumerate() {
             let i = self.regions.iter().position(|r| r.role == *role).ok_or_else(|| bad(format!("no region for the bind {role}")))?;
             binds[k] = mems[i].base() as u64;
+            bind_regions[k] = i;
         }
-        Ok(Loaded { wave: self.clone(), mems, binds, relocations: bound, reverse: false })
+        Ok(Loaded {
+            #[cfg(feature = "metal")]
+            wraps,
+            wave: self.clone(),
+            mems,
+            binds,
+            bind_regions,
+            relocations: bound,
+            reverse: false,
+        })
     }
 }
 
@@ -287,7 +350,7 @@ impl Mem {
         }
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             Mem::Reserved { len, .. } => *len,
             Mem::Mapped(b) => b.used(),
@@ -319,10 +382,15 @@ impl Drop for Mem {
 
 /// A launch placed in the lab, ready to run (`run`), then to compare (`compare`).
 pub struct Loaded {
+    /// Its regions' wraps for the device (the `metal` engine's): released before the memory they wrap, as a field
+    /// before `mems`.
+    #[cfg(feature = "metal")]
+    wraps: Option<metal::Wraps>,
     pub wave: Wave,
     pub mems: Vec<Mem>,
-    /// `join_run`'s nine buffers' addresses, where its regions lie now.
+    /// `join_run`'s nine buffers' addresses, where its regions lie now, and their regions.
     binds: [u64; 9],
+    bind_regions: [usize; 9],
     /// The addresses bound again (`relocs.zst`'s entries).
     pub relocations: usize,
     /// Each dispatch's groups run last first (`join-lab run --reverse`).
@@ -335,6 +403,8 @@ pub struct Ran {
     pub dispatches: usize,
     pub groups: u64,
     pub seconds: f64,
+    /// Its items' time by kind (the program's, `join_run_timed`): each kind's name, nanoseconds and items.
+    pub kinds: Vec<(&'static str, u64, u64)>,
 }
 
 /// A region the replay left otherwise than the engine's launch: its bytes compared, those that differ, the first.
@@ -354,9 +424,39 @@ pub struct Diff {
 const TG: u32 = 256;
 
 impl Loaded {
+    /// Its chain on engine `e` (the one it was loaded for, `Wave::load_on`).
+    pub fn run_on(&mut self, e: Engine) -> io::Result<Ran> {
+        match e {
+            Engine::Program => Ok(self.run()),
+            Engine::Class => Err(bad(match self.classes() {
+                Err(why) => why,
+                Ok(_) => "the classes' executor (the design's step 7) is not built".into(),
+            })),
+            #[cfg(feature = "metal")]
+            Engine::Metal => {
+                let w = self.wraps.as_ref().ok_or_else(|| bad("the metal engine: a launch loaded for another engine".into()))?;
+                metal::run(self, w, &self.bind_regions).map_err(bad)
+            }
+            #[cfg(not(feature = "metal"))]
+            Engine::Metal => Err(bad("the metal engine: this lab was built without its `metal` feature".into())),
+        }
+    }
+
+    /// The classes of its runs' shapes (`Wave::classes`).
+    pub fn classes(&self) -> Result<Vec<&'static rerail_join_shapes::parts::Class>, String> {
+        self.wave.classes()
+    }
+
     /// Its chain through `join_run`, as the CPU device runs it: each dispatch's groups the three words at its offset
     /// of the control words, which the phases before it wrote; its groups one after another on this thread.
     pub fn run(&mut self) -> Ran {
+        self.run_timed(false)
+    }
+
+    /// `run`, with its items' time by kind where `timed` (`join_run_timed`).
+    pub fn run_timed(&mut self, timed: bool) -> Ran {
+        let mut clock = rerail_ukl_rust::join_program::ItemClock::default();
+        let clock_at: *mut rerail_ukl_rust::join_program::ItemClock = if timed { &raw mut clock } else { std::ptr::null_mut() };
         let ctl = self.binds[7] as usize;
         let prog = self.wave.args;
         // The shim's two arguments past the kernel's: no groups' counts, and the first group's position 0.
@@ -383,10 +483,13 @@ impl Loaded {
                 let l = rerail_ukl_rust::Launch { group: [x, y, z], block: [TG, 1, 1], groups: grid };
                 // SAFETY: `argv` holds the program's buffers' addresses where the lab placed them, its `ProgP`, and the
                 // shim's two; the regions they reach are the capture's, bound again.
-                unsafe { rerail_ukl_rust::join_program::join_run(argv.as_ptr(), &l) };
+                unsafe { rerail_ukl_rust::join_program::join_run_timed(argv.as_ptr(), &l, clock_at) };
             }
         }
         ran.seconds = start.elapsed().as_secs_f64();
+        if timed {
+            ran.kinds = (0..64).filter(|&k| clock.items[k] > 0).map(|k| (rerail_ukl_rust::join_program::item_kind_name(k), clock.nanos[k], clock.items[k])).collect();
+        }
         ran
     }
 
@@ -432,8 +535,6 @@ impl Loaded {
         Ok(out)
     }
 
-    /// The words the lab bound again (`relocs.zst`), as (region, offset): where an after-image holds the engine's
-    /// address and the replay the lab's.
     /// Its words (each region of at most 64 MB, as loaded and bound) whose values lie in `lo..hi`: each its region,
     /// offset and value (`join-lab words`: which word holds an address a replay faults at).
     pub fn words_in(&self, lo: u64, hi: u64) -> Vec<(String, usize, u64)> {
@@ -555,16 +656,232 @@ impl Loaded {
         self.wave.regions.iter().zip(&self.mems).map(|(r, m)| (r.name.clone(), m.base(), m.len())).collect()
     }
 
+    /// The words the lab bound again (`relocs.zst`, and each view's home's device word), as (region, offset): where
+    /// an after-image holds the engine's address and the replay the lab's.
     pub fn relocated(&self) -> io::Result<Vec<(usize, usize)>> {
         let relocs = zstd::stream::decode_all(open_named(&self.wave.dir.join("relocs.zst"))?)?;
-        Ok(relocs.chunks_exact(32).map(|q| (u64::from_le_bytes(q[..8].try_into().expect("8")) as usize, u64::from_le_bytes(q[8..16].try_into().expect("8")) as usize)).collect())
+        let w = |q: &[u8], k: usize| u64::from_le_bytes(q[8 * k..8 * k + 8].try_into().expect("8"));
+        // And each view's home's device word beside its host word (`load_on` binds it on a device where none does).
+        Ok(relocs.chunks_exact(32).flat_map(|q| {
+            let at = (w(q, 0) as usize, w(q, 1) as usize);
+            std::iter::once(at).chain((w(q, 2) & HOST != 0).then_some((at.0, at.1 + 8)))
+        }).collect())
     }
 }
 
-/// An engine a launch is replayed on: the join program's Rust (`join_run`, the CPU device's).
+impl Loaded {
+    /// Its size script's ops as loaded (`SizeOp`: an address `w`, a word `c`, its op and registers), each address
+    /// placed in the region whose wrap or memory holds it as the engine reaches them, and the word there as the host
+    /// reads it: how a device's address that reaches no region shows (its reads zeros).
+    pub fn script_ops(&self) -> Vec<String> {
+        let script = self.bind_regions[6];
+        let m = &self.mems[script];
+        let reach = |i: usize| -> u64 {
+            #[cfg(feature = "metal")]
+            if let Some(w) = &self.wraps {
+                return w.dev[i];
+            }
+            self.mems[i].base() as u64
+        };
+        let place = |a: u64| self.mems.iter().enumerate().find(|(i, mm)| reach(*i) <= a && a < reach(*i) + mm.len() as u64).map(|(i, _)| (i, (a - reach(i)) as usize));
+        let word = |b: &[u8], k: usize| u64::from_ne_bytes(b[k..k + 8].try_into().expect("8 bytes"));
+        let mut out = Vec::new();
+        for i in 0..m.len() / 32 {
+            let b = m.bytes(32 * i, 32);
+            let (w, c, op) = (word(b, 0), word(b, 8), u32::from_ne_bytes(b[16..20].try_into().expect("4 bytes")));
+            if w == 0 && c == 0 && op == 0 {
+                continue;
+            }
+            let at = |a: u64| match place(a) {
+                Some((r, o)) => format!("{}+{o} ({:#x})", self.wave.regions[r].name, u32::from_ne_bytes(self.mems[r].bytes(o, 4).try_into().expect("4 bytes"))),
+                None if a == 0 => "0".to_owned(),
+                None => format!("{a:#x} IN NO REGION"),
+            };
+            let k = |f: usize| u32::from_ne_bytes(b[f..f + 4].try_into().expect("4 bytes")) & 15;
+            out.push(format!("op {i:>3}: {op:>2} r{} x{} y{} w {} c {}", k(20), k(24), k(28), at(w), if c > 1 << 32 { at(c) } else { format!("{c}") }));
+        }
+        out
+    }
+}
+
+/// Where two engines' replays of a launch first part (`first_divergence`): the dispatch after which their regions
+/// differ, the phase it ran and its items' kinds, and the regions that differ then (each its name, bytes, first word).
+#[derive(Clone, Debug)]
+pub struct Divergence {
+    pub dispatch: usize,
+    pub phase: u32,
+    pub kinds: Vec<&'static str>,
+    /// Within the dispatch, the phase after which they first differ (its walk ended past it), and its items' kinds.
+    pub last: u32,
+    pub walked: Vec<&'static str>,
+    pub regions: Vec<(String, usize, Option<(usize, u64, u64)>)>,
+}
+
+impl Divergence {
+    pub fn line(&self) -> String {
+        let regions: Vec<String> = self.regions.iter().map(|(n, b, w)| match w {
+            Some((o, x, y)) => format!("{n}: {b} bytes, first word at {o}: {x:#x} against {y:#x}"),
+            None => format!("{n}: {b} bytes"),
+        }).collect();
+        format!("first differs after dispatch {} (phase {}, items {}), in it after phase {} (items {}): {}", self.dispatch, self.phase, self.kinds.join(" "), self.last, self.walked.join(" "), regions.join("; "))
+    }
+}
+
+impl Loaded {
+    /// Its chain's first `k` dispatches only.
+    pub fn upto(&mut self, k: usize) {
+        self.wave.offsets.truncate(k);
+    }
+
+    /// Its walk ended before phase `p` (`ProgP::end`, the program's own stop: a phase past it runs only inside the
+    /// program's tail).
+    pub fn end_at(&mut self, p: u32) {
+        self.wave.args[2] = p;
+    }
+
+    /// Phase `p`'s items as loaded: each its kind's name, its `x` (a size item's first op, another's job), its group
+    /// (a size item's ops) and its segment.
+    pub fn phase_items(&self, p: u32) -> Vec<(&'static str, u32, u32, u32)> {
+        let word = |region: usize, at: usize| u32::from_ne_bytes(self.mems[region].bytes(at, 4).try_into().expect("4 bytes"));
+        let (phases, segs, items) = (self.bind_regions[2], self.bind_regions[3], self.bind_regions[1]);
+        let at = 16 * p as usize;
+        if at + 16 > self.mems[phases].len() {
+            return Vec::new();
+        }
+        let [first, count, s0, ns] = [0, 1, 2, 3].map(|k| word(phases, at + 4 * k));
+        let runs: Vec<(u32, u32)> = if ns == 0 { vec![(first, count)] } else { (s0..s0 + ns).map(|s| (word(segs, 24 * s as usize + 8), word(segs, 24 * s as usize + 12))).collect() };
+        runs.iter().flat_map(|&(f, n)| f..f + n).map(|i| {
+            let what = word(items, 16 * i as usize);
+            (rerail_ukl_rust::join_program::item_kind_name((what >> 24) as usize), what & 0xff_ffff, word(items, 16 * i as usize + 4), word(items, 16 * i as usize + 12))
+        }).collect()
+    }
+
+    /// The phase its next dispatch runs (its control words' first, `ctl(0)`), and that phase's items' kinds.
+    fn next_phase(&self) -> (u32, Vec<&'static str>) {
+        let word = |region: usize, at: usize| u32::from_ne_bytes(self.mems[region].bytes(at, 4).try_into().expect("4 bytes"));
+        let (ctl, phases, segs, items) = (self.bind_regions[7], self.bind_regions[2], self.bind_regions[3], self.bind_regions[1]);
+        let p = word(ctl, 0);
+        let at = 16 * p as usize;
+        if at + 16 > self.mems[phases].len() {
+            return (p, Vec::new());
+        }
+        let [first, count, s0, ns] = [0, 1, 2, 3].map(|k| word(phases, at + 4 * k));
+        // Its items: its own run of them, or each segment's (`Seg`: its count's address, then its first and items).
+        let runs: Vec<(u32, u32)> = if ns == 0 { vec![(first, count)] } else { (s0..s0 + ns).map(|s| (word(segs, 24 * s as usize + 8), word(segs, 24 * s as usize + 12))).collect() };
+        let mut kinds: Vec<&'static str> = runs.iter().flat_map(|&(f, n)| (f..f + n).map(|i| rerail_ukl_rust::join_program::item_kind_name((word(items, 16 * i as usize) >> 24) as usize))).collect();
+        kinds.dedup();
+        (p, kinds)
+    }
+
+    /// Its regions held to `other`'s (the same launch, loaded again: its regions elsewhere): each that differs, a word
+    /// counted equal where each holds an address at the same offset of the same region (an address its kernel wrote).
+    fn against(&self, other: &Loaded) -> Vec<(String, usize, Option<(usize, u64, u64)>)> {
+        // The words bound again, by the capture's relocations and the codes' homes (whose device word is each
+        // engine's own: none on the host, its wrap's on the device).
+        let mut relocated: std::collections::HashSet<(usize, usize)> = self.relocated().unwrap_or_default().into_iter().collect();
+        for (region, at, _) in &self.wave.codes {
+            if let Some(i) = self.wave.regions.iter().position(|r| r.name == *region) {
+                relocated.extend([(i, *at), (i, *at + 8)]);
+            }
+        }
+        let place = |l: &Loaded, a: u64| l.mems.iter().position(|m| (m.base() as u64) <= a && a < (m.base() + m.len()) as u64).map(|i| (i, a - l.mems[i].base() as u64));
+        let mut out = Vec::new();
+        for (i, r) in self.wave.regions.iter().enumerate() {
+            let (a, b) = (&self.mems[i], &other.mems[i]);
+            if matches!(a, Mem::Mapped(_)) {
+                continue;
+            }
+            // The pages either holds (a reservation's others read zero in both, and reading them would make them).
+            let n = r.len.min(a.len()).min(b.len()) / 8 * 8;
+            let mut pages = std::collections::BTreeSet::new();
+            for m in [a, b] {
+                for (o, len) in rerail_blocks::mem::written_runs(m.base(), n) {
+                    pages.extend(o / PAGE..(o + len).div_ceil(PAGE));
+                }
+            }
+            let (mut differ, mut first) = (0usize, None);
+            for o in pages.iter().flat_map(|&p| (p * PAGE..((p + 1) * PAGE).min(n)).step_by(8)) {
+                let (x, y) = (a.bytes(o, 8), b.bytes(o, 8));
+                if x == y {
+                    continue;
+                }
+                let (u, v) = (u64::from_ne_bytes(x.try_into().expect("8")), u64::from_ne_bytes(y.try_into().expect("8")));
+                if u == v || relocated.contains(&(i, o)) || (u > 1 << 32 && place(self, u).is_some() && place(self, u) == place(other, v)) {
+                    continue;
+                }
+                differ += 8;
+                first.get_or_insert((o, u, v));
+            }
+            if differ > 0 {
+                out.push((r.name.clone(), differ, first));
+            }
+        }
+        out
+    }
+}
+
+/// The first dispatch after which `a` and `b` leave `w`'s regions otherwise (each run of a dispatch's prefix loaded
+/// afresh): bisected over its dispatches, a difference once made taken to stay. None where they agree after them all.
+pub fn first_divergence(w: &Wave, a: Engine, b: Engine) -> io::Result<Option<Divergence>> {
+    let after = |k: usize| -> io::Result<(Loaded, Loaded)> {
+        let mut x = w.load_on(a)?;
+        x.upto(k);
+        x.run_on(a)?;
+        let mut y = w.load_on(b)?;
+        y.upto(k);
+        y.run_on(b)?;
+        Ok((x, y))
+    };
+    let n = w.offsets.len();
+    let (x, y) = after(n)?;
+    if x.against(&y).is_empty() {
+        return Ok(None);
+    }
+    drop((x, y));
+    // `lo` agree, `hi` differ.
+    let (mut lo, mut hi) = (0usize, n);
+    while hi - lo > 1 {
+        let mid = (lo + hi) / 2;
+        let (x, y) = after(mid)?;
+        if x.against(&y).is_empty() { lo = mid } else { hi = mid }
+    }
+    let mut before = w.load_on(a)?;
+    before.upto(lo);
+    before.run_on(a)?;
+    let (phase, kinds) = before.next_phase();
+    // Within dispatch `hi` (a dispatch walks phase after phase): the first phase after which they differ, each walk
+    // ended there (`end_at`). `plo` agree, `phi` differ.
+    let ended = |p: u32| -> io::Result<bool> {
+        let run = |e: Engine| -> io::Result<Loaded> {
+            let mut l = w.load_on(e)?;
+            l.upto(hi);
+            l.end_at(p);
+            l.run_on(e)?;
+            Ok(l)
+        };
+        Ok(!run(a)?.against(&run(b)?).is_empty())
+    };
+    let (mut plo, mut phi) = (phase, w.args[2]);
+    if phi > plo && ended(phi)? {
+        while phi - plo > 1 {
+            let mid = (plo + phi) / 2;
+            if ended(mid)? { phi = mid } else { plo = mid }
+        }
+    }
+    let last = phi.saturating_sub(1);
+    let walked = before.phase_items(last).iter().map(|i| i.0).collect::<Vec<_>>();
+    let (x, y) = after(hi)?;
+    Ok(Some(Divergence { dispatch: hi, phase, kinds, last, walked: walked.into_iter().fold(Vec::new(), |mut v, k| { if v.last() != Some(&k) { v.push(k) } v }), regions: x.against(&y) }))
+}
+
+/// An engine a launch is replayed on: the join program's Rust (`join_run`, the CPU device's), or its kernel on the
+/// device (`metal`, a lab built with its `metal` feature, on a Mac).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Engine {
     Program,
+    Metal,
+    /// Its shapes' classes (`rerail_join_shapes::parts::CLASSES`), where each has one.
+    Class,
 }
 
 impl Engine {
@@ -572,13 +889,17 @@ impl Engine {
     pub fn named(name: &str) -> Result<Engine, String> {
         match name {
             "program" => Ok(Engine::Program),
-            _ => Err(format!("no engine {name} (engines: program)")),
+            "metal" => Ok(Engine::Metal),
+            "class" => Ok(Engine::Class),
+            _ => Err(format!("no engine {name} (engines: class, program, metal)")),
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Engine::Program => "program",
+            Engine::Metal => "metal",
+            Engine::Class => "class",
         }
     }
 }
@@ -587,6 +908,18 @@ impl Wave {
     /// Its directory's name: the process and capture number (`<pid>-<id>`).
     pub fn name(&self) -> String {
         self.dir.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned())
+    }
+
+    /// The classes of its runs' shapes (`rerail_join_shapes::parts::CLASSES`), or the shapes that have none.
+    pub fn classes(&self) -> Result<Vec<&'static rerail_join_shapes::parts::Class>, String> {
+        let (mut found, mut none) = (Vec::new(), Vec::new());
+        for l in &self.labels {
+            match rerail_join_shapes::parts::key_of(&l.shape).and_then(rerail_join_shapes::parts::class_of) {
+                Some(c) => found.push(c),
+                None => none.push(l.shape.as_str()),
+            }
+        }
+        if none.is_empty() { Ok(found) } else { Err(format!("no class: {}", none.join(" "))) }
     }
 
     /// The bytes its capture holds on disk: its own files, and the block files it names (each once).
@@ -626,11 +959,9 @@ pub fn replay(w: &Wave, e: Engine) -> io::Result<Replay> {
 
 /// `replay`, each dispatch's groups last first where `reverse`.
 pub fn replay_in(w: &Wave, e: Engine, reverse: bool) -> io::Result<Replay> {
-    let mut l = w.load()?;
+    let mut l = w.load_on(e)?;
     l.reverse = reverse;
-    let ran = match e {
-        Engine::Program => l.run(),
-    };
+    let ran = l.run_on(e)?;
     let mut diffs = l.compare()?;
     drop(l);
     // Each differing word as it was before the launch: where the replay's is the before's, the replay never wrote
@@ -672,16 +1003,20 @@ pub struct Profile {
     pub cycles: u64,
     pub bytes: u64,
     pub same: bool,
+    /// Its items' time by kind, of a run of its own (the program's; the clock's own time is not in the others'):
+    /// each kind's name, nanoseconds and items.
+    pub kinds: Vec<(&'static str, u64, u64)>,
 }
 
 impl Profile {
     pub fn header() -> String {
-        "launch\tengine\tdispatches\tgroups\trepeat\tbest_ms\tmedian_ms\tcpu_ms\tinstructions\tcycles\tbytes\tsame\tshapes".to_owned()
+        "launch\tengine\tdispatches\tgroups\trepeat\tbest_ms\tmedian_ms\tcpu_ms\tinstructions\tcycles\tbytes\tsame\tshapes\tkinds".to_owned()
     }
 
     pub fn tsv(&self) -> String {
         let shapes: Vec<String> = self.shapes.iter().map(|(s, r, w)| format!("{s}|{r}|{w}")).collect();
-        format!("{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}", self.launch, self.engine, self.dispatches, self.groups, self.repeat, self.best_ms, self.median_ms, self.cpu_ms, self.instructions, self.cycles, self.bytes, self.same, shapes.join(","))
+        let kinds: Vec<String> = self.kinds.iter().map(|(k, ns, n)| format!("{k}|{ns}|{n}")).collect();
+        format!("{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}\t{}\t{}", self.launch, self.engine, self.dispatches, self.groups, self.repeat, self.best_ms, self.median_ms, self.cpu_ms, self.instructions, self.cycles, self.bytes, self.same, shapes.join(","), kinds.join(","))
     }
 
     pub fn line(&self) -> String {
@@ -691,24 +1026,32 @@ impl Profile {
 }
 
 /// `w` run `repeat` times on `e`, each loaded afresh (the load not timed): its wall times' best and median, the
-/// CPU time of its median run, and whether its last run left what the engine's launch left.
-pub fn profile(w: &Wave, e: Engine, repeat: usize) -> io::Result<Profile> {
+/// CPU time of its median run, and whether its last run left what the engine's launch left. On the program, one run
+/// more gives its items' time by kind. Its runs (not its loads) are `sampler`'s, tagged `tag`, where it is given.
+pub fn profile(w: &Wave, e: Engine, repeat: usize, sampler: Option<(&sample::Sampler, u32)>) -> io::Result<Profile> {
     let counters = counters::Counters::open();
     let count = || counters.as_ref().map_or(counters::Counts::default(), counters::Counters::read);
     let mut times = Vec::with_capacity(repeat);
     let mut last = None;
     for _ in 0..repeat.max(1) {
-        let mut l = w.load()?;
+        let mut l = w.load_on(e)?;
+        if let Some((s, t)) = sampler {
+            s.tag(t);
+        }
         let (cpu, c) = (thread_cpu(), count());
-        let ran = match e {
-            Engine::Program => l.run(),
-        };
+        let ran = l.run_on(e);
         let (cpu, c) = (thread_cpu() - cpu, count() - c);
+        if let Some((s, _)) = sampler {
+            s.tag(0);
+        }
+        let ran = ran?;
         times.push((ran.seconds, cpu, c));
         last = Some((ran, l));
     }
     let (ran, l) = last.expect("a run");
     let same = l.compare()?.iter().all(|d| d.differ == 0);
+    drop(l);
+    let kinds = if e == Engine::Program { w.load()?.run_timed(true).kinds } else { ran.kinds.clone() };
     let mut sorted = times.clone();
     sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
     let median = sorted[sorted.len() / 2];
@@ -726,5 +1069,6 @@ pub fn profile(w: &Wave, e: Engine, repeat: usize) -> io::Result<Profile> {
         cycles: median.2.cycles,
         bytes: w.bytes(),
         same,
+        kinds,
     })
 }

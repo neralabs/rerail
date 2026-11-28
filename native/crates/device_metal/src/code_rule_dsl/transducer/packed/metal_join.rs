@@ -458,6 +458,12 @@ fn program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, S
     })
 }
 
+/// The program's kernel for views of `format` (`program_pipe`), as `launch` chains it: the join lab's, which replays a
+/// captured launch's chain on the device (`rerail-join-lab`'s `metal` engine).
+pub fn join_program_pipe(format: u32) -> Result<Arc<rerail_accel_gpu::gpu::join::Pipe>, String> {
+    program_pipe(format)
+}
+
 /// The tape format of the views `rels` read (`ViewInPlace::format`), one for them all: a relation reads none, and with
 /// no view the run's format is taken, whose kernels are made already.
 fn views_format<'a>(rels: impl IntoIterator<Item = &'a DevRel>) -> u32 {
