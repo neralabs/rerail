@@ -1772,3 +1772,90 @@ Checks (on Metal, a farm Mac):
 Not covered by the checks: a layer of the Packed, Dict or Ranged encodings, levels, and Bloom filters, orders and
 permutations as declared indexes. None of the executor's traces has them, and their launches are refused, not run.
 The kernels are mostly one item at a time; their speed is not measured.
+
+## Step 4, continued: a launch as one device program, its phases across their items (2026-11-27)
+
+The UKL versions above ran most phases as one item on one thread, and each phase was its own command with a wait
+after it: l0's cold boot run took 440 ms on the device (m1max), against tens of milliseconds on the CPU. Rebuilt:
+
+**A launch is one command** (`OnDevice::program`, `delta_device`). For each phase it queues the phase's count kernel
+(`{entry}_{phase}_items`, one thread: the phase's items, from what the phases before it wrote, into the control
+words' grid), then the phase's kernel by an indirect dispatch over that grid (a lane an item, or a threadgroup an
+item for a `Threadgroup` phase), and for a round phase (`Across::Rounds`) its `_again` kernel after each turn, which
+sizes the next turn or ends the rounds (`Bound::Turns`: the turns queued are its bound; a turn past the last is an
+empty grid). One flush, one wait, one read of the meter and control words: the needs, the fronts, a fault, an
+overflow, the turns each phase ran (charged to the ledger, 0601). An overflow (`REACH` past a capacity) stops every
+later phase (`DELTA_STOPPED`), and the executor grows the blocks and runs the launch again (D6), as before.
+`RERAIL_DELTA_SPLIT=1` flushes after each phase and prints its time (a profile's view, not a run's);
+`RERAIL_KERNEL_TIMES` prints each launch's.
+
+**The library** (`ukl/lib/ukl/`), what the phases share:
+- `delta/op.h`: `DELTA_COUNT`, `DELTA_AGAIN`, `DELTA_LANES`/`DELTA_ITEM`, `DELTA_GROUPS`/`DELTA_GROUP_ITEM` (a
+  threadgroup an item, its scratch and shared words), `DELTA_ONE`;
+- `delta/par.h`: a group's scan of a block's words in place; a sort as phases (each chunk of 64 ids ranked, a lane
+  an id; then merge passes of 16 runs, a lane an element, its place by binary searches into the other runs: 2^30
+  ids in 6 turns);
+- `group.h`: 64-bit reductions and scans, an exclusive max-scan (beside the 32-bit sum and scan it had);
+- `delta/trace.h`: a state probed as `trace::ProbeIter` reads it (`Probe`): each layer newest first, a range by
+  binary search when the column leads the canonical order, the hashed index's bucket on the column alone (the CLIF
+  relation reads `rel_group`, `rel_group_row`, `rel_key_mix`), else its rows; a candidate taken when no layer above
+  kills it. `state_has`, `state_first` and `blob_find` read through it (they read every row before);
+- `delta/text.h`: `text_same`, two texts compared as written; `delta/sketch.h`: the kept form cleared and emitted
+  by a group.
+- `delta/sort.h` (a heap sort on one thread) is removed: no kernel uses it.
+
+**Each operation's phases** (the UKL versions' own shapes where they differ from the twins'):
+- `consolidate`, `merge` (`trace::TRACE_UKL`, 16 phases): the source sorted (chunk ranks, merge passes), its runs
+  summed, the rows out counted and placed (a chunk of 64 a group, scans by one group), the layer opened and its
+  indexes' entries laid out, each row's kill and partition start and each index element's hash, the digests summed,
+  the partitions numbered, the kills' and indexes' sorts (one round phase for both), the index places, marks and
+  buckets' starts, the columns' statistics and ranges, each column's sketch (a group), the freeze and the seal.
+  Phases that read only what the phase before last wrote run as one, over the most of their items.
+- `intern` (`intern::INTERN_UKL`): the hash phase a lane a node; the scan one threadgroup over its items (the
+  language's names on a cold run, the path, the module, each node's text and value) in rounds: each item found at
+  once, the first of each text in the round to make numbered by a scan and written at its place by its thread, the
+  round's atoms linked into the table by one thread in id order (as `atoms_append` one at a time).
+- `k0_pass` (`k0::K0_UKL`): the statements listed first (a group a document counts, then lists them in node order:
+  a node whose parent is the root, by the tape's parent read), count and place a lane a statement, the scan one group
+  (the least refused statement by a reduction; else each relation's prefix sums a round at a time, the claims by one
+  thread).
+- `semi_change`, `change_rows`, `replace_rows`, `docs_of`, `room_of`, `named_blocks`, `drop_parts`: one threadgroup
+  each, a lane a row (or a document, a partition): counted, claimed at once by one thread, written at their places by
+  an exclusive scan a round. A row of A's change is decided by itself (gone and matching before, added and matching
+  after, kept and its key flipped in B): the set the twin walks.
+- `order` (`cache::ORDER_UKL`): the entry opened, ids ranked in their chunks, merge passes, fences, the entry counted;
+  the sort's second array past the entry (scratch: the cursor moves to the fences' end), the array ranked into chosen
+  so the last pass ends in the entry's ids.
+- `cache_open`, `cache_commit`: one lane: a few header words.
+
+**Checks** (on Metal, m1max): `every_ukl_version_checks_against_its_twin` with a large case for each rebuilt
+operation (consolidate: 3000 rows below and 3540 changes; merge at scale; intern cold, the language's names and 60
+rules whose names repeat within and across rounds; k0_pass: documents of 150 and 70 statements, refusals in two
+documents; semi: 300 documents over three layers of each trace; replace_rows: 200 keys given 150 rows; docs_of and
+named_blocks: 200 documents; drop_parts: 150 partitions; order: 5000 rows, two passes), and
+`the_boot_run_on_the_device_or_mixed_is_the_cpus` (the device's K-form, and three mixed runs', the CPU's).
+
+**Measured** (l0's cold boot run on Metal, m1max, `the_boot_run_on_the_device_repeated`; the host is shared, its load
+10–20, so a run's time moves by up to 1.5× between runs):
+
+| Point | A boot run |
+|---|---|
+| A command a phase, one thread an item | 440 ms |
+| A launch one command | 398 ms |
+| The trace's phases across their items | 141 ms |
+| Count and again kernels size the grids; 16-way merges | 89–108 ms |
+| `intern`'s scan by a group | 70 ms |
+| `k0_pass`, `semi`, `docs_of`, `named_blocks`, `room_of`, `drop_parts` by groups; states probed by their indexes | 34–56 ms |
+
+At the last point a run is 32 launches, 22 ms of them on the device (load 12): `consolidate` 17 launches, 0.75 ms
+each (median), `intern` 3.2 ms, `merge` 0.8 ms, the rest 0.2–0.5 ms each, about a command's floor (~0.2 ms).
+
+**What is still one thread, or slow.**
+- A consolidate launch is ~30 dispatches (a count kernel and a kernel a phase, again kernels): its time is now
+  mostly theirs, serial in one encoder. The run's 32 launches each wait for their command.
+- `intern`'s scan walks every node in rounds, most of which want nothing; each round's atoms are linked by one thread.
+- The sketch's own rows are added on one thread a column (`sk_add`, `sk_remove` over the state).
+- `parts_seal` (sorted, each once) is an insertion sort on one thread: linear on parts that come in order (a
+  document trace's rows), quadratic otherwise.
+- `k0_pass`'s keep walks the cache's entries for each document on one thread.
+- The probe reads no Bloom filter, sorted order or permutation index (no executor trace declares one).
