@@ -15,7 +15,7 @@ import type { RerailApiStores } from "../api/operation.js";
 import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
-import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
+import { reportedUpdateChannel, startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
 import { publishedPackReader } from "../setup/published-packs.js";
 import { isNewerRelease } from "../setup/updater.js";
 import { checkNodeVersion } from "../setup/node-version.js";
@@ -52,6 +52,8 @@ try {
     ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
       updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
     } : {}),
+    // A managed install's dashboard marks a version from a channel other than `latest` Pre-release.
+    ...(isMainRerailBuild() ? { updateChannel: () => reportedUpdateChannel(defaultRerailHome()) } : {}),
     // A managed install's Add rule packs lists the packs published on npm, read when a person opens it; a checkout's
     // build, which the dashboard's browser tests run, never reads npm.
     ...(isMainRerailBuild() ? { publishedRulePacks: publishedPackReader({ home: defaultRerailHome() }) } : {}),

@@ -456,10 +456,16 @@ export interface DaemonHealth extends Pick<DaemonState, "version" | "pid" | "ui"
   /** The experimental features this daemon runs (docs/internal-testing.md); the dashboard shows only theirs. */
   experiments: ExperimentalFeature[];
   /**
-   * The newest Rerail on the update channel and when npm said so (epoch ms), from the daily update check
+   * The newest Rerail under the `latest` dist-tag and when npm said so (epoch ms), from the daily update check
    * (`setup/update-check.ts`); null before its first answer, and always for a daemon that does not check.
    */
   update: { latest: string; checkedAt: number } | null;
+  /**
+   * The channel `update-state.json` records, the one this computer's Rerail and rule packs update from; the dashboard
+   * marks a version from any channel but `latest` Pre-release, and offers its own version once `latest` reaches it. Null
+   * for a checkout's daemon and while a signed customer profile is active.
+   */
+  updateChannel: string | null;
 }
 
 /**

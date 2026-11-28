@@ -360,7 +360,11 @@ declare module "*/ui/settings-model.js" {
   export function installedLabel(ms: number | null | undefined): string | null;
   export function releaseUrl(version: string): string;
   export function isNewerVersion(a: string, b: string): boolean;
-  export function newerRelease(health: { version?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined): string | null;
+  type ReleaseHealth = { version?: unknown; updateChannel?: unknown; update?: { latest?: unknown; checkedAt?: unknown } | null } | null | undefined;
+  export function availableRelease(health: ReleaseHealth): string | null;
+  export function releaseHeadline(health: ReleaseHealth, release: string): string;
+  export function promotedNote(health: ReleaseHealth, release: string): string | null;
+  export function preReleaseNote(health: { version?: unknown; updateChannel?: unknown } | null | undefined): string | null;
 }
 
 declare module "*/ui/render/rule-sheet-model.js" {

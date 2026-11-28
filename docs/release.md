@@ -109,7 +109,8 @@ Merging publishes the release to `next`; nothing reaches `latest` until a person
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
   core, then updates your installed packs to their newest versions on `next`, so the packs under test are the
-  release's too.
+  release's too. Once it is promoted, the dashboard offers the update to `latest`, which a bare `rerail update`
+  installs.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
@@ -195,7 +196,8 @@ that version to npmjs on the channel it names, after a reviewer approves.
 | `v0.2.0-beta.1` | `beta` |
 | `v0.2.0-next.1` | `next` |
 
-- `beta` and `next` are opt-in: `rerail update --channel <tag>`.
+- `beta` and `next` are opt-in, each time: `rerail update --channel <tag>`. A bare `rerail update` installs from
+  `latest`, and moves a computer on `beta` or `next` back to `latest` once `latest` has its version or a newer one.
 - The Release pull request makes only plain versions. For a `beta` or `next` preview, set the version and push the tag
   by hand. A release is refused while `next` holds a newer preview, since publishing it would move `next` back. To
   release anyway, end the preview first: `npm dist-tag add @neralabs/rerail@<latest version> next`, then re-run the

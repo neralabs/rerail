@@ -1,0 +1,1 @@
+The dashboard's "Update available" names only versions released under npm's `latest` tag, never a `next` release candidate. On a computer on `next` or `beta`, it shows once `latest` has the version running or a newer one.

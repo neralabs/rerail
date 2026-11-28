@@ -172,6 +172,12 @@ export interface RerailDaemonOptions {
    */
   updateChecks?: () => { newest(): DaemonHealth["update"]; stop(): void };
   /**
+   * The channel `update-state.json` records, the one this computer's Rerail and rule packs update from, read on every
+   * `/healthz` (`updateChannel`). A managed install's
+   * entry point passes set-up's, whether or not it checks for updates; omitted, as for a checkout's daemon, it is null.
+   */
+  updateChannel?: () => string | undefined;
+  /**
    * Keeps what a coding agent's status line shows drawn ahead of time, from the daemon's `stores`, until the daemon
    * closes and stops it. The daemon's entry point passes presentation's (`keepClaudeStatusFiles`), a layer above the
    * daemon's; omitted, nothing is drawn ahead.
@@ -944,6 +950,7 @@ export class RerailDaemon {
       installedAt: this.#stores.installedAt(),
       experiments: enabledExperiments(),
       update: this.#updateChecks?.newest() ?? null,
+      updateChannel: this.#options.updateChannel?.() ?? null,
     };
   }
 

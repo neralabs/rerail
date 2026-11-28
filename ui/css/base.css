@@ -177,6 +177,8 @@ button.repopill:hover,.repopill[aria-expanded="true"]{background:var(--subtle);c
 .status .vnew{padding:1px 8px;border-radius:var(--pill);background:var(--info-subtle);color:var(--info-foreground);font-weight:500}
 .status .vnew:hover{filter:brightness(.96)}
 .status .vnew[aria-expanded="true"]{filter:brightness(.94)}
+/* "Pre-release" beside the version (a `next` install): Steer's amber, the chip's pill shape, not a button. */
+.status .vpre{padding:1px 8px;border-radius:var(--pill);background:var(--steer-bg);color:var(--steer-fg);font-weight:500;cursor:default}
 /* "Update available"'s popover (frame/topbar.js), under the chip like the repository menu: slightly see-through over a
  * blur, no outline, as round as Overview's tiles; the command in its grey box with Copy beside it. */
 .updpop{position:fixed;z-index:30;width:300px;max-width:calc(100vw - 24px);background:color-mix(in srgb,var(--popover) 78%,transparent);-webkit-backdrop-filter:blur(16px) saturate(1.6);backdrop-filter:blur(16px) saturate(1.6);color:var(--popover-foreground);border:0;border-radius:var(--radius-xl);box-shadow:var(--card-shadow);padding:12px 14px;display:grid;gap:8px;font-size:13px;line-height:1.45;text-align:left}

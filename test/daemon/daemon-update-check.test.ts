@@ -10,7 +10,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function daemonIn(prefix: string, options: Pick<Parameters<typeof RerailDaemon.start>[0], "updateChecks"> = {}): Promise<RerailDaemon> {
+async function daemonIn(prefix: string, options: Pick<Parameters<typeof RerailDaemon.start>[0], "updateChecks" | "updateChannel"> = {}): Promise<RerailDaemon> {
   const home = mkdtempSync(join(tmpdir(), prefix));
   cleanups.push(() => removeFolderSync(home));
   const daemon = await RerailDaemon.start({ version: "0.2.1", databasePath: join(home, "rerail.sqlite"), workspaceRoot: home, port: 0, ...options });
@@ -34,5 +34,16 @@ describe("/healthz.update", () => {
 
     await daemon.close();
     expect(stops).toBe(1);
+  });
+});
+
+describe("/healthz.updateChannel", () => {
+  it("is null for a checkout's daemon, and else the channel rerail update installs from, read at each ask", async () => {
+    expect((await daemonIn("rerail-channel-none-")).health().updateChannel).toBeNull();
+    let channel: string | undefined = "next";
+    const daemon = await daemonIn("rerail-channel-some-", { updateChannel: () => channel });
+    expect(daemon.health().updateChannel).toBe("next");
+    channel = undefined;
+    expect(daemon.health().updateChannel).toBeNull();
   });
 });

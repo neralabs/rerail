@@ -370,22 +370,26 @@ The trust-root file must arrive through an authenticated channel independent of 
 ## Update
 
 Updates are explicit: Rerail never installs on its own. Once a day the daemon of an installed Rerail asks npm for the
-newest version on the update channel, the one a bare `rerail update` installs, and keeps the answer in
-`update-check.json` in the Rerail home. `/healthz` reports it as `update` while that channel is still the update channel, and the dashboard shows "Update available"
-while it is newer than the daemon's version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
+version under the `latest` dist-tag and keeps the answer in `update-check.json` in the Rerail home. A release
+candidate under `next` is still in QA and is never recommended. `/healthz` reports the answer as `update`, and the
+dashboard shows "Update available" while a bare `rerail update` would change something: the version is newer than the
+daemon's, or, on a computer that updates from `next` or `beta`, it is the daemon's own version, promoted to `latest`.
+The daemon asks on every channel. On `next` or `beta`, and for any version with a prerelease part (`0.3.0-next.1`), the
+top bar and Settings say "Pre-release" beside the version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
 tried again a day later; a restarted daemon asks only once that day has passed. Unless you add a remote or turn Merge
 Assist on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
-checks, and neither does one while its home holds a signed customer profile (internal testing), whose channel it cannot
-read. The daemon runs npm with the Node it runs under first on `PATH`, so a daemon started with an agent's shorter `PATH` still reaches the npm installed beside that Node.
+checks, and neither does one while its home holds a signed customer profile (internal testing), which limits updates
+to its own dist-tag. The daemon runs npm with the Node it runs under first on `PATH`, so a daemon started with an agent's shorter `PATH` still reaches the npm installed beside that Node.
 
 ```sh
 rerail version            # the installed version
 rerail update status      # active and previous versions, channel, last check
-rerail update check       # resolve the channel without installing
-rerail update             # install and activate a newer version
+rerail update check       # resolve latest (or --channel <tag>) without installing
+rerail update             # install and activate a newer version from latest
+rerail update --channel next   # the same from another dist-tag (next: release candidates)
 ```
 
-`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by updating each installed rule pack to the newest version that fits the active core.
+`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. Without `--channel` it always installs from `latest`, even on a computer that `--channel next` moved to `next`, and moves that computer back to `latest` once `latest` has its version or a newer one. A `next` build `latest` has not reached stays, with its channel, and the update says so; it never moves a version back. It names each step on stderr as it starts, and ends by updating each installed rule pack to the newest version that fits the active core.
 
 <details>
 <summary>Update steps and failures</summary>
@@ -393,7 +397,7 @@ rerail update             # install and activate a newer version
 `rerail events`, hooks and the daemon run only the active version. `rerail update`:
 
 1. Copies the database to `$RERAIL_HOME/rerail.sqlite.pre-update` for manual restore ([Database compatibility](how-setup-works.md#database-compatibility)).
-2. Installs the configured npm dist-tag's version under `~/.rerail/versions`.
+2. Installs the version under `latest`, or the `--channel` dist-tag, under `~/.rerail/versions`.
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
 5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone. A daemon still running another version restarts on the active one, on the same port ([how updates hand over](how-setup-works.md#one-main-instance)).
@@ -448,7 +452,7 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 The daemon writes rules and work links; the shared runtime records harness events.
 
 - `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, `update` (the daily
-  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
+  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), `updateChannel` (the channel `update-state.json` records, the one Rerail and its rule packs update from, or null for a checkout's daemon and under a signed customer profile), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
   is sent at once, again when a commit to the database becomes readable or a pack is installed or removed, and

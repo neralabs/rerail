@@ -155,10 +155,20 @@ function printUpdateResult(result: UpdateResult, home: string, tookMs: number): 
   const from = result.previous === undefined ? "" : `${result.previous.version} → `;
   process.stdout.write(result.changed
     ? `Updated Rerail ${from}${result.current.version} in ${formatDuration(tookMs)}; new harness sessions will use it.\n`
-    : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
+    : `${unchangedLine(result)}\n`);
+  if (result.channelBefore !== undefined) process.stdout.write(`Rerail and its rule packs now update from ${result.channel}, not ${result.channelBefore}.\n`);
   if (!result.changed) return;
   const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
   if (leftOut.length > 0) process.stdout.write(`${leftOutPackLines(result.current.version, leftOut).join("\n")}\n`);
+}
+
+/**
+ * What an update that installed nothing says: the version is current, or, ahead of the channel asked about (a `next`
+ * build `latest` has not reached), that it stays.
+ */
+function unchangedLine({ current, channel, asked }: UpdateResult): string {
+  if (asked === undefined || asked.version === current.version) return `Rerail ${current.version} is current for channel ${asked?.channel ?? channel}.`;
+  return `Rerail ${current.version} is newer than ${asked.version} on ${asked.channel}, so it stays until ${asked.channel} reaches it.`;
 }
 
 /** The installed rule packs core `coreVersion` leaves out, each with why, and how to install a version that fits. */
@@ -550,10 +560,10 @@ async function runEvents(policy?: SignedUpdatePolicy): Promise<number> {
   return await runChild(process.execPath, [join(packageRoot, ENTRY_POINTS.eventStream)]);
 }
 
-/** `rerail update check`: the status, and the version the channel offers. */
+/** `rerail update check`: the status, and the version `latest` (or the channel given) offers. */
 function printUpdateCheck(result: UpdateCheck): void {
   printStatus(result);
-  process.stdout.write(`Available: ${result.availableVersion}\n`);
+  process.stdout.write(`Available on ${result.availableChannel}: ${result.availableVersion}\n`);
   process.stdout.write(`Update available: ${result.updateAvailable ? "yes" : "no"}\n`);
 }
 

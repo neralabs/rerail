@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVE_PROFILE_FILE } from "../../src/activation/index.js";
-import { startUpdateChecks, UPDATE_CHECK_FILE, updateCheckApplies, type UpdateChecks } from "../../src/setup/update-check.js";
+import { reportedUpdateChannel, startUpdateChecks, UPDATE_CHECK_FILE, updateCheckApplies, type UpdateChecks } from "../../src/setup/update-check.js";
 import { UPDATE_STATE_FILE, type PackageRegistry } from "../../src/setup/updater.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -108,22 +108,15 @@ describe("the daemon's daily update check", () => {
     expect(restarted.newest()?.latest).toBe("0.4.0");
   });
 
-  it("asks on the channel rerail update installs from, and asks again at the next look when it changes", async () => {
-    const folder = home(), time = clock(), npm = registry("0.3.0-next.2", "0.3.0");
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.2.1", packageRoot: folder } }));
+  it.each(["next", "beta"])("asks about latest on %s too, where a bare rerail update installs from latest", async channel => {
+    const folder = home(), time = clock(), npm = registry("0.3.0");
+    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel, current: { version: `0.3.0-${channel}.1`, packageRoot: folder } }));
+    // An older daemon asked about the recorded channel: its answer, a preview, is not reported.
+    writeFileSync(join(folder, UPDATE_CHECK_FILE), JSON.stringify({ channel, latest: `0.3.1-${channel}.0`, answeredAt: time.now(), askedAt: time.now() }));
     const checks = start(folder, npm, time.now);
-    await time.advance(1_000);
-    expect(checks.newest()?.latest).toBe("0.3.0-next.2");
-
-    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "latest", current: { version: "0.2.1", packageRoot: folder } }));
-    // The channel left behind is not reported in the meantime, nor by a daemon restarted before its first look.
     expect(checks.newest()).toBeNull();
-    const restarted = start(folder, npm, time.now);
-    expect(restarted.newest()).toBeNull();
-    restarted.stop();
-
-    await time.advance(HOUR);
-    expect(npm.asked).toEqual(["next", "latest"]);
+    await time.advance(1_000);
+    expect(npm.asked).toEqual(["latest"]);
     expect(checks.newest()?.latest).toBe("0.3.0");
   });
 
@@ -175,4 +168,24 @@ describe("whether the daemon checks at all", () => {
     writeFileSync(join(folder, ACTIVE_PROFILE_FILE), "acme\n");
     expect(updateCheckApplies(folder, {})).toBe(false);
   });
+});
+
+describe("the channel rerail update installs from", () => {
+  it("is the one update-state.json records, else latest, and unknown while a signed customer profile is active", () => {
+    const folder = home();
+    expect(reportedUpdateChannel(folder)).toBe("latest");
+    writeFileSync(join(folder, UPDATE_STATE_FILE), JSON.stringify({ schemaVersion: 1, channel: "next", current: { version: "0.2.2", packageRoot: folder } }));
+    expect(reportedUpdateChannel(folder)).toBe("next");
+    writeFileSync(join(folder, ACTIVE_PROFILE_FILE), "acme\n");
+    expect(reportedUpdateChannel(folder)).toBeUndefined();
+  });
+
+  it.each([["unparseable", "{"], ["no string channel", JSON.stringify({ schemaVersion: 1, channel: 7 })]])(
+    "is latest when update-state.json is %s, as when it is missing",
+    (_case, contents) => {
+      const folder = home();
+      writeFileSync(join(folder, UPDATE_STATE_FILE), contents);
+      expect(reportedUpdateChannel(folder)).toBe("latest");
+    },
+  );
 });

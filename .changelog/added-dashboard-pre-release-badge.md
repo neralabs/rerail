@@ -1,0 +1,1 @@
+The dashboard says "Pre-release" beside the version, in the top bar and in Settings, on a computer that updates from `next` or `beta`, or runs a version such as `0.3.0-next.1`: those are release candidates still in QA.
