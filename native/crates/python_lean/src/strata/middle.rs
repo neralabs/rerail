@@ -223,11 +223,15 @@ impl Depth {
 
     /// The depth out of the range from `d`, none where it goes past the bound (refused).
     pub fn apply(self, d: i8) -> Option<i8> {
+        let (out, ok) = self.apply_sel(d);
+        ok.then_some(out)
+    }
+
+    /// `apply` with no branch: the depth out, and whether it stays within the bound.
+    #[inline(always)]
+    fn apply_sel(self, d: i8) -> (i8, bool) {
         let d = i32::from(d);
-        if (d + self.max).max(self.k) > i32::from(super::MAX_DEPTH) {
-            return None;
-        }
-        Some((d + self.net).max(self.net - self.min) as i8)
+        ((d + self.net).max(self.net - self.min) as i8, (d + self.max).max(self.k) <= i32::from(super::MAX_DEPTH))
     }
 
     /// A block's brackets in code, opener `up`, closer `down`.
@@ -268,7 +272,22 @@ pub(crate) fn rb_lane(c: RB) -> Option<usize> {
 
 /// A chunk's summary (pass 1): for each lane of the carries it can be entered with, the lane it leaves in and its
 /// depth's run, none where B's reading from that entry is wrong.
-pub type Summary = [Option<(u8, Depth)>; LANES];
+pub type PerLane = [Option<(u8, Depth)>; LANES];
+
+/// A chunk's summary (pass 1's, which pass 3 composes): its map over every lane, a block map's form.
+pub type Summary = BlockMap;
+
+impl BlockMap {
+    /// The map of per-lane runs (`WRONG` for none).
+    pub fn of_lanes(p: &PerLane) -> BlockMap {
+        BlockMap { exit: core::array::from_fn(|l| p[l].map_or(WRONG as u8, |(e, _)| e)), depth: core::array::from_fn(|l| p[l].map_or(Depth::default(), |(_, d)| d)) }
+    }
+
+    /// Each lane's run, none at `WRONG`.
+    pub fn lanes(&self) -> PerLane {
+        core::array::from_fn(|l| (usize::from(self.exit[l]) != WRONG).then_some((self.exit[l], self.depth[l])))
+    }
+}
 
 /// The range of blocks strata 2 and 3 cover for the chunk `from..to` (`blocks` the text's): from the block below its
 /// first to the one below the next chunk's, the last chunk to the text's end.
@@ -279,7 +298,7 @@ fn region_range(from: usize, to: usize, blocks: usize) -> (usize, usize) {
 
 /// Pass 1: chunk `from..to`'s summary, from every lane at once, by its bytes alone (stratum 1's carries read from the
 /// bytes below it).
-pub fn summary(src: &[u8], from: usize, to: usize) -> Summary {
+pub fn summary(src: &[u8], from: usize, to: usize) -> PerLane {
     let blocks = src.len().div_ceil(64);
     let to = to.min(blocks);
     let (c0, _) = firsts(from);
@@ -445,13 +464,15 @@ pub fn summary_superposed(src: &[u8], from: usize, to: usize) -> Summary {
     for w in b[r0 + lead - c0 - 1..r1 + lead - c0 + 1].windows(3) {
         then_block(&mut exit, &mut dep, &block_map(&w[0], &w[1], &w[2]));
     }
-    // At the text's end, a string open is B's reading wrong.
-    let at_end = r1 == blocks;
-    core::array::from_fn(|l| {
-        let e = usize::from(exit[l]);
-        let open = e != WRONG && (lane_rb(e).t0 != 0 || lane_rb(e).s0 != 0);
-        (e != WRONG && !(at_end && open)).then_some((e as u8, dep[l]))
-    })
+    // At the text's end, a string open is B's reading wrong: selected by masks.
+    let at_end = u8::from(r1 == blocks);
+    for e in &mut exit {
+        // A lane at `WRONG` (144) has `e / 16 % 3 == 0` and `e / 48 == 3`: open, and stays `WRONG`.
+        let open = u8::from(*e / 48 != 0) | u8::from(*e / 16 % 3 != 0);
+        let keep = (at_end & open).wrapping_sub(1);
+        *e = (*e & keep) | (WRONG as u8 & !keep);
+    }
+    BlockMap { exit, depth: dep }
 }
 
 /// Pass 1 superposed against B run from each lane, chunk by chunk of `blocks` blocks: the same summary, or the first
@@ -461,7 +482,7 @@ pub fn superposed_is_per_lane(src: &[u8], blocks: usize) -> Result<(), String> {
     let mut from = 0;
     while from < n.max(1) {
         let to = from + blocks;
-        let (a, b) = (summary_superposed(src, from, to), summary(src, from, to));
+        let (a, b) = (summary_superposed(src, from, to).lanes(), summary(src, from, to));
         if let Some(l) = (0..LANES).find(|&l| a[l] != b[l]) {
             return Err(format!("chunk {from}..{to}, lane {l} ({:?}): superposed {:?}, per lane {:?}", lane_rb(l), a[l], b[l]));
         }
@@ -491,7 +512,9 @@ fn each<T>(n: usize, order: Order<'_>, mut f: impl FnMut(usize) -> T) -> Vec<T> 
 
 /// Summary `a` then `b`: each lane of `a` on in the lane of `b` it leaves in.
 pub fn compose(a: &Summary, b: &Summary) -> Summary {
-    core::array::from_fn(|l| a[l].and_then(|(e, d)| b[usize::from(e)].map(|(e2, d2)| (e2, Depth::then(d, d2)))))
+    let mut x = *a;
+    then_block(&mut x.exit, &mut x.depth, b);
+    x
 }
 
 /// Pass 3: each chunk's carries into its first block of strata 2 and 3 and its depth there, from the chunks' summaries,
@@ -509,8 +532,10 @@ pub fn entries_in(sums: &[Summary], order: Order<'_>) -> Vec<Option<(RB, i8)>> {
         if c == 0 {
             return Some((RB::default(), 0));
         }
-        let (e, dep) = acc[c - 1][start]?;
-        Some((lane_rb(usize::from(e)), dep.apply(0)?))
+        let (d, ok) = acc[c - 1].depth[start].apply_sel(0);
+        let e = acc[c - 1].exit[start];
+        let ok = ok & (usize::from(e) != WRONG);
+        ok.then(|| (lane_rb(usize::from(e)), d))
     })
 }
 
@@ -909,7 +934,7 @@ pub fn entries_are_the_folds(src: &[u8], blocks: usize, order: Order<'_>) -> Opt
     got.ok()?;
     let n = src.len().div_ceil(64);
     let k = n.div_ceil(blocks.max(1)).max(1);
-    let sums = each(k, order, |c| summary(src, c * blocks.max(1), (c + 1) * blocks.max(1)));
+    let sums = each(k, order, |c| BlockMap::of_lanes(&summary(src, c * blocks.max(1), (c + 1) * blocks.max(1))));
     let es = entries_in(&sums, order);
     for (c, (e, f)) in es.iter().zip(&fold).enumerate() {
         let from = c * blocks.max(1);

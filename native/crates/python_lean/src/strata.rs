@@ -183,6 +183,36 @@ mod nib {
     ]);
 }
 
+impl B {
+    /// Stratum 1's masks of a block read from `sh` bytes below it: the block's own (the bytes past the text's end
+    /// none).
+    #[inline(always)]
+    fn shifted(self, sh: usize) -> B {
+        let f = |m: u64| m >> sh;
+        B {
+            word: f(self.word),
+            space: f(self.space),
+            sptab: f(self.sptab),
+            skip: f(self.skip),
+            eol: f(self.eol),
+            lf: f(self.lf),
+            bare_lf: f(self.bare_lf),
+            sq: f(self.sq),
+            dq: f(self.dq),
+            bt: f(self.bt),
+            bs: f(self.bs),
+            hash: f(self.hash),
+            ob: f(self.ob),
+            cb: f(self.cb),
+            lb: f(self.lb),
+            rb: f(self.rb),
+            slow: f(self.slow),
+            pfx: f(self.pfx),
+            ..self
+        }
+    }
+}
+
 /// Stratum 1 of one block: two class bytes by nibble tables, then each mask one compare or bit test (`vn`: the
 /// bytes one on).
 #[inline(always)]
@@ -194,13 +224,9 @@ fn block(v: V, vn: V) -> B {
     let (k1, k2) = (t(nib::T1), t(nib::T2));
     let is = |k: V, bits: u8| (k & s(bits)).simd_ne(s(0));
     let (space, lf) = (eq(b' ').to_bitmask(), eq(b'\n').to_bitmask());
-    // Tabs, form feeds, `'\r'` and backticks are rare: one test, and each its own only in a block that has one.
-    let (tab, ff, cr, bt) = if is(k2, nib::RARE_WS | nib::TICK).any() {
-        (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask(), eq(b'`').to_bitmask())
-    } else {
-        (0, 0, 0, 0)
-    };
-    let (lbm, rbm) = if is(k2, nib::BRACE).any() { (eq(b'{').to_bitmask(), eq(b'}').to_bitmask()) } else { (0, 0) };
+    // Tabs, form feeds, `'\r'`, backticks and braces: a compare each, in every block (no test of whether it has one).
+    let (tab, ff, cr, bt) = (eq(b'\t').to_bitmask(), eq(0x0c).to_bitmask(), eq(b'\r').to_bitmask(), eq(b'`').to_bitmask());
+    let (lbm, rbm) = (eq(b'{').to_bitmask(), eq(b'}').to_bitmask());
     // The next byte `=` or `>`: one subtraction and compare.
     let next_eq_gt = (vn - s(b'=')).simd_lt(s(2)) & v.simd_ne(s(b' '));
     B {
@@ -234,30 +260,54 @@ fn block(v: V, vn: V) -> B {
     }
 }
 
-/// The 64 bytes from `at`, zeros past the text's end.
-#[cold]
-fn bytes_from(src: &[u8], at: usize) -> V {
-    let mut b = [0u8; 64];
-    let k = src.len().saturating_sub(at).min(64);
-    if k > 0 {
-        b[..k].copy_from_slice(&src[at..at + k]);
+/// The 64 bytes a block's reads load for byte `at`: from `base`, the lesser of `at` and the text's last 64 bytes'
+/// start, so that a load never runs past the text's end and no block is copied. Its bytes, `base`, and how far
+/// below `at` they start (the lanes the reads shift out). A text under 64 bytes has no 64 to load: it alone is
+/// read from its bytes padded with zeros (one test per text, not per block).
+#[inline(always)]
+fn window(src: &[u8], at: usize) -> (V, usize, usize) {
+    let n = src.len();
+    if n < 64 {
+        return (short_text(src), 0, at);
     }
+    let base = at.min(n - 64);
+    (V::from_slice(&src[base..base + 64]), base, at - base)
+}
+
+/// A text under 64 bytes, padded with zeros.
+#[cold]
+fn short_text(src: &[u8]) -> V {
+    let mut b = [0u8; 64];
+    b[..src.len()].copy_from_slice(src);
     V::from_array(b)
+}
+
+/// The lanes from `sh` on of `v`, zeros past them: one table lookup.
+#[inline(always)]
+fn lanes_from(v: V, sh: usize) -> V {
+    const IOTA: V = {
+        let mut a = [0u8; 64];
+        let mut i = 0;
+        while i < 64 {
+            a[i] = i as u8;
+            i += 1;
+        }
+        V::from_array(a)
+    };
+    v.swizzle_dyn(IOTA + V::splat(sh.min(64) as u8))
+}
+
+/// The 64 bytes from `at`, zeros past the text's end.
+#[inline(always)]
+fn bytes_from(src: &[u8], at: usize) -> V {
+    let (v, _, sh) = window(src, at);
+    lanes_from(v, sh)
 }
 
 /// Block `bi`'s 64 bytes, zeros past the text's end.
 #[inline(always)]
 fn bytes(src: &[u8], bi: usize) -> V {
-    let at = bi * 64;
-    match src.get(at..at + 64) {
-        Some(b) => V::from_slice(b),
-        None => {
-            let mut b = [0u8; 64];
-            let k = src.len().saturating_sub(at).min(64);
-            b[..k].copy_from_slice(&src[at..at + k]);
-            V::from_array(b)
-        }
-    }
+    bytes_from(src, bi * 64)
 }
 
 /// Block `bi`'s bytes that are one of `xs`: made from its bytes where an f-string's interior asks (its `:`), not
@@ -293,40 +343,48 @@ pub struct S1 {
 
 /// Blocks `from..to`'s classes after `out`, from the carries `c` into block `from` (left as those out of block `to - 1`),
 /// and the carries into block `at` kept in `at_c`.
-#[inline(always)]
+#[inline(never)]
 fn classes_in(src: &[u8], from: usize, to: usize, c: &mut S1, out: &mut Vec<B>, at: usize, at_c: &mut S1) {
+    // A text under 64 bytes is read from its bytes padded (`window`): one test per call, not per block.
+    if src.len() < 64 {
+        classes_over::<true>(src, from, to, c, out, at, at_c);
+    } else {
+        classes_over::<false>(src, from, to, c, out, at, at_c);
+    }
+}
+
+/// `classes_in` over a text under 64 bytes (`SHORT`) or not.
+#[inline(always)]
+fn classes_over<const SHORT: bool>(src: &[u8], from: usize, to: usize, c: &mut S1, out: &mut Vec<B>, at: usize, at_c: &mut S1) {
     let n = src.len();
+    let Some(last) = n.checked_sub(1) else { return };
     let (mut carry, mut cr_carry, mut lb_carry) = (c.carry, c.cr, c.lb);
-    let mut at_b = from * 64;
     let end = (to * 64).min(n);
-    while at_b < end {
-        if at_b >> 6 == at {
-            *at_c = S1 { carry, cr: cr_carry, lb: lb_carry };
-        }
-        let at = at_b;
-        let v = match src.get(at..at + 64) {
-            Some(b) => V::from_slice(b),
-            None => {
-                let mut b = [0u8; 64];
-                b[..n - at].copy_from_slice(&src[at..]);
-                V::from_array(b)
-            }
-        };
-        // The bytes one on: the next byte of each, for the operators' second bytes.
-        let vn = match src.get(at + 1..at + 65) {
-            Some(b) => V::from_slice(b),
-            None => bytes_from(src, at + 1),
-        };
-        let mut b = block(v, vn);
+    // One reservation and a write per block (a range's `extend`: no test of the room per block).
+    out.extend((from * 64..end).step_by(64).map(|at_b| {
+        // The carries into block `at` kept, by a select.
+        let here = 0u64.wrapping_sub(u64::from(at_b >> 6 == at));
+        *at_c = S1 { carry: (carry & here) | (at_c.carry & !here), cr: (cr_carry & here) | (at_c.cr & !here), lb: (lb_carry & here) | (at_c.lb & !here) };
+        // The block's bytes by one load that ends at the text's end at most (`window`), its masks shifted down by
+        // the bytes below the block it starts at. The bytes one on: the same lanes one on, and the byte after them
+        // (none past the text's end: a clamped index and a mask).
+        let base = if SHORT { 0 } else { at_b.min(n - 64) };
+        // SAFETY: not `SHORT`, the text has 64 bytes or more and `base + 64 <= n`.
+        let v = if SHORT { short_text(src) } else { unsafe { V::from_slice(src.get_unchecked(base..base + 64)) } };
+        let sh = at_b - base;
+        let after = base + 64;
+        // SAFETY: `after.min(last) <= last < n`.
+        let nb = unsafe { *src.get_unchecked(after.min(last)) } & 0u8.wrapping_sub(u8::from(after < n));
+        let vn = v.shift_elements_left::<1>(nb);
+        let mut b = block(v, vn).shifted(sh);
         b.esc = escaped(b.bs, &mut carry);
         // `bare_lf` held the block's `'\r'`s: a `'\n'` after an escaped one is escaped too.
         let esc_cr = b.bare_lf & b.esc;
         b.bare_lf = b.lf & !b.esc & !((esc_cr << 1) | cr_carry);
         cr_carry = esc_cr >> 63;
         b.lbu = b.lb & !escaped(b.lb, &mut lb_carry);
-        out.push(b);
-        at_b += 64;
-    }
+        b
+    }));
     *c = S1 { carry, cr: cr_carry, lb: lb_carry };
 }
 

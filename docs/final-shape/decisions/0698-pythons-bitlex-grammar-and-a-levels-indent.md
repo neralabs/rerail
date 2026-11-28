@@ -779,9 +779,28 @@ statements and blocks end.
     - **The block loop is the only loop.** The lanes are unrolled, a zero block below the text's start stands in
       for a test of it, and each block's map is composed onto the lanes' runs so far by gathers (`then_block`),
       also unrolled.
-    - **As compiled** (`crates/python_lean/scripts/check_pass1_branch_free.sh`, aarch64): `block_map` is 28831
+    - **As compiled** (`crates/python_lean/scripts/check_strata_branch_free.sh`, aarch64): `block_map` is 28831
       instructions and `then_block` 4532, with no conditional branch and no call; the selections are `csel`s.
     - **As tested:** the superposed summary is B run lane by lane, on every lane of every chunk: the test texts and
       600 random texts at 1, 2, 3 and 16 blocks a chunk, and the corpus at 1, 2, 3 and 16 (1644 of 1644 files).
       `lex_middle` with it gives 1644 of 1644 files the serial lexer's. The serial lexer's speed is unchanged with
       `pfx` made in stratum 1: B 1.02× the lean lexer.
+101. **Stratum 1 and pass 3 with no branch** (as built).
+    - **Stratum 1 tests nothing per block.** Tabs, form feeds, `'\r'`, backticks and braces are a compare each in
+      every block; before, each was made only in a block that had one, after one test.
+    - **The last block is not copied.** Each block is one 64-byte load from the lesser of its start and the text's
+      last 64 bytes, and its masks are shifted down by the bytes below the block the load starts at. The bytes one
+      on are the same lanes one on, with the byte after them read at a clamped index and masked. `bytes` and
+      `bytes_from` (the later strata's reads of a block's bytes) are the same load, with the lanes shifted by a
+      table lookup.
+    - A text under 64 bytes has no 64 bytes to load. It alone is read from its bytes padded with zeros, decided once
+      per call (`classes_over::<SHORT>`), not per block.
+    - The carries kept at a chunk's entry are a select, and the blocks are written by one `extend` (no test of the
+      room per block).
+    - **As compiled:** stratum 1's block loop has only the loop's own two branches (the test of an empty range and
+      the back edge).
+    - **Pass 3's composition is `then_block`.** A summary is a block map's form (each lane's exit, `WRONG` a lane
+      that stays itself, and its depth's run), so composing two summaries is the gathers pass 1 composes blocks
+      with. The depth's application at an entry is a select (`Depth::apply_sel`).
+    - **As measured:** stratum 1's compares in every block cost the serial lexer: B 0.95× the lean lexer, from
+      1.02×. The corpus gives the same records and entries as before (1644 of 1644 from the middle).
