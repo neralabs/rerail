@@ -500,6 +500,11 @@ impl<'a> Doc<'a> {
             _ => self.entry.doc_module,
         })
     }
+    /// `view_visit(l, col)`: numbered node `l`'s id, its place in the visit order (`ViewDoc::visits`).
+    #[inline]
+    pub fn visit(&self, l: u32, col: u32) -> i64 {
+        if col == 0 { self.node_id(l) } else { i64::from(self.items(&self.entry.visits)[l as usize]) }
+    }
     /// The numbered node of the `next_sibling` view's row `i` (a node after a numbered sibling), and its tape node.
     #[inline]
     pub fn after_sibling(&self, i: u32) -> (u32, u32) {

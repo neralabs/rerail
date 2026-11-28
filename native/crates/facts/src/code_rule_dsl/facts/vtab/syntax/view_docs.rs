@@ -134,8 +134,9 @@ impl ViewEntry {
             (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
             let (columns, named, digests) = p.derived.made();
-            let [before, after, visits] = columns;
-            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after), (&raw mut (*d).visits, visits)] {
+            // The visit order's run is its making's (`VisitIndex::places`), which may come after.
+            let [before, after, _] = columns;
+            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after)] {
                 if let Some(c) = cells {
                     Run::set(run, c.as_ptr(), c.len());
                 }

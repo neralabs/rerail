@@ -2427,8 +2427,9 @@ use rerail_blocks::vector::Vector;
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
         // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before). `doc`'s rows, one a
-        // file, read in place too: its key and its path's and module's atoms, in its entry (`view_doc`).
-        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order", "doc"] {
+        // file, read in place too: its key and its path's and module's atoms, in its entry (`view_doc`); and
+        // `visit_index`'s, a row a node, its place in the visit order in its entry's `visits` (`view_visit`).
+        for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order", "doc", "visit_index"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
             let Some(d) = src.device_view() else {
                 assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
@@ -2462,8 +2463,8 @@ use rerail_blocks::vector::Vector;
         // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
         // of (Metal's, CUDA's, the CPU's); given to the device by none of them elsewhere (decision 0440 step C:
         // OpenCL's wraps have none, though its allocations may, Intel's unified shared memory).
-        let placed = if device.has_addresses() { 18 } else { 0 };
-        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth, node_order and doc read in place");
+        let placed = if device.has_addresses() { 20 } else { 0 };
+        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth, node_order, doc and visit_index read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};

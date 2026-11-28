@@ -1271,6 +1271,15 @@ pub fn doc(b: &mut B<'_, '_>) -> Value {
     b.either(I64, k, |b| b.entry_u32(at::KEY), |b| b.either(I64, p, |b| b.entry_u32(at::DOC_PATH), |b| b.entry_u32(at::DOC_MODULE)))
 }
 
+/// `view_visit(l, col)`: column `col` of `visit_index`'s row of numbered node `l`: its id, its place in the visit
+/// order (`ViewDoc::visits`, by local id: derived where its program reads `visit_index`, `tape_rows::derive`).
+#[cfg(feature = "ir")]
+pub fn visit(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.node_id(l), |b| b.entry_item(at::VISITS, l))
+}
+
 #[cfg(all(test, feature = "ir"))]
 mod tests {
     use super::{NO_DOC, ViewDir, ViewRow};

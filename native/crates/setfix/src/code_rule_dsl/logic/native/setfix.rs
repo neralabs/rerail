@@ -5312,6 +5312,10 @@ impl View {
             }
         }
     }
+    /// The relation it reads, by its table's name (`main.def_unit`'s `def_unit`), where it was found by one.
+    pub fn name(&self) -> Option<&str> {
+        self.of.as_deref()
+    }
     /// Whether the view reads every row of its source (no constant filters chose its rows).
     pub fn whole(&self) -> bool {
         self.ids.is_none()

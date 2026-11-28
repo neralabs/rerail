@@ -202,6 +202,9 @@ pub const READS: &[Read] = &[
     // `doc` read in place: a file's row of its key and its path's and module's atoms, in its entry. Last, so no other
     // read's number moves.
     Read { family: Family::View, name: "view_doc", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::doc },
+    // `visit_index` read in place: each node's id and its place in the visit order, in its entry's `visits`. Last, so
+    // no other read's number moves.
+    Read { family: Family::View, name: "view_visit", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::visit },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

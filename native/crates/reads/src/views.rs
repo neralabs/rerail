@@ -175,10 +175,10 @@ pub const END: usize = SPREAD + 1;
 /// `text`'s rows (decision 0656 step 4: a view, no row made).
 pub const TEXT: usize = END + 1;
 /// The first of the tape's other relations' (`tape_rows`): `structural_before`, `structural_after`,
-/// `rr_token_named`, `visit_index` and `tree_digest`, in that order (`doc` is a view's: `DOC_VIEW`).
+/// `rr_token_named` and `tree_digest`, in that order (`doc` and `visit_index` are views': `DOC_VIEW`, `VISIT_VIEW`).
 pub const TAPE: usize = TEXT + 1;
 /// How many relations `TAPE` starts.
-pub const TAPE_RELATIONS: usize = 5;
+pub const TAPE_RELATIONS: usize = 4;
 
 /// Where a home of a directory's tapes and lines lies for each executor: a slab's (or a tape's vector's) host
 /// address, and its device address (`gpu`; 0 where the device has none: no device, or the home is a vector of the
@@ -555,10 +555,14 @@ pub fn lower_bound(keys: &[u32], key: u32) -> u32 {
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
-/// `node_order`; then `op`, then `doc` (a row per file: its key, its path's and module's atoms).
-pub const VIEWS: [&str; 14] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_doc"];
-/// `doc`'s slot (`VIEWS`' last): its first rows, one a file.
-pub const DOC_VIEW: usize = VIEWS.len() - 1;
+/// `node_order`; then `op`, then `doc` (a row per file: its key, its path's and module's atoms), then `visit_index` (a
+/// row a node: its id, its place in the visit order, `ViewDoc::visits`).
+pub const VIEWS: [&str; 15] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op", "view_doc", "view_visit"];
+/// `doc`'s slot: its first rows, one a file.
+pub const DOC_VIEW: usize = 13;
+const _: () = assert!(matches!(VIEWS[DOC_VIEW].as_bytes(), b"view_doc"));
+/// `visit_index`'s slot (`VIEWS`' last): its first rows, one a node.
+pub const VISIT_VIEW: usize = VIEWS.len() - 1;
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -580,6 +584,7 @@ pub mod at {
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
     pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
+    pub const VISITS: i32 = offset_of!(ViewDoc, visits) as i32;
     pub const SEGMENTS: i32 = offset_of!(ViewDoc, segments) as i32;
     pub const PLACE: i32 = offset_of!(ViewDoc, place) as i32;
     pub const DOC_PATH: i32 = offset_of!(ViewDoc, doc_path) as i32;
@@ -605,6 +610,8 @@ pub const ORDER_COLUMNS: u32 = 2;
 pub const OP_COLUMNS: u32 = 2;
 /// `doc`'s: the document's key, its path's atom, its module's.
 pub const DOC_COLUMNS: u32 = 3;
+/// `visit_index`'s: the node's id, its place in the visit order.
+pub const VISIT_COLUMNS: u32 = 2;
 
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
 pub const NO_ROW: u32 = u32::MAX;

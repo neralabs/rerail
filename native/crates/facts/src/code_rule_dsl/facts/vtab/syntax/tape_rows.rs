@@ -171,10 +171,12 @@ pub(super) trait TapeRows: Send + Sync + 'static {
 /// `doc`'s atoms where its program reads it. A reader over several batches' directory (`values::Layered`, its tape
 /// values') asks it of each: a batch whose projection reads no `doc` holds none.
 pub(super) fn entries_hold(view: u32, batch: &Batch) -> bool {
-    if view != super::device_chunk::VIEW_DOC {
-        return true;
-    }
-    let held = (0..batch.docs.len()).all(|doc| DocRow.device_read(batch, doc).is_some_and(|(_, held)| held));
+    let read = |doc| match view {
+        super::device_chunk::VIEW_DOC => DocRow.device_read(batch, doc),
+        super::device_chunk::VIEW_VISIT => VisitIndex.device_read(batch, doc),
+        _ => Some((view, true)),
+    };
+    let held = (0..batch.docs.len()).all(|doc| read(doc).is_some_and(|(_, held)| held));
     if !held {
         crate::code_rule_dsl::prof::count("views.refused.not_derived", 1);
     }
@@ -855,7 +857,7 @@ impl VisitIndex {
             let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python) == Some(p.tag());
             let n = p.len() as usize;
             // copy: derived (each node's key in the visit order, a walk the tape holds no index of)
-            Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
+            let places = Cells::build(p.block(), n.max(1), |out: &mut [u32]| {
                 out.fill(NONE);
                 let mut order = Vec::with_capacity(n);
                 super::tree::visit_order(p, dialect, python, &mut |l, i| {
@@ -865,7 +867,13 @@ impl VisitIndex {
                 super::tree::keys_by_run(&order, |l| (p.global(l) as u32) >> rerail_clif::ids::INDEX_BITS, out);
                 n.max(1)
             })
-            .expect("a projection's block holds a view's places")
+            .expect("a projection's block holds a view's places");
+            // Its entry's run (`view_visit` reads it), written here alone, whoever makes the places first: a host read
+            // of the rows before its entry was filled, or `derive` after.
+            // SAFETY: the entry lies in the projection's block from its making; its `visits` is written by this alone,
+            // inside the `OnceLock`, and read by a view's read only once the `OnceLock` holds it (`device_read`).
+            unsafe { rerail_clif::ids::Run::set(&raw mut (*p.entry().0.as_ptr()).visits, places.as_ptr(), places.len()) };
+            places
         })
     }
 }
@@ -876,7 +884,7 @@ impl TapeRows for VisitIndex {
         VISIT
     }
     fn slot(&self) -> usize {
-        TAPE + 3
+        rerail_clif::view_reads::VISIT_VIEW
     }
     fn columns(&self) -> &'static [&'static str] {
         &["n", "i"]
@@ -894,6 +902,12 @@ impl TapeRows for VisitIndex {
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
         out[1] = i64::from(Self::places(at)[k as usize]);
+    }
+    /// `view_visit`, each node's place in its entry's `visits`, which `places` points it at where its program reads
+    /// `visit_index` (`derive`); a document with no grammar has no row.
+    fn device_read(&self, batch: &Batch, doc: usize) -> Option<(u32, bool)> {
+        let held = batch.dialects.get(batch.docs.tag(doc)).is_none() || batch.docs[doc].derived.visits.get().is_some();
+        Some((super::device_chunk::VIEW_VISIT, held))
     }
 }
 
@@ -936,7 +950,7 @@ impl TapeRows for TreeDigest {
         DIGEST
     }
     fn slot(&self) -> usize {
-        TAPE + 4
+        TAPE + 3
     }
     fn columns(&self) -> &'static [&'static str] {
         &["n", "s"]
