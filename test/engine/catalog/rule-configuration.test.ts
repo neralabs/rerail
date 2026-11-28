@@ -488,7 +488,9 @@ describe("a library rule or a setting whose stored text is no JSON", () => {
     setRuleSetting(db, repositorySetting("", "rule", "no-var", { on: null, mode: "steer", config: { word: "alert" } }));
     const read = () => loadCheckoutRuleSet(db, configurableBundle, checkout(OTHER_CHECKOUT), RUNNING, []);
     const before = read().rulesFor("a.ts").map(rule => [rule.document.rule.id, rule.on, rule.mode, rule.configError === null]);
+    const version = repositoryRulesVersionReader(db);
     damage(db, "rule_settings", "config_json", "target_id = 'configurable'", "[");
+    const damagedVersion = version();
 
     const { value: rules, lines } = logged(() => [read(), read()][1]!);
     const byId = new Map(rules.rulesFor("a.ts").map(rule => [rule.document.rule.id, rule]));
@@ -505,16 +507,23 @@ describe("a library rule or a setting whose stored text is no JSON", () => {
 
     setRuleSetting(db, repositorySetting("", "rule", "configurable", { on: null, mode: "steer", config: { word: "debug" } }));
     expect(read().rulesFor("a.ts").find(rule => rule.document.rule.id === "configurable")).toMatchObject({ config: { word: "debug" }, configError: null });
+    expect(version()).not.toBe(damagedVersion);
   });
 
-  it("gives one signature by both reads, and another when a setting's options stop reading", async () => {
+  it("gives one signature by both reads, another when a setting's options stop reading, and another when it is written again", async () => {
     const db = await workedExample();
-    setRuleSetting(db, repositorySetting("", "rule", "no-console", { on: null, mode: null, config: { word: "alert" } }));
-    const readable = ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE]);
-    expect(loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, []).signature.startsWith(`${readable}:`)).toBe(true);
+    const setting = (config: { word: string } | null) => repositorySetting("", "rule", "no-console", { on: null, mode: "steer", config });
+    const signature = () => logged(() => ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).value;
+    const loaded = () => logged(() => loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, [])).value.signature;
+    setRuleSetting(db, setting({ word: "alert" }));
+    const readable = signature();
+    expect(loaded().startsWith(`${readable}:`)).toBe(true);
     damage(db, "rule_settings", "config_json", "owner_kind = 'repository' AND target_id = 'no-console' AND folder = ''", "[");
-    const damaged = logged(() => ruleConfigurationSignature(db, ruleCatalog, REPOSITORY, [WORKTREE])).value;
+    const damaged = signature();
     expect(damaged).not.toBe(readable);
-    expect(logged(() => loadCheckoutRuleSet(db, ruleCatalog, checkout(WORKTREE), RUNNING, [])).value.signature.startsWith(`${damaged}:`)).toBe(true);
+    expect(loaded().startsWith(`${damaged}:`)).toBe(true);
+    // Written with no options, as the Rules page writes a change of the mode alone over options that do not read.
+    setRuleSetting(db, setting(null));
+    expect(signature()).not.toBe(damaged);
   });
 });

@@ -101,6 +101,22 @@ describe("rule settings: suppressions and config", () => {
     expect(await ruleView()).toMatchObject({ config: null });
   });
 
+  it("shows a rule whose setting's stored options are no JSON as not running, with why, and lets a change of its mode clear them", async () => {
+    expect(await setting({ mode: "log", config: { option: "type" } })).toMatchObject({ status: 200 });
+    // The closing brace gone, as a damaged file or a hand edit leaves it.
+    stores.database().$client.prepare("UPDATE rule_settings SET config_json = ? WHERE target_id = ?").run('{"option":"type"', RULE);
+    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(await ruleView()).toMatchObject({ mode: "log", config: null, configError: expect.stringMatching(/no JSON object/u) });
+      expect((await app.request(`/api/library-rules`)).status).toBe(200);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(await setting({ mode: "steer" })).toMatchObject({ status: 200, body: { settings: [{ mode: "steer", config: null }] } });
+    expect(await ruleView()).toMatchObject({ mode: "steer", config: null, configError: null });
+  });
+
   it("answers a write that puts a rule on Block with the note that it steers in this release, and stores block", async () => {
     const blocked = await setting({ mode: "block" });
     expect(blocked).toMatchObject({ status: 200, body: { settings: [{ mode: "block" }], note: BLOCK_STEERS_NOTE } });
