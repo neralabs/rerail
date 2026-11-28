@@ -524,6 +524,21 @@ describe("a remote changed in place in a checkout not recorded, while the daemon
     expect(await namedRepositories(api, checkout)).toEqual(allNaming(first));
   });
 
+  it("asks a Git that could not start again at each read, one start a read, and names the repository once Git answers", async () => {
+    const { root, first, resolveCheckout } = await twoRepositories();
+    const checkout = cloneAt(join(root, "fresh"), APP);
+    Object.assign(noAnswer, { remotes: true, failed: 0 });
+    try {
+      expect(resolveCheckout(checkout)?.repositoryKey).toBeUndefined();
+      const later = [1, 2, 3].map(() => counted(resolveCheckout, checkout));
+      expect({ failed: noAnswer.failed, later }).toEqual({ failed: 4, later: Array(3).fill({ named: undefined, remotes: 1, starts: 1, stamps: 0 }) });
+    } finally {
+      noAnswer.remotes = false;
+    }
+
+    expect(counted(resolveCheckout, checkout)).toEqual({ named: first, remotes: 1, starts: 1, stamps: 0 });
+  });
+
   it("asks a Git that ran to its time limit once, and at no later read until Git's answer for the clone's remote is kept", async () => {
     const { root, db, first, resolveCheckout } = await twoRepositories();
     const checkout = cloneAt(join(root, "fresh"), APP);

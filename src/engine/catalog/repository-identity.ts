@@ -950,7 +950,7 @@ export interface RemoteAnswer {
    * `remote` is then no answer of Git's, "no remote" included, and nothing keeps it.
    */
   readonly answered: boolean;
-  /** True where a Git asked ran to its time limit: the read asked nothing after it, which would wait as long again. */
+  /** True where the Git that gave no answer ran to its time limit. */
   readonly ranToLimit: boolean;
 }
 
@@ -960,7 +960,9 @@ export function readRemoteAnswer(root: string): RemoteAnswer {
   const kept = keptRemote(source);
   if (kept !== undefined) return { remote: kept.remote, answered: true, ranToLimit: false };
   const answers: GitResult[] = [];
-  for (let step = remoteStep(answers); "ask" in step && !answers.some(answer => ranToLimit(answer.error)); step = remoteStep(answers)) {
+  // The read ends at the first ask Git gives no answer to: it is unanswered from then on, and the next ask would cost
+  // another start, or wait as long again.
+  for (let step = remoteStep(answers); "ask" in step && answers.every(answer => answer.status === 0); step = remoteStep(answers)) {
     answers.push(runGit(root, step.ask));
   }
   return answeredRemote(source, answers);
