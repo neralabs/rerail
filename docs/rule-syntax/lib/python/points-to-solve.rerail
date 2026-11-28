@@ -98,6 +98,30 @@
 .decl types__anc(c: symbol, a: symbol)
 .decl types__proto(c: symbol)
 .decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
+// ---- a term's file (decision 0725: callable relations routed by key) ---------------------------------------------
+// pt_tm_file(t, d): the document a term's rows lie in, read off the term (`pt_tm`): a module's is its name (its path,
+// where it has none); a definition's or a place's, the module its scope is under: the scope (the text before its
+// first `@` or `#`) up, a part at a time, to the first module. A guest's (`~g@..`) are the files whose strings hold
+// guest document g: a guest's text is one tape, shared by equal strings (decision 0431). The relations of a file's
+// terms are asked by term (`.callable R PATTERN by pt_tm_file C`), each ask answered in its term's file; the split
+// writes the terms asked as `pt_tm_file__ask`. No negation reads an ask's term: the walk tests the module table alone.
+// The walk and the router read every file's module (`cross_file`): a file's own table names its module alone.
+.decl pt_tm_file_mod(q: symbol, d: number)
+pt_tm_file_mod(q, d) :- doc(d, _, q), q != "".
+pt_tm_file_mod(p, d) :- doc(d, p, "").
+.decl pt_tm_file_name(q: symbol)
+pt_tm_file_name(q) :- pt_tm_file_mod(q, _).
+.decl pt_tm_guest_doc(g: number, d: number)
+pt_tm_guest_doc(g, d) :- guest_of(n, s), node(g, n, _, _, _), docof(s, d).
+.decl pt_tm_file__ask(t: symbol)
+.decl pt_tm_file_up(t: symbol, s: symbol) cross_file
+pt_tm_file_up(t, t) :- pt_tm_file__ask(t), match("[^~@#]+", t).
+pt_tm_file_up(t, s) :- pt_tm_file__ask(t), match("(?<s>[^~@#][^@#]*)[@#].*", t).
+pt_tm_file_up(t, m) :- pt_tm_file_up(t, s), !pt_tm_file_name(s), m = @pkg_up(s, 1), m != "".
+.decl pt_tm_file(t: symbol, d: number) cross_file
+pt_tm_file(t, d) :- pt_tm_file_up(t, s), pt_tm_file_mod(s, d).
+pt_tm_file(t, d) :- pt_tm_file__ask(t), match("~(?<g>[0-9]+)@.*", t), pt_tm_guest_doc(to_number(g), d).
+
 // ---- names read, and the scope that binds them ----------------------------------------------------------------
 // ---- unconditional rebinding --------------------------------------------------------------------------------------
 // ---- decorators ---------------------------------------------------------------------------------------------------
@@ -1027,6 +1051,7 @@ pt_vopen(n) :- pt_vopen_l_7(n, o), pt_pv(o, "super", c), pt_base_open(c).
 pt_vopen(n) :- pt_vopen_l_5(n, o), pt_pv(o, "fn", _).
 pt_vopen(n) :- pt_vopen_l_5(n, o), pt_pv(o, "wfn", _).
 .decl pt_vopen_l_8(n: symbol)
+.callable pt_vopen_l_8 b by pt_tm_file
 pt_vopen_l_8(n__t) :- pt_vpos(n), !pt_callee(_, n), pt_tm(n, n__t).
 pt_vopen(n) :- pt_vopen_l_8(n), pt_ext_attr(n).
 .decl pt_vopen_l_9(c: symbol, n: symbol)

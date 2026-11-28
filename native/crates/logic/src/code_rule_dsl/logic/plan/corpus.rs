@@ -2782,9 +2782,11 @@ fn run_observed_within(
             } else {
                 version
             };
-            let version = match preparation::callable::split(&version).map_err(Error::Plan)? {
+            let mut requests: Vec<(String, Option<String>)> = Vec::new();
+            let version = match preparation::callable::split(&version).map_err(|e| Error::Plan(format!("the program's callables: {e} (a program of {} rules, outputs {})", version.rules().count(), version.outputs().take(4).map(|o| version.text(o).to_owned()).collect::<Vec<_>>().join(", "))))? {
                 Some(split) => {
                     crate::code_rule_dsl::logic::profile::decision("callable relations", || split.callees.iter().map(|c| format!("{} {}", c.callable.rel, c.callable.pattern())).collect::<Vec<_>>().join(", "));
+                    requests = split.callees.iter().map(|c| (c.callable.request.clone(), c.callable.by.as_ref().map(|(h, _)| h.clone()))).collect();
                     split.caller
                 }
                 None => version,
@@ -2794,6 +2796,14 @@ fn run_observed_within(
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
             // No relation is cross-file without a declaration (decision 0652).
             crate::code_rule_dsl::typing::file_local::crossings_checked(&split).map_err(Error::Plan)?;
+            // A callable's requests are the cross part's to make: made in each file, they never reach a call, and the
+            // file's own rows (a router's table of its own module alone) route them.
+            if let Some((req, by)) = requests.iter().find(|(r, _)| split.file_local.contains(r)) {
+                return Err(Error::Plan(match by {
+                    Some(h) => format!("{req} is made in each file: router {h} reads one file's rows there; declare it `cross_file`, as it reads every file's"),
+                    None => format!("{req} is made in each file: its readers' bodies read one file's rows; a call is asked from the cross-file part"),
+                }));
+            }
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), domains, ops, dialect);
             drop(_step);
@@ -3022,7 +3032,7 @@ fn run_observed_within(
     // among their own reads. An entry holds their rows, so a later round's partial hit derives the asks' rules alone.
     // Callable relations (the spike): their callees, from the prepared program's source (the prepared program is the
     // caller alone, as the store keeps it), lowered as the run's program is.
-    let callees: Vec<preparation::callable::Callee> = match preparation::callable::split(source).map_err(Error::Plan)? {
+    let callees: Vec<preparation::callable::Callee> = match preparation::callable::split(source).map_err(|e| Error::Plan(format!("the prepared program's callees: {e}")))? {
         None => Vec::new(),
         Some(s) => s
             .callees

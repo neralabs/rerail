@@ -1,7 +1,8 @@
 //! Calls to callable per-file relations, answered (the "Callable Per-file Relations" page; a spike, CPU only).
 //!
 //! The caller's fixpoint pauses when a component makes request rows (`R__call`, decision 0065 §2a), and hands them
-//! here as one batch. [`Calls::answer`] groups the batch by what holds the file column 0 names (its document: a
+//! here as one batch. [`Calls::answer`] groups the batch by what holds the file column 0 names (a request's first
+//! column: the callable's own column 0, or the document its router names, `by H`) (its document: a
 //! chunk's relations, which hold its files' rows together), enters each holder once: it binds the holder's relations
 //! as they stand ([`FileState`]) and its files' requests, and runs the callee (R's rules, each reading its request
 //! first) on a connection of its own. The request binds the file, so the callee reads only its rows, wherever the
@@ -63,7 +64,7 @@ pub fn measured(stats: &mut Stats, rel: &str, source: &dyn Source) {
 struct Prepared {
     rel: String,
     width: usize,
-    /// Its request's width: the bound columns'.
+    /// Its request's width: the bound columns', after the document where a router names it.
     key: usize,
     bound: Vec<usize>,
     lowered: lower::Lowered,
@@ -94,7 +95,7 @@ impl Calls {
             let widths = c.reads.iter().map(|r| (r.clone(), c.program.columns_of(r).map_or(1, |cs| cs.len()))).collect();
             by_request.insert(
                 c.callable.request.clone(),
-                Prepared { rel: c.callable.rel.clone(), width: c.callable.width, key: c.callable.bound.len(), bound: c.callable.bound.clone(), lowered, reads: c.reads.clone(), widths },
+                Prepared { rel: c.callable.rel.clone(), width: c.callable.width, key: c.callable.request_width(), bound: c.callable.bound.clone(), lowered, reads: c.reads.clone(), widths },
             );
         }
         Ok(Calls { by_request, db, modules: Modules::default(), modes: modes.to_owned(), memo: BTreeSet::new(), counts: CallCounts::default() })

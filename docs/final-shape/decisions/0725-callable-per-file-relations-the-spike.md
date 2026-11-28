@@ -195,3 +195,22 @@ at home, 97.64% in all; 1.90% are answered by files elsewhere, 0.42% name no fil
 and 73.03% of 21,386 (94.33%), 2.67% elsewhere, 2.92% none. The pair caches are asked by their document alone (`fb`, the
 document bound): a whole file's rows. The findings are the same (PostHog's 5); 52.0 s real, 2.32 GB.
 
+
+**A call routed by its key's file (`.callable R PATTERN by H [C]`).** For the 97.6% whose key names its file, the call
+is sent to the file the key names. `H(k, d)` is a router of column C (default: the first bound one): the callable split
+writes `H__ask(k) :- <the reader's body>` and `R__call(d, key..) :- <the reader's body>, H(k, d)`, and the callee
+reads `R__call(_, key..)`, column 0 bound by the router. A router reads every file's table, so it is declared
+`cross_file`; the run refuses a request made in each file (there a router reads one file's rows and routes none).
+Nothing but the split reads a router before the split runs, so the passes that drop what no output reads take it as a
+root: `prune`, the relations no output reads, a part's outputs (decision 0345) and demand's closure (decision 0048),
+which had dropped `pt_tm_file`'s rules and left every call empty. A file-local relation the cone of requests reads is
+exported, not projected again in the cross part from a stored input, whose rows no load answers (the router's table
+of the files). The library's router is `pt_tm_file` (python/points-to-solve): a term's file, by its scope walked up
+with `@pkg_up` to a module of `doc`'s, and a guest's term by the document its string holds (`pt_tm_guest_doc`); it
+routes `pt_vopen_l_8 b`. PostHog's 291 files, get-handler-writes: 2,260 requests to 163 files (3 holders entered), 0
+of no file, 1,193 answer rows; the cross part's `pt_vopen_l_8` is those 1,193 rows, against 79,319 made whole. The
+findings are the same 5, identical. CPU 29.4 s against 24.8 s (one run each, this Mac loaded): the request path's
+own time (requests answered inside the fixpoint 0.57 s, an input's frames 0.49 s, the cone 0.24 s, exports to the
+cross part 0.16 s), about 250 µs a request answered; joins 1.2 s more. Each file still makes the callee's memo entry
+(`pt_vopen_l_8_at`) whole. Tests: `callable_tests` (a routed call, under demand, and a router's table of the files
+exported).

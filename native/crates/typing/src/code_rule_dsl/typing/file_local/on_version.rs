@@ -1732,6 +1732,26 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
         names
     };
     let cross_reads = read(&|h| !is_local(h));
+    // What the cone of requests reads (decision 0065 §2a): its rows of a file are a load's answer, so a file-local
+    // relation it reads is exported, never derived again from a stored input, whose rows a load does not answer (a
+    // callable's router over each file's module table, `.callable R PATTERN by H`).
+    let cone_reads: BTreeSet<&str> = {
+        let mut cone: BTreeSet<&str> = f.answers().iter().map(|&(req, _)| v.rel_name(req)).filter(|r| !is_local(r)).collect();
+        let mut work: Vec<&str> = cone.iter().copied().collect();
+        let mut reads = BTreeSet::new();
+        while let Some(rel) = work.pop() {
+            for r in v.rules().filter(|r| head(r) == rel) {
+                for a in r.reads() {
+                    let read = v.rel_name(a.rel());
+                    reads.insert(read);
+                    if !is_local(read) && cone.insert(read) {
+                        work.push(read);
+                    }
+                }
+            }
+        }
+        reads
+    };
     let projection = |rel: &str| {
         let Some(id) = v.rel(rel) else { return false };
         let mut rules = v.heads(id).peekable();
@@ -1744,7 +1764,13 @@ pub(super) fn crossing(v: &Version, f: Fields<'_>, local: &BTreeSet<String>) -> 
                 // file and made every document's rows for it (`raw_all_name` on t50's product run, 24 s of CPU).
                 // Its projection is exported instead.
                 match (body.next().map(|l| l.view()), body.next()) {
-                    (Some(L::Atom(a)), None) => !a.neg() && f.is_input(v.rel_name(a.rel())) && !v.rel_name(a.rel()).starts_with(crate::code_rule_dsl::facts::core::ast_matches::PREFIX),
+                    (Some(L::Atom(a)), None) => {
+                        let input = v.rel_name(a.rel());
+                        !a.neg()
+                            && f.is_input(input)
+                            && !input.starts_with(crate::code_rule_dsl::facts::core::ast_matches::PREFIX)
+                            && (!cone_reads.contains(rel) || super::run_constant(v, input))
+                    }
                     _ => false,
                 }
             })
