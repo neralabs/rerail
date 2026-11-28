@@ -414,7 +414,7 @@ fn step_map(buf: &[u8], lx: &crate::tier1::Lexed, toks: &[crate::middle::Token],
 fn tier2_places_by_record_are_the_walks() {
     use crate::middle::{Entry, Stop, STEP_PLACES};
     let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
-    let (mut records, mut files_done, mut refused) = (0, 0, 0);
+    let (mut records, mut files_done, mut refused, mut nodes_checked) = (0, 0, 0, 0);
     for (k, f) in all.iter().enumerate() {
         let buf = padded(f);
         let lx = lex(&buf, f.len());
@@ -426,11 +426,14 @@ fn tier2_places_by_record_are_the_walks() {
         let toks = crate::middle::tokens(&buf, &lx, &ty.types, &crate::middle::in_order);
         // The serial walk a record at a time: its place before each record, every read a place, and its verdict.
         let mut serial = vec![REFUSED; n + 1];
+        // The nodes written before each record's step.
+        let mut serial_nodes = vec![0usize; n + 1];
         let mut ret = [0u8; crate::middle::STEP_DEPTH];
         let mut en = Entry { i: 0, e: 0, depth: 0, st: 0 };
         let mut d = Count { toks: &toks, nodes: 0 };
         let verdict = loop {
             serial[en.i] = en.st;
+            serial_nodes[en.i] = d.nodes;
             // SAFETY: as `step_map`'s.
             match unsafe { crate::middle::run_step(&buf, &lx, &mut d, en, &mut ret, 0, en.i + 1) } {
                 Stop::At(x) => {
@@ -482,9 +485,11 @@ fn tier2_places_by_record_are_the_walks() {
         let maps: Vec<[u8; 32]> = (0..=n).map(|_| [REFUSED; 32]).collect();
         let mut maps = maps;
         let mut starts = vec![REFUSED; n + 1];
+        let mut counts = vec![[0u32; 32]; n + 1];
         for r in 0..=n {
-            let (m, c, _) = step_map(&buf, &lx, &toks, r, walk_depth(r));
+            let (m, c, nodes) = step_map(&buf, &lx, &toks, r, walk_depth(r));
             maps[r] = m;
+            counts[r] = nodes;
             let mut s = c.iter().take(STEP_PLACES).copied().filter(|&x| x != REFUSED);
             if let Some(first) = s.next() {
                 assert!(s.all(|x| x == first), "file {k}: record {r}'s level starts at more than one place");
@@ -531,11 +536,18 @@ fn tier2_places_by_record_are_the_walks() {
         // The refusal: the first record whose step from its place is refused (or whose place is none).
         // A file whose root ends at its last record's step has ended there: its end's place is `ENDS`.
         let stuck = (0..=n).find(|&r| if place[r] == ENDS { r < n } else { place[r] as usize >= STEP_PLACES || maps[r][place[r] as usize] == REFUSED });
+        // The node scan: each record's nodes at its place, a prefix sum in file order: its first node's number.
+        let last = stuck.unwrap_or(n);
+        let mine: Vec<usize> = (0..=last).map(|r| if (place[r] as usize) < STEP_PLACES { counts[r][place[r] as usize] as usize } else { 0 }).collect();
+        let numbered = crate::middle::scan(mine.clone(), &order, |a, b| a + b);
         for r in 0..=verdict.0 {
             if Some(r) == stuck {
                 break;
             }
             assert_eq!(place[r], serial[r], "file {k}: record {r}'s place by its level's scan, the walk's");
+            let first = if r == 0 { 0 } else { numbered[r - 1] };
+            assert_eq!(first, serial_nodes[r], "file {k}: record {r}'s first node by the node scan, the walk's");
+            nodes_checked += 1;
         }
         match verdict.1 {
             Ok(()) => assert!(stuck.is_none(), "file {k} ({:?}): refused by the scan at record {stuck:?}, the walk accepted it; places {:?}, the walk's {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), &place[..place.len().min(12)], &serial[..serial.len().min(12)]),
@@ -547,5 +559,5 @@ fn tier2_places_by_record_are_the_walks() {
         records += n;
         files_done += 1;
     }
-    eprintln!("{files_done} files ({refused} refused), {records} records: each record's place by its level's scan is the walk's");
+    eprintln!("{files_done} files ({refused} refused), {records} records: each record's place by its level's scan is the walk's, and its first node's number by the node scan ({nodes_checked} records)");
 }
