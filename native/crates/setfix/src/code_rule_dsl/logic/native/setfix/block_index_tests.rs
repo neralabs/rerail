@@ -228,15 +228,14 @@ fn an_order_built_ahead_is_the_one_its_probe_reads() {
     let before = rel.rows.last_in_block().unwrap().relation().orders().count();
     let ix = rel.index(&[1]);
     assert!(ix.ordered.is_some() && ix.order.get().is_none(), "a derived input's order, not yet made");
-    let (ahead, readers) = (super::access::orders_built_ahead_for_tests(), super::access::orders_made_by_readers_for_tests());
+    // The relation's own directory says what was built: the process's counters (`orders_built_ahead_for_tests`) are
+    // moved by the tests beside it too, and compared exactly they failed one full run in three.
     assert_eq!(super::access::build_orders(&[(&*rel, &*ix)]), 1);
-    assert_eq!(super::access::orders_built_ahead_for_tests(), ahead + 1);
     assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the order is in the directory");
     let mut got = Vec::new();
     rel.probe_each(&[1], &[2000], &mut |row| got.push((row(0), row(1))));
     assert_eq!(got, vec![(2000 % 7, 2000)]);
-    assert_eq!(super::access::orders_made_by_readers_for_tests(), readers, "the probe made no order");
-    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1);
+    assert_eq!(rel.rows.last_in_block().unwrap().relation().orders().count(), before + 1, "the probe made no order: it read the one built ahead");
 }
 
 /// Decision 0478 step 6: a derived input's value counts and measured statistics are written once in a block, and
