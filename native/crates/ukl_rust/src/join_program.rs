@@ -1518,20 +1518,55 @@ unsafe fn trim_has(y: &Txt, spaces: bool, c: u8) -> bool {
     (0..y.len()).any(|i| y.byte(i) == c)
 }
 
-/// An automaton's table (`text::table::Table`): its 256 byte classes, then its transitions, `s` states of `c` classes,
-/// then its states after the end and their verdicts. Its classes of 64 bytes are four lookups of 64 bytes each.
+/// A test's automata (`text::table::Table`), `parts` of them from `g`: a text passes where any part accepts it. The
+/// first part's byte classes are held for every row of the group's (`Automaton::new`); the others' read as each is
+/// walked.
+struct Automata {
+    first: Automaton,
+    g: *const u8,
+    parts: u32,
+}
+
+impl Automata {
+    unsafe fn new(g: *const u8, parts: u32) -> Self {
+        Automata { first: Automaton::new(g), g, parts }
+    }
+
+    /// Whether any part accepts `x`.
+    unsafe fn verdict(&self, x: &Txt) -> bool {
+        if self.first.verdict(x) {
+            return true;
+        }
+        let mut p = self.g.add(self.first.size as usize);
+        for _ in 1..self.parts {
+            let a = Automaton::new(p);
+            if a.verdict(x) {
+                return true;
+            }
+            p = p.add(a.size as usize);
+        }
+        false
+    }
+}
+
+/// A part of a test's table (`text::table::Table`): a header of four words (its states `s`, classes `c`, start state
+/// and size in bytes), its 256 byte classes, then its transitions, `s` states of `c` classes, then its states after
+/// the end and their verdicts. Its classes of 64 bytes are four lookups of 64 bytes each.
 struct Automaton {
     tab: *const u8,
     classes: [u8x64; 4],
     s: u32,
     c: u32,
     start: u32,
+    size: u32,
 }
 
 impl Automaton {
-    unsafe fn new(tab: *const u8, s: u32, c: u32, start: u32) -> Self {
+    unsafe fn new(part: *const u8) -> Self {
+        let h = part as *const u32;
+        let tab = part.add(16);
         let classes = core::array::from_fn(|k| ld(tab.add(64 * k)));
-        Automaton { tab, classes, s, c, start }
+        Automaton { tab, classes, s: h.read_unaligned(), c: h.add(1).read_unaligned(), start: h.add(2).read_unaligned(), size: h.add(3).read_unaligned() }
     }
 
     /// Bytes `v`'s classes: an index past a table's 64 gives 0 there, so the four lookups' or is the class.
@@ -3593,7 +3628,7 @@ unsafe fn row_text(st: &St, j: &Job, b: &Bufs, ctl: *mut u32, sg: u32) {
     let op = s.agg[0] & 15;
     let want = (s.agg[0] >> 8) & 1 != 0;
     // A test's automaton, its byte classes in registers for every row of the group's.
-    let dfa = (op == 3 || op == 5).then(|| Automaton::new(g, pw(2), pw(3), pw(4)));
+    let dfa = (op == 3 || op == 5).then(|| Automata::new(g, pw(2)));
     let counter = |bits: u32| {
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_or(bits, SeqCst);

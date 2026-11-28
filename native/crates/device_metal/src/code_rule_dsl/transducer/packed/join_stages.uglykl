@@ -1348,9 +1348,9 @@ UKL_INLINE uint32_t rx_replace_txt(JSPACE const uint8_t* G, Txt x, Txt z, bool w
     return w + n - pos;
 }
 
-// Whether text test table `tab` (`text::table::Table`: S states of C classes, from `start`) accepts x, walked by a
-// SIMD group a byte a lane at a time (`chunk_states`), the state after the end of text accepting.
-UKL_INLINE bool txt_verdict(JSPACE const uint8_t* tab, uint32_t S, uint32_t C, uint32_t start, Txt x, JSPACE uint8_t* f,
+// Whether a part of a text test's table (`tab`: S states of C classes, from `start`) accepts x, walked by a SIMD group a
+// byte a lane at a time (`chunk_states`), the state after the end of text accepting.
+UKL_INLINE bool txt_accepts(JSPACE const uint8_t* tab, uint32_t S, uint32_t C, uint32_t start, Txt x, JSPACE uint8_t* f,
                             uint32_t lane __UKL_PARAMS) {
     JSPACE const uint8_t* eoi = tab + 256 + S * C;
     JSPACE const uint8_t* acc = eoi + S;
@@ -1361,6 +1361,17 @@ UKL_INLINE bool txt_verdict(JSPACE const uint8_t* tab, uint32_t S, uint32_t C, u
         st = ukl_sg_shuffle(q, m - 1 __UKL_ARGS);
     }
     return acc[eoi[st]] != 0;
+}
+
+// Whether text test table G (`text::table::Table`, `parts` parts) accepts x: any part (each a header of its states,
+// classes, start and size in bytes, then its table) accepting it. Every lane has each part's verdict.
+UKL_INLINE bool txt_verdict(JSPACE const uint8_t* G, uint32_t parts, Txt x, JSPACE uint8_t* f, uint32_t lane __UKL_PARAMS) {
+    for (uint32_t k = 0; k < parts; k++) {
+        JSPACE const uint32_t* h = (JSPACE const uint32_t*)G;
+        if (txt_accepts(G + 16, h[0], h[1], h[2], x, f, lane __UKL_ARGS)) return true;
+        G += h[3];
+    }
+    return false;
 }
 
 // `replace_all` of literal y (not empty; empty: x itself) in x by z, by a SIMD group: each lane tests whether a match
@@ -1681,7 +1692,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 uint32_t len = clif_atoms_len(D, 0ul, id);
                 bool held = len != 0xffffffffu;
                 Txt x = txt_raw(D + (held ? clif_atoms_at(D, 0ul, id) : 0ul), held ? len : 0u);
-                bool ok = held && txt_verdict(G, P[2], P[3], P[4], x, fs, lane __UKL_ARGS);
+                bool ok = held && txt_verdict(G, P[2], x, fs, lane __UKL_ARGS);
                 if (lane == 0 && held) clif_verdict_put(VC, 0ul, test, id, ok ? 2u : 1u);
                 if (lane == l) got = held ? (ok ? 2u : 1u) : 3u;
             }
@@ -1715,7 +1726,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
             continue;
         }
         if (op == 3) {
-            bool v = txt_verdict(G, P[2], P[3], P[4], x, fs, lane __UKL_ARGS);
+            bool v = txt_verdict(G, P[2], x, fs, lane __UKL_ARGS);
             if (lane == 0) counts[row] = (uint32_t)(v == want);
             continue;
         }

@@ -2063,7 +2063,7 @@ fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
 }
 
 /// A `ROWTEXT` stage's automaton on the device and `Batch::row_stage`'s numbers for it ([its scratch's states, a
-/// test table's states, classes, start]), where the automata block holds it.
+/// test table's parts, 0, 0]), where the automata block holds it.
 fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevBytes>, [u32; 4])>, String> {
     Ok(match auto {
         RowAuto::None => None,
@@ -2082,7 +2082,7 @@ fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevB
         }
         RowAuto::Test { table, .. } => {
             let b = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
-            Some((b, [table.states, table.states, table.classes, table.start]))
+            Some((b, [table.states, table.parts, 0, 0]))
         }
     })
 }
@@ -2282,7 +2282,7 @@ impl<'p> Run<'p> {
                             Kind::RowText { auto, kept, .. } => (row_automaton(auto, names)?, *kept),
                             Kind::Verdict { table, test } => {
                                 let a = Rc::new(mj::DevBytes::of(&table.automaton).map_err(|e| format!("{e:?}"))?);
-                                (Some((a, [table.states, table.states, table.classes, table.start])), *test)
+                                (Some((a, [table.states, table.parts, 0, 0])), *test)
                             }
                             _ => (None, 0),
                         };

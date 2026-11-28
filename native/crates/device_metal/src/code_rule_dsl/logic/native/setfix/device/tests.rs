@@ -1317,6 +1317,7 @@ use rerail_blocks::vector::Vector;
         let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
         let m = format!("t:x:{}:{}:s", hex("temp.m"), hex("c0"));
         let sym = |t: &str| format!("x:{}", hex(t));
+        let pairs: Vec<String> = parts.iter().flat_map(|a| parts.iter().map(move |b| format!("{a}{b}"))).map(|p| sym(&p)).collect();
         let rules = [
             format!("pos {n} v0 v1\ntest prefix v0 {} 1\nhead v0 v1", sym("foo")),
             format!("pos {n} v0 v1\ntest contains v0 {} 0\nhead v0 v1", sym("_b")),
@@ -1360,7 +1361,18 @@ use rerail_blocks::vector::Vector;
             format!("pos {m} v0\nfunc rr_strlen v1 v0\nlt i:9 v1\nhead v0 v1"),
             // A cat's text both compared and in the head.
             format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:500\ncat v3 v0 {}\nne v3 v1\ntest prefix v1 v0 1\nhead v3 v2", sym("ts")),
+            // Sets past one automaton's 255 states (every two parts' name, 144 of them): a table in parts, a symbol's
+            // and a made text's, and case-insensitive.
+            format!("pos {n} v0 v1\ntestset contains v0 1 {}\nhead v0 v1", pairs.join(" ")),
+            format!("pos {n} v0 v1\ntestset icontains v0 1 {}\nhead v0 v1", pairs.join(" ")),
+            format!("pos {n} v0 v1\nlt v1 i:800\ncat v2 v0 {}\ntestset contains v2 0 {}\nhead v0 v1", sym("ts"), pairs.join(" ")),
         ];
+        for set in ["contains", "icontains"] {
+            let patterns: Vec<String> = parts.iter().flat_map(|a| parts.iter().map(move |b| format!("{a}{b}"))).collect();
+            let m = crate::code_rule_dsl::logic::strings::Matcher::new(set, &patterns).unwrap();
+            let t = crate::code_rule_dsl::text::table::table(m.plans()).unwrap();
+            assert!(t.parts > 1, "@{set} of {} names: one automaton of {} states", patterns.len(), t.states);
+        }
         let mut got = Vec::new();
         // The device first: the texts it makes are new symbols.
         for device in [true, false] {

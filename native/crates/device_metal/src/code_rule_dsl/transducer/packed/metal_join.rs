@@ -2880,8 +2880,8 @@ impl Batch {
         stage.nslots = left.slots as u32;
         let n = left.room() + 1;
         let ngroups = left.room().clamp(1, 1024);
-        // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states, two
-        // rows a lane.
+        // [scratch states, and the automaton's words]: a replacement's scratch holds its larger automaton's states, two
+        // rows a lane; a test's table its parts' most (its words its parts, `text::table::Table`).
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
         // Its values a row: placed with its input where that is placed (its room its input's).

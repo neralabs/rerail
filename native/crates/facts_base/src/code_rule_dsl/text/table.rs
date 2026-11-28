@@ -4,25 +4,32 @@
 //! The device answers a text test once per symbol not yet in the verdict cache (decision 0478 step 2d), and once
 //! per row for a made text, a SIMD group per text, by composing each byte's
 //! transition function over a chunk of 32 bytes at a time (decision 0038's chunked matching). So it needs the plans
-//! as one deterministic automaton with few states (each a byte, at most 255), whose final state alone says whether
+//! as deterministic automata with few states (each a byte, at most 255), whose final state alone says whether
 //! any plan matched anywhere: a match state is made absorbing (every byte, and the end of the text, keep it), and
-//! the end-of-text transition is applied last.
+//! the end-of-text transition is applied last. A test whose one automaton would pass 255 states is its plans'
+//! alternatives in parts (`Table::parts`), each an automaton within them, the test any part's: a set of literals is
+//! each literal at its anchor, and an anchor distributes over an alternation (`^(a|b)$` is `^a$|^b$`).
 //!
 //! The table is made from the same lowered plans the CPU's `Compiled` runs (the text layer's one canonical plan per
 //! test), so both answer the same question. A plan the table cannot hold (a backtracking pattern, a Unicode word
-//! boundary, more than 255 states) is refused, with why: the test then runs on the CPU.
+//! boundary, one alternative past 255 states, more than `MAX_PARTS` parts) is refused, with why: the test then runs
+//! on the CPU.
 
 use super::{Lowered, Plan};
 use regex_automata::dfa::{Automaton, StartKind, dense};
 use regex_automata::nfa::thompson;
 use regex_automata::util::start;
 use regex_automata::{Anchored, MatchKind};
-use regex_syntax::hir::Hir;
+use regex_syntax::hir::{Hir, HirKind};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// The most states a table holds (a state is a byte in the device's scratch).
+/// The most states a table's part holds (a state is a byte in the device's scratch).
 pub const MAX_STATES: usize = 255;
+
+/// The most parts a table has: the device walks a text once a part, so a test past it costs more there than the CPU's
+/// one automaton.
+pub const MAX_PARTS: usize = 64;
 
 /// A dense automaton's configuration for a table, its determinization bounded by what a table can hold: a state's
 /// row is at most 512 transitions of 4 bytes (`regex_automata`'s stride, a power of two past 256 classes and the
@@ -30,18 +37,29 @@ pub const MAX_STATES: usize = 255;
 /// are refused at once ("its automaton: ..."), as a table of more than `MAX_STATES` states is: unbounded, a set of
 /// plans one python_main shard tests was determinized for most of its 240 s, to be refused when it was done.
 fn bounded(config: dense::Config) -> dense::Config {
-    const STATE_BYTES: usize = 512 * 4;
     config.dfa_size_limit(Some(4 * MAX_STATES * STATE_BYTES)).determinize_size_limit(Some(16 * MAX_STATES * STATE_BYTES))
 }
 
-/// A dense automaton: its bytes (`bytes()`, in the automata block, decision 0478 step 2c) are the byte classes
-/// (256), then `next` (`states` rows of `classes`), then the end-of-text transition per state, then whether each state
-/// accepts (all bytes).
+/// A state's row's most bytes in a dense automaton (`bounded`).
+const STATE_BYTES: usize = 512 * 4;
+
+/// `bounded` for a trial of a part (`pack`): its automaton at most a part's states, so one that passes them stops at
+/// them. Its determinization's own work as `bounded`'s: a plan of many literals (a case-insensitive name's every
+/// casing) holds large sets of its NFA's states while making a small automaton.
+fn bounded_part(config: dense::Config) -> dense::Config {
+    config.dfa_size_limit(Some((MAX_STATES + 1) * STATE_BYTES)).determinize_size_limit(Some(16 * MAX_STATES * STATE_BYTES))
+}
+
+/// A test's dense automata, its parts: its bytes (`bytes()`, in the automata block, decision 0478 step 2c) are each
+/// part's in turn, a header of four words (its states, its classes, its start state, and its size in bytes, header
+/// included, a multiple of 4), then its byte classes (256), then `next` (`states` rows of `classes`), then the
+/// end-of-text transition per state, then whether each state accepts (all bytes). A text passes where any part
+/// accepts it.
 #[derive(Clone, Copy, Debug)]
 pub struct Table {
+    /// The most states of a part: the device's scratch a lane.
     pub states: u32,
-    pub classes: u32,
-    pub start: u32,
+    pub parts: u32,
     /// Where the automata block holds it.
     pub automaton: super::automata::Automaton,
 }
@@ -55,16 +73,24 @@ impl Table {
     /// Whether `text` matches: the CPU's walk of the same table (tests only; the device walks it in chunks).
     #[cfg(test)]
     pub fn is_match(&self, text: &[u8]) -> bool {
-        let (s, c) = (self.states as usize, self.classes as usize);
-        let bytes = self.bytes();
-        let next = &bytes[256..256 + s * c];
-        let eoi = &bytes[256 + s * c..256 + s * c + s];
-        let accept = &bytes[256 + s * c + s..];
-        let mut state = self.start as usize;
-        for &b in text {
-            state = next[state * c + bytes[b as usize] as usize] as usize;
+        let all = self.bytes();
+        let mut at = 0;
+        let mut any = false;
+        for _ in 0..self.parts {
+            let word = |i: usize| u32::from_le_bytes(all[at + 4 * i..at + 4 * i + 4].try_into().unwrap()) as usize;
+            let (s, c, start, size) = (word(0), word(1), word(2), word(3));
+            let bytes = &all[at + 16..at + size];
+            let next = &bytes[256..256 + s * c];
+            let eoi = &bytes[256 + s * c..256 + s * c + s];
+            let accept = &bytes[256 + s * c + s..256 + s * c + 2 * s];
+            let mut state = start;
+            for &b in text {
+                state = next[state * c + bytes[b as usize] as usize] as usize;
+            }
+            any |= accept[eoi[state] as usize] != 0;
+            at += size;
         }
-        accept[eoi[state] as usize] != 0
+        any
     }
 }
 
@@ -73,10 +99,7 @@ fn hir(plan: &Plan) -> Option<Hir> {
     Some(match plan {
         Plan::Always => Hir::empty(),
         Plan::Never => Hir::fail(),
-        Plan::Literals { anchor, literals } => {
-            let core = Hir::alternation(literals.iter().map(|l| Hir::literal(l.clone())).collect());
-            Plan::automaton_hir(*anchor, &core)
-        }
+        Plan::Literals { anchor, literals } => Plan::automaton_hir(*anchor, &Hir::alternation(words(literals))),
         Plan::Automaton { anchor, core } => Plan::automaton_hir(*anchor, core),
         Plan::Backtracking { .. } => return None,
     })
@@ -93,26 +116,155 @@ pub fn test_id(plans: &[Arc<Lowered>]) -> Option<u32> {
     super::automata::id(&format!("test:{}", plans_key(plans)))
 }
 
+/// A set of literals as its words: the literals of one word in any ASCII casing together, as the word with each
+/// letter a class of its two cases where the set holds every casing (a case-insensitive test's literals are its
+/// words' every casing: as literals, an automaton of a state for each casing of each prefix), else as the literals.
+fn words(literals: &[Vec<u8>]) -> Vec<Hir> {
+    use regex_syntax::hir::{Class, ClassBytes, ClassBytesRange};
+    let mut words: std::collections::BTreeMap<Vec<u8>, Vec<&Vec<u8>>> = std::collections::BTreeMap::new();
+    for l in literals {
+        words.entry(l.to_ascii_lowercase()).or_default().push(l);
+    }
+    words
+        .into_iter()
+        .map(|(word, casings)| {
+            let letters = word.iter().filter(|b| b.is_ascii_lowercase()).count();
+            // Distinct literals of one lowercase form: as many as its casings is every casing.
+            if letters < 24 && casings.len() == 1 << letters {
+                Hir::concat(
+                    word.iter()
+                        .map(|&b| {
+                            if b.is_ascii_lowercase() {
+                                Hir::class(Class::Bytes(ClassBytes::new([ClassBytesRange::new(b, b), ClassBytesRange::new(b.to_ascii_uppercase(), b.to_ascii_uppercase())])))
+                            } else {
+                                Hir::literal([b])
+                            }
+                        })
+                        .collect(),
+                )
+            } else {
+                Hir::alternation(casings.into_iter().map(|l| Hir::literal(l.clone())).collect())
+            }
+        })
+        .collect()
+}
+
+/// A plan's alternatives, each at its anchor, whose any matching is the plan's: a set of literals' words (`words`), an
+/// automaton's top alternation's branches; the plan whole for the rest. `None` for a backtracking one.
+fn alternatives(plan: &Plan) -> Option<Vec<Hir>> {
+    Some(match plan {
+        Plan::Literals { anchor, literals } => words(literals).iter().map(|w| Plan::automaton_hir(*anchor, w)).collect(),
+        Plan::Automaton { anchor, core } => match core.kind() {
+            HirKind::Alternation(branches) => branches.iter().map(|b| Plan::automaton_hir(*anchor, b)).collect(),
+            _ => vec![Plan::automaton_hir(*anchor, core)],
+        },
+        _ => vec![hir(plan)?],
+    })
+}
+
 /// The table of `plans` (any of them matching), made once per set of plans into the automata block.
 pub fn table(plans: &[Arc<Lowered>]) -> Result<Arc<Table>, String> {
     let key = format!("table:{}", plans_key(plans));
-    let a = super::automata::get_or_make(&key, || build(plans).map(|(bytes, [states, classes, start])| (bytes, [states, classes, start, 0])))?;
-    Ok(Arc::new(Table { states: a.words[0], classes: a.words[1], start: a.words[2], automaton: a }))
+    let a = super::automata::get_or_make(&key, || build(plans).map(|(bytes, [states, parts])| (bytes, [states, parts, 0, 0])))?;
+    Ok(Arc::new(Table { states: a.words[0], parts: a.words[1], automaton: a }))
 }
 
-/// The table's bytes and its states, classes and start.
-fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
+/// Why a part was not made: more states than a part holds (its alternatives may go in parts of their own), or else.
+enum Unmade {
+    Big(String),
+    Not(String),
+}
+
+/// The table's bytes, its most states of a part and its parts: the plans as one automaton where it fits
+/// (`MAX_STATES`), else their alternatives (`alternatives`) in parts, halved until each fits.
+fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 2]), String> {
     let hirs = plans.iter().map(|p| hir(&p.plan).ok_or_else(|| "a backtracking pattern".to_owned())).collect::<Result<Vec<_>, _>>()?;
     let hirs = if hirs.is_empty() { vec![Hir::fail()] } else { hirs };
+    let mut parts = Vec::new();
+    match part(&hirs, false) {
+        Ok(p) => parts.push(p),
+        Err(Unmade::Not(why)) => return Err(why),
+        Err(Unmade::Big(_)) => pack(hirs.into_iter().zip(plans.iter().map(|p| Some(&p.plan))).collect(), &mut parts)?,
+    }
+    let states = parts.iter().map(|p| p.1).max().unwrap_or(0);
+    let mut bytes = Vec::new();
+    for (b, _) in &parts {
+        bytes.extend_from_slice(b);
+    }
+    Ok((bytes, [states, parts.len() as u32]))
+}
+
+/// `units` (regexes, each a plan's whole or one of its alternatives) in parts of at most `MAX_STATES` states each,
+/// onto `parts`: each part as many of the next units as fit, found by doubling the count from the last part's and then
+/// halving between what fit and what did not, so a part is a few determinizations (each bounded by what a part holds,
+/// `part`'s `limit`), not one per unit. A plan that alone passes a part is its alternatives (`alternatives`), in its
+/// place: a plan's own automaton (a case-insensitive literal's every casing) is kept whole where it fits.
+fn pack(mut units: Vec<(Hir, Option<&Plan>)>, parts: &mut Vec<(Vec<u8>, u32)>) -> Result<(), String> {
+    let mut at = 0;
+    let mut guess = 1;
+    while at < units.len() {
+        let hirs: Vec<Hir> = units[at..].iter().map(|u| u.0.clone()).collect();
+        let left = hirs.len();
+        let mut try_part = |n: usize| match part(&hirs[..n], true) {
+            Ok(p) => Ok(Some(p)),
+            Err(Unmade::Big(_)) => Ok(None),
+            Err(Unmade::Not(why)) => Err(why),
+        };
+        // The most that fit (`lo`, with its part) and the fewest that did not (`hi`): up by doubling, then halved.
+        let (mut lo, mut hi, mut fit) = (0, left + 1, None);
+        let mut n = guess.min(left);
+        while n < hi {
+            match try_part(n)? {
+                Some(p) => (lo, fit) = (n, Some(p)),
+                None => hi = n,
+            }
+            if hi <= left || n == left {
+                break;
+            }
+            n = (2 * n).min(left);
+        }
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            match try_part(mid)? {
+                Some(p) => (lo, fit) = (mid, Some(p)),
+                None => hi = mid,
+            }
+        }
+        let Some(p) = fit else {
+            // The next unit alone passes a part: a plan is its alternatives, else the test has no table.
+            let Some(plan) = units[at].1 else { return Err(format!("its automaton has more than {MAX_STATES} states")) };
+            let alts = alternatives(plan).ok_or("a backtracking pattern")?;
+            if alts.len() < 2 {
+                return Err(format!("its automaton has more than {MAX_STATES} states"));
+            }
+            units.splice(at..=at, alts.into_iter().map(|h| (h, None)));
+            guess = 1;
+            continue;
+        };
+        let n = lo;
+        parts.push(p);
+        if parts.len() > MAX_PARTS {
+            return Err(format!("its automata need more than {MAX_PARTS} parts of {MAX_STATES} states"));
+        }
+        at += n;
+        guess = n;
+    }
+    Ok(())
+}
+
+/// `hirs` (any matching) as one part's bytes, header included, and its states. `limit`: its determinization bounded by
+/// what a part holds (a trial of how many alternatives fit), not `bounded`'s few times that.
+fn part(hirs: &[Hir], limit: bool) -> Result<(Vec<u8>, u32), Unmade> {
     let nfa = thompson::Compiler::new()
         .configure(thompson::Config::new().utf8(false))
-        .build_many_from_hir(&hirs)
-        .map_err(|e| format!("its automaton: {e}"))?;
+        .build_many_from_hir(hirs)
+        .map_err(|e| Unmade::Not(format!("its automaton: {e}")))?;
     let dfa = dense::Builder::new()
-        .configure(bounded(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Unanchored)))
+        .configure((if limit { bounded_part } else { bounded })(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Unanchored)))
         .build_from_nfa(&nfa)
-        .map_err(|e| format!("its automaton: {e}"))?;
-    let first = dfa.start_state(&start::Config::new().anchored(Anchored::No)).map_err(|e| format!("its start: {e}"))?;
+        // Past `bounded`'s limits: a size, as a table past `MAX_STATES` is.
+        .map_err(|e| Unmade::Big(format!("its automaton: {e}")))?;
+    let first = dfa.start_state(&start::Config::new().anchored(Anchored::No)).map_err(|e| Unmade::Not(format!("its start: {e}")))?;
     // Every state reachable from the start, numbered in the order found.
     let mut ids = vec![first];
     let mut index: HashMap<regex_automata::util::primitives::StateID, usize> = HashMap::from([(first, 0)]);
@@ -122,7 +274,7 @@ fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
     while at < ids.len() {
         let id = ids[at];
         if dfa.is_quit_state(id) {
-            return Err("its automaton quits on some bytes".into());
+            return Err(Unmade::Not("its automaton quits on some bytes".into()));
         }
         let mut row = [0usize; 256];
         let mut see = |to| {
@@ -139,7 +291,7 @@ fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
         next.push(row);
         eoi.push(e);
         if ids.len() > MAX_STATES {
-            return Err(format!("its automaton has more than {MAX_STATES} states"));
+            return Err(Unmade::Big(format!("its automaton has more than {MAX_STATES} states")));
         }
         at += 1;
     }
@@ -166,13 +318,16 @@ fn build(plans: &[Arc<Lowered>]) -> Result<(Vec<u8>, [u32; 3]), String> {
         classes[b] = c;
     }
     let nc = columns.len();
-    let mut bytes = classes.to_vec();
+    let size = (16 + 256 + n * nc + 2 * n).next_multiple_of(4);
+    let mut bytes: Vec<u8> = [n, nc, 0, size].iter().flat_map(|&w| (w as u32).to_le_bytes()).collect();
+    bytes.extend_from_slice(&classes);
     for s in 0..n {
         bytes.extend(columns.iter().map(|col| col[s] as u8));
     }
     bytes.extend(eoi.iter().map(|&e| e as u8));
     bytes.extend(accept.iter().map(|&a| u8::from(a)));
-    Ok((bytes, [n as u32, nc as u32, 0]))
+    bytes.resize(size, 0);
+    Ok((bytes, n as u32))
 }
 
 /// A regex's automata for `replace_all` on the device (`metal_join`'s `text_replace`, decision 0038's chunked
@@ -643,6 +798,32 @@ mod tests {
 
 
     use crate::code_rule_dsl::logic::strings::Matcher;
+
+    /// A test whose one automaton passes `MAX_STATES` (a set of 120 names, as `contains(x, t)` of every name a
+    /// relation holds) is its alternatives in parts, each within it, and answers as the CPU's matcher does, at its
+    /// anchors too; a case-insensitive set (an automaton's alternation) the same.
+    #[test]
+    fn a_test_past_a_parts_states_is_made_in_parts() {
+        let names: Vec<String> = (0..120).map(|i| format!("trigger_{i:03}_{}", ["file", "path", "name"][i % 3])).collect();
+        let texts = ["", "trigger_007_path", "x trigger_118_file y", "trigger_118_path", "TRIGGER_005_NAME!", "trigger_05", "a/trigger_119_name"];
+        for op in ["contains", "prefix", "equals", "icontains"] {
+            let m = Matcher::new(op, &names).unwrap();
+            let t = super::table(m.plans()).unwrap_or_else(|e| panic!("@{op}: {e}"));
+            assert!(t.parts > 1, "@{op}: one part of {} states", t.states);
+            assert!(t.states as usize <= super::MAX_STATES, "@{op}: a part of {} states", t.states);
+            for text in texts {
+                assert_eq!(t.is_match(text.as_bytes()), m.is_match(text), "@{op}({text:?}) in {} parts", t.parts);
+            }
+        }
+        // One case-insensitive name: its literals are its every casing (2048 of them), a word of classes, one part.
+        let m = Matcher::new("icontains", &names[..1]).unwrap();
+        let t = super::table(m.plans()).expect("one name's every casing");
+        assert_eq!(t.parts, 1);
+        assert!(t.states < 32, "a word of classes: {} states", t.states);
+        for text in ["xTrIgGeR_000_FiLe", "trigger_000_fil", "TRIGGER_000_FILE"] {
+            assert_eq!(t.is_match(text.as_bytes()), m.is_match(text), "@icontains({text:?})");
+        }
+    }
 
     /// The table answers as the CPU's matcher does, for every kind of test.
     #[test]
