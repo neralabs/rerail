@@ -215,16 +215,17 @@ ses_key(q0) :- ses_cand(_, k, q0, _), k != "direct".
 ses_canon(q0, q0) :- ses_key(q0).
 ses_canon(q0, q) :- ses_key(q0), match("(?<s>[^.#][^#]*)#(?<x>[^#]+)", q0), ses_pkg_module(s, m),
     tsx_names__exports(m, x, q).
-// ses_pkg_module(s, m): specifier s names module m of a workspace package.
+// ses_pkg_module(s, m): specifier s names module m of a workspace package: m is some file's module
+// (tsx_names__module_at).
 .decl ses_pkg_spec(s: symbol)
 ses_pkg_spec(s) :- ses_key(q0), match("(?<s>[^.#][^#]*)#[^#]+", q0).
 .decl ses_pkg_module(s: symbol, m: symbol)
 ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(s, dir), (m = @join(dir, "src/index") ; m = @join(dir, "index")),
-    tsx_names__module(m).
+    tsx_names__module_at(_, m).
 ses_pkg_module(s, m) :- ses_pkg_spec(s), ses_pkg_dir(n, dir), prefix(cat(n, "/"), s),
     rest = substr(s, strlen(n) + 1, strlen(s) - strlen(n) - 1),
     (m = @join(dir, rest) ; m = @join(dir, cat("src/", rest)) ; m = @join(dir, cat(rest, "/index")) ;
-     m = @join(dir, cat("src/", rest, "/index"))), tsx_names__module(m).
+     m = @join(dir, cat("src/", rest, "/index"))), tsx_names__module_at(_, m).
 
 // ses_walk(x, k): directory x, k levels below the root (""), up to 3; dot folders and node_modules left out.
 // (dir_entry can only be asked of folders the rule names from constants, not of documents' folders.)
