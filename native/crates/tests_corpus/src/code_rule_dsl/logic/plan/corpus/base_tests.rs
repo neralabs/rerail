@@ -2151,9 +2151,9 @@ children(n, a, c) :- nearest(n, a, scope, c).
     assert!(got[4].len() > got[0].len(), "every scope's children: {}", got[4].len());
 }
 
-/// A document's nodes probed by its id (`docof(a, d)` by `d`) are every row of the document, not one: an index's
-/// measure that its key names one row (`Csr::at_most_one`) is made again as its relation grows. Measured at a
-/// relation's first row and kept, the step was a one-row lookup, and each document of several assignments gave none.
+/// A document's nodes probed by its id (`docof(a, d)` by `d`) are every row of the document, not one. A plan made
+/// before the batch's rows are asked the made source whether `d` is a key (`setfix::at_most_one`); its template, of
+/// no rows, said so, and the step was a one-row lookup: each document of several assignments gave none.
 #[test]
 fn a_documents_nodes_probed_by_its_id_are_all_its_rows() {
     let sources: Vec<(String, String)> = (0..40).map(|i| (format!("g{i:02}.py"), (0..(i % 4 + 1)).map(|k| format!("a{k} = b{k} + c{k}\n")).collect())).collect();
