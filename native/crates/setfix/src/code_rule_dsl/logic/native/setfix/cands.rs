@@ -550,6 +550,11 @@ fn one_row(rel: &InRel, id: u32, keys: &[(usize, Key)], tests: &[(usize, usize)]
 pub(super) fn ask_chunk(j: &JoinRule, step: &Step, test: &rowcode::Test, columns: &mut [Vector<i64>], params: &[i64], alive: &mut [u64], n: usize, verdict: usize, looks: &[(usize, usize)], asked: &mut Asked) -> Option<(u64, u64)> {
     let Step::Atom { src: Src::In(rel, ix), keys, tests, binds, neg } = step else { return None };
     if let Some(v) = &j.src_in(rel, ix).0.view {
+        // A test of a bound node against a constant (`kind(n, K)`): its bit in the bits the source built ahead, as a
+        // row's test reads it (`value_bits_test`, decision 0723 step 1), no row of the view read.
+        if binds.is_empty() && let Some(found) = ask_view_bits_chunk(j, step, keys, tests, *neg, test, columns, alive, n, verdict, asked) {
+            return Some(found);
+        }
         return ask_view_chunk(v, keys, tests, *neg, test, columns, params, alive, n, verdict, looks, asked);
     }
     let one_key = match keys.as_slice() {
@@ -701,6 +706,53 @@ fn ask_derived_chunk(rel: &InRel, ix: &Csr, keys: &[(usize, Key)], tests: &[(usi
             }
         }
         alive[w] = pass;
+    }
+    Some((none, one))
+}
+
+/// `ask_chunk` of a view's test by a constant (`value_bits_need`) where its source built the constant's bits: each row's
+/// bound node's bit, a loop over the chunk's column (`value_bits_test`'s, a row at a time). `None` where the step has no
+/// bits, the node is no column of the chunk, or a part holds rows of documents beside the bits (`others`): the caller
+/// reads the rows.
+#[allow(clippy::too_many_arguments)]
+fn ask_view_bits_chunk(j: &JoinRule, step: &Step, keys: &[(usize, Key)], tests: &[(usize, usize)], neg: bool, test: &rowcode::Test, columns: &mut [Vector<i64>], alive: &mut [u64], n: usize, verdict: usize, asked: &mut Asked) -> Option<(u64, u64)> {
+    let Step::Atom { src, .. } = step else { return None };
+    if !value_bits_on() || n > rowcode::CHUNK {
+        return None;
+    }
+    if asked.bits.is_none() {
+        asked.bits = Some(value_bits_of(j, src, keys, tests));
+    }
+    let bits = asked.bits.as_ref()?.as_ref()?;
+    if !bits.others.is_empty() {
+        return None;
+    }
+    let s = keys.iter().find_map(|&(_, k)| match k { Key::Slot(s) => Some(s), Key::Const(_) => None })?;
+    let kc = test.slots.iter().find_map(|&(x, b)| match b { rowcode::Bind::Column(c) if x == s => Some(c), _ => None })?;
+    // SAFETY: a chunk the source built and keeps in its block while it lives (`Source::value_bits`), which the walk's
+    // join holds.
+    let index = unsafe { rerail_blocks::relation::NodeIndex::in_chunk(bits.bits) };
+    chunk_rows_only(alive, n);
+    let hint = &mut asked.hints[0];
+    let (mut none, mut one) = (0u64, 0u64);
+    for (w, word) in alive.iter_mut().enumerate().take(n.div_ceil(64)) {
+        let mut m = *word;
+        while m != 0 {
+            let r = w * 64 + m.trailing_zeros() as usize;
+            m &= m - 1;
+            let has = index.has(columns[kc][r], hint);
+            if has { one += 1 } else { none += 1 }
+            if has != neg {
+                columns[verdict][r] = 1;
+            } else {
+                *word &= !(1u64 << (r % 64));
+            }
+        }
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    VALUE_BIT_TESTS.fetch_add(none + one, std::sync::atomic::Ordering::Relaxed);
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named_args(format_args!("view bits: tests"), (none + one) as usize);
     }
     Some((none, one))
 }
