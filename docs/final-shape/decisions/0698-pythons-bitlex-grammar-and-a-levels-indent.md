@@ -913,3 +913,31 @@ statements and blocks end.
     - **As tested:** at every block's start, the first top by masks is the walk's (its entry by `lex_chunked`, `p`
       and `done`): the test texts, 4000 random texts, and every block of the corpus's 1632 files. The corpus lexed
       from the middle is still the serial lexer's in 1644 of 1644 files, at 1, 2, 3 and 16 blocks a chunk.
+107. **The walk's summary by masks, its layout from its events** (as built: `middle::walk_summary_masks`; `lex_middle`
+    does not call it yet, and its events are folded one after another, with branches).
+    - **Why:** the walk's pass 1 is a chunk's summary from each of `COMBOS`. Its tokens and extras are lane-free
+      (items 102 to 105), as are the iterations' tops (item 106). What depends on the lane is the layout, and the
+      layout happens at a few places: the loop tops where a logical line ends.
+    - **The chunk's range:** from its place to the chunk after's. Its tokens and extras are the popcounts of their
+      starts there, plus the text's end where the chunk reads it.
+    - **An event:** a loop top in the range whose next byte, past spaces, tabs and form feeds, is a line end or the
+      text's end. Read from masks:
+      - in brackets or not (stratum 3's `depth0`);
+      - the next line's width and the first comment's, from the first byte of content past the line end and the
+        first `#` before it. Each width is the spaces and 8 per tab since the last line end, `\r` or form feed,
+        by popcounts;
+      - whether the next line starts with a quote.
+    - **Between events:** whether a token starts since the event before (the walk's `open`), and whether the last
+      is a `:` out of brackets (its `header`).
+    - **Each lane:** the layout loop's rules over a fixed-size lane: up to 8 levels it opens, `t`, its phantoms, up
+      to 8 reads of its entry, the layout tokens, `open` and `header`. It converts to `Sym`.
+    - **The dedent check in brackets** reads the walk's last two records, which may be layout tokens, so each lane
+      keeps whether layout tokens came after its last token and between the last two. A name and a keyword differ
+      there, and the walk's keyword lookup gives which.
+    - **Not known** (the lane is `Unknown`): a rare block in the range; a line end whose next content lies past
+      the window of the block and the one after; a continuation before a blank line; more levels or reads than the
+      lane holds; a dedent check that would refuse.
+    - **As tested:** each lane by masks is the walk's (`walk_summary`, the conditions compared as sets) wherever
+      masks know it: every chunk of the test texts at 1, 2, 3 and 16 blocks, 1500 random texts of indented lines,
+      headers, brackets, comments and blank lines, and the corpus (1641 files; at 1 block a chunk 653880 lanes the
+      walk's and 31137 not known; at 16 blocks, 31452 and 13713; none differ).

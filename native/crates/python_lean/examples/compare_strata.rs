@@ -70,6 +70,27 @@ fn main() {
         println!("token starts by masks ({}): {blocks} blocks, {same} the walk's, {rare} rare, {differ} files with a block that differs", only.unwrap_or_default());
         return;
     }
+    if only == Some("layout") {
+        // The walk's summaries by masks against the walk's, chunk by chunk, at each chunk size.
+        for blocks in [1, 3, 16] {
+            let (mut same, mut unknown, mut differ, mut files) = (0, 0, 0, 0);
+            for (p, b) in &all {
+                if let Some((s, u, first)) = strata::middle::layout_is_the_walks(b, blocks) {
+                    files += 1;
+                    same += s;
+                    unknown += u;
+                    if let Some(e) = first {
+                        differ += 1;
+                        if differ <= 6 {
+                            println!("{} :: {e}", p.strip_prefix(dir).unwrap_or(p).display());
+                        }
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: walk summaries by masks: {files} files, {same} lanes the walk's, {unknown} not known, {differ} files with a lane that differs");
+        }
+        return;
+    }
     if only == Some("tops") {
         // The walk's loop tops by masks against the walk's, at each block's start.
         let (mut same, mut differ, mut files) = (0, 0, 0);

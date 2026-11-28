@@ -463,7 +463,7 @@ pub(super) struct StrCarry {
 
 /// From each of `seeds` forward through `through` (each seed in it): the run to its end.
 #[inline(always)]
-fn fill(seeds: u128, through: u128) -> u128 {
+pub(super) fn fill(seeds: u128, through: u128) -> u128 {
     let s = seeds & through;
     s | ((through.wrapping_add(s) ^ through) & through)
 }

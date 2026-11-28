@@ -11,7 +11,7 @@
 use super::{B, Masks, RB, S1, Stack, Text, Walk, classes_in};
 use rerail_simd::prelude::*;
 use super::{Variant, b_reads, lex_with};
-use crate::lex::{Extra, Lexed, Refusal, Tok};
+use crate::lex::{Extra, Lexed, Refusal, T, Tok};
 
 /// The state of the strata where a chunk starts at block `from`: stratum 1's carries into block `from - 2`, variant
 /// B's and the depth's into block `from - 1` (the walk reads the depth below its first item, and stratum 2 a string's
@@ -707,6 +707,324 @@ pub fn walk_summary(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: us
     }
 }
 
+/// The most levels a layout lane opens, and the most reads of its entry it keeps: more is not known.
+const OWN: usize = 8;
+const CONDS: usize = 8;
+
+/// A lane of the walk's layout by masks: what `Sym` keeps of the indents, in a fixed size, and the layout's tokens,
+/// `open` and `header`.
+#[derive(Clone, Copy, Debug)]
+struct LayoutLane {
+    own: [u32; OWN],
+    len: usize,
+    t: i64,
+    phantom: usize,
+    conds: [(i64, i64); CONDS],
+    nconds: usize,
+    toks: usize,
+    open: bool,
+    header: bool,
+    /// Layout tokens written after the last token read, and between the two last (the walk's `closer_may_follow`
+    /// reads the kinds of its last two records).
+    lay_since: bool,
+    lay_between: bool,
+    /// Not known by masks.
+    bad: bool,
+}
+
+impl LayoutLane {
+    fn new(open: bool, header: bool) -> LayoutLane {
+        LayoutLane { own: [0; OWN], len: 0, t: i64::MAX, phantom: 0, conds: [(0, 0); CONDS], nconds: 0, toks: 0, open, header, lay_since: false, lay_between: false, bad: false }
+    }
+
+    fn cond(&mut self, lo: i64, hi: i64) {
+        self.bad |= self.nconds == CONDS;
+        self.conds[self.nconds.min(CONDS - 1)] = (lo, hi);
+        self.nconds = (self.nconds + 1).min(CONDS);
+    }
+
+    /// A line's layout out of brackets (the walk's layout loop): the next line's width `w` and `m`, the larger of it
+    /// and the first comment's.
+    fn line(&mut self, w: i64, m: i64) {
+        let before = self.toks;
+        self.line_tokens(w, m);
+        self.lay_since |= self.toks > before;
+    }
+
+    /// `k` tokens read (none a layout token).
+    fn read(&mut self, k: u32) {
+        self.lay_between = k == 1 && self.lay_since;
+        self.lay_since = false;
+        self.open = true;
+    }
+
+    /// The walk's `closer_may_follow` from the kinds of the last two tokens read.
+    fn closer_may_follow(&self, k1: Option<T>, k2: Option<T>) -> bool {
+        let Some(k1) = k1 else { return false };
+        !self.lay_since
+            && match k1 {
+                T::Name | T::Int | T::Float | T::True | T::False | T::None | T::Ellipsis | T::StrEnd | T::RParen | T::RBracket | T::RBrace | T::LParen | T::LBrace | T::Comma => true,
+                T::LBracket => self.lay_between || !matches!(k2, Some(T::Name | T::StrEnd | T::RParen | T::RBracket | T::RBrace)),
+                _ => false,
+            }
+    }
+
+    fn line_tokens(&mut self, w: i64, m: i64) {
+        let below = if self.len > 0 { i64::from(self.own[self.len - 1]) < w } else { true };
+        if self.header && below {
+            if self.len == 0 && w <= self.t {
+                self.cond(w, self.t);
+            }
+            self.bad |= self.len == OWN;
+            self.own[self.len.min(OWN - 1)] = w as u32;
+            self.len = (self.len + 1).min(OWN);
+            self.toks += 1;
+        } else {
+            self.toks += usize::from(self.open);
+            let keep = self.own[..self.len].iter().filter(|&&o| i64::from(o) <= m).count();
+            self.toks += self.len - keep;
+            self.len = keep;
+            if self.len == 0 && m < self.t {
+                self.t = m;
+                self.phantom += 1;
+                self.toks += 1;
+            }
+        }
+        self.open = false;
+        self.header = false;
+    }
+
+    /// A line in brackets the walk checks for a dedent: refused where the top is above `m` (not known here).
+    fn in_brackets(&mut self, m: i64) {
+        if self.len > 0 {
+            self.bad |= i64::from(self.own[self.len - 1]) > m;
+        } else if m < self.t {
+            self.cond(m + 1, self.t);
+        }
+    }
+
+    fn sym(&self) -> Sym {
+        Sym { own: self.own[..self.len].to_vec(), t: self.t, phantom: self.phantom, conds: self.conds[..self.nconds].to_vec() }
+    }
+}
+
+/// A layout event: a loop top where a logical line ends.
+#[derive(Clone, Copy, Debug)]
+struct Event {
+    brackets: bool,
+    w: i64,
+    m: i64,
+    /// The next line's first byte is a quote (in brackets the walk then does not check for a dedent).
+    quote_next: bool,
+}
+
+/// The layout event at loop top `t` (block `bi`'s), from masks: none where it is not one, `Err` where masks do not
+/// know it.
+fn event_at(m: &Masks<'_>, bi: usize, t: usize) -> Result<Option<Event>, ()> {
+    let src = m.src;
+    let n = src.len();
+    let w2 = |f: fn(&B) -> u64| u128::from(f(m.blk(bi))) | u128::from(f(m.blk(bi + 1))) << 64;
+    let base = 64 * bi;
+    let lim = n.saturating_sub(base).min(128) as u32;
+    let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
+    let j = (t - base) as u32;
+    let above_eq = |x: u32| if x >= 128 { 0 } else { !0u128 << x };
+    let lowest = |x: u128| (x != 0).then(|| x.trailing_zeros());
+    let (sptab, lf, eol, bs, cstart) = (w2(|b| b.sptab), w2(|b| b.lf), w2(|b| b.eol), w2(|b| b.bs), w2(|b| b.cstart));
+    let ff = w2(|b| b.skip) & !sptab & !lf;
+    let cr = eol & !lf;
+    // The first byte past spaces, tabs and form feeds.
+    let Some(k) = lowest(!(sptab | ff) & above_eq(j)) else { return Err(()) };
+    let kb = 1u128 << k;
+    let eol_at = if k >= lim {
+        None
+    } else if lf & kb != 0 {
+        Some(k)
+    } else if cr & kb != 0 {
+        if lf & (kb << 1) == 0 {
+            return Err(());
+        }
+        Some(k + 1)
+    } else if bs & kb != 0 {
+        // A continuation: an event only where its next line is blank (not read here).
+        let after = lowest(!(sptab | ff) & above_eq(k + 1)).ok_or(())?;
+        let a = 1u128 << after;
+        let next = if lf & a != 0 { after + 1 } else if cr & a != 0 { after + 2 } else { return Err(()) };
+        let rest = lowest(!(sptab | ff) & above_eq(next)).ok_or(())?;
+        if rest >= lim || eol & (1u128 << rest) != 0 {
+            return Err(());
+        }
+        return Ok(None);
+    } else {
+        return Ok(None);
+    };
+    let brackets = t > 0 && !m.bit(t - 1, |b| b.depth0);
+    // The next line's first byte of content past the line end, and the first comment before it.
+    let (w, fc, x) = match eol_at {
+        None => (0, -1, n),
+        Some(e) => {
+            let comment = super::starts::fill(cstart & above_eq(e + 1), !eol);
+            let content = valid & !(sptab | ff | eol) & !comment;
+            let x = lowest(content & above_eq(e + 1));
+            let xp = match x {
+                Some(x) => x,
+                None if lim < 128 => lim,
+                None => return Err(()),
+            };
+            if xp < lim && bs & (1u128 << xp) != 0 {
+                return Err(());
+            }
+            let width = |p: u32| {
+                let resets = (lf | cr | ff) & ((1u128 << p) - 1);
+                let between = if resets == 0 { (1u128 << p) - 1 } else { ((1u128 << p) - 1) & !((2u128 << (127 - resets.leading_zeros())) - 1) };
+                let (sp, tab) = (w2(|b| b.space) & sptab, sptab & !w2(|b| b.space));
+                i64::from((sp & between).count_ones() + 8 * (tab & between).count_ones())
+            };
+            let c = lowest(cstart & above_eq(e + 1) & ((1u128 << xp) - 1));
+            let w = if xp >= lim { 0 } else { width(xp) };
+            (w, c.map_or(-1, width), base + xp as usize)
+        }
+    };
+    let m_ = w.max(fc);
+    let quote_next = matches!(m.at(x), b'\'' | b'"' | b'`');
+    Ok(Some(Event { brackets, w, m: m_, quote_next }))
+}
+
+/// The kind of the token at `s` as the walk's `closer_may_follow` reads it (a string's last token is its end; an
+/// operator not among those it names is a `+`).
+fn kind_at(m: &Masks<'_>, s: usize) -> T {
+    let src = m.src;
+    if !m.bit(s, |b| b.code) {
+        return T::StrEnd;
+    }
+    let c = src[s];
+    if m.bit(s, |b| b.word) {
+        if c.is_ascii_digit() {
+            return T::Int;
+        }
+        let len = m.run_end(s, |b| b.word) - s;
+        return super::keyword_at(src, s, len).0;
+    }
+    match c {
+        b'.' if src.get(s + 1).is_some_and(u8::is_ascii_digit) => T::Float,
+        b'.' if src.get(s..s + 3) == Some(b"...") => T::Ellipsis,
+        b')' => T::RParen,
+        b']' => T::RBracket,
+        b'}' => T::RBrace,
+        b'(' => T::LParen,
+        b'{' => T::LBrace,
+        b'[' => T::LBracket,
+        b',' => T::Comma,
+        _ => T::Plus,
+    }
+}
+
+/// Pass 1 of the walk by masks: chunk `from..to`'s summary from its place `p` to the chunk after's (`next`), over
+/// the strata from `rb` and `depth`, for each of `COMBOS`: its tokens and extras the popcounts of their starts in
+/// its range, its layout from its events. A lane masks do not know is `Unknown`.
+pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: Place, next: Option<Place>) -> WalkSummary {
+    let unknown = || core::array::from_fn(|_| WalkLane::Unknown);
+    let n = src.len();
+    let nb = n.div_ceil(64);
+    if p.1 {
+        return COMBOS.map(|(o, h)| WalkLane::Goes { exit: combo(o, h), toks: 0, extras: 0, sym: Sym::new() });
+    }
+    let (lo, eof) = (p.0, next.is_none_or(|x| x.1));
+    let hi = if eof { n + 1 } else { next.map_or(n + 1, |x| x.0) };
+    let last_block = (hi.min(n).saturating_sub(1) / 64).max(lo / 64);
+    let (c0, _) = firsts(from);
+    let r = over_window(src, from, to.max(last_block + 2).min(nb.max(1)), s1_at(src, c0), rb, depth, |m| {
+        let mut lanes = COMBOS.map(|(o, h)| LayoutLane::new(o, h));
+        let (mut toks, mut extras) = (usize::from(eof), 0);
+        let mut carry = super::starts::StrCarry::default();
+        let mut last: Vec<usize> = Vec::new();
+        let mut colon = false;
+        let in_range = |bi: usize| {
+            let a = lo.saturating_sub(64 * bi).min(64) as u32;
+            let b = hi.saturating_sub(64 * bi).min(64) as u32;
+            let mk = |x: u32| if x >= 64 { !0u64 } else { (1u64 << x) - 1 };
+            mk(b) & !mk(a)
+        };
+        // The tokens `bits` of block `bi` (all after those before): the last two starts, and whether the last is a
+        // `:` out of brackets (a header's).
+        let read = |bits: u64, bi: usize, last: &mut Vec<usize>, colon: &mut bool| {
+            if bits == 0 {
+                return;
+            }
+            let s = 64 * bi + 63 - bits.leading_zeros() as usize;
+            let rest = bits & !(1u64 << (s % 64));
+            let s2 = if rest != 0 { Some(64 * bi + 63 - rest.leading_zeros() as usize) } else { last.first().copied() };
+            *last = [Some(s), s2].into_iter().flatten().collect();
+            *colon = src[s] == b':' && src.get(s + 1) != Some(&b'=') && m.bit(s, |b| b.depth0) && m.bit(s, |b| b.code);
+        };
+        for bi in (lo / 64)..=last_block.min(nb.saturating_sub(1)) {
+            let range = in_range(bi);
+            let (cs, r1) = super::starts::code_starts(&m, bi);
+            let (ss, r2) = super::starts::string_starts(&m, bi, &mut carry);
+            let (xs, r3) = super::starts::extra_starts(&m, bi);
+            if (r1 | r2 | r3) && range != 0 {
+                return None;
+            }
+            let tk = (cs | ss) & range;
+            toks += tk.count_ones() as usize;
+            extras += (xs & range).count_ones() as usize;
+            let (tp, at_end) = super::starts::tops(&m, bi);
+            let mut tops = tp & range;
+            if lo / 64 == bi && lo < hi {
+                tops |= 1u64 << (lo % 64);
+            }
+            let mut all: Vec<usize> = Vec::new();
+            while tops != 0 {
+                all.push(64 * bi + tops.trailing_zeros() as usize);
+                tops &= tops - 1;
+            }
+            if at_end && n == 64 * (bi + 1) && n >= lo && n < hi {
+                all.push(n);
+            }
+            let mut k = tk;
+            for &t in &all {
+                // The tokens before the event: `open` and `header` from them.
+                let before = if t >= 64 * (bi + 1) { k } else { k & ((1u64 << (t % 64)) - 1) };
+                k &= !before;
+                if before != 0 {
+                    read(before, bi, &mut last, &mut colon);
+                    for l in &mut lanes {
+                        l.read(before.count_ones());
+                        l.header = colon;
+                    }
+                }
+                let Ok(ev) = event_at(&m, bi, t) else { return None };
+                if let Some(e) = ev {
+                    if !e.brackets {
+                        for l in &mut lanes {
+                            l.line(e.w, e.m);
+                        }
+                    } else if !e.quote_next {
+                        let (k1, k2) = (last.first().map(|&s| kind_at(&m, s)), last.get(1).map(|&s| kind_at(&m, s)));
+                        for l in &mut lanes {
+                            if !l.closer_may_follow(k1, k2) {
+                                l.in_brackets(e.m);
+                            }
+                        }
+                    }
+                }
+            }
+            if k != 0 {
+                read(k, bi, &mut last, &mut colon);
+                for l in &mut lanes {
+                    l.read(k.count_ones());
+                    l.header = colon;
+                }
+            }
+        }
+        Some(lanes.map(|l| if l.bad { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }))
+    });
+    match r {
+        Ok((Some(s), ..)) => s,
+        _ => unknown(),
+    }
+}
+
 /// Walk summary `a` then `b`.
 pub fn compose_walk(a: &WalkSummary, b: &WalkSummary) -> WalkSummary {
     core::array::from_fn(|c| match &a[c] {
@@ -921,6 +1239,53 @@ pub fn tops_are_the_walks(src: &[u8]) -> Option<(usize, Option<String>)> {
         }
     }
     Some((same, None))
+}
+
+/// The oracle of `walk_summary_masks`: each chunk's summary by masks against the walk's (`walk_summary`), in chunks
+/// of `blocks` blocks. The chunks whose lanes masks know, those they do not, and the first that differs.
+pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, Option<String>)> {
+    let n = src.len().div_ceil(64);
+    let blocks = blocks.max(1);
+    let k = n.div_ceil(blocks).max(1);
+    let range = |c: usize| (c * blocks, (c + 1) * blocks);
+    let sums: Vec<_> = (0..k).map(|c| summary_superposed(src, range(c).0, range(c).1)).collect();
+    let strata = entries_in(&sums, &|k| (0..k).collect()).into_iter().collect::<Option<Vec<_>>>()?;
+    let own: Vec<_> = (0..k).map(|c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1)).collect::<Option<Vec<_>>>()?;
+    let mut places = vec![Place(src.len(), true); k];
+    for c in (0..k).rev() {
+        places[c] = match own[c] {
+            _ if c == 0 => Place(0, false),
+            Some(p) => Place(p, false),
+            None => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
+        };
+    }
+    let norm = |l: &WalkLane| match l {
+        WalkLane::Goes { exit, sym, toks, extras } => {
+            let mut s = sym.clone();
+            s.conds.sort_unstable();
+            s.conds.dedup();
+            WalkLane::Goes { exit: *exit, sym: s, toks: *toks, extras: *extras }
+        }
+        x => x.clone(),
+    };
+    let (mut same, mut unknown) = (0, 0);
+    for c in 0..k {
+        let Place(p, done) = places[c];
+        let walk = walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done);
+        let masks = walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied());
+        for l in 0..3 {
+            match (&masks[l], &walk[l]) {
+                (WalkLane::Unknown, _) => unknown += 1,
+                (a, b) if norm(a) == norm(b) => same += 1,
+                (a, b) => {
+                    let at = 64 * range(c).0;
+                    let text = String::from_utf8_lossy(&src[at.min(src.len())..(at + 64 * blocks + 32).min(src.len())]).into_owned();
+                    return Some((same, unknown, Some(format!("chunk {c} lane {l} (place {:?}, next {:?}): masks {a:?}, walk {b:?} (the chunk's text: {text:?})", places[c], places.get(c + 1)))));
+                }
+            }
+        }
+    }
+    Some((same, unknown, None))
 }
 
 #[cfg(test)]
@@ -1232,5 +1597,48 @@ mod tests {
             }
         }
         assert!(blocks > 100, "{blocks}");
+    }
+
+    #[test]
+    fn layout_by_masks_is_the_walks() {
+        let mut lanes = 0;
+        for (i, t) in texts().iter().enumerate() {
+            for blocks in [1, 2, 3, 16] {
+                if let Some((same, _, first)) = super::layout_is_the_walks(t.as_bytes(), blocks) {
+                    lanes += same;
+                    if let Some(e) = first {
+                        panic!("text {i}, {blocks} blocks a chunk: {e}");
+                    }
+                }
+            }
+        }
+        assert!(lanes > 100, "{lanes}");
+        // Random texts of lines: indents of spaces and tabs, headers, brackets across lines, comments, blank lines.
+        let mut x = 0x3c6e_f372_fe94_f82bu64;
+        let mut rnd = |k: u64| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 8) % k
+        };
+        let pieces: [&str; 14] = ["if a:", "x = 1", "y(", "z)", "# c", "", "  ", "f(a,", "b)", "else:", "'s'", "[", "]", "def f():"];
+        for _ in 0..1500 {
+            let mut t = String::new();
+            for _ in 0..(5 + rnd(60)) {
+                let indent = ["", " ", "  ", "    ", "\t", "        ", "\t "][rnd(7) as usize];
+                t.push_str(indent);
+                t.push_str(pieces[rnd(14) as usize]);
+                t.push_str(["\n", "\n", "\n", "\r\n", "\n\n"][rnd(5) as usize]);
+            }
+            for blocks in [1, 2, 3] {
+                if let Some((same, _, first)) = super::layout_is_the_walks(t.as_bytes(), blocks) {
+                    lanes += same;
+                    if let Some(e) = first {
+                        panic!("{blocks} blocks a chunk: {e}: {t:?}");
+                    }
+                }
+            }
+        }
+        assert!(lanes > 10000, "{lanes}");
     }
 }
