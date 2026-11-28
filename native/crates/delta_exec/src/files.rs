@@ -288,6 +288,15 @@ pub struct Load<'a> {
     pub named: &'a [Load1],
 }
 
+impl Load<'_> {
+    /// The answer to every document `named` names, at once (one `answer_load` over all of them, and one `parse` of the
+    /// sources no home holds): each its source's blob, or a miss; a document the world could not read refused.
+    pub fn answer_all(&mut self, leaves: &mut LeavesW) -> Result<Vec<Answer>, String> {
+        let Reach { world, ops, dir, blobs } = &mut self.at;
+        world.answer(ops, dir, blobs, self.named, leaves)?.into_iter().map(|a| Ok(a?.map_or(Answer::Miss, |doc| Answer::Blob(doc.after.source)))).collect()
+    }
+}
+
 impl Answerer for Load<'_> {
     const KIND: AnswerKind = AnswerKind::World;
     fn answer(&mut self, key: &[i64], leaves: &mut LeavesW) -> Result<Answer, String> {

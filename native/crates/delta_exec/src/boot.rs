@@ -159,59 +159,84 @@ impl DocSet {
         Ok(())
     }
 
-    /// Reads document `path` as module `module` (B§8's first line; the engine's load names both) through the three
-    /// answerers (P§12 item 7), its leaf into the run's layer `leaves`: the load answer (its source; a miss refused,
-    /// naming the path); when it changed, the parse answer (its tape) and the intern answer (its symbols, into
-    /// `atoms`), its places, and the document set's next state, its old row retracted where the set keeps it
-    /// (`drop_parts`) and its new row added; an unchanged document is the identity (no layer).
+    /// Reads document `path` as module `module` (B§8's first line; the engine's load names both): `read_all` of it.
     pub fn read(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, path: &str, module: &str) -> Result<Doc, String> {
-        let kept = self.row_at(&bench.dir, atoms, path)?;
-        let d = match &kept {
-            Some(r) => r[0],
-            None => self.key(&bench.dir, atoms, path)?,
-        };
-        let before = kept.as_ref().map(|r| row_blobs(r).0);
-        let named = [Load1 { d, path: path.to_string(), module: module.to_string(), before }];
-        let Bench { ops, dir, blobs, .. } = &mut *bench;
-        macro_rules! reach {
-            () => {
-                Reach { world: &mut self.world, ops, dir, blobs }
+        Ok(self.read_all(bench, leaves, atoms, &[(path, module)])?.pop().expect("one document read"))
+    }
+
+    /// Reads the documents `docs` names (each its path and its module; B§8's first line) through the three answerers
+    /// (P§12 item 7), their leaves into the run's layer `leaves`: the load answer of all of them at once (one
+    /// `answer_load`, and one `parse` of the sources no home holds; a miss refused, naming the path); for each that
+    /// changed, the parse answer (its tape) and the intern answer (its symbols, into `atoms`) and its places; and the
+    /// document set's next state, one change of it: each changed document's old row retracted where the set keeps it and
+    /// its new row added (one `replace_rows`). An unchanged document is the identity; the read's writes are committed
+    /// once. So a read of the set costs its launches in what changed, not in how many documents it holds (P1).
+    pub fn read_all(&mut self, bench: &mut Bench, leaves: &mut LeavesW, atoms: Atoms, docs: &[(&str, &str)]) -> Result<Vec<Doc>, String> {
+        let mut named = Vec::with_capacity(docs.len()); // copy: derived (the load δ's asks)
+        for &(path, module) in docs {
+            let kept = self.row_at(&bench.dir, atoms, path)?;
+            let d = match &kept {
+                Some(r) => r[0],
+                None => self.key(&bench.dir, atoms, path)?,
             };
+            named.push(Load1 { d, path: path.to_string(), module: module.to_string(), before: kept.as_ref().map(|r| row_blobs(r).0) });
         }
-        let source = match (Load { at: reach!(), named: &named }).answer(&[d], leaves)? {
-            Answer::Blob(s) => s,
-            Answer::Miss => return Err(format!("{path}: not a readable file")),
+        let answers = {
+            let Bench { ops, dir, blobs, .. } = &mut *bench;
+            (Load { at: Reach { world: &mut self.world, ops, dir, blobs }, named: &named }).answer_all(leaves)?
         };
-        let blob = |a: Answer, what: &str| match a {
-            Answer::Blob(b) => Ok(b),
-            a => Err(format!("{path}: the {what} answer is {a:?}")),
-        };
-        let doc = match before {
-            Some(b) if b.source == source => Doc { path: path.to_string(), module: module.to_string(), before, after: b },
-            _ => {
-                let tape = blob((Parse { at: reach!() }).answer(&source.words(), leaves)?, "parse")?;
-                Doc { path: path.to_string(), module: module.to_string(), before, after: DocIds { source, tape } }
+        let mut out = Vec::with_capacity(docs.len()); // copy: not block data (the documents read)
+        let mut rows = Vec::new(); // copy: derived (the set's new rows, the answers)
+        for (a, answer) in named.iter().zip(answers) {
+            let source = match answer {
+                Answer::Blob(s) => s,
+                _ => return Err(format!("{}: not a readable file", a.path)),
+            };
+            let Bench { ops, dir, blobs, .. } = &mut *bench;
+            macro_rules! reach {
+                () => {
+                    Reach { world: &mut self.world, ops, dir, blobs }
+                };
             }
-        };
-        if doc.is_identity() {
-            self.commit_read(bench, leaves, None)?;
-            return Ok(doc);
+            let blob = |x: Answer, what: &str| match x {
+                Answer::Blob(b) => Ok(b),
+                x => Err(format!("{}: the {what} answer is {x:?}", a.path)),
+            };
+            let doc = match a.before {
+                Some(b) if b.source == source => Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after: b },
+                _ => {
+                    let tape = blob((Parse { at: reach!() }).answer(&source.words(), leaves)?, "parse")?;
+                    Doc { path: a.path.clone(), module: a.module.clone(), before: a.before, after: DocIds { source, tape } }
+                }
+            };
+            if !doc.is_identity() {
+                let (s, t) = (doc.after.source.words(), doc.after.tape.words());
+                let key = [a.d, s[0], s[1], s[2], s[3], t[0], t[1], t[2], t[3]];
+                let one = std::slice::from_ref(a);
+                let syms = blob((Intern { at: reach!(), atoms, named: one }).answer(&key, leaves)?, "intern")?;
+                self.world.place(&bench.ops, &mut bench.dir, a.d, Some(doc.after.source))?;
+                let p = atoms.find(&bench.dir, &a.path).ok_or("the path, interned")?;
+                rows.push(tape_row(a.d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms));
+            }
+            out.push(doc);
         }
-        let (s, t) = (doc.after.source.words(), doc.after.tape.words());
-        let key = [d, s[0], s[1], s[2], s[3], t[0], t[1], t[2], t[3]];
-        let syms = blob((Intern { at: reach!(), atoms, named: &named }).answer(&key, leaves)?, "intern")?;
-        self.world.place(&bench.ops, &mut bench.dir, d, Some(doc.after.source))?;
-        let p = atoms.find(&bench.dir, path).ok_or("the path, interned")?;
-        // The answer, written once where it is made: the document's row of the set. Its change of the set (its old
-        // row gone where it differs, its new row come) is `replace_rows`'.
-        let given = self.tape.open(&mut bench.dir, 1);
-        let opened = self.tape.open(&mut bench.dir, 2);
+        if rows.is_empty() {
+            self.commit_read(bench, leaves, None)?;
+            return Ok(out);
+        }
+        // The answers, written once where they are made: the documents' rows of the set. Its change of the set (each
+        // old row gone where it differs, each new row come) is `replace_rows`'.
+        let given = self.tape.open(&mut bench.dir, rows.len());
+        let opened = self.tape.open(&mut bench.dir, 2 * rows.len());
         let release = |dir: &mut Directory| [given, opened].into_iter().for_each(|x| dir.release(x));
         let written = (|| {
             {
                 let b = bench.dir.block(given).expect("just made");
-                let pin = rerail_blocks::region::pin_block(&b, "the document set's answer", true)?;
-                rerail_blocks::layer::RunsW::new(&pin).push(&tape_row(d, p, rerail_rr_syntax::grammar()[1], &doc.after, &syms), 1).ok_or("the document set's answer, full")?;
+                let pin = rerail_blocks::region::pin_block(&b, "the document set's answers", true)?;
+                let w = rerail_blocks::layer::RunsW::new(&pin);
+                for r in &rows {
+                    w.push(r, 1).ok_or("the document set's answers, full")?;
+                }
             }
             semi::replace(&bench.ops, &mut bench.dir, self.tape.head(), TAPE_ARITY, 1, given, opened)
         })();
@@ -222,10 +247,10 @@ impl DocSet {
                 return Err(e);
             }
         };
-        // The one not committed let go: the opened runs, when the set was empty and the answer is its change.
+        // The one not committed let go: the opened runs, when the set was empty and the answers are its change.
         bench.dir.release(if runs == given { opened } else { given });
         self.commit_read(bench, leaves, Some(runs))?;
-        Ok(doc)
+        Ok(out)
     }
 
     /// A read's writes committed in one launch (`Trace::commit_wide`): the blobs it housed, the answers and places it

@@ -473,12 +473,16 @@ fn edits_coalesce_two_as_one_and_an_undo_as_the_identity() {
     assert_eq!(c.undo_in_identity, (false, true), "the input's change: not the identity by its counts, the identity by value");
 }
 
-/// P1: the work of one edit does not grow with the rest: one module edited among 1, 2, 4 and 8 unchanged ones, L1's
-/// step reads, writes and launches the same; and the world's read of the set reads the edited file alone.
+/// P1: the work of one edit does not grow with the rest (P§10: the edit held, everything else doubled): one module
+/// edited among 4, 8 and 16 unchanged ones, L1's step reads, writes and launches the same; and the world's read of the
+/// set reads the edited file alone, in the same launches (one load answer over every document, `DocSet::read_all`).
+/// Below 4 the set's geometric roll-up (O5) merges the edit's layer, as big as the set, in two launches more.
 #[test]
 fn the_work_of_one_edit_does_not_grow_with_the_rest() {
-    let runs: Vec<crate::laws::EditAmong> = [1, 2, 4, 8].iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
-    for (r, n) in runs.iter().zip([1, 2, 4, 8]) {
-        assert_eq!((&r.work, r.launches, r.asked), (&runs[0].work, runs[0].launches, runs[0].asked), "{n} unchanged modules beside the edit");
+    let sizes = [4, 8, 16];
+    let runs: Vec<crate::laws::EditAmong> = sizes.iter().map(|&n| crate::laws::edit_among(&mut Bench::new().unwrap(), &laws_base(&format!("p1-{n}")), n).unwrap_or_else(|e| panic!("{n}: {e}"))).collect();
+    assert_eq!(runs[0].read_launches, 6, "the edit's read: its load answer, its parse and intern, the set's replace and commit, its residency");
+    for (r, n) in runs.iter().zip(sizes) {
+        assert_eq!((&r.work, r.launches, r.asked, r.read_launches), (&runs[0].work, runs[0].launches, runs[0].asked, runs[0].read_launches), "{n} unchanged modules beside the edit");
     }
 }

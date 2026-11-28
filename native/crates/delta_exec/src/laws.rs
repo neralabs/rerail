@@ -107,9 +107,8 @@ pub fn edit_among(bench: &mut Bench, base: &Path, others: usize) -> Result<EditA
         // A run of the world (decision 0105): the journal asked once what changed under the root, the rest trusted.
         docs.world.begin();
         let mut leaves = docs.world.leaves_w(&mut bench.dir);
-        for (p, m) in &paths {
-            docs.read(bench, &mut leaves, atoms, p, m)?;
-        }
+        let named: Vec<(&str, &str)> = paths.iter().map(|(p, m)| (p.as_str(), m.as_str())).collect();
+        docs.read_all(bench, &mut leaves, atoms, &named)?;
         docs.world.commit_leaves(&bench.ops, &mut bench.dir, leaves)?;
         docs.world.end();
         docs.resident(bench)
