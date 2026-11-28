@@ -1595,32 +1595,6 @@ pub mod tests {
     }
     use super::*;
 
-    /// A semi-join's counts read back as kept: the plan and statistics as written, the counts of the documents a
-    /// reader keeps; words that are not whole are not read as kept.
-    #[test]
-    fn a_semijoins_kept_counts_read_back_as_written() {
-        let node = |d: i64, i: i64| d << 32 | i;
-        let mut counts = super::super::keptstats::SemijoinCounts::new(2, 0);
-        for row in [[node(1, 0), 7], [node(1, 1), 9], [node(2, 4), 7]] {
-            counts.row(&row);
-        }
-        counts.document(3);
-        let stats = vec![[3, 3, 3, 3], [3, 2, 5, 5]];
-        let words = semijoin_words(u64::MAX - 3, &stats, &counts);
-        let (plan, read, at) = semijoin_header(&|i| words[i], words.len()).expect("kept");
-        assert_eq!((plan, &read), (u64::MAX - 3, &stats));
-        let mut back = super::super::keptstats::SemijoinCounts::new(2, 0);
-        back.add_encoded(&|i| words[i], at.start, at.end, &|_| true).expect("counts");
-        assert_eq!(back, counts);
-        let mut no2 = super::super::keptstats::SemijoinCounts::new(2, 0);
-        no2.add_encoded(&|i| words[i], at.start, at.end, &|d| d != 2).expect("counts");
-        assert_eq!((no2.rows(), no2.counts(2), no2.counts(3)), (2, false, true));
-        assert!(semijoin_header(&|i| words[i], 1).is_none());
-        assert!(semijoin_header(&|_| 9, 3).is_none());
-        // Cut short, the counts are not read.
-        assert!(super::super::keptstats::SemijoinCounts::new(2, 0).add_encoded(&|i| words[i], at.start, at.end - 1, &|_| true).is_none());
-    }
-
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
     /// the rest, and a lookup finds a row through the kept rows' index at its place now. Its column bounds hold them.
     #[test]
@@ -1819,15 +1793,6 @@ impl InKept {
     /// The digest input `rel` is kept at, when it is kept.
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
-    }
-    /// Whether every input of `measured` (statistics a run measured, `write_input_kept`'s `input_stats`) has them
-    /// kept at the rows of its digest in `digests`: a run that put its inputs as they were then puts nothing.
-    pub(in crate::code_rule_dsl) fn holds_all_stats<V>(&self, measured: &HashMap<String, V>, digests: &HashMap<String, u64>) -> bool {
-        measured.keys().all(|rel| self.names.get(rel).zip(digests.get(rel)).is_some_and(|(name, d)| self.holds_stats(name, *d)))
-    }
-    /// Whether a statistics entry (`kept_stats::PART`) of the rows of digest `digest` is kept under `name`.
-    fn holds_stats(&self, name: &KeptRel, digest: u64) -> bool {
-        self.bound.as_ref().and_then(|b| b.entry(&name.name, &name.ident, kept_stats::PART)).is_some_and(|e| e.digest() == digest)
     }
     /// The digest of `rel`'s stored frame, when it is stored and current.
     pub(in crate::code_rule_dsl) fn derived_digest(&self, rel: &str) -> Option<u64> {
@@ -2029,9 +1994,6 @@ pub(in crate::code_rule_dsl) struct KeptInput {
     /// Its documents and each owner's range, laid out where first asked (Q91).
     pub(in crate::code_rule_dsl) layout: Arc<InputLayout>,
     pub(in crate::code_rule_dsl) digest: u64,
-    /// Its statistics as a run measured them at these rows (`digest`), kept beside its frame (decision 0120 §3's
-    /// part): asked only for an input `kept_inputs` is told to (`stats_of`), whose statistics no keeper counts.
-    pub(in crate::code_rule_dsl) stats: Option<Vec<(String, i64, i64, i64, i64)>>,
 }
 
 /// Each owner's rows in a kept input: (first row, rows).
@@ -2044,7 +2006,7 @@ impl KeptInput {
         let digest = digest_of_docs(&docs);
         let laid = LaidOut { docs: Arc::new(Docs::Made(docs)), ranges: Arc::new(ranges), owners: Vec::new() };
         let layout = InputLayout { rel: String::new(), frame: None, digest, atoms: None, granules: Vec::new(), laid: std::sync::OnceLock::from(Ok(laid)) };
-        KeptInput { source, layout: Arc::new(layout), digest, stats: None }
+        KeptInput { source, layout: Arc::new(layout), digest }
     }
     /// Its rows' digests by owner (its documents' frame, decoded and checked where first asked).
     pub(in crate::code_rule_dsl) fn docs(&self) -> std::result::Result<&Arc<Docs>, String> {
@@ -2409,85 +2371,6 @@ pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKep
     store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], BlockFlat::of_bytes(&bytes))]);
 }
 
-fn semijoin_counts_name(rel: &str) -> String {
-    format!("#semijoin-counts-at-held/{rel}")
-}
-
-/// A semi-join relation's counts at the nodes the exports held (Q396, `keptstats::SemijoinCounts`), kept beside the
-/// documents' table as the base relations' statistics are (`base_stats`), with the digest of the documents they were
-/// counted of: the memo plan they were counted under (`memo_plan_tag`: an unchanged file's exports hold the same nodes
-/// only under it), the statistics counted of them (each column's rows, distinct values and the two sums of squares, in
-/// the order of the relation's columns), then the counts, by document. A run of the same documents and plan takes the
-/// statistics as they are; an edit under the same plan takes the counts of the documents it did not change, and counts
-/// only the changed documents' (in their chunks). They are counts, not the rows they were read of (decision 0458's
-/// follow-up): the rows at PostHog's 8.6 M held nodes were 26 M words.
-pub(in crate::code_rule_dsl) struct KeptSemijoin {
-    pub(in crate::code_rule_dsl) plan: u64,
-    pub(in crate::code_rule_dsl) stats: Vec<[i64; 4]>,
-    counts: std::ops::Range<usize>,
-    entry: kept_read::Entry,
-}
-
-/// The header of a kept semi-join's `len` words `get` reads (`semijoin_words`): the plan, the statistics, and where
-/// the counts lie.
-fn semijoin_header(get: &dyn Fn(usize) -> i64, len: usize) -> Option<(u64, Vec<[i64; 4]>, std::ops::Range<usize>)> {
-    if len < 2 {
-        return None;
-    }
-    let at = usize::try_from(get(1)).ok()?.checked_mul(4)?.checked_add(2)?;
-    if at > len {
-        return None;
-    }
-    let stats = (2..at).step_by(4).map(|i| [get(i), get(i + 1), get(i + 2), get(i + 3)]).collect();
-    Some((get(0) as u64, stats, at..len))
-}
-
-impl KeptSemijoin {
-    /// The counts of the documents `keep` takes added to `counts` (`SemijoinCounts::add_encoded`), read where they lie.
-    /// `None` where they are not counts of `counts`' shape.
-    pub(in crate::code_rule_dsl) fn add_to(&self, counts: &mut super::keptstats::SemijoinCounts, keep: &dyn Fn(i64) -> bool) -> Option<()> {
-        let d = self.entry.packed().col(0).dec();
-        counts.add_encoded(&|i| d.get(i), self.counts.start, self.counts.end, keep)
-    }
-}
-
-/// Semi-join relation `rel`'s kept counts as words (`KeptSemijoin`): the plan, the statistics' number and theirs, then
-/// the counts.
-fn semijoin_words(plan: u64, stats: &[[i64; 4]], counts: &super::keptstats::SemijoinCounts) -> Vec<i64> {
-    let mut words = Vec::with_capacity(2 + 4 * stats.len());
-    words.extend([plan as i64, stats.len() as i64]);
-    words.extend(stats.iter().flatten());
-    counts.encode(&mut words);
-    words
-}
-
-/// Each semi-join relation `rels`' counts at the held nodes as kept beside the documents' table of `binds`
-/// (`put_semijoin_counts`), with the digest of the documents they were counted of.
-pub(in crate::code_rule_dsl) fn semijoin_counts(store: &ContentStore, space: [u8; 32], binds: [u8; 32], rels: &[&str]) -> Result<HashMap<String, (u64, KeptSemijoin)>> {
-    let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(HashMap::new()) };
-    let ident = base_documents_ident(&binds);
-    let mut out = HashMap::new();
-    for rel in rels {
-        let Some(entry) = bound.entry(&semijoin_counts_name(rel), &ident, DOCS_PART) else { continue };
-        if entry.width() != 1 {
-            continue;
-        }
-        let d = entry.packed().col(0).dec();
-        let Some((plan, stats, counts)) = semijoin_header(&|i| d.get(i), entry.len()) else { continue };
-        out.insert((*rel).to_owned(), (entry.digest(), KeptSemijoin { plan, stats, counts, entry: entry.clone() }));
-    }
-    Ok(out)
-}
-
-/// Queues semi-join relation `rel`'s counts at the held nodes and their statistics, counted of documents of digest
-/// `digest` under memo plan `plan`, beside the documents' table (`semijoin_counts`).
-#[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn put_semijoin_counts(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, plan: u64, stats: &[[i64; 4]], counts: &super::keptstats::SemijoinCounts) {
-    let words = semijoin_words(plan, stats, counts);
-    let name = KeptRel { name: semijoin_counts_name(rel), ident: base_documents_ident(&binds) };
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], crate::content_store::kept_facts::BlockFlat::of_rows(&words, 1, true))]);
-}
-
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
 /// wave, under the memo plan `plan` (`memo_plan_tag`), with `digest`, the digest of the documents it names (decision
 /// 0458: the base relations' digests are of it): the writer finds each document's places as it writes it, its tape in
@@ -2534,7 +2417,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs_stored(store: &ContentStore, space: 
 /// The inputs `rels` of the cross part `prog` (key `key`) as the store's frames in `space` keep them: read as
 /// `Retained::load` reads a changed input, each owner's rows a range. `Err` (why) when one is not kept, or its frames
 /// do not match their document table.
-pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String], stats_of: &BTreeSet<String>) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
+pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32], binds: [u8; 32], prog: &Placed, rels: &[String]) -> Result<std::result::Result<HashMap<String, KeptInput>, String>> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs, bound where they lie".into());
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else {
         return Ok(Err("the space keeps no blocks".into()));
@@ -2587,17 +2470,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         let source: Arc<dyn Source> = held.source(names);
         // Each granule's first row, in the order the rows were laid out.
         let source: Arc<dyn Source> = if traced { Arc::new(Traced::new(rel.clone(), source, starts)) } else { source };
-        // Its statistics at these rows: the entry under the documents' digest (an older entry is never matched).
-        let stats = keyed
-            .entry(kept_stats::PART)
-            .filter(|p| kept_stats::on() && stats_of.contains(rel) && p.digest() == digest)
-            .and_then(|p| {
-                // Its words read where they lie (decision 0353 step 8): one column of them.
-                let rows = p.packed();
-                (rows.arity == 1).then(|| kept_stats::from_words(rows.len(), &|i| rows.get(i, 0))).flatten()
-            })
-            .and_then(|all| all.get(&(rel.clone(), digest)).map(|(columns, _, _)| columns.clone()));
-        out.insert(rel.clone(), KeptInput { source, layout, digest, stats });
+        out.insert(rel.clone(), KeptInput { source, layout, digest });
     }
     Ok(Ok(out))
 }
@@ -3277,7 +3150,7 @@ impl Retained {
     /// changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &crate::code_rule_dsl::logic::front::Components, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_kept(&self, store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &crate::code_rule_dsl::logic::front::Components, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, digest_only: &BTreeMap<String, Option<usize>>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, put".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -3295,7 +3168,7 @@ impl Retained {
             Some(done) => done,
             None => {
                 let held = &self.input_docs;
-                write_input_kept(store, was, prog, domains, locations, inputs, digests, &|rel: &str| held.get(rel).and_then(|d| d.get()).cloned(), input_stats, digest_only)
+                write_input_kept(store, was, prog, domains, locations, inputs, digests, &|rel: &str| held.get(rel).and_then(|d| d.get()).cloned(), digest_only)
             }
         };
         // Every input the run bound, kept or not (an option's `env`, an earlier phase's export): its digest is what a
@@ -3455,7 +3328,7 @@ pub(in crate::code_rule_dsl) struct InputsWritten {
 /// by document, queued as each input's job makes them. They depend on the inputs alone, so a run that lets its inputs
 /// go after their last reader (Q74) writes them before it runs, and hands what it wrote to `write_kept`.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<Docs>> + Sync), input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
+pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InKept, prog: &Placed, domains: &lower::Domains, locations: &Locations, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, input_docs: &(dyn Fn(&str) -> Option<Arc<Docs>> + Sync), digest_only: &BTreeMap<String, Option<usize>>) -> InputsWritten {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the inputs' frames".into());
     let mut now: HashMap<String, u64> = HashMap::new();
     let mut written = 0;
@@ -3489,14 +3362,6 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         let types = types_of(prog, domains, rel);
         let cells = if types.len() == width { Cells::new(atoms, &types) } else { Cells::plain(width) };
         let digest = digests.get(rel).copied().unwrap_or_else(|| digest(source.as_ref(), &cells));
-        // Its statistics this run measured (an input no keeper counts, a semi-join's: `kept_inputs`' `stats_of`),
-        // kept beside its frame at these rows (decision 0120 §3's part), unchanged rows or not, unless an entry of
-        // these rows is kept already: the statistics of the same rows are the same, and a warm run writes nothing.
-        if let Some(columns) = input_stats.get(rel).filter(|_| kept_stats::on() && !was.holds_stats(name, digest)) {
-            let all: kept_stats::ByDigest = [((rel.clone(), digest), (columns.clone(), Vec::new(), BTreeSet::new()))].into_iter().collect();
-            let words = kept_stats::to_words(&kept_stats::encode(&all));
-            kept.push(kept_flat(name, kept_stats::PART, digest, Vec::new(), vec![b'i'], crate::content_store::kept_facts::BlockFlat::of_rows(&words, 1, true)));
-        }
         if was.inputs.get(rel).is_some_and(|(d, _)| *d == digest) {
             queue(kept);
             return Some((digest, written));

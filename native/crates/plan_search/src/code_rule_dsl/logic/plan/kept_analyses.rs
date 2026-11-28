@@ -116,7 +116,7 @@ pub fn of_store_rows(rows: &[Row]) -> ByVersion {
 
 /// A value of `v` and of what `given` names, kept as `kept` keeps an analysis: under the version's identity with
 /// `given` hashed in, `name` and `version`. For what is made of a version and a few things besides, not an analysis
-/// of the version alone (the semijoin bases, of the cross part and the split's base relations). Made, it is kept for
+/// of the version alone (the text kinds demanded, of the program and its matchers). Made, it is kept for
 /// the store as its `rows`; read, `of_rows` makes it. A debug build checks it reads back.
 pub fn kept_value<T: PartialEq>(v: &Version, name: &'static str, version: u32, given: &[&[u8]], make: impl FnOnce() -> T, rows: impl Fn(&T) -> Vec<Row>, of_rows: impl Fn(&[Row]) -> Option<T>) -> T {
     if !super::run_holds_plans() {
