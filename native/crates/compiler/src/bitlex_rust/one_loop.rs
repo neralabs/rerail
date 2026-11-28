@@ -137,6 +137,9 @@ struct Lp<'g, 'a> {
     /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
     /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
     deciding: RefCell<std::collections::BTreeSet<String>>,
+    /// The walk a record at a time (decision 0726's tier 2 by record): every record read ends a place, so the walk
+    /// from a place to the first place past record `i` (`run_range`, stopped at `i + 1`) is record `i`'s step.
+    split: bool,
 }
 
 /// A set of bytes.
@@ -860,8 +863,15 @@ impl Lp<'_, '_> {
         };
         // The cycle after the element, written where the element ends (a level's call returns to it as a place).
         let cycle = self.decide(&arms, &otherwise)?;
-        let body = self.walk(a, &none, K::Code(cycle), T::No)?;
-        let code = format!("// The list: its element, then its separator back to the element, or what follows it.\n'l{head}: loop {{\n{body}}}\n");
+        // A record at a time: the cycle after the element is a place.
+        let after = if self.split { K::Go(self.to_place(K::Code(cycle))) } else { K::Code(cycle) };
+        let body = self.walk(a, &none, after, T::No)?;
+        // A record at a time, the element's end is a place: the loop never goes round, the list is its place.
+        let code = if self.split {
+            format!("// The list 'l{head}: its element; its separator, a place of its own, goes back to it.\n{body}")
+        } else {
+            format!("// The list: its element, then its separator back to the element, or what follows it.\n'l{head}: loop {{\n{body}}}\n")
+        };
         self.places.borrow_mut()[head] = Self::labels(&code, Some(head));
         Ok(head)
     }
@@ -921,6 +931,9 @@ impl Lp<'_, '_> {
                 _ => return self.err(format!("`{n}`: no rule or token")),
             },
             Gram::Seq(gs) => {
+                if self.split && self.takes(gs)? && gs.iter().filter(|g| self.g.first(g).is_ok_and(|f| !f.1)).count() > 1 {
+                    return self.err("a record at a time: a sequence of tokens with no level's call in it is not written yet");
+                }
                 let (mut out, none) = (String::new(), Key::default());
                 for (k, g) in gs.iter().enumerate() {
                     let follows = self.takes(&gs[k + 1..])?;
@@ -929,6 +942,7 @@ impl Lp<'_, '_> {
                 out
             }
             Gram::Opt(a) => self.decide(&self.plain_arms(a, key)?, "")?,
+            Gram::Star(_) | Gram::Plus(_) if self.split => return self.err("a record at a time: a repetition with no level's call in it is not written yet"),
             Gram::Star(a) => format!("loop {{\n{}}}\n", self.decide(&self.plain_arms(a, key)?, "break;\n")?),
             Gram::Plus(a) => {
                 let one = self.plain(a, key, t)?;
@@ -985,7 +999,7 @@ impl Lp<'_, '_> {
                     let empty_end = if falls { String::new() } else { Self::go(ret) };
                     let number = self.number(kind, key)?;
                     let mut out = String::new();
-                    let depth_test = if self.at_root.get() { "" } else { "if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n" };
+                    let depth_test = if self.at_root.get() && !self.split { "" } else { "if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n" };
                     if let Some((_, close)) = self.brackets(n)? {
                         // The level the root's value: the file's last record its closer, checked before the walk, as
                         // the lean parser's `last != '}'`.
@@ -993,12 +1007,19 @@ impl Lp<'_, '_> {
                             let _ = write!(out, "if src[starts[count - 1] as usize] != {close:#04x} {{\nreturn Err(at(src, starts, i));\n}}\n");
                         }
                         // Empty: one leaf from its opener (its decision's) to its closer, as the lean parser's `empty!`;
-                        // its depth tested as a level's.
-                        let _ = write!(
-                            out,
-                            "{}if peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
-                            depth_test, empty_end
-                        );
+                        // its depth tested as a level's. A record at a time, the opener and the closer each a step:
+                        // the leaf written at its closer, from the record before.
+                        if self.split {
+                            let closer = format!("// `{kind}`, empty: its closer (tested again: a step is taken from every place).\nif i == 0 || peek(src, starts, i) != {close:#04x} {{\nreturn Err(at(src, starts, i));\n}}\nlet s = starts[i - 1] as usize;\ne = starts[i] as usize + 1;\ni += 1;\nleaf(d, {number}, s as u64, e as u64);\n{}", Self::go(ret));
+                            let at = self.to_place(K::Code(closer));
+                            let _ = write!(out, "{}if peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty: its opener.\ni += 1;\n{}}} else {{\n", depth_test, Self::go(at));
+                        } else {
+                            let _ = write!(
+                                out,
+                                "{}if peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
+                                depth_test, empty_end
+                            );
+                        }
                     } else {
                         out.push_str(depth_test);
                     }
@@ -1037,6 +1058,10 @@ impl Lp<'_, '_> {
                 };
                 for (j, g) in gs.iter().enumerate().rev() {
                     let follows = list.is_some() || self.takes(&gs[j + 1..])?;
+                    // A record at a time: what follows each element is a place.
+                    if self.split {
+                        k = K::Go(self.to_place(k));
+                    }
                     k = K::Code(self.unread(g, follows, || self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No }))?);
                 }
                 Self::jump(&k)
@@ -1260,6 +1285,55 @@ pub fn tier2_loop_reads(x: &Input<'_>) -> Result<(String, Option<u32>), String> 
         // Tokens tier 1 decides (their marks, the comments, the flags, the readings): the records form.
         return records::tier2(x).map(|(out, reads)| (out, Some(reads)));
     }
+    let out = loop_text(x, false)?;
+    let split = loop_text(x, true)?;
+    Ok((out + &step_of(&split)?, None))
+}
+
+/// The walk a record at a time (`split`'s `run_range`) as `run_step`, with its places' constants: its return places
+/// (`STEP_RETS`), its lists' cycle places (`STEP_CYCLES`), each level kind's return place and cycle place
+/// (`STEP_CONT`, `STEP_CYCLE`), and its places' count (`STEP_PLACES`).
+fn step_of(split: &str) -> Result<String, String> {
+    let why = |w: &str| format!("tier 2 a record at a time: {w}");
+    let head = "pub unsafe fn run_range<D: Out>(";
+    let f = split.find(head).ok_or_else(|| why("no run_range"))?;
+    // Its end: where its braces close (its code holds no brace in a string or a character).
+    let open = f + split[f..].find('{').ok_or_else(|| why("run_range's body"))?;
+    let mut depth = 0i32;
+    let mut e = None;
+    for (k, c) in split[open..].char_indices() {
+        depth += match c {
+            '{' => 1,
+            '}' => -1,
+            _ => 0,
+        };
+        if depth == 0 {
+            e = Some(open + k + 2);
+            break;
+        }
+    }
+    let e = e.ok_or_else(|| why("run_range's end"))?;
+    // Its doc comment: the lines above it.
+    let doc = split[..f].rfind("\n\n").map_or(f, |d| d + 2);
+    let body = split[doc..e].replacen("pub unsafe fn run_range<", "pub unsafe fn run_step<", 1);
+    let konst = |name: &str| -> Result<String, String> {
+        let at = split.find(&format!("pub const {name}: &[u8] = &[")).ok_or_else(|| why(name))?;
+        let line = &split[at..at + split[at..].find('\n').unwrap_or(0)];
+        Ok(line.replacen(&format!("pub const {name}:"), &format!("pub const STEP_{name}:"), 1))
+    };
+    let places = body.lines().filter_map(|l| l.split(" => ").next()).flat_map(|p| p.split(" | ")).filter_map(|n| n.trim().parse::<usize>().ok()).max().map_or(0, |m| m + 1);
+    Ok(format!(
+        "\n// Tier 2 a record at a time (decision 0726's tier 2 by record): the same loop with every record read ending a\n// place, so the walk from a place to the first place past record `i` is record `i`'s step.\n\n/// The places of `run_step`'s loop.\npub const STEP_PLACES: usize = {places};\n\n/// The levels the walk opens at most (`run_step`'s levels' places).\npub const STEP_DEPTH: usize = DEPTH;\n\n/// `run_step`'s places a level returns to.\n{}\n\n/// `run_step`'s lists' cycle places.\n{}\n\n/// `run_step`'s return place of each level kind (the root's last).\n{}\n\n/// `run_step`'s cycle place of each level kind.\n{}\n\n{body}",
+        konst("RETS")?,
+        konst("CYCLES")?,
+        konst("CONT")?,
+        konst("CYCLE")?
+    ))
+}
+
+/// The one loop's text and its chunked form; with `split`, the loop a record at a time.
+fn loop_text(x: &Input<'_>, split: bool) -> Result<String, String> {
+    let g = G::new(x);
     let readers = crate::bitlex_lex_rust::readers(x.lexer);
     let mut ends = BTreeMap::new();
     let mut row_of: [Option<u8>; 256] = [None; 256];
@@ -1322,7 +1396,7 @@ matches!(ROWS[usize::from(b)], {pat})
 
 ")))
     });
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()), split };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1468,7 +1542,7 @@ matches!(ROWS[usize::from(b)], {pat})
     }
     // Each level's opener and closer: what the depth's prefix sum counts.
     let brackets: Vec<(u8, u8)> = lp.levels.borrow().keys().filter_map(|r| lp.brackets(r).ok().flatten()).collect();
-    Ok((chunked::with_chunks(drop_uncalled(out, &parts), &brackets)?, None))
+    chunked::with_chunks(drop_uncalled(out, &parts), &brackets)
 }
 
 /// Whether `code` names `id` (not as part of a longer name, a field or a method).

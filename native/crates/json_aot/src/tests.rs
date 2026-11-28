@@ -339,3 +339,213 @@ fn tier2_tape_from_the_middle_is_the_serial_tape() {
     }
     eprintln!("{tapes} tapes from the middle ({chunks} chunks), each the serial tape; {zipped} as 16z by the greedy encoder, {plain} bytes to {zbytes}, each decoding to its tape");
 }
+
+/// What a walk's nodes count, through the token pass's answers (pass 1's `Shadow` without its frames).
+struct Count<'a> {
+    toks: &'a [crate::middle::Token],
+    nodes: usize,
+}
+
+impl crate::middle::Out for Count<'_> {
+    fn known(&self, i: usize) -> Option<Result<crate::middle::Token, u32>> {
+        let t = *self.toks.get(i)?;
+        if t.err != crate::middle::NONE {
+            Some(Err(t.err))
+        } else if t.kind == crate::middle::NONE {
+            None
+        } else {
+            Some(Ok(t))
+        }
+    }
+    unsafe fn skip(&mut self, _: u64, t: crate::middle::Token) -> usize {
+        self.nodes += t.nodes as usize;
+        t.end as usize
+    }
+    unsafe fn open(&mut self, _: u32, _: u64) {
+        self.nodes += 1;
+    }
+    unsafe fn leaf(&mut self, _: u32, _: u64, _: u64) {
+        self.nodes += 1;
+    }
+    unsafe fn leaf_in(&mut self, _: u32, _: u32, _: u64, _: u64, _: u64, _: u64) {
+        self.nodes += 2;
+    }
+    unsafe fn close(&mut self, _: u64) {}
+}
+
+/// A step map's values past the places: the step closes its level, ends the file, or is refused.
+const CLOSES: u8 = 253;
+const ENDS: u8 = 254;
+const REFUSED: u8 = 255;
+
+/// Record `r`'s step from each place (`run_step` to the first place past it, at the walk's depth `depth`, nothing
+/// known of the levels below): the place after it, or where it opens a level the place that level returns to (its
+/// parent's next place), and the place its level starts at; `CLOSES`, `ENDS` or `REFUSED`. And its nodes from each.
+fn step_map(buf: &[u8], lx: &crate::tier1::Lexed, toks: &[crate::middle::Token], r: usize, depth: usize) -> ([u8; 32], [u8; 32], [u32; 32]) {
+    use crate::middle::{Entry, Stop};
+    let (mut map, mut child, mut nodes) = ([REFUSED; 32], [REFUSED; 32], [0u32; 32]);
+    for p in 0..crate::middle::STEP_PLACES {
+        let mut ret = [0u8; crate::middle::STEP_DEPTH];
+        let mut d = Count { toks, nodes: 0 };
+        // SAFETY: `buf` is the file padded, `lx` its records.
+        let stop = unsafe { crate::middle::run_step(buf, lx, &mut d, Entry { i: r, e: 0, depth, st: p as u8 }, &mut ret, depth, r + 1) };
+        nodes[p] = d.nodes as u32;
+        map[p] = match stop {
+            Stop::At(x) if x.i == r + 1 && x.depth == depth + 1 => {
+                child[p] = x.st;
+                ret[depth]
+            }
+            Stop::At(x) if x.i == r + 1 && x.depth == depth => x.st,
+            Stop::At(x) => panic!("record {r} from place {p}: a step to record {} at depth {}, from depth {depth}", x.i, x.depth),
+            Stop::Read(_) => CLOSES,
+            Stop::Done(Ok(())) => ENDS,
+            Stop::Done(Err(_)) => REFUSED,
+        };
+    }
+    (map, child, nodes)
+}
+
+/// Tier 2 by record (decision 0726): each record's place found with no walk, by its level, a stable sort by level and
+/// one segmented scan of step maps, equals the serial walk's place there, record by record; the refusal is the first
+/// record whose step from its place is refused, at the serial walk's record. Each record's step map is the generated
+/// loop's own (`run_step`, the loop with every record read ending a place), from each of its places. The scan composes
+/// maps (a place in, a place out) in a random order of each round's elements.
+#[test]
+fn tier2_places_by_record_are_the_walks() {
+    use crate::middle::{Entry, Stop, STEP_PLACES};
+    let all: Vec<Vec<u8>> = files().into_iter().chain(trees()).collect();
+    let (mut records, mut files_done, mut refused) = (0, 0, 0);
+    for (k, f) in all.iter().enumerate() {
+        let buf = padded(f);
+        let lx = lex(&buf, f.len());
+        if lx.refused || lx.count == 0 {
+            continue;
+        }
+        let n = lx.count;
+        let ty = crate::lex_typed(&buf, f.len(), 16);
+        let toks = crate::middle::tokens(&buf, &lx, &ty.types, &crate::middle::in_order);
+        // The serial walk a record at a time: its place before each record, every read a place, and its verdict.
+        let mut serial = vec![REFUSED; n + 1];
+        let mut ret = [0u8; crate::middle::STEP_DEPTH];
+        let mut en = Entry { i: 0, e: 0, depth: 0, st: 0 };
+        let mut d = Count { toks: &toks, nodes: 0 };
+        let verdict = loop {
+            serial[en.i] = en.st;
+            // SAFETY: as `step_map`'s.
+            match unsafe { crate::middle::run_step(&buf, &lx, &mut d, en, &mut ret, 0, en.i + 1) } {
+                Stop::At(x) => {
+                    assert_eq!(x.i, en.i + 1, "file {k}: a step past record {} took more than one record", en.i);
+                    en = x;
+                }
+                Stop::Done(r) => break (en.i, r),
+                Stop::Read(_) => unreachable!("every level is known from the start"),
+            }
+        };
+        let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+        let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
+        let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+        assert_eq!(verdict.1, crate::parse_lexed(&buf, &lx, &mut w), "file {k}: the walk a record at a time's verdict is the serial walk's");
+        // Each record's first byte and its change of the depth; an empty level's opener and closer (a local read).
+        let byte = |r: usize| buf[lx.starts[r] as usize];
+        let (opens, closes) = (|b: u8| b == b'{' || b == b'[', |b: u8| b == b'}' || b == b']');
+        let pair = |o: u8, c: u8| (o == b'{' && c == b'}') || (o == b'[' && c == b']');
+        let empty_open = |r: usize| r + 1 < n && opens(byte(r)) && pair(byte(r), byte(r + 1));
+        let empty_close = |r: usize| r > 0 && closes(byte(r)) && pair(byte(r - 1), byte(r));
+        let delta: Vec<i64> = (0..n).map(|r| if opens(byte(r)) { 1 } else if closes(byte(r)) { -1 } else { 0 }).collect();
+        // The depth before each record: a prefix sum (exclusive).
+        let order = shuffled(k as u64 + 7);
+        let incl = crate::middle::scan(delta.clone(), &order, |a, b| a + b);
+        let before = |r: usize| if r == 0 { 0 } else { incl[r - 1] };
+        // The walk's depth before a record: an empty level's closer is inside no level the walk opened.
+        let walk_depth = |r: usize| (before(r) - i64::from(r < n && empty_close(r))).max(0) as usize;
+        // Items: (level, record, head): an opener of a level its parent's item and its own level's head; an empty
+        // level's opener and closer, and every other record, one item at the level they are read in. The file's end
+        // (record n) an item of the level open there.
+        let mut items: Vec<(i64, usize, bool)> = Vec::new();
+        for r in 0..=n {
+            let b = if r < n { byte(r) } else { 0 };
+            if r < n && opens(b) && !empty_open(r) {
+                items.push((before(r), r, false));
+                items.push((before(r) + 1, r, true));
+            } else if r < n && closes(b) && !empty_close(r) {
+                items.push((before(r), r, false));
+            } else if r < n && empty_close(r) {
+                items.push((before(r) - 1, r, false));
+            } else {
+                items.push((if r < n { before(r) } else { incl[n - 1] }, r, false));
+            }
+        }
+        // The stable sort by level (the records already in order, a head before its level's items).
+        items.sort_by_key(|&(l, r, h)| (l, r, !h));
+        // Each item's step map: a head's is the level's start (the place its opener's step opens it at, the same
+        // from every place its opener is read at); an opener's in its parent, the place its level returns to.
+        let maps: Vec<[u8; 32]> = (0..=n).map(|_| [REFUSED; 32]).collect();
+        let mut maps = maps;
+        let mut starts = vec![REFUSED; n + 1];
+        for r in 0..=n {
+            let (m, c, _) = step_map(&buf, &lx, &toks, r, walk_depth(r));
+            maps[r] = m;
+            let mut s = c.iter().take(STEP_PLACES).copied().filter(|&x| x != REFUSED);
+            if let Some(first) = s.next() {
+                assert!(s.all(|x| x == first), "file {k}: record {r}'s level starts at more than one place");
+                starts[r] = first;
+            }
+        }
+        // The segmented scan: (head, map). A segment's first item is its head (the level's start, a constant map);
+        // the root level's first item starts at place 0.
+        let compose = |a: &[u8; 32], b: &[u8; 32]| -> [u8; 32] {
+            let mut out = [REFUSED; 32];
+            for p in 0..STEP_PLACES {
+                out[p] = if (a[p] as usize) < STEP_PLACES { b[a[p] as usize] } else { a[p] };
+            }
+            out
+        };
+        let constant = |s: u8| -> [u8; 32] { [s; 32] };
+        let elems: Vec<(bool, [u8; 32])> = items
+            .iter()
+            .enumerate()
+            .map(|(x, &(l, r, h))| {
+                if h {
+                    (true, constant(starts[r]))
+                } else if x == 0 || items[x - 1].0 != l {
+                    // A level's first item with no head: the root's, from place 0.
+                    let mut m = maps[r];
+                    let first = m[0];
+                    m = constant(first);
+                    (true, m)
+                } else {
+                    (false, maps[r])
+                }
+            })
+            .collect();
+        let scanned = crate::middle::scan(elems.clone(), &order, |a, b| if b.0 { *b } else { (a.0, compose(&a.1, &b.1)) });
+        // Each record's place: the scan before its item, applied to anything (a segment's value is constant).
+        let mut place = vec![REFUSED; n + 1];
+        for (x, &(l, r, h)) in items.iter().enumerate() {
+            if h {
+                continue;
+            }
+            let first = x == 0 || items[x - 1].0 != l;
+            place[r] = if first { 0 } else { scanned[x - 1].1[0] };
+        }
+        // The refusal: the first record whose step from its place is refused (or whose place is none).
+        // A file whose root ends at its last record's step has ended there: its end's place is `ENDS`.
+        let stuck = (0..=n).find(|&r| if place[r] == ENDS { r < n } else { place[r] as usize >= STEP_PLACES || maps[r][place[r] as usize] == REFUSED });
+        for r in 0..=verdict.0 {
+            if Some(r) == stuck {
+                break;
+            }
+            assert_eq!(place[r], serial[r], "file {k}: record {r}'s place by its level's scan, the walk's");
+        }
+        match verdict.1 {
+            Ok(()) => assert!(stuck.is_none(), "file {k} ({:?}): refused by the scan at record {stuck:?}, the walk accepted it; places {:?}, the walk's {:?}", String::from_utf8_lossy(&f[..f.len().min(80)]), &place[..place.len().min(12)], &serial[..serial.len().min(12)]),
+            Err(_) => {
+                refused += 1;
+                assert_eq!(stuck, Some(verdict.0), "file {k}: refused by the scan at record {stuck:?}, the walk at {}", verdict.0);
+            }
+        }
+        records += n;
+        files_done += 1;
+    }
+    eprintln!("{files_done} files ({refused} refused), {records} records: each record's place by its level's scan is the walk's");
+}

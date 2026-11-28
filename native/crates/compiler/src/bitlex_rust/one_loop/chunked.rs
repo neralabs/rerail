@@ -103,6 +103,26 @@ pub(super) fn with_chunks(out: String, brackets: &[(u8, u8)]) -> Result<String, 
             seps.push(byte);
         }
     }
+    // A record at a time, a separator goes to its list's place (`st = N;`, the list's loop a place of its own), not
+    // round its loop: `0x.. => {\ni += 1;\nst = N;\ncontinue 'run;` with N a list's place.
+    if cycles.is_empty() {
+        // Each list's place, as its comment names it (`// The list 'lN: …`).
+        let heads: Vec<u8> = body.lines().filter_map(|l| l.strip_prefix("// The list 'l").and_then(|r| r.split(':').next())).filter_map(|n| n.parse::<u8>().ok()).collect();
+        for &n in &heads {
+            let tail = format!(" => {{\ni += 1;\nst = {n};\ncontinue 'run;\n");
+            for (k, _) in body.match_indices(&tail) {
+                let byte = body[..k].rsplit('\n').next().and_then(|b| b.strip_prefix("0x")).and_then(|b| u8::from_str_radix(b, 16).ok());
+                if let Some(byte) = byte {
+                    if !cycles.contains(&n) {
+                        cycles.push(n);
+                    }
+                    if !seps.contains(&byte) {
+                        seps.push(byte);
+                    }
+                }
+            }
+        }
+    }
     cycles.sort_unstable();
     if rets.is_empty() || cycles.is_empty() || brackets.is_empty() {
         return Err(why("no level or no list"));
@@ -114,7 +134,17 @@ pub(super) fn with_chunks(out: String, brackets: &[(u8, u8)]) -> Result<String, 
     let mut cont: Vec<Option<u8>> = vec![None; brackets.len() + 1];
     let mut cycle: Vec<Option<u8>> = vec![None; brackets.len()];
     for &r in &rets {
-        let arms = arms_of(body, r);
+        // A record at a time, a return place may only close what its caller holds and go on (`st = N;`): its kind is
+        // the place it goes to's, which takes the closer.
+        let mut arms = arms_of(body, r);
+        for _ in 0..8 {
+            let [a] = &arms[..] else { break };
+            if a.contains("match ") {
+                break;
+            }
+            let Some(n) = a.rsplit_once("\nst = ").and_then(|(_, t)| t.split(';').next()).and_then(|t| t.parse::<u8>().ok()) else { break };
+            arms = arms_of(body, n);
+        }
         if arms.is_empty() {
             return Err(why(&format!("no arm of return place {r}")));
         }

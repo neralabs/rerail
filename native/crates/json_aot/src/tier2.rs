@@ -1665,3 +1665,380 @@ pub fn parse_middle(src: &[u8], lx: &crate::tier1::Lexed, types: &[Vec<u32>], w:
         Some(_) => Err(u32::MAX),
     }
 }
+
+// Tier 2 a record at a time (decision 0726's tier 2 by record): the same loop with every record read ending a
+// place, so the walk from a place to the first place past record `i` is record `i`'s step.
+
+/// The places of `run_step`'s loop.
+pub const STEP_PLACES: usize = 17;
+
+/// The levels the walk opens at most (`run_step`'s levels' places).
+pub const STEP_DEPTH: usize = DEPTH;
+
+/// `run_step`'s places a level returns to.
+pub const STEP_RETS: &[u8] = &[4, 8, 14];
+
+/// `run_step`'s lists' cycle places.
+pub const STEP_CYCLES: &[u8] = &[2, 7];
+
+/// `run_step`'s return place of each level kind (the root's last).
+pub const STEP_CONT: &[u8] = &[8, 4, 14];
+
+/// `run_step`'s cycle place of each level kind.
+pub const STEP_CYCLE: &[u8] = &[7, 2];
+
+/// The walk from `en` to the first place at or past record `stop`, through `d`: the levels' places `ret[low..depth]`
+/// known; a close below `low` stops it (`Stop::Read`), which no walk of a chunk from its kinds meets but past a broken
+/// word, where the chunk is past the file's refusal.
+#[inline(always)]
+pub unsafe fn run_step<D: Out>(src: &[u8], lx: &crate::tier1::Lexed, d: &mut D, en: Entry, ret: &mut [u8; DEPTH], low: usize, stop: usize) -> Stop {
+let (starts, count, len) = (&lx.starts[..], lx.count, lx.len);
+let _ = (count, len);
+let mut i = en.i;
+let mut e = en.e;
+let mut depth = en.depth;
+let mut st: u8 = en.st;
+'run: loop {
+if i >= stop {
+return Stop::At(Entry { i, e, depth, st });
+}
+match st {
+0 => {
+open(d, 0, at(src, starts, i) as u64);
+match peek(src, starts, i) {
+0x7b => {
+if src[starts[count - 1] as usize] != 0x7d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty: its opener.
+i += 1;
+st = 15;
+continue 'run;
+} else {
+open(d, 15, at(src, starts, i) as u64);
+ret[depth] = 14;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if src[starts[count - 1] as usize] != 0x5d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty: its opener.
+i += 1;
+st = 16;
+continue 'run;
+} else {
+open(d, 16, at(src, starts, i) as u64);
+ret[depth] = 14;
+depth += 1;
+st = 6;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [3, 4, 5, 6, 7]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+close(d, len as u64);
+if i != count {
+return Stop::Done(Err(at(src, starts, i)));
+}
+return Stop::Done(Ok(()));
+}
+1 => {
+i += 1;
+st = 2;
+continue 'run;
+}
+2 => {
+// The list 'l2: its element; its separator, a place of its own, goes back to it.
+open(d, 8, at(src, starts, i) as u64);
+match peek(src, starts, i) {
+0x22 => {}
+_ => return Stop::Done(Err(at(src, starts, i))),
+}
+e = match unsafe { string(src, starts, d, &mut i, [18]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+st = 13;
+continue 'run;
+}
+3 => {
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+st = 2;
+continue 'run;
+}
+0x7d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'run;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+4 | 8 | 14 => 'ret: loop {
+if i >= stop {
+return Stop::At(Entry { i, e, depth, st });
+}
+// Where a level returns: its caller's rest, by the place it pushed.
+match st {
+4 => {
+close(d, e as u64);
+st = 3;
+continue 'run;
+}
+8 => {
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+st = 7;
+continue 'run;
+}
+0x5d => {
+let s = starts[i] as usize;
+i += 1;
+e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+if depth == 0 {
+return Stop::Done(Err(at(src, starts, i)));
+}
+depth -= 1;
+if depth < low {
+return Stop::Read(Entry { i, e, depth, st });
+}
+st = ret[depth];
+continue 'ret;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+}
+14 => {
+close(d, len as u64);
+if i != count {
+return Stop::Done(Err(at(src, starts, i)));
+}
+return Stop::Done(Ok(()));
+}
+_ => unreachable!(),
+}
+},
+5 => {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x7d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 14, s as u64, e as u64);
+st = 4;
+continue 'run;
+}
+6 => {
+i += 1;
+st = 7;
+continue 'run;
+}
+7 => {
+// The list 'l7: its element; its separator, a place of its own, goes back to it.
+match peek(src, starts, i) {
+0x7b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty: its opener.
+i += 1;
+st = 9;
+continue 'run;
+} else {
+open(d, 15, at(src, starts, i) as u64);
+ret[depth] = 8;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty: its opener.
+i += 1;
+st = 10;
+continue 'run;
+} else {
+open(d, 16, at(src, starts, i) as u64);
+ret[depth] = 8;
+depth += 1;
+st = 6;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [3, 4, 5, 6, 7]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+st = 8;
+continue 'run;
+}
+9 => {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x7d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 15, s as u64, e as u64);
+st = 8;
+continue 'run;
+}
+10 => {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x5d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 16, s as u64, e as u64);
+st = 8;
+continue 'run;
+}
+11 => {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x5d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 17, s as u64, e as u64);
+st = 4;
+continue 'run;
+}
+12 => {
+match peek(src, starts, i) {
+0x7b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x7d {
+// `object`, empty: its opener.
+i += 1;
+st = 5;
+continue 'run;
+} else {
+open(d, 14, at(src, starts, i) as u64);
+ret[depth] = 4;
+depth += 1;
+st = 1;
+continue 'run;
+}
+}
+0x5b => {
+if depth == DEPTH {
+return Stop::Done(Err(at(src, starts, i)));
+}
+if peek(src, starts, i + 1) == 0x5d {
+// `array`, empty: its opener.
+i += 1;
+st = 11;
+continue 'run;
+} else {
+open(d, 17, at(src, starts, i) as u64);
+ret[depth] = 4;
+depth += 1;
+st = 6;
+continue 'run;
+}
+}
+_ => {
+e = match unsafe { value_primitive(src, starts, d, &mut i, [9, 10, 11, 12, 13]) } {
+Ok(v) => v,
+Err(x) => return Stop::Done(Err(x)),
+};
+}
+}
+st = 4;
+continue 'run;
+}
+13 => {
+match peek(src, starts, i) {
+0x3a => {
+i += 1;
+}
+_ => {
+return Stop::Done(Err(at(src, starts, i)));
+}
+}
+st = 12;
+continue 'run;
+}
+15 => {
+// `object`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x7d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 15, s as u64, e as u64);
+st = 14;
+continue 'run;
+}
+16 => {
+// `array`, empty: its closer (tested again: a step is taken from every place).
+if i == 0 || peek(src, starts, i) != 0x5d {
+return Stop::Done(Err(at(src, starts, i)));
+}
+let s = starts[i - 1] as usize;
+e = starts[i] as usize + 1;
+i += 1;
+leaf(d, 16, s as u64, e as u64);
+st = 14;
+continue 'run;
+}
+_ => unreachable!(),
+}
+}
+
+}
