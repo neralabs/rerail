@@ -545,25 +545,81 @@ pub fn entries_in(sums: &[Summary], order: Order<'_>) -> Vec<Option<(RB, i8)>> {
 pub struct Place(pub usize, pub bool);
 
 /// Chunk `from..to`'s first loop top by masks (`starts::tops`), over its strata from `rb` and `depth`: the lowest of
-/// its blocks' tops, none where it has none (the chunk after's is then its own). None where the strata do not read
-/// the chunk.
-fn first_top(src: &[u8], from: usize, to: usize, rb: RB, depth: i8) -> Option<Option<usize>> {
+/// its blocks' tops, none where it has none (the chunk after's is then its own). And the first content its blocks'
+/// windows read in their upper halves (`Far::upper`: blocks `from + 1..=to`). None where the strata do not read the
+/// chunk.
+fn chunk_firsts(src: &[u8], from: usize, to: usize, rb: RB, depth: i8) -> Option<(Option<usize>, Far)> {
     let (c0, _) = firsts(from);
     let n = src.len().div_ceil(64);
     over_window(src, from, to, s1_at(src, c0), rb, depth, |m| {
-        (from..to.min(n)).rev().fold(None, |after, bi| {
+        (from..to.min(n)).rev().fold((None, Far::NONE), |(after, far), bi| {
             let (t, at_end) = super::starts::tops(&m, bi);
-            if t != 0 {
+            let top = if t != 0 {
                 Some(64 * bi + t.trailing_zeros() as usize)
             } else if at_end {
                 Some(src.len())
             } else {
                 after
-            }
+            };
+            // A text under 64 bytes has no block above its first.
+            let up = if n < 2 { Far::NONE } else { Far::upper(&m.win::<false>(bi)) };
+            (top, up.first(far))
         })
     })
     .ok()
     .map(|(x, ..)| x)
+}
+
+/// What the walk's pass 1 by masks takes from the chunks after each: its place, the next chunk's, and the first
+/// content past its blocks' windows (`Far`, in the blocks above its last's window).
+pub struct WalkInputs {
+    pub places: Vec<Place>,
+    pub afters: Vec<Far>,
+}
+
+/// The walk's inputs from each chunk's firsts (`chunk_firsts`): a chunk's place is its first loop top, else the
+/// chunk after's (past the last, the text's end read); the content after it is the first of the chunks' after it.
+/// Err: the first chunk the strata do not read.
+pub fn walk_inputs(src: &[u8], blocks: usize, strata: &[(RB, i8)], order: Order<'_>) -> Result<WalkInputs, usize> {
+    let blocks = blocks.max(1);
+    let k = strata.len();
+    let own = each(k, order, |c| chunk_firsts(src, c * blocks, (c + 1) * blocks, strata[c].0, strata[c].1));
+    if let Some(c) = own.iter().position(Option::is_none) {
+        return Err(c);
+    }
+    let mut places = vec![Place(src.len(), true); k];
+    let mut afters = vec![Far::NONE; k];
+    for c in (0..k).rev() {
+        let (top, _) = own[c].unwrap();
+        places[c] = match top {
+            _ if c == 0 => Place(0, false),
+            Some(p) => Place(p, false),
+            None => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
+        };
+        afters[c] = match own.get(c + 1) {
+            Some(Some((_, f))) => f.first(afters[c + 1]),
+            _ => Far::NONE,
+        };
+    }
+    Ok(WalkInputs { places, afters })
+}
+
+impl WalkInputs {
+    /// Chunk `c`'s walk summary by masks.
+    pub fn summary(&self, src: &[u8], blocks: usize, strata: &[(RB, i8)], c: usize) -> (WalkSummary, [u32; 3]) {
+        let blocks = blocks.max(1);
+        walk_summary_masks(src, c * blocks, (c + 1) * blocks, strata[c].0, strata[c].1, self.places[c], self.places.get(c + 1).copied(), self.afters[c])
+    }
+}
+
+/// The strata's entries of a text's chunks of `blocks` blocks, by the scan of their summaries in order. None where
+/// the strata do not read it.
+fn strata_of(src: &[u8], blocks: usize) -> Option<Vec<(RB, i8)>> {
+    let n = src.len().div_ceil(64);
+    let blocks = blocks.max(1);
+    let k = n.div_ceil(blocks).max(1);
+    let sums: Vec<_> = (0..k).map(|c| summary_superposed(src, c * blocks, (c + 1) * blocks)).collect();
+    entries_in(&sums, &|k| (0..k).collect()).into_iter().collect()
 }
 
 
@@ -710,6 +766,33 @@ pub fn walk_summary(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: us
 /// The most levels a layout lane opens, and the most reads of its entry it keeps: more is not known.
 const OWN: usize = 8;
 const CONDS: usize = 8;
+/// Why a lane of the walk's pass 1 is not known by masks (bits; none: known). A lane's own: more reads of its entry
+/// or levels than it holds, a dedent check in brackets that would refuse. A block's: its starts rare in code, in
+/// strings or in extras; a `\r` before no `\n`; a continuation before a blank line; blanks to the window's top; a
+/// next line's content past the window, or starting with a backslash; more than `EVENTS` events; the window not read.
+pub const WHY_CONDS: u32 = 1 << 0;
+pub const WHY_OWN: u32 = 1 << 1;
+pub const WHY_BRACKETS: u32 = 1 << 2;
+pub const WHY_CODE: u32 = 1 << 3;
+pub const WHY_STRINGS: u32 = 1 << 4;
+pub const WHY_EXTRAS: u32 = 1 << 5;
+pub const WHY_CR: u32 = 1 << 6;
+pub const WHY_CONT: u32 = 1 << 7;
+pub const WHY_TOP: u32 = 1 << 8;
+pub const WHY_FAR: u32 = 1 << 9;
+pub const WHY_BS: u32 = 1 << 10;
+pub const WHY_MANY: u32 = 1 << 11;
+pub const WHY_WINDOW: u32 = 1 << 12;
+/// The reasons' names, by bit.
+pub const WHY_NAMES: [&str; 13] =
+    ["reads", "levels", "brackets", "code", "strings", "extras", "cr", "continuation", "top", "far", "backslash", "events", "window"];
+
+/// `why` where `c`, else none: no branch.
+#[inline(always)]
+fn why(c: bool, why: u32) -> u32 {
+    u32::from(c) * why
+}
+
 /// The most layout events of a block masks read (6 in all but 0.024% of the corpus's blocks): more is not known.
 const EVENTS: usize = 6;
 
@@ -748,13 +831,13 @@ struct LayoutLane {
     /// reads the kinds of its last two records).
     lay_since: bool,
     lay_between: bool,
-    /// Not known by masks.
-    bad: bool,
+    /// Why masks do not know it (`WHY_*`; none: known).
+    bad: u32,
 }
 
 impl LayoutLane {
     fn new(open: bool, header: bool) -> LayoutLane {
-        LayoutLane { own: [0; OWN], len: 0, t: i64::MAX, phantom: 0, conds: [(0, 0); CONDS], nconds: 0, toks: 0, open, header, lay_since: false, lay_between: false, bad: false }
+        LayoutLane { own: [0; OWN], len: 0, t: i64::MAX, phantom: 0, conds: [(0, 0); CONDS], nconds: 0, toks: 0, open, header, lay_since: false, lay_between: false, bad: 0 }
     }
 
     /// A read of the entry where `on`: none of its levels in `[lo, hi]` (kept once).
@@ -762,7 +845,7 @@ impl LayoutLane {
     fn cond(&mut self, on: bool, lo: i64, hi: i64) {
         let dup = (0..CONDS).fold(false, |d, i| d | ((i < self.nconds) & (self.conds[i] == (lo, hi))));
         let add = on & !dup;
-        self.bad |= add & (self.nconds == CONDS);
+        self.bad |= why(add & (self.nconds == CONDS), WHY_CONDS);
         let i = self.nconds.min(CONDS - 1);
         self.conds[i] = pick(add, (lo, hi), self.conds[i]);
         self.nconds = pick(add, (self.nconds + 1).min(CONDS), self.nconds);
@@ -793,7 +876,7 @@ impl LayoutLane {
         let push = on & self.header & below;
         let pop = on & !push;
         self.cond(push & !has & (w <= self.t), w, self.t);
-        self.bad |= push & (self.len == OWN);
+        self.bad |= why(push & (self.len == OWN), WHY_OWN);
         let at = self.len.min(OWN - 1);
         self.own[at] = pick(push, w as u32, self.own[at]);
         let keep = (0..OWN).fold(0, |k, i| k + usize::from((i < self.len) & (i64::from(self.own[i]) <= m)));
@@ -813,7 +896,7 @@ impl LayoutLane {
     #[inline(always)]
     fn in_brackets(&mut self, on: bool, m: i64) {
         let has = self.len > 0;
-        self.bad |= on & has & (self.top() > m);
+        self.bad |= why(on & has & (self.top() > m), WHY_BRACKETS);
         self.cond(on & !has & (m < self.t), m + 1, self.t);
     }
 
@@ -827,6 +910,49 @@ impl LayoutLane {
 
     fn sym(&self) -> Sym {
         Sym { own: self.own[..self.len].to_vec(), t: self.t, phantom: self.phantom, conds: self.conds[..self.nconds].to_vec() }
+    }
+}
+
+/// The first content past a block's window, for its events whose next line starts there: its byte, its line's width,
+/// whether it is a quote or a backslash, and whether the width is known (its line's start in the window it is read
+/// from). None (`at` past every byte): the text's end, width 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Far {
+    pub at: usize,
+    pub w: i64,
+    pub quote: bool,
+    pub bs: bool,
+    pub known: bool,
+}
+
+impl Far {
+    pub const NONE: Far = Far { at: usize::MAX, w: 0, quote: false, bs: false, known: true };
+
+    /// The first of two: no branch.
+    #[inline(always)]
+    pub fn first(self, b: Far) -> Far {
+        pick(self.at <= b.at, self, b)
+    }
+
+    /// The first content in the upper half of block `r.bi`'s window (block `r.bi + 1`), its width read in the window:
+    /// a block function of pass 1 (no branch).
+    fn upper(r: &Win<'_, false>) -> Far {
+        far_block(r)
+    }
+}
+
+/// `Far::upper`'s block function, apart for the branch check.
+#[inline(never)]
+fn far_block(r: &Win<'_, false>) -> Far {
+    {
+        let em = EventMasks::of(r);
+        let x = (em.content & !(u128::from(u64::MAX))).trailing_zeros();
+        let some = x < 128;
+        let bit = |m: u128| (m >> (x & 127)) & 1 == 1;
+        // The line's start in the window: a line end or form feed before it, or the text's start.
+        let started = (em.resets & ((1u128 << (x & 127)) - 1) != 0) | (r.bi == 0);
+        let f = Far { at: 64 * r.bi + x as usize, w: em.width(x), quote: bit(em.quote), bs: bit(em.bs), known: started };
+        pick(some, f, Far::NONE)
     }
 }
 
@@ -850,6 +976,8 @@ struct EventMasks {
     word: u128,
     code: u64,
     depth0: u64,
+    /// The first content past the window (`Far`).
+    far: Far,
 }
 
 impl EventMasks {
@@ -864,7 +992,10 @@ impl EventMasks {
         let ff = w2(|b| b.skip) & !sptab & !lf;
         let sf = sptab | ff;
         let cstart = w2(|b| b.cstart);
-        let comment = super::starts::fill(cstart, !eol);
+        // A comment from below the window: the bytes before its first comment's end where no `#` is before it.
+        let ce = w2(|b| b.cend).trailing_zeros();
+        let from_below = pick(ce < cstart.trailing_zeros(), (1u128 << (ce & 127)).wrapping_sub(1), 0);
+        let comment = super::starts::fill(cstart, !eol) | from_below;
         let below = u128::from(pb.depth0 >> 63);
         EventMasks {
             lim,
@@ -883,6 +1014,7 @@ impl EventMasks {
             word: w2(|b| b.word),
             code: b.code,
             depth0: b.depth0,
+            far: Far::NONE,
         }
     }
 
@@ -898,19 +1030,20 @@ impl EventMasks {
 
     /// The block's layout events among its loop tops `tops`, and whether one is not known by masks (a `\r` before
     /// no `\n`, a continuation before a blank line, blanks to the window's top).
-    fn events(&self, t: u128) -> (u128, bool) {
+    fn events(&self, t: u128) -> (u128, u32) {
         let ends = self.lf | (self.cr & (self.lf >> 1)) | !self.valid;
         let events = super::starts::reaching(ends, self.sf) & t;
         let reach = super::starts::reaching(ends, self.sf);
         let cont_blank = (self.bs & (self.lf >> 1) & (reach >> 2)) | (self.bs & (self.cr >> 1) & (self.lf >> 2) & (reach >> 3));
-        let bad = (self.cr & !(self.lf >> 1)) | cont_blank | ((self.sf >> 127) << 127);
-        (events, super::starts::reaching(bad, self.sf) & t != 0)
+        let hit = |x: u128| super::starts::reaching(x, self.sf) & t != 0;
+        let bad = why(hit(self.cr & !(self.lf >> 1)), WHY_CR) | why(hit(cont_blank), WHY_CONT) | why(hit((self.sf >> 127) << 127), WHY_TOP);
+        (events, bad)
     }
 
     /// The event at bit `e`: whether it is in brackets, the next line's width `w` and `m` (the larger of it and the
     /// first comment's), whether the next line starts with a quote, and whether masks do not know it.
     #[inline(always)]
-    fn event(&self, e: u32) -> (bool, i64, i64, bool, bool) {
+    fn event(&self, e: u32) -> (bool, i64, i64, bool, u32) {
         let above_eq = |x: u32| pick(x >= 128, 0, !0u128 << (x & 127));
         let k = (!self.sf & above_eq(e)).trailing_zeros();
         let eof = k >= self.lim;
@@ -919,12 +1052,18 @@ impl EventMasks {
         let found = (self.content & after).trailing_zeros();
         let none = found >= 128;
         let x = pick(none, self.lim, found);
-        let bad = !eof & ((none & (self.lim >= 128)) | ((x < self.lim) & ((self.bs >> (x & 127)) & 1 == 1)));
-        let c = (self.cstart & after & ((1u128 << (x & 127)) - 1)).trailing_zeros();
+        // Below `x` (all the window at 128: no content in it).
+        let under = pick(x >= 128, !0, (1u128 << (x & 127)).wrapping_sub(1));
+        let c = (self.cstart & after & under).trailing_zeros();
         let has_c = !eof & (c < x);
+        // The next line's content past the window: the first there (`far`). Its first comment must be in the window
+        // (one past it is not read), and its width known.
+        let far = !eof & none & (self.lim >= 128);
+        let bs = pick(far, self.far.bs, (x < self.lim) & ((self.bs >> (x & 127)) & 1 == 1));
+        let bad = why(far & (!has_c | !self.far.known), WHY_FAR) | why(!eof & bs, WHY_BS);
         let fc = pick(has_c, self.width(c), -1);
-        let w = pick(eof | (x >= self.lim), 0, self.width(x));
-        let quote = !eof & (x < self.lim) & ((self.quote >> (x & 127)) & 1 == 1);
+        let w = pick(far, self.far.w, pick(eof | (x >= self.lim), 0, self.width(x)));
+        let quote = pick(far, self.far.quote, !eof & (x < self.lim) & ((self.quote >> (x & 127)) & 1 == 1));
         let brackets = (self.depth0_before >> (e & 127)) & 1 == 0;
         (brackets, w, w.max(fc), quote, bad)
     }
@@ -1009,7 +1148,7 @@ fn lane_step(l: &mut LayoutLane, last: &LastToks, n: u32, e: Ev) {
 
 /// The block's next event (the lowest of `rest`, where there is one): the tokens before it read, and each lane's step.
 #[inline(always)]
-fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> bool {
+fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
     let on = *rest != 0;
     let e = rest.trailing_zeros();
     *rest &= rest.wrapping_sub(1);
@@ -1022,14 +1161,14 @@ fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u
     lane_step(a, last, n, ev);
     lane_step(b, last, n, ev);
     lane_step(c, last, n, ev);
-    on & ebad
+    why(on, ebad)
 }
 
 /// One block's layout by masks, for each lane: its window `em`, its tokens `tk` (starts in the chunk's range) and
 /// loop tops `tops` (in it, and at bit 64 one at the text's end just past it), its events in `EVENTS` steps of
-/// selections, written out. Whether masks do not know it. No branch: pass 1 runs it for every lane at once.
+/// selections, written out. Why masks do not know it (`WHY_*`). No branch: pass 1 runs it for every lane at once.
 #[inline(always)]
-fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> bool {
+fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> u32 {
     let (events, mut bad) = em.events(tops);
     let (mut rest, mut k) = (events, tk);
     // `EVENTS` steps, written out (a loop of them may stay a loop).
@@ -1045,7 +1184,7 @@ fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lan
     a.read(n, last.colon);
     b.read(n, last.colon);
     c.read(n, last.colon);
-    bad | (rest != 0)
+    bad | why(rest != 0, WHY_MANY)
 }
 
 /// What the walk's pass 1 by masks carries from a block to the next in a chunk.
@@ -1055,13 +1194,14 @@ struct WalkAcc {
     carry: super::starts::StrCarry,
     toks: usize,
     extras: usize,
-    bad: bool,
+    /// Why masks do not know the chunk (`WHY_*`).
+    bad: u32,
 }
 
 /// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
 /// its tokens' and extras' starts, its loop tops and its layout, for every lane at once. No branch.
 #[inline(never)]
-fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, acc: &mut WalkAcc) {
+fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, far: Far, acc: &mut WalkAcc) {
     let (src, bi) = (r.src, r.bi);
     let n = src.len();
     let mk = |x: usize| pick(x >= 64, !0u64, (1u64 << (x & 63)).wrapping_sub(1));
@@ -1069,7 +1209,8 @@ fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, acc: &mut Wal
     let (cs, r1) = super::starts::code_starts_w(r);
     let (ss, r2) = super::starts::string_starts_w(r, &mut acc.carry);
     let (xs, r3) = super::starts::extra_starts_w(r);
-    acc.bad |= (r1 | r2 | r3) & (range != 0);
+    let some = range != 0;
+    acc.bad |= why(r1 & some, WHY_CODE) | why(r2 & some, WHY_STRINGS) | why(r3 & some, WHY_EXTRAS);
     let tk = (cs | ss) & range;
     acc.toks += tk.count_ones() as usize;
     acc.extras += (xs & range).count_ones() as usize;
@@ -1078,19 +1219,22 @@ fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, acc: &mut Wal
     // A loop top at the text's end just past the block (its last), in the range: bit 64.
     let end = u128::from(at_end & (n >= lo) & (n < hi)) << 64;
     let tops = u128::from(tp & range) | own | end;
-    let em = EventMasks::of(r);
+    let em = EventMasks { far, ..EventMasks::of(r) };
     acc.bad |= layout_block(src, &em, bi, tk, tops, &mut acc.lanes, &mut acc.last);
 }
 
 /// Pass 1 of the walk by masks: chunk `from..to`'s summary from its place `p` to the chunk after's (`next`), over
 /// the strata from `rb` and `depth`, for each of `COMBOS`: its tokens and extras the popcounts of their starts in
 /// its range, its layout from its events (`layout_block`). A lane masks do not know is `Unknown`.
-pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: Place, next: Option<Place>) -> WalkSummary {
-    let unknown = || core::array::from_fn(|_| WalkLane::Unknown);
+/// With it, why masks do not know each lane (`WHY_*`; none: known). `after` is the first content past the windows
+/// of the chunk's blocks (`WalkInputs`).
+#[allow(clippy::too_many_arguments)]
+pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: Place, next: Option<Place>, after: Far) -> (WalkSummary, [u32; 3]) {
+    let unknown = || (core::array::from_fn(|_| WalkLane::Unknown), [WHY_WINDOW; 3]);
     let n = src.len();
     let nb = n.div_ceil(64);
     if p.1 {
-        return COMBOS.map(|(o, h)| WalkLane::Goes { exit: combo(o, h), toks: 0, extras: 0, sym: Sym::new() });
+        return (COMBOS.map(|(o, h)| WalkLane::Goes { exit: combo(o, h), toks: 0, extras: 0, sym: Sym::new() }), [0; 3]);
     }
     let (lo, eof) = (p.0, next.is_none_or(|x| x.1));
     let hi = if eof { n + 1 } else { next.map_or(n + 1, |x| x.0) };
@@ -1103,22 +1247,39 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
             carry: super::starts::StrCarry::default(),
             toks: usize::from(eof),
             extras: 0,
-            bad: false,
+            bad: 0,
         };
+        // Each block's first content past its window, from the right: the first its windows above read in their
+        // upper halves (to the chunk's last and the walk's), then the chunks' after it (`after`).
+        let (b0, b1) = (lo / 64, last_block.min(nb.saturating_sub(1)));
+        let top = b1.max(to.min(nb).saturating_sub(1));
+        let mut fars = vec![after; b1 + 1 - b0.min(b1)];
+        let mut far = after;
+        for k in (b0 + 1..=top).rev() {
+            far = Far::upper(&m.win::<false>(k)).first(far);
+            if k - 1 <= b1 {
+                fars[k - 1 - b0] = far;
+            }
+        }
         // The loop over blocks: each block's reads from the window, then its block function (one instance for the
         // text: under 64 bytes or not).
-        for bi in (lo / 64)..=last_block.min(nb.saturating_sub(1)) {
+        for bi in b0..=b1 {
             if n < 64 {
-                walk_block(&m.win::<true>(bi), lo, hi, &mut acc);
+                walk_block(&m.win::<true>(bi), lo, hi, fars[bi - b0], &mut acc);
             } else {
-                walk_block(&m.win::<false>(bi), lo, hi, &mut acc);
+                walk_block(&m.win::<false>(bi), lo, hi, fars[bi - b0], &mut acc);
             }
         }
         let WalkAcc { lanes, toks, extras, bad, .. } = acc;
-        (!bad).then(|| lanes.map(|l| if l.bad { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }))
+        let whys = lanes.map(|l| bad | l.bad);
+        let sum = core::array::from_fn(|i| {
+            let l = &lanes[i];
+            if whys[i] != 0 { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }
+        });
+        (sum, whys)
     });
     match r {
-        Ok((Some(s), ..)) => s,
+        Ok((s, ..)) => s,
         _ => unknown(),
     }
 }
@@ -1358,20 +1519,13 @@ pub fn lex_middle(src: &[u8], blocks: usize, order: Order<'_>) -> Result<Middle,
     let sums = each(k, order, |c| summary_superposed(src, range(c).0, range(c).1));
     let strata = entries_in(&sums, order);
     let Some(strata) = strata.into_iter().collect::<Option<Vec<_>>>() else { return Ok(Middle::NotB) };
-    // A chunk's place: its first loop top, else the chunk after's; past the last, the text's end read.
-    let own = each(k, order, |c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1));
-    if let Some(c) = own.iter().position(Option::is_none) {
-        return Ok(Middle::Unknown(c, "a chunk's strata"));
-    }
-    let mut places = vec![Place(src.len(), true); k];
-    for c in (0..k).rev() {
-        places[c] = match own[c] {
-            _ if c == 0 => Place(0, false),
-            Some(Some(p)) => Place(p, false),
-            _ => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
-        };
-    }
-    let wsums = each(k, order, |c| walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied()));
+    // Each chunk's place and the first content after it, from the chunks after it.
+    let inputs = match walk_inputs(src, blocks, &strata, order) {
+        Ok(x) => x,
+        Err(c) => return Ok(Middle::Unknown(c, "a chunk's strata")),
+    };
+    let places = &inputs.places;
+    let wsums = each(k, order, |c| inputs.summary(src, blocks, &strata, c).0);
     let mut walks = walk_entries_in(&wsums, order);
     // A chunk the scan gives no entry waits for the one before's: by that chunk's lane where masks know it, else by
     // lexing that chunk from its entry.
@@ -1515,21 +1669,12 @@ pub fn tops_are_the_walks(src: &[u8]) -> Option<(usize, Option<String>)> {
 /// The oracle of `walk_summary_masks`: each chunk's summary by masks against the walk's (`walk_summary`), in chunks
 /// of `blocks` blocks. The chunks whose lanes masks know, those they do not, and the first that differs.
 pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, Option<String>)> {
-    let n = src.len().div_ceil(64);
     let blocks = blocks.max(1);
-    let k = n.div_ceil(blocks).max(1);
     let range = |c: usize| (c * blocks, (c + 1) * blocks);
-    let sums: Vec<_> = (0..k).map(|c| summary_superposed(src, range(c).0, range(c).1)).collect();
-    let strata = entries_in(&sums, &|k| (0..k).collect()).into_iter().collect::<Option<Vec<_>>>()?;
-    let own: Vec<_> = (0..k).map(|c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1)).collect::<Option<Vec<_>>>()?;
-    let mut places = vec![Place(src.len(), true); k];
-    for c in (0..k).rev() {
-        places[c] = match own[c] {
-            _ if c == 0 => Place(0, false),
-            Some(p) => Place(p, false),
-            None => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
-        };
-    }
+    let strata = strata_of(src, blocks)?;
+    let k = strata.len();
+    let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
+    let places = &inputs.places;
     let norm = |l: &WalkLane| match l {
         WalkLane::Goes { exit, sym, toks, extras } => {
             let mut s = sym.clone();
@@ -1543,7 +1688,7 @@ pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, O
     for c in 0..k {
         let Place(p, done) = places[c];
         let walk = walk_summary(src, range(c).0, range(c).1, strata[c].0, strata[c].1, p, done);
-        let masks = walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied());
+        let masks = inputs.summary(src, blocks, &strata, c).0;
         for l in 0..3 {
             match (&masks[l], &walk[l]) {
                 (WalkLane::Unknown, _) => unknown += 1,
@@ -1564,22 +1709,11 @@ pub fn layout_is_the_walks(src: &[u8], blocks: usize) -> Option<(usize, usize, O
 /// (`walk_entries_by_sym`). The entries the same, those the fixed sizes do not know where `Sym` does (the chunk waits),
 /// and the first that differs. None where the strata do not read the text.
 pub fn walk_scan_is_syms(src: &[u8], blocks: usize, order: Order<'_>) -> Option<(usize, usize, Option<String>)> {
-    let n = src.len().div_ceil(64);
     let blocks = blocks.max(1);
-    let k = n.div_ceil(blocks).max(1);
-    let range = |c: usize| (c * blocks, (c + 1) * blocks);
-    let sums: Vec<_> = (0..k).map(|c| summary_superposed(src, range(c).0, range(c).1)).collect();
-    let strata = entries_in(&sums, &|k| (0..k).collect()).into_iter().collect::<Option<Vec<_>>>()?;
-    let own: Vec<_> = (0..k).map(|c| first_top(src, range(c).0, range(c).1, strata[c].0, strata[c].1)).collect::<Option<Vec<_>>>()?;
-    let mut places = vec![Place(src.len(), true); k];
-    for c in (0..k).rev() {
-        places[c] = match own[c] {
-            _ if c == 0 => Place(0, false),
-            Some(p) => Place(p, false),
-            None => places.get(c + 1).copied().unwrap_or(Place(src.len(), true)),
-        };
-    }
-    let wsums: Vec<_> = (0..k).map(|c| walk_summary_masks(src, range(c).0, range(c).1, strata[c].0, strata[c].1, places[c], places.get(c + 1).copied())).collect();
+    let strata = strata_of(src, blocks)?;
+    let k = strata.len();
+    let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
+    let wsums: Vec<_> = (0..k).map(|c| inputs.summary(src, blocks, &strata, c).0).collect();
     let (fixed, by_sym) = (walk_entries_in(&wsums, order), walk_entries_by_sym(&wsums, order));
     let (mut same, mut waits) = (0, 0);
     for (c, (f, y)) in fixed.iter().zip(&by_sym).enumerate() {
@@ -1593,6 +1727,38 @@ pub fn walk_scan_is_syms(src: &[u8], blocks: usize, order: Order<'_>) -> Option<
     Some((same, waits, None))
 }
 
+/// `walk_why_counts`: the lanes, per reason the lanes among its reasons and those it alone marks, and per reason the
+/// first chunk's first block it marks.
+pub type WhyCounts = (usize, [usize; 13], [usize; 13], [Option<usize>; 13]);
+
+/// Why pass 1 by masks does not know a text's lanes, in chunks of `blocks` blocks: the lanes, and for each reason
+/// (`WHY_NAMES`) the lanes it is among the reasons of, and those it is the only reason of. None where the strata do
+/// not read the text.
+pub fn walk_why_counts(src: &[u8], blocks: usize) -> Option<WhyCounts> {
+    let blocks = blocks.max(1);
+    let range = |c: usize| (c * blocks, (c + 1) * blocks);
+    let strata = strata_of(src, blocks)?;
+    let k = strata.len();
+    let inputs = walk_inputs(src, blocks, &strata, &in_order).ok()?;
+    let (mut lanes, mut any, mut alone, mut first) = (0, [0; 13], [0; 13], [None; 13]);
+    for c in 0..k {
+        let (_, whys) = inputs.summary(src, blocks, &strata, c);
+        for w in whys {
+            lanes += 1;
+            for (b, (a, o)) in any.iter_mut().zip(alone.iter_mut()).enumerate() {
+                if w >> b & 1 == 1 {
+                    *a += 1;
+                    first[b] = first[b].or(Some(range(c).0));
+                    if w == 1 << b {
+                        *o += 1;
+                    }
+                }
+            }
+        }
+    }
+    Some((lanes, any, alone, first))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1604,6 +1770,7 @@ mod tests {
             "if a:\n    b\nc\n",
             "x = (1,\n 2)\n",
             "if a:\n    b\n    # c\nd\n",
+            "if a:\n    b\n    # one\n    # ------------------------------------------------------------\n# two ----------------------------------------------------------\n  # three -------------------------------------------------------\n\n# four -----------------------------------------------------------\nc\n",
             "f'a{b!r:>{w}}c'\n",
             "x = 'a # b' # c ( \ny = [1, # ]\n 2]\n",
             "t = '''a\n'' b ( '''\nu = \"\"\"a\\\"\"\" b\"\"\"\n",
@@ -1952,6 +2119,22 @@ mod tests {
     }
 
     #[test]
+    fn next_lines_past_the_window_are_known() {
+        // Each line end before the run of comments has its next line's content blocks away.
+        let mut t = String::from("import a\n\nif a:\n    b = 1\n");
+        for i in 0..8 {
+            t.push_str(&format!("{}# {i} {}\n", ["", "    "][i % 2], "-".repeat(50)));
+        }
+        t.push_str("c = 2\n");
+        for blocks in [1, 2, 3] {
+            let (lanes, any, _, first) = super::walk_why_counts(t.as_bytes(), blocks).unwrap();
+            assert!(any.iter().all(|&a| a == 0), "{blocks} blocks a chunk: of {lanes} lanes, not known: {any:?} (first at {first:?})");
+            let (same, unknown, e) = super::layout_is_the_walks(t.as_bytes(), blocks).unwrap();
+            assert!(e.is_none() && unknown == 0 && same > 0, "{same} {unknown} {e:?}");
+        }
+    }
+
+    #[test]
     fn layout_by_masks_is_the_walks() {
         let mut lanes = 0;
         for (i, t) in texts().iter().enumerate() {
@@ -1987,6 +2170,18 @@ mod tests {
                     t.push_str(&"-".repeat(pad));
                 }
                 t.push_str(["\n", "\n", "\n", "\r\n", "\n\n"][rnd(5) as usize]);
+                // Now and then a run of comment lines and blank ones past a block's window (the next line's content
+                // read past it).
+                if rnd(8) == 0 {
+                    for _ in 0..(2 + rnd(10)) {
+                        t.push_str(["", " ", "    ", "\t", "        "][rnd(5) as usize]);
+                        if rnd(5) > 0 {
+                            t.push('#');
+                            t.push_str(&"=".repeat(10 + rnd(50) as usize));
+                        }
+                        t.push_str(["\n", "\n", "\r\n"][rnd(3) as usize]);
+                    }
+                }
             }
             for blocks in [1, 2, 3] {
                 if let Some((same, _, first)) = super::layout_is_the_walks(t.as_bytes(), blocks) {

@@ -109,6 +109,38 @@ fn main() {
         println!("loop tops by masks: {files} files, {same} blocks the walk's, {differ} files with a block that differs");
         return;
     }
+    if only == Some("why") {
+        // Why pass 1 by masks does not know lanes: per reason, the lanes among its reasons, and those it alone marks.
+        for blocks in [1, 3, 16] {
+            let (mut lanes, mut any, mut alone) = (0, [0usize; 13], [0usize; 13]);
+            for (_, b) in &all {
+                if let Some((l, a, o, f)) = strata::middle::walk_why_counts(b, blocks) {
+                    if blocks == 1 {
+                        for (i, at) in f.iter().enumerate() {
+                            if let Some(bi) = at
+                                && any[i] < 4
+                                && std::env::var("WHY_SHOW").is_ok_and(|v| v == strata::middle::WHY_NAMES[i])
+                            {
+                                println!("{} at block {bi}: {:?}", strata::middle::WHY_NAMES[i], String::from_utf8_lossy(&b[64 * bi..(64 * bi + 192).min(b.len())]));
+                            }
+                        }
+                    }
+                    lanes += l;
+                    for i in 0..13 {
+                        any[i] += a[i];
+                        alone[i] += o[i];
+                    }
+                }
+            }
+            println!("chunks of {blocks} blocks: {lanes} lanes; not known, by reason (among its reasons / its only one):");
+            for i in 0..13 {
+                if any[i] > 0 {
+                    println!("  {:<13} {:>7} / {:>7}", strata::middle::WHY_NAMES[i], any[i], alone[i]);
+                }
+            }
+        }
+        return;
+    }
     if only == Some("scan") {
         // Pass 3 of the walk in fixed-size lanes against the scan by `Sym`, over the summaries by masks.
         for blocks in [1, 3, 16] {

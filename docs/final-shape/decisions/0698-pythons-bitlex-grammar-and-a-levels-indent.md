@@ -1004,3 +1004,26 @@ statements and blocks end.
       entries known at 1 block a chunk, 20546 at 3, 4557 at 16). The corpus lexed from the middle is still the
       serial lexer's in 1644 of 1644 files. `check_strata_branch_free.sh` gives `then_walk` 0 conditional branches
       and 0 calls on AArch64 and x86-64, and the crate's tests pass on both.
+111. **The lanes masks do not know, by cause; a next line past the window read from the chunks after** (as built:
+    `middle::WHY_*`, `Far`, `chunk_firsts`, `walk_inputs`, `walk_why_counts`).
+    - **The causes:** pass 1 carries why a lane is not known as bits, by selections, not one flag. `walk_why_counts`
+      and `compare_strata … why` count them over the corpus. At 1 block a chunk, of 685017 lanes, 26763 were not
+      known only because a line end's next line had no content in the block's two-block window ("far"). The
+      window has 128 bytes, and a run of comment lines is longer. Next came starts rare in code (2223) and in
+      strings (1866).
+    - **The next line past the window** (`Far`): the first content past a block's window, its line's width, and
+      whether it is a quote or a backslash. Each block's window gives the first content in its upper half, its
+      width read there (`far_block`, no branch). A chunk's own is the first of its blocks'. A chunk's after is the
+      first of the chunks' after it, filled from the right as the places are (`walk_inputs`). In pass 1, a
+      backward loop over the walk's blocks gives each block the first past its window. An event whose window has
+      no content after its line end takes the far content's width, quote and backslash. It stays not known when
+      its first comment is not in the window, or the far content's line starts below the window it is read in.
+    - **Two errors this showed:** the mask below an event's next content was 0 where the window has none (a shift
+      by 128, now a selection). And a comment from below the window was content in it: its bytes before the
+      window's first comment end (`cend`) with no `#` before it are now comment.
+    - **As tested:** a test of a header, then 8 comment lines, then a dedented line, at 1, 2 and 3 blocks a chunk:
+      every lane known, and the walk's. The random layout test adds runs of comment and blank lines. Over the
+      corpus at 1 block a chunk, 4521 lanes not known of 685017 (31140 before): far 144, code 2331, strings 1875.
+      At 3 blocks 3618 (23148 before), at 16 blocks 2487 (13713). No lane differs from the walk's. The scan in
+      fixed size knows 143215 entries at 1 block a chunk (59840 before). From the middle is still the serial
+      lexer's in 1644 of 1644 files. `far_block` has 0 conditional branches and 0 calls on AArch64 and x86-64.
