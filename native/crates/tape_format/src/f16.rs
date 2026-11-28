@@ -1553,7 +1553,6 @@ const REPEAT: u8 = 2;
 #[cfg(any(test, feature = "reference"))]
 const REPEAT_MIN: usize = 8;
 /// The fewest bytes a piece holds to be offered to LZ4.
-#[cfg(any(test, feature = "reference"))]
 const LZ4_MIN: usize = 16;
 
 /// A 16z tape's own regions (`head::Z`): its part starts, checkpoints, newline index, piece starts, piece lengths,
@@ -1565,6 +1564,124 @@ const ZSTARTS: usize = 3;
 const ZLENS: usize = 4;
 const ZKINDS: usize = 5;
 const ZEND: usize = 6;
+
+/// Format 16 tape `t` as a 16z tape (decision 0726, S6), every piece on its own, as the device makes it: block `b`'s
+/// piece `q` read where it lies in `t` (array `q`'s column at the block's rows, then side list `q`'s part `b`), stored
+/// as `encode` gives its bytes where that saves a tenth, else as they are; no repeats. The tail's regions are `t`'s:
+/// its part starts, its checkpoints in node order, its newline index; then the piece index.
+pub fn z_of(t: &[u8], encode: &dyn Fn(&[u8]) -> Vec<u8>) -> Result<Vec<u8>, String> {
+    if !t.starts_with(MAGIC16) {
+        return Err("not a format 16 tape".into());
+    }
+    let p = header(t)?;
+    let count = p.block_count();
+    let mut out = t[..HEAD16].to_vec();
+    out[..8].copy_from_slice(MAGIC16Z);
+    let (mut starts, mut lens, mut kinds) = (Vec::new(), Vec::new(), Vec::new());
+    // A piece's bytes, read from its two places (the encoder's input: on the device it reads them where they lie).
+    let mut raw: Vec<u8> = Vec::new();
+    for b in 0..count {
+        for q in 0..PIECES {
+            let fixed = p.column(b, q);
+            let part = |j: usize| u32_at(t, p.parts[q] + 4 * j) as usize;
+            raw.clear();
+            raw.extend_from_slice(&t[fixed..fixed + p.rows(b) * cell(p.widths, p.cw, q)]);
+            raw.extend_from_slice(&t[p.side[q] + part(b)..p.side[q] + part(b + 1)]);
+            starts.push((out.len() - HEAD16) as u32);
+            let z = if raw.len() >= LZ4_MIN { Some(encode(&raw)).filter(|z| z.len() * 10 <= raw.len() * 9) } else { None };
+            let (kind, bytes) = match &z {
+                Some(z) => (LZ4, &z[..]),
+                None => (RAW, &raw[..]),
+            };
+            out.extend_from_slice(bytes);
+            lens.push(bytes.len() as u32);
+            kinds.push(kind);
+        }
+    }
+    let mut zat = [0usize; ZS];
+    out.resize(out.len().next_multiple_of(4), 0);
+    zat[ZPARTS] = out.len();
+    out.extend_from_slice(&t[p.parts[0]..p.lines]);
+    zat[ZCKPT] = out.len();
+    for b in 0..count {
+        let at = p.column(b, 4);
+        out.extend_from_slice(&t[at..at + p.rows(b).div_ceil(K) * p.cw]);
+    }
+    out.extend_from_slice(&[0; 8]);
+    zat[ZLINES] = out.len();
+    out.extend_from_slice(&t[p.lines..p.end - 8]);
+    out.extend_from_slice(&[0; 8]);
+    out.resize(out.len().next_multiple_of(4), 0);
+    zat[ZSTARTS] = out.len();
+    out.extend(starts.iter().flat_map(|v| v.to_le_bytes()));
+    zat[ZLENS] = out.len();
+    out.extend(lens.iter().flat_map(|v| v.to_le_bytes()));
+    zat[ZKINDS] = out.len();
+    out.extend_from_slice(&kinds);
+    zat[ZEND] = out.len();
+    for (k, &v) in zat.iter().enumerate() {
+        out[head::Z + 4 * k..head::Z + 4 * k + 4].copy_from_slice(&(v as u32).to_le_bytes());
+    }
+    Ok(out)
+}
+
+/// LZ4's fast parse as `ukl/lz4_encode.h` makes it, serially (decision 0726, S6): each position from the walk's looked
+/// up (the latest earlier one with its word's hash, 12 bits) and then put in the table, the first match taken and
+/// measured to LZ4's limits (no match in the last 12 bytes, the last 5 literals), the positions inside it skipped. The
+/// bytes the device's encoder writes, at every width.
+pub fn lz4_greedy(s: &[u8]) -> Vec<u8> {
+    let n = s.len();
+    let word = |p: usize| u32::from_le_bytes([s[p], s[p + 1], s[p + 2], s[p + 3]]);
+    let hash = |x: u32| (x.wrapping_mul(2_654_435_761) >> 20) as usize;
+    let mut out = Vec::with_capacity(n + n / 255 + 16);
+    let length = |out: &mut Vec<u8>, len: usize| {
+        out.extend(std::iter::repeat_n(255u8, len / 255));
+        out.push((len % 255) as u8);
+    };
+    let sequence = |out: &mut Vec<u8>, lit: &[u8], m: Option<(usize, usize)>| {
+        let token = out.len();
+        out.push(0);
+        let mut tok = (lit.len().min(15) as u8) << 4;
+        if lit.len() >= 15 {
+            length(out, lit.len() - 15);
+        }
+        out.extend_from_slice(lit);
+        if let Some((dist, ml)) = m {
+            out.extend_from_slice(&(dist as u16).to_le_bytes());
+            let l = ml - 4;
+            tok |= l.min(15) as u8;
+            if l >= 15 {
+                length(out, l - 15);
+            }
+        }
+        out[token] = tok;
+    };
+    let (mut p, mut anchor) = (0usize, 0usize);
+    if n > 12 {
+        let (mflimit, matchlimit) = (n - 12, n - 5);
+        let mut table = vec![0usize; 4096];
+        while p <= mflimit {
+            let w = word(p);
+            let h = hash(w);
+            let cand = table[h];
+            table[h] = p + 1;
+            if cand != 0 && p - (cand - 1) <= 65535 && word(cand - 1) == w {
+                let from = cand - 1;
+                let mut ml = 4;
+                while p + ml < matchlimit && s[from + ml] == s[p + ml] {
+                    ml += 1;
+                }
+                sequence(&mut out, &s[anchor..p], Some((p - from, ml)));
+                p += ml;
+                anchor = p;
+            } else {
+                p += 1;
+            }
+        }
+    }
+    sequence(&mut out, &s[anchor..], None);
+    out
+}
 
 /// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0434 §3), held as
 /// stored (`as_bytes`):
@@ -1734,7 +1851,7 @@ impl Tape16Z {
     }
 
     /// The length of the format 16 tape it decodes to (`decode_into`, a test's).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn decoded_len(&self) -> usize {
         self.p.end
     }
@@ -1795,7 +1912,7 @@ impl Tape16Z {
     /// block's checkpoints, the side lists' part starts, the newline index, and the room after the last block, each
     /// side list and the newline index. With every block (`decode_block_into`), `out` is the format 16 tape
     /// (`decode_into`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn decode_head_into(&self, out: &mut [u8]) -> Result<(), String> {
         let p = &self.p;
         if out.len() != p.end {
@@ -1827,7 +1944,7 @@ impl Tape16Z {
 
     /// Block `b` decoded where it lies in the format 16 tape `out` (`decoded_len` bytes): each of its pieces, its
     /// array's column and its side part. No other block is read; `scratch` holds an LZ4 piece while it is copied.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn decode_block_into(&self, b: usize, out: &mut [u8], scratch: &mut Vec<u8>) -> Result<(), String> {
         if out.len() != self.decoded_len() || b >= self.p.block_count() {
             return Err(format!("block {b} into {} bytes, of a format 16 tape of {}", out.len(), self.decoded_len()));
@@ -1842,8 +1959,16 @@ impl Tape16Z {
         Ok(())
     }
 
+    /// The format 16 tape it decodes to, whole (a test's: a 16z tape is read a block at a time, decision 0353 step 4b).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn decoded_whole(&self) -> Result<Vec<u8>, String> {
+        let mut out = vec![0u8; self.decoded_len()];
+        self.decode_into(&mut out)?;
+        Ok(out)
+    }
+
     /// The format 16 tape it is, into `out` (`decoded_len` bytes): its head, then each block where it lies.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn decode_into(&self, out: &mut [u8]) -> Result<(), String> {
         self.decode_head_into(out)?;
         let mut scratch = Vec::new();

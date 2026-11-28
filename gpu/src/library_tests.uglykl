@@ -215,6 +215,31 @@ DEFINE_KERNEL2(tests, t_lz4_encode,
         lengths[j] = got;
 }
 
+// ukl/lz4_encode.h on a format 16 tape's 16z pieces, each read where it lies (decision 0726, S6): job `j` is its
+// column's offset and length in `tape`, its side part's offset and length, then its output's offset and room. Counted
+// (`args.w` 0: each piece's length) or written (`args.w` 1).
+DEFINE_KERNEL2(tests, t_z_pieces,
+               ARGS,     TestArgs, args,    ,
+               ROBUFFER, uint32_t, jobs,    "[n * 6]",
+               ROBUFFER, uint8_t,  tape,    "[tapeLength]",
+               RWBUFFER, uint8_t,  outData, "[outLength]",
+               RWBUFFER, uint32_t, lengths, "[n]",
+               SHARED,   uint32_t, table,   UKL_LZ4E_TABLE,
+               TGID0,    uint32_t, j,       ,
+               LANE,     uint16_t, lane,    )
+{
+    if (j >= args.n)
+        return;
+    ROBUFFER(uint32_t) job = jobs + j * 6u;
+    UklLz4Spans s;
+    s.a = tape + job[0];
+    s.an = job[1];
+    s.b = tape + job[2];
+    uint32_t got = ukl_lz4_encode2_sg(s, job[1] + job[3], outData + job[4], job[5], args.w != 0u, table, lane __UKL_ARGS);
+    if (lane == 0u)
+        lengths[j] = got;
+}
+
 // ukl/workqueue.h: a persistent dispatch walking the binary tree of `w` nodes from node 0, each node pushing its
 // children; `visits` counts each node's visits. A worker stops after `n` empty polls in a row, or once it has taken
 // `b` items in the launch (0: no budget). `t_workqueue` takes a thread at a time, `t_workqueue_sg` a SIMD group at a

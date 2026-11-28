@@ -439,63 +439,6 @@ fn lz4_blocks_decode_as_lz4_does() {
     }
 }
 
-/// `ukl/lz4_encode.h`'s parse, serially: each position from the walk's looked up (the latest earlier one with its
-/// word's hash) and then put in the table, the first match taken and measured to LZ4's limits, the positions inside it
-/// skipped. The bytes the encoder must write.
-fn lz4_greedy(s: &[u8]) -> Vec<u8> {
-    let n = s.len();
-    let word = |p: usize| u32::from_le_bytes([s[p], s[p + 1], s[p + 2], s[p + 3]]);
-    let hash = |x: u32| (x.wrapping_mul(2_654_435_761) >> 20) as usize;
-    let mut out = Vec::new();
-    let length = |out: &mut Vec<u8>, len: usize| {
-        out.extend(std::iter::repeat_n(255u8, len / 255));
-        out.push((len % 255) as u8);
-    };
-    let sequence = |out: &mut Vec<u8>, lit: &[u8], m: Option<(usize, usize)>| {
-        let token = out.len();
-        out.push(0);
-        let mut tok = (lit.len().min(15) as u8) << 4;
-        if lit.len() >= 15 {
-            length(out, lit.len() - 15);
-        }
-        out.extend_from_slice(lit);
-        if let Some((dist, ml)) = m {
-            out.extend_from_slice(&(dist as u16).to_le_bytes());
-            let l = ml - 4;
-            tok |= l.min(15) as u8;
-            if l >= 15 {
-                length(out, l - 15);
-            }
-        }
-        out[token] = tok;
-    };
-    let (mut p, mut anchor) = (0usize, 0usize);
-    if n > 12 {
-        let (mflimit, matchlimit) = (n - 12, n - 5);
-        let mut table = vec![0usize; 4096];
-        while p <= mflimit {
-            let w = word(p);
-            let h = hash(w);
-            let cand = table[h];
-            table[h] = p + 1;
-            if cand != 0 && p - (cand - 1) <= 65535 && word(cand - 1) == w {
-                let from = cand - 1;
-                let mut ml = 4;
-                while p + ml < matchlimit && s[from + ml] == s[p + ml] {
-                    ml += 1;
-                }
-                sequence(&mut out, &s[anchor..p], Some((p - from, ml)));
-                p += ml;
-                anchor = p;
-            } else {
-                p += 1;
-            }
-        }
-    }
-    sequence(&mut out, &s[anchor..], None);
-    out
-}
-
 /// LZ4's own decoder (`LZ4_decompress_safe`) on block `z` of `n` bytes.
 fn lz4_decompress(z: &[u8], n: usize) -> Option<Vec<u8>> {
     let mut out = vec![0u8; n];
@@ -548,7 +491,7 @@ fn lz4_blocks_encode_greedily() {
     let out: Vec<u8> = read(&ob, out_len);
     let (mut plain, mut packed) = (0usize, 0usize);
     for (j, b) in blocks.iter().enumerate() {
-        let want = lz4_greedy(b);
+        let want = rerail_tape_format::f16::lz4_greedy(b);
         assert_eq!(lz4_decompress(&want, b.len()).as_deref(), Some(&b[..]), "the serial parse of block {j} ({} bytes) is LZ4's", b.len());
         let at = jobs[j * 4 + 2] as usize;
         assert_eq!(lengths[j] as usize, want.len(), "{}: block {j}'s length ({} bytes)", crate::device::backend(), b.len());
@@ -557,6 +500,90 @@ fn lz4_blocks_encode_greedily() {
         packed += want.len();
     }
     eprintln!("{}: {} blocks, {plain} bytes to {packed}, each the serial parse's", crate::device::backend(), blocks.len());
+}
+
+/// A JSON file's format 16 tape, by JSON's tiers on the CPU.
+fn json_tape(f: &[u8]) -> Vec<u8> {
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
+    let buf = rerail_json_aot::padded(f);
+    let lx = rerail_json_aot::lex(&buf, f.len());
+    let mut w = rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
+    rerail_json_aot::parse_lexed(&buf, &lx, &mut w).expect("parses");
+    w.finish().expect("a tape").tape.as_bytes().to_vec()
+}
+
+/// Decision 0726, S6: a format 16 tape's 16z pieces, each encoded by a SIMD group from where it lies in the tape (its
+/// array's column at the block's rows, then its side list's part), counted and then written at its place, are the
+/// greedy parse of its bytes (`lz4_greedy`, which `z_of` stores): JSON tapes of several blocks, with side lists.
+#[test]
+fn z_pieces_encode_in_place() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut files: Vec<Vec<u8>> = Vec::new();
+    for (n, long) in [(3000usize, false), (700, true), (5, false)] {
+        let mut f = b"[".to_vec();
+        for i in 0..n {
+            let name = if long { format!("a longer name, {} of them, with {} in it", i, "x".repeat(i % 90)) } else { format!("item {i}") };
+            f.extend_from_slice(format!("{}{{\"id\": {i}, \"name\": \"{name}\", \"tags\": [\"a\", \"b{}\"], \"v\": {}.5, \"ok\": {}}}\n", if i == 0 { "" } else { "," }, i % 7, i * 3, i % 2 == 0).as_bytes());
+        }
+        f.push(b']');
+        files.push(f);
+    }
+    let (mut pieces, mut plain, mut packed) = (0usize, 0usize, 0usize);
+    for f in &files {
+        let t = json_tape(f);
+        let pl = rerail_tape_format::f16::placement(&t).expect("a placement");
+        let cell = |q: usize| [1, pl.widths[0], pl.widths[1], pl.widths[2]][q];
+        let part = |q: usize, j: usize| u32::from_le_bytes(t[pl.parts[q] + 4 * j..pl.parts[q] + 4 * j + 4].try_into().unwrap()) as usize;
+        // Each piece's places in the tape, and its greedy bytes (the reference reads them joined).
+        let (mut jobs, mut want) = (Vec::new(), Vec::new());
+        let mut room = 0usize;
+        for b in 0..pl.block_count() {
+            for q in 0..4 {
+                let (col, clen) = (pl.column(b, q), pl.rows(b) * cell(q));
+                let (side, slen) = (pl.side[q] + part(q, b), part(q, b + 1) - part(q, b));
+                let mut raw = t[col..col + clen].to_vec();
+                raw.extend_from_slice(&t[side..side + slen]);
+                let z = rerail_tape_format::f16::lz4_greedy(&raw);
+                let cap = raw.len() + raw.len() / 255 + 16;
+                jobs.extend([col as u32, clen as u32, side as u32, slen as u32, room as u32, cap as u32]);
+                room += cap;
+                (plain, packed) = (plain + raw.len(), packed + z.len());
+                want.push(z);
+            }
+        }
+        let n = want.len() as u32;
+        let tb = buffer_of(&t).unwrap();
+        // Counted, then written at the places a scan of the counts gives.
+        let jb = buffer_of(&jobs).unwrap();
+        let ob = buffer_of(&vec![0u8; room]).unwrap();
+        let lb = alloc::<u32>(want.len()).unwrap();
+        launch(&q, p.function("t_z_pieces").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("jobs", &jb).buffer("tape", &tb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[crate::device::simd_width().max(32) as u64]).unwrap();
+        q.flush().await_().unwrap();
+        let counted: Vec<u32> = read(&lb, want.len());
+        for (j, z) in want.iter().enumerate() {
+            assert_eq!(counted[j] as usize, z.len(), "{}: piece {j}'s count", crate::device::backend());
+        }
+        let mut at = 0u32;
+        for (j, &c) in counted.iter().enumerate() {
+            jobs[j * 6 + 4] = at;
+            jobs[j * 6 + 5] = c;
+            at += c;
+        }
+        let jb = buffer_of(&jobs).unwrap();
+        let ob = buffer_of(&vec![0u8; at as usize]).unwrap();
+        launch(&q, p.function("t_z_pieces").unwrap()).value("args", &TestArgs { n, w: 1 }).buffer("jobs", &jb).buffer("tape", &tb).buffer("outData", &ob).buffer("lengths", &lb).run(&[n as u64], &[crate::device::simd_width().max(32) as u64]).unwrap();
+        q.flush().await_().unwrap();
+        let out: Vec<u8> = read(&ob, at as usize);
+        let lengths: Vec<u32> = read(&lb, want.len());
+        for (j, z) in want.iter().enumerate() {
+            let s = jobs[j * 6 + 4] as usize;
+            assert_eq!(lengths[j] as usize, z.len(), "{}: piece {j}'s length", crate::device::backend());
+            assert!(out[s..s + z.len()] == z[..], "{}: piece {j}'s bytes", crate::device::backend());
+        }
+        pieces += want.len();
+    }
+    eprintln!("{}: {pieces} pieces of {} tapes, {plain} bytes to {packed}, each the greedy parse, written in place", crate::device::backend(), files.len());
 }
 
 #[test]

@@ -4315,6 +4315,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-clif",
  "rerail-device",
+ "rerail-json-aot",
  "rerail-tape-format",
  "rerail-ukl",
  "rerail-ukl-rust",

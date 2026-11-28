@@ -23,6 +23,8 @@ rerail-ukl-rust = { path = "../native/crates/ukl_rust" }
 rerail-tape-format = { path = "../native/crates/tape_format", features = ["test-hooks"] }
 # A block's device buffer read and written in place by a kernel, on each backend (decision 0440 step B).
 rerail-blocks = { path = "../native/crates/blocks" }
+# JSON's format 16 tapes, whose 16z pieces the library's encoder makes on the device (decision 0726, S6).
+rerail-json-aot = { path = "../native/crates/json_aot", features = ["test-hooks"] }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.
 lz4-sys = "=1.11.1"
 

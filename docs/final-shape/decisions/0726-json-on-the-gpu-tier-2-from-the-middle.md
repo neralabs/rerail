@@ -130,6 +130,18 @@ one at every width and on every backend: each position looked up and then put in
 the positions inside a match skipped. A match is measured a byte a lane, literals copied a byte a lane, and LZ4's
 limits hold (no match in the last 12 bytes, the last 5 literals), so LZ4's own decoder takes the block.
 
+**The 16z pieces** (S6). A tape from the middle has every block made first and none final while chunks write, so
+its 16z is made from the finished format 16 tape (`f16::z_of`), every piece on its own: block `b`'s piece `q` is read
+where it lies (array `q`'s column at the block's rows, then side list `q`'s part `b`), and stored LZ4 where that saves
+a tenth, else raw (no repeats, which the reader does not need). The tail is the tape's regions (its part starts, its
+checkpoints in node order, its newline index), then the piece index. `Tape16Z::from_bytes` takes it as the CPU
+writer's.
+
+On the device a SIMD group encodes a piece from its two places (`ukl_lz4_encode2_sg`, `UklLz4Spans`), nothing joined:
+once counting (`write` false: its length alone), then, after a scan of the lengths, written at its place. The
+encoder's room check is exact, so a piece given the room its count found fits it. `f16::lz4_greedy` is the serial
+parse, the one reference the device and `z_of` are held to.
+
 ### 6. Every chunk on its own, in any order
 
 The user (2026-11-27): "run the blocks in random order (including the prefix sum). This should allow us to validate the
@@ -148,7 +160,7 @@ scan round, each chunk a thread or a group.
 
 ### 7. Still to build (the design's stages)
 
-- The 16z pieces of a tape from the middle, each encoded by a group.
+- S6's scan of the piece lengths and its tail as device phases (the pieces' count and write are built).
 - The UKL printers in `bitlex_lex_rust` and `one_loop`, the phases on the work queue, and Metal.
 
 ## Tests
@@ -167,4 +179,8 @@ and every chunk's summary from them is the summary of pass 1 reading each token 
 1, 2, 3 and 16 blocks (8,784 records), every pass in a random order, the records `lex`'s and each type's the records split by their first byte.
 `rerail-gpu`'s `lz4_blocks_encode_greedily`: 26 blocks (0 to 70,000 bytes: matches at every distance, short and long,
 runs, noise, and one byte repeated), each encoded by a group to the bytes of the serial parse (`lz4_greedy`), which
-LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.
+LZ4's `LZ4_decompress_safe` decodes to the block; on UKL's CPU backend, compiled and on the vector path. The tape test also stores each tape from the middle (90, in order) as 16z by `z_of` and the greedy encoder (129,819
+bytes to 69,804): each loads as a 16z tape and decodes to its tape. `rerail-gpu`'s `z_pieces_encode_in_place`: JSON
+tapes of several blocks with side lists (384 pieces, 388,473 bytes to 36,059), each piece counted and then written by a
+group from where it lies in the tape, at the places its counts give: each the greedy parse of its bytes, on the CPU
+backend, compiled and on the vector path. `rerail-clif`'s `the_writer_headers_constants_are_the_ops` holds `<ukl/writer.h>`'s side area to the ops'.

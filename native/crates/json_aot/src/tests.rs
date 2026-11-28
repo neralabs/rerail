@@ -303,7 +303,7 @@ fn tier2_tape_from_the_middle_is_the_serial_tape() {
     let entries = crate::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
     let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), crate::WIDTHS, 1).expect("a language");
     let writer = |f: &[u8]| rerail_tape_format::f16::Writer::new(&lang, f, rerail_tape_format::newlines::Terminators::Newlines, 0, false, true, f.len() / 2 + 16);
-    let (mut tapes, mut chunks) = (0, 0);
+    let (mut tapes, mut chunks, mut zipped, mut zbytes, mut plain) = (0, 0, 0, 0, 0);
     for (k, f) in all.iter().enumerate() {
         let buf = padded(f);
         let lx = lex(&buf, f.len());
@@ -323,9 +323,17 @@ fn tier2_tape_from_the_middle_is_the_serial_tape() {
                     assert!(have == *want, "file {k}, chunks of {size}, order {seed}: the tape from the middle differs at byte {:?} of {}", have.iter().zip(want).position(|(a, b)| a != b), want.len());
                     tapes += 1;
                     chunks += crate::middle::chunk_starts(&buf, &lx, size, &crate::middle::in_order).len();
+                    // S6: its 16z, every piece on its own by the greedy encoder, decodes to it.
+                    if seed == 0 {
+                        let z = rerail_tape_format::f16::z_of(&have, &rerail_tape_format::f16::lz4_greedy).expect("its 16z");
+                        let t = rerail_tape_format::f16::Tape16Z::from_bytes(rerail_tape_format::Vector::from(&z[..])).unwrap_or_else(|e| panic!("file {k}: its 16z: {e}"));
+                        assert!(t.decoded_whole().expect("decodes") == have, "file {k}, chunks of {size}: its 16z decodes to it");
+                        (zipped, zbytes) = (zipped + 1, zbytes + z.len());
+                        plain += have.len();
+                    }
                 }
             }
         }
     }
-    eprintln!("{tapes} tapes from the middle ({chunks} chunks), each the serial tape");
+    eprintln!("{tapes} tapes from the middle ({chunks} chunks), each the serial tape; {zipped} as 16z by the greedy encoder, {plain} bytes to {zbytes}, each decoding to its tape");
 }
