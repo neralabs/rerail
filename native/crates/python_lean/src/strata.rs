@@ -1399,8 +1399,14 @@ static KWS: [Kw; 1 << KW_BITS] = {
 /// probe of the perfect hash, and the slot's bytes and length compared (a selection, not a branch).
 #[inline(always)]
 fn keyword_at(src: &[u8], i: usize, len: usize) -> (T, u8) {
+    keyword_of(rerail_simd8::swar::load8(src, i), len)
+}
+
+/// The keyword or name of `len` bytes whose first 8 (or fewer, then zeros past the text) are `lo`.
+#[inline(always)]
+fn keyword_of(lo: u64, len: usize) -> (T, u8) {
     let mask = if len >= 8 { !0u64 } else { (1u64 << (8 * len)) - 1 };
-    let lo = rerail_simd8::swar::load8(src, i) & mask;
+    let lo = lo & mask;
     let k = KWS[(lo.wrapping_mul(KW_MULT) >> (64 - KW_BITS)) as usize];
     // The slot's word or a name, by a mask of the comparison: no branch.
     let hit = 0u8.wrapping_sub(u8::from(k.lo == lo) & u8::from(usize::from(k.len) == len));

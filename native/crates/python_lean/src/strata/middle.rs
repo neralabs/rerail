@@ -710,9 +710,29 @@ pub fn walk_summary(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: us
 /// The most levels a layout lane opens, and the most reads of its entry it keeps: more is not known.
 const OWN: usize = 8;
 const CONDS: usize = 8;
+/// The most layout events of a block masks read (6 in all but 0.024% of the corpus's blocks): more is not known.
+const EVENTS: usize = 6;
+
+use super::starts::{Win, byte, pick};
+
+/// The kinds `closer_may_follow` takes after its last record, and those of the record before a `[` it takes it after
+/// (as bits of `T`'s codes).
+const CLOSER_AFTER: u128 = {
+    let mut s = 0u128;
+    let ks = [T::Name, T::Int, T::Float, T::True, T::False, T::None, T::Ellipsis, T::StrEnd, T::RParen, T::RBracket, T::RBrace, T::LParen, T::LBrace, T::Comma];
+    let mut i = 0;
+    while i < ks.len() {
+        s |= 1 << (ks[i] as u8);
+        i += 1;
+    }
+    s
+};
+const SUBSCRIPT_AFTER: u128 = (1 << T::Name as u8) | (1 << T::StrEnd as u8) | (1 << T::RParen as u8) | (1 << T::RBracket as u8) | (1 << T::RBrace as u8);
+/// No record: a code no kind has.
+const NO_KIND: u8 = 127;
 
 /// A lane of the walk's layout by masks: what `Sym` keeps of the indents, in a fixed size, and the layout's tokens,
-/// `open` and `header`.
+/// `open` and `header`. Each step is selections: no branch.
 #[derive(Clone, Copy, Debug)]
 struct LayoutLane {
     own: [u32; OWN],
@@ -737,70 +757,72 @@ impl LayoutLane {
         LayoutLane { own: [0; OWN], len: 0, t: i64::MAX, phantom: 0, conds: [(0, 0); CONDS], nconds: 0, toks: 0, open, header, lay_since: false, lay_between: false, bad: false }
     }
 
-    fn cond(&mut self, lo: i64, hi: i64) {
-        self.bad |= self.nconds == CONDS;
-        self.conds[self.nconds.min(CONDS - 1)] = (lo, hi);
-        self.nconds = (self.nconds + 1).min(CONDS);
+    /// A read of the entry where `on`: none of its levels in `[lo, hi]` (kept once).
+    #[inline(always)]
+    fn cond(&mut self, on: bool, lo: i64, hi: i64) {
+        let dup = (0..CONDS).fold(false, |d, i| d | ((i < self.nconds) & (self.conds[i] == (lo, hi))));
+        let add = on & !dup;
+        self.bad |= add & (self.nconds == CONDS);
+        let i = self.nconds.min(CONDS - 1);
+        self.conds[i] = pick(add, (lo, hi), self.conds[i]);
+        self.nconds = pick(add, (self.nconds + 1).min(CONDS), self.nconds);
     }
 
-    /// A line's layout out of brackets (the walk's layout loop): the next line's width `w` and `m`, the larger of it
-    /// and the first comment's.
-    fn line(&mut self, w: i64, m: i64) {
-        let before = self.toks;
-        self.line_tokens(w, m);
-        self.lay_since |= self.toks > before;
+    /// The top level it opened (where it opened one).
+    #[inline(always)]
+    fn top(&self) -> i64 {
+        i64::from(self.own[self.len.wrapping_sub(1) & (OWN - 1)])
     }
 
-    /// `k` tokens read (none a layout token).
-    fn read(&mut self, k: u32) {
-        self.lay_between = k == 1 && self.lay_since;
-        self.lay_since = false;
-        self.open = true;
+    /// `k` tokens read, the last a header's `:` where `colon`.
+    #[inline(always)]
+    fn read(&mut self, k: u32, colon: bool) {
+        let some = k > 0;
+        self.lay_between = pick(some, (k == 1) & self.lay_since, self.lay_between);
+        self.lay_since &= !some;
+        self.open |= some;
+        self.header = pick(some, colon, self.header);
     }
 
-    /// The walk's `closer_may_follow` from the kinds of the last two tokens read.
-    fn closer_may_follow(&self, k1: Option<T>, k2: Option<T>) -> bool {
-        let Some(k1) = k1 else { return false };
-        !self.lay_since
-            && match k1 {
-                T::Name | T::Int | T::Float | T::True | T::False | T::None | T::Ellipsis | T::StrEnd | T::RParen | T::RBracket | T::RBrace | T::LParen | T::LBrace | T::Comma => true,
-                T::LBracket => self.lay_between || !matches!(k2, Some(T::Name | T::StrEnd | T::RParen | T::RBracket | T::RBrace)),
-                _ => false,
-            }
+    /// Where `on`, a line's layout out of brackets (the walk's layout loop): the next line's width `w` and `m`, the
+    /// larger of it and the first comment's.
+    #[inline(always)]
+    fn line(&mut self, on: bool, w: i64, m: i64) {
+        let has = self.len > 0;
+        let below = !has | (self.top() < w);
+        let push = on & self.header & below;
+        let pop = on & !push;
+        self.cond(push & !has & (w <= self.t), w, self.t);
+        self.bad |= push & (self.len == OWN);
+        let at = self.len.min(OWN - 1);
+        self.own[at] = pick(push, w as u32, self.own[at]);
+        let keep = (0..OWN).fold(0, |k, i| k + usize::from((i < self.len) & (i64::from(self.own[i]) <= m)));
+        let phantom = pop & (keep == 0) & (m < self.t);
+        let added = pick(push, 1, pick(pop, usize::from(self.open) + (self.len - keep) + usize::from(phantom), 0));
+        self.len = pick(push, (self.len + 1).min(OWN), pick(pop, keep, self.len));
+        self.t = pick(phantom, m, self.t);
+        self.phantom += usize::from(phantom);
+        self.toks += added;
+        self.lay_since |= added > 0;
+        self.open &= !on;
+        self.header &= !on;
     }
 
-    fn line_tokens(&mut self, w: i64, m: i64) {
-        let below = if self.len > 0 { i64::from(self.own[self.len - 1]) < w } else { true };
-        if self.header && below {
-            if self.len == 0 && w <= self.t {
-                self.cond(w, self.t);
-            }
-            self.bad |= self.len == OWN;
-            self.own[self.len.min(OWN - 1)] = w as u32;
-            self.len = (self.len + 1).min(OWN);
-            self.toks += 1;
-        } else {
-            self.toks += usize::from(self.open);
-            let keep = self.own[..self.len].iter().filter(|&&o| i64::from(o) <= m).count();
-            self.toks += self.len - keep;
-            self.len = keep;
-            if self.len == 0 && m < self.t {
-                self.t = m;
-                self.phantom += 1;
-                self.toks += 1;
-            }
-        }
-        self.open = false;
-        self.header = false;
+    /// Where `on`, a line in brackets the walk checks for a dedent: refused where the top is above `m` (not known
+    /// here).
+    #[inline(always)]
+    fn in_brackets(&mut self, on: bool, m: i64) {
+        let has = self.len > 0;
+        self.bad |= on & has & (self.top() > m);
+        self.cond(on & !has & (m < self.t), m + 1, self.t);
     }
 
-    /// A line in brackets the walk checks for a dedent: refused where the top is above `m` (not known here).
-    fn in_brackets(&mut self, m: i64) {
-        if self.len > 0 {
-            self.bad |= i64::from(self.own[self.len - 1]) > m;
-        } else if m < self.t {
-            self.cond(m + 1, self.t);
-        }
+    /// The walk's `closer_may_follow` from the codes of the kinds of the last two tokens read.
+    #[inline(always)]
+    fn closer_may_follow(&self, k1: u8, k2: u8) -> bool {
+        let bit = |set: u128, k: u8| ((set >> (k & 127)) & 1 == 1) & (k != NO_KIND);
+        let bracket = (k1 == T::LBracket as u8) & (self.lay_between | !bit(SUBSCRIPT_AFTER, k2));
+        !self.lay_since & (bit(CLOSER_AFTER, k1) | bracket)
     }
 
     fn sym(&self) -> Sym {
@@ -808,120 +830,262 @@ impl LayoutLane {
     }
 }
 
-/// A layout event: a loop top where a logical line ends.
-#[derive(Clone, Copy, Debug)]
-struct Event {
+/// A block's window of masks the layout events read: the block's and the next one's.
+struct EventMasks {
+    lim: u32,
+    valid: u128,
+    sf: u128,
+    lf: u128,
+    cr: u128,
+    bs: u128,
+    cstart: u128,
+    content: u128,
+    resets: u128,
+    space: u128,
+    tab: u128,
+    quote: u128,
+    /// At bit `j`: whether the bracket depth after byte `j - 1` is 0.
+    depth0_before: u128,
+    /// The block's words (and the next block's), code and depth-0 bits, for the kinds of its tokens.
+    word: u128,
+    code: u64,
+    depth0: u64,
+}
+
+impl EventMasks {
+    /// Block `r.bi`'s window. The depth below it is the block before's last bit, or where that block is not the
+    /// text's (`r.bi == 0`), 0.
+    #[inline(always)]
+    fn of<const S: bool>(r: &Win<'_, S>) -> EventMasks {
+        let (pb, b, b1, bi) = (&r.pb, &r.b, &r.b1, r.bi);
+        let w2 = |f: fn(&B) -> u64| u128::from(f(b)) | u128::from(f(b1)) << 64;
+        let lim = r.src.len().saturating_sub(64 * bi).min(128) as u32;
+        let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
+        let (sptab, lf, eol) = (w2(|b| b.sptab), w2(|b| b.lf), w2(|b| b.eol));
+        let ff = w2(|b| b.skip) & !sptab & !lf;
+        let sf = sptab | ff;
+        let cstart = w2(|b| b.cstart);
+        let comment = super::starts::fill(cstart, !eol);
+        let below = u128::from(pick(bi > 0, pb.depth0 >> 63 == 1, true));
+        EventMasks {
+            lim,
+            valid,
+            sf,
+            lf,
+            cr: eol & !lf,
+            bs: w2(|b| b.bs),
+            cstart,
+            content: valid & !(sf | eol) & !comment,
+            resets: eol | ff,
+            space: w2(|b| b.space) & sptab,
+            tab: sptab & !w2(|b| b.space),
+            quote: w2(|b| b.sq | b.dq | b.bt),
+            depth0_before: (w2(|b| b.depth0) << 1) | below,
+            word: w2(|b| b.word),
+            code: b.code,
+            depth0: b.depth0,
+        }
+    }
+
+    /// The width of the line before byte `p`: spaces and 8 for each tab since the last line end, `\r` or form feed.
+    #[inline(always)]
+    fn width(&self, p: u32) -> i64 {
+        let under = (1u128 << (p & 127)) - 1;
+        let r = self.resets & under;
+        // Both arms are computed (a selection): each wraps.
+        let between = under & !pick(r == 0, 0, (2u128 << (127u32.wrapping_sub(r.leading_zeros()) & 127)).wrapping_sub(1));
+        i64::from((self.space & between).count_ones() + 8 * (self.tab & between).count_ones())
+    }
+
+    /// The block's layout events among its loop tops `tops`, and whether one is not known by masks (a `\r` before
+    /// no `\n`, a continuation before a blank line, blanks to the window's top).
+    fn events(&self, t: u128) -> (u128, bool) {
+        let ends = self.lf | (self.cr & (self.lf >> 1)) | !self.valid;
+        let events = super::starts::reaching(ends, self.sf) & t;
+        let reach = super::starts::reaching(ends, self.sf);
+        let cont_blank = (self.bs & (self.lf >> 1) & (reach >> 2)) | (self.bs & (self.cr >> 1) & (self.lf >> 2) & (reach >> 3));
+        let bad = (self.cr & !(self.lf >> 1)) | cont_blank | ((self.sf >> 127) << 127);
+        (events, super::starts::reaching(bad, self.sf) & t != 0)
+    }
+
+    /// The event at bit `e`: whether it is in brackets, the next line's width `w` and `m` (the larger of it and the
+    /// first comment's), whether the next line starts with a quote, and whether masks do not know it.
+    #[inline(always)]
+    fn event(&self, e: u32) -> (bool, i64, i64, bool, bool) {
+        let above_eq = |x: u32| pick(x >= 128, 0, !0u128 << (x & 127));
+        let k = (!self.sf & above_eq(e)).trailing_zeros();
+        let eof = k >= self.lim;
+        let eol = k + u32::from((self.cr >> (k & 127)) & 1 == 1);
+        let after = above_eq(eol + 1);
+        let found = (self.content & after).trailing_zeros();
+        let none = found >= 128;
+        let x = pick(none, self.lim, found);
+        let bad = !eof & ((none & (self.lim >= 128)) | ((x < self.lim) & ((self.bs >> (x & 127)) & 1 == 1)));
+        let c = (self.cstart & after & ((1u128 << (x & 127)) - 1)).trailing_zeros();
+        let has_c = !eof & (c < x);
+        let fc = pick(has_c, self.width(c), -1);
+        let w = pick(eof | (x >= self.lim), 0, self.width(x));
+        let quote = !eof & (x < self.lim) & ((self.quote >> (x & 127)) & 1 == 1);
+        let brackets = (self.depth0_before >> (e & 127)) & 1 == 0;
+        (brackets, w, w.max(fc), quote, bad)
+    }
+}
+
+/// The layout by masks's carry from a block to the next: the codes of the last two tokens' kinds (`NO_KIND` where
+/// none), and whether the last is a header's `:`.
+#[derive(Clone, Copy)]
+struct LastToks {
+    k: [u8; 2],
+    colon: bool,
+}
+
+/// The operators' kinds that `closer_may_follow` names, by byte (else a `+`); `.` is apart.
+const OP_KIND: [u8; 256] = {
+    let mut t = [T::Plus as u8; 256];
+    t[b')' as usize] = T::RParen as u8;
+    t[b']' as usize] = T::RBracket as u8;
+    t[b'}' as usize] = T::RBrace as u8;
+    t[b'(' as usize] = T::LParen as u8;
+    t[b'{' as usize] = T::LBrace as u8;
+    t[b'[' as usize] = T::LBracket as u8;
+    t[b',' as usize] = T::Comma as u8;
+    t
+};
+
+/// The 8 bytes of the text from `i`, zeros past its end, by single-byte loads: no branch.
+#[inline(always)]
+fn bytes8(src: &[u8], i: usize) -> u64 {
+    (0..8).fold(0u64, |w, k| w | u64::from(byte(src, i + k)) << (8 * k))
+}
+
+/// The kind's code of the token starting at bit `q` of block `bi` as the walk's `closer_may_follow` reads it (a
+/// string's last token is its end; an operator it does not name is a `+`), and whether it is a header's `:`: from
+/// the block's masks and a few bytes at it, no branch.
+#[inline(always)]
+fn kind_of(src: &[u8], em: &EventMasks, bi: usize, q: u32) -> (u8, bool) {
+    let s = 64 * bi + q as usize;
+    let bit = |x: u64| (x >> (q & 63)) & 1 == 1;
+    let (c, c1, c2) = (byte(src, s), byte(src, s + 1), byte(src, s + 2));
+    let len = (!(em.word >> (q & 63))).trailing_zeros() as usize;
+    let word = super::keyword_of(bytes8(src, s), len.max(1)).0 as u8;
+    let dot = pick(c1.is_ascii_digit(), T::Float as u8, pick((c1 == b'.') & (c2 == b'.'), T::Ellipsis as u8, T::Plus as u8));
+    let op = pick(c == b'.', dot, OP_KIND[usize::from(c)]);
+    let code_kind = pick(bit(em.word as u64 & em.code), pick(c.is_ascii_digit(), T::Int as u8, word), op);
+    let colon = (c == b':') & (c1 != b'=') & bit(em.depth0 & em.code);
+    (pick(bit(em.code), code_kind, T::StrEnd as u8), colon)
+}
+
+/// The tokens `bits` of block `bi` read (all after those before): `last` takes the last two, and their count.
+#[inline(always)]
+fn read_toks(src: &[u8], em: &EventMasks, bi: usize, bits: u64, last: &mut LastToks) -> u32 {
+    let n = bits.count_ones();
+    let h1 = 63 - bits.leading_zeros().min(63);
+    let h2 = 63 - (bits & !(1u64 << h1)).leading_zeros().min(63);
+    let ((k1, colon), (k2, _)) = (kind_of(src, em, bi, h1), kind_of(src, em, bi, h2));
+    let k0 = last.k;
+    last.k = [pick(n > 0, k1, k0[0]), pick(n > 1, k2, pick(n == 1, k0[0], k0[1]))];
+    last.colon = pick(n > 0, colon, last.colon);
+    n
+}
+
+/// A step's event: whether there is one, whether it is in brackets, the next line's width `w` and `m` (the larger
+/// of it and the first comment's), and whether the next line starts with a quote.
+#[derive(Clone, Copy)]
+struct Ev {
+    on: bool,
     brackets: bool,
     w: i64,
     m: i64,
-    /// The next line's first byte is a quote (in brackets the walk then does not check for a dedent).
-    quote_next: bool,
+    quote: bool,
 }
 
-/// The layout event at loop top `t` (block `bi`'s), from masks: none where it is not one, `Err` where masks do not
-/// know it.
-fn event_at(m: &Masks<'_>, bi: usize, t: usize) -> Result<Option<Event>, ()> {
-    let src = m.src;
+/// A lane's step for an event, after the tokens `n` read before it.
+#[inline(always)]
+fn lane_step(l: &mut LayoutLane, last: &LastToks, n: u32, e: Ev) {
+    l.read(n, last.colon);
+    l.line(e.on & !e.brackets, e.w, e.m);
+    let check = e.on & e.brackets & !e.quote & !l.closer_may_follow(last.k[0], last.k[1]);
+    l.in_brackets(check, e.m);
+}
+
+/// The block's next event (the lowest of `rest`, where there is one): the tokens before it read, and each lane's step.
+#[inline(always)]
+fn event_step(src: &[u8], em: &EventMasks, bi: usize, rest: &mut u128, k: &mut u64, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> bool {
+    let on = *rest != 0;
+    let e = rest.trailing_zeros();
+    *rest &= rest.wrapping_sub(1);
+    let before = *k & pick(e >= 64, !0, (1u64 << (e & 63)).wrapping_sub(1));
+    *k &= !before;
+    let n = read_toks(src, em, bi, before, last);
+    let (brackets, w, m, quote, ebad) = em.event(e);
+    let ev = Ev { on, brackets, w, m, quote };
+    let [a, b, c] = lanes;
+    lane_step(a, last, n, ev);
+    lane_step(b, last, n, ev);
+    lane_step(c, last, n, ev);
+    on & ebad
+}
+
+/// One block's layout by masks, for each lane: its window `em`, its tokens `tk` (starts in the chunk's range) and
+/// loop tops `tops` (in it, and at bit 64 one at the text's end just past it), its events in `EVENTS` steps of
+/// selections, written out. Whether masks do not know it. No branch: pass 1 runs it for every lane at once.
+#[inline(always)]
+fn layout_block(src: &[u8], em: &EventMasks, bi: usize, tk: u64, tops: u128, lanes: &mut [LayoutLane; 3], last: &mut LastToks) -> bool {
+    let (events, mut bad) = em.events(tops);
+    let (mut rest, mut k) = (events, tk);
+    // `EVENTS` steps, written out (a loop of them may stay a loop).
+    const _: () = assert!(EVENTS == 6);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    bad |= event_step(src, em, bi, &mut rest, &mut k, lanes, last);
+    let n = read_toks(src, em, bi, k, last);
+    let [a, b, c] = lanes;
+    a.read(n, last.colon);
+    b.read(n, last.colon);
+    c.read(n, last.colon);
+    bad | (rest != 0)
+}
+
+/// What the walk's pass 1 by masks carries from a block to the next in a chunk.
+struct WalkAcc {
+    lanes: [LayoutLane; 3],
+    last: LastToks,
+    carry: super::starts::StrCarry,
+    toks: usize,
+    extras: usize,
+    bad: bool,
+}
+
+/// One block of the walk's pass 1 by masks, from its reads `r`, in the chunk's range `lo..hi` (and its eof's `n`):
+/// its tokens' and extras' starts, its loop tops and its layout, for every lane at once. No branch.
+#[inline(never)]
+fn walk_block<const S: bool>(r: &Win<'_, S>, lo: usize, hi: usize, acc: &mut WalkAcc) {
+    let (src, bi) = (r.src, r.bi);
     let n = src.len();
-    let w2 = |f: fn(&B) -> u64| u128::from(f(m.blk(bi))) | u128::from(f(m.blk(bi + 1))) << 64;
-    let base = 64 * bi;
-    let lim = n.saturating_sub(base).min(128) as u32;
-    let valid = ((1u128 << (lim & 127)) - 1) | 0u128.wrapping_sub(u128::from(lim >> 7));
-    let j = (t - base) as u32;
-    let above_eq = |x: u32| if x >= 128 { 0 } else { !0u128 << x };
-    let lowest = |x: u128| (x != 0).then(|| x.trailing_zeros());
-    let (sptab, lf, eol, bs, cstart) = (w2(|b| b.sptab), w2(|b| b.lf), w2(|b| b.eol), w2(|b| b.bs), w2(|b| b.cstart));
-    let ff = w2(|b| b.skip) & !sptab & !lf;
-    let cr = eol & !lf;
-    // The first byte past spaces, tabs and form feeds.
-    let Some(k) = lowest(!(sptab | ff) & above_eq(j)) else { return Err(()) };
-    let kb = 1u128 << k;
-    let eol_at = if k >= lim {
-        None
-    } else if lf & kb != 0 {
-        Some(k)
-    } else if cr & kb != 0 {
-        if lf & (kb << 1) == 0 {
-            return Err(());
-        }
-        Some(k + 1)
-    } else if bs & kb != 0 {
-        // A continuation: an event only where its next line is blank (not read here).
-        let after = lowest(!(sptab | ff) & above_eq(k + 1)).ok_or(())?;
-        let a = 1u128 << after;
-        let next = if lf & a != 0 { after + 1 } else if cr & a != 0 { after + 2 } else { return Err(()) };
-        let rest = lowest(!(sptab | ff) & above_eq(next)).ok_or(())?;
-        if rest >= lim || eol & (1u128 << rest) != 0 {
-            return Err(());
-        }
-        return Ok(None);
-    } else {
-        return Ok(None);
-    };
-    let brackets = t > 0 && !m.bit(t - 1, |b| b.depth0);
-    // The next line's first byte of content past the line end, and the first comment before it.
-    let (w, fc, x) = match eol_at {
-        None => (0, -1, n),
-        Some(e) => {
-            let comment = super::starts::fill(cstart & above_eq(e + 1), !eol);
-            let content = valid & !(sptab | ff | eol) & !comment;
-            let x = lowest(content & above_eq(e + 1));
-            let xp = match x {
-                Some(x) => x,
-                None if lim < 128 => lim,
-                None => return Err(()),
-            };
-            if xp < lim && bs & (1u128 << xp) != 0 {
-                return Err(());
-            }
-            let width = |p: u32| {
-                let resets = (lf | cr | ff) & ((1u128 << p) - 1);
-                let between = if resets == 0 { (1u128 << p) - 1 } else { ((1u128 << p) - 1) & !((2u128 << (127 - resets.leading_zeros())) - 1) };
-                let (sp, tab) = (w2(|b| b.space) & sptab, sptab & !w2(|b| b.space));
-                i64::from((sp & between).count_ones() + 8 * (tab & between).count_ones())
-            };
-            let c = lowest(cstart & above_eq(e + 1) & ((1u128 << xp) - 1));
-            let w = if xp >= lim { 0 } else { width(xp) };
-            (w, c.map_or(-1, width), base + xp as usize)
-        }
-    };
-    let m_ = w.max(fc);
-    let quote_next = matches!(m.at(x), b'\'' | b'"' | b'`');
-    Ok(Some(Event { brackets, w, m: m_, quote_next }))
-}
-
-/// The kind of the token at `s` as the walk's `closer_may_follow` reads it (a string's last token is its end; an
-/// operator not among those it names is a `+`).
-fn kind_at(m: &Masks<'_>, s: usize) -> T {
-    let src = m.src;
-    if !m.bit(s, |b| b.code) {
-        return T::StrEnd;
-    }
-    let c = src[s];
-    if m.bit(s, |b| b.word) {
-        if c.is_ascii_digit() {
-            return T::Int;
-        }
-        let len = m.run_end(s, |b| b.word) - s;
-        return super::keyword_at(src, s, len).0;
-    }
-    match c {
-        b'.' if src.get(s + 1).is_some_and(u8::is_ascii_digit) => T::Float,
-        b'.' if src.get(s..s + 3) == Some(b"...") => T::Ellipsis,
-        b')' => T::RParen,
-        b']' => T::RBracket,
-        b'}' => T::RBrace,
-        b'(' => T::LParen,
-        b'{' => T::LBrace,
-        b'[' => T::LBracket,
-        b',' => T::Comma,
-        _ => T::Plus,
-    }
+    let mk = |x: usize| pick(x >= 64, !0u64, (1u64 << (x & 63)).wrapping_sub(1));
+    let range = mk(hi.saturating_sub(64 * bi)) & !mk(lo.saturating_sub(64 * bi));
+    let (cs, r1) = super::starts::code_starts_w(r);
+    let (ss, r2) = super::starts::string_starts_w(r, &mut acc.carry);
+    let (xs, r3) = super::starts::extra_starts_w(r);
+    acc.bad |= (r1 | r2 | r3) & (range != 0);
+    let tk = (cs | ss) & range;
+    acc.toks += tk.count_ones() as usize;
+    acc.extras += (xs & range).count_ones() as usize;
+    let (tp, at_end) = super::starts::tops_w(r);
+    let own = u128::from((lo / 64 == bi) & (lo < hi)) << (lo % 64);
+    // A loop top at the text's end just past the block (its last), in the range: bit 64.
+    let end = u128::from(at_end & (n >= lo) & (n < hi)) << 64;
+    let tops = u128::from(tp & range) | own | end;
+    let em = EventMasks::of(r);
+    acc.bad |= layout_block(src, &em, bi, tk, tops, &mut acc.lanes, &mut acc.last);
 }
 
 /// Pass 1 of the walk by masks: chunk `from..to`'s summary from its place `p` to the chunk after's (`next`), over
 /// the strata from `rb` and `depth`, for each of `COMBOS`: its tokens and extras the popcounts of their starts in
-/// its range, its layout from its events. A lane masks do not know is `Unknown`.
+/// its range, its layout from its events (`layout_block`). A lane masks do not know is `Unknown`.
 pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8, p: Place, next: Option<Place>) -> WalkSummary {
     let unknown = || core::array::from_fn(|_| WalkLane::Unknown);
     let n = src.len();
@@ -934,90 +1098,25 @@ pub fn walk_summary_masks(src: &[u8], from: usize, to: usize, rb: RB, depth: i8,
     let last_block = (hi.min(n).saturating_sub(1) / 64).max(lo / 64);
     let (c0, _) = firsts(from);
     let r = over_window(src, from, to.max(last_block + 2).min(nb.max(1)), s1_at(src, c0), rb, depth, |m| {
-        let mut lanes = COMBOS.map(|(o, h)| LayoutLane::new(o, h));
-        let (mut toks, mut extras) = (usize::from(eof), 0);
-        let mut carry = super::starts::StrCarry::default();
-        let mut last: Vec<usize> = Vec::new();
-        let mut colon = false;
-        let in_range = |bi: usize| {
-            let a = lo.saturating_sub(64 * bi).min(64) as u32;
-            let b = hi.saturating_sub(64 * bi).min(64) as u32;
-            let mk = |x: u32| if x >= 64 { !0u64 } else { (1u64 << x) - 1 };
-            mk(b) & !mk(a)
+        let mut acc = WalkAcc {
+            lanes: COMBOS.map(|(o, h)| LayoutLane::new(o, h)),
+            last: LastToks { k: [NO_KIND; 2], colon: false },
+            carry: super::starts::StrCarry::default(),
+            toks: usize::from(eof),
+            extras: 0,
+            bad: false,
         };
-        // The tokens `bits` of block `bi` (all after those before): the last two starts, and whether the last is a
-        // `:` out of brackets (a header's).
-        let read = |bits: u64, bi: usize, last: &mut Vec<usize>, colon: &mut bool| {
-            if bits == 0 {
-                return;
-            }
-            let s = 64 * bi + 63 - bits.leading_zeros() as usize;
-            let rest = bits & !(1u64 << (s % 64));
-            let s2 = if rest != 0 { Some(64 * bi + 63 - rest.leading_zeros() as usize) } else { last.first().copied() };
-            *last = [Some(s), s2].into_iter().flatten().collect();
-            *colon = src[s] == b':' && src.get(s + 1) != Some(&b'=') && m.bit(s, |b| b.depth0) && m.bit(s, |b| b.code);
-        };
+        // The loop over blocks: each block's reads from the window, then its block function (one instance for the
+        // text: under 64 bytes or not).
         for bi in (lo / 64)..=last_block.min(nb.saturating_sub(1)) {
-            let range = in_range(bi);
-            let (cs, r1) = super::starts::code_starts(&m, bi);
-            let (ss, r2) = super::starts::string_starts(&m, bi, &mut carry);
-            let (xs, r3) = super::starts::extra_starts(&m, bi);
-            if (r1 | r2 | r3) && range != 0 {
-                return None;
-            }
-            let tk = (cs | ss) & range;
-            toks += tk.count_ones() as usize;
-            extras += (xs & range).count_ones() as usize;
-            let (tp, at_end) = super::starts::tops(&m, bi);
-            let mut tops = tp & range;
-            if lo / 64 == bi && lo < hi {
-                tops |= 1u64 << (lo % 64);
-            }
-            let mut all: Vec<usize> = Vec::new();
-            while tops != 0 {
-                all.push(64 * bi + tops.trailing_zeros() as usize);
-                tops &= tops - 1;
-            }
-            if at_end && n == 64 * (bi + 1) && n >= lo && n < hi {
-                all.push(n);
-            }
-            let mut k = tk;
-            for &t in &all {
-                // The tokens before the event: `open` and `header` from them.
-                let before = if t >= 64 * (bi + 1) { k } else { k & ((1u64 << (t % 64)) - 1) };
-                k &= !before;
-                if before != 0 {
-                    read(before, bi, &mut last, &mut colon);
-                    for l in &mut lanes {
-                        l.read(before.count_ones());
-                        l.header = colon;
-                    }
-                }
-                let Ok(ev) = event_at(&m, bi, t) else { return None };
-                if let Some(e) = ev {
-                    if !e.brackets {
-                        for l in &mut lanes {
-                            l.line(e.w, e.m);
-                        }
-                    } else if !e.quote_next {
-                        let (k1, k2) = (last.first().map(|&s| kind_at(&m, s)), last.get(1).map(|&s| kind_at(&m, s)));
-                        for l in &mut lanes {
-                            if !l.closer_may_follow(k1, k2) {
-                                l.in_brackets(e.m);
-                            }
-                        }
-                    }
-                }
-            }
-            if k != 0 {
-                read(k, bi, &mut last, &mut colon);
-                for l in &mut lanes {
-                    l.read(k.count_ones());
-                    l.header = colon;
-                }
+            if n < 64 {
+                walk_block(&m.win::<true>(bi), lo, hi, &mut acc);
+            } else {
+                walk_block(&m.win::<false>(bi), lo, hi, &mut acc);
             }
         }
-        Some(lanes.map(|l| if l.bad { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }))
+        let WalkAcc { lanes, toks, extras, bad, .. } = acc;
+        (!bad).then(|| lanes.map(|l| if l.bad { WalkLane::Unknown } else { WalkLane::Goes { exit: combo(l.open, l.header), toks: toks + l.toks - l.phantom, extras, sym: l.sym() } }))
     });
     match r {
         Ok((Some(s), ..)) => s,
@@ -1656,6 +1755,12 @@ mod tests {
                 let indent = ["", " ", "  ", "    ", "\t", "        ", "\t "][rnd(7) as usize];
                 t.push_str(indent);
                 t.push_str(pieces[rnd(14) as usize]);
+                // A trailing comment, so lines are near real lengths (masks read at most `EVENTS` line ends a block).
+                let pad = rnd(16) as usize;
+                if pad > 2 {
+                    t.push_str("  #");
+                    t.push_str(&"-".repeat(pad));
+                }
                 t.push_str(["\n", "\n", "\n", "\r\n", "\n\n"][rnd(5) as usize]);
             }
             for blocks in [1, 2, 3] {

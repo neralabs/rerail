@@ -17,7 +17,7 @@
 //! it lies in, so a block is exact unless the run its window starts in reaches the block: then it is rare (not known),
 //! as is a block with a byte the walk refuses or reads by its own path (past ASCII).
 
-use super::{B, Masks, OP_EQ, OP_TWICE, OP1, V, bytes_from};
+use super::{B, Masks, OP_EQ, OP_TWICE, OP1, V};
 use rerail_simd::prelude::*;
 
 /// The operator classes of a byte below 128: one bit each.
@@ -70,9 +70,82 @@ struct Bytes {
     len1: u64,
 }
 
+/// A block's reads in the walk's pass 1, by value: the text, and the masks of the block below, the block and the one
+/// after (the loop over blocks reads them from the window). `S`: the text is under 64 bytes. The block functions
+/// read nothing else, and have no branch.
+#[derive(Clone, Copy)]
+pub(super) struct Win<'a, const S: bool> {
+    pub(super) src: &'a [u8],
+    pub(super) bi: usize,
+    pub(super) pb: B,
+    pub(super) b: B,
+    pub(super) b1: B,
+}
+
+impl<const S: bool> Win<'_, S> {
+    /// The 64 bytes from `at`, zeros past the text's end: one load from the lesser of `at` and the text's last 64
+    /// bytes' start, the lanes below `at` shifted out; a text under 64 bytes, byte by byte at clamped indexes. No
+    /// block is copied, and no branch (`S` is the text's, chosen once by the loop over blocks).
+    #[inline(always)]
+    fn bytes(&self, at: usize) -> V {
+        let src = self.src;
+        if S {
+            // Written out: a loop of them stays a loop.
+            let bt = |k: usize| byte(src, at + k);
+            V::from_array([
+                bt(0), bt(1), bt(2), bt(3), bt(4), bt(5), bt(6), bt(7), bt(8), bt(9), bt(10), bt(11), bt(12), bt(13), bt(14), bt(15), bt(16), bt(17), bt(18), bt(19), bt(20), bt(21), bt(22), bt(23), bt(24), bt(25), bt(26), bt(27), bt(28), bt(29), bt(30), bt(31), bt(32), bt(33), bt(34), bt(35), bt(36), bt(37), bt(38), bt(39), bt(40), bt(41), bt(42), bt(43), bt(44), bt(45), bt(46), bt(47), bt(48), bt(49), bt(50), bt(51), bt(52), bt(53), bt(54), bt(55), bt(56), bt(57), bt(58), bt(59), bt(60), bt(61), bt(62), bt(63),
+            ])
+        } else {
+            let base = at.min(src.len().wrapping_sub(64));
+            // SAFETY: the text is 64 bytes or more (`S` is false), so `base + 64 <= src.len()`.
+            let v = unsafe { src.as_ptr().add(base).cast::<[u8; 64]>().read_unaligned() };
+            super::lanes_from(V::from_array(v), at - base)
+        }
+    }
+}
+
+impl<'a> Masks<'a> {
+    /// Block `bi`'s reads for pass 1.
+    #[inline(always)]
+    pub(super) fn win<const S: bool>(&self, bi: usize) -> Win<'a, S> {
+        Win { src: self.src, bi, pb: *self.blk(bi.saturating_sub(1)), b: *self.blk(bi), b1: *self.blk(bi + 1) }
+    }
+}
+
+/// `f` over block `bi`'s reads, by the text's length (a test per call: the oracles' and the serial walk's way in).
+macro_rules! by_len {
+    ($t:expr, $bi:expr, |$r:ident| $body:expr) => {
+        if $t.src.len() < 64 {
+            let $r = $t.win::<true>($bi);
+            $body
+        } else {
+            let $r = $t.win::<false>($bi);
+            $body
+        }
+    };
+}
+
+/// `a` where `c`, else `b`: a selection, not a branch.
 #[inline(always)]
-fn classes(src: &[u8], at: usize) -> Bytes {
-    let (v, v1, v2) = (bytes_from(src, at), bytes_from(src, at + 1), bytes_from(src, at + 2));
+pub(super) fn pick<X>(c: bool, a: X, b: X) -> X {
+    core::hint::select_unpredictable(c, a, b)
+}
+
+/// Byte `i` of the text, 0 past its end: one load at a clamped index, no branch.
+#[inline(always)]
+pub(super) fn byte(src: &[u8], i: usize) -> u8 {
+    static ZERO: u8 = 0;
+    let n = src.len();
+    let j = i.min(n.saturating_sub(1));
+    let base = pick(n == 0, &raw const ZERO, src.as_ptr());
+    // SAFETY: `j < n` where `n > 0`, and `j == 0` into `ZERO` where the text is empty.
+    let b = unsafe { *base.add(j) };
+    pick(i < n, b, 0)
+}
+
+#[inline(always)]
+fn classes<const S: bool>(r: &Win<'_, S>, at: usize) -> Bytes {
+    let (v, v1, v2) = (r.bytes(at), r.bytes(at + 1), r.bytes(at + 2));
     let s = V::splat;
     let eq = |v: V, x: u8| v.simd_eq(s(x)).to_bitmask();
     let opc = V::from_array(OPC[0]).swizzle_dyn(v) | V::from_array(OPC[1]).swizzle_dyn(v - s(64));
@@ -154,7 +227,7 @@ fn run_ends(starts: u128, x: u128) -> u128 {
 /// Positions from which a forward walk through `through` bytes ends at one of `hit` (and `hit` itself): the runs of
 /// `through` just below each hit, by one addition in the window's reverse.
 #[inline(always)]
-fn reaching(hit: u128, through: u128) -> u128 {
+pub(super) fn reaching(hit: u128, through: u128) -> u128 {
     let (h, t) = (hit.reverse_bits(), through.reverse_bits());
     let q = (h << 1) & t;
     (h | ((t.wrapping_add(q) ^ t) & t)).reverse_bits()
@@ -163,21 +236,101 @@ fn reaching(hit: u128, through: u128) -> u128 {
 /// Block `bi`'s token starts in code (the serial walk's, its layout tokens and a string's aside), and whether the
 /// block is rare (its starts not known by masks).
 pub(super) fn code_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
-    let keep = 0u64.wrapping_sub(u64::from(bi > 0));
-    starts_in(t, bi, w(t.blk(bi.saturating_sub(1)).code & keep, t.blk(bi).code), false)
+    by_len!(t, bi, |r| code_starts_w(&r))
+}
+
+/// `code_starts` from the block's reads.
+#[inline(always)]
+pub(super) fn code_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
+    let keep = 0u64.wrapping_sub(u64::from(r.bi > 0));
+    starts_in(r, w(r.pb.code & keep, r.b.code), false)
+}
+
+/// What the numbers read: the classes at a byte and the bytes after it, the digits' runs, the `.`s that start a
+/// token, the word runs' starts.
+#[derive(Clone, Copy)]
+struct NumCx {
+    zero: u128,
+    lx1: u128,
+    lo1: u128,
+    lb1: u128,
+    x: u128,
+    dot: u128,
+    op_starts: u128,
+    digit1: u128,
+    exp: u128,
+    sign1: u128,
+    digit2: u128,
+    suffix: u128,
+    under2: u128,
+    under: u128,
+    long: u128,
+    run_start: u128,
+    hex: [u128; 4],
+    oct: [u128; 4],
+    bin: [u128; 4],
+}
+
+/// The numbers from the digit runs' starts `ds`: where each ends, a fraction's `.`, the `.`s that start numbers, a
+/// signed exponent's `e`, and the word runs' starts they take. A function, not a closure: `starts_in` is inlined
+/// twice, and a closure called from each may stay a call.
+#[inline(always)]
+fn numbers_from(cx: &NumCx, ds: u128) -> (u128, u128, u128, u128, u128) {
+    let NumCx { zero, lx1, lo1, lb1, x, dot, op_starts, digit1, exp, sign1, digit2, suffix, under2, under, long, run_start, hex, oct, bin } = *cx;
+    // A number of base 16, 8 or 2: its digits from after the letter (and one underscore there), with single
+    // underscores before digits, then an `l`; with no digit there, the number is its `0`.
+    macro_rules! based_end {
+        ($kind:expr, $ok:expr) => {{
+            let (kind, ok): (u128, [u128; 4]) = ($kind, $ok);
+            let u2 = kind & under2;
+            let has = kind & ((ok[2] & !u2) | (ok[3] & u2));
+            let first = ((has & !u2) << 2) | ((has & u2) << 3);
+            let end = run_ends(first, ok[0] | (under & ok[1]));
+            let l = end & long;
+            (end & !l) | (l << 1) | ((kind & !has) << 1)
+        }};
+    }
+    // A number of base 16, 8 or 2 (`0` and its letter) has no fraction or exponent.
+    let zero_letter = ds & zero;
+    let (kx, ko, kb) = (zero_letter & lx1, zero_letter & lo1, zero_letter & lb1);
+    let dec = ds & !(kx | ko | kb);
+    // Its int part's end, a fraction after it, and the fraction's end.
+    let k1 = run_ends(dec, x);
+    let frac = k1 & dot;
+    // A `.` before a digit that is not a number's fraction starts a number.
+    let dot_starts = dot & op_starts & digit1 & !frac;
+    let k2 = (k1 & !frac) | run_ends(frac << 1, x) | run_ends(dot_starts << 1, x);
+    // An exponent: `e` and a digit, or `e`, a sign and a digit. Its sign and its digits' run are the number's.
+    let e = k2 & exp;
+    let e_digit = e & digit1;
+    let e_sign = e & !e_digit & sign1 & digit2;
+    let k3 = (k2 & !(e_digit | e_sign)) | run_ends(e_digit << 1, x) | run_ends(e_sign << 2, x);
+    // A suffix where the number ends.
+    let sfx = k3 & suffix;
+    let dec_end = (k3 & !sfx) | (sfx << 1);
+    let ends = dec_end | based_end!(kx, hex) | based_end!(ko, oct) | based_end!(kb, bin);
+    // The word runs' starts a number takes: its exponent's `e` and its suffix just after a fraction's `.` (a
+    // run's start there), and its signed exponent's digits.
+    let taken = ((e_digit | e_sign | sfx) & run_start & (frac << 1 | dot_starts << 1)) | (e_sign << 2);
+    (ends, frac, dot_starts, e_sign, taken)
 }
 
 /// Block `bi`'s token starts in the bytes of `code` (the window of the block below and the block), and whether the
 /// block is rare. In an interpolation (`one_by_one`) the walk reads a token at a time, so a number's rest of a word
 /// run is always a name.
 #[inline(always)]
-fn starts_in(t: &Masks<'_>, bi: usize, code: u128, one_by_one: bool) -> (u64, bool) {
-    let src = t.src;
+fn starts_in<const S: bool>(r: &Win<'_, S>, code: u128, one_by_one: bool) -> (u64, bool) {
+    let (src, bi) = (r.src, r.bi);
     // The block below (none below the text's start: masked).
-    let (pb, b) = (*t.blk(bi.saturating_sub(1)), *t.blk(bi));
+    let (pb, b) = (r.pb, r.b);
     let keep = 0u64.wrapping_sub(u64::from(bi > 0));
-    let at = |d: usize| (classes(src, (64 * bi.saturating_sub(1)) + d), classes(src, 64 * bi + d));
-    let (c0, c1, c2, c3) = (at(0), at(1), at(2), at(3));
+    // The reads written out (a local macro: a closure called four times may be a call).
+    macro_rules! at {
+        ($d:expr) => {
+            (classes(r, (64 * bi.saturating_sub(1)) + $d), classes(r, 64 * bi + $d))
+        };
+    }
+    let (c0, c1, c2, c3) = (at!(0), at!(1), at!(2), at!(3));
     let m = |f: fn(&B) -> u64| w(f(&pb) & keep, f(&b));
     let k = |f: fn(&Bytes) -> u64| w(f(&c0.0) & keep, f(&c0.1));
     // A class of the byte one, two, three after each (read past the window's top, not shifted in).
@@ -221,47 +374,12 @@ fn starts_in(t: &Masks<'_>, bi: usize, code: u128, one_by_one: bool) -> (u64, bo
     let hex = [k(|c| c.hex), n1(|c| c.hex), n2(|c| c.hex), n3(|c| c.hex)];
     let oct = [k(|c| c.oct), n1(|c| c.oct), n2(|c| c.oct), n3(|c| c.oct)];
     let bin = [k(|c| c.bin), n1(|c| c.bin), n2(|c| c.bin), n3(|c| c.bin)];
-    // The numbers from the digit runs' starts `ds`: where each ends, the bytes of operators and the word runs'
-    // starts they take, and the `.`s that start numbers.
-    let numbers_from = |ds: u128| {
-        // A number of base 16, 8 or 2 (`0` and its letter) has no fraction or exponent.
-        let zero_letter = ds & zero;
-        let (kx, ko, kb) = (zero_letter & lx1, zero_letter & lo1, zero_letter & lb1);
-        let dec = ds & !(kx | ko | kb);
-        // Its int part's end, a fraction after it, and the fraction's end.
-        let k1 = run_ends(dec, x);
-        let frac = k1 & dot;
-        // A `.` before a digit that is not a number's fraction starts a number.
-        let dot_starts = dot & op_starts & digit1 & !frac;
-        let k2 = (k1 & !frac) | run_ends(frac << 1, x) | run_ends(dot_starts << 1, x);
-        // An exponent: `e` and a digit, or `e`, a sign and a digit. Its sign and its digits' run are the number's.
-        let e = k2 & exp;
-        let e_digit = e & digit1;
-        let e_sign = e & !e_digit & sign1 & digit2;
-        let k3 = (k2 & !(e_digit | e_sign)) | run_ends(e_digit << 1, x) | run_ends(e_sign << 2, x);
-        // A suffix where the number ends.
-        let sfx = k3 & suffix;
-        let dec_end = (k3 & !sfx) | (sfx << 1);
-        // A number of base 16, 8 or 2: its digits from after the letter (and one underscore there), with single
-        // underscores before digits, then an `l`; with no digit there, the number is its `0`.
-        let based_end = |kind: u128, ok: [u128; 4]| {
-            let u2 = kind & under2;
-            let has = kind & ((ok[2] & !u2) | (ok[3] & u2));
-            let first = ((has & !u2) << 2) | ((has & u2) << 3);
-            let end = run_ends(first, ok[0] | (under & ok[1]));
-            let l = end & long;
-            (end & !l) | (l << 1) | ((kind & !has) << 1)
-        };
-        let ends = dec_end | based_end(kx, hex) | based_end(ko, oct) | based_end(kb, bin);
-        // The word runs' starts a number takes: its exponent's `e` and its suffix just after a fraction's `.` (a
-        // run's start there), and its signed exponent's digits.
-        let taken = ((e_digit | e_sign | sfx) & run_start & (frac << 1 | dot_starts << 1)) | (e_sign << 2);
-        (ends, frac, dot_starts, e_sign, taken)
-    };
+    // The numbers from the digit runs' starts.
+    let cx = NumCx { zero, lx1, lo1, lb1, x, dot, op_starts, digit1, exp, sign1, digit2, suffix, under2, under, long, run_start, hex, oct, bin };
     // A signed exponent's digits are a word run's start but the number's: the numbers again without them (where
     // that takes others' again, rare).
-    let first = numbers_from(digit_starts);
-    let (ends, frac, dot_starts, e_sign, taken) = numbers_from(digit_starts & !(first.3 << 2));
+    let first = numbers_from(&cx, digit_starts);
+    let (ends, frac, dot_starts, e_sign, taken) = numbers_from(&cx, digit_starts & !(first.3 << 2));
     let exp_again = (e_sign << 2) != (first.3 << 2);
     // The operators' bytes a number takes: a fraction's `.` and an exponent's sign.
     let op_taken = frac | (e_sign << 1);
@@ -394,8 +512,8 @@ struct SBytes {
 }
 
 #[inline(always)]
-fn sclasses(src: &[u8], at: usize) -> SBytes {
-    let v = bytes_from(src, at);
+fn sclasses<const S: bool>(r: &Win<'_, S>, at: usize) -> SBytes {
+    let v = r.bytes(at);
     let s = V::splat;
     let eq = |x: u8| v.simd_eq(s(x)).to_bitmask();
     let low = v | s(0x20);
@@ -471,15 +589,20 @@ pub(super) fn fill(seeds: u128, through: u128) -> u128 {
 /// Block `bi`'s token starts in its strings (a string's start, its text, escapes and brace pairs, its end) from the
 /// carry `c` into it (left as the carry out), and whether the block is rare.
 pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64, bool) {
-    let src = t.src;
-    let b = *t.blk(bi);
+    by_len!(t, bi, |r| string_starts_w(&r, c))
+}
+
+/// `string_starts` from the block's reads.
+#[inline(always)]
+pub(super) fn string_starts_w<const S: bool>(win: &Win<'_, S>, c: &mut StrCarry) -> (u64, bool) {
+    let (b, bi) = (win.b, win.bi);
     let at = 64 * bi;
-    let n: [SBytes; 6] = core::array::from_fn(|d| sclasses(src, at + d));
+    let n: [SBytes; 6] = [sclasses(win, at), sclasses(win, at + 1), sclasses(win, at + 2), sclasses(win, at + 3), sclasses(win, at + 4), sclasses(win, at + 5)];
     let hi = |x: u64| u128::from(x);
     let bool128 = |x: bool| u128::from(x);
     // The strings that start in the block, the quote after each prefix (the prefix's letters read into the block
     // after), and the opener's end.
-    let up_n = sclasses(src, at + 64);
+    let up_n = sclasses(win, at + 64);
     let s = hi(b.sstart);
     let pfx = w(n[0].pfx, up_n.pfx);
     let pre = fill(s & pfx, pfx);
@@ -556,48 +679,59 @@ pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64,
         cont_spec: bool,
         cont_gv: i8,
     }
-    let round = |st: Round| {
-        let regm = 0u64.wrapping_sub(u64::from(st.reg));
-        let (at0, atm1) = (eqm(st.gv), eqm(st.gv.wrapping_sub(1)));
-        let ends = ((rbr & atm1) | (colon & at0)) & st.todo & regm;
-        let end = ends.isolate_lowest_one();
-        let region = st.todo & below(end) & regm;
-        let conv = n[0].bang & !n[1].eq & at0 & region & f64_;
-        let bad_reg = (cbm & atm1 & region) | (conv & !n[1].lower) | (region & (b.eol | b.hash | b.bs | b.sstart | b.send));
-        let is_colon = end & colon != 0;
-        let spec_from = sel(is_colon, above(end), sel(st.spec, st.todo, 0));
-        let sends = rbr & spec_from;
-        let send_ = sends.isolate_lowest_one();
-        let spec_bytes = spec_from & below(send_);
-        let bad_spec = spec_bytes & (b.lb | b.lf | b.send);
-        let close = (end & !colon) | send_;
-        let active = st.reg | st.spec;
-        let todo = sel(active, above(close), st.todo);
-        let a = interp & todo;
-        let a = a.isolate_lowest_one();
-        Round {
-            todo: above(a),
-            reg: a != 0,
-            spec: false,
-            gv: g_at(a),
-            code: st.code | (region & !(conv | conv << 1)),
-            convs: st.convs | conv,
-            marks: st.marks | a | close | (end & colon) | conv,
-            bytes: st.bytes | region | spec_bytes | end | close | a,
-            closes: st.closes | close,
-            bad: st.bad | ((bad_reg | bad_spec) != 0) | (((region | spec_bytes) & !(interior as u64)) != 0),
-            cont_reg: st.cont_reg | (st.reg & (end == 0)),
-            cont_spec: st.cont_spec | ((is_colon | st.spec) & (send_ == 0)),
-            cont_gv: sel(st.reg & (end == 0), st.gv as u8 as u64, st.cont_gv as u8 as u64) as u8 as i8,
-        }
-    };
+    let interior_lo = interior as u64;
+    // The rounds written out: a local macro, each expansion a closure called once (one closure called five times
+    // may stay a call). A closure also ends clippy's walk of a cast local's definitions (`unnecessary_cast`), which
+    // through the rounds' locals written out is exponential.
+    macro_rules! round {
+        ($st:expr) => {(|st: Round| {
+            let regm = 0u64.wrapping_sub(u64::from(st.reg));
+            let (at0, atm1) = (eqm(st.gv), eqm(st.gv.wrapping_sub(1)));
+            let ends = ((rbr & atm1) | (colon & at0)) & st.todo & regm;
+            let end = ends.isolate_lowest_one();
+            let region = st.todo & below(end) & regm;
+            let conv = n[0].bang & !n[1].eq & at0 & region & f64_;
+            let bad_reg = (cbm & atm1 & region) | (conv & !n[1].lower) | (region & (b.eol | b.hash | b.bs | b.sstart | b.send));
+            let is_colon = end & colon != 0;
+            let spec_from = sel(is_colon, above(end), sel(st.spec, st.todo, 0));
+            let sends = rbr & spec_from;
+            let send_ = sends.isolate_lowest_one();
+            let spec_bytes = spec_from & below(send_);
+            let bad_spec = spec_bytes & (b.lb | b.lf | b.send);
+            let close = (end & !colon) | send_;
+            let active = st.reg | st.spec;
+            let todo = sel(active, above(close), st.todo);
+            let a = interp & todo;
+            let a = a.isolate_lowest_one();
+            Round {
+                todo: above(a),
+                reg: a != 0,
+                spec: false,
+                gv: g_at(a),
+                code: st.code | (region & !(conv | conv << 1)),
+                convs: st.convs | conv,
+                marks: st.marks | a | close | (end & colon) | conv,
+                bytes: st.bytes | region | spec_bytes | end | close | a,
+                closes: st.closes | close,
+                bad: st.bad | ((bad_reg | bad_spec) != 0) | (((region | spec_bytes) & !interior_lo) != 0),
+                cont_reg: st.cont_reg | (st.reg & (end == 0)),
+                cont_spec: st.cont_spec | ((is_colon | st.spec) & (send_ == 0)),
+                cont_gv: pick(st.reg & (end == 0), st.gv, st.cont_gv),
+            }
+        })($st)};
+    }
     let r0 = Round { todo: !0, reg: c.reg, spec: c.spec, gv: c.idepth.wrapping_neg(), ..Round::default() };
-    let r = round(round(round(round(round(r0)))));
+    // One after another: each round's argument a local (nested, each expansion would hold the ones before).
+    let r1 = round!(r0);
+    let r2 = round!(r1);
+    let r3 = round!(r2);
+    let r4 = round!(r3);
+    let r = round!(r4);
     let r = Round { code: r.code & !u64::from(c.cv), ..r };
     // More interpolations than the rounds read: rare.
     let more = r.reg;
     let ibytes_all = hi(r.bytes);
-    let (rcode, rare_code) = starts_in(t, bi, w(c.rcode, r.code), true);
+    let (rcode, rare_code) = starts_in(win, w(c.rcode, r.code), true);
     let lb_pair = lb & !ibytes_all & hi(b.lbu) & hi(n[1].lbrace);
     let rb_t = rb & !ibytes_all;
     let rbu = rb_t & !hi(super::escaped(rb_t as u64, &mut c.rb));
@@ -655,8 +789,14 @@ pub(super) fn string_starts(t: &Masks<'_>, bi: usize, c: &mut StrCarry) -> (u64,
 /// continuation is an extra unless the next line's first byte past its blanks starts a string's prefix and quote
 /// (the walk's reading).
 pub(super) fn extra_starts(t: &Masks<'_>, bi: usize) -> (u64, bool) {
-    let src = t.src;
-    let (b, b1) = (*t.blk(bi), *t.blk(bi + 1));
+    by_len!(t, bi, |r| extra_starts_w(&r))
+}
+
+/// `extra_starts` from the block's reads.
+#[inline(always)]
+pub(super) fn extra_starts_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
+    let (src, bi) = (r.src, r.bi);
+    let (b, b1) = (r.b, r.b1);
     let m = |f: fn(&B) -> u64| w(f(&b), f(&b1));
     // The window of the block and the one after: bit `j` is byte `64 * bi + j`.
     let lim = src.len().saturating_sub(64 * bi).min(128) as u32;
@@ -718,8 +858,14 @@ pub fn extras_are_the_walks(src: &[u8]) -> Option<(usize, usize, Option<String>)
 /// run ends after the last byte of code that is not a blank with only spaces and tabs between it and the run's stop;
 /// a string after its closer; a comment at its line's end; a continuation at its next line's start.
 pub(super) fn tops(t: &Masks<'_>, bi: usize) -> (u64, bool) {
-    let src = t.src;
-    let (pb, b, b1) = (*t.blk(bi.saturating_sub(1)), *t.blk(bi), *t.blk(bi + 1));
+    by_len!(t, bi, |r| tops_w(&r))
+}
+
+/// `tops` from the block's reads.
+#[inline(always)]
+pub(super) fn tops_w<const S: bool>(r: &Win<'_, S>) -> (u64, bool) {
+    let (src, bi) = (r.src, r.bi);
+    let (pb, b, b1) = (r.pb, r.b, r.b1);
     let keep = u128::from(bi > 0);
     let m = |f: fn(&B) -> u64| w(f(&b), f(&b1));
     let lim = src.len().saturating_sub(64 * bi).min(128) as u32;
@@ -760,5 +906,5 @@ pub(super) fn tops(t: &Masks<'_>, bi: usize) -> (u64, bool) {
     let at_text_end = !valid & (valid << 1);
     let comment_end = ((!code & valid) << 1) & at_text_end;
     let all = runs | strings | comments | conts | comment_end;
-    ((all as u64) | below_strings | below_cont, all >> 64 & 1 == 1 && src.len() == 64 * (bi + 1))
+    ((all as u64) | below_strings | below_cont, (all >> 64 & 1 == 1) & (src.len() == 64 * (bi + 1)))
 }

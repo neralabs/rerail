@@ -951,3 +951,28 @@ statements and blocks end.
       Then the chunks after it go on from there.
     - **As tested:** the corpus lexed from the middle is the serial lexer's in 1644 of 1644 files, at 1, 2, 3 and 16
       blocks a chunk, and the crate's tests hold.
+109. **The walk's pass 1 by masks has no branch: one block function, every lane at once** (as built:
+    `middle::walk_block`, `layout_block`; `starts::Win`).
+    - **One block function** (`walk_block`) does a block's whole share of the walk's pass 1: its tokens' starts in
+      code and in strings, its extras, its loop tops, and its layout for the 3 lanes together. Only the loop over
+      blocks branches. It reads the block's masks, the block below's and the next one's from the window (`Win`, by
+      value), and passes them in.
+    - **The layout's events** are at most 6 a block, in 6 steps written out (a loop of them stays a loop). More than
+      6 is not known: 0.024% of the corpus's blocks, 3 of its lanes. Each step is selections. The lane's levels and
+      reads stay in fixed arrays.
+    - **The dedent check's kinds** are worked out when a token is read, from its own block's masks and a few of its
+      bytes, by a byte table and the keyword's perfect hash, and are carried as codes. So no step reads a token
+      from an earlier block.
+    - **The text's bytes:** a text of 64 bytes or more is read by one load from the lesser of the byte and the
+      text's last 64 bytes' start. A text under 64 bytes is read byte by byte at clamped indexes, with no copy. The
+      block function has one instance for each, chosen once a text.
+    - **The closures called more than once** may stay calls. The numbers are an `#[inline(always)]` function over
+      what they read (`NumCx`). The interpolations' rounds and the classes' reads are local macros. Each round is a
+      closure called once, so clippy's `unnecessary_cast` stops at it: that lint walks a cast local's definitions
+      with no memo, and through rounds written out as locals it ran for hours.
+    - **As tested:** `scripts/check_strata_branch_free.sh` reads both instances (AArch64): 0 conditional branches and
+      0 calls. Every count of items 102 to 107 over the corpus is as before, except 3 lanes not known (blocks of
+      more than 6 events). The corpus lexed from the middle is still the serial lexer's in 1644 of 1644 files, at 1,
+      2, 3 and 16 blocks a chunk.
+    - **On x86-64 not yet:** the build is baseline x86-64, which has no byte shuffle. So `swizzle_dyn`, in this
+      function and in `block_map`, is a loop of bytes there: 274 branches in `walk_block`, 144 in `block_map`.
