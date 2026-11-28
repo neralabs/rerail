@@ -304,8 +304,8 @@ export class SqliteAuditControlStore {
    * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
    * folder under the key `spelt.cwd` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
    * sharing the database goes on writing that row, so it is read where it is rather than copied. Both keys are read in
-   * one statement, prepared once per store, so a folder with no row under either costs no more than a read of the
-   * canonical key alone.
+   * one statement, prepared once for this store's own connection while a save on another connection prepares its own
+   * ({@link #underEither}), so a folder with no row under either costs no more than a read of the canonical key alone.
    */
   #settingsRow(workspaceRoot: string, spelt: SpeltFolder, database = this.#database): typeof auditSettings.$inferSelect | undefined {
     const earlier = this.#earlierKey(workspaceRoot, spelt.cwd);
