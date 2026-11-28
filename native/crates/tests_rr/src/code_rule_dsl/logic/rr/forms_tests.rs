@@ -448,3 +448,77 @@ fn a_reach_form_from_kinds_gives_its_rules_rows() {
     let texts: Vec<&str> = formed.iter().map(|r| r[2].as_str()).collect();
     assert!(texts.contains(&"x") && texts.contains(&"not x") && texts.contains(&"a") && texts.contains(&"(b)"), "{formed:?}");
 }
+
+/// Classes, methods, a nested function, a lambda, a definition in a function, attributes and a match's patterns.
+const NAMES_TEXT: &str = "import os\nclass C:\n    def m(self, k=1):\n        def inner(): pass\n        return os.path.join(k, f(x=1))\n    class D:\n        def n(self): pass\nlam = lambda: 0\ndef top():\n    class E: pass\nmatch v:\n    case Point(x=px): pass\n    case os.PathLike(): pass\n";
+
+/// `program`'s `outputs` over `NAMES_TEXT`, in a directory of `tag`.
+fn names_rows(program: &str, tag: &str, outputs: &[&str]) -> Vec<Vec<Vec<String>>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(tag);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c.py"), NAMES_TEXT).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    outputs.iter().map(|o| crate::code_rule_dsl::logic::plan::output::shown(&out, o).unwrap()).collect()
+}
+
+/// python/scopes' `def_name` and `qualname`: a definition's name, and its dotted path from its module.
+const QUALS: &str = r#"#include "core.rerail"
+.decl scope(kind: symbol)
+scope("module"). scope("function_definition"). scope("class_definition"). scope("lambda").
+.decl modname(m: node, q: symbol)
+modname(m, q) :- node(d, m, "module", _, _), doc(d, _, q).
+.decl def_name(f: node, s: symbol)
+def_name(f, s) :- kind(f, k), (k = "function_definition" ; k = "class_definition"), field(f, "name", n), text(n, s).
+.decl qualname(f: node, q: symbol)
+qualname(f, @dot(m, x)) :- def_name(f, x), nearest(f, s, scope), modname(s, m).
+qualname(f, @dot(p, x)) :- def_name(f, x), nearest(f, s, scope), !kind(s, "module"), qualname(s, p).
+.decl names(b: number, x: symbol)
+names(b, x) :- def_name(f, x), node(_, f, _, b, _).
+.decl quals(b: number, q: symbol)
+quals(b, q) :- qualname(f, q), node(_, f, _, b, _).
+.output names
+.output quals
+"#;
+
+/// `def_name`'s and `qualname`'s forms give their rules' rows, the second read over either of the first.
+#[test]
+fn a_dotted_paths_form_gives_its_rules_rows() {
+    let names = ".form def_name tape.field_text args function_definition class_definition / name\n";
+    let quals = ".form qualname tape.dotted reads def_name modname args module function_definition class_definition lambda\n";
+    let ruled = names_rows(QUALS, "quals-rules", &["names", "quals"]);
+    assert_eq!(names_rows(&format!("{QUALS}{names}"), "quals-names", &["names", "quals"]), ruled);
+    assert_eq!(names_rows(&format!("{QUALS}{quals}"), "quals-quals", &["names", "quals"]), ruled);
+    assert_eq!(names_rows(&format!("{QUALS}{names}{quals}"), "quals-both", &["names", "quals"]), ruled);
+    let quals: Vec<&str> = ruled[1].iter().map(|r| r[1].as_str()).collect();
+    assert!(quals.contains(&"c.C.m.inner") && quals.contains(&"c.C.D.n") && quals.contains(&"c.top.E"), "{quals:?}");
+}
+
+/// python/scopes' `attr_of` and `nameref`: `o.a`'s object and name, and the identifiers that name (not an attribute's
+/// name, a definition's or keyword's name, nor a keyword pattern's key).
+const REFS: &str = r#"#include "core.rerail"
+.decl attr_of(n: node, o: node, a: symbol)
+attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).
+.decl kwpat_key(n: node)
+kwpat_key(n) :- kind(k, "keyword_pattern"), child(k, n, 0).
+.decl nameref(n: node, x: symbol)
+nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n), !kwpat_key(n).
+.decl refs(b: number, x: symbol)
+refs(b, x) :- nameref(n, x), node(_, n, _, b, _).
+.decl attrs(b: number, ob: number, a: symbol)
+attrs(b, ob, a) :- attr_of(n, o, a), node(_, n, _, b, _), node(_, o, _, ob, _).
+.output refs
+.output attrs
+"#;
+
+/// `attr_of`'s and `nameref`'s forms give their rules' rows.
+#[test]
+fn field_and_text_forms_give_their_rules_rows() {
+    let forms = ".form attr_of tape.field_and_text args attribute / object attribute\n.form nameref tape.text args identifier / attribute name reads kwpat_key\n";
+    let ruled = names_rows(REFS, "refs-rules", &["refs", "attrs"]);
+    let formed = names_rows(&format!("{REFS}{forms}"), "refs", &["refs", "attrs"]);
+    assert_eq!(formed, ruled);
+    let refs: Vec<&str> = ruled[0].iter().map(|r| r[1].as_str()).collect();
+    assert!(refs.contains(&"os") && refs.contains(&"px") && !refs.contains(&"join") && !refs.contains(&"inner") && !refs.contains(&"x"), "{refs:?}");
+    assert_eq!(ruled[1].iter().map(|r| r[2].as_str()).collect::<Vec<_>>(), ["join", "path"], "{:?}", ruled[1]);
+}

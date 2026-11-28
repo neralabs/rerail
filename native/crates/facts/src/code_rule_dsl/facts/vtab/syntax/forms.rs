@@ -68,7 +68,7 @@ pub trait Form: Send + Sync {
 static FORMS: OnceLock<Vec<&'static dyn Form>> = OnceLock::new();
 
 /// The language-free forms.
-const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText, &Subtrees, &Reach];
+const TAPE: &[&dyn Form] = &[&SameSpan, &Unwrap, &NearestText, &Subtrees, &Reach, &FieldText, &FieldAndText, &Text, &Dotted];
 
 /// Registers a language's forms (once, at load), with the tape's.
 pub fn install_forms(forms: Vec<&'static dyn Form>) {
@@ -553,5 +553,278 @@ impl Step<'_> {
             Pick::Field(f) => Some(f),
             _ => None,
         }
+    }
+}
+
+/// Fields by name, as a form's words give them: each dialect's codes of the names found once, by a node's kind atom.
+pub struct FieldSet<'a> {
+    names: &'a [&'a str],
+    by_tag: Vec<(u8, Vec<Option<u16>>)>,
+}
+
+impl<'a> FieldSet<'a> {
+    pub fn new(names: &'a [&'a str]) -> FieldSet<'a> {
+        FieldSet { names, by_tag: Vec::new() }
+    }
+    /// The codes of the names, in their order, in the dialect of the node of kind atom `atom`.
+    pub fn codes(&mut self, atom: u32) -> &[Option<u16>] {
+        let tag = crate::code_rule_dsl::facts::core::kind_tag(atom);
+        let at = match self.by_tag.iter().position(|(t, _)| *t == tag) {
+            Some(i) => i,
+            None => {
+                let kinds = crate::code_rule_dsl::language::from_tape_tag(tag).map(|d| d.kinds());
+                self.by_tag.push((tag, self.names.iter().map(|n| kinds.and_then(|k| k.field_id(n))).collect()));
+                self.by_tag.len() - 1
+            }
+        };
+        &self.by_tag[at].1
+    }
+    /// Whether `code` is one of the names' in the dialect of the node of kind atom `atom`.
+    pub fn has(&mut self, atom: u32, code: u16) -> bool {
+        code != 0 && self.codes(atom).contains(&Some(code))
+    }
+}
+
+/// The words before a lone `/`, and those after it (none when there is no `/`).
+fn halves<'a>(args: &'a [&'a str]) -> (&'a [&'a str], &'a [&'a str]) {
+    match args.iter().position(|w| *w == "/") {
+        Some(i) => (&args[..i], &args[i + 1..]),
+        None => (args, &[]),
+    }
+}
+
+/// Every document of `batch` not withheld.
+fn each_doc(batch: &Batch, mut each: impl FnMut(&Projected) -> Result<(), String>) -> Result<(), String> {
+    for (i, p) in (&batch.docs).into_iter().enumerate() {
+        if !batch.docs.withheld(i) {
+            each(p)?;
+        }
+    }
+    Ok(())
+}
+
+/// `tape.field_text KIND… / FIELD`: `r(n, t)`, `n` a node of a `KIND`, `t` the text of its child under `FIELD`
+/// (Python's `def_name`: a definition's name). Made whole.
+pub struct FieldText;
+
+impl Form for FieldText {
+    fn name(&self) -> &'static str {
+        "tape.field_text"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let (kinds, field @ [_]) = halves(call.args) else { return Err("tape.field_text takes the kinds, `/`, then a field".into()) };
+        let (mut kinds, mut fields) = (KindSet::new(kinds), FieldSet::new(field));
+        each_doc(call.batch, |p| {
+            let f = p.f();
+            for l in 0..p.len() {
+                let x = p.node(l);
+                let k = f.kind(x);
+                if !kinds.has(k) {
+                    continue;
+                }
+                let Some(code) = fields.codes(k)[0] else { continue };
+                f.each_child_field(x, |c, fc| {
+                    if fc == code && p.local_of_node(c) != NONE {
+                        let t = out.text(f.text(c).to_owned());
+                        out.push(&[p.global(l), t]);
+                    }
+                });
+            }
+            Ok(())
+        })
+    }
+}
+
+/// `tape.field_and_text KIND… / FIELD TEXT`: `r(n, c, t)`, `n` a node of a `KIND`, `c` its child under `FIELD` and
+/// `t` the text of its child under `TEXT` (Python's `attr_of`: `o.a`'s object and attribute name). Made whole.
+pub struct FieldAndText;
+
+impl Form for FieldAndText {
+    fn name(&self) -> &'static str {
+        "tape.field_and_text"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "node", "sym"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let (kinds, fields @ [_, _]) = halves(call.args) else { return Err("tape.field_and_text takes the kinds, `/`, a node's field and a text's".into()) };
+        let (mut kinds, mut fields) = (KindSet::new(kinds), FieldSet::new(fields));
+        let (mut nodes, mut texts): (Vec<i64>, Vec<u32>) = (Vec::new(), Vec::new());
+        each_doc(call.batch, |p| {
+            let f = p.f();
+            for l in 0..p.len() {
+                let x = p.node(l);
+                let k = f.kind(x);
+                if !kinds.has(k) {
+                    continue;
+                }
+                let [Some(of), Some(tf)] = *fields.codes(k) else { continue };
+                nodes.clear();
+                texts.clear();
+                f.each_child_field(x, |c, fc| {
+                    let cl = p.local_of_node(c);
+                    if cl == NONE {
+                        return;
+                    }
+                    if fc == of {
+                        nodes.push(p.global(cl));
+                    }
+                    if fc == tf {
+                        texts.push(c);
+                    }
+                });
+                for &c in &nodes {
+                    for &t in &texts {
+                        let t = out.text(f.text(t).to_owned());
+                        out.push(&[p.global(l), c, t]);
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+/// `tape.text KIND… [/ FIELD…] [reads except…]`: `r(n, t)`, `n` a node of a `KIND` not hanging from its parent under
+/// a `FIELD` nor a node of an `except` relation (its first column), and `t` its text (Python's `nameref`: an
+/// identifier that names, not an attribute's or a definition's name). Made whole.
+pub struct Text;
+
+impl Form for Text {
+    fn name(&self) -> &'static str {
+        "tape.text"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let (kinds, fields) = halves(call.args);
+        let (mut kinds, mut fields) = (KindSet::new(kinds), FieldSet::new(fields));
+        let mut except: Vec<i64> = call.reads.iter().flat_map(|r| (0..r.len()).map(|i| r.value(i, 0))).collect();
+        except.sort_unstable();
+        except.dedup();
+        each_doc(call.batch, |p| {
+            let f = p.f();
+            for l in 0..p.len() {
+                let x = p.node(l);
+                let k = f.kind(x);
+                if !kinds.has(k) || fields.has(k, f.field(x)) {
+                    continue;
+                }
+                let n = p.global(l);
+                if except.binary_search(&n).is_ok() {
+                    continue;
+                }
+                let t = out.text(f.text(x).to_owned());
+                out.push(&[n, t]);
+            }
+            Ok(())
+        })
+    }
+}
+
+/// `tape.dotted SCOPE… reads names bases`: `r(f, q)`, for each `names(f, x)`, `q` is `x` after the dotted path of
+/// `f`'s nearest `SCOPE` ancestor `s`: `bases(s, m)`'s `m`, and `r(s, p)`'s `p` (Python's `qualname`: a definition's
+/// path from its module, `pkg.mod.C.m`). `@dot`'s join: `a.x`, and `x` where `a` is empty. Made whole.
+pub struct Dotted;
+
+impl Form for Dotted {
+    fn name(&self) -> &'static str {
+        "tape.dotted"
+    }
+    fn version(&self) -> u32 {
+        1
+    }
+    fn columns(&self) -> &'static [&'static str] {
+        &["node", "sym"]
+    }
+    fn keyed(&self) -> &'static [usize] {
+        &[]
+    }
+    fn rows(&self, call: &FormCall<'_>, _column: usize, out: &mut FormRows) -> Result<(), String> {
+        let [names, bases] = call.reads else { return Err("tape.dotted reads the names, then the scopes' bases".into()) };
+        let mut scopes = KindSet::new(call.args);
+        // Each relation's rows by node, their texts found once.
+        let by_node = |r: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| -> Result<Vec<(i64, String)>, String> {
+            let atoms: Vec<i64> = (0..r.len()).map(|i| r.value(i, 1)).collect();
+            let texts = (call.texts)(&atoms)?;
+            let mut rows: Vec<(i64, String)> = (0..r.len()).map(|i| r.value(i, 0)).zip(texts).collect();
+            rows.sort_unstable();
+            rows.dedup();
+            Ok(rows)
+        };
+        let (names, bases) = (by_node(names)?, by_node(bases)?);
+        let of = |rows: &[(i64, String)], n: i64| {
+            let lo = rows.partition_point(|r| r.0 < n);
+            let hi = lo + rows[lo..].partition_point(|r| r.0 == n);
+            lo..hi
+        };
+        let dot = |a: &str, x: &str| if a.is_empty() { x.to_owned() } else { format!("{a}.{x}") };
+        // The scopes open at a node: each one's subtree's end, its node and its paths.
+        let mut stack: Vec<(u32, i64, Vec<String>)> = Vec::new();
+        let of_doc = |n: i64| (n >> 32) as u32;
+        let mut lo = 0;
+        while lo < names.len() {
+            let d = of_doc(names[lo].0);
+            let hi = lo + names[lo..].partition_point(|r| of_doc(r.0) == d);
+            let mine = &names[lo..hi];
+            lo = hi;
+            let Some(i) = call.batch.docs.position(d).filter(|&i| !call.batch.docs.withheld(i)) else { continue };
+            let p = &call.batch.docs[i];
+            let f = p.f();
+            stack.clear();
+            for l in 0..p.len() {
+                let x = p.node(l);
+                while stack.last().is_some_and(|(end, _, _)| x >= *end) {
+                    stack.pop();
+                }
+                let n = p.global(l);
+                let own = of(mine, n);
+                let mut paths: Vec<String> = Vec::new();
+                if !own.is_empty()
+                    && let Some((_, s, up)) = stack.last()
+                {
+                    for (_, name) in &mine[own.clone()] {
+                        for (_, m) in &bases[of(&bases, *s)] {
+                            paths.push(dot(m, name));
+                        }
+                        for q in up {
+                            paths.push(dot(q, name));
+                        }
+                    }
+                    paths.sort_unstable();
+                    paths.dedup();
+                    for q in &paths {
+                        let t = out.text(q.clone());
+                        out.push(&[n, t]);
+                    }
+                }
+                if scopes.has(f.kind(x)) {
+                    stack.push((f.subtree_end(x), n, paths));
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -71,6 +71,7 @@ modname(m, q) :- modnode(d, m), doc(d, _, q).
 .decl nameref(n: node, x: symbol)
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n),
     !kwpat_key(n), !pat_tail(n).
+.form nameref tape.text args identifier / attribute name reads kwpat_key pat_tail
 // kwpat_key(n): the attribute name `x` in the class pattern `case Point(x=px)`, which is not a name read.
 .decl kwpat_key(n: node)
 kwpat_key(n) :- kind(k, "keyword_pattern"), child(k, n, 0).
@@ -346,6 +347,7 @@ live_asg(s, x, r) :- asg(s, x, r, a), asgstmt(a, st), !shadowed(st).
 // attr_of(n, o, a): n is the attribute expression `o.a`.
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).
+.form attr_of tape.field_and_text args attribute / object attribute
 // Qualified names: an imported name and attributes of one (`os.path.join`), whether or not the workspace defines it.
 // qn(n, q): after `import os`, the `os` in `os.path.join` has qn "os", `os.path` has "os.path", and the whole
 // expression "os.path.join". Recursive along the attribute chain. Purely syntactic: no re-export following here.
@@ -367,12 +369,14 @@ scope_node(n, s) :- nearest(n, s, scope).
 // def_name(f, s): function or class definition f is named s.
 .decl def_name(f: node, s: symbol)
 def_name(f, s) :- kind(f, k), (k = "function_definition" ; k = "class_definition"), field(f, "name", n), text(n, s).
+.form def_name tape.field_text args function_definition class_definition / name
 // qualname(f, q): dotted path of a definition from its module: `class C: def m` in pkg.mod gives "pkg.mod.C.m".
 // First rule: defined directly in the module. Second: inside another def/class, append to that one's qualname
 // (recursive). Unlike Python's __qualname__, functions nested in functions get no "<locals>" segment.
 .decl qualname(f: node, q: symbol)
 qualname(f, @dot(m, x)) :- def_name(f, x), nearest(f, s, scope), modname(s, m).
 qualname(f, @dot(p, x)) :- def_name(f, x), nearest(f, s, scope), !kind(s, "module"), qualname(s, p).
+.form qualname tape.dotted reads def_name modname args module function_definition class_definition lambda
 // scope_name(n, s): the enclosing function's name, prefixed by its class when it has one ("C.m"), for messages.
 // Note `nearest(..., {"class_definition"})` finds any enclosing class, not only the immediate parent scope.
 .decl scope_name(n: node, s: symbol)  // "Class.method", as linters report it
