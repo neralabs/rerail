@@ -23,7 +23,8 @@ import { clearSetupReview } from "../engine/catalog/setup-review.js";
 import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contract.js";
 import { conversationRulesEnabled } from "../engine/experimental-features.js";
 import type { SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
-import { sayLeftOut, storedReceiptRuleIds } from "./session-store.js";
+import type { StoredListLog } from "../engine/storage/stored-list.js";
+import { sayLeftOut, storedReceiptRuleIds, type EventSource } from "./session-store.js";
 
 const STOPPED: RepositoryStatus = { started: false, setUp: false, startedBy: "repository" };
 
@@ -220,6 +221,8 @@ export interface RepositoryStopOptions {
    * known, so the reply names the rules that steered it. Absent from a terminal; Cursor cannot name its session.
    */
   session?: { host: RerailHost; sessionId?: string };
+  /** Where a steer receipt of `session` whose stored text is no JSON is named once (`sayLeftOut`); the process's error output by default. */
+  log?: StoredListLog;
 }
 
 /** Every rule present in `checkout`, at any folder of its repository, as its own and its parents' settings leave them. */
@@ -314,16 +317,16 @@ export function startSetUpRepository(database: RerailDatabase, checkout: Checkou
  * The rules whose violations `session` was steered about, each once, in the order they first steered: the
  * `ruleIds` of its `steering-delivered` receipts, as the footer's steered count reads those receipts. A session
  * recorded under another host is not the caller's, so it names none. A receipt whose text is no JSON names none, and
- * the command's error output names it once (`sayLeftOut`).
+ * `log` names it once (`sayLeftOut`).
  */
-function sessionSteeredRules(database: RerailDatabase, host: RerailHost, sessionId: string): string[] {
+function sessionSteeredRules({ database, log }: EventSource, host: RerailHost, sessionId: string): string[] {
   const receipts = database.select({ eventId: events.eventId, payloadJson: events.payloadJson })
     .from(events).innerJoin(sessions, eq(sessions.sessionId, events.sessionId))
     .where(and(eq(events.sessionId, sessionId), eq(sessions.host, host), eq(events.kind, "steering-delivered")))
     .orderBy(asc(events.sequence)).all();
   return [...new Set(receipts.flatMap(({ eventId, payloadJson }) => {
     const ruleIds = storedReceiptRuleIds(payloadJson);
-    if (ruleIds === undefined) sayLeftOut({ database, log: process.stderr }, sessionId, eventId);
+    if (ruleIds === undefined) sayLeftOut({ database, log }, sessionId, eventId);
     return ruleIds ?? [];
   }))];
 }
@@ -368,7 +371,7 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
     }
     setStarted(database, recordCheckout(database, workspace), false, wholeRepository);
     const session = options.session;
-    steered = session?.sessionId === undefined ? [] : sessionSteeredRules(database, session.host, session.sessionId);
+    steered = session?.sessionId === undefined ? [] : sessionSteeredRules({ database, log: options.log ?? process.stderr }, session.host, session.sessionId);
   } finally {
     database.$client.close();
   }

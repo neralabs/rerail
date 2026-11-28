@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -463,15 +463,15 @@ describe("repository start state", () => {
       const database = new Database(databasePath);
       database.prepare("UPDATE events SET payload_json = replace(payload_json, '\"ruleIds\":[', '\"ruleIds\":{') WHERE event_id = 'steering-delivered:r4'").run();
       database.close();
-      const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-      expect(stopped({ session })).toBe([
+      const named: string[] = [];
+      const log = { write: (line: string) => named.push(line) > 0 };
+      expect(stopped({ session, log })).toBe([
         HEAD, "  Start it again with /rerail-start.", DAEMON, "",
         "  Rerail steered this session on ts:no-any, acme:no-print and ts:no-unused.",
         "  To turn off only one rule instead, say “turn that rule off”.",
       ].join("\n"));
-      stopped({ session });
-      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).filter(line => line.includes("event steering-delivered:r4 of session s1"))).toHaveLength(1);
-      stderr.mockRestore();
+      stopped({ session, log });
+      expect(named.filter(line => line.includes("event steering-delivered:r4 of session s1"))).toHaveLength(1);
 
       // The same id under another coding agent is not this session; Codex names its own commands with `$`.
       expect(stopped({ session: { host: "codex", sessionId: "s1" } })).toBe([
