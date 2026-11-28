@@ -1,8 +1,9 @@
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { readLedger } from "../../scripts/host/host-lifecycle.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { leave, readLedger } from "../../scripts/host/host-lifecycle.js";
 import { hasCompletedViolation } from "../../scripts/host/host-smoke.js";
 import {
   PARITY_HOSTS,
@@ -119,5 +120,66 @@ describe("live harness evidence", () => {
     expect(evidence(retry, { ...result, sessionId: "other" })).toBe(false);
     expect(evidence(result, retry)).toBe(false);
     expect(evidence({ ...retry, input: "read the file" }, { ...result, output: "cursor.execute" })).toBe(false);
+  });
+});
+
+describe("the lifecycle run's end", () => {
+  const roots: string[] = [];
+  const refused = async (): Promise<never> => { throw new Error("Rerail could not prove that pid 4242 is this home's daemon"); };
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    await Promise.all(roots.splice(0).map(async root => await removeFolder(root)));
+  });
+
+  /** A run's scratch project with its Rerail home, LIFECYCLE_KEEP set as `keep` says, and what the end writes. */
+  async function scratch(keep: boolean): Promise<{ root: string; rerailHome: string; out: string[]; err: string[] }> {
+    vi.stubEnv("LIFECYCLE_KEEP", keep ? "1" : "");
+    const root = await mkdtemp(join(tmpdir(), "rerail-lifecycle-end-"));
+    roots.push(root);
+    const rerailHome = join(root, ".rerail-home");
+    await mkdir(rerailHome);
+    const out: string[] = [];
+    const err: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => { err.push(String(chunk)); return true; });
+    return { root, rerailHome, out, err };
+  }
+
+  it("keeps a failed run's own error when the daemon's stop throws, says so on stderr and removes the project", async () => {
+    const { root, rerailHome, err } = await scratch(false);
+    const failure = new Error("the host exited 1");
+    await expect(Promise.reject(failure).finally(async () => await leave("omp", { root, rerailHome }, refused))).rejects.toBe(failure);
+    expect(err).toContain(`could not stop the Rerail daemon in ${rerailHome}, which may still run; end the process this names: `
+      + "Error: Rerail could not prove that pid 4242 is this home's daemon\n");
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it("keeps a passed run's evidence for its report when the daemon's stop throws, and removes the project", async () => {
+    const { root, rerailHome } = await scratch(false);
+    const evidence = { passed: true };
+    await expect(Promise.resolve(evidence).finally(async () => await leave("omp", { root, rerailHome }, refused))).resolves.toBe(evidence);
+    expect(existsSync(root)).toBe(false);
+  });
+
+  it("says only that a kept Pi run's project was kept: Pi's run starts no daemon", async () => {
+    const { root, rerailHome, out } = await scratch(true);
+    await leave("pi", { root, rerailHome }, refused);
+    expect(out).toContain(`kept ${root}\n`);
+    expect(existsSync(root)).toBe(true);
+  });
+
+  it.each([
+    { stop: async () => "stopped" as const, said: "(its daemon was stopped)" },
+    { stop: async () => "not-running" as const, said: "(no daemon was running)" },
+    { stop: async () => "not-daemon" as const, said: "(no daemon was running)" },
+    { stop: async () => "record-changed" as const, said: "(its daemon was not stopped: daemon.json changed during the stop)" },
+    { stop: refused, said: "(its daemon could not be stopped)" },
+  ])("says what the stop did in a kept OMP run's line: $said", async ({ stop, said }) => {
+    const { root, rerailHome, out } = await scratch(true);
+    await leave("omp", { root, rerailHome }, stop);
+    expect(out).toContain(`kept ${root} ${said}\n`);
+    expect(existsSync(root)).toBe(true);
   });
 });

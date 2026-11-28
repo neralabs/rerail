@@ -453,19 +453,40 @@ function report(host: Host, { run, rerail, steer, transcript }: Evidence): void 
   print(assertions, infos);
 }
 
+type StopResult = Awaited<ReturnType<typeof stopDaemon>>;
+
+/** What the `kept` line says of an OMP run's daemon: the stop's result, or `failed` when the stop threw. */
+const KEPT_DAEMON: Readonly<Record<StopResult | "failed", string>> = {
+  stopped: " (its daemon was stopped)",
+  "not-running": " (no daemon was running)",
+  "not-daemon": " (no daemon was running)",
+  "record-changed": " (its daemon was not stopped: daemon.json changed during the stop)",
+  failed: " (its daemon could not be stopped)",
+};
+
+/**
+ * Stops the daemon in `home` with `stop`. A stop that throws is written to stderr, not thrown: the run's own error or
+ * report stands, and the project is still removed or kept. The stop's error names the daemon's pid and how to end it.
+ */
+async function stopRunDaemon(home: string, stop: typeof stopDaemon): Promise<StopResult | "failed"> {
+  try {
+    return await stop(home);
+  } catch (error) {
+    process.stderr.write(`could not stop the Rerail daemon in ${home}, which may still run; end the process this names: ${String(error)}\n`);
+    return "failed";
+  }
+}
+
 /**
  * Ends a run, passed or failed: stops the daemon the OMP session's attach started in the run's Rerail home (Pi's run
- * starts none), then removes the scratch project, or keeps it with LIFECYCLE_KEEP. A daemon left running holds the
- * removed home open, writes its session's record back into the project, and on Windows makes the removal fail; a kept
- * project is read through its files, which the stopped daemon has finished writing.
+ * starts none), then removes the scratch project, or keeps it with LIFECYCLE_KEEP and says what the stop did. A daemon
+ * left running holds the removed home open, writes its session's record back into the project, and on Windows makes
+ * the removal fail; a kept project is read through its files, which the stopped daemon has finished writing.
  */
-async function leave(host: Host, { root, rerailHome }: Workspace): Promise<void> {
-  try {
-    if (host === "omp") await stopDaemon(rerailHome);
-  } finally {
-    if (process.env.LIFECYCLE_KEEP) process.stdout.write(`kept ${root} (its daemon was stopped)\n`);
-    else await rm(root, { recursive: true, force: true });
-  }
+export async function leave(host: Host, { root, rerailHome }: Pick<Workspace, "root" | "rerailHome">, stop = stopDaemon): Promise<void> {
+  const said = host === "omp" ? KEPT_DAEMON[await stopRunDaemon(rerailHome, stop)] : "";
+  if (process.env.LIFECYCLE_KEEP) process.stdout.write(`kept ${root}${said}\n`);
+  else await rm(root, { recursive: true, force: true });
 }
 
 async function main(): Promise<void> {
